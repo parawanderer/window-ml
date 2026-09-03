@@ -99,6 +99,14 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-cog { margin-left: 6px; }
 .rc-cog:hover, .rc-cog.on { color: var(--fg); background: var(--panel-2); border-color: var(--border); }
 /* Expanded on demand: you configure rarely and read constantly. */
+/* Expands from nothing and collapses back the same way. `grid-template-rows: 0fr → 1fr` animates to the
+   content's OWN height without hardcoding one — a max-height guess is either clipped or eases against empty
+   space. The child needs min-height:0 for the 0fr row to actually collapse. */
+.rc-editor-wrap { display: grid; grid-template-rows: 0fr; opacity: 0;
+                  transition: grid-template-rows .22s cubic-bezier(.22,.61,.36,1), opacity .18s ease; }
+.rc-editor-wrap.open { grid-template-rows: 1fr; opacity: 1; }
+.rc-editor-wrap > * { overflow: hidden; min-height: 0; }
+@media (prefers-reduced-motion: reduce) { .rc-editor-wrap { transition: none; } }
 .rc-editor { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; padding: 6px;
              background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.78em; }
 .rc-etrack { display: flex; flex-direction: column; gap: 3px; }
@@ -788,6 +796,12 @@ details.io[open] > summary .io-preview { display: none; }
    it display:none is what stops its prose being selected and copied along with the row it sits in — the old
    scheme left it in the DOM at opacity 0, so copying a row dragged every tooltip's text with it. */
 .tt-pop { display: none; }
+/* A keyboard shortcut rendered as its own keys. Chrome reports it as "Alt+Space"; showing that verbatim reads
+   as text, whereas the keys read as something to press. */
+.keys { display: inline-flex; gap: 3px; vertical-align: baseline; }
+.key { display: inline-block; padding: 1px 5px; font: inherit; font-size: 0.85em; line-height: 1.5;
+       color: var(--fg); background: var(--panel-2); border: 1px solid var(--border);
+       border-bottom-width: 2px; border-radius: 4px; }
 /* The one floating layer: position:fixed, so no scrolling or overflow-hidden ancestor can clip it, and its
    direction is computed rather than hardcoded per call site. */
 .tt-layer {

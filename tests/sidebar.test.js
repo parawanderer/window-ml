@@ -6196,3 +6196,55 @@ test("residentNow: knows loaded from not-loaded, and unknown from either", async
         assert.equal(residentNow(null), undefined, "no model named → nothing to claim");
     } finally { loadedModels.value = before; }
 });
+
+// The empty state used to say only "run one in the console", which is half the truth — there is a keyboard
+// shortcut. It must be the LIVE binding: it is user-rebindable, and naming a key that does nothing is worse
+// than naming none.
+test("empty state: offers the live HUD shortcut as key pills, or stays silent when unbound", async () => {
+    const bound = await loadSidebarWorld({ invocation: { shortcut: "Alt+Space", defaultShortcut: "Alt+Space", isDefault: true, contextMenu: false } });
+    await bound.flush();
+    const txt = bound.shadow.querySelector(".empty").textContent;
+    assert.match(txt, /Run one in the console/, "the console is still named");
+    assert.match(txt, /or press/, "…and so is the shortcut");
+    const keys = [...bound.shadow.querySelectorAll(".empty .key")].map((k) => k.textContent);
+    assert.deepEqual(keys, ["Alt", "Space"], "rendered as separate keys, not the literal 'Alt+Space' string");
+
+    // Cleared binding → mention nothing. Pointing at a dead key is worse than saying nothing.
+    const unbound = await loadSidebarWorld({ invocation: { shortcut: "", defaultShortcut: "Alt+Space", isDefault: false, contextMenu: false } });
+    await unbound.flush();
+    assert.match(unbound.shadow.querySelector(".empty").textContent, /Run one in the console\./);
+    assert.equal(unbound.shadow.querySelectorAll(".empty .key").length, 0, "no key offered when none is bound");
+});
+
+// The editor grows from nothing and collapses the same way, rather than appearing at full height.
+test("track editor: expands and collapses instead of snapping in", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "a", vramGB: 8, vramBytes: 8 * 1024 ** 3, expiresAt: null }],
+        info: INFO_MIXED,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    // Mounted but collapsed — it must stay in the DOM, or a close has nothing to animate out.
+    const wrap = w.shadow.querySelector(".rc-editor-wrap");
+    assert.ok(wrap, "the editor is mounted even while closed");
+    assert.ok(!wrap.classList.contains("open"), "…and collapsed");
+    assert.ok(w.shadow.querySelector(".rc-editor"), "its content exists, ready to animate");
+
+    w.shadow.querySelector('[aria-label="Edit tracks"]').click();
+    await w.flush();
+    assert.ok(w.shadow.querySelector(".rc-editor-wrap").classList.contains("open"), "opening is a class flip, so it transitions");
+
+    w.shadow.querySelector('[aria-label="Edit tracks"]').click();
+    await w.flush();
+    assert.ok(!w.shadow.querySelector(".rc-editor-wrap").classList.contains("open"), "and it collapses the same way");
+
+    // The animation is height-driven from the content's own size — a hardcoded max-height either clips the
+    // editor or eases against empty space.
+    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const rule = css.slice(css.indexOf(".rc-editor-wrap {"), css.indexOf("}", css.indexOf(".rc-editor-wrap {")));
+    assert.match(rule, /grid-template-rows:\s*0fr/, "collapsed to a zero-height row");
+    assert.match(rule, /transition:[^;]*grid-template-rows/, "…and it transitions to the content's real height");
+});

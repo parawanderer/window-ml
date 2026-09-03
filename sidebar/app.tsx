@@ -14,6 +14,7 @@ import {
     vramOpen, sidebarOpen, backendError, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
 import { ContextMenu, Hash, highlightPos } from "./ui-kit";
+import type { InvocationInfo } from "../contract";
 import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge } from "./reply";
 import { AgentRunView, RunStatsBar } from "./agent-detail";
@@ -41,8 +42,45 @@ function ListView() {
     // data-rev so the subscription survives minification.
     const r = rev.value;
     const list = [...sessionMap.values()].sort((a, b) => b.lastTs - a.lastTs);
-    if (!list.length) return <div class="empty" data-rev={r}>No ml calls yet. Run one in the console.</div>;
+    if (!list.length) return <EmptySessions rev={r} />;
     return <div class="list" data-rev={r}>{list.map(s => <SessionRow key={s.hash} s={s} profile={sessionProfile(s)} />)}</div>;
+}
+
+/** The shortcut that opens the HUD composer on THIS install, or "" when the user cleared it. Read live from
+ *  chrome.commands (GET_INVOCATION) rather than hardcoded: it is user-rebindable, and naming a key that does
+ *  nothing is worse than not mentioning one. Null until the answer arrives. */
+function useInvocation(): InvocationInfo | null {
+    const [info, setInfo] = useState<InvocationInfo | null>(null);
+    useEffect(() => {
+        try {
+            chrome.runtime.sendMessage({ type: "GET_INVOCATION", payload: {} }, (resp: any) => {
+                if (chrome.runtime.lastError || !resp || resp.error) return;
+                setInfo(resp.data || null);
+            });
+        } catch { /* no runtime (a test harness) — the console line stands on its own */ }
+    }, []);
+    return info;
+}
+
+/** A keyboard shortcut as its own keys: "Alt+Space" → [Alt][Space]. */
+export function KeyPill({ combo }: { combo: string }) {
+    return (
+        <span class="keys">
+            {combo.split("+").map((k, i) => <kbd class="key" key={i}>{k}</kbd>)}
+        </span>
+    );
+}
+
+function EmptySessions({ rev }: { rev: number }) {
+    const inv = useInvocation();
+    // Only offer the shortcut when one is actually bound — the user may have cleared it, and pointing at a
+    // dead key is worse than saying nothing.
+    return (
+        <div class="empty" data-rev={rev}>
+            No ml calls yet. Run one in the console
+            {inv?.shortcut ? <> or press <KeyPill combo={inv.shortcut} /></> : null}.
+        </div>
+    );
 }
 
 function DetailView({ hash }: { hash: string }) {

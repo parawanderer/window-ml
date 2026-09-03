@@ -646,7 +646,13 @@ export function VramPanel() {
                     </button>
                 ) : null}
             </div>
-            {editorOpen.value && latestSample ? <TrackEditor sample={latestSample} /> : null}
+            {/* Kept MOUNTED so it can animate both ways: unmounting on close would snap it out of existence,
+                and a collapse has nothing to animate if the content is already gone. */}
+            {latestSample ? <div class={`rc-editor-wrap${editorOpen.value ? " open" : ""}`}
+                // Present but not reachable while collapsed — an invisible editor must not swallow a Tab.
+                inert={editorOpen.value ? undefined : true} aria-hidden={editorOpen.value ? undefined : "true"}>
+                <TrackEditor sample={latestSample} />
+            </div> : null}
             <RowTip sample={latestSample} />
             {capacity.value
                 ? <ResourceTracks samples={resourceHistory.value} capacity={capacity.value} hidden={hidden} layout={layout.value} />
