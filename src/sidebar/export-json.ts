@@ -13,10 +13,10 @@ import type { Session, Turn, AgentStep } from "./store";
 import { turnsRun } from "./store";
 import type { TokenUsage } from "../contract";
 import type {
-    ExportDocument, ExportSession, ExportStep, ExportMessage,
+    ExportDocument, ExportSession, ExportBuild, ExportPage, ExportStep, ExportMessage,
     ExportOutcome, ExportTotals, ExportModelUsage, ExportStatus, IsoTimestamp,
 } from "../export-schema";
-import { EXPORT_SCHEMA_VERSION } from "../export-schema";
+import { EXPORT_SCHEMA_VERSION, schemaUrl } from "../export-schema";
 
 /** Epoch ms → ISO 8601. Invalid/absent stamps are dropped rather than exported as an
  *  epoch-zero date, which would read as a real 1970 timestamp to a consumer. */
@@ -206,13 +206,58 @@ function outcome(s: Session, isAgent: boolean): ExportOutcome {
 }
 
 /**
+ * What the exporter knows about itself. Passed in rather than read here, because this module runs in the
+ * sidebar (where `chrome.runtime` has the manifest) and in Node (where the harness has the build stamp).
+ */
+export interface ExportProvenance {
+    /** Extension version, from the manifest. */
+    version?: string;
+    /** The extension's own `BUILD_INFO`. Its `dirtyDiff` is dropped unless `includeDirtyDiff`.
+     *  Readonly-tolerant: BUILD_INFO is declared `as const`, so its arrays arrive readonly. */
+    build?: { readonly [K in keyof ExportBuild]?: K extends "dirtyFiles" ? readonly string[] : ExportBuild[K] };
+    /**
+     * Include the uncommitted diff in {@link ExportBuild.dirtyDiff}. Off by default: it is often larger
+     * than the run it describes, and it puts unpublished source into a file people share. Turn it on for
+     * a local artifact where reproducing the exact build is the point (a benchmark cell, a kept report).
+     */
+    includeDirtyDiff?: boolean;
+}
+
+/** Normalise a `BUILD_INFO` into the published shape, dropping the diff unless it was asked for. */
+function buildOf(p?: ExportProvenance): ExportBuild | undefined {
+    const b = p?.build;
+    if (!b) return undefined;
+    return compact<ExportBuild>({
+        commit: b.commit || undefined,
+        shortCommit: b.shortCommit || undefined,
+        dirty: typeof b.dirty === "boolean" ? b.dirty : undefined,
+        dirtyFiles: b.dirtyFiles?.length ? [...b.dirtyFiles] : undefined,
+        dirtyDiff: p?.includeDirtyDiff && b.dirtyDiff ? b.dirtyDiff : undefined,
+        commitDate: b.commitDate || undefined,
+        repoUrl: b.repoUrl || undefined,
+        commitUrl: b.commitUrl || undefined,
+        buildTime: b.buildTime || undefined,
+    });
+}
+
+/**
  * Serialize a session to the published export shape.
  *
  * @param {Session} s The session to export, as the sidebar holds it.
- * @param {string} [version] The extension version, for provenance.
+ * @param {ExportProvenance|string} [prov] Build provenance; a bare string is read as the version.
  * @returns {ExportDocument} The document; stringify it to produce the `.json` file.
  */
-export function sessionToJson(s: Session, version?: string): ExportDocument {
+/** The page a run started on, when the run recorded one. */
+function pageOf(s: Session): ExportPage | undefined {
+    const url = s.pageUrl;
+    if (!url && !s.pageTitle) return undefined;
+    let origin: string | undefined;
+    try { origin = url ? new URL(url).origin : undefined; } catch { origin = undefined; }
+    return compact<ExportPage>({ url: url || undefined, origin, title: s.pageTitle || undefined });
+}
+
+export function sessionToJson(s: Session, prov?: ExportProvenance | string): ExportDocument {
+    const p: ExportProvenance = typeof prov === "string" ? { version: prov } : (prov || {});
     const isAgent = s.kind === "agent";
 
     // Array.prototype.sort is stable, which matters: `seq` ties (a turn's thought and its
@@ -232,6 +277,7 @@ export function sessionToJson(s: Session, version?: string): ExportDocument {
         model: s.model ?? undefined,
         config: isAgent ? s.agentConfig : s.config,
         task: s.task,
+        page: isAgent ? pageOf(s) : undefined,
         taskImages: s.taskImages?.length ? s.taskImages : undefined,
         outcome: outcome(s, isAgent),
         totals: totals(s, steps, messages),
@@ -239,15 +285,18 @@ export function sessionToJson(s: Session, version?: string): ExportDocument {
         steps: isAgent ? steps : undefined,
     });
 
+    const build = buildOf(p);
     return {
+        // First, by convention: an editor looks at the head of the file for it.
+        ...(schemaUrl(build) ? { $schema: schemaUrl(build) } : {}),
         schema: EXPORT_SCHEMA_VERSION,
         exportedAt: new Date().toISOString(),
-        generator: compact({ name: "window.ml", version }),
+        generator: compact({ name: "window.ml", version: p.version, build }),
         session,
     };
 }
 
 /** The document as a `.json` file body: 2-space indent, so a human can read a diff. */
-export function serializeSessionJson(s: Session, version?: string): string {
-    return JSON.stringify(sessionToJson(s, version), null, 2) + "\n";
+export function serializeSessionJson(s: Session, prov?: ExportProvenance | string): string {
+    return JSON.stringify(sessionToJson(s, prov), null, 2) + "\n";
 }

@@ -38,8 +38,8 @@ async function waitForGate(sw) {
 const fake = await startFakeLlm({ model: "fake-model" });
 const site = await startPageServer({});
 // A NARRATED DEMO: it exists to be watched, so it keeps a real window even though the harness is now
-// headless by default (a window that steals focus on every launch makes the machine unusable while
-// the suite runs).
+// headless by default. (Everything else — the e2e suite, bench cells, observe without WATCH — runs
+// headless, because a window that steals focus on every launch makes the machine unusable.)
 const ext = await launchExtension({ headful: true });
 await configureExtension(ext.sw, {
     chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model",

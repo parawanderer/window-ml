@@ -602,6 +602,67 @@ export function residencyEvents(samples: ResourceSample[], knownLoads: ResourceE
     return out;
 }
 
+/** The SCRUB strip's geometry: where the visible window sits inside the whole session.
+ *
+ *  The strip is a compressed view of every sample the session holds (~30 minutes at a 2s poll), with a box
+ *  showing which slice of it the chart above is drawing. Unlike the chart, the strip's own axis IS linear in
+ *  time — it is an overview, and a 10-minute hole in the middle of a session is a fact about the session that
+ *  an overview should show at its true width, not collapse the way the chart's segments do.
+ *
+ *  Returns null when there is nothing to scrub: no samples, or a session so short that the window covers all
+ *  of it — a strip whose box is the whole strip is a control that cannot do anything, and drawing one implies
+ *  otherwise. */
+export interface ScrubExtent {
+    /** First and last sample in the session. */
+    from: number;
+    to: number;
+    /** The visible window, as fractions of that span. */
+    windowFrom: number;
+    windowTo: number;
+    /** Whether the window's right edge is at the session's tail — i.e. it is following live samples. */
+    atTail: boolean;
+}
+
+/** How close to the tail still counts as AT it. One poll of slack: a window pinned to live is always a
+ *  moment behind the newest sample, and calling that "scrolled back" would unpin the view for nobody. */
+export const TAIL_SLACK_MS = 3000;
+
+export function scrubExtent(
+    samples: readonly { t: number }[],
+    window: { from: number; to: number } | null,
+): ScrubExtent | null {
+    if (samples.length < 2) return null;
+    const from = samples[0].t, to = samples[samples.length - 1].t;
+    const span = to - from;
+    if (span <= 0) return null;
+    const w = window ?? { from, to };
+    // Clamped, because a window can legitimately extend past the samples (the rolling window reaches back
+    // before the first sample on a fresh open, and forward to now).
+    const clamp = (t: number) => Math.min(1, Math.max(0, (t - from) / span));
+    const windowFrom = clamp(w.from), windowTo = clamp(w.to);
+    // Nothing to scrub if the window already covers everything there is.
+    if (windowFrom <= 0 && windowTo >= 1) return null;
+    return { from, to, windowFrom, windowTo, atTail: w.to >= to - TAIL_SLACK_MS };
+}
+
+/** Move a window to a new position on the strip, keeping its DURATION. Dragging the box scrolls time; it does
+ *  not zoom, which is what the drag-on-the-chart gesture is for. The result is clamped to the session, so a
+ *  drag past either end parks against it rather than scrolling into time that was never sampled. */
+export function scrubTo(
+    extent: { from: number; to: number },
+    window: { from: number; to: number },
+    centerFrac: number,
+): { from: number; to: number } {
+    const span = extent.to - extent.from;
+    const width = window.to - window.from;
+    const center = extent.from + Math.min(1, Math.max(0, centerFrac)) * span;
+    let start = center - width / 2;
+    start = Math.max(extent.from, Math.min(start, extent.to - width));
+    // A window WIDER than the session sits over all of it rather than being squeezed.
+    if (width >= span) return { from: extent.from, to: extent.to };
+    return { from: start, to: start + width };
+}
+
 /** The TIME at a fraction across the whole plot — the inverse of `placeEvents`, for turning a drag into a
  *  time range. The plot is segments laid out with flex weights proportional to their sample counts, so the
  *  fraction is spent across the segments in those proportions and then interpolated INSIDE the one it lands
@@ -626,7 +687,43 @@ export function timeAtFraction(runs: { t: number }[][], frac: number): number | 
     return live.at(-1)!.at(-1)!.t;
 }
 
-/** An event's whole lineage:/** An event's whole lineage: itself, everything it descends from, and everything descended from it. Hovering
+/** What the lane draws. Everything is shown by default; this is how a busy session is narrowed.
+ *
+ *  Two independent axes, because they answer different questions. SCOPE answers "whose events" — a browsing
+ *  session accumulates every run, and when you are reading one of them the others are noise. KINDS answers
+ *  "which of them" — sub-calls are the numerous ones (a vision reader fires several per step) and loads and
+ *  evictions are the rare, expensive ones you may want alone. */
+export interface LaneFilter {
+    /** A session hash to restrict to, or null for every session. */
+    hash: string | null;
+    /** Kinds to HIDE. An exclusion list, so a kind added later is visible by default rather than silently
+     *  filtered out by a stored preference that predates it. */
+    hidden: readonly ResourceEvent["kind"][];
+}
+
+export const EMPTY_LANE_FILTER: LaneFilter = { hash: null, hidden: [] };
+
+/** Apply a filter. An event with no `ref` (an eviction — it belongs to the machine, not to a run) survives a
+ *  session scope: it is what the memory trace is DOING, and hiding it because it has no owner would remove
+ *  the events the chart exists for. */
+export function filterEvents(events: readonly ResourceEvent[], filter: LaneFilter): ResourceEvent[] {
+    const hidden = new Set(filter.hidden);
+    return events.filter((e) => {
+        if (hidden.has(e.kind)) return false;
+        if (filter.hash && e.ref && e.ref.hash !== filter.hash) return false;
+        return true;
+    });
+}
+
+/** How many of each kind are in a set — for a filter control that says what it is hiding rather than making
+ *  you toggle blindly. */
+export function countByKind(events: readonly ResourceEvent[]): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const e of events) out[e.kind] = (out[e.kind] || 0) + 1;
+    return out;
+}
+
+/** An event's whole lineage:/** An event's whole lineage:/** An event's whole lineage: itself, everything it descends from, and everything descended from it. Hovering
  *  a sub-call should leave the step that spawned it and the run that contains it lit — the relationship is
  *  what makes the bar mean anything — and hovering the step should keep what it spawned, which is the same
  *  relationship read the other way. */

@@ -12,13 +12,14 @@
 import { useMemo, useRef, useState, useLayoutEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, MIN_EV_SPAN, type ResourceEvent, type EventPlacement,
+    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
+    filterEvents, countByKind, type ResourceEvent, type EventPlacement,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
-import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS } from "./vram";
-import { loadedModels, resWindowS, view, zoomRange, brush, crosshair } from "./store";
+import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter } from "./vram";
+import { loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY } from "./store";
 import { clockAt, hhmmssms } from "./timestamps";
 import { scrollToStepSeq } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
@@ -508,6 +509,58 @@ function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; ru
     ))}</>;
 }
 
+/** The SCRUB strip: the whole session compressed into one bar, with a box showing which slice the chart above
+ *  is drawing. Drag the box to move through the session; drag it back to the right edge — or press the live
+ *  button — to re-pin to the tail.
+ *
+ *  Its own axis is LINEAR in time, unlike the chart's: this is an overview, and a ten-minute hole is a fact
+ *  about the session that an overview should show at its true width rather than collapse. The runs are drawn
+ *  as filled blocks with the gaps left empty, so "nothing was measured here" reads as a hole. */
+function ScrubStrip({ samples, window: win }: { samples: ResourceSample[]; window: { from: number; to: number } | null }) {
+    const ex = scrubExtent(samples, win);
+    if (!ex || !win) return null;   // nothing to scrub: the window already covers the session
+    const span = ex.to - ex.from;
+    const runs = segments(samples);
+    const drag = (e: PointerEvent) => {
+        if (e.button !== 0) return;
+        const el = e.currentTarget as HTMLElement;
+        const box = el.getBoundingClientRect();
+        const at = (x: number) => Math.min(1, Math.max(0, (x - box.left) / Math.max(1, box.width)));
+        const move = (ev: PointerEvent) => {
+            if (ev.buttons === 0 && ev.type === "pointermove") return up();
+            zoomRange.value = scrubTo(ex, win, at(ev.clientX));
+        };
+        const up = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+            // Dropped against the right edge → back to live, rather than a pinned window that happens to end
+            // at the tail and then falls behind it as new samples arrive.
+            const z = zoomRange.value;
+            if (z && z.to >= ex.to - TAIL_SLACK_MS) zoomRange.value = null;
+        };
+        move(e);
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+    };
+    return (
+        <div class="rc-scrub">
+            <div class="rc-scrub-track" onPointerDown={drag}>
+                {runs.map((run, i) => {
+                    const a = (run[0].t - ex.from) / span, b = (run.at(-1)!.t - ex.from) / span;
+                    return <div class="rc-scrub-run" key={i}
+                        style={{ left: `${a * 100}%`, width: `${Math.max(0.4, (b - a) * 100)}%` }} />;
+                })}
+                <div class="rc-scrub-win" style={{ left: `${ex.windowFrom * 100}%`,
+                    width: `${Math.max(1, (ex.windowTo - ex.windowFrom) * 100)}%` }} />
+            </div>
+            {/* Says which state you are in, and is the way back. A view that has silently stopped following
+                live is the failure this prevents. */}
+            <button class={`rc-scrub-live${ex.atTail ? " on" : ""}`} title={ex.atTail ? "Following new samples" : "Jump back to live"}
+                onClick={() => (zoomRange.value = null)}>{ex.atTail ? "live" : "⏸ live"}</button>
+        </div>
+    );
+}
+
 /** The crosshair, mirrored into every track: a line where the pointer is, and the instant it names. Reading
  *  one pool against another at a given moment is the whole reason these are small multiples, and doing it by
  *  eye across three plots is exactly what a shared line removes. */
@@ -676,13 +729,20 @@ function EventTip({ scope }: { scope: string }) {
  *
  *  Spans are bars in the lane; instants (an eviction) are rules. Both are placed inside the run that contains
  *  them, because the axis is segmented by gaps and is not linear in time. */
-function EventLane({ samples, events }: { samples: ResourceSample[]; events: ResourceEvent[] }) {
+function EventLane({ samples, events: all }: { samples: ResourceSample[]; events: ResourceEvent[] }) {
+    // Filtered before anything is placed, so the rows pack against what is actually drawn — a hidden kind
+    // must not leave a hole where it would have been.
+    const filter = laneFilter();
+    const events = useMemo(() => filterEvents(all, filter), [all, filter.hash, filter.hidden]);
+    const counts = useMemo(() => countByKind(all), [all]);
     const runs = useMemo(() => segments(samples).filter((r) => r.length > 1), [samples]);
     const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
     // The window admits a poll's worth past the last sample, for the same reason placeEvents does.
     const placed = useMemo(() => placeEvents(runs, eventsIn(events, from, to + VRAM_POLL_MS), VRAM_POLL_MS),
         [runs, events, from, to]);
-    if (!runs.length || !placed.length) return null;
+    // The CONTROL still shows when everything is filtered out — otherwise hiding the last kind hides the way
+    // to bring it back.
+    if (!runs.length || (!placed.length && !all.length)) return null;
     const spans = placed.filter((p) => p.event.until != null);
     const rows = laneRows(spans);
     const lit = lineageOf(events, eventHover.value?.p.event.id);
@@ -729,6 +789,39 @@ function EventLane({ samples, events }: { samples: ResourceSample[]; events: Res
                 </div>
             ))}
             <EventTip scope="lane" />
+            <LaneFilterBar counts={counts} shown={events.length} total={all.length} />
+        </div>
+    );
+}
+
+/** What the lane is drawing, and what it is leaving out. Each kind is a chip with its count: a filter that
+ *  makes you toggle blindly to find out what it hides is worse than none. */
+function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number>; shown: number; total: number }) {
+    const hidden = new Set(laneHidden.value);
+    const KINDS: { kind: ResourceEvent["kind"]; label: string }[] = [
+        { kind: "run", label: "runs" }, { kind: "tool", label: "steps" }, { kind: "gen", label: "calls" },
+        { kind: "embed", label: "sub-calls" }, { kind: "load", label: "loads" }, { kind: "evict", label: "evictions" },
+    ];
+    const toggle = (k: string) => {
+        const next = hidden.has(k) ? laneHidden.value.filter((x) => x !== k) : [...laneHidden.value, k];
+        laneHidden.value = next;
+        try { chrome.storage.local.set({ [LANE_HIDDEN_KEY]: next }); } catch { /* opaque origin */ }
+    };
+    const inDetail = view.value.name === "detail";
+    return (
+        <div class="rc-lane-filter">
+            {KINDS.filter((k) => counts[k.kind]).map((k) => (
+                <button class={`rc-lane-chip${hidden.has(k.kind) ? " off" : ""}`} key={k.kind}
+                    title={hidden.has(k.kind) ? `Show ${k.label}` : `Hide ${k.label}`}
+                    onClick={() => toggle(k.kind)}>{k.label} {counts[k.kind]}</button>
+            ))}
+            {/* Scope follows what you are READING, so it is only offered where "this run" names something. */}
+            {inDetail ? (
+                <button class={`rc-lane-chip scope${laneScoped.value ? " on" : ""}`}
+                    title={laneScoped.value ? "Showing only this run" : "Show only this run"}
+                    onClick={() => (laneScoped.value = !laneScoped.value)}>this run</button>
+            ) : null}
+            {shown < total ? <span class="rc-lane-count">{shown}/{total}</span> : null}
         </div>
     );
 }
@@ -737,15 +830,20 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     // Capacity is fetched once per open and arrives AFTER the first ps poll, so the earliest samples carry
     // none. Backfill the current one rather than dropping them: capacity is slow-moving (a card doesn't change
     // size), and the alternative is a panel that renders nothing for the first two seconds every time.
-    const windowed = useMemo(() => {
-        // A zoom REPLACES the rolling window: you asked for a stretch, so the panel stops sliding away from it.
+    // The visible window as an explicit RANGE, so the scrub strip can say where it sits in the session and
+    // move it. A zoom (or a scrub) REPLACES the rolling window: you asked for a stretch, so the panel stops
+    // sliding away from it.
+    const window_ = useMemo(() => {
         const z = zoomRange.value;
-        if (z) return samples.filter((s) => s.t >= z.from && s.t <= z.to);
+        if (z) return z;
         const secs = resWindowS.value;
-        if (!secs) return samples;
-        const cutoff = Date.now() - secs * 1000;
-        return samples.filter((s) => s.t >= cutoff);
-    }, [samples, resWindowS.value, zoomRange.value]);
+        if (!secs) return null;                    // "everything" — no window to draw
+        const now = Date.now();
+        return { from: now - secs * 1000, to: now };
+    }, [resWindowS.value, zoomRange.value, samples.length]);
+    const windowed = useMemo(
+        () => (window_ ? samples.filter((s) => s.t >= window_.from && s.t <= window_.to) : samples),
+        [samples, window_]);
     const filled = useMemo(() => windowed.map((s) => (s.capacity ? s : { ...s, capacity })), [windowed, capacity]);
     const latest = filled.at(-1);
     if (!latest?.capacity) return null;
@@ -757,6 +855,8 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
             </div>
             {/* Below every track, sharing their x-axis: what happened, against what was in memory while it did. */}
             <EventLane samples={filled} events={events} />
+            {/* And below THAT: where this window sits in the whole session. */}
+            <ScrubStrip samples={samples} window={window_} />
         </>
     );
 }

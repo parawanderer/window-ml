@@ -21,6 +21,18 @@
  *    The exception is {@link ExportOutcome}, whose flags are always present so consumers
  *    need no defaulting.
  *
+ * WHAT THE VERSION PROMISE COVERS. This file's own field names and shapes, and the borrowed types that
+ * are not marked unstable. Some fields reach types that live in `contract.ts` and are INTERNAL — most
+ * visibly {@link ExportStep.renderIn}/{@link ExportStep.renderOut} and {@link ExportSession.config}.
+ * Those carry `@unstable` at their declaration: a new render-descriptor variant or a new agent option can
+ * appear in any release, and doing so is NOT a breaking change to this format. They are still fully
+ * described in `docs/spec/export.schema.json` — you get real generated types for them — but the schema
+ * marks them `x-unstable` and lets an unrecognised variant validate. Switch on what you know; tolerate
+ * the rest.
+ *
+ * The generated JSON Schema at `docs/spec/export.schema.json` is this file, lifted, for consumers who are
+ * not writing TypeScript. Regenerate it with `npm run gen-export-schema` (the build does it too).
+ *
  * Types erased at build; import with `import type`.
  */
 
@@ -37,12 +49,44 @@ export const EXPORT_SCHEMA_VERSION = 1;
  *  these a differ should ignore. */
 export type IsoTimestamp = string;
 
+/** Path of the generated schema within the repo. */
+export const SCHEMA_PATH = "docs/spec/export.schema.json";
+
+/**
+ * The `$schema` URL for a document produced by a given build: the generated schema as it stood at that
+ * commit, on raw.githubusercontent so it is fetchable JSON rather than a GitHub HTML page.
+ *
+ * Returns undefined rather than guessing when there is nothing to pin to — no commit, no remote, or a
+ * remote that is not GitHub. A wrong URL would be validated against and quietly mislead.
+ *
+ * @param build the extension's build stamp (`repoUrl` + `commit`)
+ */
+export function schemaUrl(build?: { repoUrl?: string; commit?: string }): string | undefined {
+    const { repoUrl, commit } = build || {};
+    if (!repoUrl || !commit) return undefined;
+    const m = repoUrl.replace(/\.git$/, "").match(/^https:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)\/?$/);
+    if (!m) return undefined;
+    return `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${commit}/${SCHEMA_PATH}`;
+}
+
 /** A run's terminal state, mirroring the sidebar's own. */
 export type ExportStatus = "pending" | "ok" | "err";
 
 /* ------------------------------- envelope ------------------------------- */
 
 export interface ExportDocument {
+    /**
+     * URL of the JSON Schema this document was written against, pinned to the COMMIT that produced it —
+     * the conventional `$schema` key, which editors (VS Code and friends) pick up to validate and
+     * autocomplete a file with no configuration.
+     *
+     * Pinned to the commit rather than to `main` because `main` drifts away from what this file actually
+     * is; a URL that describes a later format is worse than none. BEST EFFORT: it is absent when the
+     * build had no git remote or the remote is not GitHub, and when the build was DIRTY the commit's
+     * schema is the nearest published thing rather than an exact match — `generator.build.dirty` sitting
+     * beside it is how a consumer knows.
+     */
+    $schema?: string;
     /** {@link EXPORT_SCHEMA_VERSION} at the time of writing. Check this before parsing. */
     schema: number;
     /** When the export was produced — not when the run happened. Volatile. */
@@ -54,8 +98,45 @@ export interface ExportDocument {
 export interface ExportGenerator {
     /** Always "window.ml". Present so an aggregator can tell exports apart by origin. */
     name: string;
-    /** The extension version that wrote the file, from the manifest. */
+    /** The extension version that wrote the file, from the manifest. Coarse — it moves on releases,
+     *  not on commits. {@link ExportGenerator.build} is what identifies the actual code. */
     version?: string;
+    /** Which BUILD produced this run. Absent when the exporter had no build stamp to hand. */
+    build?: ExportBuild;
+}
+
+/**
+ * The commit the extension was built from — the answer to "are these two exports even comparable?".
+ *
+ * A manifest version cannot answer that: two runs a week apart share it while the code moved underneath.
+ * Anything comparing runs (a benchmark sweep, a regression differ) needs the commit, and needs to know
+ * whether the tree was dirty, because a dirty build is not reproducible from any commit.
+ *
+ * Mirrors the extension's own `BUILD_INFO`, minus its `dirtyDiff` unless the exporter opts in — see
+ * {@link ExportBuild.dirtyDiff}.
+ */
+export interface ExportBuild {
+    /** Full commit SHA the extension was built from. */
+    commit?: string;
+    shortCommit?: string;
+    /** The working tree had uncommitted changes at build time, so `commit` does NOT fully describe what
+     *  ran. A sweep should treat runs from a dirty build as provisional. */
+    dirty?: boolean;
+    /** Paths that were modified, when dirty. Names only — cheap, and usually enough to know what moved. */
+    dirtyFiles?: string[];
+    /**
+     * The full uncommitted diff, when the exporter asked for it. OPT-IN, and off by default for two
+     * reasons: it is frequently larger than the run it describes, and it puts unpublished source into a
+     * file that gets shared. Turn it on where the export is a local artifact and reproducing the exact
+     * build matters — a benchmark cell, a bug report you are keeping.
+     */
+    dirtyDiff?: string;
+    /** Committer date of {@link ExportBuild.commit}, ISO 8601. */
+    commitDate?: string;
+    repoUrl?: string;
+    commitUrl?: string;
+    /** When the bundle was built. Volatile: rebuilding the same commit changes it. */
+    buildTime?: string;
 }
 
 /* ------------------------------- session ------------------------------- */
@@ -79,6 +160,12 @@ export interface ExportSession {
     config?: DebugSessionConfig | DebugAgentConfig;
     /** The initial task. Agent runs only. */
     task?: string;
+    /** The page the run STARTED on. Agent runs only, and absent on a run exported from a build that
+     *  predates the field. Close to a primary key when comparing runs — the same task against a
+     *  different page is a different experiment — and previously recoverable only by regexing the URL
+     *  back out of `config.system`, which is prose and only present when `env` was on. A run that
+     *  navigates ends somewhere else; this is where it began. */
+    page?: ExportPage;
     /** Images attached to the initial task, as data URLs. Agent runs only. */
     taskImages?: string[];
     outcome: ExportOutcome;
@@ -89,6 +176,13 @@ export interface ExportSession {
     messages: ExportMessage[];
     /** The agent loop's steps, ordered by {@link ExportStep.seq}. Agent runs only. */
     steps?: ExportStep[];
+}
+
+export interface ExportPage {
+    url?: string;
+    /** Origin of {@link ExportPage.url}, split out so grouping by site needs no URL parsing. */
+    origin?: string;
+    title?: string;
 }
 
 /* ------------------------------- derived ------------------------------- */
@@ -128,7 +222,11 @@ export interface ExportTotals {
     /** Tokens spent by DELEGATED sub-calls (`look`, `locate`, verify) — billed to the
      *  run but not part of the driver's own context. */
     subcallTokens: number;
-    /** Wall-clock from the session's first to last event. Volatile. */
+    /**
+     * ELAPSED wall-clock, first event to last — not time spent working. A multi-turn session includes
+     * whatever the human spent between turns, so a chat left open for an hour reports an hour. Dividing
+     * tokens by this gives throughput of the session, not of the model. Volatile.
+     */
     wallMs: number;
     /** Per-model breakdown, so a sweep can attribute cost when a run used several
      *  (a driver plus a utility reader, say). */
@@ -279,14 +377,23 @@ export interface ExportStep {
  * will diff wall-clock noise instead of behaviour.
  *
  * Published as data so a differ does not have to hardcode our field names.
+ *
+ * NOT SUFFICIENT ON ITS OWN — see {@link VOLATILE_PATTERNS}, which covers the same volatile values
+ * where they appear inside free text, and which no amount of field removal can reach.
  */
 export const VOLATILE_FIELDS: readonly string[] = [
     "exportedAt",
+    "generator.build.buildTime",
     "session.hash",
     "session.createdAt",
     "session.lastAt",
     "session.totals.wallMs",
     "session.messages[].at",
+    // A message carries the same TokenUsage a step does, and a CHAT export is all messages and no
+    // steps — so omitting these left that whole session kind with nothing stripped but the envelope.
+    "session.messages[].usage.genMs",
+    "session.messages[].usage.evalMs",
+    "session.messages[].usage.loadMs",
     "session.steps[].at",
     "session.steps[].durationMs",
     "session.steps[].streamMarks",
@@ -295,3 +402,35 @@ export const VOLATILE_FIELDS: readonly string[] = [
     "session.steps[].usage.evalMs",
     "session.steps[].usage.loadMs",
 ];
+
+/**
+ * Volatile values that appear INSIDE text, which stripping fields cannot remove.
+ *
+ * A tool-output pointer is the case that forces this. `steps[].token` is correctly listed as volatile
+ * above, but that same id is deliberately surfaced to the model as text: as an `@tool:a39f599` citation
+ * in an answer, as the `ref` argument of a `dereference` call, and in the token line appended to a tool
+ * result. Delete the field and every one of those copies remains, so a differ that follows
+ * {@link VOLATILE_FIELDS} faithfully still diffs pure noise — and worse, it diffs noise that LOOKS like
+ * behaviour, since the surrounding sentence is identical and only the id moved.
+ *
+ * Apply these to every string value that survives field-stripping, then compare.
+ *
+ * Use {@link canonicalizeText}, which also handles the session hash.
+ */
+export const VOLATILE_PATTERNS: readonly { pattern: RegExp; replace: string }[] = [
+    /** A minted tool-output pointer: 7 hex characters (6 of payload plus a check character). The
+     *  `@tool:` prefix is what makes this safe to apply blindly — the hex alone would not be. */
+    { pattern: /@tool:[0-9a-f]{7}\b/g, replace: "@tool:<id>" },
+];
+
+/**
+ * The session hash is volatile in text too, but deliberately NOT in {@link VOLATILE_PATTERNS}: it is
+ * eight bare hex characters, and a pattern that loose would also strike a colour, a short commit or any
+ * hex the page happened to contain — masking real differences while claiming to remove noise. It does
+ * not need a pattern, because its value is known: take `session.hash` and replace that literal string.
+ */
+export function canonicalizeText(text: string, sessionHash?: string): string {
+    let out = VOLATILE_PATTERNS.reduce((t, { pattern, replace }) => t.replace(pattern, replace), text);
+    if (sessionHash) out = out.split(sessionHash).join("<hash>");
+    return out;
+}

@@ -1,0 +1,37 @@
+{
+  // Extensions this repo's own tooling assumes. Each one is here because something checked in expects
+  // it — a setting, a config file, or a documented workflow — not because it is generally nice.
+  "recommendations": [
+    // The `nodejs-testing.extensions` block in settings.json exists FOR this: it points the test worker
+    // at tsx's loader so the .mjs tests can import the .ts sources directly, the same way `npm test`
+    // does. Without the extension that setting is dead config, so this is the one recommendation the
+    // repo actively depends on.
+    "connor4312.nodejs-testing",
+
+    // `npm run coverage` writes coverage/lcov.info, which this reads with no configuration — named in
+    // AGENTS.md and in the `coverage` skill. It shows the BRANCH gutters, which is the thing a coverage
+    // percentage hides and the reason the script exists.
+    "ryanluker.vscode-coverage-gutters",
+
+    // playwright.config.mjs + tests/e2e/*.spec.mjs. Worth it mainly for running a single e2e from the
+    // gutter: the suite loads a real browser per spec, so running one beats running all of them.
+    "ms-playwright.playwright",
+
+    // docs/LOCATE-VISION.md is illustrated with mermaid diagrams, and VS Code's built-in markdown
+    // preview does not render mermaid — without this they show as code blocks, which is the one doc
+    // where the diagram IS the explanation.
+    "bierner.markdown-mermaid",
+
+    // openwebui/*.py are real deliverables (workspace tools a user installs into OpenWebUI), and
+    // python-runtime.ts embeds the Pyodide prelude as Python source.
+    "ms-python.python"
+  ],
+
+  // Prettier would reformat this codebase on save. The style here is deliberate and hand-maintained —
+  // long single-line paragraphs in comments (which is also how GitHub renders them correctly), aligned
+  // table-like literals, 4-space indent — and there is no prettier config to tell it any of that. If you
+  // want it for other repos, keep it disabled for this workspace rather than dropping this line.
+  "unwantedRecommendations": [
+    "esbenp.prettier-vscode"
+  ]
+}
