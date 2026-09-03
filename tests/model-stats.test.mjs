@@ -165,3 +165,28 @@ test("eventsFrom: an approval gate is its OWN phase — the human's time, not th
     }, { p: tool.phases[0], i: 0 });
     assert.equal(widest.p.kind, "wait");
 });
+
+test("eventsFrom: a delegated sub-call is its own span, parented to the step that spawned it", () => {
+    const evs = M.eventsFrom([{
+        hash: "r", model: "qwen3.8:27b",
+        steps: [{
+            seq: 2, ts: 20_000, tool: "look", toolMs: 3000,
+            usage: usage(100, 20, { genMs: 1000 }),
+            // The reader ran INSIDE the tool's own window — that nesting is the point.
+            subUsage: {
+                byModel: [{ model: "minicpm-v", prompt: 700, completion: 30, calls: 1 }],
+                calls_: [{ model: "minicpm-v", ts: 19_000, ms: 1800, prompt: 700, completion: 30 }],
+            },
+        }],
+    }]);
+    const step = evs.find((e) => e.kind === "tool");
+    const sub = evs.find((e) => e.kind === "embed");
+    assert.ok(sub, "the sub-call is drawn, not just tallied");
+    assert.equal(sub.model, "minicpm-v", "a DIFFERENT model doing different work");
+    assert.equal(sub.t, 17_200, "a span, back over its own generation");
+    assert.equal(sub.until, 19_000);
+    assert.equal(sub.parent, step.id, "…owned by the step that spawned it");
+    assert.equal(step.parent, "run:r", "…which is owned by the run");
+    assert.equal(sub.cost.inTokens, 700, "and it carries its own cost, not the driver's");
+    assert.deepEqual(sub.ref, { hash: "r", seq: 2 }, "clicking it opens the step it belongs to");
+});

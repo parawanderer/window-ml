@@ -589,3 +589,25 @@ test("laneRows: nested and overlapping events stack under the one that contains 
     assert.equal(at("embed"), 2, "…and what THAT contains goes below again");
     assert.equal(at("tool"), 1, "a later sibling reuses the freed row rather than opening a new one");
 });
+
+// A delegated sub-call — a vision reader, an embedding — never happens on its own: it belongs to a step,
+// which belongs to a run. Hovering one has to leave that chain lit, or the bar is just "some bar".
+test("lineageOf: an event, what spawned it, and what it spawned", () => {
+    const evs = [
+        { id: "run:a", kind: "run", label: "run", t: 0 },
+        { id: "step:a:1", parent: "run:a", kind: "tool", label: "exec", t: 1 },
+        { id: "step:a:1:sub0", parent: "step:a:1", kind: "embed", label: "reader", t: 2 },
+        { id: "step:a:2", parent: "run:a", kind: "tool", label: "click", t: 3 },
+        { id: "run:b", kind: "run", label: "other run", t: 4 },
+    ];
+    // From the sub-call UP: the step that spawned it and the run that contains it.
+    assert.deepEqual([...M.lineageOf(evs, "step:a:1:sub0")].sort(), ["run:a", "step:a:1", "step:a:1:sub0"]);
+    // From the step: itself, its run, and what IT spawned — the same relationship read the other way.
+    assert.deepEqual([...M.lineageOf(evs, "step:a:1")].sort(), ["run:a", "step:a:1", "step:a:1:sub0"]);
+    // From the run: everything under it, but never a sibling run.
+    const fromRun = M.lineageOf(evs, "run:a");
+    assert.ok(fromRun.has("step:a:2") && fromRun.has("step:a:1:sub0"));
+    assert.ok(!fromRun.has("run:b"), "another run is not part of this lineage");
+    // Nothing hovered → nothing lit, which is what leaves the lane undimmed at rest.
+    assert.equal(M.lineageOf(evs, undefined).size, 0);
+});

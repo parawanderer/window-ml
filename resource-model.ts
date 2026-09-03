@@ -570,6 +570,28 @@ export function residencyEvents(samples: ResourceSample[], knownLoads: ResourceE
     return out;
 }
 
+/** An event's whole lineage: itself, everything it descends from, and everything descended from it. Hovering
+ *  a sub-call should leave the step that spawned it and the run that contains it lit — the relationship is
+ *  what makes the bar mean anything — and hovering the step should keep what it spawned, which is the same
+ *  relationship read the other way. */
+export function lineageOf(events: readonly ResourceEvent[], id: string | undefined): Set<string> {
+    const out = new Set<string>();
+    if (!id) return out;
+    const byId = new Map(events.filter((e) => e.id).map((e) => [e.id!, e]));
+    out.add(id);
+    // ANCESTORS: straight up the chain.
+    for (let cur = byId.get(id)?.parent; cur && !out.has(cur); cur = byId.get(cur)?.parent) out.add(cur);
+    // DESCENDANTS: only of the hovered event itself, never of its ancestors — a sibling step is not part of
+    // this lineage, and pulling one in would light half the run for hovering one sub-call.
+    const below = new Set<string>([id]);
+    for (let grew = true; grew; ) {
+        grew = false;
+        for (const e of events) if (e.id && e.parent && below.has(e.parent) && !below.has(e.id)) { below.add(e.id); grew = true; }
+    }
+    for (const d of below) out.add(d);
+    return out;
+}
+
 /** Pack placed events into non-overlapping ROWS, greedily and in time order: an event goes in the first row
  *  whose last event ends before it starts. Spans that overlap in TIME must not overlap on screen — two bars on
  *  one line read as a single longer one, which is a false statement about what happened.
@@ -640,6 +662,12 @@ export interface ResourceEvent {
     kind: "run" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
     label: string;
     model?: string;
+    /** This event's own id, and the event that SPAWNED it. A delegated sub-call — a vision reader, an
+     *  embedding — never happens on its own: it belongs to a step, which belongs to a run. Hovering one can
+     *  then light its whole lineage and dim everything else, which is the difference between "some bar" and
+     *  "the reader this step called". */
+    id?: string;
+    parent?: string;
     /** Where this happened, so a click can go there: a session hash, and the step within it. Events are
      *  CROSS-SESSION — a model load belongs to the machine's timeline, not to whichever chat provoked it — so
      *  the reference is how the lane gets you back to the one that did. */

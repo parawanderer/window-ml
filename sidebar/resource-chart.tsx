@@ -12,7 +12,7 @@
 import { useMemo } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    placeEvents, laneRows, eventsIn, type ResourceEvent, type EventPlacement,
+    placeEvents, laneRows, eventsIn, lineageOf, type ResourceEvent, type EventPlacement,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
@@ -499,13 +499,14 @@ function EventLane({ samples, events }: { samples: ResourceSample[]; events: Res
     if (!runs.length || !placed.length) return null;
     const spans = placed.filter((p) => p.event.until != null);
     const rows = laneRows(spans);
+    const lit = lineageOf(events, eventHover.value?.p.event.id);
     const open = (e: ResourceEvent) => {
         if (!e.ref) return;
         view.value = { name: "detail", hash: e.ref.hash };
         scrollToStepSeq(e.ref.seq, e.ref.hash);
     };
     return (
-        <div class="rc-lane" onPointerLeave={() => { eventHover.value = null; hoverAt.value = null; }}>
+        <div class="rc-lane" onPointerLeave={() => { eventHover.value = null; hoverAt.value = null; hoverModel.value = null; }}>
             {rows.map((row, ri) => (
                 <div class="rc-lane-row" key={ri}
                     onPointerMove={(ev: PointerEvent) => { const el = ev.currentTarget as HTMLElement; hoverAt.value = { x: ev.offsetX, y: ev.offsetY, w: el.clientWidth }; }}>
@@ -519,8 +520,11 @@ function EventLane({ samples, events }: { samples: ResourceSample[]; events: Res
                                 // separate elements, so it still hovers and clicks as the single step it is.
                                 const total = (e.until ?? e.t) - e.t;
                                 const bg = e.phases && total > 0 ? phaseGradient(e.phases, e.t, total, e.model) : undefined;
+                                // Hovering one event dims everything outside its LINEAGE: a sub-call only means
+                                // something next to the step that spawned it and the run that contains it.
+                                const away = lit.size > 0 && !(e.id && lit.has(e.id));
                                 return (
-                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}`} key={k}
+                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}`} key={k}
                                         style={{ left: `${p.from * 100}%`, width: `${w}%`,
                                                  ...(e.model && !bg ? { background: colorFor(e.model) } : {}),
                                                  // A model's events carry ITS colour — the same one its row and
@@ -529,7 +533,7 @@ function EventLane({ samples, events }: { samples: ResourceSample[]; events: Res
                                                  ...(e.model ? { "--model": colorFor(e.model) } : {}),
                                                  ...(bg ? { background: bg } : {}) }}
                                         title=""
-                                        onPointerEnter={() => (eventHover.value = { p, scope: "lane" })}
+                                        onPointerEnter={() => { eventHover.value = { p, scope: "lane" }; hoverModel.value = e.model ?? null; }}
                                         onClick={() => open(e)} />
                                 );
                             })}

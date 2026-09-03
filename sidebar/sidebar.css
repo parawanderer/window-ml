@@ -210,6 +210,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-ev { position: absolute; top: 0; height: 100%; min-width: 3px; padding: 0; border: none; border-radius: 2px;
          cursor: default; background: var(--fg-faint); opacity: .75; }
 .rc-ev.linked { cursor: pointer; }
+/* Outside the hovered event's lineage: still there, but out of the way. A sub-call means something only
+   beside the step that spawned it, so hovering one leaves that chain lit and drops everything else back. */
+.rc-ev.away { opacity: .18; }
+.rc-ev { transition: opacity .12s ease; }
 .rc-ev:hover { opacity: 1; outline: 1px solid var(--fg-dim); }
 /* A composite step: hard stops at each phase boundary, built inline from the phases themselves (the model's
    own colour for its work, a neutral for the human's wait, a wash of the same colour for the tool). The

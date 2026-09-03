@@ -1684,7 +1684,13 @@ export interface DebugAgentStep extends DebugBase {
 /** Delegated-sub-call token tally (look/locate/verify's own vision calls). See DebugAgentStep.subUsage.
  *  `byModel` breaks the aggregate down per vision model, for chat_metadata's "which model cost what". */
 export interface SubcallUsageByModel { model: string; prompt: number; completion: number; calls: number; }
-export interface SubcallUsage { prompt: number; completion: number; calls: number; byModel?: SubcallUsageByModel[]; }
+/** ONE delegated sub-call: a vision reader, or (when it lands) a background embedding. `ts` is when it
+ *  FINISHED and `ms` how long it took, so it can be drawn as a span nested under the step that spawned it —
+ *  a total tells you what the reader cost, but not when, or inside which step. */
+export interface SubcallRecord { model: string; ts: number; ms: number; prompt: number; completion: number; }
+export interface SubcallUsage { prompt: number; completion: number; calls: number; byModel?: SubcallUsageByModel[];
+    /** The individual calls behind `byModel`. Named `calls_` because `calls` is already the COUNT. */
+    calls_?: SubcallRecord[]; }
 export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; cancelled?: boolean; error?: string | null; answerMedia?: AnswerMedia[];
     /** the curated answer SET resolved to markdown (AgentResult.answer) — the card renders it when it carries a
      *  `@tool:` citation (a designated tool output, e.g. a table/image), which the plain summary can't show. */

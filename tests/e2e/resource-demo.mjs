@@ -344,7 +344,13 @@ async function main() {
             post({ kind: "agent-step", id: hash, ts: now - 9000, save: false, session: { hash, turn: 2 },
                    step: 2, seq: 2, tool: "python_exec", toolMs: 5200,
                    arguments: { code: "df.describe()" }, result: "ok",
-                   usage: { promptTokens: 3100, completionTokens: 210, totalTokens: 3310, genMs: 2100, loadMs: 40 } });
+                   usage: { promptTokens: 3100, completionTokens: 210, totalTokens: 3310, genMs: 2100, loadMs: 40 },
+                   subUsage: { calls: 2, prompt: 1600, completion: 60,
+                               byModel: [{ model: "minicpm-v:8b", prompt: 1600, completion: 60, calls: 2 }],
+                               calls_: [{ model: "minicpm-v:8b", ts: now - 12_500, ms: 1400, prompt: 800, completion: 30 },
+                                        { model: "minicpm-v:8b", ts: now - 10_200, ms: 1100, prompt: 800, completion: 30 }] } });
+            // Step 2 also delegated: a vision reader ran INSIDE it, a different model doing different work.
+            // Hovering it lights only its lineage — itself, the step that spawned it, the run that contains it.
             // Step 3: gated. The model wrote the call in 1.4s, a human took 6s to allow it, the tool ran in
             // 700ms — so most of that block is a person deciding, and it must not read as work.
             post({ kind: "agent-step", id: hash, ts: now - 1000, save: false, session: { hash, turn: 3 },

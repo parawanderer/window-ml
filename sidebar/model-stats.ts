@@ -28,7 +28,11 @@ export interface UsageSource {
         usage?: TokenUsage | null;
         /** Delegated vision sub-calls (look/locate/verify) — a DIFFERENT model, and attributing them to the
          *  driver is how a reader model's cost disappears from the ledger. */
-        subUsage?: { byModel?: { model: string; prompt: number; completion: number; calls: number }[] } | null;
+        subUsage?: {
+            byModel?: { model: string; prompt: number; completion: number; calls: number }[];
+            /** The individual delegated calls, each with its own timing — what makes them drawable. */
+            calls_?: { model: string; ts: number; ms: number; prompt: number; completion: number }[];
+        } | null;
     }[];
 }
 
@@ -83,7 +87,7 @@ export function eventsFrom(sessions: readonly UsageSource[]): ResourceEvent[] {
         return { inTokens: s.inTokens, outTokens: s.outTokens, tokPerSec: s.tokPerSec, genBasis: s.genBasis };
     };
     const call = (ts: number | undefined, u: TokenUsage | null | undefined, model: string | null | undefined,
-                  ref: ResourceEvent["ref"]) => {
+                  ref: ResourceEvent["ref"], id?: string, parent?: string) => {
         if (!ts || !u) return;
         // The timestamp we have is when the call FINISHED (the event is emitted with its result), so a span
         // runs backwards from it: that is where the time actually went.
@@ -91,7 +95,7 @@ export function eventsFrom(sessions: readonly UsageSource[]): ResourceEvent[] {
         const loadMs = u.loadMs ?? 0;
         if (genMs > 0) {
             out.push({ t: ts - genMs, until: ts, kind: "gen", label: model || "generation",
-                       model: model || undefined, ref, cost: costOf(u) });
+                       model: model || undefined, ...(id ? { id } : {}), ...(parent ? { parent } : {}), ref, cost: costOf(u) });
         }
         // The load happened at the START of the call, before a token was generated — drawn as its own span so
         // "the turn was slow" and "the model wasn't there yet" are visibly different answers.
@@ -102,6 +106,7 @@ export function eventsFrom(sessions: readonly UsageSource[]): ResourceEvent[] {
         }
     };
     for (const s of sessions) {
+        const runId = `run:${s.hash}`;
         for (const t of s.turns || []) call(t.ts, t.usage, t.model || s.model, { hash: s.hash });
         const steps = s.steps || [];
         for (const st of steps) {
@@ -118,12 +123,26 @@ export function eventsFrom(sessions: readonly UsageSource[]): ResourceEvent[] {
                 if (genMs > 0) phases.push({ kind: "model", until: from + genMs });
                 if (waitMs > 0) phases.push({ kind: "wait", until: from + genMs + waitMs });
                 phases.push({ kind: "tool", until: st.ts });
+                const stepId = `step:${s.hash}:${st.seq ?? st.step ?? 0}`;
                 out.push({
                     t: from, until: st.ts, phases, kind: "tool",
                     label: st.tool, tool: st.tool, model: s.model || undefined,
+                    id: stepId, parent: runId,
                     ref: { hash: s.hash, seq: st.seq },
                     ...(st.usage ? { cost: costOf(st.usage) } : {}),
                 });
+                // Delegated sub-calls (a vision reader today, a background embedding when that lands) are
+                // spawned BY this step and are drawn as their own spans under it — a different model doing
+                // different work, which the step's own block cannot say.
+                for (const [i, sc] of (st.subUsage?.calls_ || []).entries()) {
+                    out.push({
+                        t: sc.ts - (sc.ms || 0), until: sc.ts, kind: "embed", label: sc.model, model: sc.model,
+                        id: `${stepId}:sub${i}`, parent: stepId, ref: { hash: s.hash, seq: st.seq },
+                        cost: { inTokens: sc.prompt, outTokens: sc.completion,
+                                tokPerSec: sc.ms > 0 ? sc.completion / (sc.ms / 1000) : null,
+                                genBasis: sc.ms > 0 ? "wall" : null },
+                    });
+                }
                 // Its own load, if this call had to wait for the model to arrive, stays a separate span: it
                 // happened before a token was generated, and burying it inside the block would hide the one
                 // thing that explains a slow turn.
@@ -134,14 +153,14 @@ export function eventsFrom(sessions: readonly UsageSource[]): ResourceEvent[] {
                 }
                 continue;
             }
-            call(st.ts, st.usage, s.model, { hash: s.hash, seq: st.seq });
+            call(st.ts, st.usage, s.model, { hash: s.hash, seq: st.seq }, `step:${s.hash}:${st.seq ?? st.step ?? 0}`, runId);
         }
         // The run itself, so a generation can be read against the turn that contained it.
         const stamps = steps.map((st) => st.ts).filter((t): t is number => !!t);
         if (stamps.length > 1) {
             out.push({ t: Math.min(...stamps), until: Math.max(...stamps), kind: "run",
                        label: s.model ? `run · ${s.model}` : "run", model: s.model || undefined,
-                       ref: { hash: s.hash } });
+                       id: runId, ref: { hash: s.hash } });
         }
     }
     return out.sort((a, b) => a.t - b.t);

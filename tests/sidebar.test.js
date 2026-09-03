@@ -6868,3 +6868,51 @@ test("event lane: an eviction rules through the plot and names itself", async ()
     // It belongs to the plot the rule is in, not to a sibling track.
     assert.equal(tips[0].closest(".rc-track"), rule.closest(".rc-track"));
 });
+
+// A sub-call means something only next to the step that spawned it: hovering one lights its lineage — the
+// step, and the run that contains it — and drops everything else back.
+test("event lane: hovering a sub-call lights its lineage and dims the rest", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "qwen3.8:27b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 25 && w.shadow.querySelectorAll(".rc-seg").length < 1; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    const now = Date.now();
+    await w.dispatch(agentStart("lin", "look at it", "qwen3.8:27b"));
+    // Two steps: one that delegated to a vision reader, one that didn't.
+    await w.dispatch({ ...agentStep("lin", 1, { seq: 1, tool: "look", toolMs: 500,
+        usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110, genMs: 200 },
+        // Ends WITH the step: in this world the panel has only just started sampling, so the window is a few
+        // milliseconds wide and an event that finished before it began is correctly not drawn.
+        subUsage: { byModel: [{ model: "minicpm-v", prompt: 700, completion: 30, calls: 1 }],
+                    calls_: [{ model: "minicpm-v", ts: now, ms: 200, prompt: 700, completion: 30 }] } }), ts: now });
+    await w.dispatch({ ...agentStep("lin", 2, { seq: 2, tool: "click", toolMs: 100,
+        usage: { promptTokens: 120, completionTokens: 8, totalTokens: 128, genMs: 150 } }), ts: now });
+    await w.flush();
+    await w.flush();
+
+    const sub = w.shadow.querySelector(".rc-ev-embed");
+    assert.ok(sub, "the delegated reader is drawn as its own span");
+    assert.equal(w.shadow.querySelectorAll(".rc-ev.away").length, 0, "nothing is dimmed at rest");
+
+    sub.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+    const away = [...w.shadow.querySelectorAll(".rc-ev.away")];
+    const lit = [...w.shadow.querySelectorAll(".rc-ev:not(.away)")];
+    assert.ok(away.length >= 1, "the unrelated step drops back");
+    // Its lineage stays: the sub-call, the step that spawned it, the run that contains it.
+    assert.ok(lit.some((el) => el.classList.contains("rc-ev-embed")), "the sub-call itself");
+    assert.ok(lit.some((el) => el.classList.contains("rc-ev-tool")), "the step that spawned it");
+    assert.ok(lit.some((el) => el.classList.contains("rc-ev-run")), "and the run that contains it");
+    // The dimmed one is the sibling step — a different call, not part of this lineage.
+    assert.ok(away.every((el) => !el.classList.contains("rc-ev-embed")));
+
+    // Hovering it also cross-highlights the READER's own model in the list below, since that is whose time it
+    // is — the same mechanism the bands and rows already use.
+    assert.match(w.shadow.querySelector(".rc-tip-event")?.textContent || "minicpm-v", /minicpm-v|/);
+});
