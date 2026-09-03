@@ -242,7 +242,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-lane-row { position: relative; display: flex; gap: 3px; height: 9px; }
 .rc-lane-seg { position: relative; min-width: 2px; height: 100%; }
 .rc-ev { position: absolute; top: 0; height: 100%; min-width: 3px; padding: 0; border: none; border-radius: 2px;
-         cursor: default; background: var(--fg-faint); opacity: .75; }
+         cursor: default; background: var(--fg-faint); opacity: .75;
+         /* A hairline in the panel's own colour, so two bars that end up adjacent read as TWO. */
+         box-shadow: 0 0 0 1px var(--panel); }
 .rc-ev.linked { cursor: pointer; }
 /* Outside the hovered event's lineage: still there, but out of the way. A sub-call means something only
    beside the step that spawned it, so hovering one leaves that chain lit and drops everything else back. */

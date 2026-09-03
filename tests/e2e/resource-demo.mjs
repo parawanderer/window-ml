@@ -139,26 +139,35 @@ const freeWith = (onDev) => SHAPE.devices.map((_, i) => IDLE(i) - (onDev[i] || 0
  *  measured then), which on a short warm-up would silently leave the lane looking empty. */
 const scriptRun = (page, spanMs) => page.evaluate((span) => {
     const now = Date.now();
-    const at = (frac) => now - Math.round(span * frac);   // frac of the way back through the window
     const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
     const hash = "demo-run";
-    post({ kind: "agent", id: hash, ts: at(1), save: false, session: { hash, turn: 0 },
+    // Built FORWARD from the run's start, not backward from now: a step's timestamp is when it FINISHED, so
+    // laying these out by counting back is how the first version ended up with a model load that began
+    // BEFORE the run that waited through it — a fixture claiming something the loop could never produce.
+    const t0 = now - span;                   // the agent starts
+    const gap = Math.round(span * 0.03);     // a beat before the first call
+    const step = (from, parts) => from + parts.reduce((a, b) => a + b, 0);
+
+    post({ kind: "agent", id: hash, ts: t0, save: false, session: { hash, turn: 0 },
            task: "summarise the spreadsheet", model: "gemma4:31b", maxSteps: 8, config: null });
-    // Step 1: the model wasn't resident — a long load before a token, then a short generation.
-    post({ kind: "agent-step", id: hash, ts: at(0.46), save: false, session: { hash, turn: 1 },
-           step: 1, seq: 1, tool: "exec", toolMs: 1200,
+
+    // Step 1: the model wasn't resident. A long load, a short generation, a quick tool.
+    const load1 = Math.round(span * 0.30), gen1 = Math.round(span * 0.10), tool1 = Math.round(span * 0.06);
+    const ts1 = step(t0 + gap, [load1, gen1, tool1]);
+    post({ kind: "agent-step", id: hash, ts: ts1, save: false, session: { hash, turn: 1 },
+           step: 1, seq: 1, tool: "exec", toolMs: tool1,
            arguments: { js: "document.title" }, result: "ok",
            renderIn: { type: "code", lang: "javascript", code: "document.title", format: true },
-           usage: { promptTokens: 2400, completionTokens: 90, totalTokens: 2490, genMs: 2600,
-                    loadMs: Math.round(span * 0.46) } });
+           usage: { promptTokens: 2400, completionTokens: 90, totalTokens: 2490, genMs: gen1, loadMs: load1 } });
+
     // Step 2: resident now, so the cost is generation + a slow tool — and it DELEGATED: a vision reader ran
-    // inside it, a different model doing different work. Hovering one lights only its lineage.
-    post({ kind: "agent-step", id: hash, ts: at(0.35), save: false, session: { hash, turn: 2 },
-           step: 2, seq: 2, tool: "python_exec", toolMs: 5200,
+    // INSIDE the tool's own window, twice. Hovering one lights only its lineage.
+    const gen2 = Math.round(span * 0.08), tool2 = Math.round(span * 0.22);
+    const ts2 = step(ts1, [gen2, tool2]);
+    const readerEnd = ts2 - Math.round(tool2 * 0.15);
+    post({ kind: "agent-step", id: hash, ts: ts2, save: false, session: { hash, turn: 2 },
+           step: 2, seq: 2, tool: "python_exec", toolMs: tool2,
            arguments: { code: "df.describe()" }, result: "ok",
-           // The RENDER descriptors a real python_exec returns. Without them the step falls back to raw args
-           // and a bare result — which is what the sidebar does when a tool renders nothing, and made the
-           // demo look like the notebook cell was broken rather than absent.
            renderIn: { type: "python-in", mode: "readonly", source: "df.describe()",
                        tables: [{ name: "df", source: "#sales", kind: "dom",
                                   df: { columns: ["Rep", "Q1", "Q2"],
@@ -166,21 +175,24 @@ const scriptRun = (page, spanMs) => page.evaluate((span) => {
            renderOut: { type: "python-out", stdout: "count    3.000000\nmean   513.333333\nstd    105.4",
                         df: { columns: ["", "Q1", "Q2"],
                               rows: [["count", 3, 3], ["mean", 335, 513.33], ["std", 68.4, 105.4]] } },
-           usage: { promptTokens: 3100, completionTokens: 210, totalTokens: 3310, genMs: 2100, loadMs: 40 },
+           usage: { promptTokens: 3100, completionTokens: 210, totalTokens: 3310, genMs: gen2, loadMs: 40 },
            subUsage: { calls: 2, prompt: 1600, completion: 60,
                        byModel: [{ model: "minicpm-v:8b", prompt: 1600, completion: 60, calls: 2 }],
-                       calls_: [{ model: "minicpm-v:8b", ts: at(0.44), ms: 1400, prompt: 800, completion: 30 },
-                                { model: "minicpm-v:8b", ts: at(0.38), ms: 1100, prompt: 800, completion: 30 }] } });
-    // Step 3: gated. The model wrote the call in 1.4s, a human took 6s to allow it, the tool ran in 700ms —
-    // most of that block is a person deciding, and it must not read as work.
-    post({ kind: "agent-step", id: hash, ts: at(0.04), save: false, session: { hash, turn: 3 },
-           step: 3, seq: 3, tool: "exec", toolMs: 700, approveMs: 6000, approval: "user",
+                       calls_: [{ model: "minicpm-v:8b", ts: readerEnd - Math.round(tool2 * 0.35), ms: Math.round(tool2 * 0.3), prompt: 800, completion: 30 },
+                                { model: "minicpm-v:8b", ts: readerEnd, ms: Math.round(tool2 * 0.25), prompt: 800, completion: 30 }] } });
+
+    // Step 3: gated. The model wrote the call quickly, a human took far longer to allow it, the tool ran in
+    // no time — so most of that block is a person deciding, and it must not read as work.
+    const gen3 = Math.round(span * 0.05), wait3 = Math.round(span * 0.14), tool3 = Math.round(span * 0.02);
+    const ts3 = step(ts2, [gen3, wait3, tool3]);
+    post({ kind: "agent-step", id: hash, ts: ts3, save: false, session: { hash, turn: 3 },
+           step: 3, seq: 3, tool: "exec", toolMs: tool3, approveMs: wait3, approval: "user",
            arguments: { js: "document.querySelectorAll('tr').length" }, result: "41",
            renderIn: { type: "code", lang: "javascript", code: "document.querySelectorAll('tr').length", format: true },
            renderOut: { type: "keyval", pairs: [["value", "41"]] },
-           usage: { promptTokens: 3300, completionTokens: 45, totalTokens: 3345, genMs: 1400, loadMs: 30 } });
-    post({ kind: "agent-result", id: hash, ts: at(0.02), save: false, session: { hash, turn: 3 },
-           summary: "done", steps: 3, hitCap: false });
+           usage: { promptTokens: 3300, completionTokens: 45, totalTokens: 3345, genMs: gen3, loadMs: 30 } });
+    post({ kind: "agent-result", id: hash, ts: ts3 + Math.round(span * 0.01), save: false,
+           session: { hash, turn: 3 }, summary: "done", steps: 3, hitCap: false });
 }, spanMs);
 
 async function main() {

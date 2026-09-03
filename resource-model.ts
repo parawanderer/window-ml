@@ -633,13 +633,16 @@ export function lineageOf(events: readonly ResourceEvent[], id: string | undefin
  *  visible — which means packing has to reserve the same width, or two events that do not overlap in time
  *  are drawn overlapping and read as one longer bar. */
 export const MIN_EV_SPAN = 0.006;
+/** A hair of separation reserved BETWEEN bars in a row. Two bars that merely touch read as one bar with a
+ *  seam — which is the same misreading as an overlap, arrived at differently. */
+export const EV_ROW_GAP = 0.004;
 
 export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN): EventPlacement[][] {
     const rows: EventPlacement[][] = [];
     const ends: number[] = [];   // per row: [run, to] as a comparable number
     // The END is the DRAWN end, not the true one: see MIN_EV_SPAN.
     const key = (p: EventPlacement, edge: "from" | "to") =>
-        p.run + (edge === "from" ? p.from : Math.max(p.to, p.from + minSpan));
+        p.run + (edge === "from" ? p.from : Math.max(p.to, p.from + minSpan) + EV_ROW_GAP);
     for (const p of [...placed].sort((a, b) => key(a, "from") - key(b, "from"))) {
         let r = ends.findIndex((e) => e <= key(p, "from"));
         if (r < 0) {

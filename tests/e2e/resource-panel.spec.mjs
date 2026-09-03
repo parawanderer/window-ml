@@ -901,3 +901,71 @@ test("resource panel: the crosshair is mirrored across tracks and names the inst
         await fake.stop();
     }
 });
+
+// Bars in the same lane row must never overlap: two bars on one line read as a single longer one, which is a
+// false statement about what happened. Packing reserves the width a bar is DRAWN at (short events are widened
+// to stay visible), and this is the check that the reserved width and the drawn width actually agree — in a
+// real browser, where the pixels are real.
+test("resource panel: no two lane bars overlap on the same row", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(9000);
+
+        // Deliberately adversarial: sub-calls that OVERLAP each other, sub-calls that merely touch, and a
+        // couple of instant-length ones — the case where the widening for visibility creates the overlap.
+        await page.evaluate(() => {
+            const now = Date.now(), span = 8000, t0 = now - span;
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const hash = "overlap";
+            post({ kind: "agent", id: hash, ts: t0, save: false, session: { hash, turn: 0 },
+                   task: "t", model: "gemma4:31b", maxSteps: 4, config: null });
+            const ts1 = t0 + 4000;
+            post({ kind: "agent-step", id: hash, ts: ts1, save: false, session: { hash, turn: 1 },
+                   step: 1, seq: 1, tool: "python_exec", toolMs: 2500,
+                   usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, genMs: 500 },
+                   subUsage: { calls: 4, prompt: 40, completion: 8,
+                               byModel: [{ model: "minicpm-v:8b", prompt: 40, completion: 8, calls: 4 }],
+                               calls_: [
+                                   { model: "minicpm-v:8b", ts: ts1 - 1800, ms: 900, prompt: 10, completion: 2 },  // overlaps the next
+                                   { model: "minicpm-v:8b", ts: ts1 - 1200, ms: 800, prompt: 10, completion: 2 },
+                                   { model: "minicpm-v:8b", ts: ts1 - 300, ms: 5, prompt: 10, completion: 2 },     // an instant…
+                                   { model: "minicpm-v:8b", ts: ts1 - 260, ms: 5, prompt: 10, completion: 2 },     // …right beside another
+                               ] } });
+            post({ kind: "agent-step", id: hash, ts: t0 + 7500, save: false, session: { hash, turn: 2 },
+                   step: 2, seq: 2, tool: "exec", toolMs: 100, approveMs: 900,
+                   usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, genMs: 200 } });
+        });
+        await expect.poll(() => frame.locator(".rc-ev").count(), { timeout: 15000 }).toBeGreaterThan(4);
+
+        const rows = await frame.evaluate(() => [...document.querySelectorAll(".rc-lane-row")].map((row) =>
+            [...row.querySelectorAll(".rc-ev")].map((e) => {
+                const r = e.getBoundingClientRect();
+                return { cls: e.className.replace("rc-ev ", ""), x: Math.round(r.x), right: Math.round(r.right) };
+            }).sort((a, b) => a.x - b.x)));
+
+        const clashes = [];
+        rows.forEach((row, i) => {
+            for (let k = 1; k < row.length; k++) {
+                // Not just overlap: bars that merely TOUCH read as one bar with a seam, which is the same
+                // misreading arrived at differently. A hair of daylight is required.
+                const gap = row[k].x - row[k - 1].right;
+                if (gap < 1) clashes.push(`row ${i}: ${row[k - 1].cls} [${row[k - 1].x}..${row[k - 1].right}] ${gap < 0 ? "overlaps" : "touches"} ${row[k].cls} [${row[k].x}..${row[k].right}]`);
+            }
+        });
+        // Capture what it looked like, so a failure is a picture and not just numbers.
+        await frame.locator(".vram").screenshot({ path: "tests/e2e/artifacts/lane-overlap.png" }).catch(() => {});
+        expect(clashes, clashes.join("\n")).toEqual([]);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});

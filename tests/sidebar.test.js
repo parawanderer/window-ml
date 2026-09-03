@@ -6884,6 +6884,12 @@ test("event lane: an eviction rules through the plot and names itself", async ()
     const tips = [...w.shadow.querySelectorAll(".rc-tip-event")];
     assert.equal(tips.length, 1, "ONE tooltip — every track renders one, and they share a signal");
     assert.match(tips[0].textContent, /doomed:12b/, "…naming the model that left");
+    // An instant has no duration: reporting "0ms" and dropping the label said nothing about the thing being
+    // pointed at. It says WHEN, and what happened.
+    assert.match(tips[0].textContent, /\d{2}:\d{2}:\d{2}/, "the moment it happened");
+    assert.doesNotMatch(tips[0].textContent, /0ms/);
+    assert.match(tips[0].textContent, /left memory here/, "…and what the line means");
+    assert.ok(tips[0].querySelector(".rc-tip-dot"), "in the model's own colour");
     // It belongs to the plot the rule is in, not to a sibling track.
     assert.equal(tips[0].closest(".rc-track"), rule.closest(".rc-track"));
 });

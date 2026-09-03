@@ -19,7 +19,7 @@ import {
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS } from "./vram";
 import { loadedModels, resWindowS, view, zoomRange, brush, crosshair } from "./store";
-import { clockAt } from "./timestamps";
+import { clockAt, hhmmss } from "./timestamps";
 import { scrollToStepSeq } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
 import { signal } from "@preact/signals";
@@ -586,6 +586,23 @@ function EventTip({ scope }: { scope: string }) {
     // A run span has no phases and no cost of its own — it is the CONTAINER. Saying "click to open this step"
     // under it was wrong twice over: it is not a step, and its ref carries no seq to scroll to.
     const isRun = e.kind === "run";
+    // An INSTANT has no duration and no cost — it is a moment, and the tooltip built for spans reported it as
+    // "0ms" with its label dropped entirely, which said nothing at all about the thing you were pointing at.
+    const instant = e.until == null;
+    if (instant) return (
+        <div class="rc-tip rc-tip-event" role="tooltip" ref={ref} style={style}>
+            <div class="rc-tip-line">
+                {e.model ? <i class="rc-tip-dot" style={{ background: colorFor(e.model) }} /> : null}
+                <span class="rc-tip-name">{e.model || e.label}</span>
+                {/* WHEN, not how long: that is the only quantity a moment has. */}
+                <span class="rc-tip-size">{hhmmss(e.t)}</span>
+            </div>
+            <div class="rc-tip-note">{e.kind === "evict"
+                ? "left memory here — nothing reports an eviction, so this is the sample where it stopped being resident"
+                : e.kind === "load" ? "appeared here — loaded by something else, or while the panel was closed"
+                : e.label}</div>
+        </div>
+    );
     return (
         <div class="rc-tip rc-tip-event" role="tooltip" ref={ref} style={style}>
             {/* Each phase, in the order it happened: the model, the human deciding, then the tool. */}
