@@ -94,3 +94,49 @@ test("eventsFrom: events from DIFFERENT sessions share one timeline", () => {
     // the ref is what gets you back to the one that did.
     assert.deepEqual(evs.map((e) => e.ref.hash), ["two", "one"]);
 });
+
+test("eventsFrom: a tool step is ONE block, split where the model hands over to the tool", () => {
+    const evs = M.eventsFrom([{
+        hash: "run9", model: "qwen3.8:27b",
+        steps: [{
+            seq: 7, ts: 50_000, tool: "python_exec", toolMs: 3000,
+            usage: usage(900, 60, { genMs: 2000 }),
+        }],
+    }]);
+    const tool = evs.find((e) => e.kind === "tool");
+    assert.ok(tool, "a tool step produces a composite span");
+    assert.equal(tool.t, 45_000, "it begins when the model started generating the call");
+    assert.equal(tool.split, 47_000, "…hands over where generation ended");
+    assert.equal(tool.until, 50_000, "…and ends when the tool finished");
+    assert.equal(tool.tool, "python_exec");
+    assert.equal(tool.model, "qwen3.8:27b", "both halves are named: the model, then the tool");
+    assert.equal(tool.cost.outTokens, 60, "the model half carries what it spent");
+    assert.deepEqual(tool.ref, { hash: "run9", seq: 7 }, "clicking it goes to that step");
+    // It is ONE event, not a generation plus a tool — you reason about the halves together.
+    assert.equal(evs.filter((e) => e.kind === "gen").length, 0);
+});
+
+test("eventsFrom: a load before a tool call stays its OWN span", () => {
+    const evs = M.eventsFrom([{
+        hash: "r", model: "gemma4:31b",
+        steps: [{ seq: 1, ts: 100_000, tool: "exec", toolMs: 1000, usage: usage(10, 10, { genMs: 2000, loadMs: 20_000 }) }],
+    }]);
+    const tool = evs.find((e) => e.kind === "tool");
+    const load = evs.find((e) => e.kind === "load");
+    assert.equal(tool.t, 97_000);
+    // The load happened BEFORE a token was generated. Burying it inside the block would hide the one thing
+    // that explains the slow turn.
+    assert.equal(load.until, tool.t, "it ends exactly where the generation begins");
+    assert.equal(load.t, 77_000);
+    assert.deepEqual(load.ref, { hash: "r", seq: 1 });
+});
+
+test("eventsFrom: a step with no tool execution is not a composite", () => {
+    // A denial, a doomed-action skip, or a thought-only step: nothing ran, so there is no second half.
+    const evs = M.eventsFrom([{
+        hash: "r", model: "m",
+        steps: [{ seq: 1, ts: 10_000, tool: "click", usage: usage(5, 5, { genMs: 800 }) }],
+    }]);
+    assert.equal(evs.filter((e) => e.kind === "tool").length, 0);
+    assert.equal(evs.find((e) => e.kind === "gen").until, 10_000, "just the generation it did do");
+});

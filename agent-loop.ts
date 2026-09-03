@@ -377,12 +377,20 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         if (!r) return { args: a };
         return r.error ? { error: r.error } : { args: r.args! };
     };
+    // How long the last tool actually RAN, excluding the approval gate — the human deciding for thirty seconds
+    // is not the tool being slow, and a span that conflated them would say the wrong thing about both. Written
+    // by runTool, read by the DONE emit; safe as a single holder because the loop dispatches tools one at a
+    // time (delegation is sequential).
+    let lastToolMs: number | undefined;
     /** Every tool dispatch goes through here so `dereference` is answered from run state instead of delegated. */
-    const runTool = (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number, seq: number): Promise<ToolRunResult> | ToolRunResult =>
-        name === DEREF_TOOL ? derefLocally(a, step, seq) : (() => {
+    const runTool = async (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number, seq: number): Promise<ToolRunResult> => {
+        const t0 = Date.now();
+        try {
+            if (name === DEREF_TOOL) return await derefLocally(a, step, seq);
             const l = lookArgs(name, a, step);
-            return "error" in l ? { result: `Error: ${l.error}` } : deps.runTool(name, l.args, push);
-        })();
+            return "error" in l ? { result: `Error: ${l.error}` } : await deps.runTool(name, l.args, push);
+        } finally { lastToolMs = Date.now() - t0; }
+    };
     let seq = 0;
     // Live token stats for the chat_metadata tool: promptLast = the last call's prompt tokens (current
     // context occupancy), genTotal = completion tokens summed across the run. Accurate on both worlds since
@@ -438,6 +446,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const meta = byName.get(call.name);
             let args = (call.arguments || {}) as Record<string, unknown>;
             const s = ++seq;
+            lastToolMs = undefined;   // this step's own measurement, never the previous step's
             // On a STREAMING run the pending step is on screen while its output fills in, so give it a pretty
             // In up front (the gated path already does this via approve; this covers auto-approved calls too).
             const preIn = (opts.stream && deps.renderFor) ? await deps.renderFor(call.name, args).catch(() => undefined) : undefined;
@@ -594,7 +603,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 : result;
             // The DONE event carries the clean `result` for the pretty Out AND — when a token line was appended —
             // `modelResult` (what the model ACTUALLY saw), so the log's raw view stays complete (the AGENTS rule).
-            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused });   // DONE (patches the START)
+            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}) });   // DONE (patches the START)
             deps.pushToolResult(messages, call, forModel);
             if (tr?.image) pendingImages.push({ image: tr.image, label: tr.imageLabel || "screenshot" });
             // Multiple images from one call (look's overlay + no-overlay) → each becomes its own inline image.

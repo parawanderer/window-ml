@@ -576,13 +576,20 @@ export interface ResourceEvent {
      *  span (a bar in the lane), and the duration is the interesting part: a 40-second turn that spent 30 of
      *  them loading a model is a different story from one that didn't. */
     until?: number;
-    kind: "run" | "gen" | "load" | "evict" | "error" | "note";
+    kind: "run" | "gen" | "tool" | "load" | "evict" | "error" | "note";
     label: string;
     model?: string;
     /** Where this happened, so a click can go there: a session hash, and the step within it. Events are
      *  CROSS-SESSION — a model load belongs to the machine's timeline, not to whichever chat provoked it — so
      *  the reference is how the lane gets you back to the one that did. */
     ref?: { hash: string; seq?: number };
+    /** For a composite span, where its two halves meet: a `tool` event is ONE block — the model generating the
+     *  call, then the tool running it — because they are one step and you reason about them together. The
+     *  split is what makes the balance visible: a wide left half is a slow model, a wide right half is a slow
+     *  tool, and the same block hovers as one thing. */
+    split?: number;
+    /** The tool that ran, for a composite span. */
+    tool?: string;
     /** What it cost, for the kinds that spend tokens. Plain numbers rather than a RunStats import: this module
      *  stays standalone, and the surface that renders it already knows how to say "eval" vs "wall". */
     cost?: { inTokens: number; outTokens: number; tokPerSec: number | null; genBasis: "eval" | "wall" | "mixed" | null };

@@ -1516,6 +1516,10 @@ export interface DebugAgentStep extends DebugBase {
      *  is offset cumulatively across turns so the sidebar's turn groups don't collide, but maxSteps is a
      *  per-turn budget, so the pill must show this local count (turn 2 starts at 1/N again, not 18/20). */
     localStep?: number;
+    /** How long the tool itself RAN, in ms — measured around the dispatch, so it excludes the approval gate
+     *  (a human deciding is not the tool being slow). Absent when nothing was executed: a denial, a
+     *  doomed-action skip, or a step that only carried a thought. */
+    toolMs?: number;
     /** A monotonic id per TOOL-call step in a run, so the sidebar can correlate the in-flight START
      *  (pending: true, no result yet) with the completed DONE and patch the row in place. Thoughts
      *  have no seq. `pending` marks the START (render "running…" until the DONE arrives). */

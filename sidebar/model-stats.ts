@@ -19,6 +19,9 @@ export interface UsageSource {
     turns?: { ts?: number; model?: string | null; usage?: TokenUsage | null }[];
     steps?: {
         seq?: number; step?: number; ts?: number;
+        tool?: string;
+        /** How long the tool itself ran (the loop measures it around the dispatch, excluding the gate). */
+        toolMs?: number;
         usage?: TokenUsage | null;
         /** Delegated vision sub-calls (look/locate/verify) — a DIFFERENT model, and attributing them to the
          *  driver is how a reader model's cost disappears from the ledger. */
@@ -98,7 +101,31 @@ export function eventsFrom(sessions: readonly UsageSource[]): ResourceEvent[] {
     for (const s of sessions) {
         for (const t of s.turns || []) call(t.ts, t.usage, t.model || s.model, { hash: s.hash });
         const steps = s.steps || [];
-        for (const st of steps) call(st.ts, st.usage, s.model, { hash: s.hash, seq: st.seq });
+        for (const st of steps) {
+            // A TOOL step is one composite span: the model generating the call, then the tool running it. One
+            // block, because it is one step and you read the two halves against each other — but split, so
+            // "the model was slow" and "the tool was slow" are different shapes rather than one long bar.
+            if (st.tool && st.toolMs != null && st.ts) {
+                const genMs = st.usage?.genMs ?? st.usage?.evalMs ?? 0;
+                const from = st.ts - st.toolMs - genMs;
+                out.push({
+                    t: from, until: st.ts, split: from + genMs, kind: "tool",
+                    label: st.tool, tool: st.tool, model: s.model || undefined,
+                    ref: { hash: s.hash, seq: st.seq },
+                    ...(st.usage ? { cost: costOf(st.usage) } : {}),
+                });
+                // Its own load, if this call had to wait for the model to arrive, stays a separate span: it
+                // happened before a token was generated, and burying it inside the block would hide the one
+                // thing that explains a slow turn.
+                if ((st.usage?.loadMs ?? 0) >= LOAD_EVENT_MIN_MS) {
+                    const lFrom = from - (st.usage!.loadMs as number);
+                    out.push({ t: lFrom, until: from, kind: "load", label: `loading ${s.model || "model"}`,
+                               model: s.model || undefined, ref: { hash: s.hash, seq: st.seq } });
+                }
+                continue;
+            }
+            call(st.ts, st.usage, s.model, { hash: s.hash, seq: st.seq });
+        }
         // The run itself, so a generation can be read against the turn that contained it.
         const stamps = steps.map((st) => st.ts).filter((t): t is number => !!t);
         if (stamps.length > 1) {
