@@ -218,3 +218,23 @@ test("credentials carry to every rung, not just the first request", async () => 
     await fetchUrlContent("https://cred2.test/guide").catch(() => {});
     for (const call of seen) assert.equal(call.credentials, "omit", `${call.url} sent cookies it should not have`);
 });
+
+// A server may send no Content-Type at all. The rung must then judge by CONTENT alone rather than treating a
+// missing header as a miss — the twin is still the twin. (Found by coverage: this was the only branch inside
+// the ladder that no test reached and that can actually happen; the rest are defensive fallbacks against
+// things a real `fetch` cannot produce.)
+test("a twin served with NO content-type is judged by its content", async () => {
+    const noType = (body) => (url) => ({
+        ok: true, status: 200, url, redirected: false,
+        headers: new Headers(), text: async () => body,
+    });
+    net({ "https://noct.test/guide": noType("# Guide\n\nReal markdown, unlabelled.") });
+    const r = await fetchUrlContent("https://noct.test/guide");
+    assert.equal(by(r), "accept", "prose with no header is accepted, not rejected for lacking one");
+    assert.equal(rung(r, "accept").contentType, "", "…and the trace records that there was none");
+
+    // …while HTML with no header is still HTML, because the sniff carries the decision either way.
+    net({ "https://noct2.test/guide": noType(PLAIN_PAGE) });
+    const r2 = await fetchUrlContent("https://noct2.test/guide");
+    assert.equal(by(r2), "convert", "a missing header is not a licence to accept tag soup");
+});

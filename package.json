@@ -11,7 +11,10 @@
         "pretest": "npm run build",
         "test": "node --import tsx --test --test-concurrency=1 tests/*.test.js tests/*.test.mjs",
         "pretest:e2e": "npm run build",
-        "test:e2e": "playwright test"
+        "test:e2e": "playwright test",
+        "precoverage": "npm run build",
+        "coverage": "node --import tsx --test --enable-source-maps --experimental-test-coverage --test-reporter=lcov --test-reporter-destination=coverage/lcov.info --test-reporter=spec --test-reporter-destination=stdout --test-concurrency=1 tests/*.test.js tests/*.test.mjs",
+        "coverage:lines": "node scripts/coverage-lines.mjs"
     },
     "devDependencies": {
         "@playwright/test": "^1.50.1",

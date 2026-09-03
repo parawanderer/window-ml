@@ -19,4 +19,4 @@ tests/e2e/artifacts/
 # subagent worktrees (ephemeral)
 .claude/worktrees/
 
-window-ml.code-workspace
+window-ml.code-workspacecoverage/

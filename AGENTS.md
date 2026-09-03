@@ -935,6 +935,14 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   `npm test` stays green. CI fetches the wheels (cached by pyodide version) for
   both the test job (so these run) and the build job (so the uploaded extension
   artifact can actually run `python_exec`).
+- **Coverage: `npm run coverage`** — Node's built-in coverage (no dependency), writing
+  `coverage/lcov.info` (the **Coverage Gutters** VSCode extension reads it with no configuration) plus a
+  table on stdout. `node scripts/coverage-lines.mjs <file>` prints the gaps AS SOURCE, separating **NEVER
+  RUN** from **BRANCH NOT TAKEN** — the second is the one a percentage hides, and the one that answers "was
+  the `else` of this guard ever taken". Reach for it before claiming a path is tested: auditing the Markdown
+  ladder this way found five untaken branches where the claim had been "fully covered", though only one was
+  worth a test. `--enable-source-maps` is NOT optional in that script — tests run through tsx, so without it
+  every line number describes the transform. See the `coverage` skill.
 - **End-to-end tests: `npm run test:e2e`** (Playwright, `tests/e2e/*.spec.mjs`) —
   the ONE heavy layer that loads the **built** extension in a real Chromium. Use
   it **only** for behaviour jsdom/`node:vm` genuinely can't represent: full-page
