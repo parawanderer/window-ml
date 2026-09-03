@@ -1,0 +1,33 @@
+{
+    // A SECOND project, for the code that runs in Node rather than in a browser.
+    //
+    // The root tsconfig sets `"types": ["chrome"]`, which deliberately excludes @types/node: the extension
+    // runs in a page, a service worker and an offscreen document, and none of them have `process` or
+    // `node:fs`. That exclusion is worth keeping — it is what stops core code reaching for a Node API that
+    // would not exist at runtime — so the harness cannot simply be added to it. Hence two projects with
+    // two ambient environments, rather than one permissive one.
+    //
+    // `checkJs` is ON here, and the `include` list is deliberately NARROW: the files other code CALLS.
+    // A test that is wrong fails loudly by itself; a LIBRARY that is wrong breaks its callers silently,
+    // which is the difference that decides what is worth typing. harness.mjs is imported by 24 files and
+    // fake-llm.mjs by 14 — they are the shared surface of the e2e suite, so a wrong assumption in either
+    // is a wrong assumption everywhere.
+    //
+    // The test files themselves are NOT here on purpose. Checking them means annotating ~1500 implicitly
+    // typed parameters for no safety a failing test does not already give.
+    //
+    //     npx tsc --noEmit -p tsconfig.tests.json      (also `npm run typecheck`)
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "types": ["node", "chrome"],
+        "checkJs": true,
+        "noEmit": true,
+        // The harness talks to Playwright, whose types come from the package rather than the ambient set.
+        "moduleResolution": "bundler",
+        "allowImportingTsExtensions": true
+    },
+    "include": [
+        "tests/e2e/harness.mjs",
+        "tests/e2e/fake-llm.mjs"
+    ]
+}

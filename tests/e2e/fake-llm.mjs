@@ -14,16 +14,36 @@
 
 import { createServer } from "node:http";
 
+/**
+ * One scripted turn: a plain reply, a tool call, or a function that decides from the conversation so far.
+ * This is the contract the e2e specs write against — 14 of them — so it is worth naming rather than
+ * leaving each spec to infer it from an example.
+ *
+ * @typedef {object} FakeStep
+ * @property {string} [content] a plain assistant reply, which ends the run
+ * @property {string} [tool] call this tool instead of replying
+ * @property {Record<string, unknown>} [args] the tool's arguments
+ * @property {string} [reasoning] thinking text, streamed word by word when the request asks to stream
+ *
+ * @typedef {FakeStep | ((req: any) => FakeStep)} StepOrFn
+ */
+
+/** @typedef {import("node:http").ServerResponse} Res */
+/** @typedef {import("node:http").IncomingMessage} Req */
+
+/** @param {Res} res @param {number} code @param {unknown} body */
 const json = (res, code, body) => {
     res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*", "cache-control": "no-store" });
     res.end(JSON.stringify(body));
 };
+/** @param {Req} req @returns {Promise<any>} the JSON body, or `{}` when it is absent or malformed */
 const readBody = (req) => new Promise((resolve) => {
-    let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => { try { resolve(JSON.parse(b || "{}")); } catch { resolve({}); } });
+    let b = ""; req.on("data", (/** @type {Buffer} */ c) => (b += c)); req.on("end", () => { try { resolve(JSON.parse(b || "{}")); } catch { resolve({}); } });
 });
 
 // A step spec → an OpenAI-shape assistant choice.
 let callSeq = 0;
+/** @param {FakeStep} step */
 const toChoice = (step) => {
     if (step && typeof step.tool === "string") {
         return {
@@ -43,23 +63,30 @@ const toChoice = (step) => {
  * - calls:     () => object[]                      — every chat request body received (for assertions)
  * @param {{ port?: number, model?: string }} [opts]
  */
+/** @param {number} ms */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0 } = {}) {
     // A scriptable fake BOX as well as a fake model: /api/ps (what is resident) and /api/info (what capacity
     // exists) are what the resource panel polls, and both are settable mid-run so a test or demo can make
     // models load and evict on a timeline. `info: null` reproduces a stock Ollama, which doesn't serve the
     // route at all — the case the panel must degrade for.
+    /** @type {any[]} */
     let resident = [];
+    /** @type {any} */
     let boxInfo = null;
+    /** @type {StepOrFn[]} */
     let script = [];
     let idx = 0;
+    /** @type {any[]} */
     const calls = [];
     // Stream a step as SSE (when the request asks for stream:true) — reasoning_content word-by-word, then the
     // content words (or the tool_call whole), then [DONE]. A step's `reasoning` field feeds the thinking channel.
     // `streamDelayMs` paces the words so a test can screenshot MID-stream. Mirrors the OpenAI SSE shape
     // background.ts's streamChunk parses.
+    /** @param {Res} res @param {FakeStep} step */
     const streamStep = async (res, step) => {
         res.writeHead(200, { "content-type": "text/event-stream", "access-control-allow-origin": "*", "cache-control": "no-store" });
+        /** @param {Record<string, unknown>} delta @param {Record<string, unknown>} [extra] */
         const send = (delta, extra = {}) => res.write(`data: ${JSON.stringify({ id: `chatcmpl-${callSeq}`, object: "chat.completion.chunk", model, choices: [{ index: 0, delta, ...extra }] })}\n\n`);
         const choice = toChoice(step);
         for (const w of (step.reasoning || "").match(/\S+\s*/g) || []) { send({ reasoning_content: w }); await sleep(streamDelayMs); }
@@ -104,16 +131,18 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
 
     return new Promise((resolve) => {
         server.listen(port, "127.0.0.1", () => {
-            const realPort = server.address().port;
+            // address() is `string | AddressInfo | null` because a server can be bound to a unix socket;
+            // this one is always a TCP listen, so the port is there.
+            const realPort = /** @type {import("node:net").AddressInfo} */ (server.address()).port;
             const origin = `http://127.0.0.1:${realPort}`;
             resolve({
                 url: `${origin}/api/chat/completions`,
                 origin,
-                setScript: (steps) => { script = steps.slice(); idx = 0; },
+                setScript: (/** @type {StepOrFn[]} */ steps) => { script = steps.slice(); idx = 0; },
                 /** What /api/ps reports as resident — raw ollama ps rows (size / size_vram / gpus / …). */
-                setResident: (models) => { resident = models; },
+                setResident: (/** @type {any[]} */ models) => { resident = models; },
                 /** What /api/info reports as capacity; null = a server that doesn't serve the route at all. */
-                setCapacity: (info) => { boxInfo = info; },
+                setCapacity: (/** @type {any} */ info) => { boxInfo = info; },
                 calls: () => calls.slice(),
                 stop: () => new Promise((r) => server.close(r)),
             });
