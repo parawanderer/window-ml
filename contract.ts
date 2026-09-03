@@ -720,6 +720,9 @@ export interface TableSource { kind: "dom" | "sheet-current" | "sheet-external";
  *  rows preview (`columns`+`rows`) or `html: true` (loaded via `pd.read_html`, no clean preview). */
 export interface TablePreview { name: string; source: TableSource; columns?: string[]; rows?: (string | number | null)[][]; html?: boolean; }
 
+/** @unstable INTERNAL, and reachable from the published JSON export — a new variant/member may
+ *  appear in any release, so the generated `docs/spec/export.schema.json` marks it open rather
+ *  than pinning it. Adding to it is NOT a breaking export change. */
 export type RenderDescriptor = (
     | { type: "image"; src: string; label?: string }
     | { type: "code"; text: string; lang?: string; format?: boolean }   // format: let the sidebar beautify the source (e.g. exec's JS)
@@ -1555,6 +1558,9 @@ export interface DebugChatRequest {
  *  `ml.createChat({ think: true })`). This is what the sidebar shows as the
  *  "options" block, kept distinct from the per-turn request + message history
  *  (full history is a separate export feature). */
+/** @unstable INTERNAL, and reachable from the published JSON export — a new variant/member may
+ *  appear in any release, so the generated `docs/spec/export.schema.json` marks it open rather
+ *  than pinning it. Adding to it is NOT a breaking export change. */
 export interface DebugSessionConfig {
     system: string | null;
     model: string | null;
@@ -1580,6 +1586,9 @@ export interface DebugChatError extends DebugBase { kind: "chat-error"; error: s
  *  result), then a result. `elements` is a COUNT — real DOM nodes can't cross the
  *  window bus (they reach the console via onStep instead). */
 /** The agent run's resolved setup — for the sidebar's "agent options" block. */
+/** @unstable INTERNAL, and reachable from the published JSON export — a new variant/member may
+ *  appear in any release, so the generated `docs/spec/export.schema.json` marks it open rather
+ *  than pinning it. Adding to it is NOT a breaking export change. */
 export interface DebugAgentConfig {
     /** the resolved system prompt the model actually received */
     system: string;

@@ -1068,11 +1068,16 @@ thing. The parts:
     run completes.
 **Programmatic export (`export-schema.ts` + `docs/spec/export.schema.json`).** The JSON export is a
 PUBLISHED contract, and `export-schema.ts` (root, beside contract.ts) is normative. Two things about it are
-easy to get wrong. **The version promise has a boundary**: it covers this file's own shapes plus the
-borrowed `TokenUsage`/`SubcallUsage`/`ToolFeedback`/grants, but NOT `renderIn`/`renderOut`/`config`, whose
-types live in contract.ts and grow whenever the debug UI or `ml.agent` does — pinning them would either
-freeze the UI or bump the version for reasons no consumer cares about. Those emit as permissive objects
-that say so. **And a differ needs more than the field list**: `VOLATILE_FIELDS` names the fields to strip,
+easy to get wrong. **Internal types are RESOLVED, and tag their own instability**: the
+generator chases every referenced type out of contract.ts lazily and transitively — no hand-kept list,
+because one goes stale silently and the schema would then describe less than it claims while still
+looking complete — so a consumer gets real types for `renderIn`/`renderOut`/`config` instead of an opaque
+object. The ones that WILL grow carry **`@unstable`** in the JSDoc above their declaration; the generator
+marks those `x-unstable`, says so in the description, and gives an unstable UNION a trailing branch that
+accepts anything, so adding a render-descriptor variant does not start failing an old consumer's
+validator. A union inherits its members' instability, which is what makes an inline
+`DebugSessionConfig | DebugAgentConfig` permissive without being tagged itself. Put `@unstable` on a type
+and the schema follows: that is the whole mechanism. **And a differ needs more than the field list**: `VOLATILE_FIELDS` names the fields to strip,
 but a pointer id is also surfaced *as text* (an `@tool:` citation in an answer, a `dereference` ref, the
 token line on a result), so removing `steps[].token` leaves every copy behind — `VOLATILE_PATTERNS` +
 `canonicalizeText()` handle those, and the session hash is deliberately NOT a pattern (eight bare hex

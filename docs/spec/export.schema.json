@@ -129,14 +129,14 @@
           "description": "The options the session was created with, verbatim: `createChat`'s for a chat, `ml.agent`'s for a run.",
           "anyOf": [
             {
-              "type": "object",
-              "additionalProperties": true,
-              "description": "The options the chat session was created with. Not covered by the schema version."
+              "$ref": "#/$defs/DebugSessionConfig"
+            },
+            {
+              "$ref": "#/$defs/DebugAgentConfig"
             },
             {
               "type": "object",
-              "additionalProperties": true,
-              "description": "The options the agent run was created with. Grows whenever `ml.agent` gains an option, so it is NOT covered by the schema version. Read the keys you know."
+              "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
             }
           ]
         },
@@ -185,6 +185,212 @@
         "totals",
         "messages"
       ],
+      "additionalProperties": true
+    },
+    "DebugSessionConfig": {
+      "type": "object",
+      "description": "@unstable INTERNAL, and reachable from the published JSON export — a new variant/member may appear in any release, so the generated `docs/spec/export.schema.json` marks it open rather than pinning it. Adding to it is NOT a breaking export change. This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others.",
+      "x-unstable": true,
+      "properties": {
+        "system": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "think": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "schema": {
+          "type": "boolean"
+        },
+        "toolIds": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "maxTokens": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "save": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "system",
+        "model",
+        "think",
+        "schema",
+        "toolIds",
+        "maxTokens",
+        "save"
+      ],
+      "additionalProperties": true
+    },
+    "DebugAgentConfig": {
+      "type": "object",
+      "description": "@unstable INTERNAL, and reachable from the published JSON export — a new variant/member may appear in any release, so the generated `docs/spec/export.schema.json` marks it open rather than pinning it. Adding to it is NOT a breaking export change. This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others.",
+      "x-unstable": true,
+      "properties": {
+        "system": {
+          "description": "the resolved system prompt the model actually received",
+          "type": "string"
+        },
+        "customSystem": {
+          "description": "caller supplied their own `system` (vs the built-in preamble)",
+          "type": "boolean"
+        },
+        "tools": {
+          "description": "description/parameters let the sidebar show the FULL tool definitions (a JSON tree), not just names.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "requiresApproval": {
+                "type": "boolean"
+              },
+              "vision": {
+                "type": "boolean"
+              },
+              "description": {
+                "type": "string"
+              },
+              "parameters": {
+                "$ref": "#/$defs/JsonSchema"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "requiresApproval"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "maxSteps": {
+          "type": "number"
+        },
+        "think": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "env": {
+          "type": "boolean"
+        },
+        "vision": {
+          "description": "the `vision` option AS PASSED (true=forced native · false=off · string=forced reader · null=auto)",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "driverSees": {
+          "description": "RESOLVED: does the driver's own model see the pixels natively this run (native vs delegated look)?",
+          "type": "boolean"
+        },
+        "visionModel": {
+          "description": "RESOLVED: the vision reader a delegated sub-call uses (equals the driver when native; null = none)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hints": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "silent": {
+          "description": "scripting run: kept out of the in-page HUD (the card reads this to stay hidden)",
+          "type": "boolean"
+        },
+        "unattended": {
+          "description": "headless run: approval-gated calls are refused (no human to approve)",
+          "type": "boolean"
+        },
+        "navigate": {
+          "description": "may this run navigate to other pages (the `navigate` tool + cross-page persistence)? false = off",
+          "type": "boolean"
+        },
+        "crossOrigin": {
+          "description": "may this run navigate to OTHER SITES (different origins)? true only when opted in",
+          "type": "boolean"
+        },
+        "approvalRouting": {
+          "description": "where privileged gates are resolved: \"ui\" (default) · \"both\" (UI + __mlApprovals IPC) · \"external\" (IPC only)",
+          "type": "string",
+          "enum": [
+            "ui",
+            "both",
+            "external"
+          ]
+        },
+        "stream": {
+          "description": "did this run STREAM the model's thinking/reply live (opt-in `stream:true`)? Shown in the agent-options block so you can tell whether a step's \"thinking\" was live or only landed at the turn's end.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "system",
+        "customSystem",
+        "tools",
+        "maxSteps",
+        "think",
+        "env",
+        "vision",
+        "hints"
+      ],
+      "additionalProperties": true
+    },
+    "JsonSchema": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "enum": {
+          "type": "array",
+          "items": {}
+        }
+      },
       "additionalProperties": true
     },
     "ExportPage": {
@@ -386,6 +592,39 @@
       ],
       "additionalProperties": true
     },
+    "TokenUsage": {
+      "type": "object",
+      "description": "Token accounting for ONE request, when the server reports it (OpenWebUI returns a `usage` block; Ollama-native returns prompt_eval_count/eval_count). IMPORTANT: `promptTokens` already covers the WHOLE conversation — every turn re-sends the full history — so live context occupancy is `promptTokens + completionTokens` of the LATEST call, never a sum across turns (summing would overcount quadratically). Only cumulative SPEND is a sum.",
+      "properties": {
+        "promptTokens": {
+          "type": "number"
+        },
+        "completionTokens": {
+          "type": "number"
+        },
+        "totalTokens": {
+          "type": "number"
+        },
+        "genMs": {
+          "description": "Wall-clock ms of THIS model call, measured at the source (around the fetch). ALWAYS available; it includes the call's own network/queue latency (TTFT) — the honest \"time spent waiting on the model\".",
+          "type": "number"
+        },
+        "evalMs": {
+          "description": "Ollama-native `eval_duration` (generation-only, ns → ms) when the native route reports it. PREFERRED over `genMs` for a tok/s rate (it excludes network/queue); absent for cloud / OpenWebUI-OpenAI.",
+          "type": "number"
+        },
+        "loadMs": {
+          "description": "Ollama-native `load_duration` (ns → ms): how long THIS call spent loading the model before generating. Small and constant when the model was already resident; seconds-to-a-minute when it was not — which is the difference between \"the model was slow\" and \"the model wasn't there yet\", and the only place that answer exists. Absent for cloud / OpenWebUI-OpenAI, which don't report it.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "promptTokens",
+        "completionTokens",
+        "totalTokens"
+      ],
+      "additionalProperties": true
+    },
     "ExportStep": {
       "type": "object",
       "description": "One agent step: either a thought, or a tool call with its arguments and result. Transient view state is NOT exported — `pending`, `awaitingApproval`, `liveStream`, `ended`/`endedStep` describe a live UI, not the run. A pending step never appears in an export; only its completed form does.",
@@ -490,14 +729,888 @@
           "type": "number"
         },
         "renderIn": {
-          "description": "A visualisation payload, keyed by its `type` field. This is an OPEN registry that grows whenever the debug UI learns to draw something new, so it is NOT covered by the schema version. Switch on `type` and ignore what you do not recognise.",
-          "type": "object",
-          "additionalProperties": true
+          "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others.",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "image"
+                },
+                "src": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "src"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "code"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "lang": {
+                  "type": "string"
+                },
+                "format": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "text"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "table"
+                },
+                "columns": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "rows": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "object",
+                          "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "required": [
+                "type",
+                "columns",
+                "rows"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "keyval"
+                },
+                "pairs": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ],
+                    "minItems": 2,
+                    "maxItems": 2
+                  }
+                }
+              },
+              "required": [
+                "type",
+                "pairs"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "elements"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "index": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ],
+                    "additionalProperties": true
+                  }
+                }
+              },
+              "required": [
+                "type",
+                "items"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "locate"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "grounding",
+                    "marks",
+                    "grid",
+                    "grid-grounding"
+                  ]
+                },
+                "model": {
+                  "type": "string"
+                },
+                "substeps": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/LocateSubstep"
+                  }
+                },
+                "picked": {
+                  "type": "string"
+                },
+                "pickedBy": {
+                  "type": "string",
+                  "enum": [
+                    "model",
+                    "snap"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "mode",
+                "model",
+                "substeps"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "python-in"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "script",
+                    "pt",
+                    "box"
+                  ]
+                },
+                "code": {
+                  "type": "string"
+                },
+                "image": {
+                  "type": "string"
+                },
+                "imageToken": {
+                  "type": "string"
+                },
+                "tables": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/TablePreview"
+                  }
+                }
+              },
+              "required": [
+                "type",
+                "mode",
+                "code"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "python-out"
+                },
+                "stdout": {
+                  "type": "string"
+                },
+                "seen": {
+                  "type": "number"
+                },
+                "image": {
+                  "type": "string"
+                },
+                "token": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                },
+                "latex": {
+                  "type": "boolean"
+                },
+                "df": {
+                  "type": "object",
+                  "properties": {
+                    "columns": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "object",
+                              "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "required": [
+                    "columns",
+                    "rows"
+                  ],
+                  "additionalProperties": true
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "exec-out"
+                },
+                "stdout": {
+                  "type": "string"
+                },
+                "seen": {
+                  "type": "number"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                },
+                "token": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "look"
+                },
+                "image": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "output": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "prompt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "image",
+                "output"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "action"
+                },
+                "verb": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "target": {
+                  "type": "string"
+                },
+                "selector": {
+                  "type": "string"
+                },
+                "input": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "crossOrigin": {
+                  "type": "string"
+                },
+                "ask": {
+                  "type": "string"
+                },
+                "answeredBy": {
+                  "type": "string"
+                },
+                "tokens": {
+                  "type": "number"
+                },
+                "askBody": {
+                  "type": "string"
+                },
+                "askBodyLang": {
+                  "type": "string"
+                },
+                "askBodyTruncated": {
+                  "type": "boolean"
+                },
+                "pipe": {
+                  "type": "string"
+                },
+                "attempts": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/FetchAttempt"
+                  }
+                },
+                "resolvedBy": {
+                  "type": "string",
+                  "enum": [
+                    "accept",
+                    "declared",
+                    "sibling",
+                    "convert"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "verb"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+            }
+          ]
         },
         "renderOut": {
-          "description": "A visualisation payload, keyed by its `type` field. This is an OPEN registry that grows whenever the debug UI learns to draw something new, so it is NOT covered by the schema version. Switch on `type` and ignore what you do not recognise.",
-          "type": "object",
-          "additionalProperties": true
+          "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others.",
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "image"
+                },
+                "src": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "src"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "code"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "lang": {
+                  "type": "string"
+                },
+                "format": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "type",
+                "text"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "table"
+                },
+                "columns": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "rows": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "object",
+                          "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              "required": [
+                "type",
+                "columns",
+                "rows"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "keyval"
+                },
+                "pairs": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ],
+                    "minItems": 2,
+                    "maxItems": 2
+                  }
+                }
+              },
+              "required": [
+                "type",
+                "pairs"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "elements"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "index": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ],
+                    "additionalProperties": true
+                  }
+                }
+              },
+              "required": [
+                "type",
+                "items"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "locate"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "grounding",
+                    "marks",
+                    "grid",
+                    "grid-grounding"
+                  ]
+                },
+                "model": {
+                  "type": "string"
+                },
+                "substeps": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/LocateSubstep"
+                  }
+                },
+                "picked": {
+                  "type": "string"
+                },
+                "pickedBy": {
+                  "type": "string",
+                  "enum": [
+                    "model",
+                    "snap"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "mode",
+                "model",
+                "substeps"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "python-in"
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "script",
+                    "pt",
+                    "box"
+                  ]
+                },
+                "code": {
+                  "type": "string"
+                },
+                "image": {
+                  "type": "string"
+                },
+                "imageToken": {
+                  "type": "string"
+                },
+                "tables": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/TablePreview"
+                  }
+                }
+              },
+              "required": [
+                "type",
+                "mode",
+                "code"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "python-out"
+                },
+                "stdout": {
+                  "type": "string"
+                },
+                "seen": {
+                  "type": "number"
+                },
+                "image": {
+                  "type": "string"
+                },
+                "token": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                },
+                "latex": {
+                  "type": "boolean"
+                },
+                "df": {
+                  "type": "object",
+                  "properties": {
+                    "columns": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "object",
+                              "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "required": [
+                    "columns",
+                    "rows"
+                  ],
+                  "additionalProperties": true
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "exec-out"
+                },
+                "stdout": {
+                  "type": "string"
+                },
+                "seen": {
+                  "type": "number"
+                },
+                "value": {
+                  "type": "string"
+                },
+                "error": {
+                  "type": "string"
+                },
+                "token": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "look"
+                },
+                "image": {
+                  "type": "string"
+                },
+                "model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "output": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "prompt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "image",
+                "output"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "const": "action"
+                },
+                "verb": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "target": {
+                  "type": "string"
+                },
+                "selector": {
+                  "type": "string"
+                },
+                "input": {
+                  "type": "string"
+                },
+                "note": {
+                  "type": "string"
+                },
+                "crossOrigin": {
+                  "type": "string"
+                },
+                "ask": {
+                  "type": "string"
+                },
+                "answeredBy": {
+                  "type": "string"
+                },
+                "tokens": {
+                  "type": "number"
+                },
+                "askBody": {
+                  "type": "string"
+                },
+                "askBodyLang": {
+                  "type": "string"
+                },
+                "askBodyTruncated": {
+                  "type": "boolean"
+                },
+                "pipe": {
+                  "type": "string"
+                },
+                "attempts": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/FetchAttempt"
+                  }
+                },
+                "resolvedBy": {
+                  "type": "string",
+                  "enum": [
+                    "accept",
+                    "declared",
+                    "sibling",
+                    "convert"
+                  ]
+                }
+              },
+              "required": [
+                "type",
+                "verb"
+              ],
+              "additionalProperties": true
+            },
+            {
+              "type": "object",
+              "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+            }
+          ]
         },
         "feedback": {
           "description": "What was fed back into the model's context off the back of this step (a crop after a `locate`, say), and why.",
@@ -518,36 +1631,240 @@
       ],
       "additionalProperties": true
     },
-    "TokenUsage": {
+    "PersistGrant": {
       "type": "object",
-      "description": "Token accounting for ONE request, when the server reports it (OpenWebUI returns a `usage` block; Ollama-native returns prompt_eval_count/eval_count). IMPORTANT: `promptTokens` already covers the WHOLE conversation — every turn re-sends the full history — so live context occupancy is `promptTokens + completionTokens` of the LATEST call, never a sum across turns (summing would overcount quadratically). Only cumulative SPEND is a sum.",
+      "description": "A persistable egress consent a tool call would establish — the unit button #3 remembers for the session. Extracted STATICALLY, background-side (grant-extract.ts), so it holds only literal targets the human saw. `kind` keys the UI's per-kind rendering + the background's per-kind persistence (today: `ml.fetch` URLs).",
       "properties": {
-        "promptTokens": {
-          "type": "number"
+        "kind": {
+          "type": "string",
+          "const": "fetch-url"
         },
-        "completionTokens": {
-          "type": "number"
-        },
-        "totalTokens": {
-          "type": "number"
-        },
-        "genMs": {
-          "description": "Wall-clock ms of THIS model call, measured at the source (around the fetch). ALWAYS available; it includes the call's own network/queue latency (TTFT) — the honest \"time spent waiting on the model\".",
-          "type": "number"
-        },
-        "evalMs": {
-          "description": "Ollama-native `eval_duration` (generation-only, ns → ms) when the native route reports it. PREFERRED over `genMs` for a tok/s rate (it excludes network/queue); absent for cloud / OpenWebUI-OpenAI.",
-          "type": "number"
-        },
-        "loadMs": {
-          "description": "Ollama-native `load_duration` (ns → ms): how long THIS call spent loading the model before generating. Small and constant when the model was already resident; seconds-to-a-minute when it was not — which is the difference between \"the model was slow\" and \"the model wasn't there yet\", and the only place that answer exists. Absent for cloud / OpenWebUI-OpenAI, which don't report it.",
-          "type": "number"
+        "urls": {
+          "description": "the distinct static URLs this grant would remember",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
-        "promptTokens",
-        "completionTokens",
-        "totalTokens"
+        "kind",
+        "urls"
+      ],
+      "additionalProperties": true
+    },
+    "ReusedGrant": {
+      "type": "object",
+      "description": "A prior grant a tool call REUSED (so it ran without a fresh prompt) — the transparency counterpart of PersistGrant. `kind` keys the per-kind label/icon; `detail` is the human-readable thing reused (the URL, the sheet name/id). Extensible: a new grant kind adds a `kind` + a detail here + one render branch.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "fetch-url",
+            "sheet"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "detail"
+      ],
+      "additionalProperties": true
+    },
+    "LocateSubstep": {
+      "type": "object",
+      "description": "One stage of a `locate` run: a vision sub-call (grid cell-pick, Set-of-Marks pick, grounding box) or a non-model DOM snap. A sub-call carries its `prompt` (In), the model's raw `output` (Out), the exact `rawImage` sent, and a human `image` overlay (the raw⇄visualise toggle). A DOM snap carries just `image` + `label` (no prompt).",
+      "properties": {
+        "label": {
+          "description": "header after the [N] badge, e.g. \"Cell pick · grid 5×3 · model chose cell 12\"",
+          "type": "string"
+        },
+        "note": {
+          "description": "grey-italic explanation shown ABOVE this substep (e.g. why a hand-off happened)",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "In: the prompt sent to the model (collapsible)",
+          "type": "string"
+        },
+        "output": {
+          "description": "Out: the model's raw reply (collapsible)",
+          "type": "string"
+        },
+        "image": {
+          "description": "the visualise (human overlay) view — shown by default",
+          "type": "string"
+        },
+        "rawImage": {
+          "description": "the exact image sent to the model; its presence enables the raw⇄visualise toggle",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "additionalProperties": true
+    },
+    "TablePreview": {
+      "type": "object",
+      "description": "One loaded DataFrame for the `python-in` render: its variable name, its source, and either a rows preview (`columns`+`rows`) or `html: true` (loaded via `pd.read_html`, no clean preview).",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/TableSource"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "object",
+                  "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                }
+              ]
+            }
+          }
+        },
+        "html": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "source"
+      ],
+      "additionalProperties": true
+    },
+    "TableSource": {
+      "type": "object",
+      "description": "Where a `python_exec` DataFrame came from — for the debug render's source label + tooltip. `dom` = a table on the current page (label = the selector); `sheet-current` = the Google Sheet you're on (label = its page title); `sheet-external` = a Google Sheet fetched by URL with the user's approval (label = its spreadsheet id).",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "dom",
+            "sheet-current",
+            "sheet-external"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "label"
+      ],
+      "additionalProperties": true
+    },
+    "FetchAttempt": {
+      "type": "object",
+      "description": "One rung of the Markdown ladder, as it actually ran. Recorded for every attempt — including the ones that were skipped — because the failure modes here are INVISIBLE in the body alone: a stub twin is a valid 200 Markdown document that is simply the wrong page, and a site-authored twin is content written specifically to be read by agents (GitBook appends an \"Agent Instructions\" section), so \"which URL did these bytes come from\" is provenance for an injection surface, not decoration.",
+      "properties": {
+        "strategy": {
+          "description": "`accept` = the same URL with `Accept: text/markdown`; `declared` = the `<link rel=\"alternate\">` the page named; `sibling` = the derived `.md`/`index.md`; `convert` = our own HTML→Markdown.",
+          "type": "string",
+          "enum": [
+            "accept",
+            "declared",
+            "sibling",
+            "convert"
+          ]
+        },
+        "url": {
+          "type": "string"
+        },
+        "status": {
+          "type": "number"
+        },
+        "contentType": {
+          "type": "string"
+        },
+        "bytes": {
+          "type": "number"
+        },
+        "ms": {
+          "type": "number"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "hit",
+            "not-markdown",
+            "error",
+            "skipped"
+          ]
+        },
+        "note": {
+          "description": "Why, when the outcome needs one (\"not attempted — already resolved\", a cross-origin declaration).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "strategy",
+        "url",
+        "outcome"
+      ],
+      "additionalProperties": true
+    },
+    "ToolFeedback": {
+      "type": "object",
+      "description": "What a tool fed back INTO the model's context, for the debug render + export to surface (the model received it via the normal channels — an inline image, or appended result text). `locate`'s snap-inject sets it: a marked crop (vision driver) or a delegated description (text-only driver), plus the `reason` it was sent (a point is automatic; a selector/@box only when `verify:true`).",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "via": {
+          "type": "string",
+          "enum": [
+            "image",
+            "text"
+          ]
+        },
+        "image": {
+          "description": "the marked crop (data URL) — shown in the render even for a text-only driver (what got described)",
+          "type": "string"
+        },
+        "text": {
+          "description": "the delegated description text (via:\"text\" only)",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "the exact prompt the reader was asked over the crop (via:\"text\") — shown in the debug render + export",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "via"
       ],
       "additionalProperties": true
     },
@@ -599,85 +1916,6 @@
         "prompt",
         "completion",
         "calls"
-      ],
-      "additionalProperties": true
-    },
-    "ToolFeedback": {
-      "type": "object",
-      "description": "What a tool fed back INTO the model's context, for the debug render + export to surface (the model received it via the normal channels — an inline image, or appended result text). `locate`'s snap-inject sets it: a marked crop (vision driver) or a delegated description (text-only driver), plus the `reason` it was sent (a point is automatic; a selector/@box only when `verify:true`).",
-      "properties": {
-        "reason": {
-          "type": "string"
-        },
-        "via": {
-          "type": "string",
-          "enum": [
-            "image",
-            "text"
-          ]
-        },
-        "image": {
-          "description": "the marked crop (data URL) — shown in the render even for a text-only driver (what got described)",
-          "type": "string"
-        },
-        "text": {
-          "description": "the delegated description text (via:\"text\" only)",
-          "type": "string"
-        },
-        "prompt": {
-          "description": "the exact prompt the reader was asked over the crop (via:\"text\") — shown in the debug render + export",
-          "type": "string"
-        },
-        "label": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "reason",
-        "via"
-      ],
-      "additionalProperties": true
-    },
-    "PersistGrant": {
-      "type": "object",
-      "description": "A persistable egress consent a tool call would establish — the unit button #3 remembers for the session. Extracted STATICALLY, background-side (grant-extract.ts), so it holds only literal targets the human saw. `kind` keys the UI's per-kind rendering + the background's per-kind persistence (today: `ml.fetch` URLs).",
-      "properties": {
-        "kind": {
-          "type": "string",
-          "const": "fetch-url"
-        },
-        "urls": {
-          "description": "the distinct static URLs this grant would remember",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "kind",
-        "urls"
-      ],
-      "additionalProperties": true
-    },
-    "ReusedGrant": {
-      "type": "object",
-      "description": "A prior grant a tool call REUSED (so it ran without a fresh prompt) — the transparency counterpart of PersistGrant. `kind` keys the per-kind label/icon; `detail` is the human-readable thing reused (the URL, the sheet name/id). Extensible: a new grant kind adds a `kind` + a detail here + one render branch.",
-      "properties": {
-        "kind": {
-          "type": "string",
-          "enum": [
-            "fetch-url",
-            "sheet"
-          ]
-        },
-        "detail": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "kind",
-        "detail"
       ],
       "additionalProperties": true
     }

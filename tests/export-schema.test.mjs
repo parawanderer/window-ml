@@ -127,8 +127,12 @@ test("the validator can actually fail — a wrong type is caught, not waved thro
 test("the open payloads stay open — a new render descriptor type must not invalidate old parsers", () => {
     const schema = buildSchema();
     const renderOut = schema.$defs.ExportStep.properties.renderOut;
-    assert.equal(renderOut.additionalProperties, true, "renderIn/renderOut are an OPEN registry, not a pinned shape");
-    assert.ok(/not covered by the schema version/i.test(renderOut.description), "the open payloads must SAY they are outside the version promise");
+    // Resolved in full — a consumer gets real types for the known variants — but with a trailing branch
+    // that accepts anything, so a variant added later does not fail an old consumer's validator.
+    assert.ok(renderOut.anyOf.length > 3, "the known descriptor variants must be described, not hidden behind an opaque object");
+    assert.ok(renderOut.anyOf.some((b) => b.properties?.type?.const === "image"), "a known variant should be usable for codegen");
+    assert.ok(/UNSTABLE/i.test(renderOut.anyOf.at(-1).description), "the last branch is the permissive one, and must say why");
+    assert.equal(schema.$defs.DebugAgentConfig["x-unstable"], true, "an @unstable type is machine-identifiable, not just prose");
 
     const doc = sessionToJson(agentSession({
         steps: [{ step: 1, seq: 1, ts: 1, tool: "x", result: "y", renderOut: { type: "a-format-invented-later", whatever: { deeply: [1, 2] } } }],

@@ -15,12 +15,18 @@
 // the house style (top-level `export interface X {`, one member per line, JSDoc above) and THROWS rather
 // than silently emitting a partial schema.
 //
-// THE CONTRACT BOUNDARY IS ENCODED HERE. export-schema.ts borrows types from contract.ts, which carries no
-// versioning promise of its own. Those inside the promise (TokenUsage, SubcallUsage, ToolFeedback, the
-// grants) are resolved from contract.ts and inlined, so a consumer gets their real shape. The three that
-// are deliberately OPEN — renderIn, renderOut, config — are emitted as permissive objects with a
-// description saying so, because pinning them would either freeze the debug UI or force a version bump
-// for a change no consumer cares about.
+// EVERY borrowed type is resolved. export-schema.ts references types that live in contract.ts, and those
+// reference more; the scanner chases them LAZILY and transitively rather than working from a hand-kept
+// list, because such a list goes stale silently — the schema would simply start describing less than it
+// claims while still looking complete.
+//
+// Some of those types are internal and WILL change (a render descriptor gains a variant, an agent option
+// is added). They say so themselves, with `@unstable` in the JSDoc above the declaration, which this
+// picks up: the shape is still resolved in full — a consumer wants real types for the most interesting
+// payload in the document — but it is described as unstable, marked `x-unstable`, and an unstable UNION
+// gets a trailing branch that accepts anything, so a variant added tomorrow does not start failing an old
+// consumer's validator today. Tagging beats a list here for the same reason: the knowledge lives with the
+// type, in the file someone edits when they change it.
 //
 //   node scripts/gen-export-schema.mjs
 
@@ -32,17 +38,16 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "docs/spec/export.schema.json");
 
 /** Types borrowed from contract.ts that ARE part of the version promise: resolved and inlined. */
-const RESOLVE_FROM_CONTRACT = ["TokenUsage", "SubcallUsage", "SubcallUsageByModel", "ToolFeedback", "PersistGrant", "ReusedGrant"];
+const RESOLVE_FROM_CONTRACT = [
+    "TokenUsage", "SubcallUsage", "SubcallUsageByModel", "ToolFeedback", "PersistGrant", "ReusedGrant",
+    // Resolved too, though they are OPEN registries (see OPEN_UNIONS). Nobody hand-maintains a second
+    // copy of these — the generator reads contract.ts — so leaving them opaque bought nothing and cost a
+    // consumer the ability to generate real types for the most interesting payload in the document.
+    "DebugAgentConfig", "DebugSessionConfig",
+];
 
-/**
- * Fields whose type is deliberately open. Emitted as a permissive object rather than a resolved shape —
- * see the boundary note above. The value is the description a consumer reads.
- */
-const OPEN_TYPES = {
-    RenderDescriptor: "A visualisation payload, keyed by its `type` field. This is an OPEN registry that grows whenever the debug UI learns to draw something new, so it is NOT covered by the schema version. Switch on `type` and ignore what you do not recognise.",
-    DebugAgentConfig: "The options the agent run was created with. Grows whenever `ml.agent` gains an option, so it is NOT covered by the schema version. Read the keys you know.",
-    DebugSessionConfig: "The options the chat session was created with. Not covered by the schema version.",
-};
+/** Appended to an `@unstable` type's description, and to the permissive branch of an unstable union. */
+const UNSTABLE_NOTE = "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others.";
 
 /** Strip a JSDoc block to a single-line description. */
 function jsdocText(lines) {
@@ -119,16 +124,94 @@ function scanInterfaces(src, file) {
  */
 function scanAliases(src) {
     const out = new Map();
-    for (const m of src.matchAll(/^export type (\w+)\s*=\s*([^;]+);/gm)) out.set(m[1], m[2].trim());
+    for (const m of src.matchAll(/^export type (\w+)\s*=\s*/gm)) {
+        // Scan to the `;` at depth 0. A union of object literals spans many lines and contains `;` inside
+        // its members, so stopping at the first one captures a fragment — which then fails as a bad type
+        // rather than being read as the union it is.
+        let depth = 0, end = -1;
+        for (let i = m.index + m[0].length; i < src.length; i++) {
+            const ch = src[i];
+            // Skip over string literals and comments before counting anything: a bracket inside either is
+            // text, not structure, and one stray `)` in a trailing comment sends the depth negative so the
+            // terminating `;` is never recognised at depth 0.
+            if (ch === '"' || ch === "'" || ch === "`") {
+                const quote = ch;
+                while (++i < src.length && src[i] !== quote) if (src[i] === "\\") i++;
+                continue;
+            }
+            if (ch === "/" && src[i + 1] === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
+            if (ch === "/" && src[i + 1] === "*") { i = src.indexOf("*/", i) + 1; continue; }
+            if ("({[".includes(ch)) depth++;
+            else if (")}]".includes(ch)) depth--;
+            else if (ch === ";" && depth === 0) { end = i; break; }
+        }
+        if (end < 0) throw new Error(`gen-export-schema: unterminated type alias ${m[1]}`);
+        // Strip line comments: a `//` note inside a union variant is documentation, not syntax.
+        const body = src.slice(m.index + m[0].length, end).replace(/\/\/[^\n]*/g, "").replace(/\s+/g, " ").trim();
+        out.set(m[1], body);
+    }
     return out;
+}
+
+/**
+ * Types the source itself marks as UNSTABLE, by carrying `@unstable` in the JSDoc above the declaration.
+ *
+ * The knowledge that a shape will grow belongs with the shape, not in a list inside this generator: a
+ * denylist here goes stale the moment someone adds an open registry, and silently — the schema would
+ * simply start claiming a closed shape. Tagging is self-declaring, and greppable from the type's own file.
+ */
+function scanUnstable(src) {
+    const out = new Set();
+    for (const m of src.matchAll(/\/\*\*[\s\S]*?\*\/\s*\nexport (?:interface|type) (\w+)/g)) {
+        if (/@unstable/.test(m[0])) out.add(m[1]);
+    }
+    return out;
+}
+
+/**
+ * Split on a top-level delimiter, ignoring anything nested in (), {}, [] or <>.
+ * `t.split("|")` tears `(string | number)[][]` in half and produces nonsense.
+ */
+function splitTop(t, delim) {
+    const parts = [];
+    let depth = 0, cur = "";
+    for (const ch of t) {
+        // `<`/`>` deliberately excluded: `=>` in a function type would unbalance them, and a generic
+        // never contains a top-level `|` or `;` that matters here.
+        if ("({[".includes(ch)) depth++;
+        else if (")}]".includes(ch)) depth--;
+        if (ch === delim && depth === 0) { parts.push(cur); cur = ""; continue; }
+        cur += ch;
+    }
+    parts.push(cur);
+    return parts.map((x) => x.trim()).filter(Boolean);
+}
+
+/** Parse an inline object literal body — `a: string; b?: number` — into members. */
+function inlineMembers(body) {
+    return splitTop(body, ";").map((part) => {
+        const m = part.match(/^(\w+)(\?)?:\s*([\s\S]+)$/);
+        if (!m) throw new Error(`gen-export-schema: cannot read inline member \`${part}\``);
+        return { name: m[1], optional: !!m[2], type: m[3].trim(), doc: "" };
+    });
 }
 
 /** Map one TypeScript type expression to a JSON Schema node. */
 function typeToSchema(type, ctx) {
     const t = type.trim();
 
+    // A parenthesised group is just grouping: `(string | number)[]` is an array of that union.
+    if (/^\(.*\)$/.test(t) && splitTop(t.slice(1, -1), ")").length >= 1 && depthBalanced(t.slice(1, -1))) {
+        return typeToSchema(t.slice(1, -1), ctx);
+    }
+
+    // An inline object literal — a union variant, or a `tools: { name: string }[]` member.
+    if (/^\{[\s\S]*\}$/.test(t)) {
+        return interfaceToSchema("(inline)", { doc: "", members: inlineMembers(t.slice(1, -1).trim().replace(/;\s*$/, "")) }, ctx);
+    }
+
     // A union of string literals is an enum — the most useful thing the scanner can recognise.
-    const literals = t.split("|").map((x) => x.trim());
+    const literals = splitTop(t, "|");
     if (literals.length > 1 && literals.every((x) => /^"[^"]*"$/.test(x))) {
         return { type: "string", enum: literals.map((x) => x.slice(1, -1)) };
     }
@@ -140,7 +223,16 @@ function typeToSchema(type, ctx) {
         return inner.type ? { ...inner, type: [inner.type, "null"] } : inner;
     }
     if (literals.length > 1 && bare.length > 1) {
-        return { anyOf: bare.map((x) => typeToSchema(x, ctx)) };
+        const branches = bare.map((x) => typeToSchema(x, ctx));
+        // An UNSTABLE union gets one more branch that accepts anything. Without it, `anyOf` over the
+        // variants known today REJECTS a variant added tomorrow — so an old consumer's validator would
+        // start failing on new exports, which is the opposite of what a published schema should do.
+        //
+        // A union is only as pinned as its members, so an inline union of unstable types counts too, not
+        // just a tagged alias: `DebugSessionConfig | DebugAgentConfig` names two shapes that both grow.
+        const anyUnstable = ctx.unstableUnion || bare.some((x) => ctx.unstable.has(x.trim()));
+        if (anyUnstable) branches.push({ type: "object", description: UNSTABLE_NOTE });
+        return { anyOf: branches };
     }
 
     // ARRAY before TUPLE: `[number, number][]` is an array OF tuples, and a tuple pattern anchored on the
@@ -162,19 +254,52 @@ function typeToSchema(type, ctx) {
     if (/^Record<string,\s*unknown>$/.test(t)) return { type: "object", additionalProperties: true };
     if (t === "IsoTimestamp") return { type: "string", format: "date-time" };
 
-    if (OPEN_TYPES[t]) return { type: "object", additionalProperties: true, description: OPEN_TYPES[t] };
-    if (ctx.known.has(t)) return { $ref: `#/$defs/${t}` };
+    // An indexed access — `FetchAttempt["strategy"]` — is that member's own type.
+    const indexed = t.match(/^(\w+)\[\s*"([^"]+)"\s*\]$/);
+    if (indexed) {
+        const owner = ctx.ifaces.get(indexed[1]);
+        const member = owner?.members.find((x) => x.name === indexed[2]);
+        if (!member) throw new Error(`gen-export-schema: \`${t}\` names no such member`);
+        return typeToSchema(member.type, ctx);
+    }
+
+    // A named type resolves LAZILY and transitively: emit a $ref, and generate the definition the first
+    // time it is asked for. A hand-kept list of "types to resolve" would go stale silently — the schema
+    // would just start describing less than it claims — and every borrowed type drags in its own.
+    if (ctx.ifaces.has(t)) {
+        if (!(t in ctx.defs)) {
+            ctx.defs[t] = {};   // placeholder first, so a self-referential type terminates
+            ctx.defs[t] = interfaceToSchema(t, ctx.ifaces.get(t), ctx);
+        }
+        return { $ref: `#/$defs/${t}` };
+    }
     // A type alias resolves to whatever it names. Guarded against a cycle, which would otherwise be a
     // stack overflow rather than a message.
     if (ctx.aliases.has(t)) {
         if (ctx.resolving.has(t)) throw new Error(`gen-export-schema: type alias \`${t}\` is cyclic`);
         ctx.resolving.add(t);
-        try { return typeToSchema(ctx.aliases.get(t), ctx); } finally { ctx.resolving.delete(t); }
+        const wasUnstable = ctx.unstableUnion;
+        ctx.unstableUnion = ctx.unstable.has(t);
+        try {
+            const node = typeToSchema(ctx.aliases.get(t), ctx);
+            return ctx.unstable.has(t) ? { description: UNSTABLE_NOTE, ...node } : node;
+        } finally { ctx.resolving.delete(t); ctx.unstableUnion = wasUnstable; }
     }
 
     // An unrecognised named type would silently become "anything", which is how a generated schema stops
     // describing the thing it claims to. Refuse instead.
-    throw new Error(`gen-export-schema: unhandled type \`${t}\` — add it to RESOLVE_FROM_CONTRACT, OPEN_TYPES, or typeToSchema()`);
+    throw new Error(`gen-export-schema: unhandled type \`${t}\` — teach typeToSchema() to map it, or simplify the declaration`);
+}
+
+/** Are all brackets balanced across this string? (A `)` closing an outer group would go negative.) */
+function depthBalanced(t) {
+    let depth = 0;
+    for (const ch of t) {
+        if ("({[".includes(ch)) depth++;
+        else if (")}]".includes(ch)) depth--;
+        if (depth < 0) return false;
+    }
+    return depth === 0;
 }
 
 /** One interface → a JSON Schema object node. */
@@ -186,9 +311,12 @@ function interfaceToSchema(name, iface, ctx) {
         properties[m.name] = m.doc ? { description: m.doc, ...node } : node;
         if (!m.optional) required.push(m.name);
     }
+    const unstable = ctx.unstable.has(name);
+    const doc = [iface.doc, unstable ? UNSTABLE_NOTE : ""].filter(Boolean).join(" ");
     return {
         type: "object",
-        ...(iface.doc ? { description: iface.doc } : {}),
+        ...(doc ? { description: doc } : {}),
+        ...(unstable ? { "x-unstable": true } : {}),
         properties,
         ...(required.length ? { required } : {}),
         // Additive changes are free by the version rule, so an older consumer must tolerate new fields.
@@ -205,22 +333,20 @@ export function buildSchema() {
     if (!own.has("ExportDocument")) throw new Error("gen-export-schema: export-schema.ts no longer declares ExportDocument");
     const contract = scanInterfaces(contractSrc, "contract.ts");
 
-    const defs = new Map(own);
-    for (const n of RESOLVE_FROM_CONTRACT) {
-        const iface = contract.get(n);
-        if (!iface) throw new Error(`gen-export-schema: ${n} is in RESOLVE_FROM_CONTRACT but contract.ts no longer declares it`);
-        defs.set(n, iface);
-    }
-
     const version = (schemaSrc.match(/EXPORT_SCHEMA_VERSION\s*=\s*(\d+)/) || [])[1];
     if (!version) throw new Error("gen-export-schema: EXPORT_SCHEMA_VERSION not found");
 
-    const aliases = new Map([...scanAliases(contractSrc), ...scanAliases(schemaSrc)]);
-    const ctx = { known: new Set(defs.keys()), aliases, resolving: new Set() };
-    const $defs = {};
-    for (const [n, iface] of defs) if (n !== "ExportDocument") $defs[n] = interfaceToSchema(n, iface, ctx);
-
-    const root = interfaceToSchema("ExportDocument", defs.get("ExportDocument"), ctx);
+    const ctx = {
+        // export-schema.ts wins a name clash: it is the normative file.
+        ifaces: new Map([...contract, ...own]),
+        aliases: new Map([...scanAliases(contractSrc), ...scanAliases(schemaSrc)]),
+        unstable: new Set([...scanUnstable(contractSrc), ...scanUnstable(schemaSrc)]),
+        resolving: new Set(),
+        defs: {},
+    };
+    const root = interfaceToSchema("ExportDocument", own.get("ExportDocument"), ctx);
+    const $defs = ctx.defs;
+    delete $defs.ExportDocument;
     return {
         $schema: "https://json-schema.org/draft/2020-12/schema",
         $id: "https://github.com/parawanderer/window-ml/blob/main/docs/spec/export.schema.json",

@@ -21,17 +21,17 @@
  *    The exception is {@link ExportOutcome}, whose flags are always present so consumers
  *    need no defaulting.
  *
- * WHAT THE VERSION PROMISE COVERS. This file's own field names and shapes, plus the borrowed types it
- * marks as part of the surface: {@link TokenUsage}, {@link SubcallUsage}, {@link ToolFeedback},
- * {@link PersistGrant}, {@link ReusedGrant}. Those change only with a bump.
+ * WHAT THE VERSION PROMISE COVERS. This file's own field names and shapes, and the borrowed types that
+ * are not marked unstable. Some fields reach types that live in `contract.ts` and are INTERNAL — most
+ * visibly {@link ExportStep.renderIn}/{@link ExportStep.renderOut} and {@link ExportSession.config}.
+ * Those carry `@unstable` at their declaration: a new render-descriptor variant or a new agent option can
+ * appear in any release, and doing so is NOT a breaking change to this format. They are still fully
+ * described in `docs/spec/export.schema.json` — you get real generated types for them — but the schema
+ * marks them `x-unstable` and lets an unrecognised variant validate. Switch on what you know; tolerate
+ * the rest.
  *
- * It does NOT cover three fields whose types are OPEN by design and live in `contract.ts`, which carries
- * no versioning promise of its own: {@link ExportStep.renderIn}, {@link ExportStep.renderOut} and
- * {@link ExportSession.config}. `RenderDescriptor` is a registry keyed by `type` that grows whenever the
- * debug UI learns to draw something new, and `DebugAgentConfig` grows whenever `ml.agent` gains an
- * option — so pinning them here would either freeze the UI or bump this version for reasons no consumer
- * cares about. Treat all three as best-effort payloads: switch on what you recognise and ignore the rest.
- * A consumer that hard-parses a render descriptor is coupled to our UI whatever this file says.
+ * The generated JSON Schema at `docs/spec/export.schema.json` is this file, lifted, for consumers who are
+ * not writing TypeScript. Regenerate it with `npm run gen-export-schema` (the build does it too).
  *
  * Types erased at build; import with `import type`.
  */
