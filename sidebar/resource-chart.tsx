@@ -149,10 +149,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     // data. Undrawable runs are skipped; nothing is lost, because a lone point conveys no trend either.
     const runs = useMemo(() => segments(samples).filter((r) => r.length > 1), [samples]);
     // Only the instants: a span is a duration and belongs in the lane, where its length can be read.
-    const instants = useMemo(() => {
-        const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
-        return placeEvents(runs, eventsIn(events.filter((e) => e.until == null), from, to + VRAM_POLL_MS), VRAM_POLL_MS);
-    }, [runs, events]);
+    const instants = useInstants(runs, events);
     return (
         <div class="rc-track">
             <div class="rc-head">
@@ -172,18 +169,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                         <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} scope={scope} />
-                        {/* Instants are drawn THROUGH the plot rather than in the lane below: an eviction is a
-                            moment in the memory trace, and its whole meaning is where the curve steps. */}
-                        {instants.filter((p) => p.run === i).map((p, k) => (
-                            // An eviction happened to the MACHINE, so every track draws the same moment.
-                            // Highlighting is therefore keyed by the event, not by the element: hovering the
-                            // rule in one plot thickens it in all of them, which is what says "this is one
-                            // thing that happened", not three.
-                            <div class={`rc-rule rc-rule-${p.event.kind}${eventKey(p.event) === hotEvent.value ? " hot" : ""}`}
-                                key={k} style={{ left: `${p.from * 100}%` }}
-                                onPointerEnter={(e: PointerEvent) => { eventHover.value = { p, scope }; hotEvent.value = eventKey(p.event); trackCursor(scope)(e); }}
-                                onPointerLeave={() => { eventHover.value = null; hotEvent.value = null; }} />
-                        ))}
+                        <InstantRules instants={instants} run={i} scope={scope} />
                     </div>
                 ))}
                 <BrushOverlay />
@@ -345,12 +331,12 @@ function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDe
             ceiling={c?.displayBytes ?? d.totalBytes} ceilingNote={deviceCeilingNote(d)}
             soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
     }
-    return <OverlayView def={def} samples={samples} latest={latest} hidden={hidden} />;
+    return <OverlayView def={def} samples={samples} latest={latest} hidden={hidden} events={events} />;
 }
 
 /** Several series in ONE track, drawn as independent lines rather than a stack: their sum is not a quantity
  *  anything is measured against (a model can only use one card's capacity), so the chart must not draw one. */
-function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string> }) {
+function OverlayView({ def, samples, latest, hidden, events = [] }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[] }) {
     const cap = latest.capacity!;
     // Each series is a POOL: a card, or the host. Including the host matters — a CPU-resident model holds no
     // VRAM, so a cards-only overlay makes it vanish from the chart entirely while it sits in the legend below.
@@ -381,6 +367,7 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
         return mine.length > 0 && mine.every((b) => hidden.has(b.model!));
     };
     const pct = (v: number) => `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}%`;
+    const instants = useInstants(runs, events);
     return (
         <div class="rc-track">
             <div class="rc-head">
@@ -398,8 +385,11 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
                 <BrushOverlay />
                 <Crosshair />
                 <PoolTip latest={latest} />
+                {/* This view has rules of its own now, so it needs the tip that explains them. */}
+                <EventTip scope="overlay" />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
+                        <InstantRules instants={instants} run={ri} scope="overlay" />
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {pools.map((p, pi) => {
                                 const pts = run.map((s, i) => `${((i / (run.length - 1)) * W).toFixed(1)},${(H - frac(s, p) * H).toFixed(1)}`).join(" ");
@@ -493,6 +483,29 @@ function phaseGradient(phases: { kind: string; until: number }[], from: number, 
         at = end;
     }
     return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
+/** The instants to rule through a plot, placed against its own segments. Shared, because writing them inline
+ *  in one view is exactly how the Overview preset ended up with no rules at all while the per-pool tracks had
+ *  them: the same events, drawn in one place and not the other. */
+function useInstants(runs: ResourceSample[][], events: ResourceEvent[]): EventPlacement[] {
+    return useMemo(() => {
+        const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
+        return placeEvents(runs, eventsIn(events.filter((e) => e.until == null), from, to + VRAM_POLL_MS), VRAM_POLL_MS);
+    }, [runs, events]);
+}
+
+/** The dashed rules themselves — an eviction is a moment in the memory trace, and its meaning is WHERE the
+ *  curve steps, so it belongs on the plot rather than in the lane below. */
+function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; run: number; scope: string }) {
+    return <>{instants.filter((p) => p.run === run).map((p, k) => (
+        // Keyed by the EVENT, not the element: the same eviction is drawn in every track, so hovering it in
+        // one plot thickens it in all of them — one thing that happened, not three.
+        <div class={`rc-rule rc-rule-${p.event.kind}${eventKey(p.event) === hotEvent.value ? " hot" : ""}`}
+            key={k} style={{ left: `${p.from * 100}%` }}
+            onPointerEnter={(e: PointerEvent) => { eventHover.value = { p, scope }; hotEvent.value = eventKey(p.event); trackCursor(scope)(e); }}
+            onPointerLeave={() => { eventHover.value = null; hotEvent.value = null; }} />
+    ))}</>;
 }
 
 /** The crosshair, mirrored into every track: a line where the pointer is, and the instant it names. Reading

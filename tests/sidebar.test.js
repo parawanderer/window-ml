@@ -7009,3 +7009,33 @@ test("pool tooltip: each model consumer carries its colour, the residual doesn't
     const residual = [...tip.querySelectorAll(".rc-tip-line")].find((l) => /driver overhead|unattributed/.test(l.textContent));
     if (residual) assert.equal(residual.querySelector(".rc-tip-dot"), null, "the residual is not a model");
 });
+
+// The rules were written INLINE in the per-pool view, so the Overview preset — the default — had none at all:
+// the same events, drawn in one place and not the other. Both views draw them from one helper now.
+test("event lane: evictions rule through the Overview track too, not just the per-pool ones", async () => {
+    const two = [
+        { model: "keeper:8b", vramGB: 5, vramBytes: 5 * 1024 ** 3, sizeBytes: 5 * 1024 ** 3,
+          gpus: [{ id: "0", runner: "CUDA", vramBytes: 5 * 1024 ** 3 }], expiresAt: null },
+        { model: "doomed:12b", vramGB: 7, vramBytes: 7 * 1024 ** 3, sizeBytes: 7 * 1024 ** 3,
+          gpus: [{ id: "0", runner: "CUDA", vramBytes: 7 * 1024 ** 3 }], expiresAt: null },
+    ];
+    // No layout seeded → the DEFAULT preset, which is Overview: one track, a line per pool.
+    const w = await loadSidebarWorld({ vram: two, info: INFO_2CARD });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 25 && w.shadow.querySelectorAll(".rc-seg").length < 1; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    assert.equal(w.shadow.querySelectorAll(".rc-name").length, 1, "this is the Overview track");
+
+    w.setVram([two[0]]);
+    for (let i = 0; i < 25 && !w.shadow.querySelector(".rc-rule"); i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    const rule = w.shadow.querySelector(".rc-rule-evict");
+    assert.ok(rule, "the eviction is ruled through the overlay plot");
+    assert.ok(rule.closest(".rc-seg"), "…inside the run that contains it");
+    rule.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+    assert.match(w.shadow.querySelector(".rc-tip-event").textContent, /doomed:12b/, "and it says what happened");
+});

@@ -232,7 +232,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-zoom { background: var(--panel-2); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px;
              padding: 2px 7px; font-size: 0.8em; cursor: pointer; font-variant-numeric: tabular-nums; }
 .vram-zoom:hover { background: var(--panel-2-hover); }
-.rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: help; }
+.rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: help; z-index: 3; }
 .rc-rule::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;
     background: repeating-linear-gradient(to bottom, var(--fg-dim) 0 3px, transparent 3px 6px); }
 .rc-rule-evict::before { background: repeating-linear-gradient(to bottom, var(--danger, #ef4444) 0 3px, transparent 3px 6px); opacity: .85; }
