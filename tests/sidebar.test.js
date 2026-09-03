@@ -6037,12 +6037,14 @@ test("resource panel: badge tooltips aren't clipped by the resizable panel", asy
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
     await w.flush();
+    // Direction is no longer a class on the source — the floating layer computes it (tooltip-layer.ts), so
+    // asserting `.above` here would be a green test with nothing behind it. What matters now is that the
+    // source never renders in place (so a clipping ancestor is irrelevant, and its prose can't be copied).
     for (const sel of [".vram-ctx", ".vram-ttl"]) {
-        const pop = w.shadow.querySelector(`${sel} .tt-pop`);
-        assert.ok(pop, `${sel} has its tooltip`);
-        assert.ok(pop.classList.contains("above"),
-            `${sel} opens upward — the rows are at the panel's bottom edge`);
+        assert.ok(w.shadow.querySelector(`${sel} .tt-pop`), `${sel} still carries its tooltip content`);
     }
+    const ttPop = css.slice(css.indexOf(".tt-pop {"), css.indexOf("}", css.indexOf(".tt-pop {")));
+    assert.match(ttPop, /display:\s*none/, "the source is never rendered in the flow, so nothing clips it");
 });
 
 // A panel dragged too small cannot fit its header, plot and rows — the content spilled over the session list
@@ -6129,4 +6131,70 @@ test("answer dedup: an UNquoted designated output still appears in the Result bl
     await openRun(w);
     const rb = w.shadow.querySelector(".card-result");
     assert.ok(rb && /COMPUTED_TABLE/.test(rb.textContent), "it has nowhere else to be shown, so it is appended");
+});
+
+// A programmatic resize (switching views changes the floor) EASES; a drag must not, because easing the
+// pointer would feel like lag. Driven by rAF, so the test steps the clock rather than waiting.
+test("resize easing: eases to the target over time, and never snaps mid-flight", async () => {
+    const { easeVramH } = await import("../sidebar/vram.tsx");
+    const { vramH } = await import("../sidebar/store.ts");
+    const frames = [];
+    const realRaf = globalThis.requestAnimationFrame;
+    // rAF timestamps share performance.now()'s origin — start there, or the elapsed fraction is nonsense.
+    let now = performance.now();
+    globalThis.requestAnimationFrame = (fn) => { frames.push(fn); return frames.length; };
+    try {
+        vramH.value = 200;
+        easeVramH(400, 200);
+        // It moves in steps, not one jump — and each step lands between where it was and where it's going.
+        const seen = [];
+        while (frames.length && seen.length < 40) {
+            now += 25;
+            const fn = frames.shift();
+            fn(now);
+            seen.push(vramH.value);
+        }
+        assert.ok(seen.length > 3, `several frames, not a snap (saw ${seen.length})`);
+        assert.ok(seen.every((v) => v >= 200 && v <= 400), "never overshoots either end");
+        for (let i = 1; i < seen.length; i++) assert.ok(seen[i] >= seen[i - 1], "monotonic toward the target");
+        assert.equal(Math.round(seen.at(-1)), 400, "lands exactly on the target");
+        // Ease-OUT: most of the distance is covered early, so it decelerates into place.
+        assert.ok(seen[0] - 200 > (400 - seen.at(-2)), "decelerates — the first step moves further than the last");
+    } finally { globalThis.requestAnimationFrame = realRaf; vramH.value = 0; }
+});
+
+test("resize easing: a tiny or first-time change is applied directly, not animated", async () => {
+    const { easeVramH } = await import("../sidebar/vram.tsx");
+    const { vramH } = await import("../sidebar/store.ts");
+    const realRaf = globalThis.requestAnimationFrame;
+    let scheduled = 0;
+    globalThis.requestAnimationFrame = () => { scheduled++; return 1; };
+    try {
+        vramH.value = 0;                 // no height yet → nothing to animate FROM
+        easeVramH(300);
+        assert.equal(vramH.value, 300, "the first height is applied directly");
+        vramH.value = 300;
+        easeVramH(301);                  // a sub-pixel nudge would be an animation nobody can see
+        assert.equal(vramH.value, 301);
+        assert.equal(scheduled, 0, "neither case schedules a frame");
+    } finally { globalThis.requestAnimationFrame = realRaf; vramH.value = 0; }
+});
+
+// "Not resident" and "we don't know yet" are different claims — the orb says "Awakening…" for the first and
+// must say nothing for the second.
+test("residentNow: knows loaded from not-loaded, and unknown from either", async () => {
+    const { residentNow } = await import("../sidebar/vram.tsx");
+    const { loadedModels } = await import("../sidebar/store.ts");
+    const before = loadedModels.value;
+    try {
+        loadedModels.value = null;                       // no /api/ps answer yet
+        assert.equal(residentNow("qwen3:8b"), undefined, "unknown, NOT 'not loaded'");
+        loadedModels.value = [{ model: "qwen3:8b" }];
+        assert.equal(residentNow("qwen3:8b"), true);
+        assert.equal(residentNow("gemma4:31b"), false, "a model that isn't there really isn't");
+        // :latest is normalised like the rest of the model plumbing, so the tag doesn't create a false miss.
+        loadedModels.value = [{ model: "qwen3:latest" }];
+        assert.equal(residentNow("qwen3"), true);
+        assert.equal(residentNow(null), undefined, "no model named → nothing to claim");
+    } finally { loadedModels.value = before; }
 });

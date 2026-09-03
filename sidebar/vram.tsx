@@ -294,10 +294,15 @@ export const PLOT_MIN_H = 44;   // matches .rc-plot's min-height
 export function easeVramH(to: number, ms = 220): void {
     const from = vramH.value;
     if (!from || Math.abs(to - from) < 2) { vramH.value = to; return; }
-    const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
-    const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (f: FrameRequestCallback) => setTimeout(() => f(Date.now()), 16) as unknown as number;
+    // ONE clock: rAF timestamps share performance.now()'s origin, and Date.now() does not — mixing them makes
+    // the elapsed fraction negative and the height undershoots below where it started.
+    const clock = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
+    const t0 = clock();
+    const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (f: FrameRequestCallback) => setTimeout(() => f(clock()), 16) as unknown as number;
     const step = (now: number) => {
-        const t = Math.min(1, (now - t0) / ms);
+        // Clamped at BOTH ends: a frame timestamped before t0 (a clock that isn't the one we sampled) must
+        // never drive the panel outside the range it was asked to move through.
+        const t = Math.max(0, Math.min(1, (now - t0) / ms));
         // cubic ease-out: fast to start, settling gently — a resize that decelerates reads as the panel
         // finding its size rather than jumping to it.
         vramH.value = from + (to - from) * (1 - Math.pow(1 - t, 3));
