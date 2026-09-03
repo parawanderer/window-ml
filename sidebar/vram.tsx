@@ -269,9 +269,46 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
  *  a row that shifts the layout under the cursor. */
 export const poolHover = signal<{ name: string; ceiling: number; used: number; consumers: { label: string; bytes: number }[] } | null>(null);
 
-/** The smallest the panel may be dragged: header + a plot at its floor + a couple of model rows. Below this
- *  the content cannot fit and overflows the panel instead of shrinking. */
-export const VRAM_MIN_H = 190;
+// The smallest the panel may be dragged. It is NOT a constant — a one-track Overview and a three-track
+// GPU + RAM need very different room — and it is MEASURED rather than estimated: hardcoded part heights are a
+// guess that font scale, a wrapped model name, or a new row in a track would each break silently, and the
+// symptom is content overlapping, which nobody notices until they see it.
+//
+// What is measured: every part of the panel that has a fixed size (the header, each track's name row and
+// legend, the model rows, the grip). What is added: the plot's own floor per track, since the plot is the
+// flexible part and is the thing that must not be squeezed to nothing.
+export const PLOT_MIN_H = 44;   // matches .rc-plot's min-height
+
+/** Animate the panel to a height with a cubic ease. Used when the size changes on its OWN — switching views
+ *  raises the floor, a restored layout needs more room — where a snap reads as a glitch. A live DRAG never
+ *  uses this: dragging must track the pointer exactly, and easing it would feel like lag. */
+export function easeVramH(to: number, ms = 220): void {
+    const from = vramH.value;
+    if (!from || Math.abs(to - from) < 2) { vramH.value = to; return; }
+    const t0 = (typeof performance !== "undefined" ? performance.now() : Date.now());
+    const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (f: FrameRequestCallback) => setTimeout(() => f(Date.now()), 16) as unknown as number;
+    const step = (now: number) => {
+        const t = Math.min(1, (now - t0) / ms);
+        // cubic ease-out: fast to start, settling gently — a resize that decelerates reads as the panel
+        // finding its size rather than jumping to it.
+        vramH.value = from + (to - from) * (1 - Math.pow(1 - t, 3));
+        if (t < 1) raf(step);
+    };
+    raf(step);
+}
+
+/** Measure the floor from what is actually rendered. `el` is the panel. */
+export function measureMinH(el: HTMLElement | null): number {
+    if (!el) return 0;
+    const px = (sel: string) => [...el.querySelectorAll(sel)]
+        .reduce((n, x) => n + (x as HTMLElement).getBoundingClientRect().height, 0);
+    const style = getComputedStyle(el);
+    const chrome = parseFloat(style.paddingTop || "0") + parseFloat(style.paddingBottom || "0");
+    const tracks = el.querySelectorAll(".rc-track").length;
+    // Everything that does not flex, plus a plot floor for each track.
+    return Math.ceil(chrome + px(".vram-head") + px(".rc-head") + px(".rc-legend") + px(".vram-row")
+        + px(".vram-grip") + Math.max(1, tracks) * PLOT_MIN_H);
+}
 
 /** Pointer position for the model-row tip, in viewport coords (the row is not inside the plot). */
 export const rowTipAt = signal<{ x: number; y: number } | null>(null);
@@ -429,6 +466,17 @@ export function VramPanel() {
     const [, tick] = useState(0);
     useEffect(() => { const id = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(id); }, []);
     useEffect(() => { pollPs(); fetchCapacity(); }, []);   // immediate poll + the denominator
+    // The floor for whatever is on screen RIGHT NOW, measured after each render — switching views changes the
+    // track count, and the floor has to follow or the new view renders on top of itself.
+    const panelRef = useRef<HTMLDivElement>(null);
+    const [minH, setMinH] = useState(0);
+    useEffect(() => {
+        const m = measureMinH(panelRef.current);
+        if (m && Math.abs(m - minH) > 1) setMinH(m);
+        // Switching views changes the track count and so the floor. If the current height no longer fits,
+        // grow into the new one — eased, because the change wasn't the user's hand on the grip.
+        if (m && vramH.value && vramH.value < m) easeVramH(m);
+    });
     // The newest sample, with capacity filled in — what the picker and editor describe.
     const latestSample = (() => {
         const last = resourceHistory.value.at(-1);
@@ -456,7 +504,7 @@ export function VramPanel() {
         // 80px was not a usable panel: the header, a plot at its own floor, and the model rows cannot fit, so
         // the content spilled over the session list below. The floor is what the panel actually needs to hold
         // its parts.
-        const move = (ev: PointerEvent) => { vramH.value = Math.max(VRAM_MIN_H, startH + (ev.clientY - startY)); };
+        const move = (ev: PointerEvent) => { vramH.value = Math.max(minH, startH + (ev.clientY - startY)); };
         const up = () => {
             window.removeEventListener("pointermove", move);
             window.removeEventListener("pointerup", up);
@@ -480,7 +528,10 @@ export function VramPanel() {
         ? series.map((v, i) => `${((i / (series.length - 1)) * W).toFixed(1)},${(H - (v / yMax) * H).toFixed(1)}`).join(" ")
         : "";
     return (
-        <div class="vram" style={vramH.value ? { height: `${vramH.value}px` } : undefined}>
+        // The floor rides along as `minHeight`, so a height chosen for a one-track view can never render a
+        // three-track one on top of itself — switching views lifts the box even before you drag it.
+        <div class="vram" ref={panelRef}
+            style={vramH.value ? { height: `${Math.max(vramH.value, minH)}px`, minHeight: `${minH}px` } : undefined}>
             <div class="vram-head">
                 <span class="vram-total">{formatBytes(total)} in use</span>
                 <span class="sp" />

@@ -5943,11 +5943,12 @@ test("resource panel: drag the bottom edge to resize, and the height is remember
     await w.flush();
     assert.equal(w.localStore.ml_vram_h, h, "…and it is remembered, not just applied");
 
-    // A height can't be dragged to nothing — the panel would become unusable and un-grabbable.
+    // A height can't be dragged to nothing. The floor is MEASURED from the rendered parts, and jsdom has no
+    // layout — so this only checks the clamp holds at all; the real geometry is the e2e's job.
     grip.dispatchEvent(new w.window.PointerEvent("pointerdown", { bubbles: true, clientY: 300 }));
     w.window.dispatchEvent(new w.window.PointerEvent("pointermove", { clientY: -5000 }));
     await w.flush();
-    assert.ok(parseFloat(w.shadow.querySelector(".vram").style.height) >= 80, "clamped to a usable minimum");
+    assert.ok(parseFloat(w.shadow.querySelector(".vram").style.height) > 0, "clamped, never dragged past zero");
     w.window.dispatchEvent(new w.window.PointerEvent("pointerup", {}));
 });
 
@@ -6046,29 +6047,22 @@ test("resource panel: badge tooltips aren't clipped by the resizable panel", asy
 
 // A panel dragged too small cannot fit its header, plot and rows — the content spilled over the session list
 // below rather than shrinking. Both the drag and the stylesheet enforce a floor.
-test("resource panel: cannot be dragged smaller than its content needs", async () => {
-    const { VRAM_MIN_H } = await import("../sidebar/vram.tsx");
-    assert.ok(VRAM_MIN_H >= 160, `the floor must hold header + plot + rows, got ${VRAM_MIN_H}`);
-
-    const w = await loadSidebarWorld({
-        vram: [{ model: "a", vramGB: 8, vramBytes: 8 * 1024 ** 3, expiresAt: null }],
-        info: INFO_MIXED,
+test("resource panel: the floor is MEASURED from what is rendered, not guessed", async () => {
+    const { measureMinH, PLOT_MIN_H } = await import("../sidebar/vram.tsx");
+    // A hardcoded floor is a guess that font scale, a wrapped model name, or a new row in a track each break
+    // silently — and the symptom is overlapping content. So it is measured from the real parts.
+    const fake = (counts) => ({
+        querySelectorAll: (sel) => Array.from({ length: counts[sel] ?? 0 }, () => ({ getBoundingClientRect: () => ({ height: 20 }) })),
     });
-    await w.raw({ __mlSidebarOpen: true });
-    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
-    await w.flush();
-    await w.flush();
+    const el = fake({ ".vram-head": 1, ".rc-head": 3, ".rc-legend": 3, ".vram-row": 2, ".vram-grip": 1, ".rc-track": 3 });
+    globalThis.getComputedStyle = () => ({ paddingTop: "8px", paddingBottom: "10px" });
+    const three = measureMinH(el);
+    // 18 padding + 10 parts x 20 + 3 plots at their floor.
+    assert.equal(three, 18 + 10 * 20 + 3 * PLOT_MIN_H);
 
-    const grip = w.shadow.querySelector(".vram-grip");
-    grip.dispatchEvent(new w.window.PointerEvent("pointerdown", { bubbles: true, clientY: 400 }));
-    w.window.dispatchEvent(new w.window.PointerEvent("pointermove", { clientY: -9999 }));
-    await w.flush();
-    assert.equal(parseFloat(w.shadow.querySelector(".vram").style.height), VRAM_MIN_H, "clamped to the floor");
-    w.window.dispatchEvent(new w.window.PointerEvent("pointerup", {}));
-
-    // …and the stylesheet enforces it too, so a height saved before the floor existed can't render broken.
-    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
-    const rule = css.slice(css.indexOf('.vram[style*="height"] {'), css.indexOf("}", css.indexOf('.vram[style*="height"] {')));
-    assert.match(rule, /min-height:\s*\d+px/, "a stale saved height still can't render smaller than the content");
-    assert.match(rule, /overflow-y:\s*auto/, "and what doesn't fit scrolls instead of spilling");
+    // One track needs materially less — which is the whole point: a floor sized for Overview would let
+    // GPU + RAM render on top of itself, and one sized for GPU + RAM would strand Overview at a huge minimum.
+    const one = measureMinH(fake({ ".vram-head": 1, ".rc-head": 1, ".rc-legend": 1, ".vram-row": 2, ".vram-grip": 1, ".rc-track": 1 }));
+    assert.ok(one < three, `one track needs less room than three (${one} < ${three})`);
+    assert.equal(measureMinH(null), 0, "nothing rendered yet → no floor to enforce");
 });

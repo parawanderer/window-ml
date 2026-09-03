@@ -148,7 +148,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 {bands.filter((b) => b.kind === "other" && b.bytes > 0).map((b) => (
                     <span class="rc-key tt" key={b.key}>
                         <i class="rc-swatch rc-swatch-other" /> {b.label} {formatBytes(b.bytes)}
-                        <span class="tt-pop left" role="tooltip">{b.label === DRIVER_BAND_LABEL
+                        <span class="tt-pop left above" role="tooltip">{b.label === DRIVER_BAND_LABEL
                             ? "Ollama's own driver context, held on every visible card whether or not a model is loaded. Not another process."
                             : OTHER_BAND_NOTE}</span>
                     </span>
@@ -361,7 +361,7 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
                         onPointerEnter={() => enterPool(p, latest)} onPointerLeave={() => leavePool()}>
                         <i class="rc-swatch" style={{ background: VRAM_COLORS[pi % VRAM_COLORS.length] }} />
                         {p.name} {pct(frac(latest, p))}
-                        <span class="tt-pop left" role="tooltip">{formatBytes(usedOf(latest, p))} of {formatBytes(p.ceiling)}</span>
+                        <span class="tt-pop left above" role="tooltip">{formatBytes(usedOf(latest, p))} of {formatBytes(p.ceiling)}</span>
                     </span>
                 ))}
             </div>

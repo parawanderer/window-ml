@@ -65,7 +65,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Belt and braces with the drag's own clamp: even if a height arrives from storage that predates the floor
    (or from a narrower panel), the box can never render smaller than its content needs, and what does not fit
    scrolls rather than spilling over the session list below. */
-.vram[style*="height"] { overflow-y: auto; min-height: 190px; }
+/* The floor is MEASURED per layout and applied inline (see measureMinH) — a fixed number here would be wrong
+   for one view or the other. This only guarantees the box scrolls rather than spilling. */
+.vram[style*="height"] { overflow-y: auto; }
 /* The boundary between this panel and the session list, as a handle. It competes with the list for height, so
    which one you want more of depends on what you are doing — a drag, not a setting, and remembered. */
 /* STICKY, not absolute: the panel scrolls once a height is set, and an absolutely-positioned grip sits at the
@@ -301,7 +303,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .py-env-err { color: var(--err); font-size: 0.85em; }
 .test-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
 .test-row { display: flex; align-items: center; gap: 7px; font-size: 0.92em; min-width: 0; position: relative; }
-.test-row:hover .tt-pop { opacity: 1; }
+
 .test-row .role { color: var(--fg-dim); min-width: 62px; flex: 0 0 auto; }
 .test-row .name { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .test-ic { width: 14px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; }
@@ -778,12 +780,18 @@ details.io[open] > summary .io-preview { display: none; }
 /* Long text: wrap instead of one very wide nowrap strip. Combines with any anchor.
    overflow-wrap:anywhere lets an unbreakable token (a 44-char Google Sheet id) break
    so it stays inside max-width instead of spilling out and clipping at the frame edge. */
-.tt-pop.wrap { white-space: normal; width: max-content; max-width: 190px; overflow-wrap: anywhere; }
-.tt-pop {
-    position: absolute; top: calc(100% + 6px); right: 0; z-index: 10;
+
+/* The source node NEVER renders: it is the tooltip's content, read and cloned into .tt-layer on hover. Keeping
+   it display:none is what stops its prose being selected and copied along with the row it sits in — the old
+   scheme left it in the DOM at opacity 0, so copying a row dragged every tooltip's text with it. */
+.tt-pop { display: none; }
+/* The one floating layer: position:fixed, so no scrolling or overflow-hidden ancestor can clip it, and its
+   direction is computed rather than hardcoded per call site. */
+.tt-layer {
+    position: fixed; z-index: 2147483000; pointer-events: none; max-width: 260px;
     background: var(--panel-2); color: var(--fg); border: 1px solid var(--border);
     border-radius: 5px; padding: 4px 7px; line-height: 1.35;
-    white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .12s;
+    white-space: nowrap; pointer-events: none;
     box-shadow: 0 2px 8px rgba(0,0,0,.35);
     /* Size off the ROOT content size (--fs, which the font-scale setting drives),
        NOT the parent's em: triggers sit inside already-shrunken rows (.vram-row and
@@ -796,28 +804,21 @@ details.io[open] > summary .io-preview { display: none; }
     text-transform: none; letter-spacing: normal; text-align: left; text-indent: 0;
     writing-mode: horizontal-tb;
 }
-.tt-pop::after {
-    content: ""; position: absolute; bottom: 100%; right: 10px;
-    border: 5px solid transparent; border-bottom-color: var(--panel-2);
-}
-.tt-pop.wide {
-    right: auto; left: 50%; transform: translateX(-50%);
-    white-space: normal; width: max-content; max-width: 170px; text-align: center; overflow-wrap: anywhere;
-}
-.tt-pop.wide::after { right: auto; left: 50%; transform: translateX(-50%); }
+.tt-layer.wrap { white-space: normal; }
+.tt-layer[hidden] { display: none; }
+
+
 /* Left-anchored (extends rightward) — for triggers at the panel's left edge,
    e.g. the status dot, which would clip a right-anchored/centered pop. */
-.tt-pop.left {
-    right: auto; left: 0; transform: none;
-    white-space: normal; width: max-content; max-width: 190px; overflow-wrap: anywhere;
-}
-.tt-pop.left::after { right: auto; left: 10px; transform: none; }
+/* `left` / `wide` / `above` are now HINTS at width, not instructions about direction — the layer computes
+   which way to open from where the trigger actually is. */
+
 /* Open ABOVE the trigger (for a trigger near the panel's bottom edge, e.g. the
    composer's usage gauge, where a below-pop would fall off-screen). The arrow
    flips to the tooltip's bottom, pointing down at the trigger. */
-.tt-pop.above { top: auto; bottom: calc(100% + 6px); }
-.tt-pop.above::after { top: 100%; bottom: auto; border-bottom-color: transparent; border-top-color: var(--panel-2); }
-.tt:hover .tt-pop { opacity: 1; }
+
+
+
 
 /* DevTools run-stats readout — a thin muted bar above the detail composer (cumulative in/out tokens + tok/s).
    Reuses `.tt` for the provenance tooltip; overrides its inline-flex so the bar can right-align full width. */
