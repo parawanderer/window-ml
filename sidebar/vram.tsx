@@ -12,7 +12,7 @@ import {
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
-import { tipStyle } from "./tip";
+import { useTipPlacement } from "./use-tip";
 import { VRAMH_KEY, vramH, resWindowS } from "./store";
 import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
@@ -566,12 +566,15 @@ function RowTip({ sample }: { sample: ResourceSample | null }) {
     const m = sample.models.find((x) => x.model === name);
     if (!m) return null;
     const where = placementOf(m, sample.capacity, formatBytes);
+    // The SAME placement every other cursor tip uses — measured, so it flips when it doesn't fit rather than
+    // when it passes an arbitrary fraction of the width.
+    const { ref, style } = useTipPlacement({ x: at.x, y: at.y, w: typeof window !== "undefined" ? window.innerWidth : 1e4 });
     return (
         // The SAME snapping every other cursor-following tip uses — this one had none, so it ran off the
         // window's right edge. Bounds are the viewport here (the row sits outside the plot, so the tip is
         // position: fixed).
         <div class="vram-rowtip rc-tip" role="tooltip"
-            style={tipStyle({ x: at.x, y: at.y, w: typeof window !== "undefined" ? window.innerWidth : 1e4 })}>
+            ref={ref} style={style}>
             <div class="vram-rowtip-name"><i class="rc-tip-dot" style={{ background: colorFor(name) }} />{name}</div>
             {where ? <div class={isSplit(m) ? "vram-rowtip-split" : ""}>{isSplit(m) ? "split: " : "on "}{where}</div> : null}
             <div class="vram-rowtip-dim">{formatBytes((m.vramBytes || 0) + (m.ramBytes || 0))} resident</div>

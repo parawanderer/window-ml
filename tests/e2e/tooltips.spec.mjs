@@ -244,3 +244,112 @@ test("cursor tooltips: one at a time, never under the pointer, never clipped", a
         await fake.stop();
     }
 });
+
+// The invariants above are checked at ONE point per target, which is exactly the kind of test that passes
+// while the thing is broken: a tooltip's placement is a function of WHERE the pointer is, so it has to be
+// checked across the space it can be in — near each edge, in each corner, in a panel with room to spare and
+// in one without. What must hold at every point: fully on screen, never under the pointer, and RE-PLACED
+// (flipped) rather than clamped or clipped.
+for (const width of [360, 900]) {
+    test(`cursor tooltips: placement holds everywhere in a ${width}px panel`, async () => {
+        const fake = await startFakeLlm({ model: "fake-model" });
+        const ext = await launchExtension();
+        try {
+            await configureExtension(ext.sw, {
+                chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+                model: "fake-model", debugMode: "overlay",
+            });
+            fake.setCapacity({ compute: {
+                system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 6 * GiB },
+                supported_gpus: [card(0, IDLE - 55 * GiB), card(1, IDLE - 38 * GiB)],
+            } });
+            fake.setResident([{
+                model: "colossus:120b-instruct-q4_K_M", name: "colossus:120b-instruct-q4_K_M",
+                size: 121 * GiB, size_vram: 93 * GiB, context_length: 262144,
+                expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+                gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: 55 * GiB }, { gpu_id: "1", runner: "CUDA", size_vram: 38 * GiB }],
+            }]);
+
+            const page = await ext.context.newPage();
+            await page.setViewportSize({ width: 1100, height: 760 });
+            await page.goto(`${fake.url}/api/version`);
+            await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
+            await page.evaluate((w) => {
+                const root = document.getElementById("ml-sb-root").shadowRoot;
+                const panel = root.getElementById("ml-sb-host");
+                panel.style.width = `${w}px`;
+                panel.classList.add("open");
+                root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+            }, width);
+            const frame = await (async () => {
+                for (let i = 0; i < 80; i++) {
+                    const f = page.frames().find((fr) => /sidebar\.html/.test(fr.url()));
+                    if (f) return f;
+                    await sleep(100);
+                }
+                throw new Error("sidebar iframe never appeared");
+            })();
+            for (let i = 0; i < 5; i++) {
+                if (await frame.locator(".vram").count()) break;
+                await frame.locator('[aria-label="VRAM monitor"]').click().catch(() => {});
+                await sleep(400);
+            }
+            await frame.locator(".rc-preset").selectOption("memory").catch(() => {});
+            await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+            // Make the panel TALL, so a hover target reaches the bottom of the window — where a tip that only
+            // ever opens downward would run off.
+            await frame.locator(".vram-grip").hover();
+            await page.mouse.down();
+            await page.mouse.move((await frame.locator(".vram-grip").boundingBox()).x + 40, 700, { steps: 6 });
+            await page.mouse.up();
+            await sleep(400);
+
+            const view = page.viewportSize();
+            // A rect measured INSIDE the iframe is frame-relative; page.mouse is page-relative. Comparing the
+            // two directly is how a placement test can report a tooltip under a cursor that is nowhere near
+            // it — and pass in a narrow panel for the same reason.
+            const off = await page.evaluate(() => {
+                const r = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-frame").getBoundingClientRect();
+                return { x: r.x, y: r.y };
+            });
+            const failures = [];
+            const probe = async (sel, at, label) => {
+                await page.mouse.move(at.x, at.y);
+                await sleep(120);
+                const tips = (await frame.locator(".rc-tip, .vram-rowtip").evaluateAll((els) =>
+                    els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })))
+                    .map((t) => ({ ...t, x: t.x + off.x, y: t.y + off.y }));
+                if (!tips.length) return;
+                if (tips.length > 1) return failures.push(`${label}: ${tips.length} tooltips at once`);
+                const t = tips[0];
+                // Under the pointer — the tip would flicker as the cursor enters it, and it covers the thing
+                // being pointed at.
+                if (at.x >= t.x && at.x <= t.x + t.w && at.y >= t.y && at.y <= t.y + t.h)
+                    failures.push(`${label}: under the cursor at (${Math.round(at.x)},${Math.round(at.y)})`);
+                // Off screen in any direction. There is room for it somewhere; being cut off means it was
+                // clamped or never re-placed.
+                if (t.x < 0) failures.push(`${label}: off the left at x=${Math.round(t.x)}`);
+                if (t.y < 0) failures.push(`${label}: off the top at y=${Math.round(t.y)}`);
+                if (t.x + t.w > view.width + 1) failures.push(`${label}: clipped right by ${Math.round(t.x + t.w - view.width)}px`);
+                if (t.y + t.h > view.height + 1) failures.push(`${label}: clipped bottom by ${Math.round(t.y + t.h - view.height)}px`);
+            };
+
+            for (const sel of [".rc-band", ".rc-hit", ".vram-row", ".rc-ev"]) {
+                const n = await frame.locator(sel).count();
+                if (!n) continue;
+                const b = await frame.locator(sel).first().boundingBox();
+                if (!b) continue;
+                // Across the target's own width and height: its edges are where placement has to change.
+                for (const fx of [0.02, 0.25, 0.5, 0.75, 0.98]) {
+                    for (const fy of [0.15, 0.5, 0.85]) {
+                        await probe(sel, { x: b.x + b.width * fx, y: b.y + b.height * fy }, `${sel} @${fx}/${fy}`);
+                    }
+                }
+            }
+            expect(failures, failures.join("\n")).toEqual([]);
+        } finally {
+            await ext.close();
+            await fake.stop();
+        }
+    });
+}

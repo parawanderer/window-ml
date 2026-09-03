@@ -20,18 +20,36 @@ export interface TipAt {
     y: number;
     /** Width of the space the tip must stay inside. */
     w: number;
+    /** Height of that space, when the tip's own height is known too (see `size`). */
+    h?: number;
 }
+
+/** The tip's MEASURED size, when the caller has it. Without it the side is chosen by a heuristic — sit right
+ *  of the cursor until past the middle — which is wrong for any tip wide enough to matter: at the centre of a
+ *  360px panel a 190px tooltip still runs off the edge, because "past the middle" says nothing about whether
+ *  the thing FITS. With it, the question becomes the real one: is there room on this side? */
+export interface TipSize { w: number; h: number; }
 
 /** A style object for a cursor-following tip. `left`/`right` are always BOTH set, so a previous frame's value
  *  can't linger when the tip flips sides. */
-export function tipStyle(at: TipAt): Record<string, string> {
-    // Past the middle, there is more room on the left — flip rather than run off the edge.
-    const flipX = at.x > at.w * 0.55;
-    const above = at.y - TIP_ABOVE >= 2;
+export function tipStyle(at: TipAt, size?: TipSize): Record<string, string> {
+    // With a measured width, flip only when the tip does NOT FIT to the right — and when it fits on neither
+    // side, take the roomier one, since something has to give and the wider side clips less.
+    const roomRight = at.w - (at.x + TIP_GAP);
+    const flipX = size
+        ? (size.w > roomRight && at.x - TIP_GAP > roomRight)
+        : at.x > at.w * 0.55;
+    // Vertical: prefer above, but only if the tip's own height fits there. Without a measurement this is the
+    // old guess (one line's worth); with one it is the real question.
+    const needAbove = size ? size.h + TIP_GAP : TIP_ABOVE;
+    const above = at.y - needAbove >= 2;
+    let top = above ? at.y - needAbove : at.y + TIP_BELOW;
+    // …and never past the bottom: a tip placed below near the window's edge would hang off it.
+    if (size && at.h != null) top = Math.max(2, Math.min(top, at.h - size.h - 2));
     return {
         ...(flipX
             ? { right: `${Math.max(2, at.w - at.x + TIP_GAP)}px`, left: "auto" }
-            : { left: `${at.x + TIP_GAP}px`, right: "auto" }),
-        top: `${above ? at.y - TIP_ABOVE : at.y + TIP_BELOW}px`,
+            : { left: `${Math.max(2, Math.min(at.x + TIP_GAP, size ? at.w - size.w - 2 : at.x + TIP_GAP))}px`, right: "auto" }),
+        top: `${top}px`,
     };
 }

@@ -9,7 +9,7 @@
 //     ~0.55 GiB of ollama's discovery context and calling that "other processes" invents a process.
 //   • HONEST GAPS. Polling is gated on the panel being open, so history is discontinuous. A line drawn across
 //     a ten-minute hole is a confident claim about memory nobody measured; `segments` breaks it instead.
-import { useMemo } from "preact/hooks";
+import { useMemo, useRef, useState, useLayoutEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
     placeEvents, laneRows, eventsIn, lineageOf, type ResourceEvent, type EventPlacement,
@@ -20,7 +20,7 @@ import {
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS } from "./vram";
 import { loadedModels, resWindowS, view } from "./store";
 import { scrollToStepSeq } from "./answer-render";
-import { tipStyle } from "./tip";
+import { useTipPlacement } from "./use-tip";
 import { signal } from "@preact/signals";
 
 /** Which overlay POOL (a card, or the host) is hovered — the line and its key light together. */
@@ -227,9 +227,9 @@ function BandTip({ bands, history, ceiling, scope }: { bands: Band[]; history: B
     const m = (loadedModels.value || []).find((x) => x.model === name);
     // Follows the cursor, offset up-left so it never sits under the pointer (which would flicker as the
     // pointer enters the tip itself) and clamped inside the plot so it can't run off the narrow panel.
-    const style = tipStyle(at);
+    const { ref, style } = useTipPlacement(at);
     return (
-        <div class="rc-tip" role="tooltip" style={style}>
+        <div class="rc-tip" role="tooltip" ref={ref} style={style}>
             <i class="rc-tip-dot" style={{ background: colorFor(name) }} />
             <span class="rc-tip-name">{name}</span>
             {/* Bytes AND the share of this device — a model is "big" only relative to the card it is on. */}
@@ -252,12 +252,12 @@ function BandTip({ bands, history, ceiling, scope }: { bands: Band[]; history: B
 function PoolTip({ latest }: { latest: ResourceSample }) {
     const h = poolHover.value, at = cursorOn("overlay");
     if (!h || !at) return null;
-    const style = tipStyle(at);
+    const { ref, style } = useTipPlacement(at);
     // Read from the NEWEST sample, not from what was true when the pointer arrived: a model can load or evict
     // while you hold the cursor still, and the tip has to say the same thing as the chart under it.
     const { used, consumers } = poolFacts(h.bandsOf(latest));
     return (
-        <div class="rc-tip rc-tip-pool" role="tooltip" style={style}>
+        <div class="rc-tip rc-tip-pool" role="tooltip" ref={ref} style={style}>
             <div class="rc-tip-line"><span class="rc-tip-name">{h.name}</span>
                 <span class="rc-tip-size">{formatShare(used, h.ceiling)}</span></div>
             {consumers.length
@@ -480,11 +480,12 @@ function EventTip({ scope }: { scope: string }) {
     const dur = (e.until ?? e.t) - e.t;
     const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`);
     // Each phase's own duration, from where the previous one ended.
+    const { ref, style } = useTipPlacement(at);
     const phases = (e.phases || []).map((ph, i) => ({ ...ph, from: i ? e.phases![i - 1].until : e.t }));
     const first = phases[0];
     const nameFor = (kind: string) => (kind === "model" ? e.model || "model" : kind === "wait" ? "waiting for approval" : e.tool || "tool");
     return (
-        <div class="rc-tip rc-tip-event" role="tooltip" style={tipStyle(at)}>
+        <div class="rc-tip rc-tip-event" role="tooltip" ref={ref} style={style}>
             {/* Each phase, in the order it happened: the model, the human deciding, then the tool. */}
             <div class="rc-tip-line"><span class="rc-tip-name">{first ? nameFor(first.kind) : e.model || e.label}</span>
                 <span class="rc-tip-size">{first ? ms(first.until - first.from) : ms(dur)}</span></div>
