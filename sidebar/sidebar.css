@@ -246,6 +246,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    window, so it explains much of the GB on the right. Sits by the name, dimmed. */
 .vram-ctx { flex: 0 0 auto; color: var(--fg-faint); font-size: 0.9em; font-variant-numeric: tabular-nums;
   border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; line-height: 1.35; cursor: help; }
+/* Says what a resident model IS. /api/ps doesn't distinguish an embedding model from a chat one, and a 5.8 GiB
+   embedder is a big share of a card to leave unexplained. */
+.vram-embed { padding: 0 4px; font-size: 0.72em; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 3px; }
 /* Live keep-alive countdown — same chip shape as the context badge, sat beside it. */
 .vram-ttl { flex: 0 0 auto; color: var(--fg-faint); font-size: 0.9em; font-variant-numeric: tabular-nums;
   border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; line-height: 1.35; cursor: help; }

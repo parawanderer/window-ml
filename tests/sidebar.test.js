@@ -6559,3 +6559,41 @@ test("ceiling note: names the right tool per vendor, and none for a runner we do
     const unknown = await noteFor({ gpu_id: "0", name: "VLK0", runner: "Vulkan", total_memory: 17179869184, free_memory: 16 * 1024 ** 3 });
     assert.doesNotMatch(unknown, /-smi/, "an unknown runner names no tool rather than guessing one");
 });
+
+// Embedding models are resident models like any other — /api/ps reports them with the same shape and says
+// NOTHING about what they are, so a 5.8 GiB embedder sat in the list looking like a chat model. Real capture
+// from the live box: qwen3-embedding:0.6b, 5.78 GB on CUDA1, capabilities ["tools","thinking","embedding"].
+test("embedding models: named as such, and evicted the same way", async () => {
+    const asked = [];
+    const w = await loadSidebarWorld({
+        vram: [
+            { model: "qwen3.8:27b", vramGB: 35, vramBytes: 37959227144, sizeBytes: 37959227144, contextLength: 262144,
+              gpus: [{ id: "0", runner: "CUDA", vramBytes: 37959227144 }], expiresAt: null },
+            { model: "qwen3-embedding:0.6b", vramGB: 5, vramBytes: 5776426925, sizeBytes: 5776426925, contextLength: 32768,
+              gpus: [{ id: "1", runner: "CUDA", vramBytes: 5776426925 }], expiresAt: null },
+        ],
+        info: INFO_2CARD,
+        caps: (model) => { asked.push(model); return model.includes("embedding") ? ["tools", "thinking", "embedding"] : ["completion", "tools"]; },
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 20 && !w.shadow.querySelector(".vram-embed"); i++) { await w.flush(); await new Promise((r) => setTimeout(r, 120)); }
+
+    const rowFor = (name) => [...w.shadow.querySelectorAll(".vram-row")].find((r) => r.textContent.includes(name));
+    assert.ok(rowFor("qwen3-embedding:0.6b").querySelector(".vram-embed"), "the embedder says what it is");
+    assert.ok(!rowFor("qwen3.8:27b").querySelector(".vram-embed"), "…and the chat model doesn't claim to be one");
+    // "embedding" arrives ALONGSIDE tools/thinking on a real capture — the badge is about that one capability,
+    // not about the absence of the others.
+    assert.match(rowFor("qwen3-embedding:0.6b").querySelector(".vram-embed .tt-pop").textContent, /doesn't chat/);
+
+    // Asked once per model, not once per poll: the panel re-renders every two seconds.
+    const before = asked.length;
+    for (let i = 0; i < 4; i++) await w.flush();
+    assert.equal(asked.length, before, "capabilities are asked for once and kept");
+
+    // And it evicts through the same path as any other resident model — verified against the live box, where
+    // /api/generate with keep_alive:0 unloads an embedding model (done_reason "unload").
+    rowFor("qwen3-embedding:0.6b").querySelector(".vram-x").click();
+    await w.flush();
+    assert.deepEqual(w.unloadCalls.at(-1), { model: "qwen3-embedding:0.6b" }, "the row's ✕ evicts the embedder");
+});

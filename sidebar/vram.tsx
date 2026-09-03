@@ -252,6 +252,26 @@ export function ModelStatusDot({ model, inFlight }: { model: string; inFlight: b
 /** The facts about one resident model: context window and keep-alive TTL, each with its explanation. Shared
  *  by the legend row and the chart's hover tooltip so the two can never drift — a badge added here appears in
  *  both placements, which is the whole reason this isn't inlined twice. */
+// What each resident model can DO, by name. /api/ps says nothing about a model's role, so an embedding model
+// sits in the list looking exactly like a chat model — and one of those is 5.8 GiB of a card you were trying
+// to account for. /api/show knows (`capabilities` includes "embedding"), so ask ONCE per model and keep it:
+// capabilities don't change while a model is loaded, and the panel re-renders every two seconds.
+export const modelCaps = signal<Record<string, string[] | null>>({});
+const capsAsked = new Set<string>();
+export function probeCaps(model: string): void {
+    if (capsAsked.has(model)) return;
+    capsAsked.add(model);
+    try {
+        chrome.runtime.sendMessage({ type: "MODEL_CAPS", payload: { model } }, (resp: any) => {
+            if (chrome.runtime.lastError || !resp || resp.error) return;   // unknown, never "no"
+            modelCaps.value = { ...modelCaps.value, [model]: Array.isArray(resp.data) ? resp.data : null };
+        });
+    } catch { /* no runtime (tests) */ }
+}
+/** Only a POSITIVE answer counts: a cloud model or an old Ollama reports nothing, and "unknown" must not be
+ *  rendered as a claim either way. */
+export const isEmbedding = (model: string): boolean => !!modelCaps.value[model]?.includes("embedding");
+
 export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean }) {
     const ttl = fmtTTL(m.expiresAt);
     // Only the row's copy has its own tooltips to defer to; the chart tip renders these as plain text.
@@ -260,6 +280,11 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
         : {};
     return (
         <>
+            {isEmbedding(m.model) ? (
+                <span class={tips ? "tt vram-embed" : "vram-embed"} {...yieldTip}>embed
+                    {tips ? <span class="tt-pop left above" role="tooltip">An EMBEDDING model — it turns text into vectors for search and retrieval; it doesn't chat. It holds its VRAM like any other resident model, and evicts the same way.</span> : null}
+                </span>
+            ) : null}
             {m.contextLength ? (
                 <span class={tips ? "tt vram-ctx" : "vram-ctx"} {...yieldTip}>{fmtCtx(m.contextLength)}
                     {tips ? <span class="tt-pop left above" role="tooltip">Loaded with a {m.contextLength.toLocaleString()}-token context window. Ollama preallocates the KV cache for the FULL window, even when your prompts are short. Load with a smaller <code>num_ctx</code> to reclaim it.</span> : null}
@@ -559,6 +584,8 @@ export function VramPanel() {
     })();
     // Restore the saved view once capacity is known (a layout can only be validated against a real box).
     useEffect(() => { if (latestSample?.capacity && !layout.value) restoreLayout(latestSample); }, [capacity.value]);
+    // Ask what each resident model IS, once per name (see probeCaps).
+    useEffect(() => { for (const m of loaded || []) probeCaps(m.model); }, [loaded]);
     useEffect(() => {
         if (!loaded) return;
         const snap: Record<string, number> = {};
