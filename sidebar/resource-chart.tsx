@@ -12,13 +12,13 @@
 import { useMemo, useRef, useState, useLayoutEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    placeEvents, laneRows, eventsIn, lineageOf, type ResourceEvent, type EventPlacement,
+    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, type ResourceEvent, type EventPlacement,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS } from "./vram";
-import { loadedModels, resWindowS, view } from "./store";
+import { loadedModels, resWindowS, view, zoomRange, brush } from "./store";
 import { scrollToStepSeq } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
 import { signal } from "@preact/signals";
@@ -165,6 +165,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 </span>
             </div>
             <div class="rc-plot"
+                onPointerDown={startBrush(runs)}
                 onPointerMove={trackCursor(scope)}
                 onPointerLeave={() => { hoverAt.value = null; hoverModel.value = null; eventHover.value = null; }}>
                 {runs.map((run, i) => (
@@ -184,6 +185,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                         ))}
                     </div>
                 ))}
+                <BrushOverlay />
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
                     title={soft.label} /> : null}
                 <BandTip bands={bands} history={samples.map(bandsOf)} ceiling={ceiling} scope={scope} />
@@ -264,7 +266,13 @@ function PoolTip({ latest }: { latest: ResourceSample }) {
                 <span class="rc-tip-size">{formatShare(used, h.ceiling)}</span></div>
             {consumers.length
                 ? consumers.map((c) => (
-                    <div class="rc-tip-line rc-tip-dim" key={c.label}><span>{c.label}</span>
+                    <div class="rc-tip-line rc-tip-dim" key={c.label}>
+                        <span class="rc-tip-consumer">
+                            {/* A model's own dot, the same one its row carries. The residual gets none: it is
+                                not a model, and a dot would say it was. */}
+                            {c.model ? <i class="rc-tip-dot" style={{ background: colorFor(c.model) }} /> : null}
+                            {c.label}
+                        </span>
                         {/* Its own share of THIS pool: the question a per-consumer line is asked is "how much
                             of the card is this", which bytes alone only answer after arithmetic. */}
                         <span>{formatBytes(c.bytes)} <span class="rc-tip-pct">{percentOf(c.bytes, h.ceiling)}</span></span></div>
@@ -382,8 +390,10 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
                 </span>
             </div>
             <div class="rc-plot"
+                onPointerDown={startBrush(runs)}
                 onPointerMove={trackCursor("overlay")}
                 onPointerLeave={() => { hoverAt.value = null; leavePool(); }}>
+                <BrushOverlay />
                 <PoolTip latest={latest} />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
@@ -475,6 +485,45 @@ function phaseGradient(phases: { kind: string; until: number }[], from: number, 
     }
     return `linear-gradient(to right, ${stops.join(", ")})`;
 }
+
+/** The selection, mirrored. Every track draws the same fractions, so a drag on ONE plot is visibly a drag on
+ *  the whole chart — the ranges only mean anything compared across pools. */
+function BrushOverlay() {
+    const b = brush.value;
+    if (!b) return null;
+    const from = Math.min(b.from, b.to), to = Math.max(b.from, b.to);
+    return <div class="rc-brush" style={{ left: `${from * 100}%`, width: `${Math.max(0, to - from) * 100}%` }} />;
+}
+
+/** Drag across a plot to select a time range (and release to apply it). The fractions are mapped back to TIME
+ *  through the same segmented geometry events are placed with — the axis is not linear, so a range read off
+ *  the pixels alone would select a different stretch than the one under the pointer. */
+const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
+    if (e.button !== 0) return;
+    const el = (e.currentTarget as HTMLElement);
+    const box = el.getBoundingClientRect();
+    const frac = (x: number) => Math.min(1, Math.max(0, (x - box.left) / Math.max(1, box.width)));
+    const start = frac(e.clientX);
+    let moved = false;
+    brush.value = { from: start, to: start };
+    const move = (ev: PointerEvent) => {
+        if (ev.buttons === 0) return up(ev);
+        moved = true;
+        brush.value = { from: start, to: frac(ev.clientX) };
+    };
+    const up = (ev: PointerEvent) => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        const end = frac(ev.clientX);
+        brush.value = null;
+        // A CLICK is not a selection: without this every click on the chart would zoom to an instant.
+        if (!moved || Math.abs(end - start) < 0.01) return;
+        const a = timeAtFraction(runs, Math.min(start, end)), b = timeAtFraction(runs, Math.max(start, end));
+        if (a != null && b != null && b > a) zoomRange.value = { from: a, to: b };
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+};
 
 /** One event's identity across surfaces: the same eviction is drawn in every track, so hovering it anywhere
  *  must highlight it everywhere. Its time and what it was are enough to identify it. */
@@ -597,11 +646,14 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     // none. Backfill the current one rather than dropping them: capacity is slow-moving (a card doesn't change
     // size), and the alternative is a panel that renders nothing for the first two seconds every time.
     const windowed = useMemo(() => {
+        // A zoom REPLACES the rolling window: you asked for a stretch, so the panel stops sliding away from it.
+        const z = zoomRange.value;
+        if (z) return samples.filter((s) => s.t >= z.from && s.t <= z.to);
         const secs = resWindowS.value;
         if (!secs) return samples;
         const cutoff = Date.now() - secs * 1000;
         return samples.filter((s) => s.t >= cutoff);
-    }, [samples, resWindowS.value]);
+    }, [samples, resWindowS.value, zoomRange.value]);
     const filled = useMemo(() => windowed.map((s) => (s.capacity ? s : { ...s, capacity })), [windowed, capacity]);
     const latest = filled.at(-1);
     if (!latest?.capacity) return null;

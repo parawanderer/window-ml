@@ -781,3 +781,64 @@ test("resource panel: the event lane draws phased blocks, dims by lineage, and c
         await fake.stop();
     }
 });
+
+// Drag across a plot to select a time range, Grafana-style. Two things only a real browser can check: that
+// the selection is MIRRORED into every track while it is being drawn (the ranges only mean anything compared
+// across pools), and that the drag maps back to the right stretch of TIME through a segmented axis.
+test("resource panel: drag selects a range, mirrored across every track, Esc leaves it", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.5:35b", 22 * GiB, 1)]);
+        await seedStacked(ext);   // three tracks, so mirroring has something to mirror into
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBe(3);
+        await sleep(9000);   // a window worth selecting inside
+
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        const y = plot.y + plot.height / 2;
+        await page.mouse.move(plot.x + plot.width * 0.3, y);
+        await page.mouse.down();
+        await page.mouse.move(plot.x + plot.width * 0.6, y, { steps: 8 });
+        await sleep(200);
+
+        // MID-DRAG: every track shows the same selection, not just the one under the pointer.
+        const mid = await frame.locator(".rc-brush").evaluateAll((els) => els.map((e) => {
+            const r = e.getBoundingClientRect(); const p = e.parentElement.getBoundingClientRect();
+            return { from: (r.x - p.x) / p.width, w: r.width / p.width };
+        }));
+        expect(mid.length, "the selection is drawn in every track").toBe(3);
+        for (const m of mid) {
+            expect(Math.abs(m.from - 0.3), `mirrored at the same place (${JSON.stringify(mid)})`).toBeLessThan(0.03);
+            expect(Math.abs(m.w - 0.3), "…and the same width").toBeLessThan(0.03);
+        }
+
+        await page.mouse.up();
+        await sleep(400);
+        // Released: the brush is gone and the panel is showing the selected stretch instead of the rolling
+        // window, with a way out.
+        expect(await frame.locator(".rc-brush").count()).toBe(0);
+        const chip = frame.locator(".vram-zoom");
+        await expect(chip).toBeVisible();
+        // The range is the ~30% of the window that was dragged over, not the whole thing.
+        expect(await chip.textContent()).toMatch(/\d+s|\dm/);
+
+        // Esc goes back to live — a zoom you cannot leave is a trap.
+        await page.keyboard.press("Escape");
+        await sleep(300);
+        expect(await frame.locator(".vram-zoom").count()).toBe(0);
+
+        // And a plain CLICK is not a selection: without that guard every click on the chart zooms to an instant.
+        await page.mouse.click(plot.x + plot.width * 0.5, y);
+        await sleep(300);
+        expect(await frame.locator(".vram-zoom").count()).toBe(0);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});

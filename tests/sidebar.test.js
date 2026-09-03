@@ -6970,3 +6970,28 @@ test("event lane: the tooltip's model line carries the model's colour", async ()
     // The tool half is not a model, so it gets no dot: one would imply it is.
     assert.equal(tip.querySelectorAll(".rc-tip-dot").length, 1);
 });
+
+// The pool tip lists what is resident, so each MODEL there carries its own dot — the same colour its row
+// uses. The residual gets none: it is not a model, and a dot would say it was.
+test("pool tooltip: each model consumer carries its colour, the residual doesn't", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "qwen3.5:35b", vramGB: 22, vramBytes: 22 * 1024 ** 3, sizeBytes: 22 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 22 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+    const key = w.shadow.querySelector(".rc-legend .rc-key");
+    key.dispatchEvent(new w.window.MouseEvent("pointerenter", {}));
+    await w.flush();
+
+    const tip = w.shadow.querySelector(".rc-tip-pool");
+    const modelLine = [...tip.querySelectorAll(".rc-tip-line")].find((l) => l.textContent.includes("qwen3.5:35b"));
+    assert.ok(modelLine.querySelector(".rc-tip-dot"), "the model consumer has a dot");
+    assert.equal(modelLine.querySelector(".rc-tip-dot").getAttribute("style"),
+        w.shadow.querySelector(".vram-row .vram-dot").getAttribute("style"), "…in the colour its row uses");
+    const residual = [...tip.querySelectorAll(".rc-tip-line")].find((l) => /driver overhead|unattributed/.test(l.textContent));
+    if (residual) assert.equal(residual.querySelector(".rc-tip-dot"), null, "the residual is not a model");
+});

@@ -148,6 +148,7 @@ const scriptRun = (page, spanMs) => page.evaluate((span) => {
     post({ kind: "agent-step", id: hash, ts: at(0.46), save: false, session: { hash, turn: 1 },
            step: 1, seq: 1, tool: "exec", toolMs: 1200,
            arguments: { js: "document.title" }, result: "ok",
+           renderIn: { type: "code", lang: "javascript", code: "document.title", format: true },
            usage: { promptTokens: 2400, completionTokens: 90, totalTokens: 2490, genMs: 2600,
                     loadMs: Math.round(span * 0.46) } });
     // Step 2: resident now, so the cost is generation + a slow tool — and it DELEGATED: a vision reader ran
@@ -155,6 +156,16 @@ const scriptRun = (page, spanMs) => page.evaluate((span) => {
     post({ kind: "agent-step", id: hash, ts: at(0.35), save: false, session: { hash, turn: 2 },
            step: 2, seq: 2, tool: "python_exec", toolMs: 5200,
            arguments: { code: "df.describe()" }, result: "ok",
+           // The RENDER descriptors a real python_exec returns. Without them the step falls back to raw args
+           // and a bare result — which is what the sidebar does when a tool renders nothing, and made the
+           // demo look like the notebook cell was broken rather than absent.
+           renderIn: { type: "python-in", mode: "readonly", source: "df.describe()",
+                       tables: [{ name: "df", source: "#sales", kind: "dom",
+                                  df: { columns: ["Rep", "Q1", "Q2"],
+                                        rows: [["Gia", 320, 530], ["Kim", 410, 400], ["Ada", 275, 610]] } }] },
+           renderOut: { type: "python-out", stdout: "count    3.000000\nmean   513.333333\nstd    105.4",
+                        df: { columns: ["", "Q1", "Q2"],
+                              rows: [["count", 3, 3], ["mean", 335, 513.33], ["std", 68.4, 105.4]] } },
            usage: { promptTokens: 3100, completionTokens: 210, totalTokens: 3310, genMs: 2100, loadMs: 40 },
            subUsage: { calls: 2, prompt: 1600, completion: 60,
                        byModel: [{ model: "minicpm-v:8b", prompt: 1600, completion: 60, calls: 2 }],
@@ -165,6 +176,8 @@ const scriptRun = (page, spanMs) => page.evaluate((span) => {
     post({ kind: "agent-step", id: hash, ts: at(0.04), save: false, session: { hash, turn: 3 },
            step: 3, seq: 3, tool: "exec", toolMs: 700, approveMs: 6000, approval: "user",
            arguments: { js: "document.querySelectorAll('tr').length" }, result: "41",
+           renderIn: { type: "code", lang: "javascript", code: "document.querySelectorAll('tr').length", format: true },
+           renderOut: { type: "keyval", pairs: [["value", "41"]] },
            usage: { promptTokens: 3300, completionTokens: 45, totalTokens: 3345, genMs: 1400, loadMs: 30 } });
     post({ kind: "agent-result", id: hash, ts: at(0.02), save: false, session: { hash, turn: 3 },
            summary: "done", steps: 3, hitCap: false });

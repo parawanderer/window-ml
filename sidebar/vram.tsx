@@ -13,7 +13,7 @@ import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
 import { useTipPlacement } from "./use-tip";
-import { VRAMH_KEY, vramH, resWindowS } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, zoomRange } from "./store";
 import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
 import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, type ResourceEvent, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
@@ -292,6 +292,12 @@ export function costOf(model: string): RunStats | null {
     return usageByModel([...sessionMap.values()] as UsageSource[])[model] ?? null;
 }
 
+/** How long a selected range is, for the chip that offers to leave it. */
+export const zoomSpan = (z: { from: number; to: number }): string => {
+    const s = Math.max(0, Math.round((z.to - z.from) / 1000));
+    return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+};
+
 /** Everything that happened this browsing session, on the machine's timeline: generations, tool steps, model
  *  loads (from the sessions), and evictions (from the samples themselves, since nothing else reports them).
  *  Recomputed per render for the same reason the cost ledger is — the session map IS the record. */
@@ -350,12 +356,14 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
 // quietly disagree with the chart moving underneath it.
 export const poolHover = signal<{ id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] } | null>(null);
 /** What a hovered pool holds RIGHT NOW: total in use, and each consumer that has any of it. */
-export function poolFacts(bands: Band[]): { used: number; consumers: { label: string; bytes: number }[] } {
+export function poolFacts(bands: Band[]): { used: number; consumers: { label: string; bytes: number; model?: string }[] } {
     return {
         used: bands.filter((b) => b.kind !== "free").reduce((n, b) => n + b.bytes, 0),
         // Including the residual, which is most of what a nearly-idle card holds and is the thing a reader
-        // would otherwise go looking for a process to explain.
-        consumers: bands.filter((b) => b.kind !== "free" && b.bytes > 0).map((b) => ({ label: b.label, bytes: b.bytes })),
+        // would otherwise go looking for a process to explain. `model` rides along so the tip can carry each
+        // consumer's own colour — the residual has none, because it is not a model.
+        consumers: bands.filter((b) => b.kind !== "free" && b.bytes > 0)
+            .map((b) => ({ label: b.label, bytes: b.bytes, ...(b.model ? { model: b.model } : {}) })),
     };
 }
 
@@ -622,6 +630,13 @@ export function VramPanel() {
         if (el.getBoundingClientRect().height < floor - 1) easeVramH(floor);
     };
     useEffect(correct);
+    // Esc leaves the zoom. Bound while the panel is open, on the document, because the pointer may be
+    // anywhere by the time you want out.
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && zoomRange.value) zoomRange.value = null; };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, []);
     // The panel already ticks once a second (the TTL countdowns); that is also what notices a drag whose
     // release never arrived, so a missed pointerup self-heals within a second instead of wedging the panel.
     useEffect(() => { const id = setInterval(correct, 1000); return () => clearInterval(id); }, [key]);
@@ -751,6 +766,14 @@ export function VramPanel() {
                             {customTracks.value ? <option value="custom">Custom</option> : null}
                         </select>
                     </>
+                ) : null}
+                {/* What the drag selected, and the way out of it. Esc does the same — a zoom you can't leave is
+                    a trap, and the panel otherwise keeps showing a stretch that scrolled into the past. */}
+                {zoomRange.value ? (
+                    <button class="tt vram-zoom" onClick={() => (zoomRange.value = null)}>
+                        {zoomSpan(zoomRange.value)} ✕
+                        <span class="tt-pop wrap" role="tooltip">Showing the range you selected instead of the rolling window. Click, or press Esc, to go back to live.</span>
+                    </button>
                 ) : null}
                 {rows.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
                 {/* Last in the row: the picker is what you reach for, the editor is the rarer follow-up. */}

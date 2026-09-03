@@ -611,3 +611,32 @@ test("lineageOf: an event, what spawned it, and what it spawned", () => {
     // Nothing hovered → nothing lit, which is what leaves the lane undimmed at rest.
     assert.equal(M.lineageOf(evs, undefined).size, 0);
 });
+
+// Turning a drag into a time range is the INVERSE of placing an event: the plot is segments weighted by
+// sample count, so a fraction is spent across them in those proportions and interpolated inside the one it
+// lands in. Getting this wrong makes a zoom select a different stretch than the one you dragged over.
+test("timeAtFraction: the inverse of placeEvents, across weighted segments", () => {
+    // Two runs: four samples over 3s, then two samples over 1s after a gap. Weights 4 and 2 → 2/3 and 1/3.
+    const runs = [
+        [{ t: 1000 }, { t: 2000 }, { t: 3000 }, { t: 4000 }],
+        [{ t: 10_000 }, { t: 11_000 }],
+    ];
+    assert.equal(M.timeAtFraction(runs, 0), 1000, "the left edge is the first sample");
+    assert.equal(M.timeAtFraction(runs, 1), 11_000, "the right edge is the last");
+    // A third of the way is halfway through the FIRST segment (which owns two thirds of the width).
+    assert.equal(M.timeAtFraction(runs, 1 / 3), 2500);
+    // AT the boundary between segments the answer is the last measured moment before the gap, never a time
+    // interpolated across it — nothing was measured there, so there is no honest value inside it.
+    assert.equal(M.timeAtFraction(runs, 2 / 3), 4000);
+    assert.equal(M.timeAtFraction(runs, 0.7), 10_100, "past it, inside the second segment");
+    assert.equal(M.timeAtFraction(runs, 5 / 6), 10_500);
+    // It round-trips with placeEvents: an event placed at a fraction reads back as its own time.
+    const ev = { t: 2500, kind: "note", label: "x" };
+    const [p] = M.placeEvents(runs, [ev]);
+    const overall = (p.run === 0 ? 0 : 2 / 3) + p.from * (p.run === 0 ? 2 / 3 : 1 / 3);
+    assert.ok(Math.abs(M.timeAtFraction(runs, overall) - 2500) < 1);
+    // Out of range clamps rather than extrapolating into time that was never on screen.
+    assert.equal(M.timeAtFraction(runs, -3), 1000);
+    assert.equal(M.timeAtFraction(runs, 9), 11_000);
+    assert.equal(M.timeAtFraction([], 0.5), null, "no samples → no answer, not a guess");
+});

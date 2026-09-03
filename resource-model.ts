@@ -570,7 +570,31 @@ export function residencyEvents(samples: ResourceSample[], knownLoads: ResourceE
     return out;
 }
 
-/** An event's whole lineage: itself, everything it descends from, and everything descended from it. Hovering
+/** The TIME at a fraction across the whole plot — the inverse of `placeEvents`, for turning a drag into a
+ *  time range. The plot is segments laid out with flex weights proportional to their sample counts, so the
+ *  fraction is spent across the segments in those proportions and then interpolated INSIDE the one it lands
+ *  in. A fraction landing in a gap between segments resolves to that gap's near edge: nothing was measured
+ *  there, so the honest answer is the last moment that was. */
+export function timeAtFraction(runs: { t: number }[][], frac: number): number | null {
+    const live = runs.filter((r) => r.length > 0);
+    if (!live.length) return null;
+    const weights = live.map((r) => Math.max(1, r.length));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let acc = 0;
+    const f = Math.min(1, Math.max(0, frac));
+    for (let i = 0; i < live.length; i++) {
+        const share = weights[i] / total;
+        if (f <= acc + share || i === live.length - 1) {
+            const within = share > 0 ? Math.min(1, Math.max(0, (f - acc) / share)) : 0;
+            const from = live[i][0].t, to = live[i].at(-1)!.t;
+            return from + (to - from) * within;
+        }
+        acc += share;
+    }
+    return live.at(-1)!.at(-1)!.t;
+}
+
+/** An event's whole lineage:/** An event's whole lineage: itself, everything it descends from, and everything descended from it. Hovering
  *  a sub-call should leave the step that spawned it and the run that contains it lit — the relationship is
  *  what makes the bar mean anything — and hovering the step should keep what it spawned, which is the same
  *  relationship read the other way. */

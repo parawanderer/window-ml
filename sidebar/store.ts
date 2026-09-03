@@ -91,6 +91,12 @@ export const showStatsTps = signal(false);     // DevTools run-stats bar: genera
 export const OUTMAX_DEFAULT = 260;             // px — roughly 14 lines; enough to read, small enough not to bury the page
 export const showOutTimes = signal(true);      // render the timestamp gutter on streamed output (default on)
 export const vramH = signal(0);   // px; 0 = size to content (the default)
+// A drag-selected time range on the resource chart (Grafana-style), or null for "the whole window". Held in
+// the store rather than the component because EVERY track and the event lane must draw the same selection —
+// while it is being drawn, and after.
+export const zoomRange = signal<{ from: number; to: number } | null>(null);
+/** The drag in progress, as fractions of the plot's width, so every track can mirror it live. */
+export const brush = signal<{ from: number; to: number } | null>(null);
 export const resWindowS = signal(RESWIN_DEFAULT);  // seconds of history the resource chart shows (Settings → Appearance)
 export const outMaxH = signal(OUTMAX_DEFAULT); // max height of a tool output cell (Settings → Appearance); 0 = uncapped
 export const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync

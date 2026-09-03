@@ -215,6 +215,15 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* DASHED, not solid: an instant is an annotation on the trace, and a solid rule reads as part of the chart
    (a ceiling, an axis) rather than as something that happened. The wide box is the hit area; the visible line
    is the ::before inside it. */
+/* The drag selection, drawn in every track at once: the ranges only mean anything compared across pools. */
+.rc-brush { position: absolute; top: 0; bottom: 0; z-index: 4; pointer-events: none;
+            background: color-mix(in srgb, var(--accent) 18%, transparent);
+            border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); }
+.rc-plot { cursor: crosshair; }
+/* The way out of a zoom, beside the view picker. */
+.vram-zoom { background: var(--panel-2); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px;
+             padding: 2px 7px; font-size: 0.8em; cursor: pointer; font-variant-numeric: tabular-nums; }
+.vram-zoom:hover { background: var(--panel-2-hover); }
 .rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: help; }
 .rc-rule::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;
     background: repeating-linear-gradient(to bottom, var(--fg-dim) 0 3px, transparent 3px 6px); }
@@ -252,6 +261,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip-event .rc-tip-line { display: flex; align-items: center; gap: 5px; }
 .rc-tip-event .rc-tip-size { margin-left: auto; }
 .rc-tip-rule { height: 1px; margin: 2px 0; background: var(--border); }
+.rc-tip-consumer { display: inline-flex; align-items: center; gap: 5px; }
 .rc-tip-pct { opacity: .7; font-variant-numeric: tabular-nums; }
 .rc-tip-gone { padding: 0 4px; font-size: 0.9em; color: var(--fg-faint); border: 1px solid var(--border); border-radius: 3px; }
 .rc-tip-dim { color: var(--fg-faint); }
