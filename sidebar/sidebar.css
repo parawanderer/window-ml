@@ -60,8 +60,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Scrolls only when a height has been DRAGGED — otherwise it sizes to content and stays a plain container,
    so nothing inside it is clipped. A scroll container clips its children's tooltips, which is why the badges'
    pops open upward (.above): the rows sit at the bottom, where the room is above them. */
+/* The bottom edge is the GRIP, which carries its own 7px — a padding under it as well just reads as the panel
+   not knowing where it ends. */
 .vram { flex: 0 0 auto; position: relative; border-bottom: 1px solid var(--border); background: var(--panel);
-        padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 5px; }
+        padding: 8px 12px 3px; display: flex; flex-direction: column; gap: 5px; }
 /* Belt and braces with the drag's own clamp: even if a height arrives from storage that predates the floor
    (or from a narrower panel), the box can never render smaller than its content needs, and what does not fit
    scrolls rather than spilling over the session list below. */
@@ -111,6 +113,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-editor-wrap > * { overflow: hidden; min-height: 0;
                       transition: margin-block .22s cubic-bezier(.22,.61,.36,1), padding-block .22s cubic-bezier(.22,.61,.36,1), border-block-width .22s cubic-bezier(.22,.61,.36,1); }
 .rc-editor-wrap:not(.open) > * { margin-block: 0; padding-block: 0; border-block-width: 0; }
+/* A zero-height item still costs the column's gap on BOTH sides, so a closed editor left a double gap between
+   the header and the plot. Cancel one of them, on the same easing so opening doesn't jump. */
+.rc-editor-wrap { margin-bottom: 0; transition: grid-template-rows .22s cubic-bezier(.22,.61,.36,1), opacity .18s ease, margin-bottom .22s cubic-bezier(.22,.61,.36,1); }
+.rc-editor-wrap:not(.open) { margin-bottom: -5px; }
 @media (prefers-reduced-motion: reduce) { .rc-editor-wrap { transition: none; } }
 .rc-editor { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; padding: 6px;
              background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.78em; }
@@ -133,7 +139,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Grows into a dragged height, but NEVER shrinks below its content: `min-height: 0` let it be squeezed past
    what fits, and a flex item smaller than its content overflows its box and lands ON TOP of the rows below.
    Too little room is the panel's problem to solve by scrolling, not the chart's by overlapping. */
-.rc { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; flex: 1 1 auto; }
+/* No top margin: the column's own gap already separates it from the header, and the two together read as a
+   band of nothing. */
+.rc { display: flex; flex-direction: column; gap: 8px; margin: 0 0 2px; flex: 1 1 auto; }
 /* One rule, not two: a second `.rc-track {` later in the file made the first look like it carried the flex
    sizing when it didn't. `position: relative` so a tip escaping the plot is still contained by something sane. */
 .rc-track { position: relative; display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; }

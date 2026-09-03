@@ -445,3 +445,51 @@ test("resource panel: a manual drag always wins over a programmatic resize", asy
         await fake.stop();
     }
 });
+
+// The track editor stays MOUNTED while closed so it can animate both ways — which cost a strip of empty panel
+// between the header and the plot, because min-height:0 zeroes only the content box and a zero-height flex
+// item still takes the column's gap on both sides. jsdom has no layout, so the slack is only visible here.
+test("resource panel: a closed editor takes no space, an open one takes its own", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
+
+        const gap = async () => {
+            const head = await frame.locator(".vram-head").boundingBox();
+            const plot = await frame.locator(".rc").boundingBox();
+            return plot.y - (head.y + head.height);
+        };
+        // One gap, not two — anything more reads as the panel having lost something.
+        expect(await gap()).toBeLessThanOrEqual(8);
+        expect(await frame.locator(".rc-editor-wrap").boundingBox().then((b) => b.height)).toBe(0);
+
+        // Opening it costs real height, and the panel grows rather than eating the plot.
+        const before = (await frame.locator(".vram").boundingBox()).height;
+        await frame.locator('[aria-label="Edit tracks"]').click();
+        await expect.poll(async () => (await frame.locator(".rc-editor-wrap").boundingBox()).height, { timeout: 5000 })
+            .toBeGreaterThan(20);
+        expect((await frame.locator(".vram").boundingBox()).height).toBeGreaterThan(before);
+
+        // …and closing it gives every pixel back.
+        await frame.locator('[aria-label="Edit tracks"]').click();
+        await expect.poll(async () => (await frame.locator(".rc-editor-wrap").boundingBox()).height, { timeout: 5000 }).toBe(0);
+        expect(await gap()).toBeLessThanOrEqual(8);
+
+        // Nothing below the last row but the grip: the panel's bottom edge IS the handle.
+        const rows = frame.locator(".vram-row");
+        const last = await rows.nth((await rows.count()) - 1).boundingBox();
+        const panel = await frame.locator(".vram").boundingBox();
+        expect(panel.y + panel.height - (last.y + last.height)).toBeLessThanOrEqual(20);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
