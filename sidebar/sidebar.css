@@ -249,6 +249,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
   border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; line-height: 1.35; cursor: help; }
 /* Says what a resident model IS. /api/ps doesn't distinguish an embedding model from a chat one, and a 5.8 GiB
    embedder is a big share of a card to leave unexplained. */
+/* The cost line in a model tooltip: what it spent, under what it is holding. */
+.vram-cost { color: var(--fg-faint); font-size: 0.92em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rc-tip .vram-cost { flex-basis: 100%; }
 .vram-row.ghost { opacity: .55; }
 .vram-row.ghost .vram-name { text-decoration: none; }
 .ghost-dot { border: none; opacity: .8; }

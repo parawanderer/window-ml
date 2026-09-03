@@ -6707,3 +6707,50 @@ test("many GPUs: a lab node draws a track per card, and a split model is attribu
     for (const i of [0, 1, 2, 3]) assert.match(tip, new RegExp(`CUDA${i}`), `…naming CUDA${i}`);
     assert.match(tip, /RAM/, "…and the part that didn't fit on any card");
 });
+
+// Residency says what is LOADED. The other half of the question — was it worth the VRAM — is what the model
+// has cost this session, which the sessions already recorded and nothing was showing.
+test("model tooltips: carry what the model has cost, with the rate's basis said out loud", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "qwen3.8:27b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_2CARD,
+    });
+    // Two calls on that model: 300 tokens out over 6s of Ollama's OWN generation timing.
+    await w.dispatch(chatStart("s1", 0, "ask one"));
+    await w.dispatch(chatResult("s1", 0, "one", { model: "qwen3.8:27b",
+        usage: { promptTokens: 1000, completionTokens: 100, totalTokens: 1100, evalMs: 2000 } }));
+    await w.dispatch(chatStart("s1", 1, "ask two"));
+    await w.dispatch(chatResult("s1", 1, "two", { model: "qwen3.8:27b",
+        usage: { promptTokens: 1200, completionTokens: 200, totalTokens: 1400, evalMs: 4000 } }));
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    const row = w.shadow.querySelector(".vram-row");
+    row.dispatchEvent(new w.window.MouseEvent("pointerenter", {}));
+    row.dispatchEvent(new w.window.MouseEvent("pointermove", { clientX: 40, clientY: 40 }));
+    await w.flush();
+    const tip = w.shadow.querySelector(".vram-rowtip").textContent;
+    assert.match(tip, /2 calls/, "how many times it ran");
+    assert.match(tip, /2,200 in \/ 300 out/, "cumulative spend, in and out");
+    assert.match(tip, /50\.0 tok\/s/, "300 tokens over 6s of generation");
+    // The basis matters: a rate from Ollama's eval timing and one from wall clock (network and queue included)
+    // are different measurements, and a bare number would imply a precision it doesn't have.
+    assert.match(tip, /generation only/);
+
+    // A model with no calls this session says nothing rather than a row of zeroes.
+    w.setVram([{ model: "never-used:8b", vramGB: 5, vramBytes: 5 * 1024 ** 3, sizeBytes: 5 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 5 * 1024 ** 3 }], expiresAt: null }]);
+    for (let i = 0; i < 20; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 120));
+        if (w.shadow.querySelector(".vram-row")?.textContent.includes("never-used")) break;
+    }
+    const fresh = w.shadow.querySelector(".vram-row");
+    fresh.dispatchEvent(new w.window.MouseEvent("pointerenter", {}));
+    fresh.dispatchEvent(new w.window.MouseEvent("pointermove", { clientX: 40, clientY: 40 }));
+    await w.flush();
+    assert.doesNotMatch(w.shadow.querySelector(".vram-rowtip").textContent, /tok\/s|call/,
+        "a model that hasn't run reports nothing, not zeroes");
+});

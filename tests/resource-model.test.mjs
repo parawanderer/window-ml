@@ -496,3 +496,43 @@ test("eventsIn: a span counts when it OVERLAPS the window, an instant when it is
     assert.deepEqual(got, ["straddles the start", "inside", "straddles the end"],
         "membership is overlap for spans; clipping to the window is the renderer's job");
 });
+
+// The chart's x-axis is NOT linear in time: it is split into contiguous runs (a gap is a gap), each weighted
+// by its sample count. So an event is placed inside the run that contains it, and one that falls in a gap has
+// no x at all — putting it at the edge would claim it happened at a moment nothing was measured.
+test("placeEvents: inside the run that holds it, dropped when it falls in a gap", () => {
+    const runs = [
+        [{ t: 1000 }, { t: 2000 }, { t: 3000 }],     // 1s..3s
+        [{ t: 9000 }, { t: 10_000 }],                // 9s..10s, after a six-second gap
+    ];
+    const at = (label, t, until) => ({ t, until, kind: "note", label });
+    const got = M.placeEvents(runs, [
+        at("start of run 0", 1000),
+        at("middle of run 0", 2000),
+        at("in the gap", 5000),
+        at("in run 1", 9500),
+        at("span inside run 0", 1500, 2500),
+        at("span crossing the gap", 2000, 9500),
+    ]);
+    const by = Object.fromEntries(got.map((p) => [p.event.label, p]));
+    assert.equal(by["in the gap"], undefined, "nothing was measured then, so there is nowhere honest to draw it");
+    assert.equal(by["start of run 0"].run, 0);
+    assert.equal(by["start of run 0"].from, 0);
+    assert.equal(by["middle of run 0"].from, 0.5, "placed by TIME within its own run, not by sample index");
+    assert.equal(by["in run 1"].run, 1);
+    assert.equal(by["in run 1"].from, 0.5);
+    // An instant has zero width.
+    assert.equal(by["middle of run 0"].to, by["middle of run 0"].from);
+    // A span inside one run keeps both ends.
+    assert.deepEqual([by["span inside run 0"].from, by["span inside run 0"].to], [0.25, 0.75]);
+    assert.equal(by["span inside run 0"].clipped, false);
+    // One that runs past the end of its segment is clipped there and SAYS so — a load that ran while the panel
+    // was closed is real, and the honest drawing of it stops where the measurements stop.
+    assert.equal(by["span crossing the gap"].to, 1);
+    assert.equal(by["span crossing the gap"].clipped, true);
+});
+
+test("placeEvents: a run of one sample has no width to place within", () => {
+    const got = M.placeEvents([[{ t: 500 }]], [{ t: 500, kind: "note", label: "only" }]);
+    assert.equal(got[0].from, 0, "no division by zero, and no fabricated position");
+});

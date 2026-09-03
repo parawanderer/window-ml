@@ -525,6 +525,48 @@ export function segments(samples: ResourceSample[], maxGapMs: number = MAX_SAMPL
     return out;
 }
 
+/** Where an event sits on the chart's x-axis — which SEGMENT, and how far across it.
+ *
+ *  The axis is not linear in time. The plot is split into contiguous runs of samples (a gap is drawn as a
+ *  gap, never interpolated across), and each run is flex-weighted by how many samples it holds — so the same
+ *  number of pixels means different durations in different segments. An event therefore has to be placed
+ *  INSIDE the run that contains it, by time, and an event that falls in a gap has no x at all: nothing was
+ *  measured then, and putting it at the edge would claim it happened at a moment the chart can't speak for.
+ *
+ *  Spans are clipped to the run they start in. A span crossing a gap is a real thing (a load that ran while
+ *  the panel was closed), and the honest drawing of it ends where the measurements do. */
+export interface EventPlacement {
+    event: ResourceEvent;
+    /** Index into the runs array — which segment it is drawn in. */
+    run: number;
+    /** 0..1 across that run's own width. */
+    from: number;
+    /** 0..1; equals `from` for an instant. */
+    to: number;
+    /** The span continues past the end of this run (into a gap, or past the window). */
+    clipped: boolean;
+}
+
+/** Place events onto segmented runs. `runs` is what the chart draws: one array of samples per contiguous run,
+ *  in order. Events that fall entirely in a gap are DROPPED — see above. */
+export function placeEvents(runs: { t: number }[][], events: ResourceEvent[]): EventPlacement[] {
+    const spans = runs.map((r) => ({ from: r[0]?.t ?? 0, to: r.at(-1)?.t ?? 0 }));
+    const out: EventPlacement[] = [];
+    for (const e of events) {
+        const end = e.until ?? e.t;
+        // The run that CONTAINS the start, else the first run the event overlaps at all — a span that began
+        // during a gap still belongs to the segment it reaches.
+        let idx = spans.findIndex((r) => e.t >= r.from && e.t <= r.to);
+        if (idx < 0) idx = spans.findIndex((r) => end >= r.from && e.t <= r.to);
+        if (idx < 0) continue;   // entirely inside a gap (or outside every run): nothing measured, nothing drawn
+        const r = spans[idx];
+        const width = r.to - r.from;
+        const at = (t: number) => (width > 0 ? Math.min(1, Math.max(0, (t - r.from) / width)) : 0);
+        out.push({ event: e, run: idx, from: at(e.t), to: at(Math.min(end, r.to)), clipped: end > r.to });
+    }
+    return out;
+}
+
 /** An annotation on the time axis — a run starting, a model loading or being evicted, a context reload.
  *  Kept separate from the samples because events are instants while samples are a cadence, and because the
  *  event source (the debug bus) is independent of the poll. */

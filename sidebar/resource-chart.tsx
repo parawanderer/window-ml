@@ -16,7 +16,7 @@ import {
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
-import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts } from "./vram";
+import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts } from "./vram";
 import { loadedModels, resWindowS } from "./store";
 import { tipStyle } from "./tip";
 import { signal } from "@preact/signals";
@@ -202,6 +202,7 @@ function BandTip({ bands, history, ceiling }: { bands: Band[]; history: Band[][]
                 is still on the chart: this is history, not something resident now. */}
             {gone ? <span class="rc-tip-gone">evicted</span> : null}
             {m ? <ModelFacts m={m} tips={false} /> : null}
+            <CostFacts model={name} />
         </div>
     );
 }

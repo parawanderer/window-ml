@@ -14,6 +14,8 @@ import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
 import { tipStyle } from "./tip";
 import { VRAMH_KEY, vramH, resWindowS } from "./store";
+import { usageByModel, type UsageSource } from "./model-stats";
+import type { RunStats } from "../contract";
 import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
@@ -282,6 +284,28 @@ export function probeCaps(model: string): void {
  *  rendered as a claim either way. */
 export const isEmbedding = (model: string): boolean => !!modelCaps.value[model]?.includes("embedding");
 
+/** What this model has COST this browsing session, across every chat and run in the list. Recomputed from the
+ *  session map on each render rather than kept as its own accumulator: the map IS the record, and a second
+ *  copy is a second thing to keep true. `rev` is what makes it re-read (the map mutates in place). */
+export function costOf(model: string): RunStats | null {
+    void rev.value;
+    return usageByModel([...sessionMap.values()] as UsageSource[])[model] ?? null;
+}
+
+/** The cost line under a model's name: what it spent, and how fast — with the rate's BASIS said out loud,
+ *  since one from Ollama's own eval timings and one from wall clock (network and queue included) are not the
+ *  same measurement. */
+export function CostFacts({ model }: { model: string }) {
+    const c = costOf(model);
+    if (!c || !c.calls) return null;
+    return (
+        <div class="vram-cost">
+            {c.calls} call{c.calls === 1 ? "" : "s"} · {c.inTokens.toLocaleString()} in / {c.outTokens.toLocaleString()} out
+            {c.tokPerSec != null ? <> · {c.tokPerSec.toFixed(1)} tok/s <span class="rc-tip-pct">({c.genBasis === "eval" ? "generation only" : c.genBasis === "wall" ? "incl. network" : "mixed"})</span></> : null}
+        </div>
+    );
+}
+
 export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean }) {
     const ttl = fmtTTL(m.expiresAt);
     // Only the row's copy has its own tooltips to defer to; the chart tip renders these as plain text.
@@ -542,6 +566,8 @@ function RowTip({ sample }: { sample: ResourceSample | null }) {
             <div class="vram-rowtip-name"><i class="rc-tip-dot" style={{ background: colorFor(name) }} />{name}</div>
             {where ? <div class={isSplit(m) ? "vram-rowtip-split" : ""}>{isSplit(m) ? "split: " : "on "}{where}</div> : null}
             <div class="vram-rowtip-dim">{formatBytes((m.vramBytes || 0) + (m.ramBytes || 0))} resident</div>
+            {/* Residency answers "what is loaded"; this answers "and was it worth the VRAM". */}
+            <CostFacts model={name} />
         </div>
     );
 }
