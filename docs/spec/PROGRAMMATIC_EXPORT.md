@@ -67,7 +67,8 @@ that replay — so it is consumable without reimplementing our internals. Both c
     },
     "totals": { … },                   // derived, see below
     "messages": [ … ],                 // agent: says/answers interleaved. chat: turns
-    "steps":    [ … ]                  // agent only
+    "steps":    [ … ],                 // agent only
+    "events":   [ … ]                  // the timeline; derived, see below
   }
 }
 ```
@@ -108,6 +109,51 @@ Fields are the `AgentStep` (`sidebar/store.ts:37`) with transient UI state dropp
 `endedStep`. These describe a live view, not the run. A `pending` step never appears —
 only its DONE.
 
+### The timeline
+
+`session.events` is the resource panel's event lane, published: what ran, when, and for how
+long, as a flat list of spans and instants. It is derived from the step records above, using
+the same function the panel uses (`sidebar/model-stats.ts`), so the two cannot disagree.
+
+```jsonc
+{
+  "kind": "tool",               // run | gen | tool | embed | load | evict | error | note
+  "label": "exec",
+  "at": "2026-09-03T09:40:55.020Z",
+  "endedAt": "2026-09-03T09:40:58.220Z",   // absent → an instant
+  "durationMs": 3200,
+  "model": "gemma4:31b",
+  "id": "step:a1b2c3d4:11",     // opaque, unique within the document
+  "parent": "run:a1b2c3d4",     // the event that spawned it
+  "seq": 11,                    // the step it came from
+  "tool": "exec",
+  "phases": [                   // contiguous from `at`; only on a tool event
+    { "kind": "model", "ms": 900 },
+    { "kind": "wait",  "ms": 1500 },
+    { "kind": "tool",  "ms": 800 }
+  ],
+  "cost": { "inTokens": 10, "outTokens": 5, "tokPerSec": 6.25, "genBasis": "eval",
+            "evalMs": 800, "wallMs": 900 }
+}
+```
+
+It is published rather than left to each consumer because the arithmetic is easy to get
+subtly wrong, in the same three places every time:
+
+- **Spans run backwards.** A step's timestamp is when it FINISHED. Reconstructed forwards,
+  every bar sits one generation to the right of the work it describes.
+- **A tool step is one event with phases**, not three events. The model deciding, the human
+  at the approval gate and the tool running are three kinds of time inside one step, and the
+  wait is the step's wall clock but not the machine's work — frequently the largest part.
+- **A model load is its own event.** "The model was slow" and "the model wasn't there yet"
+  are different answers. Only real loads appear: a resident model reports a few ms of
+  bookkeeping on every call, and those are floored out.
+
+Delegated sub-calls carry `parent`, so a reader model's cost is attributable instead of
+hidden inside the step that spawned it. `evict` events are in the union because the panel
+draws them, but they are read off consecutive `/api/ps` polls — a fact about the box, not
+about a session — so they never appear in an export.
+
 ### Derived fields
 
 The agreed exception to "raw only". Three consumers immediately want these, and if the
@@ -117,6 +163,7 @@ format omits them each one recomputes them slightly differently and they stop ag
 - `session.totals` — `{ steps, turnsRun, tokensIn, tokensOut, subcallTokens, wallMs, byModel: { "<model>": { calls, tokensIn, tokensOut } } }`.
 - `session.outcome` — the flags above, gathered in one object rather than scattered as
   optional booleans.
+- `session.events` — the timeline, above.
 
 Everything else is verbatim. Nothing derived is *only* derived: the inputs stay present, so
 a consumer that disagrees with our arithmetic can redo it.
@@ -135,7 +182,9 @@ a consumer that disagrees with our arithmetic can redo it.
   present so consumers need no defaulting.
 - **Volatile fields**, for anyone diffing two runs: `exportedAt`, every `at` / `ts`,
   `durationMs`, `wallMs`, `streamMarks`, `hash`, and any tool token. A differ that ignores
-  these compares behaviour rather than timing.
+  these compares behaviour rather than timing. An event's `phases` and rate go with them; what
+  survives is the SHAPE of the timeline — which events, in what order, spawned by what, costing
+  how many tokens — which is the part worth diffing.
 
 ## Size
 

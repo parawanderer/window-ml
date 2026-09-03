@@ -176,6 +176,8 @@ export interface ExportSession {
     messages: ExportMessage[];
     /** The agent loop's steps, ordered by {@link ExportStep.seq}. Agent runs only. */
     steps?: ExportStep[];
+    /** The session's TIMELINE — what ran, when, and for how long. Derived; see {@link ExportEvent}. */
+    events?: ExportEvent[];
 }
 
 export interface ExportPage {
@@ -369,6 +371,92 @@ export interface ExportStep {
     subUsage?: SubcallUsage;
 }
 
+/* ------------------------------- timeline ------------------------------- */
+
+/**
+ * One thing that HAPPENED, on the wall clock: a run, a model call, a tool step, a delegated sub-call, a
+ * model being loaded.
+ *
+ * This is the session's timeline, and it is DERIVED — like {@link ExportOutcome} and {@link ExportTotals},
+ * and for the same reason. Every input is already elsewhere in the document, but the arithmetic that turns
+ * step records into spans is easy to get subtly wrong and easy to disagree about, so it is published rather
+ * than left to each consumer:
+ *
+ *  - A step's timestamp is when it FINISHED, so every span runs BACKWARDS from it. Reconstructed naively,
+ *    each bar sits one generation to the right of the work it describes.
+ *  - A tool step is ONE event with {@link ExportEvent.phases}, because the model deciding, the human at the
+ *    approval gate and the tool running are three different kinds of time inside one step. The wait is the
+ *    step's wall clock but not the machine's work, and it is frequently the largest part.
+ *  - A model LOAD is its own event rather than slow generation — the difference between "the model was
+ *    slow" and "the model wasn't there yet". Only real loads appear: a resident model reports a few ms of
+ *    bookkeeping on every call, which is floored out.
+ *  - Delegated sub-calls (a vision reader) are separate events carrying {@link ExportEvent.parent}, so a
+ *    different model's work is attributable instead of hidden inside the step that spawned it.
+ *
+ * The panel's own lane draws EVICTIONS too, read off consecutive `/api/ps` polls. Those are facts about the
+ * BOX rather than about a session — nothing in a session records them — so they are not exported here.
+ */
+export interface ExportEvent {
+    /**
+     * `run` the whole session · `gen` one model call · `tool` a tool step (with {@link ExportEvent.phases})
+     * · `embed` a delegated sub-call · `load` a model arriving in memory. The remaining kinds the panel
+     * models (`evict`, `error`, `note`) are not derivable from a session and do not appear in an export;
+     * they are listed so a consumer's switch is written against the whole set.
+     */
+    kind: "run" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
+    /** Human-readable, as the panel labels it — the model id for a generation, the tool name for a step. */
+    label: string;
+    /** When it BEGAN. Volatile. */
+    at: IsoTimestamp;
+    /** When it ended. Absent means an instant (a point on the timeline, not a span). Volatile. */
+    endedAt?: IsoTimestamp;
+    /** `endedAt - at`, which is the number a timeline is usually read for. Absent on an instant. Volatile. */
+    durationMs?: number;
+    /** The model that did the work, where one did. A sub-call names the READER, not the driver. */
+    model?: string;
+    /**
+     * This event's own id, and the event that SPAWNED it — a sub-call's parent is its step, a step's parent
+     * is the run. Following `parent` gives the lineage the panel lights up on hover.
+     *
+     * Opaque, and unique within this document only. They EMBED the session hash, which is volatile — pass
+     * strings through {@link canonicalizeText} before diffing, which handles it.
+     */
+    id?: string;
+    parent?: string;
+    /** The step this came from, matching {@link ExportStep.seq} — how a timeline event gets back to the
+     *  record that produced it. Absent on events that belong to the session as a whole. */
+    seq?: number;
+    /** The tool that ran, on a `tool` event. Same value as {@link ExportEvent.label}, named so a consumer
+     *  switching on `kind` need not know that. */
+    tool?: string;
+    /** A `tool` event's parts, in the order they happened and contiguous from {@link ExportEvent.at}.
+     *  Durations rather than absolute ends, since that is what they are read as. Volatile. */
+    phases?: ExportEventPhase[];
+    /** What it cost, on the kinds that spend tokens. */
+    cost?: ExportEventCost;
+}
+
+export interface ExportEventPhase {
+    /** `model` generating the call · `wait` a human at the approval gate · `tool` the call running. */
+    kind: "model" | "wait" | "tool";
+    ms: number;
+}
+
+export interface ExportEventCost {
+    inTokens: number;
+    outTokens: number;
+    /** Output tokens per second. Absent when nothing timed the call. Volatile. */
+    tokPerSec?: number;
+    /** Which clock {@link ExportEventCost.tokPerSec} came from: Ollama's own generation timing, our wall
+     *  clock, or a mix across several calls. A rate that silently mixed the two would imply a precision it
+     *  does not have. Absent alongside the rate. */
+    genBasis?: "eval" | "wall" | "mixed";
+    /** Ollama's generation-only time and our wall clock for the SAME call, when both are known. Their
+     *  difference is what the network and the queue cost, which no rate can recover. Volatile. */
+    evalMs?: number;
+    wallMs?: number;
+}
+
 /* ------------------------------- diffing ------------------------------- */
 
 /**
@@ -401,6 +489,15 @@ export const VOLATILE_FIELDS: readonly string[] = [
     "session.steps[].usage.genMs",
     "session.steps[].usage.evalMs",
     "session.steps[].usage.loadMs",
+    // The timeline is mostly clock: what survives stripping is the SHAPE of the run — which events, in
+    // what order, spawned by what, costing how many tokens — which is the behaviour worth diffing.
+    "session.events[].at",
+    "session.events[].endedAt",
+    "session.events[].durationMs",
+    "session.events[].phases",
+    "session.events[].cost.tokPerSec",
+    "session.events[].cost.evalMs",
+    "session.events[].cost.wallMs",
 ];
 
 /**
