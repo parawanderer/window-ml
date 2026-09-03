@@ -105,6 +105,18 @@ jobs:
       - run: npm ci
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
+      # The wheels the built dist/ needs for python_exec. Without them the extension loads but a python
+      # step dies with `No module named 'numpy'`, so python-stream.spec.mjs failed on every run — it does
+      # NOT self-skip the way the node CPython tests do, because a browser test cannot know why the
+      # sandbox is empty. Cached exactly as the `test` job caches it.
+      - name: Cache pyodide wheels
+        id: pyocache
+        uses: actions/cache@v4
+        with:
+          path: pyodide-wheels
+          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'python-env.ts') }}
+      - if: steps.pyocache.outputs.cache-hit != 'true'
+        run: npm run fetch-pyodide
       # `test:e2e` runs `pretest:e2e` (npm run build) first, so it exercises the built dist/. The harness is
       # headful by default (an MV3 service worker doesn't register under headless), so run it under xvfb.
       - name: Run E2E
