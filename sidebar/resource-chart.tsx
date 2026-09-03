@@ -364,7 +364,11 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
             </div>
             <div class="rc-legend">
                 {pools.map((p, pi) => (
-                    <span class={`rc-key tt${hoverModel.value && !p.bandsOf(latest).some((b) => b.model === hoverModel.value) ? " away" : ""}${allHidden(p) ? " off" : ""}`} key={p.id}
+                    // Dimmed from BOTH ends: hovering a model dims the pools it isn't on, and hovering a pool
+                    // (its line or its key) dims the other pools' keys — the legend is the list this selection
+                    // is made from, so leaving it lit while the chart and the rows both react is a half answer.
+                    <span class={`rc-key tt${(hoverModel.value && !p.bandsOf(latest).some((b) => b.model === hoverModel.value))
+                            || (hoverPool.value && hoverPool.value !== p.id) ? " away" : ""}${allHidden(p) ? " off" : ""}`} key={p.id}
                         onPointerEnter={() => enterPool(p)} onPointerLeave={() => leavePool()}>
                         <i class="rc-swatch" style={{ background: VRAM_COLORS[pi % VRAM_COLORS.length] }} />
                         {p.name} {pct(frac(latest, p))}

@@ -6426,3 +6426,37 @@ test("overview lines: the hit target never moves under the pointer", async () =>
     const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
     assert.match(css, /\.rc-line \{[^}]*pointer-events:\s*none/, "the visible line takes no pointer events");
 });
+
+// Hovering a pool dims the model rows and the other lines, but the legend it was selected FROM stayed fully
+// lit — a half answer to "which one am I pointing at". It dims from both ends now.
+test("overview legend: hovering one pool's line dims every other pool's key", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "big", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 20 && !w.shadow.querySelector(".rc-hit"); i++) { await w.flush(); await new Promise((r) => setTimeout(r, 150)); }
+
+    const keys = () => [...w.shadow.querySelectorAll(".rc-legend .rc-key")];
+    assert.ok(keys().length >= 2, "the overview lists a key per pool");
+    assert.equal(keys().filter((k) => k.classList.contains("away")).length, 0, "nothing is dimmed at rest");
+
+    // Hover the FIRST pool's line (the hit target — the same handler its key uses).
+    w.shadow.querySelector(".rc-hit").dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+    const after = keys();
+    assert.ok(!after[0].classList.contains("away"), "the hovered pool's own key stays lit");
+    assert.ok(after.slice(1).every((k) => k.classList.contains("away")),
+        `every other key dims (${after.map((k) => k.className).join(" | ")})`);
+
+    // The class has to actually reduce the opacity — a class name alone proves nothing.
+    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    assert.match(css, /\.rc-key\.away \{[^}]*opacity:\s*0?\.\d/, ".rc-key.away dims the key");
+
+    // …and it comes back.
+    w.shadow.querySelector(".rc-hit").dispatchEvent(new w.window.MouseEvent("pointerleave", { bubbles: true }));
+    await w.flush();
+    assert.equal(keys().filter((k) => k.classList.contains("away")).length, 0, "leaving restores the legend");
+});
