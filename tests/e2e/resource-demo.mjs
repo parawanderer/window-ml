@@ -61,30 +61,33 @@ async function main() {
         await page.goto(`${fake.url}/api/version`);   // any page the content script can attach to
         await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
 
-        // Slide the overlay open and switch to the VRAM monitor.
-        await page.evaluate(() => {
+        // Slide the overlay open and switch to the VRAM monitor. A reload re-mounts the shell, so this is a
+        // function rather than a one-off.
+        const openOverlay = () => page.evaluate(() => {
             const root = document.getElementById("ml-sb-root").shadowRoot;
             const panel = root.getElementById("ml-sb-host");
             panel.style.width = "460px";
             panel.classList.add("open");
             root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
         });
-        const frame = await (async () => {
+        // The iframe is replaced on every page load, so hold it in a variable the reload can refresh.
+        const findFrame = async () => {
             for (let i = 0; i < 80; i++) {
                 const f = page.frames().find((fr) => /sidebar\.html/.test(fr.url()));
                 if (f) return f;
                 await sleep(100);
             }
             throw new Error("sidebar iframe never appeared");
-        })();
-        const vram = frame.locator('[aria-label="VRAM monitor"]');
+        };
+        await openOverlay();
+        let frame = await findFrame();
         // Toggling blind desyncs (a missed click leaves the panel in the opposite state and every later step
         // is inverted), so drive it to the state we want and verify.
         const setPanel = async (open) => {
             for (let i = 0; i < 4; i++) {
                 const showing = (await frame.locator(".vram").count()) > 0;
                 if (showing === open) return;
-                await vram.click();
+                await frame.locator('[aria-label="VRAM monitor"]').click();
                 await sleep(400);
             }
             throw new Error(`couldn't put the VRAM panel ${open ? "open" : "closed"}`);
@@ -137,17 +140,27 @@ async function main() {
         await sleep(6000);
         await capture(page, "gap");
 
-        // 6. The degrade: a server without the /api/info patch. Capacity is UNKNOWN, so no ceiling is drawn.
-        log("switching to a box that doesn't serve /api/info — capacity unknown, so no ceiling is invented.");
+        // 6. Capacity STOPS answering. What was already measured stands — a box does not lose its hardware
+        //    because one poll came back empty, and forgetting it swapped the panel for the legacy chart at
+        //    random.
+        log("the box stops answering /api/info — the panel keeps what it measured rather than flipping views.");
         fake.setCapacity(null);
-        await setPanel(false); await sleep(500); await setPanel(true);   // reopen → re-fetch capacity
+        await sleep(14000);
+        await capture(page, "capacity-silent");
+
+        // 7. The real degrade: a box that has NEVER answered. Fresh page, since that is a different state.
+        log("a box that never answers /api/info — capacity unknown, so no ceiling is invented.");
+        await page.reload();
+        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
+        await openOverlay();
+        frame = await findFrame();
+        await setPanel(true);
         await sleep(4000);
         await capture(page, "no-capacity");
 
         // Restore a full box and let it rebuild, so the browser is HELD OPEN on the interesting view rather
         // than on the degraded one — the last step is a demonstration, not the resting state.
         fake.setCapacity(box(IDLE - 30 * GiB, IDLE - 22 * GiB, 8 * GiB));
-        await setPanel(false); await sleep(500); await setPanel(true);
         log("capacity restored — holding here.");
         await sleep(8000);
         await capture(page, "restored");

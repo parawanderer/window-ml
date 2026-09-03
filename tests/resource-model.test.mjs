@@ -443,3 +443,24 @@ test("placementOf: names the devices and shows how a model was split", () => {
     const solo = M.parseInfo(METAL_INFO);
     assert.equal(M.placementOf(M.residencyFrom({ name: "m", size: 5 * GB, size_vram: 5 * GB }), solo, fmt), null);
 });
+
+test("holdCapacity: a silent poll never unlearns the box", () => {
+    const box = M.parseInfo({ compute: {
+        system_compute: { cpu_cores: 8, total_memory: 34359738368, free_memory: 8589934592, free_swap: 0 },
+        supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 25769803776, free_memory: 25769803776 }],
+    } });
+    assert.ok(box);
+    // Nothing known yet, nothing answered → still nothing. The panel degrades honestly.
+    assert.equal(M.holdCapacity(null, null), null);
+    // First answer is adopted.
+    assert.equal(M.holdCapacity(null, box), box);
+    // A poll that answers with nothing leaves what was measured in place — this is the whole point: a box
+    // does not lose its hardware because one request came back empty.
+    assert.equal(M.holdCapacity(box, null), box);
+    // A real answer always wins, including one describing a different machine (the switch is handled after).
+    const other = M.parseInfo({ compute: {
+        system_compute: { cpu_cores: 10, total_memory: 17179869184, free_memory: 3682385920, free_swap: 0 },
+        supported_gpus: [{ gpu_id: "0", name: "MTL0", runner: "Metal", total_memory: 12712935424, free_memory: 12711886848 }],
+    } });
+    assert.equal(M.holdCapacity(box, other), other);
+});

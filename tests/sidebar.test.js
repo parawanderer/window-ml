@@ -6248,3 +6248,35 @@ test("track editor: expands and collapses instead of snapping in", async () => {
     assert.match(rule, /grid-template-rows:\s*0fr/, "collapsed to a zero-height row");
     assert.match(rule, /transition:[^;]*grid-template-rows/, "…and it transitions to the content's real height");
 });
+
+// A box that has NEVER answered /api/info degrades honestly: no ceiling is invented. (The other half of the
+// rule — that a box which STOPS answering keeps what it measured — is holdCapacity in resource-model.test.mjs
+// for the decision, and resource-panel.spec.mjs for the call site: the refresh cadence is 10s of real time,
+// which is an e2e's business, not this suite's.)
+test("capacity: a box that never answers draws no ceiling", async () => {
+    const never = await loadSidebarWorld({
+        vram: [{ model: "big", vramGB: 19, vramBytes: 19 * 1024 ** 3, expiresAt: null }],
+        info: null,
+    });
+    await never.raw({ __mlSidebarOpen: true });
+    never.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 4; i++) await never.flush();
+    assert.equal(never.shadow.querySelectorAll(".rc-track").length, 0, "no ceiling is invented");
+    assert.ok(never.shadow.querySelector(".vram-spark"), "it falls back to the auto-scaled shape");
+});
+
+// The editor stays mounted so it can animate both ways — which means "closed" must genuinely occupy nothing.
+// min-height:0 zeroes only the content box, so the editor's own margin/padding/border left a strip of empty
+// panel between the header and the plot.
+test("track editor: collapsed occupies no height at all, chrome included", async () => {
+    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const closed = css.slice(css.indexOf(".rc-editor-wrap:not(.open) > * {"));
+    const rule = closed.slice(0, closed.indexOf("}"));
+    assert.ok(rule, "the collapsed state has a rule of its own");
+    for (const prop of ["margin-block", "padding-block", "border-block-width"]) {
+        assert.match(rule, new RegExp(`${prop}:\\s*0`), `${prop} is zeroed while collapsed`);
+    }
+    // And it eases rather than snapping, on the same curve as the row transition.
+    const item = css.slice(css.indexOf(".rc-editor-wrap > * {"));
+    assert.match(item.slice(0, item.indexOf("}")), /transition:[^;]*padding-block/);
+});

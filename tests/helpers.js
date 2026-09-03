@@ -503,8 +503,11 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
                 // How the HUD is invoked on this install — the empty state offers the LIVE shortcut.
                 else if (type === "GET_INVOCATION") cb({ data: invocation });
                 else if (type === "OLLAMA_INFO") {
-                    if (holdInfo) holdInfo.then(() => cb({ data: info ?? null }));
-                    else cb({ data: info ?? null });
+                    // `info` may be a FUNCTION, so a test can make the box stop answering mid-session — the
+                    // case where capacity must persist rather than flip the panel back to the legacy chart.
+                    const now = typeof info === "function" ? info() : info;
+                    if (holdInfo) holdInfo.then(() => cb({ data: now ?? null }));
+                    else cb({ data: now ?? null });
                 }
                 else if (type === "OLLAMA_UNLOAD") { unloadCalls.push(msg.payload); cb({ data: [] }); }
                 else if (type === "PYTHON_EXEC") { pyCalls.push(msg.payload); cb({ data: typeof pythonExec === "function" ? pythonExec(msg.payload) : (pythonExec || { ok: true, value: 42, stdout: "" }) }); }   // background wraps: { data: PyResult }

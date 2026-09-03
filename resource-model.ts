@@ -92,6 +92,15 @@ export interface Capacity {
 /** Parse `/api/info`. Returns null for anything that isn't the expected JSON — a stock Ollama or unpatched
  *  OpenWebUI answers this route with SPA HTML, and every user but one is in that position. Null means
  *  "capacity unknown", which the panel must render as a missing ceiling, never as zero. */
+/** What capacity to hold after a poll answers. Capacity is a fact about the BOX, not about this poll: a null
+ *  answer means THIS request learned nothing (a hiccup, a worker that had gone to sleep, a lost race), and
+ *  forgetting what was already measured swaps the whole panel for the no-ceiling fallback until some later
+ *  poll happens to succeed — which reads as the old chart randomly reappearing. A box that has NEVER answered
+ *  still degrades, because there is nothing to keep. */
+export function holdCapacity(current: Capacity | null, answered: Capacity | null): Capacity | null {
+    return answered ?? current;
+}
+
 export function parseInfo(raw: unknown): Capacity | null {
     const r = raw as { compute?: { system_compute?: Record<string, number>; supported_gpus?: Record<string, unknown>[] } };
     const c = r?.compute;

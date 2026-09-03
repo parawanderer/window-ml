@@ -146,14 +146,22 @@ test("resource panel: a closed spell leaves a GAP, and no /api/info draws no cei
         await expect.poll(() => frame.locator(".rc-track").first().locator(".rc-seg").count(), { timeout: 20000 })
             .toBe(2);   // two runs = one honest gap between them
 
-        // A server without the /api/info patch answers with the SPA's HTML. Capacity is UNKNOWN, so the panel
-        // must draw NO ceiling — degrading to the auto-scaled sparkline rather than inventing one.
+        // A server that stops answering mid-session does NOT wipe what was already measured — capacity is a
+        // fact about the box, and forgetting it flipped the whole panel to the legacy sparkline and back at
+        // random. The tracks must stay through several failed polls.
         fake.setCapacity(null);
-        await setPanel(false); await sleep(500); await setPanel(true);
-        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBe(0);
-        expect(await frame.locator(".vram-spark").count()).toBe(1);
+        await sleep(14000);   // longer than CAPACITY_EVERY (5 polls at 2s), so several answers came back empty
+        expect(await frame.locator(".rc-track").count()).toBe(3);
+        expect(await frame.locator(".vram-spark").count()).toBe(0);
+
+        // A box that has NEVER answered is the real degrade: capacity is UNKNOWN, so the panel draws no
+        // ceiling and falls back to the auto-scaled sparkline rather than inventing one. Fresh page, because
+        // "never answered" is a different state from "stopped answering".
+        const fresh = await openPanel(fake, ext);
+        await expect.poll(() => fresh.frame.locator(".rc-track").count(), { timeout: 20000 }).toBe(0);
+        expect(await fresh.frame.locator(".vram-spark").count()).toBe(1);
         // The in-use total still renders, still in binary units.
-        expect(await frame.locator(".vram-total").textContent()).toMatch(/GiB in use/);
+        expect(await fresh.frame.locator(".vram-total").textContent()).toMatch(/GiB in use/);
     } finally {
         await ext.close();
         await fake.stop();

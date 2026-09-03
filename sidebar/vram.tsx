@@ -14,7 +14,7 @@ import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
 import { tipStyle } from "./tip";
 import { VRAMH_KEY, vramH } from "./store";
-import { parseInfo, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
+import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -80,7 +80,8 @@ export function fetchCapacity(): void {
     chrome.runtime.sendMessage({ type: "OLLAMA_INFO", payload: {} }, (resp: any) => {
         capacityAsked.value = true;
         if (chrome.runtime.lastError || !resp || resp.error) return;   // leave capacity unknown
-        const next = parseInfo(resp.data);
+        const next = holdCapacity(capacity.value, parseInfo(resp.data));
+        if (!next || next === capacity.value) return;   // this poll learned nothing new
         // Pointing at a DIFFERENT machine (a CUDA server, then a Metal Mac) invalidates the history: those
         // samples were measured against another ceiling, on devices whose ids mean different hardware. Drawing
         // them here would clip an 18 GiB band against an 11.84 GiB ceiling and look like a reading.

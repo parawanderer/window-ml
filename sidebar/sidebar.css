@@ -105,7 +105,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-editor-wrap { display: grid; grid-template-rows: 0fr; opacity: 0;
                   transition: grid-template-rows .22s cubic-bezier(.22,.61,.36,1), opacity .18s ease; }
 .rc-editor-wrap.open { grid-template-rows: 1fr; opacity: 1; }
-.rc-editor-wrap > * { overflow: hidden; min-height: 0; }
+/* min-height:0 zeroes the CONTENT box only — the editor's own margin, padding and border survive it, which
+   left a 26px strip of nothing between the header and the plot while collapsed. Zero the block-axis chrome
+   too, on the same easing, so "closed" is actually zero tall. */
+.rc-editor-wrap > * { overflow: hidden; min-height: 0;
+                      transition: margin-block .22s cubic-bezier(.22,.61,.36,1), padding-block .22s cubic-bezier(.22,.61,.36,1), border-block-width .22s cubic-bezier(.22,.61,.36,1); }
+.rc-editor-wrap:not(.open) > * { margin-block: 0; padding-block: 0; border-block-width: 0; }
 @media (prefers-reduced-motion: reduce) { .rc-editor-wrap { transition: none; } }
 .rc-editor { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; padding: 6px;
              background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.78em; }
