@@ -3046,7 +3046,9 @@ test("LIST_MODELS: `kinds` is opt-in, costs nothing when unasked, and is never s
             if (/\/api\/show$/.test(call.url)) {
                 const model = JSON.parse(call.body ? JSON.stringify(call.body) : "{}").model;
                 shows.push(model);
-                return jsonResponse({ capabilities: model === "embeddinggemma:300m" ? ["embedding"] : ["completion", "tools"] });
+                return jsonResponse(model === "embeddinggemma:300m"
+                    ? { capabilities: ["embedding"], model_info: { "gemma3.embedding_length": 768 } }
+                    : { capabilities: ["completion", "tools"], model_info: { "qwen3.embedding_length": 5120 } });
             }
             return jsonResponse({ choices: [{ message: { content: "ok" } }] });
         },
@@ -3065,6 +3067,9 @@ test("LIST_MODELS: `kinds` is opt-in, costs nothing when unasked, and is never s
     assert.deepEqual(withKinds.kinds["embeddinggemma:300m"], ["embedding"]);
     assert.deepEqual(withKinds.kinds["qwen3:14b"], ["completion", "tools"]);
     assert.equal(shows.length, 2, "one lookup per model");
+    // Dimensions ride the SAME /api/show response, so the picker shows them without a second round trip.
+    assert.equal(withKinds.dims["embeddinggemma:300m"], 768);
+    assert.equal(shows.length, 2, "…and still only one lookup per model");
 
     // A PAGE (sender.tab set) never triggers the round trips — ml.models() must stay cheap, and this is the
     // same reasoning that strips config overrides from page-relayed messages.
@@ -3128,4 +3133,31 @@ test("EMBED: says what to DO when unconfigured or unsupported, and honours the m
     const bad = await loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({}) })
         .send({ type: "EMBED", payload: { inputs: "not an array" } });
     assert.match(bad.error, /needs `inputs`/);
+});
+
+// Residency and placement are sent on EVERY embed request. That is also what makes eviction from the VRAM
+// panel work with no state to track: the next call simply re-pins the model.
+test("EMBED: keep-alive and CPU placement ride every request, and both are switchable", async () => {
+    const bodyOf = async (cfg) => {
+        let body = null;
+        await loadBackground({
+            config: baseConfig({ embeddingModel: "e", ...cfg }),
+            onFetch: (call) => { if (/\/api\/embed$/.test(call.url)) body = call.body; return jsonResponse({ embeddings: [[1, 0]] }); },
+        }).send({ type: "EMBED", payload: { inputs: ["a"] } });
+        return body;
+    };
+
+    // Defaults: pinned, and off the GPU. A cold embed measured 2726ms against 95ms warm, and CPU costs 33ms
+    // warm while using no VRAM — so these are the defaults the measurements argue for.
+    const def = await bodyOf({});
+    assert.equal(def.keep_alive, -1, "pinned with no expiry by default");
+    assert.deepEqual(def.options, { num_gpu: 0 }, "on the CPU by default");
+
+    const noPin = await bodyOf({ embeddingKeepAlive: false });
+    assert.equal(noPin.keep_alive, undefined, "off -> the server's own expiry applies");
+    assert.deepEqual(noPin.options, { num_gpu: 0 }, "…and placement is independent");
+
+    const onGpu = await bodyOf({ embeddingForceCpu: false });
+    assert.equal(onGpu.options, undefined, "off -> no placement override, so the server decides");
+    assert.equal(onGpu.keep_alive, -1);
 });

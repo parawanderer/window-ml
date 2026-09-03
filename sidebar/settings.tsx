@@ -7,11 +7,11 @@ import { signal } from "@preact/signals";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LoadedModel, VisionSupport, LexicalMetric } from "../contract";
-import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows, generatesText } from "../contract";
+import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows, generatesText, producesEmbeddings } from "../contract";
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS, modelKinds } from "./store";
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS, modelKinds, embedDims } from "./store";
 import { truncate } from "./format";
 import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
 import { IconCheck } from "./icons";
@@ -77,6 +77,9 @@ const TIP = {
     utilityNumCtx: "Context window (num_ctx) for the utility model. Summarising needs little context — keep it small on modest hardware; larger just uses more KV-cache memory. Only used when a utility model is set.",
     utilityForceCpu: "Run the utility model on CPU (num_gpu: 0) so it never competes with your main model for VRAM. Only used when a utility model is set.",
     autoTitles: "Let the utility model write short summaries for you: debug session titles, and the plain-English gloss above a code approval / the description of a custom tool call in the off-mode card. Off = titles fall back to the first prompt and the card shows no summary. Only runs when a utility model is set.",
+    embeddingModel: "Model used for ml.embed — comparing text by MEANING rather than spelling. Only models reporting the `embedding` capability are offered; an embedding model cannot generate text, so it never appears in the chat/utility/vision pickers either.",
+    embeddingKeepAlive: "Keep the embedding model loaded with no expiry. ON by default because of the ACCESS PATTERN, not the size: a cold embed measured 2726ms against 95ms warm, and a model used rarely and unpredictably would sit past Ollama's 5-minute expiry almost every time, so it would be cold nearly always. Evicting it from the VRAM panel still works — the next call simply loads it again and re-pins it.",
+    embeddingForceCpu: "Run the embedding model on CPU instead of the GPU. ON by default: measured 33ms slower warm (128 vs 95), FASTER cold (1628 vs 2726, since nothing is copied to VRAM), and it uses no VRAM at all — which the chat model wants. Turn it off only if you pick an embedding model large enough that CPU inference stops being cheap.",
     labelMatch: "How a pointer LABEL is matched when it isn't recalled exactly. A near match is only ever used when it clearly beats the runner-up, and is always reported — but WHICH metric ranks the candidates is genuinely undecided, so it is exposed here. hybrid (default): the better of trigram and word-overlap; handles both rewording and typos. tokenset: word overlap only — perfect on reordering, blind to typos. trigram: character-level, survives both without excelling. edit: Levenshtein — best on typos, but it ranks a DIFFERENT label above the correct one reworded, so it is here to be measured against, not recommended.",
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked. The agent can likewise read its own setup without asking — ml.getModel/config/models/capabilities/ps/serverTools, the same non-secret values any page can read; every other ml method still prompts.",
     autoApprovePython: "Experimental. Run readonly-mode python_exec calls without an approval prompt. A readonly run is isolated by construction — the WASM sandbox has no DOM, no filesystem, and (in this mode) no network or JS/extension scope — so it's a pure function over the injected data and can't affect the page or exfiltrate. A `mode:'full'` call (which the agent must explicitly request to get network) ALWAYS asks. Code with hidden/bidi characters also still asks.",
@@ -651,6 +654,7 @@ export function Settings() {
             if (chrome.runtime.lastError || !resp || resp.error || !Array.isArray(resp.data)) return;
             models.value = resp.data;
             if (resp.kinds) modelKinds.value = resp.kinds;
+            if (resp.dims) embedDims.value = resp.dims;
         });
     }, []);
     // Datalist entries after the access filter; plus the empty/unlisted states so the UI explains itself.
@@ -658,6 +662,9 @@ export function Settings() {
     // `embedding`, because an embedding model can advertise other capabilities too (qwen3-embedding reports
     // tools + thinking); it fails OPEN on unknown, so a cloud model we cannot interrogate is never hidden.
     const listed = models.value.filter(m => modelFilterAllows(m, c.modelFilter) && generatesText(modelKinds.value[m] ?? null));
+    // The other half of the same classification. Fails CLOSED, unlike `listed`: offering a model that turns
+    // out not to embed is a runtime surprise, where a shorter list costs nothing — a user can still type one.
+    const embedListed = models.value.filter(m => modelFilterAllows(m, c.modelFilter) && producesEmbeddings(modelKinds.value[m] ?? null));
     const notListed = (v: string) => !!v.trim() && models.value.length > 0 && !models.value.includes(v.trim());
     const filterValid = (() => { if (!c.modelFilter.trim()) return true; try { new RegExp(c.modelFilter); return true; } catch { return false; } })();
     // A configured model id the current filter excludes (non-empty + no match) → flag it (ModelPicker cls).
@@ -900,6 +907,27 @@ export function Settings() {
                     <input type="checkbox" checked={c.autoApproveReadonly}
                         onChange={(e: any) => setField("autoApproveReadonly", e.target.checked)} />
                     <Lbl tip={TIP.autoApproveReadonly}>Auto-approve read-only exec calls</Lbl>
+                </label>
+                </Section>
+
+                <Section id="embeddings" title="Embeddings">
+                <div class="set-note">Model for <code>ml.embed</code> — comparing text by meaning rather than spelling. Only models that report the <b>embedding</b> capability are listed; these are small and fast, so they default to living on the CPU and staying loaded.</div>
+                <div class="set-field">
+                    <Lbl tip={TIP.embeddingModel}>Embedding model</Lbl>
+                    <input list="embedModels" {...text("embeddingModel")} placeholder="none configured" />
+                    <datalist id="embedModels">{embedListed.map(m => <option key={m} value={m} />)}</datalist>
+                    {c.embeddingModel.trim() && embedDims.value[c.embeddingModel.trim()]
+                        ? <div class="set-hint">{embedDims.value[c.embeddingModel.trim()]} dimensions</div> : null}
+                </div>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.embeddingKeepAlive}
+                        onChange={(e: any) => setField("embeddingKeepAlive", e.target.checked)} />
+                    <Lbl tip={TIP.embeddingKeepAlive}>Keep loaded (no expiry)</Lbl>
+                </label>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.embeddingForceCpu}
+                        onChange={(e: any) => setField("embeddingForceCpu", e.target.checked)} />
+                    <Lbl tip={TIP.embeddingForceCpu}>Run on CPU (uses no VRAM)</Lbl>
                 </label>
                 </Section>
 

@@ -68,6 +68,18 @@ export interface MlConfig {
     /** Model used for `ml.embed`. Only models reporting the `embedding` capability are offered in Settings.
      *  Empty = no embedding model configured, and `ml.embed` says so rather than guessing one. */
     embeddingModel: string;
+    /** Keep the embedding model RESIDENT with no expiry (Ollama `keep_alive: -1`). Default ON, and the
+     *  argument is the access PATTERN rather than the model's size: measured, a cold embed costs 2726ms
+     *  against 95ms warm — 29x — and a label-resolution fallback fires rarely and unpredictably, so under
+     *  Ollama's default 5-minute expiry it would be almost always cold. Sparse use is exactly the pattern a
+     *  timeout never helps. Evicting it from the VRAM panel still works and needs no state here: keep_alive
+     *  is sent per request, so the next call simply re-pins it. */
+    embeddingKeepAlive: boolean;
+    /** Run the embedding model on CPU (`num_gpu: 0`). Default ON: measured, CPU is 33ms slower warm
+     *  (128 vs 95), FASTER cold (1628 vs 2726 — no VRAM transfer), and uses zero VRAM. On a box whose GPU is
+     *  holding the chat model, spending ~700MB of VRAM to save 33ms is the wrong trade. Turn it off if the
+     *  embedding model is large enough that CPU inference stops being cheap. */
+    embeddingForceCpu: boolean;
     theme: Theme;
     /** which screen corner the off-mode approval card + working pill anchor to */
     cardCorner: CardCorner;
@@ -412,6 +424,8 @@ export const DEFAULT_CONFIG: MlConfig = {
     debugMode: "off",
     labelMatch: "hybrid",
     embeddingModel: "",
+    embeddingKeepAlive: true,
+    embeddingForceCpu: true,
     theme: "auto",
     cardCorner: "bottom-right",
     agentHud: "progress",

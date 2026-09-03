@@ -1430,8 +1430,8 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             .then(async ([{ ids, ollamaModels }, cfg]) => {
                 const keep = (m: string) => modelFilterAllows(m, cfg.modelFilter);
                 const data = ids.filter(keep);
-                const kinds = wantKinds ? await modelCapabilitiesBatch(cfg, data) : undefined;
-                sendResponse({ data, ollamaModels: ollamaModels ? ollamaModels.filter(keep) : null, ...(kinds ? { kinds } : {}) });
+                const info = wantKinds ? await modelCapabilitiesBatch(cfg, data) : undefined;
+                sendResponse({ data, ollamaModels: ollamaModels ? ollamaModels.filter(keep) : null, ...(info ? { kinds: info.caps, dims: info.dims } : {}) });
             })
             .catch(err => sendResponse({ error: err.message }));
         return true;
