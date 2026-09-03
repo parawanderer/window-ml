@@ -110,6 +110,36 @@ jobs:
       - name: Run E2E
         run: xvfb-run -a npm run test:e2e
 
+  # The BENCH's own instrument check — separate from `test`/`e2e` so a failure names the right thing. A
+  # broken measurement tool is not a broken extension, and reading "e2e failed" sends you to look at the
+  # wrong code. It also runs the bench CLI end to end, which nothing else does: the unit tests cover the
+  # extractors and the e2e spec covers real event streams, but only this exercises spec loading, matrix
+  # expansion, the cache, the sinks and the written report together.
+  #
+  # `smoke.bench.ts` is scripted so every reading is known before it runs (a run that retypes must read
+  # 1.00, one that cites 0.00, one whose re-emission is in a SEEDED turn 0.00); check-calibration.mjs
+  # asserts exactly those. Deterministic — fake-LLM, no model, no key. Headful under xvfb like the e2e job.
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Calibrate the bench
+        run: xvfb-run -a npm run bench:calibrate
+      - name: Upload the sweep
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-smoke-sweep
+          path: tests/e2e/artifacts/bench/smoke/
+          retention-days: 7
+
   # Non-blocking sanity check against a REAL, free, OpenAI-shaped model (default: Groq). NOT a gate — a real
   # model is non-deterministic + rate-limited, so it runs only on demand / nightly and never fails the
   # pipeline (continue-on-error). Enabled by the repo SECRET `GROQ_API_KEY_FREE` (a free Groq API key);

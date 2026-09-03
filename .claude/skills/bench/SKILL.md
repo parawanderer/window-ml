@@ -26,10 +26,19 @@ each cell is known before it runs: **re-emitter must read 1.00, citer 0.00, seed
 three are not exactly that, the extractors are wrong and every other number the bench prints is wrong
 too. Run it after touching anything under `bench/`.
 
-The same calibration is automated in two places, both of which must stay green:
+`npm run bench:calibrate` does exactly this — builds, runs the smoke spec, and asserts the readings via
+`check-calibration.mjs`, which exits non-zero with what broke. It is the **`bench` CI job**, kept separate
+from `test`/`e2e` so a failure names the right thing: a broken measurement tool is not a broken extension,
+and "e2e failed" sends you to look at the wrong code.
+
+The same calibration is automated in three places, all of which must stay green:
 - `tests/bench-metrics.test.mjs` — the extractors against synthetic streams (fast suite, `npm test`).
 - `tests/e2e/bench-selftest.spec.mjs` — the same readings against REAL debug streams, which is the only
   thing that catches an extractor reading a field the product does not actually emit.
+- `npm run bench:calibrate` — the CLI end to end (spec loading, matrix expansion, cache, sinks, report),
+  which neither of the above exercises. Also `tests/bench-specs.test.mjs`, which scores each spec's
+  `succeeded` predicate against answers a model plausibly writes: a wrong predicate does not fail, it
+  silently marks every arm the same way and reads like a finding.
 
 ## Writing a spec
 

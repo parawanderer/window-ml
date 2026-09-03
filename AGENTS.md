@@ -1124,7 +1124,9 @@ previously recoverable only by regexing the system prompt.
   cites instead (0.00) and one that hides a re-emission in a seeded turn (0.00), and it caught two real
   extractor bugs before any GPU time. Assertions: `tests/bench-metrics.test.mjs` (fast, synthetic
   streams) and `tests/e2e/bench-selftest.spec.mjs` (real streams — the only thing that catches an
-  extractor reading a field the product never emits). One walk, N sinks: terminal + markdown today. Artifacts land per RUN under
+  extractor reading a field the product never emits). One walk, N sinks: terminal + markdown today. **CI runs it as its own `bench` job**
+  (`npm run bench:calibrate` → build, smoke sweep, `check-calibration.mjs`), deliberately separate from
+  `test`/`e2e` so a broken INSTRUMENT names itself instead of reading as a broken extension. Artifacts land per RUN under
   `tests/e2e/artifacts/bench/<spec>/<task>/<combo>/r<N>/` (gitignored) — `run.md` to read, **`run.json` to
   DIFF** (a markdown diff is mostly layout; strip `VOLATILE_FIELDS` + `canonicalizeText` first), plus
   events/transcript/screenshots, and `run.html`+`run.pdf` behind `--pdf`. The report's **Runs** table
