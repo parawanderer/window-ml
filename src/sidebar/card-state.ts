@@ -36,7 +36,12 @@ export const composerElement = signal<ElementContext | null>(null);   // right-c
 export const composerTarget = signal<{ mode: "new" } | { mode: "append"; hash: string }>({ mode: "new" });
 export const composerMaxSteps = signal(20);         // step budget for a UI-started run (persists across opens)
 export const STEP_BUDGETS = [10, 20, 50];           // the segmented presets in the composer
-export const composerStream = signal(true);         // stream the model's thinking live for a UI-started run — ON by default for Commander (you want to SEE it work); toggle off per-run. Persists across opens. (Console ml.agent stays default-off — the primitive is unchanged.)
+// Stream the model's thinking live for a UI-started run. ALWAYS on for the Commander: a run you start from
+// the HUD is one you are watching, so the reactive mode is the only one that makes sense there — the toggle
+// that used to sit in the composer bar had one useful setting and cost a button. Kept as a signal because it
+// is what the run is started with, and it is the seam a control would come back through if one is ever
+// wanted. (Console `ml.agent` stays default-off — the primitive is unchanged.)
+export const composerStream = signal(true);
 export const composerStarting = signal(0);          // timestamp: a UI run was sent, awaiting its first event (bridge pill)
 // Per-call model pick for a UI-started run. "" = follow the configured default (so switching the default
 // from the dropdown just keeps this on it). A non-"" value overrides the model FOR THIS RUN ONLY — the

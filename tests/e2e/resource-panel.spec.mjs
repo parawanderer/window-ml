@@ -621,7 +621,7 @@ test("resource panel: hovering the edge of an overview line doesn't flicker", as
         const inFrame = { dx: plotBox.x, dy: plotBox.y };
 
         await page.mouse.move(spot.x, spot.y);
-        await expect.poll(() => frame.locator(".rc-tip-pool").count(), { timeout: 5000 }).toBe(1);
+        await expect.poll(() => frame.locator(".rc-tip-pools").count(), { timeout: 5000 }).toBe(1);
 
         // THE invariant: while the line is hovered and drawn at its thick width, every point within that thick
         // stroke must still hit-test to the TARGET. If the fat visible line answers here, the pointer leaves
@@ -642,7 +642,7 @@ test("resource panel: hovering the edge of an overview line doesn't flicker", as
         for (let i = 0; i < 10; i++) {
             await page.mouse.move(spot.x, spot.y + (i % 2 ? 1.2 : 0.9));
             await sleep(50);
-            if (!(await frame.locator(".rc-tip-pool").count())) missing++;
+            if (!(await frame.locator(".rc-tip-pools").count())) missing++;
         }
         expect(missing, "the tooltip flickered while the pointer sat on the line's edge").toBe(0);
     } finally {

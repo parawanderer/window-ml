@@ -81,7 +81,9 @@ test("eventsFrom: a run spans its steps, and events are ordered by time", () => 
     const run = evs.find((e) => e.kind === "run");
     assert.equal(run.t, 5000);
     assert.equal(run.until, 20_000);
-    assert.deepEqual(run.ref, { hash: "run1" });
+    // The ref names WHICH answer too: a session holds one per run, so a bare hash sent every run's click to
+    // the session's last answer once runs became plural.
+    assert.deepEqual(run.ref, { hash: "run1", answer: 0 });
     for (let i = 1; i < evs.length; i++) assert.ok(evs[i].t >= evs[i - 1].t, "sorted by when they started");
 });
 

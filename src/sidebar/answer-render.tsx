@@ -25,11 +25,15 @@ import { RenderPanel, PyDfTable } from "./render-panel";
  * navigate to the run and then had nothing to reach. The LAST matching anchor is the target: a multi-turn run
  * has several answers and the event names only the run, so the newest is the honest choice.
  */
-export function scrollToAnswer(hash?: string): void {
+/** @param which WHICH answer, when a session has several — a run is a set of turns ending in an answer, so a
+ *  session holds one per run. Without it every run in the lane clicked through to the same final answer,
+ *  which is what "the last one" degrades to once runs became plural. An out-of-range index falls back to the
+ *  last, since a stale reference should still land somewhere real. */
+export function scrollToAnswer(hash?: string, which?: number): void {
     if (!hash) return;
     const attempt = (tries = 0): void => {
         const all = document.querySelectorAll(`[data-answer-hash="${CSS.escape(hash)}"]`);
-        const el = all[all.length - 1];
+        const el = (which != null && all[which]) || all[all.length - 1];
         if (!el) { if (tries < 8) requestAnimationFrame(() => attempt(tries + 1)); return; }
         el.scrollIntoView({ block: "center", behavior: "smooth" });
         el.classList.add("astep-pulse");

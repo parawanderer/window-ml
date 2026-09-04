@@ -17,7 +17,7 @@ import { hhmmss } from "./timestamps";
 import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels } from "./store";
 import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
+import { parseInfo, holdCapacity, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -119,11 +119,12 @@ export const capacity = signal<Capacity | null>(null);
 // flashed the legacy chart for a moment before the tracks replaced it. Until the first answer lands the plot
 // is simply empty.
 export const capacityAsked = signal(false);
-export function fetchCapacity(): void {
-    chrome.runtime.sendMessage({ type: "OLLAMA_INFO", payload: {} }, (resp: any) => {
-        capacityAsked.value = true;
-        if (chrome.runtime.lastError || !resp || resp.error) return;   // leave capacity unknown
-        const next = holdCapacity(capacity.value, parseInfo(resp.data));
+/** One reading of the machine's CAPACITY, from a poll or from a `sample` frame's embedded `/api/info` body.
+ *  Same rule as {@link applyLoaded}: one parser, one place it becomes state. */
+export function applyInfo(raw: unknown): void {
+    capacityAsked.value = true;
+    {
+        const next = holdCapacity(capacity.value, parseInfo(raw));
         if (!next || next === capacity.value) return;   // this poll learned nothing new
         // Pointing at a DIFFERENT machine (a CUDA server, then a Metal Mac) invalidates the history: those
         // samples were measured against another ceiling, on devices whose ids mean different hardware. Drawing
@@ -150,6 +151,15 @@ export function fetchCapacity(): void {
             layout.value = null;
         }
         capacity.value = next;
+    }
+}
+
+export function fetchCapacity(): void {
+    if (streamLive.value) return;   // the stream carries `info` on its sample frames
+    chrome.runtime.sendMessage({ type: "OLLAMA_INFO", payload: {} }, (resp: any) => {
+        capacityAsked.value = true;
+        if (chrome.runtime.lastError || !resp || resp.error) return;   // leave capacity unknown
+        applyInfo(resp.data);
     });
 }
 // Models the user has hidden from the totals/graph (session-only; a signal so it
@@ -176,27 +186,174 @@ export const togglePool = (id: string): void => {
 // the VRAM panel and the header status dot. Gated so it never hammers Ollama in
 // the background: only while the shell is slid open AND something needs it (the
 // panel is up, or a detail header — the only place a status dot shows).
+/** Is the event stream carrying? While it is, polling stands down — two transports feeding the same history
+ *  would double every sample and draw it at twice the true density. Null until we know (a fresh open has not
+ *  asked yet); false means this server does not serve the route, which is the ordinary stock-Ollama case and
+ *  not an error. */
+export const streamLive = signal(false);
+/** What the stream told us when it could not carry: shown in the panel's own note rather than swallowed, so a
+ *  box that has the route but is failing on it does not look like a box that never had it. */
+export const streamNote = signal<string | null>(null);
+
+/** How far apart two samples may be before the history is a HOLE rather than a quiet stretch. It depends on
+ *  the transport, because a gap means a different thing on each — see the two constants. Read at render time
+ *  rather than baked in, since a stream can drop mid-session and the answer changes with it. */
+export const sampleGapMs = (): number => (streamLive.value ? STREAM_MAX_GAP_MS : MAX_SAMPLE_GAP_MS);
+/** How far past the last sample still belongs to the final run — one sampling interval, whichever transport
+ *  is providing them. */
+export const sampleGraceMs = (): number => (streamLive.value ? STREAM_SAMPLE_MS : VRAM_POLL_MS);
+
+/** Machine events the SERVER reported, as opposed to the ones we infer by diffing polls. A load is the case
+ *  that cannot be inferred at all: for most of a load there is no runner object in Ollama for a poll to
+ *  observe (measured: `load.start` at t=4102, `load.complete` at t=48053, `/api/ps` empty across the whole
+ *  span), so every load span drawn from polling was reconstructed from the `load_duration` of whichever
+ *  request happened to be waiting. These are the edges themselves. Bounded, because a long session on a busy
+ *  box accumulates them and the lane only ever draws a window. */
+export const MACHINE_EVENTS_CAP = 400;
+export const machineEvents = signal<ResourceEvent[]>([]);
+/** Loads that have started and not yet completed, so `load.complete` can close the span it opened. */
+const openLoads = new Map<string, { t: number; weightsAt?: number }>();
+/** Models currently SERVING, by the instant they started. A signal because a span that is still open has to
+ *  be drawn while it is happening — that is the whole point of knowing when responding began — and the lane
+ *  synthesizes it against `now` on every render.
+ *
+ *  These are transitions in and out of IDLE, not per request: two overlapping generations produce one span,
+ *  so this counts working PERIODS. Per-request accounting is a different signal and does not exist. */
+export const servingSince = signal<Record<string, number>>({});
+const pushMachine = (e: ResourceEvent): void => {
+    machineEvents.value = [...machineEvents.value, e].slice(-MACHINE_EVENTS_CAP);
+};
+
+/** One edge frame → what the lane draws. Returns nothing for the frames that are not events in their own
+ *  right (`sample`, `heartbeat`, `hello`) and for a `load.complete` with no start to close, which is what a
+ *  reconnect mid-load looks like — half a span is worse than none, since its left edge would be invented. */
+export function machineEventFrom(frame: { kind: string; model?: string; reason?: string; duration_ms?: number }, at: number): ResourceEvent | null {
+    const model = frame.model;
+    switch (frame.kind) {
+        case "load.start":
+            if (model) openLoads.set(model, { t: at });
+            return null;                                    // the SPAN is emitted when it closes
+        case "load.weights":
+            // The boundary between the weights arriving and the context (KV cache + compute buffers) being
+            // allocated. NOT "warmup": the second half allocates, and on a long-context model it allocates
+            // most of the footprint — measured as a second step ~6s after the weights, immediately before the
+            // model is ready. Held until the span closes, since it is a divider inside it.
+            if (model && openLoads.has(model)) openLoads.get(model)!.weightsAt = at;
+            return null;
+        case "load.complete": {
+            const open = model ? openLoads.get(model) : undefined;
+            if (!model || !open) return null;
+            openLoads.delete(model);
+            const w = open.weightsAt;
+            return {
+                t: open.t, until: at, kind: "load", label: `loading ${model}`, model,
+                // "Resident at 4s, usable at 10s" — the two halves are weights and context, and the divider
+                // only exists when the server actually reported it.
+                ...(w && w > open.t && w < at
+                    ? { phases: [{ kind: "weights" as const, until: w }, { kind: "context" as const, until: at }] }
+                    : {}),
+            };
+        }
+        // WHEN RESPONDING BEGAN. `busy.start` coincides with `load.complete` when the request is what
+        // triggered the load, so the two spans sit end to end and the story reads straight through: weights,
+        // context, serving. A model loaded and then left alone gets no `busy.start` at all, so the pair is
+        // not guaranteed and must not be assumed.
+        case "busy.start":
+            if (model) servingSince.value = { ...servingSince.value, [model]: at };
+            return null;                                    // the SPAN is emitted when it closes
+        case "busy.end": {
+            const from = model ? servingSince.value[model] : undefined;
+            if (model) { const next = { ...servingSince.value }; delete next[model]; servingSince.value = next; }
+            return model && from ? { t: from, until: at, kind: "serve", label: `${model} serving`, model } : null;
+        }
+        case "load.failed":
+            if (model) openLoads.delete(model);
+            return model ? { t: at, kind: "error", label: `${model} failed to load${frame.reason ? `: ${frame.reason}` : ""}`, model } : null;
+        // EVICT and UNLOAD are different answers and the server draws the distinction: one made room for
+        // something, the other simply expired. Inferring them by diffing polls could never tell them apart.
+        case "evict":
+            return model ? { t: at, kind: "evict", label: `${model} evicted${frame.reason ? ` (${frame.reason})` : ""}`, model } : null;
+        case "unload":
+            return model ? { t: at, kind: "evict", label: `${model} unloaded (idle)`, model } : null;
+        default:
+            return null;
+    }
+}
+
+let streamPort: chrome.runtime.Port | null = null;
+/** Subscribe to the server's event stream through the worker, which owns the host permission and the key, and
+ *  holds ONE connection however many panels are open. Falls back to polling — never to an empty chart — when
+ *  the route is not served, which is every stock Ollama. */
+let streamHolders = 0;
+export function connectResourceStream(): () => void {
+    streamHolders++;
+    const release = () => {
+        if (--streamHolders > 0) return;   // someone else is still watching
+        try { streamPort?.disconnect(); } catch { /* already gone */ }
+        streamPort = null; streamLive.value = false;
+    };
+    if (streamPort) return release;
+    let port: chrome.runtime.Port;
+    try { port = chrome.runtime.connect({ name: "ml-resource" }); }
+    catch { streamHolders--; return () => { /* no extension context (a test harness) */ }; }
+    streamPort = port;
+    port.onMessage.addListener((msg: any) => {
+        if (msg?.unsupported) { streamLive.value = false; streamNote.value = null; return; }   // stock server: just poll
+        if (msg?.interrupted) { streamLive.value = false; streamNote.value = String(msg.interrupted); return; }
+        if (!msg?.frame) return;
+        streamLive.value = true; streamNote.value = null;
+        // A `sample` frame IS a poll's two answers, embedded verbatim by the server precisely so one parser
+        // serves both transports. Capacity first: a reading must be recorded against the ceiling in force.
+        if (msg.frame.kind === "sample") {
+            if (msg.info) applyInfo(msg.info);
+            if (msg.loaded) applyLoaded(msg.loaded, msg.at);
+            return;
+        }
+        const ev = machineEventFrom(msg.frame, msg.at);
+        if (ev) pushMachine(ev);
+    });
+    port.onDisconnect.addListener(() => { streamPort = null; streamLive.value = false; });
+    return release;
+}
+
+/** One reading of what is resident, from WHEREVER it came from — a poll, or a `sample` frame off the event
+ *  stream. Both transports hand over the same `LoadedModel[]` (the frame embeds the `/api/ps` body verbatim
+ *  and it goes through the same parser), so this is the single place a reading becomes panel state. Two
+ *  transports feeding one function is what stops the polled panel and the streamed one drifting apart. */
+export function applyLoaded(loaded: LoadedModel[], at: number = Date.now()): void {
+    psError.value = null;
+    // Remember each resident model's window (overwrite → tracks a mid-run reload).
+    for (const m of loaded) if (typeof m.contextLength === "number") seenContext.set(normModel(m.model), m.contextLength);
+    loadedModels.value = loaded;
+    // One sample per reading, carrying the capacity in force at the time — a sample read back from history
+    // must know the ceiling it was drawn against, not today's.
+    const sample: ResourceSample = { t: at, models: loaded.map((m) => residencyOf(m)), capacity: capacity.value };
+    // CHRONOLOGICAL, not append-order. Everything downstream — segmenting on gaps, placing an event inside
+    // the run that contains it, the scrub window — assumes the samples are in time order, and a bare push
+    // holds that for a poll and breaks it for the stream: a connection BACKFILLS up to ten minutes of history
+    // after the poll has already appended samples for "now", so the array goes recent, then old, then recent.
+    // Segmenting that yields one enormous negative gap, every run becomes a single sample, and the whole
+    // event lane silently draws nothing while its filter chips still count the events.
+    const prev = resourceHistory.value;
+    const last = prev.at(-1);
+    const next = !last || at >= last.t
+        ? [...prev, sample]                                    // the ordinary case: the newest reading
+        : [...prev, sample].sort((a, b) => a.t - b.t);         // backfill landing behind what we already hold
+    resourceHistory.value = next.slice(-RESOURCE_HISTORY);
+}
+
 export function pollPs(): void {
     if (!sidebarOpen.value) return;
     if (!vramOpen.value && view.value.name !== "detail") return;
+    // The stream, when one is carrying, IS the reading — polling on top of it would double every sample and
+    // draw a history at twice the true density.
+    if (streamLive.value) return;
     chrome.runtime.sendMessage({ type: "OLLAMA_PS", payload: {} }, (resp: any) => {
         if (chrome.runtime.lastError || (resp && resp.error)) {
             psError.value = (resp && resp.error) || chrome.runtime.lastError?.message || "unavailable";
             loadedModels.value = []; return;
         }
-        psError.value = null;
-        const loaded = resp.data || [];
-        // Remember each resident model's window (overwrite → tracks a mid-run reload).
-        for (const m of loaded) if (typeof m.contextLength === "number") seenContext.set(normModel(m.model), m.contextLength);
-        loadedModels.value = loaded;
-        // One sample per poll, carrying the capacity in force at the time — a sample read back from history
-        // must know the ceiling it was drawn against, not today's.
-        const sample: ResourceSample = {
-            t: Date.now(),
-            models: loaded.map((m: LoadedModel) => residencyOf(m)),
-            capacity: capacity.value,
-        };
-        resourceHistory.value = [...resourceHistory.value, sample].slice(-RESOURCE_HISTORY);
+        applyLoaded(resp.data || []);
         // Keep occupancy honest without polling capacity as often as residency (see CAPACITY_EVERY).
         if (++psSinceCapacity >= CAPACITY_EVERY) { psSinceCapacity = 0; fetchCapacity(); }
     });
@@ -374,7 +531,18 @@ export function timeline(): ResourceEvent[] {
     // eventsFrom with no `now` and gets finished work only. It advances per render, which is per poll, so a
     // live bar grows at the same cadence as the memory trace beside it.
     const fromSessions = eventsFrom([...sessionMap.values()] as UsageSource[], Date.now());
-    return [...fromSessions, ...residencyEvents(resourceHistory.value, fromSessions)].sort((a, b) => a.t - b.t);
+    // The server's own edges REPLACE the inferred ones when we have them. Diffing polls can see that a model
+    // appeared, never that it was loading — and it cannot tell an eviction that made room from an idle
+    // expiry, which the server reports as two different kinds. Falling back to inference when the stream is
+    // not carrying is the stock-Ollama path, unchanged.
+    const machine = streamLive.value
+        // A model serving RIGHT NOW has no end yet, so it is synthesized against the clock the same way an
+        // in-flight generation is — `until` is where it had reached, not where it ended. Without it the fact
+        // the panel most wants to show while you watch (the box is working) appears only once it is over.
+        ? [...machineEvents.value, ...Object.entries(servingSince.value).map(([model, t]): ResourceEvent => (
+            { t, until: Date.now(), open: true, kind: "serve", label: `${model} serving`, model }))]
+        : residencyEvents(resourceHistory.value, fromSessions);
+    return [...fromSessions, ...machine].sort((a, b) => a.t - b.t);
 }
 
 /** The session the lane scopes to when scoping is on: whichever one is open. Null in the list view, where

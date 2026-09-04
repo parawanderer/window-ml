@@ -134,3 +134,24 @@ export function timedText(text: string, marks: [number, number][] | undefined, n
     });
     return out.join("\n");
 }
+
+/** A DURATION, in units a reader can hold in their head. One formatter, because the panel had two that
+ *  disagreed: a span's tooltip stopped at seconds, so a five-minute run read as "312.4s" — technically the
+ *  number but not the answer to "how long was that". Milliseconds matter under a second (a tool call can be
+ *  4ms), tenths under a minute, and past that the seconds are noise beside the minutes. */
+export function fmtDur(ms: number): string {
+    const n = Math.max(0, ms);
+    if (n < 1000) return `${Math.round(n)}ms`;
+    if (n < 60_000) return `${(n / 1000).toFixed(1)}s`;
+    const totalS = Math.round(n / 1000);
+    const m = Math.floor(totalS / 60), sec = totalS % 60;
+    if (m < 60) return sec ? `${m}m ${sec}s` : `${m}m`;
+    const h = Math.floor(m / 60), min = m % 60;
+    return min ? `${h}h ${min}m` : `${h}h`;
+}
+
+/** The same scale, as an AGE ("3m ago"). Sub-second is not a useful age — anything that recent is "now" to a
+ *  reader — so it rounds up to seconds rather than reporting milliseconds. */
+export function fmtAge(ms: number): string {
+    return ms < 1000 ? "0s" : fmtDur(ms).replace(/\.\d+/, "");
+}

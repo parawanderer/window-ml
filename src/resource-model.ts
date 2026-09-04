@@ -548,6 +548,25 @@ export function sameBoxOnly(samples: ResourceSample[], cap: Capacity | null, swi
  *  memory that was never measured. (Same rule as never inventing a timestamp for an unmarked line.) */
 export const MAX_SAMPLE_GAP_MS = 15_000;
 
+/** The same rule, for a STREAMED history. It is a different number because a gap means a different thing on
+ *  each transport, and using the polling one under the stream is a bug that hides the whole event lane.
+ *
+ *  Polling runs at a fixed 2s while the panel is open, so 15s between samples really did mean nobody was
+ *  watching. The stream's cadence is ADAPTIVE by design — 1s while a load is in flight or the body is
+ *  changing, 15s when nothing is happening — so 15s apart is the NORMAL idle spacing and means "nothing
+ *  changed", the opposite of "nothing was measured". Reading it as a hole broke an idle history into
+ *  single-sample segments, and since a lone sample draws no line, every event placed in one was dropped:
+ *  a lane counting four loads and drawing none.
+ *
+ *  Three missed idle samples, which is a stream that has genuinely stopped rather than one that is quiet. */
+export const STREAM_MAX_GAP_MS = 45_000;
+
+/** The stream's IDLE cadence. It is the grace `placeEvents` needs on a streamed history for the same reason
+ *  the poll interval is on a polled one: the last sample can be a whole idle interval old while the chart's
+ *  right edge means "now", so without it the newest events — the ones you are watching for — are the only
+ *  ones that never appear. Fifteen seconds is a long time to be blind to the thing you opened the panel for. */
+export const STREAM_SAMPLE_MS = 15_000;
+
 /** Split history into contiguous runs, so the chart draws several segments rather than one line bridging
  *  every gap. A single sample is its own segment (it renders as a point, not a line). */
 export function segments(samples: ResourceSample[], maxGapMs: number = MAX_SAMPLE_GAP_MS): ResourceSample[][] {
@@ -1071,7 +1090,7 @@ export interface ResourceEvent {
      *  the driver runs. It is NOT produced yet; the kind exists so that when it is, it renders and hovers like
      *  everything else instead of arriving as an unlabelled bar. Its whole point is that it OVERLAPS the
      *  driver's own events rather than following them, which the lane's row packing already handles. */
-    kind: "run" | "session" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
+    kind: "run" | "session" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note" | "serve";
     label: string;
     model?: string;
     /** This event's own id, and the event that SPAWNED it. A delegated sub-call — a vision reader, an
@@ -1083,7 +1102,10 @@ export interface ResourceEvent {
     /** Where this happened, so a click can go there: a session hash, and the step within it. Events are
      *  CROSS-SESSION — a model load belongs to the machine's timeline, not to whichever chat provoked it — so
      *  the reference is how the lane gets you back to the one that did. */
-    ref?: { hash: string; seq?: number };
+    /** Where clicking this span goes. `seq` names a STEP; without one it is a container, and `answer` says
+     *  WHICH of the session's answers it ends at — a session holds one per run, so without it every run
+     *  clicked through to the same final answer. */
+    ref?: { hash: string; seq?: number; answer?: number };
     /** A composite span's PHASES, in order, each ending at `until`. A tool step is one block because it is one
      *  step and you reason about its parts together — but the parts are different kinds of time and must look
      *  different: the model generating the call, the human deciding whether to allow it, and the tool actually
@@ -1098,8 +1120,14 @@ export interface ResourceEvent {
      *  `queue`/`net` subdivide a REMOTE tool's time the same way, and for the same reason — because the
      *  executor reported its own numbers. What it said it spent evaluating is `tool`, what it spent getting
      *  started is `queue`, and whatever is left of OUR wall clock is `net`: the network and the far end's
-     *  overhead. A local tool is all `tool`, which is exactly true rather than a fallback. */
-    phases?: { kind: "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "dispatch"; until: number }[];
+     *  overhead. A local tool is all `tool`, which is exactly true rather than a fallback.
+     *
+     *  `weights`/`context` split a LOAD, and only when the server reported the boundary. They are not
+     *  "loading" and "warming up": the second half ALLOCATES, and on a long-context model it allocates most
+     *  of the footprint — measured as a second memory step some seconds after the weights land, immediately
+     *  before the model will serve. So the span says "resident at 4s, usable at 10s", which is a readiness
+     *  fact and the explanation a reader otherwise lacks for a memory trace that went flat while they waited. */
+    phases?: { kind: "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "dispatch" | "weights" | "context"; until: number }[];
     /** This span has NOT FINISHED: `until` is where it had reached when the snapshot was taken, not where it
      *  ended. Only ever set by an `eventsFrom` given a `now` — a surface drawing live. It exists so the UI can
      *  say "still going" rather than drawing a bar whose right edge looks like a measured end. */

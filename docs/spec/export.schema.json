@@ -2109,7 +2109,8 @@
                 "load",
                 "evict",
                 "error",
-                "note"
+                "note",
+                "serve"
               ]
             },
             {
@@ -2200,7 +2201,9 @@
                 "call",
                 "queue",
                 "net",
-                "dispatch"
+                "dispatch",
+                "weights",
+                "context"
               ]
             },
             {

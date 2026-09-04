@@ -205,6 +205,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip-model { flex-direction: column; align-items: flex-start; gap: 3px; width: max-content; max-width: min(300px, 92vw); }
 .rc-tip-model .rc-tip-line { display: flex; align-items: center; gap: 5px; }
 .rc-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+/* The residual's placeholder: same footprint so the names align, an empty ring so it cannot be read as a
+   model's colour. */
+.rc-tip-dot-none { background: transparent; border: 1px solid var(--fg-faint); opacity: .55; }
 /* The pool tip is a small table, not a one-liner: how big, how much is used, and BY WHAT — the consumer list
    is repeated here so the answer is complete without looking away from the cursor. */
 .rc-tip-pool { flex-direction: column; align-items: stretch; gap: 1px; min-width: 150px; }
@@ -332,6 +335,20 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    built inline from the model's colour (loadStripes); this is what it falls back to. */
 .rc-ev-load { background: repeating-linear-gradient(45deg, var(--warn, #f59e0b) 0 3px, var(--panel) 3px 8px);
               outline: 1px solid var(--border); outline-offset: -1px; }
+/* The CONTEXT half of a load, over the striped span: the KV cache and compute buffers being allocated. A
+   tighter, denser stripe than the weights half, with a hairline at the boundary, so the split reads as a
+   change of texture. Drawn as an overlay rather than as a gradient stop, because a stop takes a colour and a
+   stripe is a pattern — the same reason the approval wait is an overlay. */
+.rc-ev-ctxphase { position: absolute; top: 0; bottom: 0; pointer-events: none;
+  background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--model, var(--warn, #f59e0b)) 80%, transparent) 0 2px, transparent 2px 5px);
+  border-left: 1px solid color-mix(in srgb, var(--model, var(--fg)) 70%, transparent); }
+
+/* SERVING: the box working, from the server's own view — so it covers requests this browser never made,
+   which is the reason it is worth drawing at all. Solid (unlike a load, which is a wait) and in the model's
+   own colour, at half weight so it reads as a backdrop to the steps drawn against it rather than competing
+   with them. */
+.rc-ev-serve { background: color-mix(in srgb, var(--model, var(--accent)) 55%, transparent);
+               outline: 1px solid color-mix(in srgb, var(--model, var(--accent)) 35%, transparent); outline-offset: -1px; }
 .rc-tip-event { flex-direction: column; align-items: stretch; gap: 2px; min-width: 150px; }
 .rc-tip-event .rc-tip-line { display: flex; align-items: center; gap: 5px; }
 .rc-tip-event .rc-tip-size { margin-left: auto; }
@@ -465,7 +482,14 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Its card stopped being reported: real memory with no pool to draw it against. */
 .vram-orphan { padding: 0 4px; font-size: 0.72em; color: var(--danger, #ef4444); border: 1px solid var(--danger, #ef4444);
                border-radius: 3px; opacity: .85; }
-.vram-embed { padding: 0 4px; font-size: 0.72em; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 3px; }
+/* The kind badges share ONE geometry, so a row of them reads as a row. They differ in WEIGHT only: `embed`
+   is the notable case and `chat` the ordinary one, which is a colour difference, not a shape one. Giving
+   `chat` a capsule while `embed` and the context chip stayed rectangles made the odd one out the common
+   case, and read as two unrelated kinds of thing on the same line. */
+.vram-embed, .vram-chat { padding: 0 4px; font-size: 0.72em; border: 1px solid var(--border); border-radius: 3px;
+    line-height: 1.6; }
+.vram-embed { color: var(--fg-dim); }
+.vram-chat { color: var(--fg-faint); }
 /* Live keep-alive countdown — same chip shape as the context badge, sat beside it. */
 .vram-ttl { flex: 0 0 auto; color: var(--fg-faint); font-size: 0.9em; font-variant-numeric: tabular-nums;
   border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; line-height: 1.35; cursor: help; }
@@ -1687,12 +1711,6 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 /* Step-budget segmented control — a pretty pill selector (macOS-style raised selected), NOT a bare select. */
 .card-cmp-budget { display: flex; align-items: center; gap: 8px; }
 .card-cmp-budget-label { color: var(--fg-faint); font-size: .82em; }
-/* "◊ live" — stream the thinking for a UI-started run. Off = quiet outline; on = accent-filled. */
-.card-cmp-stream { font-size: .8em; font-weight: 600; padding: 2px 9px; border-radius: 999px; cursor: pointer;
-    color: var(--fg-faint); border: 1px solid var(--border); background: transparent; }
-.card-cmp-stream:hover { color: var(--fg); border-color: var(--fg-faint); }
-.card-cmp-stream.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-    background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--panel-2); border: 1px solid var(--border); }
 .seg .seg-opt {
     border: none; background: transparent; color: var(--fg-dim);
@@ -2111,10 +2129,6 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .srv-find { margin: 6px 0 0; }
 .srv-find input { flex: 1 1 auto; min-width: 0; }
 
-/* A generating model, beside the embedding badge. Quieter than `embed`: it is the ordinary case, and only
-   worth saying because the two are otherwise indistinguishable in a list of names. */
-.vram-chat { font-size: .7em; padding: 0 5px; border-radius: 999px; color: var(--fg-faint);
-    border: 1px solid var(--border); line-height: 1.6; }
 /* What a model IS, on its row tooltip — the same fact the badge carries, repeated where the name is named. */
 .vram-rowtip-kind { margin-left: 6px; color: var(--fg-faint); font-weight: 400; }
 

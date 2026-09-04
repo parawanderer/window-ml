@@ -26,6 +26,27 @@ export interface ResourceStreamMessage {
     interrupted?: string;
 }
 
+/** What the connection has DONE, for anything that needs to ask from outside — a live probe, a future panel
+ *  readout, a bug report. Exposed on the SW realm only (the page has no `chrome.runtime` and cannot reach it),
+ *  the same seam `__mlApprovals` and `__mlEvictForTest` use. It answers the question that is otherwise
+ *  unanswerable from a screenshot: is this panel being fed by the stream or by the poll? */
+export interface ResourceStreamStatus {
+    connected: boolean;
+    subscribers: number;
+    frames: number;
+    samples: number;
+    /** Frame kinds seen, with counts — the quickest read on whether EDGES are arriving or only samples. */
+    kinds: Record<string, number>;
+    lastAt: number | null;
+    /** Why it is not carrying, when it is not. `unsupported` is the ordinary stock-Ollama answer, not a fault. */
+    note: string | null;
+    unsupported: boolean;
+}
+const status: ResourceStreamStatus = {
+    connected: false, subscribers: 0, frames: 0, samples: 0, kinds: {}, lastAt: null, note: null, unsupported: false,
+};
+export const resourceStreamStatus = (): ResourceStreamStatus => ({ ...status, kinds: { ...status.kinds } });
+
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
 /** The server's retained ring. A first connection asks for all of it: on a fresh open that is history the
  *  panel would otherwise spend ten minutes re-measuring. */
@@ -67,6 +88,7 @@ async function connect(): Promise<void> {
         throw Object.assign(new Error(`This server does not serve /api/events (HTTP ${res.status}).`),
                             { unsupported: true });
     }
+    status.connected = true; status.note = null; status.unsupported = false;
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -87,6 +109,9 @@ async function connect(): Promise<void> {
             // older than the connection, so letting it move the mark would shrink the next reconnect's
             // window to cover history we already hold and leave the actual gap unasked for.
             if (frame.t >= 0) lastFrameAt = Math.max(lastFrameAt ?? 0, at);
+            status.frames++; status.lastAt = at;
+            status.kinds[frame.kind] = (status.kinds[frame.kind] || 0) + 1;
+            if (frame.kind === "sample") status.samples++;
             fan({
                 frame, at,
                 ...(frame.kind === "sample" ? {
@@ -112,7 +137,8 @@ async function pump(): Promise<void> {
             if (subs.size) fan({ interrupted: "stream ended" });
         } catch (e: any) {
             if (e?.name === "AbortError") break;              // we closed it on purpose
-            if (e?.unsupported) { fan({ unsupported: String(e.message) }); break; }
+            if (e?.unsupported) { status.unsupported = true; status.note = String(e.message); fan({ unsupported: String(e.message) }); break; }
+            status.note = String(e?.message || e);
             if (subs.size) fan({ interrupted: String(e?.message || e) });
         }
         if (!subs.size) break;
@@ -121,6 +147,7 @@ async function pump(): Promise<void> {
     }
     running = false;
     abort = null;
+    status.connected = false;
 }
 
 /** Attach a panel. The first subscriber opens the connection; the last one to leave closes it, because a
@@ -128,8 +155,10 @@ async function pump(): Promise<void> {
  *  to avoid. */
 export function subscribeResourceEvents(port: chrome.runtime.Port): void {
     subs.add(port);
+    status.subscribers = subs.size;
     port.onDisconnect.addListener(() => {
         subs.delete(port);
+        status.subscribers = subs.size;
         if (!subs.size) {
             abort?.abort();
             if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
@@ -144,3 +173,7 @@ export function _resetResourceEvents(): void {
     if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
     subs.clear(); abort = null; running = false; lastFrameAt = null; attempt = 0;
 }
+
+// The SW-realm handle. Reachable from `serviceWorker.evaluate` (Playwright, a live probe) and from nowhere a
+// page can get to, since the main world has no `chrome.runtime` and cannot enter this realm.
+try { (globalThis as any).__mlResourceStream = { status: resourceStreamStatus }; } catch { /* not a worker */ }

@@ -19,7 +19,7 @@ import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge, EmbedRunView } from "./reply";
 import { AgentRunView } from "./agent-detail";
 import { Composer } from "./composer";
-import { fetchModels, pollPs, pollBackendHealth, VramPanel, PythonBench, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
+import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, VramPanel, PythonBench, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
 import { CardApp, endActiveCardDrag } from "./hud-card";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
@@ -204,6 +204,13 @@ function App() {
         const id = setInterval(pollPs, VRAM_POLL_MS);
         return () => clearInterval(id);
     }, []);
+    // The live feed, when the server has one, and ONLY while something is looking at it. Gated exactly like
+    // the poll above (which self-gates internally): the overlay app is mounted in every tab, so subscribing on
+    // mount would have every tab holding a subscription for a panel nobody has open. The interval STAYS
+    // regardless — it stands down while the stream carries and comes back on its own if it drops, so a stock
+    // Ollama with no /api/events at all is served by exactly the same code path it always was.
+    const feedWanted = open && (vramOpen.value || v.name === "detail");
+    useEffect(() => (feedWanted ? connectResourceStream() : undefined), [feedWanted]);
     useEffect(() => { pollPs(); }, [v.name, vramOpen.value, open]);
     // Stick-to-bottom: while a session's detail is open and the user is parked at the bottom,
     // keep the log pinned to the latest as it grows — but if they've scrolled UP to read, leave

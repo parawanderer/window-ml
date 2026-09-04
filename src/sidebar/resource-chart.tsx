@@ -19,9 +19,9 @@ import {
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
-import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter } from "./vram";
+import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, streamLive, sampleGapMs, sampleGraceMs } from "./vram";
 import { models, ollamaIds, loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, showLane, laneLitSeqs } from "./store";
-import { clockAt, hhmmss, hhmmssms } from "./timestamps";
+import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
 import { signal } from "@preact/signals";
@@ -161,7 +161,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     // A run of ONE sample has no shape to draw — StackedArea needs two points — and giving it a 2px column
     // leaves a pale sliver where the band wash is missing, which reads as a rendering artifact rather than as
     // data. Undrawable runs are skipped; nothing is lost, because a lone point conveys no trend either.
-    const runs = useMemo(() => segments(samples).filter((r) => r.length > 1), [samples]);
+    const runs = useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]);
     // Only the instants: a span is a duration and belongs in the lane, where its length can be read.
     const instants = useInstants(runs, events);
     // The DATAPOINT under the pointer, resolved through the same segmented geometry the crosshair uses, so
@@ -245,17 +245,9 @@ function SampleStamp({ at }: { at: ResourceSample | null }) {
             <span>{hhmmss(at.t)}</span>
             {/* "how long ago" is what makes a clock time mean something at a glance on a plot with no axis
                 labels; the clock time is what makes it comparable with the transcript and the event lane. */}
-            <span class="rc-tip-ago">{ago < 1500 ? "now" : `${fmtAgo(ago)} ago`}</span>
+            <span class="rc-tip-ago">{ago < 1500 ? "now" : `${fmtAge(ago)} ago`}</span>
         </div>
     );
-}
-
-/** A compact age: seconds under a minute, then minutes, then hours. */
-function fmtAgo(ms: number): string {
-    const s = Math.round(ms / 1000);
-    if (s < 60) return `${s}s`;
-    const m = Math.round(s / 60);
-    return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
 /** What the hovered band is, shown over the plot. Deliberately the SAME facts as the legend row (ModelFacts),
@@ -393,9 +385,14 @@ function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf }: {
                         {consumers.map((c) => (
                             <div class="rc-tip-row rc-tip-consumer-row" key={c.label}>
                                 <span class="rc-tip-label">
-                                    {/* A model's own dot, the same one its row carries. The residual gets
-                                        none: it is not a model, and a dot would say it was. */}
-                                    {c.model ? <i class="rc-tip-dot" style={{ background: colorFor(c.model) }} /> : null}
+                                    {/* A model's own dot, the same one its row carries. The residual gets a
+                                        HOLLOW one: an empty ring holds the same space so the names line up,
+                                        while visibly not being a colour swatch — which is the thing that
+                                        would claim the residual is a model. Omitting it entirely aligned
+                                        nothing and left the column ragged. */}
+                                    {c.model
+                                        ? <i class="rc-tip-dot" style={{ background: colorFor(c.model) }} />
+                                        : <i class="rc-tip-dot rc-tip-dot-none" />}
                                     <span class="rc-tip-cname">{c.label}</span>
                                     {c.model && !now.has(c.label) ? <span class="rc-tip-gone">gone</span> : null}
                                 </span>
@@ -499,7 +496,7 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
     }).filter(Boolean) as { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }[];
     if (!pools.length) return null;
 
-    const runs = segments(samples).filter((r) => r.length > 1);
+    const runs = segments(samples, sampleGapMs()).filter((r) => r.length > 1);
     const usedOf = (s: ResourceSample, p: typeof pools[number]) =>
         p.bandsOf(s).filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
     // Plotted as a FRACTION of each pool's own capacity. Absolute bytes on a shared axis would be a lie here:
@@ -619,6 +616,11 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
  *  which is exactly the confusion the stripes exist to prevent.) */
 /** A phase's swatch, matching its stripe in the bar exactly — so the tooltip's sections and the block's parts
  *  are visibly the same three things, rather than a list you have to map onto a picture yourself. */
+const loadStripes = (model?: string): string => {
+    const c = model ? colorFor(model) : "var(--warn, #f59e0b)";
+    return `repeating-linear-gradient(45deg, ${c} 0 3px, var(--panel) 3px 8px)`;
+};
+
 const phaseFill = (kind: string, model?: string): string => {
     const base = model ? colorFor(model) : "var(--accent)";
     // The model's channels share its colour and differ in WEIGHT, because they are the same model doing the
@@ -637,13 +639,15 @@ const phaseFill = (kind: string, model?: string): string => {
         : kind === "dispatch" ? "color-mix(in srgb, var(--fg-faint) 20%, transparent)"
         : kind === "net" ? "color-mix(in srgb, var(--fg-faint) 26%, transparent)"
         : kind === "queue" ? "color-mix(in srgb, var(--fg-faint) 38%, transparent)"
+        // A LOAD's two halves. Both are the model arriving, so both are its colour — but the first is the
+        // weights moving (dense, and where the memory trace actually steps) and the second is the context
+        // being allocated before it will serve. Striped either way, because a load is a wait rather than
+        // work; the difference between them is weight, so the divider is what reads.
+        : kind === "weights" ? loadStripes(model)
+        : kind === "context" ? `repeating-linear-gradient(45deg, color-mix(in srgb, ${base} 45%, transparent) 0 3px, var(--panel) 3px 8px)`
         : `color-mix(in srgb, ${base} 38%, transparent)`;
 };
 
-const loadStripes = (model?: string): string => {
-    const c = model ? colorFor(model) : "var(--warn, #f59e0b)";
-    return `repeating-linear-gradient(45deg, ${c} 0 3px, var(--panel) 3px 8px)`;
-};
 
 /** Each phase as a [start, end] FRACTION of the block. Phases carry only their end, so a start is the
  *  previous end — which every consumer would otherwise re-derive, and one of them would get wrong. */
@@ -681,7 +685,7 @@ function phaseGradient(phases: { kind: string; until: number }[], from: number, 
 function useInstants(runs: ResourceSample[][], events: ResourceEvent[]): EventPlacement[] {
     return useMemo(() => {
         const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
-        return placeEvents(runs, eventsIn(events.filter((e) => e.until == null), from, to + VRAM_POLL_MS), VRAM_POLL_MS);
+        return placeEvents(runs, eventsIn(events.filter((e) => e.until == null), from, to + sampleGraceMs()), sampleGraceMs());
     }, [runs, events]);
 }
 
@@ -735,7 +739,7 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
     const ex = scrubExtent(samples, win);
     if (!ex || !win) return null;   // nothing to scrub: the window already covers the session
     const span = ex.to - ex.from;
-    const runs = segments(samples);
+    const runs = segments(samples, sampleGapMs());
     // WHERE you grabbed decides what the drag does, which is the vocabulary every timeline control uses:
     // the middle pans, an edge resizes. Recentring on the cursor wherever it lands is what made the window
     // impossible to widen once it had been narrowed — every grab was a pan, including a grab on a handle.
@@ -943,7 +947,7 @@ function EventTip({ scope }: { scope: string }) {
     if (!h || !at || h.scope !== scope) return null;
     const e = h.p.event;
     const dur = (e.until ?? e.t) - e.t;
-    const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`);
+    const ms = fmtDur;   // one duration scale for the whole panel — see timestamps.ts
     // Each phase's own duration, from where the previous one ended.
     const { ref, style } = useTipPlacement(at);
     // What getting TO the model cost. Wall MINUS generation is not that on its own: it also contains reading
@@ -1069,10 +1073,10 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
     const filter = laneFilter();
     const events = useMemo(() => filterEvents(all, filter), [all, filter.hash, filter.scope, filter.hidden]);
     const counts = useMemo(() => countByKind(all), [all]);
-    const runs = useMemo(() => segments(samples).filter((r) => r.length > 1), [samples]);
+    const runs = useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]);
     const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
     // The window admits a poll's worth past the last sample, for the same reason placeEvents does.
-    const placed = useMemo(() => placeEvents(runs, eventsIn(events, from, to + VRAM_POLL_MS), VRAM_POLL_MS),
+    const placed = useMemo(() => placeEvents(runs, eventsIn(events, from, to + sampleGraceMs()), sampleGraceMs()),
         [runs, events, from, to]);
     // The CONTROL still shows when everything is filtered out — otherwise hiding the last kind hides the way
     // to bring it back.
@@ -1155,6 +1159,13 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                                 // model, the human deciding, the tool. Drawn as gradient stops rather than
                                 // separate elements, so it still hovers and clicks as the single step it is.
                                 const total = (e.until ?? e.t) - e.t;
+                                // A LOAD keeps its stripe for the whole span — it is a wait, and a flat fill
+                                // would read as work. Its two halves are drawn as an OVERLAY below instead,
+                                // for exactly the reason the approval wait is: a gradient stop takes a
+                                // COLOUR, and a stripe is a pattern. Feeding the phase fills into
+                                // phaseGradient produced `linear-gradient(..., repeating-linear-gradient(...)
+                                // 0% 8%, ...)`, which is not valid CSS at all: the whole declaration was
+                                // dropped and the divider silently never appeared.
                                 const bg = e.kind === "load" ? loadStripes(e.model)
                                     : e.phases && total > 0 ? phaseGradient(e.phases, e.t, total, e.model) : undefined;
                                 // Hovering one event dims everything outside its LINEAGE: a sub-call only means
@@ -1185,9 +1196,15 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                                             Drawn over the flat neutral rather than into the gradient, because
                                             a gradient stop takes a colour and a stripe is a pattern. */}
                                         {e.phases && total > 0
-                                            ? phaseSpans(e.phases, e.t, total).filter((ph) => ph.kind === "wait" && ph.end > ph.start)
+                                            ? phaseSpans(e.phases, e.t, total)
+                                                .filter((ph) => (ph.kind === "wait" || ph.kind === "context") && ph.end > ph.start)
                                                 .map((ph, wi) => (
-                                                    <i class="rc-ev-wait" key={wi}
+                                                    // `context` is the second half of a LOAD: the KV cache and
+                                                    // compute buffers being allocated, which is where most of a
+                                                    // long-context model's footprint actually lands. Denser than
+                                                    // the weights half it follows, so the boundary reads as a
+                                                    // change of texture rather than needing a drawn line.
+                                                    <i class={ph.kind === "context" ? "rc-ev-ctxphase" : "rc-ev-wait"} key={wi}
                                                         style={{ left: `${ph.start * 100}%`, width: `${(ph.end - ph.start) * 100}%` }} />
                                                 ))
                                             : null}
@@ -1212,6 +1229,9 @@ function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number
         { kind: "run", label: "runs" }, { kind: "session", label: "sessions" },
         { kind: "tool", label: "steps" }, { kind: "gen", label: "calls" },
         { kind: "embed", label: "sub-calls" }, { kind: "load", label: "loads" }, { kind: "evict", label: "evictions" },
+        // What the BOX was doing, as opposed to what this browser asked for — a serving span covers traffic
+        // from any client, which is exactly why it is worth drawing and why it is separately hideable.
+        { kind: "serve", label: "serving" },
     ];
     const toggle = (k: string) => {
         const next = hidden.has(k) ? laneHidden.value.filter((x) => x !== k) : [...laneHidden.value, k];

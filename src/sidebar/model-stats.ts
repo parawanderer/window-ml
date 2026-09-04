@@ -310,7 +310,10 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
             }
             // Folded into the tool block above → drawing it again here would double the same seconds.
             if (!st.tool && folded.has(st.step ?? 0) && turnUsage.get(st.step ?? 0) === st) continue;
-            call(st.ts, st.usage, s.model, { hash: s.hash, seq: st.seq }, `step:${s.hash}:${st.seq ?? st.step ?? 0}`, runIdOf(st.step));
+            // `gen:`, not `step:`. A generation record carries no `seq`, so the id fell back to its STEP
+            // number — and in a later run a TOOL with that seq minted the identical string, so hovering one
+            // lit the other and clicking went to the wrong place. Two numbering spaces cannot share a prefix.
+            call(st.ts, st.usage, s.model, { hash: s.hash, seq: st.seq }, `gen:${s.hash}:${st.step ?? 0}`, runIdOf(st.step));
         }
         // ── IN FLIGHT ────────────────────────────────────────────────────────────────────────────────
         // Everything above is history: it is derived from a step's FINISH stamp, so none of it exists until
@@ -378,7 +381,8 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
                        // the way it always did rather than gaining a "1 of 1".
                        label: `${noun}${containers.length > 1 ? ` ${c.index + 1}/${containers.length}` : ""}${s.model ? ` · ${s.model}` : ""}`,
                        model: s.model || undefined,
-                       id: c.id, ref: { hash: s.hash },
+                       // Clicking a run opens ITS answer, not the session's last one.
+                       id: c.id, ref: { hash: s.hash, ...(s.kind === "agent" ? { answer: c.index } : {}) },
                        ...(runCost.calls ? { cost: { inTokens: runCost.inTokens, outTokens: runCost.outTokens,
                                                      tokPerSec: runCost.tokPerSec, genBasis: runCost.genBasis } } : {}) });
         }

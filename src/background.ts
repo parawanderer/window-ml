@@ -20,6 +20,7 @@ import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpEval, cdpScreensh
 import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
+import { subscribeResourceEvents } from "./sw-events";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -1790,6 +1791,14 @@ function resetDebug(tabId: number): void {
     const ports = devtoolsPorts.get(tabId);
     if (ports) for (const p of ports) { try { p.postMessage({ reset: true }); } catch { /* port closing */ } }
 }
+
+// The resource panel's live feed. ONE connection to the server's event stream per worker, fanned out to
+// every open panel — see sw-events.ts, which also owns the reconnect and the backfill that makes an evicted
+// worker cost latency rather than history.
+chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== "ml-resource") return;
+    subscribeResourceEvents(port);
+});
 
 chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "ml-devtools") return;

@@ -7128,8 +7128,15 @@ test("pool tooltip: each model consumer carries its colour, the residual doesn't
     assert.ok(modelLine.querySelector(".rc-tip-dot"), "the model consumer has a dot");
     assert.equal(modelLine.querySelector(".rc-tip-dot").getAttribute("style"),
         w.shadow.querySelector(".vram-row .vram-dot").getAttribute("style"), "…in the colour its row uses");
+    // The residual keeps the dot's FOOTPRINT so the names line up in the grid's first column, but as an empty
+    // ring: omitting it left the column ragged, and a filled one would claim the residual is a model.
     const residual = [...tip.querySelectorAll(".rc-tip-row")].find((l) => /driver overhead|unattributed/.test(l.textContent));
-    if (residual) assert.equal(residual.querySelector(".rc-tip-dot"), null, "the residual is not a model");
+    if (residual) {
+        const ring = residual.querySelector(".rc-tip-dot");
+        assert.ok(ring, "the residual still occupies the dot column, so the names align");
+        assert.ok(ring.classList.contains("rc-tip-dot-none"), "…as an empty ring, not a model's colour");
+        assert.equal(ring.getAttribute("style"), null, "…and it carries no colour of its own");
+    }
 });
 
 // The rules were written INLINE in the per-pool view, so the Overview preset — the default — had none at all:
