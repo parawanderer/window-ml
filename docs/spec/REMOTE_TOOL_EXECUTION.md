@@ -292,6 +292,39 @@ transport that has it.
 
 ---
 
+## Using the official MCP SDK (measured, not assumed)
+
+The client half is unwritten, and the obvious way to write it is `@modelcontextprotocol/sdk`. Measured
+against `1.30.0`, bundled with esbuild for `platform=browser`, because an MV3 service worker is a hostile
+enough target that the package's own docs do not answer the question.
+
+**The HTTP client path is genuinely worker-shaped.** It bundles with zero errors and contains no `node:`
+imports, no `process.`, no `__dirname`, and — the one that would have settled it — no `EventSource`, which
+service workers do not have. It reads the SSE stream off `fetch` through `eventsource-parser`.
+
+**But the obvious import is a trap.** `import { Client }` costs **298 KB minified**, and
+`client/index.js` imports the SDK's ajv provider, so the bundle contains `new Function`. MV3 forbids
+`unsafe-eval`. It would not fail at load; it would fail the first time a tool declares an `outputSchema`
+and ajv tries to compile a validator for it — a landmine rather than an honest error.
+
+**Importing only `StreamableHTTPClientTransport` avoids both**: **138 KB minified**, no `new Function`, no
+ajv. What remains is zod, the transport, and `eventsource-parser`.
+
+That is the shape to take. The transport is the part genuinely worth not writing — session handling, SSE
+framing, reconnection, resumption tokens: the things that are subtly wrong rather than obviously broken
+when hand-rolled. `Client` on top of it is mostly JSON-RPC correlation and schema validation, and the
+second is redundant here: tool arguments are already checked by `validateArgs`, and results go through the
+frame model.
+
+The cost is real and worth stating plainly. 138 KB is a large addition to a service worker, and most of it
+is zod validating a protocol we could parse with `JSON.parse` and a type guard. Against that: hand-rolling
+means owning session resumption and SSE edge cases permanently, and lossy streaming clients fail quietly
+rather than loudly — the fix in Part 3 is the proof.
+
+**Not yet verified:** that the transport works against a live MCP server from inside a service worker.
+Bundling clean is not running clean, and `chrome-extension://` origin CORS plus the extension's host
+permissions are the plausible next obstacle. That is a spike against a real server, not a bundler question.
+
 ## What the client does with each frame
 
 - `output.text` to `ctx.stream(text, ts)` to the live output cell, then the step's `streamOutput`.
