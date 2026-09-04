@@ -2081,6 +2081,12 @@ export interface MlApi {
      *  tool), so from an untrusted page it only runs a call an agent run already approved. Needs the
      *  patched OpenWebUI — see docs/FORKED-BACKENDS.md. */
     execServerTool(toolId: string, name: string, args?: Record<string, unknown>, options?: { onOutput?: (text: string, ts?: number) => void; signal?: AbortSignal }): Promise<ServerToolResult>;
+    /** The same tools as a callable NAMESPACE — `ml.dynamicTools.<bundle>.<fn>(args)`, with the function's
+     *  own `.schema` on the callable and the arguments checked against it before anything is dispatched.
+     *  See `dynamic-tools.ts`. */
+    dynamicTools: import("./dynamic-tools").DynamicToolNamespace;
+    /** @internal memoised namespace behind {@link dynamicTools}. */
+    _dynamicTools?: import("./dynamic-tools").DynamicToolNamespace;
     /** The machine's memory CAPACITY — per-device VRAM totals/free and system RAM (Ollama `/api/info`).
      *  `ml.ps()` says what is RESIDENT; this says what there is room for. Returns `null` when the route
      *  isn't available (stock Ollama, or an OpenWebUI without the passthrough) — treat that as "capacity

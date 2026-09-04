@@ -1447,7 +1447,20 @@ bundle is skipped rather than failing the run. **The tool declares `remote: {via
 the approval card and the background's grant read THAT rather than the tool's name — so a page choosing a
 friendly name cannot make the card say `search_web` while the grant authorises `send_email`. Its `render`
 is an `action` descriptor whose note says the arguments leave the machine, styled like a navigation because
-something is departing. **The timeline splits a remote step** into `net` / `queue` / `tool` phases — but ONLY because the executor
+something is departing. **`ml.dynamicTools.<bundle>.<fn>(args)`** is the same tools as a callable NAMESPACE (`dynamic-tools.ts`).
+Namespaced by BUNDLE, not flattened: function names come from the server and two bundles can both expose
+`search`, so flattening would silently call the wrong one. Each callable carries **`.schema`** (the
+function's JSON Schema) and `.spec` — the SAME object the call is validated against by `validateArgs`
+BEFORE dispatch, so a console typo fails with the reason instead of as a 400 from the far end or a call that
+succeeded with an argument dropped; a second copy for humans to read would drift from the one that checks.
+It is a **Proxy AND real keys**, because `window.ml` is defined synchronously at document_start while the
+list needs a fetch: the Proxy dispatches by name immediately (so a call works before any list arrived, and
+an unlisted one dispatches without validating rather than refusing a tool that may exist), and `load()`
+fills in enumerable keys so the console can complete them. A run-scoped `allow` list makes an
+out-of-whitelist bundle THROW with the reason rather than being `undefined`, since "undefined is not a
+function" sends the reader hunting for a typo.
+
+**The timeline splits a remote step** into `net` / `queue` / `tool` phases — but ONLY because the executor
 reports its own numbers (`ToolResult.remoteMs` → the step → `model-stats`). Our `toolMs` is wall clock
 around the whole dispatch, so it contains the network and the far end's overhead; `tool` is what the
 executor said it spent evaluating, `queue` what it spent getting started, and `net` is the REMAINDER, drawn

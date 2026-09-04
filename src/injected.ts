@@ -54,6 +54,8 @@ import { Embedding } from "./embedding";
 import { toolNameError } from "./token-id";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
+import { makeDynamicTools } from "./dynamic-tools";
+import type { DynamicToolNamespace } from "./dynamic-tools";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
 import { buildServerTools, buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
@@ -2332,6 +2334,27 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          */
         serverTools: async function(): Promise<ServerTool[]> {
             return makeBackgroundTaskPromise("LIST_SERVER_TOOLS_REQUEST", "LIST_SERVER_TOOLS_RESPONSE", {});
+        },
+        /**
+         * The server-side tools, as a callable NAMESPACE: `ml.dynamicTools.<bundle>.<fn>(args)`.
+         *
+         * Namespaced by BUNDLE rather than flattened, because function names come from the server and two
+         * bundles can both expose `search` — flattening would silently call the wrong one.
+         *
+         * Each callable carries its own contract: `.schema` is the function's JSON Schema and `.spec` the
+         * whole declaration. That is the SAME object the call validates against, so what you inspect is
+         * literally what checks your arguments rather than a second copy that can drift.
+         *
+         * Populated in two stages, because `window.ml` is defined synchronously at document_start and the
+         * tool list needs a fetch. A Proxy dispatches by name immediately — a call works before any list has
+         * arrived — and the real keys appear once `ml.serverTools()` has resolved, so tab-completion works
+         * from then on. `await ml.dynamicTools.load()` forces that early.
+         *
+         * Same gate as {@link execServerTool}: privileged, so from an untrusted page it runs only a call an
+         * agent run already approved. Inside a run, the loop narrows this to the tools that run whitelisted.
+         */
+        get dynamicTools(): DynamicToolNamespace {
+            return (this._dynamicTools ||= makeDynamicTools(this as unknown as MlApi));
         },
         /**
          * Run ONE server-side tool ourselves, in our own loop, with the arguments we chose — as opposed to
