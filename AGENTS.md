@@ -1389,6 +1389,11 @@ broken:
   `ml/tool-execute-api` — it runs the callable the chat pipeline would, so an external client can
   drive its own loop over OpenWebUI-configured tools. **The extension does not call it yet**: server
   tools go through upstream's `tool_ids` + `function_calling` loop (hence the `SERVER_TOOL_MODES` probe).
+  It now also STREAMS its output (NDJSON delta frames) and reports its own `durationMs`/`queuedMs`, which
+  is what makes a remote tool's span attributable instead of "the tool plus the network" as one number.
+  `docs/spec/REMOTE_TOOL_EXECUTION.md` is the contract, corrected against what was built. Expect little
+  output: OpenWebUI has no streaming tool protocol, so frames come from `__event_emitter__` and a tool that
+  only `print()`s streams nothing.
 
 A patched Ollama behind a STOCK OpenWebUI is fine — the `/ollama/*` passthrough is generic, so the
 OpenWebUI fork is not needed for the capacity work.
