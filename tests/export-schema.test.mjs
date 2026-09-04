@@ -141,6 +141,22 @@ test("the open payloads stay open — a new render descriptor type must not inva
     assert.deepEqual(validate(doc, schema), [], "an unknown descriptor type must still validate");
 });
 
+test("an unstable ENUM still accepts a value added later — the case tagging alone did not cover", () => {
+    // A literal union is recognised as an enum BEFORE the union branch that appends a permissive variant, so
+    // marking one @unstable used to attach the note and leave the enum closed: a validator built today would
+    // reject tomorrow's document while claiming to tolerate it. The timeline's `kind` is the union that
+    // forced this — the format is general, and other producers (a benchmark sweep) time spans a session has
+    // no concept of.
+    const schema = buildSchema();
+    const kind = schema.$defs.ExportEvent.properties.kind;
+    assert.ok(kind.anyOf?.[0]?.enum?.includes("tool"), "the known kinds stay an enum, so codegen still emits one");
+    assert.ok(/UNSTABLE/i.test(kind.anyOf.at(-1).description), "…beside a branch that accepts the rest, and says why");
+
+    const doc = sessionToJson(agentSession());
+    doc.session.events = [{ kind: "sweep", label: "a kind from another producer", at: "2026-09-04T10:00:00.000Z" }];
+    assert.deepEqual(validate(doc, schema), [], "an unknown event kind must validate");
+});
+
 test("the borrowed types INSIDE the promise are resolved, not left as anything", () => {
     const schema = buildSchema();
     // TokenUsage is imported from contract.ts; a consumer needs its real shape, not an opaque object.

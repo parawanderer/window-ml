@@ -194,6 +194,19 @@ test("FETCH_LLM surfaces token usage — OpenWebUI `usage` block and Ollama-nati
     const { genMs: gmL, ...tokL } = rL.usage;
     assert.deepEqual(tokL, { promptTokens: 20, completionTokens: 5, totalTokens: 25 }, "total derived when absent");
     assert.equal(typeof gmL, "number", "genMs stamped on the Ollama-native path too");
+
+    // Ollama's three durations are three different diagnoses and are kept apart. prompt_eval_duration is the
+    // one that used to be dropped, which left "wall minus generation" charging the box for the model's own
+    // work — reading a system prompt re-sent on every turn.
+    const bgD = loadBackground({
+        config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat" }),
+        onFetch: () => jsonResponse({ message: { content: "42" }, prompt_eval_count: 20, eval_count: 5,
+                                      load_duration: 6_200_000_000, prompt_eval_duration: 900_000_000, eval_duration: 3_000_000_000 }),
+    });
+    const rD = await bgD.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
+    assert.equal(rD.usage.loadMs, 6200, "nanoseconds → ms");
+    assert.equal(rD.usage.promptEvalMs, 900);
+    assert.equal(rD.usage.evalMs, 3000);
 });
 
 test("FETCH_LLM raw returns reasoning_content (the agent path) — a tool-call turn with empty content", async () => {

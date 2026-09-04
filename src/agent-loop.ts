@@ -74,6 +74,10 @@ export interface AgentLoopDeps {
     // `elements` carries the tool's real result nodes on a DONE (page-side only — nodes can't cross the
     // bus, so the background path leaves it undefined and assembles answer nodes separately). The page's
     // emit uses them for onStep + the debug event's element COUNT.
+    /** A model call is UNDERWAY (and, on a streamed run, what it is emitting right now). Fired the instant
+     *  the request goes out, so a surface can draw the call while it happens rather than back-dating a
+     *  finished block over memory it already drew. Optional: a host that has no live surface omits it. */
+    emitTurn?(ev: { step: number; phases?: import("./contract").GenPhase[] }): void;
     emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[]; streamOutput?: string; streamMarks?: [number, number][] }): void;
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
@@ -452,6 +456,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // A CANCEL_RUN mid-generation aborts the in-flight fetch, which REJECTS here — convert that to a
         // clean cancel (don't propagate as a run error), same as the boundary check. Re-throw a real error.
         let msg;
+        deps.emitTurn?.({ step });   // the call is going out NOW — the only stamp for "the model started"
         try { msg = await deps.callModel(messages, { tools, step }); }
         catch (e) { if (signal?.aborted) return cancelled(step - 1); throw e; }
         if (signal?.aborted) return cancelled(step - 1);

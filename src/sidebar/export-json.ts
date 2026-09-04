@@ -98,12 +98,17 @@ function stepToJson(st: AgentStep): ExportStep {
 function eventToJson(e: ResourceEvent): ExportEvent {
     const end = e.until;
     let prev = e.t;
+    // An OPEN event reports how long it has been going, not how long it took, and gets no `endedAt` at all —
+    // it has not ended, and writing the snapshot moment there would hand a consumer a measurement.
+    const elapsed = end != null ? Math.max(0, end - e.t) : undefined;
     return compact<ExportEvent>({
         kind: e.kind,
         label: e.label,
         at: iso(e.t) || new Date(0).toISOString(),
-        endedAt: iso(end),
-        durationMs: end != null ? Math.max(0, end - e.t) : undefined,
+        endedAt: e.open ? undefined : iso(end),
+        durationMs: e.open ? undefined : elapsed,
+        open: e.open,
+        elapsedMs: e.open ? elapsed : undefined,
         model: e.model,
         id: e.id,
         parent: e.parent,
@@ -123,6 +128,7 @@ function eventToJson(e: ResourceEvent): ExportEvent {
             genBasis: e.cost.genBasis ?? undefined,
             evalMs: e.cost.evalMs,
             wallMs: e.cost.wallMs,
+            promptEvalMs: e.cost.promptEvalMs,
         }),
     });
 }
@@ -134,8 +140,8 @@ function eventToJson(e: ResourceEvent): ExportEvent {
  * Both session kinds get one: a chat has no steps, but its turns still carry generation spans and the
  * model loads they waited through, which is most of what a timeline is for.
  */
-function timeline(s: Session): ExportEvent[] | undefined {
-    const events = eventsFrom([s as never]).map(eventToJson);
+function timeline(s: Session, inFlight?: boolean): ExportEvent[] | undefined {
+    const events = eventsFrom([s as never], inFlight ? Date.now() : undefined).map(eventToJson);
     return events.length ? events : undefined;
 }
 
@@ -279,6 +285,14 @@ export interface ExportProvenance {
      * a local artifact where reproducing the exact build is the point (a benchmark cell, a kept report).
      */
     includeDirtyDiff?: boolean;
+    /**
+     * Include work that had not FINISHED when the document was written, as open events (see
+     * `ExportEvent.open`). Off by default: a downloaded run is a record of what happened, and a span reaching
+     * "now" is not part of that. Turn it on where the document IS a live snapshot — a workbench or dashboard
+     * rendering the timeline of a session while it runs, which otherwise sees nothing at all during the
+     * longest span there is and then a finished block appearing back-dated.
+     */
+    includeInFlight?: boolean;
 }
 
 /** Normalise a `BUILD_INFO` into the published shape, dropping the diff unless it was asked for. */
@@ -341,7 +355,7 @@ export function sessionToJson(s: Session, prov?: ExportProvenance | string): Exp
         totals: totals(s, steps, messages),
         messages,
         steps: isAgent ? steps : undefined,
-        events: timeline(s),
+        events: timeline(s, p.includeInFlight),
     });
 
     const build = buildOf(p);

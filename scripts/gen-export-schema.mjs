@@ -213,7 +213,13 @@ function typeToSchema(type, ctx) {
     // A union of string literals is an enum — the most useful thing the scanner can recognise.
     const literals = splitTop(t, "|");
     if (literals.length > 1 && literals.every((x) => /^"[^"]*"$/.test(x))) {
-        return { type: "string", enum: literals.map((x) => x.slice(1, -1)) };
+        const en = { type: "string", enum: literals.map((x) => x.slice(1, -1)) };
+        // An UNSTABLE enum must still ACCEPT a value added later, or an old consumer's validator starts
+        // failing on new documents — the exact thing the unstable marking exists to prevent. The `anyOf`
+        // keeps the known values (so codegen still emits a real enum) while letting anything else through.
+        // Note this is NOT covered by the object-union branch below: a literal union returns here first, so
+        // tagging one @unstable used to attach the note and change nothing.
+        return ctx.unstableUnion ? { anyOf: [en, { type: "string", description: UNSTABLE_NOTE }] } : en;
     }
     // `X | undefined` / `X | null`: unwrap, but keep null as a permitted value.
     const nullable = literals.includes("null");
@@ -245,6 +251,9 @@ function typeToSchema(type, ctx) {
         return { type: "array", prefixItems: parts.map((x) => typeToSchema(x, ctx)), minItems: parts.length, maxItems: parts.length };
     }
 
+    // A boolean literal — `open?: true` — is a flag that is present or absent, never false. Mapping it to a
+    // plain boolean would lose that, and it is the whole meaning of the field.
+    if (t === "true" || t === "false") return { type: "boolean", const: t === "true" };
     // A lone string literal is a discriminator (`kind: "fetch-url"`), so it becomes a const.
     if (/^"[^"]*"$/.test(t)) return { type: "string", const: t.slice(1, -1) };
     if (t === "string") return { type: "string" };

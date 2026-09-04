@@ -271,6 +271,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Outside the hovered event's lineage: still there, but out of the way. A sub-call means something only
    beside the step that spawned it, so hovering one leaves that chain lit and drops everything else back. */
 .rc-ev.away { opacity: .18; }
+/* An OPEN span has not finished: its right edge is where it had REACHED when this frame was drawn, not where
+   it ended. So it does not get one — the fill dissolves, and a slow pulse says the thing is still moving.
+   Without this a live bar is indistinguishable from a measured one and reads as a finished 12-second call. */
+.rc-ev.open { -webkit-mask-image: linear-gradient(to right, #000 60%, transparent 100%);
+    mask-image: linear-gradient(to right, #000 60%, transparent 100%); animation: rc-ev-live 1.4s ease-in-out infinite; }
+@keyframes rc-ev-live { 0%, 100% { opacity: .95; } 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .rc-ev.open { animation: none; } }
 .rc-ev { transition: opacity .12s ease; }
 .rc-ev:hover { opacity: 1; outline: 1px solid var(--fg-dim); }
 /* A composite step: hard stops at each phase boundary, built inline from the phases themselves (the model's

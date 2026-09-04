@@ -128,9 +128,12 @@ the same function the panel uses (`sidebar/model-stats.ts`), so the two cannot d
   "seq": 11,                    // the step it came from
   "tool": "exec",
   "phases": [                   // contiguous from `at`; only on a tool event
-    { "kind": "model", "ms": 900 },
-    { "kind": "wait",  "ms": 1500 },
-    { "kind": "tool",  "ms": 800 }
+    { "kind": "model", "ms":  180 },   // before the first token: prompt eval, queue, network
+    { "kind": "think", "ms": 2920 },   // the reasoning channel   ┐ STREAMED calls only. A
+    { "kind": "call",  "ms":  500 },   // tool-call fragments     │ non-streamed call is one
+    { "kind": "think", "ms":  350 },   // …and back to thinking   ┘ undifferentiated `model`.
+    { "kind": "wait",  "ms": 1500 },   // a human at the approval gate
+    { "kind": "tool",  "ms":  800 }
   ],
   "cost": { "inTokens": 10, "outTokens": 5, "tokPerSec": 6.25, "genBasis": "eval",
             "evalMs": 800, "wallMs": 900 }
@@ -148,11 +151,46 @@ subtly wrong, in the same three places every time:
 - **A model load is its own event.** "The model was slow" and "the model wasn't there yet"
   are different answers. Only real loads appear: a resident model reports a few ms of
   bookkeeping on every call, and those are floored out.
+- **A turn's usage rides the model's own record**, not the tool call it decided on: those are
+  two events sharing a `step`, and only the second has a `seq`. A derivation that reads
+  `usage` off the tool record finds nothing and loses the model's half of the block. The
+  generation folds into the block only when the turn made exactly ONE call — several calls
+  share one generation, so charging it to each draws the same seconds twice.
 
 Delegated sub-calls carry `parent`, so a reader model's cost is attributable instead of
 hidden inside the step that spawned it. `evict` events are in the union because the panel
 draws them, but they are read off consecutive `/api/ps` polls — a fact about the box, not
-about a session — so they never appear in an export.
+about a session — so they never appear in an export. The kind union is `@unstable` and
+GROWS: other producers time spans a session has no concept of, so switch on the kinds you
+know and fall through on the rest. `ExportPhaseKind` is `@unstable` for the same reason.
+The variant already in sight is how a tool was DISPATCHED: in process, or by calling an HTTP
+endpoint that evaluates it. That is deliberately a fact about our own dispatch and not about
+where the work ended up — an in-process tool can attach to a VM or container over IPC and we
+cannot see that, whereas we can always answer whether we made an HTTP request. Equal spans
+then mean different things, since an HTTP-dispatched one also contains the network and
+someone else's queue. Which sets a requirement on that endpoint when it ships: **it must
+report its own measured evaluation time**, the way Ollama reports `eval_duration` beside our
+wall clock. Otherwise the span is one number that is the tool plus the network, and a
+difference between two runs is attributable to neither — the same trap `promptEvalMs` exists
+to close.
+
+#### Still running
+
+An event that had not finished carries `open: true`, no `endedAt`, and `elapsedMs` in place
+of `durationMs` — how long it had been going, measured to the document's `exportedAt`.
+
+Three decisions there, each of which was a wrong version first:
+
+- **`open`, not an `instant` flag.** Absent `endedAt` already meant "an instant", and a
+  running span is the opposite of one: a duration with no end yet, not a moment with no
+  duration. Marking the exceptional state leaves every finished event unchanged, and a
+  producer that forgets the flag under-claims rather than lying about everything it writes.
+- **`elapsedMs`, not "durationMs but so far".** One field cannot stop an aggregate summing a
+  measurement together with a reading that is still moving. Two can.
+- **Off by default** (`ExportProvenance.includeInFlight`). A downloaded record of a run
+  should not contain a span whose right edge is when the file was written. It is ON in
+  `tests/e2e/run-once.mjs`, which rewrites `run.json` on every event — so most copies of
+  that file describe a run that is still going.
 
 ### Derived fields
 

@@ -205,20 +205,27 @@ test("records sharing a seq keep their original order", () => {
 // same three ways every time: spans run backwards from a finish stamp, a tool step is one event
 // with phases rather than three events, and a delegated sub-call belongs to a different model.
 
-const timed = (p, c, over = {}) => ({ promptTokens: p, completionTokens: c, totalTokens: p + c, genMs: 900, evalMs: 800, ...over });
+const timed = (p, c, over = {}) => ({ promptTokens: p, completionTokens: c, totalTokens: p + c, genMs: 900, evalMs: 700, promptEvalMs: 120, ...over });
 
-/** An agent run with everything a timeline can carry: a load, a generation, a tool step that
- *  waited at an approval gate, and a delegated sub-call underneath it. */
+/** An agent run with everything a timeline can carry: a load, a tool step that waited at an approval gate,
+ *  a delegated sub-call underneath it, and a final turn that just answers.
+ *
+ *  Shaped like the loop's ACTUAL emits: a turn's usage rides its THOUGHT record and the tool call it decided
+ *  on is a separate record with the same `step`. A fixture that put both on one record described a shape the
+ *  product never produces — and hid the fact that a composite block's model half was never being drawn. */
 const timedSession = () => ({
     hash: "abc12345", kind: "agent", model: "gemma4:31b", tag: "session",
-    createdTs: 1_700_000_000_000, lastTs: 1_700_000_009_000, status: "ok", config: {}, turns: [],
+    createdTs: 1_700_000_000_000, lastTs: 1_700_000_012_000, status: "ok", config: {}, turns: [],
     task: "count the rows", maxSteps: 20,
     steps: [
+        // turn 1: the model decided (900ms, after a 4s load), the human approved (1.5s), the tool ran (800ms)
         { step: 1, seq: 1, ts: 1_700_000_005_000, thought: "look", usage: timed(100, 20, { loadMs: 4000 }) },
         { step: 1, seq: 2, ts: 1_700_000_008_000, toolMs: 800, approveMs: 1500, tool: "exec",
-          arguments: { js: "1" }, result: "42", usage: timed(10, 5),
+          arguments: { js: "1" }, result: "42",
           subUsage: { byModel: [{ model: "reader:7b", prompt: 90, completion: 8, calls: 1 }],
                       calls_: [{ model: "reader:7b", ts: 1_700_000_007_500, ms: 400, prompt: 90, completion: 8 }] } },
+        // turn 2: no tool call — it just answered, so this generation stands on its own
+        { step: 2, seq: 3, ts: 1_700_000_012_000, thought: "42 rows", usage: timed(120, 9) },
     ],
 });
 
@@ -226,12 +233,13 @@ const eventsOf = (s) => sessionToJson(s).session.events;
 const ofKind = (evts, kind) => evts.filter(e => e.kind === kind);
 
 test("timeline: a generation span runs BACKWARDS from the stamp, which is when it finished", () => {
+    // Turn 2 answered without calling anything, so its generation is its own span.
     const gen = ofKind(eventsOf(timedSession()), "gen")[0];
-    // The step is stamped at +5000 and the call took 900ms, so it began at +4100 — not at +5000.
-    assert.equal(gen.at, new Date(1_700_000_004_100).toISOString());
-    assert.equal(gen.endedAt, new Date(1_700_000_005_000).toISOString());
+    // The step is stamped at +12000 and the call took 900ms, so it began at +11100 — not at +12000.
+    assert.equal(gen.at, new Date(1_700_000_011_100).toISOString());
+    assert.equal(gen.endedAt, new Date(1_700_000_012_000).toISOString());
     assert.equal(gen.durationMs, 900, "the duration rides along; deriving it from two ISO strings is every consumer's job otherwise");
-    assert.equal(gen.seq, 1, "and it points back at the step that produced it");
+    assert.equal(gen.seq, 3, "and it points back at the step that produced it");
 });
 
 test("timeline: a tool step is ONE event whose phases separate the model, the human and the tool", () => {
@@ -239,6 +247,8 @@ test("timeline: a tool step is ONE event whose phases separate the model, the hu
 
     assert.equal(tool.tool, "exec");
     assert.deepEqual(tool.phases, [
+        // The model's time comes from the turn's THOUGHT record, which is where the loop puts it — the tool
+        // record carries none, so a block built from that record alone would lose this phase entirely.
         { kind: "model", ms: 900 },    // deciding to make the call
         { kind: "wait", ms: 1500 },    // a human at the approval gate — wall clock, but not work
         { kind: "tool", ms: 800 },     // the call itself
@@ -246,6 +256,8 @@ test("timeline: a tool step is ONE event whose phases separate the model, the hu
     assert.equal(tool.durationMs, 3200);
     assert.equal(tool.phases.reduce((n, p) => n + p.ms, 0), tool.durationMs,
         "phases are contiguous from `at`, which is what makes durations lossless");
+    // …and the generation is not ALSO drawn on its own, which would report the same seconds twice.
+    assert.equal(ofKind(eventsOf(timedSession()), "gen").length, 1, "only turn 2's answer stands alone");
 });
 
 test("timeline: a delegated sub-call is its own event, under its step, naming the READER", () => {
@@ -273,15 +285,12 @@ test("timeline: a real model load is its own event — 'not there yet' is not 's
 
 test("timeline: an unmeasurable rate is OMITTED, not exported as null", () => {
     const s = timedSession();
-    delete s.steps[0].usage.genMs;
-    delete s.steps[0].usage.evalMs;
-    delete s.steps[1].usage.genMs;
-    delete s.steps[1].usage.evalMs;
+    for (const st of s.steps) { delete st.usage?.genMs; delete st.usage?.evalMs; }
 
     const run = ofKind(eventsOf(s), "run")[0];
     assert.ok(!("tokPerSec" in run.cost), "nothing timed these calls, so there is no rate to report");
     assert.ok(!("genBasis" in run.cost));
-    assert.equal(run.cost.inTokens, 110, "the tokens are still exact");
+    assert.equal(run.cost.inTokens, 220, "the tokens are still exact");
 });
 
 test("timeline: a CHAT session gets one too — turns generate, and wait for loads, like anything else", () => {
@@ -301,4 +310,45 @@ test("timeline: a session with nothing timed has no events key at all", () => {
     for (const st of s.steps) { delete st.usage; delete st.toolMs; delete st.ts; }
     s.createdTs = s.lastTs = 0;
     assert.ok(!("events" in sessionToJson(s).session), "an empty array would read as 'measured, and nothing happened'");
+});
+
+test("timeline: in-flight work is EXCLUDED by default — a record of a run is what finished", () => {
+    const s = timedSession();
+    s.liveTurn = { step: 3, startedTs: 1_700_000_009_000 };
+    s.steps.push({ step: 3, seq: 3, ts: 1_700_000_009_500, tool: "click", pending: true });
+
+    const events = eventsOf(s);
+    assert.ok(events.every(e => !e.open), "a span whose right edge is 'when the file was written' measures nothing");
+    assert.ok(events.every(e => !("elapsedMs" in e)));
+});
+
+test("timeline: …and INCLUDED on request, as open events a consumer cannot mistake for measurements", () => {
+    // The workbench case: rendering a session's timeline WHILE it runs, which otherwise shows nothing at all
+    // during the longest span there is and then a finished block arriving back-dated.
+    const s = timedSession();
+    s.liveTurn = { step: 3, startedTs: 1_700_000_009_000 };
+    s.steps.push({ step: 3, seq: 3, ts: 1_700_000_009_500, tool: "click", pending: true });
+
+    const events = sessionToJson(s, { includeInFlight: true }).session.events;
+    const open = events.filter(e => e.open);
+    assert.equal(open.length, 3, "the generation, the tool, and the run that contains them");
+
+    for (const e of open) {
+        assert.ok(!("endedAt" in e), "it has not ended, so there is no end to report");
+        assert.ok(!("durationMs" in e), "that field means a measured length");
+        assert.ok(e.elapsedMs >= 0, "how long it has been going, to the document's exportedAt");
+    }
+    // Finished events in the same document are unaffected — the two are distinguishable per event, not per file.
+    assert.ok(events.some(e => !e.open && e.durationMs > 0 && e.endedAt));
+});
+
+test("timeline: an open event is not an instant, even though neither has an end", () => {
+    // Both spellings lack `endedAt` and they mean opposite things: an instant is a moment with no duration, an
+    // open span a duration with no end yet. `open` is what tells them apart.
+    const s = timedSession();
+    s.liveTurn = { step: 3, startedTs: 1_700_000_009_000 };
+    const [live] = sessionToJson(s, { includeInFlight: true }).session.events.filter(e => e.kind === "gen" && e.open);
+    assert.equal(live.open, true);
+    assert.ok(!("endedAt" in live));
+    assert.ok("elapsedMs" in live, "an instant would have neither");
 });

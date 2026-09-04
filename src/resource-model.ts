@@ -839,8 +839,17 @@ export interface ResourceEvent {
      *  step and you reason about its parts together — but the parts are different kinds of time and must look
      *  different: the model generating the call, the human deciding whether to allow it, and the tool actually
      *  running. A step that waited two minutes for a click otherwise looked exactly like one that ran
-     *  instantly, since only the last part is work the machine did. */
-    phases?: { kind: "model" | "wait" | "tool"; until: number }[];
+     *  instantly, since only the last part is work the machine did.
+     *
+     *  `think`/`answer`/`call` SUBDIVIDE the model's own time, and only on a STREAMED call, where the channel
+     *  each chunk arrived on is observable. `model` is the undifferentiated fallback — a non-streamed call,
+     *  and the stretch before the first token (prompt eval, queue, network), which is the model's time but
+     *  not any of its channels. */
+    phases?: { kind: "model" | "wait" | "tool" | "think" | "answer" | "call"; until: number }[];
+    /** This span has NOT FINISHED: `until` is where it had reached when the snapshot was taken, not where it
+     *  ended. Only ever set by an `eventsFrom` given a `now` — a surface drawing live. It exists so the UI can
+     *  say "still going" rather than drawing a bar whose right edge looks like a measured end. */
+    open?: true;
     /** The tool that ran, for a composite span. */
     tool?: string;
     /** What it cost, for the kinds that spend tokens. Plain numbers rather than a RunStats import: this module
@@ -854,6 +863,10 @@ export interface ResourceEvent {
          *  `eval_duration` beside our measurement. */
         evalMs?: number;
         wallMs?: number;
+        /** Reading the prompt, when the native route reports it. Splits the wall-minus-generation remainder
+         *  into model work and box latency, which are not the same kind of thing and cannot be compared
+         *  between two models while they are one number. */
+        promptEvalMs?: number;
     };
 }
 

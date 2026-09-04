@@ -24,6 +24,15 @@ import { createServer } from "node:http";
  * @property {string} [tool] call this tool instead of replying
  * @property {Record<string, unknown>} [args] the tool's arguments
  * @property {string} [reasoning] thinking text, streamed word by word when the request asks to stream
+ * @property {StreamBeat[]} [emit] STREAMING ONLY: the exact order the turn comes out in, so a test can script
+ *   an INTERLEAVED turn — think, start the call, think again, answer. Without it a streamed step emits the
+ *   default order (all the reasoning, then the tool call or the content), which is what every existing spec
+ *   expects. A `call` beat emits ONE fragment of the tool call; several of them split the arguments across
+ *   chunks the way OpenAI actually does, which is what the accumulator has to survive.
+ *
+ * @typedef {object} StreamBeat
+ * @property {"think" | "answer" | "call"} kind which channel this beat comes out on
+ * @property {string} [text] the text, for `think` / `answer`
  *
  * @typedef {FakeStep | ((req: any) => FakeStep)} StepOrFn
  */
@@ -97,20 +106,48 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
     // content words (or the tool_call whole), then [DONE]. A step's `reasoning` field feeds the thinking channel.
     // `streamDelayMs` paces the words so a test can screenshot MID-stream. Mirrors the OpenAI SSE shape
     // background.ts's streamChunk parses.
-    /** @param {Res} res @param {FakeStep} step */
-    const streamStep = async (res, step) => {
+    /** @param {Res} res @param {FakeStep} step @param {any} body */
+    const streamStep = async (res, step, body) => {
         res.writeHead(200, { "content-type": "text/event-stream", "access-control-allow-origin": "*", "cache-control": "no-store" });
         /** @param {Record<string, unknown>} delta @param {Record<string, unknown>} [extra] */
         const send = (delta, extra = {}) => res.write(`data: ${JSON.stringify({ id: `chatcmpl-${callSeq}`, object: "chat.completion.chunk", model, choices: [{ index: 0, delta, ...extra }] })}\n\n`);
         const choice = toChoice(step);
-        for (const w of (step.reasoning || "").match(/\S+\s*/g) || []) { send({ reasoning_content: w }); await sleep(streamDelayMs); }
-        if (choice.message.tool_calls) {
-            send({ tool_calls: choice.message.tool_calls.map((tc, i) => ({ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: tc.function.arguments } })) });
+        const calls = choice.message.tool_calls;
+        if (step.emit) {
+            // A SCRIPTED order. The tool call's arguments are split across however many `call` beats there
+            // are, so a run that interleaves think → call → think → call is a real fragmented stream and not a
+            // single whole call dressed up as one.
+            const nCall = step.emit.filter((b) => b.kind === "call").length;
+            let sent = 0;
+            for (const beat of step.emit) {
+                if (beat.kind === "think") send({ reasoning_content: beat.text || "" });
+                else if (beat.kind === "answer") send({ content: beat.text || "" });
+                else if (calls) {
+                    // First fragment carries the id and the name (as OpenAI does); the rest carry argument text.
+                    send({ tool_calls: calls.map((tc, i) => {
+                        const args = String(tc.function.arguments || "");
+                        const size = Math.ceil(args.length / Math.max(1, nCall));
+                        return { index: i, ...(sent === 0 ? { id: tc.id, type: "function" } : {}),
+                                 function: { ...(sent === 0 ? { name: tc.function.name } : {}), arguments: args.slice(sent * size, (sent + 1) * size) } };
+                    }) });
+                    sent++;
+                }
+                await sleep(streamDelayMs);
+            }
+            send({}, { finish_reason: calls ? "tool_calls" : "stop" });
+        } else if (calls) {
+            for (const w of (step.reasoning || "").match(/\S+\s*/g) || []) { send({ reasoning_content: w }); await sleep(streamDelayMs); }
+            send({ tool_calls: calls.map((tc, i) => ({ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: tc.function.arguments } })) });
             send({}, { finish_reason: "tool_calls" });
         } else {
+            for (const w of (step.reasoning || "").match(/\S+\s*/g) || []) { send({ reasoning_content: w }); await sleep(streamDelayMs); }
             for (const w of (choice.message.content || "").match(/\S+\s*/g) || []) { send({ content: w }); await sleep(streamDelayMs); }
             send({}, { finish_reason: "stop" });
         }
+        // Token counts ride the final chunk, as OpenWebUI's do. Not decoration: everything the CLIENT measures
+        // about a call (its wall clock, and the generation phases) is stamped onto that usage object, so a
+        // stream that reports no counts drops our own measurements with them.
+        res.write(`data: ${JSON.stringify({ id: `chatcmpl-${callSeq}`, object: "chat.completion.chunk", model, choices: [], usage: usageFor(body, step) })}\n\n`);
         res.write("data: [DONE]\n\n");
         res.end();
     };
@@ -129,12 +166,54 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
             return json(res, 200, boxInfo);
         }
         if (req.method === "GET" && path === "/api/version") return json(res, 200, { version: "fake" });
+        // OLLAMA-NATIVE (`/ollama/api/chat`, the passthrough OpenWebUI exposes and the `ollama` apiFormat
+        // targets). A genuinely different wire shape, not a spelling: NDJSON rather than SSE, thinking on
+        // `message.thinking` rather than `reasoning_content`, tool calls delivered WHOLE in one chunk rather
+        // than fragmented by index, and the token counts plus THREE durations on a final `done` object. The
+        // extension supports both formats and only one of them was ever exercised end to end.
+        if (req.method === "POST" && (path === "/api/chat" || path === "/ollama/api/chat")) {
+            const body = await readBody(req);
+            calls.push(body);
+            let step = idx < script.length ? script[idx++] : { content: "" };
+            if (typeof step === "function") step = step(body) || { content: "" };
+            const choice = toChoice(step);
+            const tc = choice.message.tool_calls;
+            const whole = tc ? tc.map((c) => ({ function: { name: c.function.name, arguments: JSON.parse(c.function.arguments || "{}") } })) : null;
+            const u = usageFor(body, step);
+            // The three durations, in NANOSECONDS as Ollama reports them. Each answers a different question —
+            // "was the model there", "how long did it read", "how long did it generate" — and only this route
+            // reports any of them.
+            const done = { done: true, done_reason: "stop",
+                           prompt_eval_count: u.prompt_tokens, eval_count: u.completion_tokens,
+                           load_duration: 20_000_000, prompt_eval_duration: 640_000_000, eval_duration: 1_200_000_000 };
+            if (!body.stream) {
+                return json(res, 200, { model, message: { role: "assistant", content: choice.message.content || "",
+                                        ...(step.reasoning ? { thinking: step.reasoning } : {}), ...(whole ? { tool_calls: whole } : {}) }, ...done });
+            }
+            res.writeHead(200, { "content-type": "application/x-ndjson", "access-control-allow-origin": "*", "cache-control": "no-store" });
+            /** @param {Record<string, unknown>} message */
+            const line = (message) => res.write(JSON.stringify({ model, message, done: false }) + "\n");
+            const beats = step.emit || [
+                ...(step.reasoning ? [{ kind: "think", text: step.reasoning }] : []),
+                ...(whole ? [{ kind: "call" }] : [{ kind: "answer", text: choice.message.content || "" }]),
+            ];
+            for (const b of beats) {
+                if (b.kind === "think") line({ role: "assistant", content: "", thinking: b.text || "" });
+                else if (b.kind === "answer") line({ role: "assistant", content: b.text || "" });
+                // WHOLE, every time — Ollama does not fragment, so repeated `call` beats resend the same
+                // array. That is the point: several beats must still collapse to ONE `call` phase.
+                else if (whole) line({ role: "assistant", content: "", tool_calls: whole });
+                await sleep(streamDelayMs);
+            }
+            res.write(JSON.stringify({ model, message: { role: "assistant", content: "" }, ...done }) + "\n");
+            return res.end();
+        }
         if (req.method === "POST" && (path === "/api/chat/completions" || path === "/v1/chat/completions")) {
             const body = await readBody(req);
             calls.push(body);
             let step = idx < script.length ? script[idx++] : { content: "" };
             if (typeof step === "function") step = step(body) || { content: "" };
-            if (body.stream) return streamStep(res, step);
+            if (body.stream) return streamStep(res, step, body);
             return json(res, 200, {
                 id: `chatcmpl-${callSeq}`, object: "chat.completion", model,
                 choices: [toChoice(step)],

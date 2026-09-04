@@ -3,7 +3,7 @@
 // view module imports from here — extracted from app.tsx so the components can
 // live in their own files while still reading one source of truth.
 import { signal } from "@preact/signals";
-import type { DebugSessionConfig, DebugAgentConfig, MlConfig, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, TokenUsage, SubcallUsage, AnswerMedia, PersistGrant, ReusedGrant } from "../contract";
+import type { DebugSessionConfig, DebugAgentConfig, MlConfig, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, TokenUsage, SubcallUsage, AnswerMedia, PersistGrant, ReusedGrant, GenPhase } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 
 export const FONT_KEY = "ml_debug_fontscale";
@@ -67,6 +67,10 @@ export interface Session {
     // reasoning/content so far, shown as a live "thinking" block until the step's real events land (which
     // clear it). Transient; not persisted in the transcript. See the agent-stream reducer + LiveStream UI.
     liveStream?: { step: number; localStep?: number; reasoning?: string; content?: string };
+    /** A model call is in flight RIGHT NOW: when it started, and (streamed runs) what it has been emitting.
+     *  Transient like {@link liveStream} — cleared the moment the step lands — and the only thing that lets a
+     *  timeline draw a generation while it happens instead of back-dating the finished block. */
+    liveTurn?: { step: number; localStep?: number; startedTs: number; phases?: GenPhase[] };
     // A turn's terminal agent-result SEALS the session so a STRAGGLER step — the in-flight tool's late DONE
     // that a background-hosted (design A) run keeps fanning after a cancel, arriving AFTER the page-emitted
     // cancelled result — can't resurrect it to "running". A genuine new turn (agent-say, or a step past
