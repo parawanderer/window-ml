@@ -20,6 +20,29 @@ const echoLastToolResult = (req: { messages?: { role?: string; content?: unknown
     return { content: `Here is what I found: ${last}` };
 };
 
+
+/** Read the sales table into the console as CSV — a long, citable output for the next step to reuse. */
+const DUMP_CSV = `const rows = [...document.querySelectorAll('#sales tr')]
+  .map(r => [...r.querySelectorAll('td,th')].map(c => c.innerText.trim()).join(','));
+console.log(rows.join('\\n'));
+return rows.length;`;
+
+/**
+ * Retype the previous tool result in a DIFFERENT SHAPE: the CSV it returned becomes the JS array literal
+ * a model writes into `exec`. Every value carries over and not one 40-character window survives, which is
+ * exactly how a real model re-emits and exactly what a verbatim scan cannot see.
+ */
+const retypeReformatted = (req: { messages?: { role?: string; content?: unknown }[] }) => {
+    const tools = (req.messages || []).filter((m) => m.role === "tool");
+    const last = tools.length ? String(tools[tools.length - 1].content ?? "") : "";
+    const rows = last.split("\n").map((l) => l.trim()).filter((l) => l.includes(","))
+        .map((l) => l.split(",").map((c) => c.trim()));
+    const lit = rows
+        .map((r) => "  [" + r.map((c) => (/^-?\d+(\.\d+)?$/.test(c) ? c : JSON.stringify(c))).join(", ") + "],")
+        .join("\n");
+    return { tool: "exec", args: { js: `const rows = [\n${lit}\n];\nreturn rows.length;` } };
+};
+
 export default defineBench({
     name: "smoke",
     description: "The bench driving itself against the fake-LLM, to check the instrument rather than a model.",
@@ -70,6 +93,26 @@ export default defineBench({
             // same data was in hand. The pair with re-emitter is what shows the metric measures behaviour
             // and not merely "did a tool return something long".
             script: [{ tool: "findByText", args: { text: "CROSSPAGE" } }, { content: "The code is in the element I located above." }],
+        },
+        {
+            // The re-emitter above retypes VERBATIM, which any substring scan catches — and that is why
+            // this gate stayed green while `reEmission` was blind to every real retype. A model asked to
+            // compute over a captured table rewrites it into a literal for `exec`: `Ada,North,120,150`
+            // becomes `["Ada", "North", 120, 150],`. Same values, no surviving window.
+            //
+            // Measured on a real gemma4:31b run that retyped twelve rows: 0.00. Both arms of an A/B would
+            // have scored nothing and the sweep would have concluded "no difference" from an instrument
+            // measuring nothing. So the calibration has to reproduce the SHAPE of the failure, not only
+            // its presence.
+            id: "reformatter",
+            start: "/spreadsheet",
+            task: "Read the sales table, then compute over the rows.",
+            tools: ["exec", "answer"],
+            script: [
+                { tool: "exec", args: { js: DUMP_CSV } },
+                retypeReformatted,
+                { content: "Counted the rows." },
+            ],
         },
         {
             id: "seeded",

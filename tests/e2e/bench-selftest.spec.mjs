@@ -34,6 +34,42 @@ test("a run that RETYPES its tool output reads as a re-emission", async () => {
     expect(m.reEmission.rate).toBe(1);
 });
 
+test("a run that RETYPES IN A DIFFERENT SHAPE reads as a re-emission too", async () => {
+    // The verbatim test above is the easy half, and passing it is what let `reEmission` ship blind to
+    // every real retype. A model computing over a captured table rewrites it into a literal for `exec`:
+    // `Ada,North,120,150` becomes `["Ada", "North", 120, 150],`. Same values, not one 40-character window
+    // left. Measured 0.00 on a gemma4:31b run that retyped twelve rows.
+    //
+    // `verbatim: false` is the assertion that matters: it pins that the VALUE-coverage path caught this,
+    // not the substring scan. Drop `sharesValues` and this reads 0.00 again, which is the regression.
+    const dump = `const rows = [...document.querySelectorAll('#sales tr')]
+  .map(r => [...r.querySelectorAll('td,th')].map(c => c.innerText.trim()).join(','));
+console.log(rows.join('\\n'));
+return rows.length;`;
+    const reformat = (req) => {
+        const tools = (req.messages || []).filter((m) => m.role === "tool");
+        const last = tools.length ? String(tools[tools.length - 1].content ?? "") : "";
+        const rows = last.split("\n").map((l) => l.trim()).filter((l) => l.includes(","))
+            .map((l) => l.split(",").map((c) => c.trim()));
+        const lit = rows
+            .map((r) => "  [" + r.map((c) => (/^-?\d+(\.\d+)?$/.test(c) ? c : JSON.stringify(c))).join(", ") + "],")
+            .join("\n");
+        return { tool: "exec", args: { js: `const rows = [\n${lit}\n];\nreturn rows.length;` } };
+    };
+
+    const run = await runOnce({
+        ...base, start: "/spreadsheet", tools: ["exec", "answer"],
+        task: "Read the sales table, then compute over the rows.",
+        script: [{ tool: "exec", args: { js: dump } }, reformat, { content: "Counted the rows." }],
+    });
+    const m = measureRun(run, {});
+    expect(m.ok, `run failed: ${m.error}`).toBe(true);
+    expect(m.reEmission.outputs, "the CSV dump must be captured as a citable output").toBeGreaterThan(0);
+    expect(m.reEmission.rate, "a reformatted retype is still a retype").toBe(1);
+    expect(m.reEmission.instances.map((i) => i.verbatim),
+        "caught by value coverage, NOT by the substring scan").toEqual([false]);
+});
+
 test("a run that CITES instead of retyping reads as zero, holding the same data", async () => {
     const run = await runOnce({
         ...base, task: "Find the code and cite it.", toolTokens: true,
