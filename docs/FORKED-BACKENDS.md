@@ -18,6 +18,8 @@ What it adds that the extension reads:
 | --- | --- | --- |
 | `GET /api/info` | `compute.supported_gpus[]` — per-device `total_memory`, `physical_memory`, `free_memory`, `runner`, `name`; `compute.system_compute` — host RAM | `ml.info()`, and every ceiling, band and share in the resource panel |
 | `GET /api/ps` | `gpus[]` on a resident model — `gpu_id`, `runner`, `size_vram` | per-device attribution: which card a model is on, and how a split model is divided |
+| `GET /api/ps` | `busy` on a resident model, from the runner's reference count | freezing the keep-alive countdown while the model is actually serving a request |
+| `GET /api/ps` | `state` on an entry that is still loading | knowing that the entry's other fields are zeros, not measurements |
 
 **Without it.** `/api/info` is not a 404 on a stock setup — the route simply isn't there, so OpenWebUI
 answers with its SPA's HTML, which is why the extension treats a non-JSON body as "unknown" rather than
@@ -31,6 +33,16 @@ as an error. Then:
   *placed*. On a single-GPU box that costs nothing — the total is the share. On a multi-GPU box the
   card a model sits on is unknowable, so it lands in the unattributed band rather than being assigned
   to a card it might not be on.
+- Without `busy`, the TTL chip counts down against `expires_at` at all times. That stamp is only
+  rewritten when a request *finishes*, so throughout a generation it stands still while the chip runs
+  down against it, and a generation longer than the keep-alive takes the countdown past zero on a model
+  that is right there, working. A local in-flight flag is not a substitute: the runs that matter most
+  are the ones this browser never started.
+
+`state` is the smaller of the two but the sharper edge: a still-loading entry carries its name and
+zeros for everything else, and Go's zero time parses to a deadline in the year 1 — a countdown of minus
+two thousand years, which is what a probe on the box actually printed. Read `state` before reading
+anything else on an entry; its absence means resident.
 
 **Reachability.** The extension finds Ollama through the same base discovery it uses for `/api/ps`:
 `<origin>/ollama` first (OpenWebUI's passthrough), then `<origin>`. OpenWebUI proxies `/ollama/*`

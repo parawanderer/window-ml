@@ -497,6 +497,53 @@ test("resource panel: a closed editor takes no space, an open one takes its own"
     }
 });
 
+test("resource panel: a BUSY runner holds its countdown, and a LOADING one has no deadline to show", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        // Idle, with a real deadline four minutes out: the ordinary case, a chip that ticks.
+        const deadline = () => new Date(Date.now() + 4 * 60_000).toISOString();
+        fake.setResident([{ ...resident("gemma4:31b", 18 * GiB, 0), expires_at: deadline() }]);
+        const { frame } = await openPanel(fake, ext);
+        const chip = frame.locator(".vram-row", { hasText: "gemma4:31b" }).locator(".vram-ttl");
+        // The chip carries its tooltip INSIDE it, so read the chip's own text node rather than textContent.
+        const ttl = { textContent: () => chip.evaluate((el) => el.firstChild?.textContent ?? ""),
+                      getAttribute: (a) => chip.getAttribute(a), count: () => chip.count() };
+        await expect.poll(() => ttl.textContent(), { timeout: 20000 }).toMatch(/^[34]m \d+s$/);
+        expect(await ttl.getAttribute("class")).not.toContain("busy");
+
+        // Now it starts serving a request. The server does NOT move the deadline until that request finishes,
+        // so a chip that kept counting would be counting against a stamp that has stopped moving — and on a
+        // generation longer than the TTL it would pass zero while the model sits there working.
+        fake.setResident([{ ...resident("gemma4:31b", 18 * GiB, 0), expires_at: deadline(), busy: true }]);
+        await expect.poll(() => ttl.textContent(), { timeout: 20000 }).toBe("in use");
+        expect(await ttl.getAttribute("class")).toContain("busy");
+
+        // A second model arrives, still LOADING: the patched server sends its name and zeros for everything
+        // else, and Go's zero time reads as a deadline in year 1. It must show no countdown rather than one.
+        fake.setResident([
+            { ...resident("gemma4:31b", 18 * GiB, 0), expires_at: deadline(), busy: true },
+            { model: "qwen3.5:35b", name: "qwen3.5:35b", size: 0, size_vram: 0,
+              expires_at: "0001-01-01T00:00:00Z", state: "loading" },
+        ]);
+        const loading = frame.locator(".vram-row", { hasText: "qwen3.5:35b" });
+        await expect.poll(() => loading.count(), { timeout: 20000 }).toBe(1);
+        expect(await loading.locator(".vram-ttl").count()).toBe(0);   // no stamp is better than a negative one
+
+        // And when it goes idle again the clock restarts, from full.
+        fake.setResident([{ ...resident("gemma4:31b", 18 * GiB, 0), expires_at: deadline() }]);
+        await expect.poll(() => ttl.textContent(), { timeout: 20000 }).toMatch(/^[34]m \d+s$/);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
+
 // The real thing the unit test can only approximate: a browser hit-testing an SVG stroke. Hovering the EDGE
 // of an overview line made the tooltip flicker many times a second — the visible stroke thickens on hover and,
 // painted above the hit target, took the pointer, which fired pointerleave on the target, which thinned it.
@@ -705,6 +752,10 @@ test("resource panel: the event lane draws phased blocks, dims by lineage, and c
             chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
             model: "fake-model", debugMode: "overlay",
         });
+        // The lane is SCOPED to the open session by default, and this test posts events without opening
+        // one, so it asks for the all-sessions view the toggle offers. Tests that read the default are
+        // the scoping ones below.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
         fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
         const { page, frame } = await openPanel(fake, ext);
@@ -954,6 +1005,10 @@ test("resource panel: no two lane bars overlap on the same row", async () => {
             chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
             model: "fake-model", debugMode: "overlay",
         });
+        // The lane is SCOPED to the open session by default, and this test posts events without opening
+        // one, so it asks for the all-sessions view the toggle offers. Tests that read the default are
+        // the scoping ones below.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
         fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
         const { page, frame } = await openPanel(fake, ext);
@@ -1073,6 +1128,10 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
             chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
             model: "fake-model", debugMode: "overlay",
         });
+        // The lane is SCOPED to the open session by default, and this test posts events without opening
+        // one, so it asks for the all-sessions view the toggle offers. Tests that read the default are
+        // the scoping ones below.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
         fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
         // A short rolling window, so the session outgrows it and the scrub strip (and its connector to the
@@ -1315,6 +1374,10 @@ test("resource panel: hovering a lane block dims the rest of the log, and clicki
             chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
             model: "fake-model", debugMode: "overlay",
         });
+        // The lane is SCOPED to the open session by default, and this test posts events without opening
+        // one, so it asks for the all-sessions view the toggle offers. Tests that read the default are
+        // the scoping ones below.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
         fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
         const { page, frame } = await openPanel(fake, ext);
@@ -1386,6 +1449,10 @@ test("resource panel: hiding a model hides its events too, and unhiding brings t
             chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
             model: "fake-model", debugMode: "overlay",
         });
+        // The lane is SCOPED to the open session by default, and this test posts events without opening
+        // one, so it asks for the all-sessions view the toggle offers. Tests that read the default are
+        // the scoping ones below.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
         fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
         const { page, frame } = await openPanel(fake, ext);

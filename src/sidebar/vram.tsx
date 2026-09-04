@@ -222,8 +222,10 @@ export function pollBackendHealth(): void {
     } catch { clearTimeout(timer); finish(null); }   // extension context gone → don't nag
 }
 
-// "expires in Xs/Xm" from an /api/ps expires_at ISO stamp (Ollama's TTL).
-export function expiresIn(expiresAt: string | null): string | null {
+// "expires in Xs/Xm" from an /api/ps expires_at ISO stamp (Ollama's TTL). A BUSY runner has no deadline to
+// report: the server rewrites it when the request finishes, so the stamp we hold is the one from last time.
+export function expiresIn(expiresAt: string | null, busy?: boolean): string | null {
+    if (busy) return "in use — TTL held";
     if (!expiresAt) return null;
     const ms = new Date(expiresAt).getTime() - Date.now();
     if (isNaN(ms) || ms <= 0) return null;
@@ -235,7 +237,14 @@ export function expiresIn(expiresAt: string | null): string | null {
 // two-unit d/h/m/s string ("2d 3h", "5m 12s", "44s") for the VRAM row. Ollama
 // evicts a model once this hits zero; each use resets it (Ollama recomputes
 // expires_at). Returns null when there's no stamp or it's already elapsed.
-export function fmtTTL(expiresAt: string | null): string | null {
+//
+// `busy` STOPS the clock, and it is not a nicety: the deadline is only rewritten when a request FINISHES, so
+// throughout a generation the stamp stands still while this counts down against it — on a long enough one,
+// straight past zero and into a model that the display says should already have been evicted. There is
+// nothing to count to while it works, so it says so instead of drawing a number that is wrong. It also covers
+// traffic this browser never sees; a local in-flight flag would only freeze the runs we started ourselves.
+export function fmtTTL(expiresAt: string | null, busy?: boolean): string | null {
+    if (busy) return "in use";
     if (!expiresAt) return null;
     const ms = new Date(expiresAt).getTime() - Date.now();
     if (isNaN(ms) || ms <= 0) return null;
@@ -270,7 +279,7 @@ export function modelLoadState(model: string, inFlight: boolean): { state: LoadS
         const where = !v
             ? (sz ? `on CPU (${sz} GB RAM)` : "on CPU (RAM)")
             : (sz && v < sz - 0.1 ? `${v} of ${sz} GB in VRAM — partial CPU offload (slower)` : `${v} GB VRAM`);
-        const bits = [where, expiresIn(resident.expiresAt)].filter(Boolean);
+        const bits = [where, expiresIn(resident.expiresAt, resident.busy)].filter(Boolean);
         return { state: "loaded", tip: `Loaded — ${bits.join(" · ")}.` };
     }
     // Not resident. An external (non-Ollama) model has no local load state at all.
@@ -395,7 +404,7 @@ export function orphanedOn(m: LoadedModel, cap: Capacity | null): string[] {
 }
 
 export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean }) {
-    const ttl = fmtTTL(m.expiresAt);
+    const ttl = fmtTTL(m.expiresAt, m.busy);
     const orphaned = orphanedOn(m, capacity.value);
     // Only the row's copy has its own tooltips to defer to; the chart tip renders these as plain text.
     const yieldTip = tips
@@ -426,8 +435,10 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
                 </span>
             ) : null}
             {ttl ? (
-                <span class={tips ? "tt vram-ttl" : "vram-ttl"} {...yieldTip}>{ttl}
-                    {tips ? <span class="tt-pop left above" role="tooltip">Keep-alive TTL — Ollama evicts this model from {m.vramBytes ? "VRAM" : "memory"} when the countdown reaches zero (expires {new Date(m.expiresAt!).toLocaleTimeString()}). Each use resets it. Set <code>keep_alive</code> to change how long it lingers.</span> : null}
+                <span class={`${tips ? "tt " : ""}vram-ttl${m.busy ? " busy" : ""}`} {...yieldTip}>{ttl}
+                    {tips ? <span class="tt-pop left above" role="tooltip">{m.busy
+                        ? <>Serving a request right now, so the keep-alive countdown is HELD. Ollama rewrites the deadline when the request finishes, which is why counting down during a generation would run past zero on a long one. The clock restarts, from full, once it is idle.</>
+                        : <>Keep-alive TTL — Ollama evicts this model from {m.vramBytes ? "VRAM" : "memory"} when the countdown reaches zero (expires {new Date(m.expiresAt!).toLocaleTimeString()}). Each use resets it. Set <code>keep_alive</code> to change how long it lingers.</>}</span> : null}
                 </span>
             ) : null}
         </>

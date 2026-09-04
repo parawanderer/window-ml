@@ -1485,6 +1485,31 @@ test("OLLAMA_PS reports loaded models with VRAM usage", async () => {
     assert.ok(!("gpus" in res.data[1]), "a CPU-resident model has NO gpus key — absence is the signal, not []");
 });
 
+test("OLLAMA_PS: `busy` and `state` ride through, and a LOADING entry's zero deadline is dropped", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({
+            models: [
+                // Serving a request: the deadline it carries is the one written when the LAST request
+                // finished, so the panel must not count down against it.
+                { model: "a", size_vram: 1e9, size: 1e9, expires_at: "2026-09-04T18:20:34Z", busy: true },
+                // Still loading: the patched server sends the name and ZEROS for everything else, and Go's
+                // zero time parses to a deadline in year 1 — a countdown of minus two thousand years.
+                { model: "b", size_vram: 0, size: 0, expires_at: "0001-01-01T00:00:00Z", state: "loading" },
+                // A stock server sends neither field. Absent means "not known", never "idle"/"resident".
+                { model: "c", size_vram: 1e9, size: 1e9, expires_at: "later" },
+            ]
+        })
+    });
+
+    const [a, b, c] = (await bg.send({ type: "OLLAMA_PS", payload: {} })).data;
+    assert.equal(a.busy, true, "the freeze signal reaches the panel");
+    assert.equal(a.expiresAt, "2026-09-04T18:20:34Z", "the stamp is still carried — busy says how to READ it");
+    assert.equal(b.state, "loading");
+    assert.equal(b.expiresAt, null, "a loading entry's zero time is not a deadline");
+    assert.ok(!("busy" in c) && !("state" in c), "a stock server's silence stays silence, not a default");
+});
+
 // A tiny helper: drains microtasks/macrotasks so port messages settle.
 const settle = () => new Promise((r) => setTimeout(r, 10));
 

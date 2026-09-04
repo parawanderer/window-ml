@@ -976,7 +976,13 @@ export async function listLoadedModels(): Promise<LoadedModel[]> {
         // FULL window, so this explains a big share of size_vram (a 256K-ctx load is
         // mostly cache). Older servers don't report it → null, and the UI hides it.
         contextLength: typeof m.context_length === "number" ? m.context_length : null,
-        expiresAt: m.expires_at || null,
+        // A LOADING entry carries its name and zeros for everything else, so its `expires_at` is Go's zero
+        // time — which parses to a deadline in year 1 and renders as a countdown of minus two thousand years.
+        // Zero there means "not known yet", so it is dropped rather than passed on as a stamp.
+        expiresAt: (m.state === "loading" ? null : m.expires_at) || null,
+        // Both need a patched Ollama; absent means "not known", never "idle" / "resident".
+        ...(typeof m.busy === "boolean" ? { busy: m.busy } : {}),
+        ...(m.state ? { state: String(m.state) } : {}),
     }));
 }
 

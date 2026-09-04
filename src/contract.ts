@@ -1625,6 +1625,16 @@ export interface LoadedModel {
     gpus?: LoadedModelGpu[];
     contextLength: number | null;
     expiresAt: string | null;
+    /** Whether this runner is SERVING a request right now, from its reference count. It is the only way to
+     *  read `expiresAt` correctly: the deadline is rewritten when a request FINISHES, so during a generation
+     *  it stands still while a countdown drawn against it keeps running down, and on a long enough one it
+     *  crosses zero. It also covers traffic we never see (another client, a script, a terminal), which no
+     *  local in-flight flag can. ABSENT on a stock server, which means "not known", never "idle". */
+    busy?: boolean;
+    /** The runner's lifecycle state. A `"loading"` entry carries its NAME and zeros for everything else,
+     *  `expires_at` included, so every other field on it is "not yet known" rather than a measurement.
+     *  Absent means resident. Both fields need a patched Ollama (see docs/FORKED-BACKENDS.md). */
+    state?: string;
 }
 
 /** One accelerator the machine has, from `/api/info` `compute.supported_gpus[]`. All memory figures are raw

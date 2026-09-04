@@ -860,6 +860,14 @@ display rather than an obvious bug:
   but no longer resident, because the rows are the chart's legend and a colour with no row explains nothing.
 - **Tracks TILE at width** (auto-fit 300px columns) rather than stretching, and the learned drag floor is
   keyed by width as well as layout — tiling needs less height, and the correction only ever grows.
+- **The keep-alive countdown STOPS while the model is working** (`busy` on `/api/ps`, patched server only).
+  Ollama rewrites `expires_at` when a request FINISHES, so during a generation the deadline stands still
+  while a clock drawn against it keeps running down — on a generation longer than the TTL, past zero, with
+  the panel claiming a model should already have been evicted while it is visibly serving. The chip reads
+  `in use` instead, dashed with a pause glyph, because a frozen NUMBER reads as a stalled panel rather than
+  as a stopped clock. A local in-flight flag would not do: the point is the traffic this browser never
+  started. And read `state` before anything else on a ps entry — a `"loading"` one carries its name and
+  ZEROS, including a Go zero-time `expires_at` that parses to a deadline in the year 1.
 
 **The event lane (§4.5 of the spec).** Under the tracks, on the SAME segmented axis: what happened, against
 what memory was doing while it did. Nothing new is collected — `src/sidebar/model-stats.ts` derives it from what
