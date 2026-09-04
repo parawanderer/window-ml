@@ -41,6 +41,8 @@ await h.chat("Now explain it like I'm five");
 > real tasks immediately.
 >
 > Step-by-step walkthrough (install, minimum config, troubleshooting): [docs/SETUP.md](docs/SETUP.md)
+>
+> Working ON the extension rather than with it? [CONTRIBUTING.md](CONTRIBUTING.md) sets the repo up from scratch.
 
 
 1. **Get a built extension in `dist/`.** The extension is TypeScript and must be
