@@ -812,7 +812,11 @@ export interface TablePreview { name: string; source: TableSource; columns?: str
  *  than pinning it. Adding to it is NOT a breaking export change. */
 export type RenderDescriptor = (
     | { type: "image"; src: string; label?: string }
-    | { type: "code"; text: string; lang?: string; format?: boolean }   // format: let the sidebar beautify the source (e.g. exec's JS)
+    // `note`: a one-line caption for when the rendered text is not literally what the caller wrote — `exec`
+    // uses it to say that pointer macros were expanded, so a reader comparing this against the raw args does
+    // not conclude the log is lying to them. `marks`: byte ranges in `text` a renderer may highlight, each
+    // with the original it replaced (hover fodder).
+    | { type: "code"; text: string; lang?: string; format?: boolean; note?: string; marks?: { start: number; end: number; from: string }[] }
     | { type: "table"; columns: string[]; rows: (string | number)[][] }
     | { type: "keyval"; pairs: [string, string][] }
     | { type: "elements"; items: { path: string; text?: string; index?: number }[] }

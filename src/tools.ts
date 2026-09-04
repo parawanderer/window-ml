@@ -15,6 +15,7 @@ export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "h
 // domTools stay ml-free. Used by describeElement to reveal content a page selector can't enter.
 export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
 import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom";
+import { expandPointers } from "./pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
 import { runPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
 import { DEREF_TOOL } from "./token-pipe";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
@@ -485,6 +486,14 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // Advertise ml.pipe HERE rather than in the system prompt or the tools' `pipe` parameter: exec
                 // is where you'd reach for it, and inside exec its availability is self-evident (naming it on
                 // another tool would name a capability that needs exec, which the run may not have).
+                // The macro is advertised HERE for the same reason ml.pipe is: exec is where you would write it,
+                // and it exists nowhere else. Naming it as a PROMISE is the load-bearing half — a model that
+                // thinks `@tool:x` is a value writes `.length` on a Promise and gets `undefined` with no error.
+                "POINTERS: write `@tool:abc1234` (or `@tool:python_exec`, or `@tool:\"a label\"`) directly in the " +
+                "code — it is real syntax here and expands to a read of that output. It evaluates to a PROMISE, " +
+                "so `await` it: `const rows = await @tool:abc1234;` or " +
+                "`const [a, b] = await Promise.all([@tool:abc1234, @tool:python_exec]);`. Inside a string or a " +
+                "comment it stays literal text, so you can still log one. " +
                 "FILTERING TEXT: `ml.pipe(text, \"grep -i pricing | head -20\")` runs the same small dialect the " +
                 "tools' `pipe` parameter takes, over ANY string — a survey's output, a fetch, python's stdout. " +
                 "Cheaper to write (and to get right) than the equivalent `.split`/`.filter`/`.slice` chain. " +
@@ -522,7 +531,21 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             requiresApproval: true,     // arbitrary eval — the agent gate confirms each call
             // Debug view: show the JS that ran as a highlighted code block (raw
             // toggle still reveals the underlying args/result).
-            render: (_input, args) => ({ type: "code", text: String((args as { js?: string }).js || ""), lang: "javascript", format: true }),
+            render: (_input, args) => {
+                // Show what actually RAN, not what was typed: `@tool:…` is not JavaScript, so a highlighter
+                // either mangles the line or gives up on it — a worse render of a less accurate text. The
+                // model's original is still one click away in the raw args (and side by side in an export),
+                // so the note is what stops the two reading as a contradiction.
+                const src = String((args as { js?: string }).js || "");
+                const { code, expansions } = expandPointers(src);
+                return {
+                    type: "code", text: code, lang: "javascript", format: true,
+                    ...(expansions.length ? {
+                        note: `${expansions.length} pointer macro${expansions.length > 1 ? "s" : ""} expanded`,
+                        marks: expansions,
+                    } : {}),
+                };
+            },
             parameters: {
                 type: "object",
                 properties: {
@@ -535,7 +558,13 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             // A raise of maxChars beyond the default with no justification is DOOMED (it will just ask for one) —
             // skip the gate and steer the model to supply `maxCharsReason` (then the human sees it on the card).
             precheck: (args) => outputCapPrecheck("exec", args as Record<string, unknown>),
-            run: async ({ js, maxChars, maxCharsReason }: { js: string; maxChars?: number; maxCharsReason?: string }, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
+            run: async ({ js: source, maxChars, maxCharsReason }: { js: string; maxChars?: number; maxCharsReason?: string }, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
+                // Pointer MACRO: `@tool:abc1234` in code position becomes `ml.dereference("@tool:abc1234")`.
+                // A lexical pass, because that syntax does not parse and a parser cannot find what it rejects
+                // — and one that leaves strings and comments alone, exactly as a C macro does. What runs from
+                // here on is the EXPANDED source; the model's own text stays in `arguments.js` for the raw
+                // view, and the render below shows the expansion so the two are never confused.
+                const { code: js, expansions } = expandPointers(source);
                 // Effective per-slot output cap. Default 500; a raise past it is only reachable AFTER the human
                 // gate (the readonly try refuses to auto-approve an escalated call), clamped to the ceiling.
                 const { cap, clamped } = resolveOutputCap("exec", maxChars, maxCharsReason);
