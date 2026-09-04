@@ -1814,6 +1814,13 @@ export interface DebugAgentStep extends DebugBase {
     /** How long the approval gate was OPEN, in ms — a human deciding, which is the step's wall time but not
      *  the machine's work. Absent when nothing was gated (auto-approved, read-only, denied without a prompt). */
     approveMs?: number;
+    /** PLUMBING: the gap between the model call returning and the tool starting, in ms — parsing the call,
+     *  validating its arguments, building the context, the hop to the page on a delegated run. Excludes the
+     *  approval gate, which is `approveMs` and its own phase; counting it here would draw the same seconds
+     *  twice. It exists because the timeline reconstructs a block's start by subtracting the parts it knows
+     *  about, so an unmeasured part does not merely go unlabelled — it shifts the whole block later than the
+     *  work happened, against an axis shared with the memory trace. */
+    dispatchMs?: number;
     /** A REMOTE executor's own measurement, when the tool ran somewhere else. `toolMs` above is OUR wall
      *  clock around the whole dispatch, so it contains the network and the far end's overhead too; this is
      *  what lets the timeline draw those apart instead of charging the difference to the tool. */

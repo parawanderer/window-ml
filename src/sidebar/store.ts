@@ -117,6 +117,10 @@ export const laneScoped = signal(false);
 // dragged to, and which of the three you want depends on what you are doing: reading a run's shape wants the
 // lane, watching memory move wants the plot, deciding what to evict wants the model list. Hidden, not
 // removed — the data behind each keeps being collected either way.
+/** The step seqs lit by whatever is hovered in the event lane, or null when nothing is. The lane already
+ *  dims its own bars by lineage; this carries the same focus into the transcript, so hovering a block says
+ *  which part of the log it is about. Seqs rather than event ids, because the log is keyed by step. */
+export const laneLitSeqs = signal<Set<number> | null>(null);
 export const SECTIONS_KEY = "ml_res_sections";
 export const showLane = signal(true);
 export const showModels = signal(true);

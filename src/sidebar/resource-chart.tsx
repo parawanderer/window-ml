@@ -9,18 +9,18 @@
 //     ~0.55 GiB of ollama's discovery context and calling that "other processes" invents a process.
 //   • HONEST GAPS. Polling is gated on the panel being open, so history is discontinuous. A line drawn across
 //     a ten-minute hole is a confident claim about memory nobody measured; `segments` breaks it instead.
-import { useMemo, useRef, useState, useLayoutEffect } from "preact/hooks";
+import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
     placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
-    scopeToSpan, scrubZone, scrubResize, scrubNudge,
+    scopeToSpan, scrubZone, scrubResize, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, type ResourceEvent, type EventPlacement,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter } from "./vram";
-import { loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, showLane } from "./store";
+import { loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, showLane, laneLitSeqs } from "./store";
 import { clockAt, hhmmssms } from "./timestamps";
 import { scrollToStepSeq } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
@@ -478,6 +478,9 @@ const phaseFill = (kind: string, model?: string): string => {
         // far end queueing before it started. Both borrow the neutral the approval wait uses rather than the
         // model's colour, because neither is the model or the tool doing anything — `net` fainter still,
         // since it is the one figure we DERIVE by subtraction rather than being told.
+        // Plumbing between the model finishing and the tool starting. The faintest of the neutrals: it is
+        // ours, it is usually milliseconds, and it exists mainly so the block sits where the work did.
+        : kind === "dispatch" ? "color-mix(in srgb, var(--fg-faint) 20%, transparent)"
         : kind === "net" ? "color-mix(in srgb, var(--fg-faint) 26%, transparent)"
         : kind === "queue" ? "color-mix(in srgb, var(--fg-faint) 38%, transparent)"
         : `color-mix(in srgb, ${base} 38%, transparent)`;
@@ -548,7 +551,7 @@ function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; ru
  *  Its own axis is LINEAR in time, unlike the chart's: this is an overview, and a ten-minute hole is a fact
  *  about the session that an overview should show at its true width rather than collapse. The runs are drawn
  *  as filled blocks with the gaps left empty, so "nothing was measured here" reads as a hole. */
-function ScrubStrip({ samples, window: win }: { samples: ResourceSample[]; window: { from: number; to: number } | null }) {
+function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSample[]; window: { from: number; to: number } | null; events?: ResourceEvent[] }) {
     const ex = scrubExtent(samples, win);
     if (!ex || !win) return null;   // nothing to scrub: the window already covers the session
     const span = ex.to - ex.from;
@@ -586,6 +589,18 @@ function ScrubStrip({ samples, window: win }: { samples: ResourceSample[]; windo
     return (
         <div class="rc-scrub">
             <div class={`rc-scrub-track${scrubGrab.value ? ` z-${scrubGrab.value}` : ""}`} onPointerDown={drag}
+                // Scrolling over the strip PANS the window, never resizes it — the same thing dragging its
+                // middle does, and the same mapping the chart uses, so one gesture means one thing on both
+                // surfaces. Resizing stays a deliberate grab on a handle: a wheel has no way to say which
+                // edge it meant.
+                onWheel={(ev: WheelEvent) => {
+                    const b = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+                    const by = wheelScrubFraction(ev.deltaX, ev.deltaY, ev.deltaMode, b.width);
+                    if (!by) return;
+                    zoomRange.value = scrubNudge({ from: ex.from, to: ex.to }, win, by);
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                }}
                 onPointerMove={(ev: PointerEvent) => {
                     // The cursor is the only thing that says a handle is there before you try to use it.
                     const b = (ev.currentTarget as HTMLElement).getBoundingClientRect();
@@ -597,6 +612,16 @@ function ScrubStrip({ samples, window: win }: { samples: ResourceSample[]; windo
                     return <div class="rc-scrub-run" key={i}
                         style={{ left: `${a * 100}%`, width: `${Math.max(0.4, (b - a) * 100)}%` }} />;
                 })}
+                {/* WHERE the work is, so scrubbing is aimed rather than swept: the strip is the only view of
+                    the whole session, and without this it says which stretch you are looking at but nothing
+                    about which stretch is worth looking at. Carries each event's model colour, the same one
+                    its lane bar and its row already use. Runs are skipped — a run spans everything, so a tick
+                    for it would just be a wash across the strip. */}
+                {events.filter((e) => e.kind !== "run" && e.t >= ex.from && e.t <= ex.to).map((e, i) => (
+                    <i class="rc-scrub-ev" key={i}
+                        style={{ left: `${((e.t - ex.from) / span) * 100}%`,
+                                 ...(e.model ? { background: colorFor(e.model) } : {}) }} />
+                ))}
                 <div class="rc-scrub-win" style={{ left: `${ex.windowFrom * 100}%`,
                     width: `${Math.max(1, (ex.windowTo - ex.windowFrom) * 100)}%` }} />
             </div>
@@ -709,6 +734,7 @@ function EventTip({ scope }: { scope: string }) {
         : kind === "wait" ? "waiting for approval"
         // Said as what it IS rather than as a label: the point of splitting a remote step is that these two
         // are not the tool being slow, and a reader should not have to know that to read the bar.
+        : kind === "dispatch" ? "dispatching the call"
         : kind === "net" ? "network, there and back"
         : kind === "queue" ? "queued before it started"
         : e.tool || "tool");
@@ -810,6 +836,29 @@ function EventLane({ samples, events: all }: { samples: ResourceSample[]; events
     const spans = placed.filter((p) => p.event.until != null);
     const rows = laneRows(spans);
     const lit = lineageOf(events, eventHover.value?.p.event.id);
+    // The same focus, carried into the transcript: the log dims every step outside the hovered lineage, so a
+    // bar and the rows it is about light up together. Derived from the lineage rather than from the one
+    // hovered event, so a sub-call still points at the step that spawned it.
+    useEffect(() => {
+        const on = lit.size > 0;
+        laneLitSeqs.value = on
+            ? new Set(events.filter((e) => e.id && lit.has(e.id) && e.ref?.seq != null).map((e) => e.ref!.seq as number))
+            : null;
+        // The transcript holds more than steps — the task, the answer, a mid-run steer — and none of them is
+        // in any lineage, so focusing has to reach them too or the log only half-dims and the effect reads as
+        // broken rather than as scoped. Driven by an attribute on <html> and pure CSS, the same way the code
+        // wrap and gutter prefs are: it is a display MODE, and the alternative is subscribing every message
+        // component to a signal that changes on hover.
+        // A generation that produced no tool call IS the answer, so hovering it must leave the answer lit —
+        // dimming the very thing the bar points at is the failure this whole affordance exists to avoid. It
+        // is the one message the lane can identify: every other message belongs to no lineage at all.
+        const answerLit = on && events.some((e) => e.id && lit.has(e.id) && e.kind === "gen" && e.ref?.seq == null);
+        try {
+            const el = document.documentElement;
+            if (on) el.setAttribute("data-lane-focus", answerLit ? "answer" : "step");
+            else el.removeAttribute("data-lane-focus");
+        } catch { /* no document in this realm */ }
+    }, [lit, events]);
     const open = (e: ResourceEvent) => {
         if (!e.ref) return;
         view.value = { name: "detail", hash: e.ref.hash };
@@ -937,6 +986,19 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     const latest = filled.at(-1);
     if (!latest?.capacity) return null;
     const tracks = layout && layout.length ? layout : (presetsFor(latest)[0]?.tracks ?? []);
+    // Hiding a model hides its EVENTS too. The dot on a model row takes it out of the totals and the bands,
+    // and leaving its lane blocks and its ticks behind left the panel saying two different things about the
+    // same model at once — one surface showing it gone, the other still charging time to it.
+    const shown = useMemo(
+        () => (hidden.size ? events.filter((e) => !(e.model && hidden.has(e.model))) : events),
+        [events, hidden]);
+    // The lane's KIND chips have to reach the strip's ticks too. Filtering only inside the lane meant hiding
+    // (say) loads left their ticks on the strip — the same "two surfaces disagreeing about one run" the
+    // model-hiding fix was about. The lane still receives the unfiltered list, because its chips count from
+    // it: a filter you have to toggle blindly to discover what it hides is worse than none.
+    const stripFilter = laneFilter();
+    const stripEvents = useMemo(() => filterEvents(shown, stripFilter),
+        [shown, stripFilter.hash, stripFilter.hidden]);
     // Wheeling over the CHART moves the window along the session — the plot is a viewport onto a timeline, so
     // a scroll gesture on it should scroll the timeline. It nudges by a fraction of the window's own width, so
     // one notch travels the same visible distance whether you are looking at ten seconds or at everything.
@@ -949,21 +1011,25 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
         if (!w) return;
         const ex = scrubExtent(samples, w);
         if (!ex) return;
-        const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-        if (!dy) return;
-        zoomRange.value = scrubNudge({ from: ex.from, to: ex.to }, w, Math.sign(dy) * 0.25);
+        const width = (e.currentTarget as HTMLElement).getBoundingClientRect().width;
+        const by = wheelScrubFraction(e.deltaX, e.deltaY, e.deltaMode, width);
+        if (!by) return;
+        zoomRange.value = scrubNudge({ from: ex.from, to: ex.to }, w, by);
         e.preventDefault();
         e.stopPropagation();
     };
     return (
         <>
             <div class="rc" onWheel={wheelScrub}>
-                {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} events={events} />)}
+                {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} events={shown} />)}
             </div>
-            {/* Below every track, sharing their x-axis: what happened, against what was in memory while it did. */}
-            {showLane.value ? <EventLane samples={filled} events={events} /> : null}
-            {/* And below THAT: where this window sits in the whole session. */}
-            <ScrubStrip samples={samples} window={window_} />
+            {/* Directly under the tracks: where this window sits in the whole session. It sits ABOVE the lane
+                rather than below it because the lane RE-PACKS as the window moves — a step entering the view
+                can add a row — and anything below a control whose height changes shifts out from under the
+                pointer mid-drag. The strip is the thing being dragged, so it goes where nothing moves it. */}
+            <ScrubStrip samples={samples} window={window_} events={stripEvents} />
+            {/* And below that, sharing the tracks' x-axis: what happened, against what memory was doing. */}
+            {showLane.value ? <EventLane samples={filled} events={shown} /> : null}
         </>
     );
 }

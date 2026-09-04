@@ -8,7 +8,7 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { RenderDescriptor, DebugAgentConfig, PersistGrant } from "../contract";
 import { resolveOutputCap, runStats, fmtTokPerSec, runStatsProvenance } from "../contract";
 import { externalSheetIds } from "../dom";
-import { config, surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps } from "./store";
+import { config, surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs } from "./store";
 import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
@@ -204,6 +204,40 @@ export function GrantCard({ grants }: { grants: PersistGrant[] }) {
     );
 }
 
+/** A step's pointer, click-to-copy. Copies the full `@tool:<id>` rather than the bare hex: that is the form
+ *  that resolves everywhere — in the composer, in `ml.dereference`, in a `@tool:` macro inside `exec` — and
+ *  making someone add the prefix by hand is how you get a fault instead of a read. */
+function TokenChip({ token }: { token: string }) {
+    const [done, setDone] = useState(false);
+    const ref = `@tool:${token}`;
+    const copy = () => {
+        // `navigator.clipboard` needs a secure context and can reject; the textarea fallback is what makes
+        // this work in an extension iframe where it sometimes does not.
+        const ok = () => { setDone(true); setTimeout(() => setDone(false), 1200); };
+        try {
+            navigator.clipboard?.writeText(ref).then(ok, () => fallback());
+            if (!navigator.clipboard) fallback();
+        } catch { fallback(); }
+        function fallback() {
+            try {
+                const ta = document.createElement("textarea");
+                ta.value = ref; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+                document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+                ok();
+            } catch { /* nothing else to try; the text is on screen to read */ }
+        }
+    };
+    return (
+        <div class="astep-token">
+            <button class="tt tok-chip" onClick={copy} aria-label={`Copy ${ref}`}>
+                <code>{ref}</code>
+                <span class="tok-chip-hint">{done ? "copied" : "copy"}</span>
+                <span class="tt-pop wrap left" role="tooltip">This step's output kept as a pointer. Copy it and paste it into the composer to ask about this exact output, or read it in `exec` as {ref}.</span>
+            </button>
+        </div>
+    );
+}
+
 export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const [expanded, setExpanded] = useState(false);
     const [decided, setDecided] = useState(false);   // hide the controls the instant we click (before the DONE lands)
@@ -222,6 +256,18 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // the step seq to correlate; without them (a page-loop run) fall back to the plain pending view.
     const awaiting = !!(st.awaitingApproval && st.pending && !decided && hash && st.seq != null);
     // A pending approval AUTO-UNFURLS the In so you review the call before deciding (no extra click).
+    // So does being the step someone just navigated TO — from a lane block or an answer citation, both of
+    // which say "open this step". Landing on a collapsed row that merely pulses is the promise half-kept:
+    // you are shown WHERE it is and not WHAT it was, which is the thing you clicked for.
+    //
+    // Derived DURING RENDER into a sticky flag, the same way the containing block does it (card-showwork's
+    // `stuckOpen`): `revealSeq` auto-clears about a second later so a re-click of the same seq re-triggers,
+    // and reading it directly would collapse the step again right after it opened. Sticky also means the
+    // header toggle still works afterwards — it clears the flag, so a collapse actually collapses.
+    // Hovering a block in the event lane dims every step outside its lineage, the same way the lane dims its
+    // own bars — so the bar and the rows it is about are picked out together.
+    const litSeqs = laneLitSeqs.value;
+    const dimmed = !!litSeqs && st.seq != null && !litSeqs.has(st.seq);
     const open = expanded || awaiting;
     // Keep the step expanded after you decide (setExpanded), so it doesn't collapse when `awaiting`
     // clears — you see the Out result fill in on the same open cell.
@@ -244,7 +290,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const sheetGrants = awaiting ? externalSheetGrant(st.arguments) : [];
     const showGrants = awaiting && hasPersistGrants(st.grants);
     return (
-        <div data-astep-seq={st.seq} class={`astep tool${open ? " open" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
+        <div data-astep-seq={st.seq} class={`astep tool${dimmed ? " away" : ""}${open ? " open" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setExpanded(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
@@ -259,6 +305,15 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
             </button>
             {open
                 ? <div class="astep-body">
+                    {/* The step's POINTER, when the run minted one. It is a first-class handle — the model
+                        reads its own outputs back through it and can cite it in an answer — but until now it
+                        only existed in the model's context, so a human watching a run had no way to name the
+                        thing they were looking at. Click to copy, which is what you do with it: paste it into
+                        the composer to ask about that exact output.
+
+                        DevTools only. The HUD is a glance surface for someone driving a task, and a hex
+                        handle there is noise; this is for the surface you open when you are debugging. */}
+                    {st.token && surface.value !== "card" ? <TokenChip token={st.token} /> : null}
                     {issues ? <div class="tt tt-row arg-issues"><IconWarn /><span>arg schema: {issues.join("; ")}</span><span class="tt-pop wrap left" role="tooltip">The args don't match this tool's parameter schema.</span></div> : null}
                     {st.reused?.length ? <ReusedBlock reused={st.reused} /> : null}
                     {args || inRender

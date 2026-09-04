@@ -166,6 +166,48 @@ test("eventsFrom: an approval gate is its OWN phase — the human's time, not th
     assert.equal(widest.p.kind, "wait");
 });
 
+test("eventsFrom: plumbing between the model and the tool is its own phase, and the block still starts where the work did", () => {
+    const evs = M.eventsFrom([{
+        hash: "plumb", model: "qwen3.8:27b",
+        steps: [{
+            // 2s generating, 300ms of dispatch, 1s running.
+            seq: 1, ts: 100_000, tool: "exec", toolMs: 1000, dispatchMs: 300,
+            usage: usage(500, 40, { genMs: 2000 }),
+        }],
+    }]);
+    const tool = evs.find((e) => e.kind === "tool");
+    // The block's START is reconstructed by subtracting the parts we know about, so an UNMEASURED part does
+    // not merely go unlabelled — it drags the whole block later than the work happened, against an axis
+    // shared with the memory trace. Counting dispatch is what puts it back.
+    assert.equal(tool.t, 96_700, "3.3s of real wall time, not 3s");
+    assert.deepEqual(tool.phases, [
+        { kind: "model", until: 98_700 },
+        { kind: "dispatch", until: 99_000 },
+        { kind: "tool", until: 100_000 },
+    ]);
+});
+
+test("eventsFrom: dispatch and an approval gate are separate spans, never the same seconds twice", () => {
+    const evs = M.eventsFrom([{
+        hash: "both", model: "qwen3.8:27b",
+        steps: [{
+            seq: 1, ts: 100_000, tool: "python_exec", toolMs: 1000, dispatchMs: 200, approveMs: 5000,
+            usage: usage(500, 40, { genMs: 2000 }),
+        }],
+    }]);
+    const tool = evs.find((e) => e.kind === "tool");
+    assert.equal(tool.t, 91_800, "gen + dispatch + wait + tool, each counted once");
+    assert.deepEqual(tool.phases.map((p) => p.kind), ["model", "dispatch", "wait", "tool"],
+        "in the order they happen: the model, the plumbing, the human, the tool");
+    // A step with no dispatch reported is unchanged — the phase is absent rather than zero-width.
+    const none = M.eventsFrom([{
+        hash: "none", model: "qwen3.8:27b",
+        steps: [{ seq: 1, ts: 100_000, tool: "exec", toolMs: 1000, usage: usage(500, 40, { genMs: 2000 }) }],
+    }]).find((e) => e.kind === "tool");
+    assert.deepEqual(none.phases.map((p) => p.kind), ["model", "tool"]);
+    assert.equal(none.t, 97_000);
+});
+
 test("eventsFrom: a delegated sub-call is its own span, parented to the step that spawned it", () => {
     const evs = M.eventsFrom([{
         hash: "r", model: "qwen3.8:27b",

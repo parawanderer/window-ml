@@ -22,12 +22,41 @@ export function scrollToStepSeq(seq?: number, hash?: string): void {
     if (seq == null) return;
     if (hash) cardShowWorkHash.value = hash;   // open the HUD "Show work" so the step exists to scroll to
     revealSeq.value = seq;                      // force-open the per-task block that holds this step (if collapsed)
-    const doScroll = (): boolean => {
-        const el = document.querySelector(`[data-astep-seq="${seq}"]`);
-        if (!el) return false;
-        el.scrollIntoView({ block: "center", behavior: "smooth" });
+    // Opening the step is done by pressing its OWN opener, once, rather than through a signal the row reads:
+    // subscribing a step to a signal that changes on click re-rendered the answer subtree around it and left
+    // a citation without its run, which threw from inside the very click meant to navigate. Borrowing the
+    // affordance also means this cannot desync from what the toggle means.
+    const pulse = (el: Element): void => {
         el.classList.add("astep-pulse");
         setTimeout(() => el.classList.remove("astep-pulse"), 1400);
+    };
+    const doScroll = (): boolean => {
+        const found = document.querySelector(`[data-astep-seq="${seq}"]`);
+        if (!found) return false;
+        // OPEN it FIRST, if it is collapsed. Scrolling to a row that merely pulses shows you where the step
+        // is and not what it was, which is the thing you clicked for.
+        //
+        // Pressing the row's own opener rather than reading a signal inside the row: subscribing a step to a
+        // signal that changes on click re-rendered the answer subtree around it and left a citation without
+        // its run, which threw from inside the very click meant to navigate. Borrowing the affordance also
+        // means this cannot desync from what the toggle means.
+        //
+        // Before the pulse, not after, because the toggle re-renders the row and Preact rewrites an
+        // element's class list from its own vdom when it does — a class added first is wiped by it. The
+        // element is then RE-QUERIED for the same reason: the node that comes back need not be the one we
+        // pressed.
+        const collapsed = !found.classList.contains("open");
+        if (collapsed) (found.querySelector(".astep-head") as HTMLElement | null)?.click();
+        const el = document.querySelector(`[data-astep-seq="${seq}"]`) ?? found;
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        pulse(el);
+        // The toggle's re-render lands in a microtask and rewrites the row's class list from its own vdom,
+        // wiping the pulse we just added. So re-apply it on a MACROTASK, which runs after that — and
+        // re-query, because the node that comes back need not be the one we pressed.
+        if (collapsed) setTimeout(() => {
+            const again = document.querySelector(`[data-astep-seq="${seq}"]`);
+            if (again && !again.classList.contains("astep-pulse")) pulse(again);
+        }, 0);
         return true;
     };
     // Retry across a handful of frames: expanding Show-work AND a collapsed block are async re-renders, so the

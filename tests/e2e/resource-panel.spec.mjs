@@ -1219,14 +1219,179 @@ test("resource panel: the scrubber resizes from its edges and pans from its midd
         // ---- and a wheel over the CHART scrubs, rather than scrolling the page ----
         const scrolled = await frame.evaluate(() => document.querySelector(".view")?.scrollTop ?? 0);
         const plot = await frame.locator(".rc-plot").first().boundingBox();
-        await page.mouse.move(plot.x + plot.width / 2, plot.y + plot.height / 2);
-        await page.mouse.wheel(0, 300);
+        const overPlot = async () => page.mouse.move(plot.x + plot.width / 2, plot.y + plot.height / 2);
+        await overPlot();
+        await page.mouse.wheel(0, 120);
         await sleep(400);
         const nudged = await winAt();
         expect(pct(nudged.left), "the window moved along the session").toBeGreaterThan(pct(panned.left) + 1);
         expect(Math.abs(pct(nudged.width) - pct(panned.width)), "…without resizing").toBeLessThan(3);
         expect(await frame.evaluate(() => document.querySelector(".view")?.scrollTop ?? 0),
             "and the transcript underneath did NOT scroll — the chart claimed the gesture").toBe(scrolled);
+        // Measured from a FIXED starting position each time. The window clamps against the end of the
+        // session, so comparing two gestures made from wherever the previous one left off compares one free
+        // movement against one that ran out of room.
+        const park = async () => {
+            const w = await winAt();
+            await dragFromTo(pct(w.left) + pct(w.width) / 2, 35);
+            return pct((await winAt()).left);
+        };
+        const travelled = async (dx, dy, notches = 1) => {
+            const from = await park();
+            for (let i = 0; i < notches; i++) { await overPlot(); await page.mouse.wheel(dx, dy); await sleep(120); }
+            await sleep(300);
+            return pct((await winAt()).left) - from;
+        };
+
+        const vertical = await travelled(0, 120);
+        expect(vertical, "a vertical wheel scrubs forward").toBeGreaterThan(1);
+
+        // A HORIZONTAL swipe scrubs too, and by the same distance. Reading only deltaY meant a trackpad's
+        // horizontal gesture did nothing except through whatever vertical jitter it happened to carry.
+        const horizontal = await travelled(120, 0);
+        expect(Math.abs(horizontal - vertical), "…and a horizontal one goes exactly as far")
+            .toBeLessThan(Math.max(1, vertical * 0.35));
+
+        // PROPORTIONAL: four small notches travel the same distance as one big one. A fixed step per event
+        // is what made the same physical swipe move wildly different distances depending on how the hardware
+        // chose to quantise it.
+        const inFour = await travelled(0, 30, 4);
+        expect(Math.abs(inFour - vertical), "4x30 goes as far as 1x120")
+            .toBeLessThan(Math.max(1, vertical * 0.35));
+
+        // Back the other way, so it is a scrub and not a one-directional ratchet.
+        expect(await travelled(0, -120), "and it goes backwards").toBeLessThan(-1);
+
+        // ---- and the same gesture over the STRIP pans it, never resizes it ----
+        // A wheel has no way to say which edge it meant, so resizing stays a deliberate grab on a handle.
+        const parked = await park();
+        const parkedW = pct((await winAt()).width);
+        await page.mouse.move(track.x + track.width / 2, y);
+        await page.mouse.wheel(120, 0);
+        await sleep(400);
+        const strip = await winAt();
+        expect(pct(strip.left), "the strip scrolls the window along").toBeGreaterThan(parked + 1);
+        expect(Math.abs(pct(strip.width) - parkedW), "…without resizing it").toBeLessThan(3);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
+
+// The lane and the transcript are two views of the same run, so a hover in one should pick out the other.
+// And "click to open this step" has to actually open it: landing on a collapsed row that merely pulses shows
+// you WHERE it is and not WHAT it was, which is the thing you clicked for.
+test("resource panel: hovering a lane block dims the rest of the log, and clicking opens the step", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(9000);
+
+        await page.evaluate(() => {
+            const now = Date.now(), span = 7000;
+            const at = (f) => now - Math.round(span * f);
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const hash = "e2e-focus";
+            post({ kind: "agent", id: hash, ts: at(1), save: false, session: { hash, turn: 0 },
+                   task: "three steps", model: "gemma4:31b", maxSteps: 6, config: null });
+            for (let i = 1; i <= 3; i++) {
+                post({ kind: "agent-step", id: hash, ts: at(0.8 - i * 0.2), save: false, session: { hash, turn: i },
+                       step: i, seq: i, tool: "exec", toolMs: 400, arguments: { js: `step ${i}` },
+                       result: `result of step ${i}`,
+                       usage: { promptTokens: 90, completionTokens: 10, totalTokens: 100, genMs: 300 } });
+            }
+        });
+        await expect.poll(() => frame.locator(".rc-ev-tool").count(), { timeout: 15000 }).toBeGreaterThanOrEqual(3);
+        // Into the run's own transcript, so the lane and the log are both on screen.
+        await frame.locator(".rc-ev-tool").first().click();
+        await expect.poll(() => frame.locator(".astep").count(), { timeout: 10000 }).toBeGreaterThanOrEqual(3);
+        // The click left the pointer ON the bar, which is itself a hover — move off before asserting the
+        // resting state, or this measures the very thing the next step is about to test. Off the LANE
+        // specifically (its pointerleave is what clears the focus), so aim below the whole panel.
+        const panelBox = await frame.locator(".vram").boundingBox();
+        await page.mouse.move(panelBox.x + panelBox.width / 2, panelBox.y + panelBox.height + 60);
+        await expect.poll(() => frame.locator(".astep.away").count(), { timeout: 5000 }).toBe(0);
+
+        // ---- hovering one block dims the steps outside its lineage ----
+        const bar = await frame.locator(".rc-ev-tool").first().boundingBox();
+        await page.mouse.move(bar.x + bar.width / 2, bar.y + bar.height / 2);
+        await expect.poll(() => frame.locator(".astep.away").count(), { timeout: 5000 }).toBeGreaterThan(0);
+        const total = await frame.locator(".astep").count();
+        expect(await frame.locator(".astep.away").count(), "…but not ALL of them — one is the step it points at")
+            .toBeLessThan(total);
+
+        // Moving off the lane puts every step back, rather than leaving the log stuck dim.
+        await page.mouse.move(panelBox.x + panelBox.width / 2, panelBox.y + panelBox.height + 60);
+        await expect.poll(() => frame.locator(".astep.away").count(), { timeout: 5000 }).toBe(0);
+
+        // ---- clicking OPENS the step it points at, not just highlights it ----
+        // Collapse everything first, so an already-open row cannot pass this by accident.
+        const heads = frame.locator(".astep.open .astep-head");
+        for (let i = await heads.count(); i > 0; i--) await heads.first().click().catch(() => {});
+        await expect.poll(() => frame.locator(".astep.open").count(), { timeout: 5000 }).toBe(0);
+
+        await frame.locator(".rc-ev-tool").first().click();
+        await expect.poll(() => frame.locator(".astep.open").count(), { timeout: 8000 }).toBeGreaterThan(0);
+        // It STAYS open after the reveal auto-clears — a step that shuts again a second later is worse than
+        // one that never opened, because you saw it and then lost it.
+        await sleep(2500);
+        expect(await frame.locator(".astep.open").count(), "still open once the pulse has passed").toBeGreaterThan(0);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
+
+// Hiding a model takes it out of the totals and the bands. Leaving its lane blocks and its strip ticks
+// behind left the panel saying two different things about one model at once.
+test("resource panel: hiding a model hides its events too, and unhiding brings them back", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(9000);
+
+        await page.evaluate(() => {
+            const now = Date.now(), span = 7000;
+            const at = (f) => now - Math.round(span * f);
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const hash = "e2e-hide";
+            post({ kind: "agent", id: hash, ts: at(1), save: false, session: { hash, turn: 0 },
+                   task: "two steps", model: "gemma4:31b", maxSteps: 4, config: null });
+            for (let i = 1; i <= 2; i++) {
+                post({ kind: "agent-step", id: hash, ts: at(0.7 - i * 0.25), save: false, session: { hash, turn: i },
+                       step: i, seq: i, tool: "exec", toolMs: 400, arguments: { js: `s${i}` }, result: "ok",
+                       usage: { promptTokens: 80, completionTokens: 10, totalTokens: 90, genMs: 300 } });
+            }
+        });
+        await expect.poll(() => frame.locator(".rc-ev-tool").count(), { timeout: 15000 }).toBeGreaterThan(0);
+        const bars = await frame.locator(".rc-ev-tool").count();
+        const ticks = await frame.locator(".rc-scrub-ev").count();
+
+        // The dot on the model's row is the hide toggle.
+        await frame.locator('.vram-row', { hasText: "gemma4:31b" }).locator(".vram-dot").click();
+        await expect.poll(() => frame.locator(".vram-row.off").count(), { timeout: 5000 }).toBeGreaterThan(0);
+        await expect.poll(() => frame.locator(".rc-ev-tool").count(), { timeout: 5000 }).toBe(0);
+        if (ticks) await expect.poll(() => frame.locator(".rc-scrub-ev").count(), { timeout: 5000 }).toBe(0);
+
+        // …and it comes back, rather than being dropped for the session.
+        await frame.locator('.vram-row', { hasText: "gemma4:31b" }).locator(".vram-dot").click();
+        await expect.poll(() => frame.locator(".rc-ev-tool").count(), { timeout: 5000 }).toBe(bars);
     } finally {
         await ext.close();
         await fake.stop();

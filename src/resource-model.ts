@@ -718,6 +718,34 @@ export function scrubNudge(
     return scrubTo(extent, window, (center - extent.from) / span);
 }
 
+/**
+ * How far a wheel gesture should slide the window, as a fraction of the window's own width.
+ *
+ * Two things this gets right that a `Math.sign(delta) * step` does not, and both were visible as the same
+ * symptom — the chart scrubbing erratically under a trackpad:
+ *
+ * It reads BOTH AXES, taking whichever dominates. A trackpad swipe is a stream of events carrying a mixture
+ * of `deltaX` and `deltaY`, so reading only one axis means a horizontal swipe does nothing except through
+ * whatever incidental vertical jitter it happens to carry. Dominant-axis rather than summed, so a diagonal
+ * gesture is not counted twice.
+ *
+ * And it is PROPORTIONAL to the distance, scaled by the plot's own width, so the window travels 1:1 with the
+ * gesture: swipe across half the plot and the window moves half its width. A fixed step per event is what
+ * made it inconsistent — one mouse notch and one of the dozens of tiny events a trackpad emits for the same
+ * physical movement were treated identically, so the same swipe moved wildly different distances depending
+ * on how the hardware chose to quantise it.
+ *
+ * `deltaMode` is honoured because a mouse reports LINES and a page gesture reports PAGES; treating either as
+ * pixels moves the window by a few pixels for a gesture that meant a screenful.
+ */
+export function wheelScrubFraction(deltaX: number, deltaY: number, deltaMode: number, plotPx: number): number {
+    if (!(plotPx > 0)) return 0;
+    const scale = deltaMode === 1 ? 16 : deltaMode === 2 ? plotPx : 1;
+    const dx = deltaX * scale, dy = deltaY * scale;
+    const d = Math.abs(dx) > Math.abs(dy) ? dx : dy;
+    return d / plotPx;
+}
+
 /** The TIME at a fraction across the whole plot — the inverse of `placeEvents`, for turning a drag into a
  *  time range. The plot is segments laid out with flex weights proportional to their sample counts, so the
  *  fraction is spent across the segments in those proportions and then interpolated INSIDE the one it lands
@@ -933,7 +961,7 @@ export interface ResourceEvent {
      *  executor reported its own numbers. What it said it spent evaluating is `tool`, what it spent getting
      *  started is `queue`, and whatever is left of OUR wall clock is `net`: the network and the far end's
      *  overhead. A local tool is all `tool`, which is exactly true rather than a fallback. */
-    phases?: { kind: "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net"; until: number }[];
+    phases?: { kind: "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "dispatch"; until: number }[];
     /** This span has NOT FINISHED: `until` is where it had reached when the snapshot was taken, not where it
      *  ended. Only ever set by an `eventsFrom` given a `now` — a surface drawing live. It exists so the UI can
      *  say "still going" rather than drawing a bar whose right edge looks like a measured end. */

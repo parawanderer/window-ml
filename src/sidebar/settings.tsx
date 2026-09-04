@@ -12,6 +12,7 @@ import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
     MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS, modelKinds, embedDims } from "./store";
+import { VRAM_PALETTES, VRAM_PALETTE_KEY, vramPalette } from "./vram";
 import { truncate } from "./format";
 import { ToolDefsView } from "./agent-detail";   // the SAME viewer an agent run uses for its local toolset
 import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
@@ -862,6 +863,17 @@ export function Settings() {
                         <option value="1800">30 minutes</option>
                         <option value="0">Everything kept</option>
                     </select></label>
+                <label class="set-field"><span>Model colours</span>
+                    <select value={vramPalette.value}
+                        onChange={(e: any) => { vramPalette.value = e.target.value; chrome.storage.local.set({ [VRAM_PALETTE_KEY]: vramPalette.value }); }}>
+                        <option value="vivid">Vivid</option>
+                        <option value="grafana">Grafana</option>
+                        <option value="cool">Cool</option>
+                        <option value="warm">Warm</option>
+                    </select></label>
+                <div class="set-note">Which palette a model's colour is drawn from. A model's colour is its identity across the whole panel — the line, its band, its row, its blocks in the event lane, its ticks on the strip — so which hues read as distinct is worth choosing rather than being stuck with. The assignment is a hash of the model's name, so a given model keeps the same colour within a palette.
+                    <span class="pal-swatches">{(VRAM_PALETTES[vramPalette.value] ?? []).map((c) => <i key={c} style={{ background: c }} />)}</span>
+                </div>
                 <div class="set-note">How much history the VRAM/RAM chart DRAWS. Samples are kept for the whole session either way — this only sets how far back the chart looks, because a long window squeezed into a narrow panel smears into an unreadable blur. Gaps stay gaps: while the panel is closed nothing is sampled, so the line breaks rather than being drawn across.</div>
                 <label class="set-check">
                     <input type="checkbox" checked={c.groundingEnabled}

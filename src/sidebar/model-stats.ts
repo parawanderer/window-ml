@@ -34,6 +34,8 @@ export interface UsageSource {
         awaitingApproval?: boolean;
         /** How long the tool itself ran (the loop measures it around the dispatch, excluding the gate). */
         toolMs?: number;
+        /** Plumbing between the model call returning and the tool starting — see AgentStep.dispatchMs. */
+        dispatchMs?: number;
         /** What a REMOTE executor said IT spent. `toolMs` is our wall clock around the whole dispatch, so it
          *  also contains the network; this is what lets the two be drawn apart. */
         remoteMs?: { durationMs: number; queuedMs?: number } | null;
@@ -194,20 +196,27 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
                 const turnU = st.usage ?? (folded.has(st.step ?? 0) ? turnUsage.get(st.step ?? 0)!.usage : null);
                 const genMs = turnU?.genMs ?? turnU?.evalMs ?? 0;
                 const waitMs = st.approveMs ?? 0;
-                const from = st.ts - st.toolMs - waitMs - genMs;
-                // Three kinds of time, in the order they happened: the model, the human, the tool. Only the
-                // first and last are work; the middle is a person deciding, and it is often the largest.
+                // PLUMBING between the model finishing and the tool starting. Counted in the block's extent
+                // rather than left out: the start is reconstructed by subtracting the parts we know about, so
+                // an unmeasured part shifts the whole block LATER than the work happened — which, on an axis
+                // shared with the memory trace, draws a block after the memory movement it caused.
+                const dispatchMs = st.dispatchMs ?? 0;
+                const from = st.ts - st.toolMs - waitMs - genMs - dispatchMs;
+                // Four kinds of time, in the order they happened: the model, the plumbing, the human, the
+                // tool. Only the first and last are work; the middle two are a step getting from one to the
+                // other, and one of them is a person deciding, which is often the largest of all.
                 const phases: NonNullable<ResourceEvent["phases"]> = [];
                 // The model's own stretch subdivides further on a streamed call — thinking, then the tool-call
                 // fragments, and back again if it interleaved.
                 if (genMs > 0) phases.push(...genPhases(from, genMs, turnU?.genPhases));
-                if (waitMs > 0) phases.push({ kind: "wait", until: from + genMs + waitMs });
+                if (dispatchMs > 0) phases.push({ kind: "dispatch", until: from + genMs + dispatchMs });
+                if (waitMs > 0) phases.push({ kind: "wait", until: from + genMs + dispatchMs + waitMs });
                 // A REMOTE tool splits further, and only because it reported its own numbers: what it spent
                 // evaluating, what it spent getting started, and — by subtraction — what the network cost.
                 // Drawn network-FIRST: the request has to get there before anything else happens, and the
                 // return leg is folded in with it because nothing measures the two halves separately.
                 const rm = st.remoteMs;
-                const toolStart = from + genMs + waitMs;
+                const toolStart = from + genMs + dispatchMs + waitMs;
                 if (rm && rm.durationMs >= 0 && st.toolMs != null && rm.durationMs <= st.toolMs) {
                     const q = Math.max(0, Math.min(rm.queuedMs ?? 0, st.toolMs - rm.durationMs));
                     const net = Math.max(0, st.toolMs - rm.durationMs - q);

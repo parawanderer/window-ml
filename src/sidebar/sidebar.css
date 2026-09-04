@@ -122,13 +122,15 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-editor { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; padding: 6px;
              background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.78em; }
 .rc-etrack { display: flex; flex-direction: column; gap: 3px; }
-.rc-erow { display: flex; align-items: center; gap: 4px; }
+.rc-erow { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .rc-emode { font: inherit; color: var(--fg-dim); background: var(--panel); border: 1px solid var(--border);
             border-radius: 3px; padding: 0 3px; }
 .rc-ex, .rc-eadd { color: var(--fg-faint); background: none; border: 1px solid transparent; border-radius: 3px;
                    cursor: pointer; font: inherit; padding: 0 5px; }
 .rc-ex:hover, .rc-eadd:hover { color: var(--fg); background: var(--panel); border-color: var(--border); }
-.rc-eseries { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+/* Series sit inline with the track's mode, not under it — see the comment at the markup. `min-width: 0`
+   so a long series list wraps inside the row instead of forcing the row wider than the panel. */
+.rc-eseries { display: flex; flex-wrap: wrap; gap: 4px 10px; min-width: 0; margin-left: 8px; }
 .rc-eopt { display: inline-flex; align-items: center; gap: 3px; color: var(--fg-dim); cursor: pointer; position: relative; }
 /* A stack the rule would refuse is DISABLED with the reason, not hidden — the constraint should teach. */
 .rc-eopt.off { opacity: .5; cursor: help; }
@@ -1008,7 +1010,10 @@ details.io[open] > summary .io-preview { display: none; }
     text-transform: none; letter-spacing: normal; text-align: left; text-indent: 0;
     writing-mode: horizontal-tb;
 }
-.tt-layer.wrap { white-space: normal; }
+/* `overflow-wrap: anywhere` is what the comment above has always claimed and the rule never had: without it
+   an unbreakable token (a 44-char sheet id, a generated tool name in a pointer) runs past max-width and is
+   clipped by the layer's own box, so the end of the very thing being explained is the part you cannot read. */
+.tt-layer.wrap { white-space: normal; overflow-wrap: anywhere; }
 .tt-layer[hidden] { display: none; }
 
 
@@ -1903,3 +1908,45 @@ code .expanded:hover { background: color-mix(in srgb, var(--ok, #22c55e) 12%, tr
     background: repeating-linear-gradient(45deg,
         color-mix(in srgb, var(--fg-faint) 60%, transparent) 0 3px, transparent 3px 8px);
 }
+
+/* A step outside the lineage hovered in the event lane. The lane dims its own bars the same way, so the two
+   surfaces pick out the same work together rather than each highlighting on its own terms. */
+.astep.away { opacity: .35; transition: opacity .12s ease; }
+
+/* Where the work is, marked on the scrub strip. A hairline rather than a block: the strip's job is to say
+   which stretch you are looking at, and a dense run of events must not turn it into a solid bar that hides
+   the window. Under .rc-scrub-win, so the window box still reads clearly on top of them. */
+.rc-scrub-ev {
+    position: absolute; top: 1px; bottom: 1px; width: 2px; margin-left: -1px;
+    border-radius: 1px; opacity: .55; pointer-events: none;
+    background: var(--fg-dim);
+}
+
+/* Where a model is, beside its name rather than under it: it is part of identifying the thing, not a third
+   fact of equal weight to the residency and cost lines below. Normal weight, so the name still leads. */
+.vram-rowtip-where { margin-left: 6px; font-weight: 400; color: var(--fg-dim); }
+
+/* While a lane block is hovered, everything in the transcript that is not part of its lineage recedes. The
+   steps carry `.away` themselves (they know their own seq); the messages around them — the task, the answer,
+   a steer — belong to no lineage at all, so they all recede together. Without this the log half-dimmed and
+   the focus read as broken rather than as scoped. */
+html[data-lane-focus] .msg { opacity: .35; transition: opacity .12s ease; }
+/* …except when the hovered bar is the generation that produced the answer, which is the answer. Dimming the
+   very thing the bar points at is the failure this affordance exists to avoid. */
+html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
+
+/* The chosen palette, shown beside its picker: eight names in a dropdown say nothing about whether the hues
+   read as distinct, which is the entire question being asked. */
+.pal-swatches { display: inline-flex; gap: 3px; margin-left: 8px; vertical-align: middle; }
+.pal-swatches i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+/* A step's pointer: a handle you can take away with you. Quiet by default — it is metadata about the step,
+   not part of its output — and it announces itself as clickable on hover, because a chip that copies is not
+   something a reader would otherwise try. */
+.astep-token { margin: 0 0 6px; }
+.tok-chip { display: inline-flex; align-items: center; gap: 6px; padding: 1px 6px; cursor: pointer;
+    color: var(--fg-dim); background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; }
+.tok-chip code { font-size: .92em; color: var(--fg); }
+.tok-chip-hint { font-size: .74em; text-transform: uppercase; letter-spacing: .04em; opacity: .55; }
+.tok-chip:hover { background: var(--panel-2-hover); }
+.tok-chip:hover .tok-chip-hint { opacity: 1; }

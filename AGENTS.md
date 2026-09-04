@@ -863,8 +863,12 @@ sessions already record. `usageByModel` is the per-model ledger (attributed to t
 delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
 - **Spans run BACKWARDS from when a call finished** — the timestamp we hold is the end — else every bar sits
   one generation to the right of the memory movement it caused, which defeats the shared axis.
-- **A tool step is ONE block with PHASES**: the model generating the call, the human at the approval gate,
-  the tool running. `toolMs` and `approveMs` are measured separately in `agent-loop.ts` for exactly that
+- **A tool step is ONE block with PHASES**: the model generating the call, the PLUMBING between (parsing it,
+  validating the args, the hop to the page — `dispatchMs`, measured in the loop like the others rather than
+  inferred), the human at the approval gate, the tool running. Dispatch is counted in the block's extent and
+  not merely labelled, because the start is RECONSTRUCTED by subtracting the parts we know about: an
+  unmeasured part shifts the whole block later than the work happened, which on an axis shared with the
+  memory trace draws a block after the movement it caused. `toolMs` and `approveMs` are measured separately in `agent-loop.ts` for exactly that
   reason — a human deciding is the step's wall time but not the machine's work, and the wait draws as a
   hollow neutral so a wide bar can never read as work.
 - **A generation is SPLIT by what the model was emitting** — `think` / `call` / `answer` phases inside the

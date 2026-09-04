@@ -431,9 +431,21 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     let lastToolMs: number | undefined;
     /** How long the approval GATE was open for this step, when it opened at all. */
     let lastApproveMs: number | undefined;
+    /** When the model call for the current turn RETURNED. Everything between that instant and the tool
+     *  actually starting is plumbing — parsing the call, validating its arguments, building the context,
+     *  the hop to the page on a delegated run. Measured rather than inferred, for the same reason
+     *  `approveMs` is: the timeline reconstructs a block's start by subtracting the parts it knows about,
+     *  so an unmeasured part does not merely go unlabelled, it shifts the whole block later than the work
+     *  happened — against a shared axis with the memory trace, which is the one error that matters. */
+    let turnReturnedAt: number | undefined;
+    /** That gap, for the step being emitted. */
+    let lastDispatchMs: number | undefined;
     /** Every tool dispatch goes through here so `dereference` is answered from run state instead of delegated. */
     const runTool = async (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number, seq: number): Promise<ToolRunResult> => {
         const t0 = Date.now();
+        // The gap since the model call returned, minus any time a human held the gate open — that wait is
+        // already its own phase, and counting it here would draw the same seconds twice.
+        if (turnReturnedAt != null) lastDispatchMs = Math.max(0, t0 - turnReturnedAt - (lastApproveMs ?? 0));
         try {
             if (name === DEREF_TOOL) return await derefLocally(a, step, seq);
             const l = lookArgs(name, a, step);
@@ -459,6 +471,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         deps.emitTurn?.({ step });   // the call is going out NOW — the only stamp for "the model started"
         try { msg = await deps.callModel(messages, { tools, step }); }
         catch (e) { if (signal?.aborted) return cancelled(step - 1); throw e; }
+        turnReturnedAt = Date.now();
         if (signal?.aborted) return cancelled(step - 1);
         if (msg.usage) { const u = usageTokens(msg.usage); modelCalls++; if (u.prompt) promptLast = u.prompt; genTotal += u.completion; usages.push(msg.usage as TokenUsage); }
         if (!msg.tool_calls || !msg.tool_calls.length) {
@@ -496,7 +509,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const meta = byName.get(call.name);
             let args = (call.arguments || {}) as Record<string, unknown>;
             const s = ++seq;
-            lastToolMs = undefined; lastApproveMs = undefined;   // this step's own measurements, never the previous step's
+            lastToolMs = undefined; lastApproveMs = undefined; lastDispatchMs = undefined;   // this step's own measurements, never the previous step's
             // On a STREAMING run the pending step is on screen while its output fills in, so give it a pretty
             // In up front (the gated path already does this via approve; this covers auto-approved calls too).
             const preIn = (opts.stream && deps.renderFor) ? await deps.renderFor(call.name, args).catch(() => undefined) : undefined;
@@ -663,7 +676,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 : result;
             // The DONE event carries the clean `result` for the pretty Out AND — when a token line was appended —
             // `modelResult` (what the model ACTUALLY saw), so the log's raw view stays complete (the AGENTS rule).
-            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}), ...(lastApproveMs != null ? { approveMs: lastApproveMs } : {}), ...(tr?.remoteMs ? { remoteMs: tr.remoteMs } : {}) });   // DONE (patches the START)
+            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}), ...(lastApproveMs != null ? { approveMs: lastApproveMs } : {}), ...(lastDispatchMs ? { dispatchMs: lastDispatchMs } : {}), ...(tr?.remoteMs ? { remoteMs: tr.remoteMs } : {}) });   // DONE (patches the START)
             deps.pushToolResult(messages, call, forModel);
             if (tr?.image) pendingImages.push({ image: tr.image, label: tr.imageLabel || "screenshot" });
             // Multiple images from one call (look's overlay + no-overlay) → each becomes its own inline image.

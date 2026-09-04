@@ -55,14 +55,40 @@ export function fetchModels(): void {
 
 
 // --- VRAM monitor ---
-export const VRAM_COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#ec4899", "#06b6d4", "#a855f7", "#ef4444", "#84cc16"];
-export const colorFor = (name: string) => VRAM_COLORS[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % VRAM_COLORS.length];
+/**
+ * The palettes a model's colour can come from. A model's colour is its identity across the whole panel — the
+ * line, the band, the row, its lane blocks, its ticks on the strip — so this is a real preference rather
+ * than decoration: which eight hues read as distinct depends on the display, the theme and the eyes.
+ *
+ * `grafana` is the classic dashboard palette, which is what a lot of people are already reading GPU graphs
+ * in; `warm`/`cool` narrow the range for a panel sitting beside other colour; `vivid` is the original.
+ * Every palette is eight long, because the assignment hashes a name into it and a shorter one collides more.
+ */
+export const VRAM_PALETTES: Record<string, string[]> = {
+    vivid:   ["#6366f1", "#22c55e", "#f59e0b", "#ec4899", "#06b6d4", "#a855f7", "#ef4444", "#84cc16"],
+    grafana: ["#7EB26D", "#EAB839", "#6ED0E0", "#EF843C", "#E24D42", "#1F78C1", "#BA43A9", "#705DA0"],
+    cool:    ["#4C78A8", "#54A24B", "#72B7B2", "#B279A2", "#439894", "#5C7EC1", "#83B4D8", "#3F8F7A"],
+    warm:    ["#E45756", "#F58518", "#EECA3B", "#B279A2", "#D67195", "#C4693D", "#E7955A", "#B4451F"],
+};
+export const VRAM_PALETTE_KEY = "ml_vram_palette";
+/** Which one is in use. A sidebar-only display pref in `chrome.storage.local`, like the font scale and the
+ *  code-block prefs — it changes how the panel LOOKS, not what the extension does, so it has no business in
+ *  the synced `MlConfig`. */
+export const vramPalette = signal<string>("vivid");
+export const VRAM_COLORS = VRAM_PALETTES.vivid;
+/** A model's colour: its name hashed into the chosen palette, so it is stable for as long as the model is
+ *  called the same thing and identical on every surface that draws it. */
+export const colorFor = (name: string) => {
+    const p = VRAM_PALETTES[vramPalette.value] ?? VRAM_PALETTES.vivid;
+    return p[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % p.length];
+};
 /** A POOL's colour. Pools are an ordered set, not names to hash, so they get distinct colours by construction
  *  — which `VRAM_COLORS[i % 8]` stopped doing on a box with more than eight pools: an 8-GPU node (eight cards
  *  plus system RAM) gave card 0 and System RAM the same indigo, in a legend whose entire job is telling the
  *  lines apart. Past the curated palette, hues are spread evenly over however many pools there are. */
 export function poolColor(i: number, count: number): string {
-    if (count <= VRAM_COLORS.length) return VRAM_COLORS[i % VRAM_COLORS.length];
+    const pal = VRAM_PALETTES[vramPalette.value] ?? VRAM_PALETTES.vivid;
+    if (count <= pal.length) return pal[i % pal.length];
     // Golden-angle-free even spread: with the count known, evenly spaced hues are maximally far apart, and
     // fixed saturation/lightness keeps them legible on both themes.
     return `hsl(${Math.round((i * 360) / count)}deg 70% 55%)`;
@@ -587,17 +613,16 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
             </div>
             {tracks.map((t, i) => (
                 <div class="rc-etrack" key={t.id}>
+                    {/* Mode and series on ONE line. They were stacked, so every track cost two rows of a panel
+                        whose whole problem is vertical space — and the two belong together anyway: "stack
+                        these series" is one sentence. */}
                     <div class="rc-erow">
                         <select class="rc-emode" aria-label="Track mode" value={t.mode}
                             onChange={(e) => setTrack(i, { ...t, mode: (e.target as HTMLSelectElement).value as TrackDef["mode"] })}>
                             <option value="stack">stack</option>
                             <option value="overlay">overlay</option>
                         </select>
-                        <span class="sp" />
-                        <button class="rc-ex" aria-label="Remove track"
-                            onClick={() => editLayout(tracks.filter((_, k) => k !== i))}>✕</button>
-                    </div>
-                    <div class="rc-eseries">
+                        <div class="rc-eseries">
                         {cat.filter(sd => !sd.model).map(sd => {
                             const on = t.series.includes(sd.id);
                             const next = on ? t.series.filter(x => x !== sd.id) : [...t.series, sd.id];
@@ -612,6 +637,10 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
                                 </label>
                             );
                         })}
+                        </div>
+                        <span class="sp" />
+                        <button class="rc-ex" aria-label="Remove track"
+                            onClick={() => editLayout(tracks.filter((_, k) => k !== i))}>✕</button>
                     </div>
                 </div>
             ))}
@@ -638,8 +667,13 @@ function RowTip({ sample }: { sample: ResourceSample | null }) {
         // position: fixed).
         <div class="vram-rowtip rc-tip" role="tooltip"
             ref={ref} style={style}>
-            <div class="vram-rowtip-name"><i class="rc-tip-dot" style={{ background: colorFor(name) }} />{name}</div>
-            {where ? <div class={isSplit(m) ? "vram-rowtip-split" : ""}>{isSplit(m) ? "split: " : "on "}{where}</div> : null}
+            {/* Placement rides the NAME line. It is one short phrase and the tip has grown a cost line and a
+                residency line beneath it, so on its own row it read as a third fact of equal weight when it
+                is really part of identifying the thing: which model, and where it is. */}
+            <div class="vram-rowtip-name">
+                <i class="rc-tip-dot" style={{ background: colorFor(name) }} />{name}
+                {where ? <span class={`vram-rowtip-where${isSplit(m) ? " vram-rowtip-split" : ""}`}>{isSplit(m) ? "split: " : "on "}{where}</span> : null}
+            </div>
             <div class="vram-rowtip-dim">{formatBytes((m.vramBytes || 0) + (m.ramBytes || 0))} resident</div>
             {/* Residency answers "what is loaded"; this answers "and was it worth the VRAM". */}
             <CostFacts model={name} />

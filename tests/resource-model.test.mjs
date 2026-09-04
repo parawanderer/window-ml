@@ -859,3 +859,37 @@ test("scrubNudge: one notch moves the same VISIBLE distance at any zoom", () => 
     // A window already covering everything has nowhere to go.
     assert.deepEqual(M.scrubNudge(ex, { from: 0, to: 600_000 }, 0.25), { from: 0, to: 600_000 });
 });
+
+// The chart scrubbing erratically under a trackpad was two bugs wearing one symptom: only `deltaY` was read,
+// and the step was a fixed fraction regardless of how far the gesture actually went.
+test("wheelScrubFraction: proportional to the gesture, and reads whichever axis dominates", () => {
+    const W = 400;
+
+    // 1:1 with the plot — swipe across half of it and the window moves half its own width.
+    assert.equal(M.wheelScrubFraction(0, 200, 0, W), 0.5);
+    assert.equal(M.wheelScrubFraction(200, 0, 0, W), 0.5, "a HORIZONTAL swipe scrubs too — it was ignored");
+
+    // Proportional, so a trackpad's stream of small events accumulates to the same distance as one big one.
+    // A fixed step per event is what made the same physical swipe travel wildly different distances
+    // depending on how the hardware quantised it.
+    const oneBig = M.wheelScrubFraction(0, 120, 0, W);
+    const manySmall = Array.from({ length: 12 }, () => M.wheelScrubFraction(0, 10, 0, W)).reduce((a, b) => a + b, 0);
+    assert.ok(Math.abs(oneBig - manySmall) < 1e-9, "twelve notches of 10 equal one of 120");
+
+    // Direction follows the gesture: down and right both move forward in time.
+    assert.ok(M.wheelScrubFraction(0, -200, 0, W) < 0);
+    assert.ok(M.wheelScrubFraction(-200, 0, 0, W) < 0);
+
+    // A diagonal is counted ONCE, on the dominant axis — not summed, which would make an off-axis swipe
+    // travel further than a clean one.
+    assert.equal(M.wheelScrubFraction(200, 40, 0, W), 0.5);
+    assert.equal(M.wheelScrubFraction(40, 200, 0, W), 0.5);
+
+    // deltaMode: a mouse reports LINES and a page gesture reports PAGES.
+    assert.equal(M.wheelScrubFraction(0, 1, 1, W), 16 / W, "one line, not one pixel");
+    assert.equal(M.wheelScrubFraction(0, 1, 2, W), 1, "one page = one window width");
+
+    // Degenerate inputs do nothing rather than dividing by zero.
+    assert.equal(M.wheelScrubFraction(0, 200, 0, 0), 0);
+    assert.equal(M.wheelScrubFraction(0, 0, 0, W), 0);
+});

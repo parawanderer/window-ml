@@ -54,7 +54,9 @@ function markedHtml(text: string, lang: string | undefined, marks: CodeMark[]): 
         // panel. `.tt-pop` is display:none and read into the floating layer on hover (see .tt-layer), so its
         // prose is never selected along with the code it annotates.
         out += `<span class="tt tt-code expanded">`
-            + `<span class="tt-pop">Expanded from <code>${escapeAttr(m.from)}</code></span>`
+            // `wrap`, because a pointer is exactly the unbreakable long token the nowrap default clips: a
+            // generated remote tool name reaches 40 characters, and the end of it is the part you hovered for.
+            + `<span class="tt-pop wrap">Expanded from <code>${escapeAttr(m.from)}</code></span>`
             + `${highlight(text.slice(m.start, m.end), lang)}</span>`;
         at = m.end;
     }
