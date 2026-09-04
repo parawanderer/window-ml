@@ -73,6 +73,9 @@ exactly what the mechanism is for.
 
 **Key: `dev.wander.windowml/timing`, on the `_meta` of a `tools/call` RESULT.**
 
+Normative TypeScript: `src/tool-protocol.ts` (`TOOL_TIMING_META_KEY`, `ToolTiming`). Language-neutral
+twin, for implementers not writing TypeScript: [`tool-timing.schema.json`](tool-timing.schema.json).
+
 ```jsonc
 {
   "jsonrpc": "2.0",
@@ -106,7 +109,16 @@ unknown.
 
 ### Mapping MCP to the client's frames
 
-The extension normalizes every source into one internal frame model. For MCP:
+The extension normalizes every source into one internal frame model — `ToolFrame` in
+`src/tool-protocol.ts`, with its schema at [`tool-protocol.schema.json`](tool-protocol.schema.json).
+
+It is OUR model, not a protocol to implement. It is typed and published so a consumer gets real models,
+but the wire format anyone implements is MCP's, or `/execute`'s; inventing a rival to MCP is the mistake
+this shape exists to avoid. What the schema cannot express — that a `result` frame is last and mandatory,
+that `output` frames are deltas, that a closed connection means cancel — is in this document, and is as
+normative as the types.
+
+For MCP:
 
 | MCP | frame | why |
 | --- | --- | --- |
@@ -183,7 +195,8 @@ gutter rendering a host skewed by a few seconds would show output that arrived b
 
 The client anchors at the FIRST frame's arrival minus its own `atMs`, then adds each subsequent offset. The
 residual error is one-way network latency, which is not measurable from one side — bounded and
-acknowledged rather than pretended away.
+acknowledged rather than pretended away. `anchorFor` / `anchorOffset` in `src/tool-protocol.ts` are the
+shared implementation, so two adapters cannot each invent a rule.
 
 **`event` frames** forward an implementation-defined payload verbatim, with no text derived from it. A
 client that only knows `output` and `result` ignores the type and loses nothing it could have used.

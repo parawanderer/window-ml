@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/parawanderer/window-ml/main/docs/spec/tool-protocol.schema.json",
+  "title": "window.ml tool execution frame",
+  "description": "One frame of a streaming tool execution, schema version 1. GENERATED from tool-protocol.ts by scripts/gen-export-schema.mjs — do not edit by hand. The TypeScript file is normative; this is its language-neutral twin, for writing a parser or generating models in another language.",
+  "x-schemaVersion": 1,
+  "anyOf": [
+    {
+      "$ref": "#/$defs/ToolOutputFrame"
+    },
+    {
+      "$ref": "#/$defs/ToolEventFrame"
+    },
+    {
+      "$ref": "#/$defs/ToolResultFrame"
+    },
+    {
+      "type": "object",
+      "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+    }
+  ],
+  "$defs": {
+    "ToolOutputFrame": {
+      "type": "object",
+      "description": "Text the tool produced, as a DELTA rather than the accumulated total. The client appends, so a dropped connection loses the tail rather than corrupting what already arrived. Human-facing: it drives the live output cell. What the MODEL receives is the tool's returned result, in result — the loop's stream fan feeds the debug event stream and nothing else. That is why a prose status line belongs here even though it is not really \"output\": there is no context cost to weigh against showing it.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "output"
+        },
+        "text": {
+          "type": "string"
+        },
+        "atMs": {
+          "description": "When the producer emitted this, as an OFFSET IN MS FROM THE START OF EVALUATION — never an epoch timestamp. This is the one place the local design does not transfer. A local producer shares our clock, so `ctx.stream` takes an absolute stamp and the UI renders it; a remote host's clock is not the user's, and a gutter rendering a host skewed by a few seconds would show output that arrived before it was requested. See anchorOffset for how a client converts these.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "additionalProperties": true
+    },
+    "ToolEventFrame": {
+      "type": "object",
+      "description": "Something structural the executor reported that is not text: a progress counter, an attached file, a citation. Forwarded VERBATIM, with no text derived from it. Deriving text is what makes this necessary rather than convenient — the payloads are inconsistent by nature (one carries a description, another a body, another only structure), so a rule that extracts text silently drops the ones that have none. Progress belongs here rather than in ToolOutputFrame, and the reason is a rendering property rather than a context-budget one: `progress` is a monotonic counter whose message labels a bar, so appended as deltas it renders \"step 1step 2step 3\" — each conceptually replacing the last while literally accumulating. A log line is a line and concatenates correctly.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "event"
+        },
+        "event": {
+          "description": "The source's own payload, whatever shape it has. Opaque by design.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "atMs": {
+          "description": "As atMs.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type",
+        "event"
+      ],
+      "additionalProperties": true
+    },
+    "ToolResultFrame": {
+      "type": "object",
+      "description": "The last frame, and mandatory even on failure. A stream that ends without one is a TRANSPORT FAILURE and must not reach the model as a tool that returned nothing — that is a wrong answer dressed as an empty one, and the model has no way to tell the difference.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "result"
+        },
+        "result": {
+          "description": "The tool's return value. Present unless error is; never both."
+        },
+        "error": {
+          "description": "A string the model can read, INSTEAD of a result. A tool that fails is a normal step outcome the model reads and reacts to — distinct from a transport failure, which is not something it can act on.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Which callable this was, where the source names one.",
+          "type": "string"
+        },
+        "durationMs": {
+          "description": "Time spent evaluating — see ToolTiming.",
+          "type": "number"
+        },
+        "queuedMs": {
+          "description": "Elapsed before evaluation began — see ToolTiming.",
+          "type": "number"
+        },
+        "truncated": {
+          "description": "Characters dropped when the executor capped its output. Absent when nothing was.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": true
+    }
+  }
+}

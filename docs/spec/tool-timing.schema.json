@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/parawanderer/window-ml/main/docs/spec/tool-timing.schema.json",
+  "title": "window.ml tool timing (MCP _meta extension)",
+  "description": "How long a remote executor spent, reported by the executor itself. The reason this has to exist: a client measures a remote call with its own wall clock, which contains the network and whatever the far end was doing before it started. That total is not attributable — nine seconds could be a slow tool or a busy box, and no amount of client-side measurement separates them. Settled ground for model calls, which is why the shape mirrors them: Ollama reports `eval_duration` beside our wall clock, and `prompt_eval_duration` had to be added later because without it \"wall minus generation\" silently charged the box for the model reading its own prompt. ABSENT MEANS UNKNOWN, never instant. A server that cannot measure a field omits it; a zero asserts a measurement. A conforming MCP client ignores an unrecognised `_meta` key, so a server that never implements this degrades to a span whose composition is unknown — reported as unknown.",
+  "x-schemaVersion": 1,
+  "type": "object",
+  "properties": {
+    "durationMs": {
+      "description": "Time spent EVALUATING the tool, excluding transport. Subtract it from a client's own wall measurement to get the network plus the far end's overhead.",
+      "type": "number"
+    },
+    "queuedMs": {
+      "description": "Elapsed time before evaluation began: scheduling, access checks, a module import, a downstream connect. Real elapsed time that is not work, drawn the way a model load is drawn.",
+      "type": "number"
+    }
+  },
+  "required": [
+    "durationMs"
+  ],
+  "additionalProperties": true,
+  "$defs": {}
+}
