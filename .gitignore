@@ -4,6 +4,9 @@ node_modules
 __pycache__
 *.log
 dist/
+# The staging directory a build writes into before swapping it over dist/ — present only mid-build, or
+# left behind by a build that FAILED (which is the point: the failure did not touch dist/).
+dist.stage/
 tmp/
 # Generated, ANYWHERE — not `src/…` specifically. Pinning the path is how the stale root-level copies
 # got committed: the src/ move repointed this at src/, the pre-move leftovers at the root stopped

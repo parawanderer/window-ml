@@ -834,21 +834,34 @@ export interface LaneFilter {
     /** Kinds to HIDE. An exclusion list, so a kind added later is visible by default rather than silently
      *  filtered out by a stored preference that predates it. */
     hidden: readonly ResourceEvent["kind"][];
+    /** The models the scoped session actually ran, delegated readers included. A MACHINE event carries no
+     *  session, so scoping cannot ask who owns it — but it can ask whether the model is one this session was
+     *  using, which is the question a reader is really asking. Undefined means "not known", and everything
+     *  machine-side is kept, since inventing an empty set would silently hide the lot. */
+    models?: readonly string[];
 }
 
 export const EMPTY_LANE_FILTER: LaneFilter = { hash: null, scope: "all", hidden: [] };
 
-/** Apply a filter. An event with no `ref` (an eviction — it belongs to the machine, not to a run) survives a
- *  session scope: it is what the memory trace is DOING, and hiding it because it has no owner would remove
- *  the events the chart exists for. */
+/** Apply a filter. An event with no `ref` belongs to the MACHINE rather than to a run — a load, an eviction,
+ *  the box serving someone else — so a session scope cannot ask who owns it. It asks the useful question
+ *  instead: is this a model the session was using? A qwen session was drawing gemma's loads and evictions
+ *  because "no ref" was read as "always relevant", and on a shared box that is most of the lane. Kept when
+ *  the models are unknown, since an empty set would hide everything the chart exists to show. */
 export function filterEvents(events: readonly ResourceEvent[], filter: LaneFilter): ResourceEvent[] {
     const hidden = new Set(filter.hidden);
+    const mine = filter.models ? new Set(filter.models) : null;
     return events.filter((e) => {
         if (hidden.has(e.kind)) return false;
-        // An event with NO ref belongs to the machine rather than to a run — an eviction is a fact about
-        // memory and survives every scoping, including "no session open".
-        if (filter.scope === "session" && e.ref) return e.ref.hash === filter.hash;
-        return true;
+        if (filter.scope !== "session") return true;
+        if (e.ref) return e.ref.hash === filter.hash;
+        // A machine event about a model this session ran EXPLAINS the session — an eviction mid-run is why
+        // the next turn paid a load. One about a model it never touched is another tenant's traffic.
+        if (!mine) return true;
+        // An event with no model at all cannot be attributed either way (the server emits a bare `unload`).
+        // Dropped while scoped and kept in full: unattributable is not the same as unrelated, but a lane
+        // asked for one session should not answer with something it cannot place.
+        return e.model ? mine.has(e.model) : false;
     });
 }
 
@@ -1080,6 +1093,11 @@ export function placeEvents(runs: { t: number }[][], events: ResourceEvent[], gr
 /** An annotation on the time axis — a run starting, a model loading or being evicted, a context reload.
  *  Kept separate from the samples because events are instants while samples are a cadence, and because the
  *  event source (the debug bus) is independent of the poll. */
+/** The parts a span divides into. Named rather than inline because the surfaces that render a phase have to
+ *  be TOTAL over it: a tooltip that fell through to a default label shipped a model load's two halves as the
+ *  word "tool", which reads as a wrong fact rather than as a missing one. */
+export type PhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "dispatch" | "weights" | "context";
+
 export interface ResourceEvent {
     t: number;
     /** When it ENDED, for the kinds that have a duration. Absent → an instant (a vertical rule); present → a
@@ -1127,7 +1145,7 @@ export interface ResourceEvent {
      *  of the footprint — measured as a second memory step some seconds after the weights land, immediately
      *  before the model will serve. So the span says "resident at 4s, usable at 10s", which is a readiness
      *  fact and the explanation a reader otherwise lacks for a memory trace that went flat while they waited. */
-    phases?: { kind: "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "dispatch" | "weights" | "context"; until: number }[];
+    phases?: { kind: PhaseKind; until: number }[];
     /** This span has NOT FINISHED: `until` is where it had reached when the snapshot was taken, not where it
      *  ended. Only ever set by an `eventsFrom` given a `now` — a surface drawing live. It exists so the UI can
      *  say "still going" rather than drawing a bar whose right edge looks like a measured end. */

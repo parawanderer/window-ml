@@ -61,6 +61,11 @@ export function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; 
                             appears AFTER you approve, so warn here, visually, BEFORE. (Same-origin frames / shadow
                             roots don't warn — not a security boundary.) */}
                         {intent.crossOrigin ? <div class="action-xorigin"><IconWarn /><span><b>Privileged click into an embedded cross-origin frame</b> — <b class="xorigin-host">{intent.crossOrigin}</b>. It uses a real debugger click and your session on that site.</span></div> : null}
+                        {/* A REMOTE call. The risk is not "this might change your page" but "this sends your
+                            data somewhere", which has no read-only version to auto-approve — so it gets its
+                            own warning rather than borrowing the frame-click one, whose words describe a
+                            debugger click that is not happening here. */}
+                        {intent.offMachine ? <div class="action-xorigin"><IconWarn /><span><b>These arguments leave this machine</b> — they are sent to <b class="xorigin-host">{intent.offMachine}</b> on the configured server, which runs the tool and can act on them.</span></div> : null}
                       </div>
                     : <div class="action-card">
                         {/* Utility-model gloss (if any) ABOVE the render — but it must NOT replace a

@@ -1694,8 +1694,12 @@ export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: reado
                     input: compactArgs(args),
                     target: `to ${fn.name} on ${b.name}`,
                     note: "off this machine, to the configured server",
-                    // Styled like a navigation or a fetch: something is leaving, and that is the part to see.
-                    crossOrigin: b.id,
+                    // NOT `crossOrigin` — that field means one specific thing (a privileged debugger click
+                    // reaching into an embedded third-party frame) and the card states it in those words, so
+                    // borrowing it for emphasis made a web-search tool warn about a debugger click into an
+                    // iframe. A consent surface may not say something that is not happening; the emphasis a
+                    // remote call needs is its own, and this is it.
+                    offMachine: b.name,
                 }),
                 async run(args: Record<string, unknown>, ctx?: ToolContext) {
                     // `token` is OURS, added above — the server never declared it and would reject or ignore

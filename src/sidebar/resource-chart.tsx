@@ -14,7 +14,7 @@ import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
     placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubNudge, wheelScrubFraction,
-    filterEvents, countByKind, type ResourceEvent, type EventPlacement,
+    filterEvents, countByKind, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
@@ -696,7 +696,13 @@ function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; ru
         // Keyed by the EVENT, not the element: the same eviction is drawn in every track, so hovering it in
         // one plot thickens it in all of them — one thing that happened, not three.
         <div class={`rc-rule rc-rule-${p.event.kind}${eventKey(p.event) === hotEvent.value ? " hot" : ""}`}
-            key={k} style={{ left: `${p.from * 100}%` }}
+            key={k}
+            // A rule about a MODEL carries that model's colour, the same one its row, its band and its lane
+            // blocks already use — so "gemma was evicted here" is legible from the line without reading the
+            // tooltip. Generic red said only "something bad", which on a box running four models is the one
+            // thing you already knew. Falls back to the danger colour when the event names no model.
+            style={{ left: `${p.from * 100}%`, ...(p.event.model ? { "--model": colorFor(p.event.model) } : {}) }}
+            data-model={p.event.model ?? undefined}
             onPointerEnter={(e: PointerEvent) => { eventHover.value = { p, scope }; hotEvent.value = eventKey(p.event); trackCursor(scope)(e); }}
             onPointerLeave={() => { eventHover.value = null; hotEvent.value = null; }} />
     ))}</>;
@@ -959,17 +965,34 @@ function EventTip({ scope }: { scope: string }) {
         ? Math.max(0, e.cost.wallMs - e.cost.evalMs - (promptMs ?? 0)) || null : null;
     const phases = (e.phases || []).map((ph, i) => ({ ...ph, from: i ? e.phases![i - 1].until : e.t }));
     const first = phases[0];
-    const nameFor = (kind: string) => (kind === "model" ? e.model || "model"
-        : kind === "think" ? "thinking"
-        : kind === "answer" ? "answering"
-        : kind === "call" ? "emitting the tool call"
-        : kind === "wait" ? "waiting for approval"
+    // A TOTAL record over the phase kinds, not a chain ending in a default. The chain shipped `weights` and
+    // `context` — the two halves of a model load — as the word "tool", because an unknown kind fell through
+    // to the tool branch and a fallback cannot tell "no name for this" from "this is a tool". Adding a phase
+    // kind without naming it is now a compile error instead of a plausible wrong label.
+    const PHASE_NAMES: Record<PhaseKind, string | (() => string)> = {
+        model: () => e.model || "model",
+        think: "thinking",
+        answer: "answering",
+        call: "emitting the tool call",
+        wait: "waiting for approval",
+        // The two halves of getting a model ready. NOT "warmup": the second half allocates the KV cache and
+        // the compute buffers, which on a long-context model is most of the footprint — and the halves invert
+        // between a cold load and a warm one, which is the whole reason to draw them apart.
+        weights: "moving the weights in",
+        context: "allocating the context",
         // Said as what it IS rather than as a label: the point of splitting a remote step is that these two
         // are not the tool being slow, and a reader should not have to know that to read the bar.
-        : kind === "dispatch" ? "dispatching the call"
-        : kind === "net" ? "network, there and back"
-        : kind === "queue" ? "queued before it started"
-        : e.tool || "tool");
+        dispatch: "dispatching the call",
+        net: "network, there and back",
+        queue: "queued before it started",
+        tool: () => e.tool || "tool",
+    };
+    const nameFor = (kind: string) => {
+        const n = PHASE_NAMES[kind as PhaseKind];
+        // A kind from OUTSIDE the union — the export's phase kinds are `@unstable` and another producer may
+        // time something we have no concept of. Show the kind itself: it is at least true.
+        return typeof n === "function" ? n() : (n ?? kind);
+    };
     // A run span has no phases and no cost of its own — it is the CONTAINER. Saying "click to open this step"
     // under it was wrong twice over: it is not a step, and its ref carries no seq to scroll to.
     const isRun = e.kind === "run" || e.kind === "session";
@@ -1071,7 +1094,10 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
     // Filtered before anything is placed, so the rows pack against what is actually drawn — a hidden kind
     // must not leave a hole where it would have been.
     const filter = laneFilter();
-    const events = useMemo(() => filterEvents(all, filter), [all, filter.hash, filter.scope, filter.hidden]);
+    // The model set is part of the filter now, so it has to be part of the KEY — a memo that ignores it holds
+    // the previous session's answer, which is the exact bug being fixed, just one render later.
+    const evKey = (filter.models || []).join("\u0000");
+    const events = useMemo(() => filterEvents(all, filter), [all, filter.hash, filter.scope, filter.hidden, evKey]);
     const counts = useMemo(() => countByKind(all), [all]);
     const runs = useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]);
     const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
@@ -1187,6 +1213,11 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                                                  ...(e.model ? { "--model": colorFor(e.model) } : {}),
                                                  ...(bg ? { background: bg } : {}) }}
                                         title=""
+                                        // Which model this block belongs to, readable from OUTSIDE the
+                                        // colour. The identity is otherwise only expressed as a CSS custom
+                                        // property, so "is the lane drawing one model or two" — the question
+                                        // behind the two-spellings bug — could only be answered by eye.
+                                        data-model={e.model ?? undefined}
                                         onPointerEnter={(ev: PointerEvent) => { eventHover.value = { p, scope: "lane" }; hoverModel.value = e.model ?? null; trackCursor("lane")(ev); }}
                                         onClick={() => open(e)}
                                         onDblClick={() => scope(e)}>

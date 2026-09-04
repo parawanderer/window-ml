@@ -78,7 +78,7 @@ export function fetchUtilityLine(messages: { role: string; content: string }[], 
 // A pending call's INTENT: prefer the tool-provided `action` descriptor (deterministic; custom tools
 // too), else a name-based verb for built-ins, else nothing (→ utility-model description).
 export const CODE_LANG: Record<string, string> = { exec: "javascript", python_exec: "python" };
-export interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; submit?: boolean; crossOrigin?: string; link?: boolean; }
+export interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; submit?: boolean; crossOrigin?: string; offMachine?: string; link?: boolean; }
 export function intentFor(st: AgentStep): Intent | null {
     // Whether a `type` will ALSO press Enter — a materially bigger action (it submits the form/search), so the
     // approval must call it out. Read from the raw args (the ground truth), regardless of the render path.
@@ -86,7 +86,7 @@ export function intentFor(st: AgentStep): Intent | null {
     const ri = st.renderIn;
     // `link` renders the target as a significant URL (warm-yellow + dotted, like navigate/submit) rather than
     // "the element …" — a fetch's URL is leaving-the-page-worthy, so style it the same as navigate's.
-    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note, submit, crossOrigin: ri.crossOrigin, link: st.tool === "navigate" || st.tool === "fetch_url" };
+    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note, submit, crossOrigin: ri.crossOrigin, offMachine: ri.offMachine, link: st.tool === "navigate" || st.tool === "fetch_url" };
     if (ri && ri.type === "elements" && ri.items[0])   // an older/other target render still gives a target + selector
         return { verb: st.tool === "click" ? "Click" : st.tool === "type" ? "Type" : `Run ${st.tool}`, target: ri.items[0].text || ri.items[0].path, selector: ri.items[0].path, submit };
     const sel = typeof st.arguments?.selector === "string" ? (st.arguments.selector as string) : undefined;

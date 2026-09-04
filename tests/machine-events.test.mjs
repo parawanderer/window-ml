@@ -88,3 +88,54 @@ test("frames that are not events in their own right produce none", () => {
     for (const kind of ["sample", "heartbeat", "hello", "expires", "something.new"])
         assert.equal(machineEventFrom({ kind, model: "m" }, 1), null, `${kind} draws nothing`);
 });
+
+// ── The two spellings of one model ─────────────────────────────────────────────────────────────────────
+//
+// Captured off the real box (tests/e2e/fixtures/events-load-lifecycle.json): the event stream names a model
+// `registry.ollama.ai/library/gemma4:31b` while `/api/ps` in the very same frame names it `gemma4:31b`. The
+// panel matched them nowhere, so every streamed model was drawn a SECOND time in its own colour and badged
+// "off-box" — a model that had never been resident — while the real row sat above it.
+
+test("a fully-qualified model name is canonicalised to the one /api/ps reports", () => {
+    reset();
+    machineEventFrom({ kind: "load.start", model: "registry.ollama.ai/library/gemma4:31b" }, 1000);
+    const span = machineEventFrom({ kind: "load.complete", model: "registry.ollama.ai/library/gemma4:31b" }, 9000);
+    assert.equal(span.model, "gemma4:31b", "the lane keys on the name the rest of the panel uses");
+    assert.match(span.label, /gemma4:31b/);
+    assert.doesNotMatch(span.label, /registry\.ollama\.ai/, "and the label reads as the model, not as a URL");
+});
+
+test("the open-load map is keyed canonically, so the closing edge finds its start", () => {
+    reset();
+    // The server is consistent, but a client that canonicalises in one place and not another opens the span
+    // under one key and closes it under the other — which silently drops the span rather than failing.
+    machineEventFrom({ kind: "load.start", model: "registry.ollama.ai/library/m:7b" }, 1000);
+    machineEventFrom({ kind: "load.weights", model: "registry.ollama.ai/library/m:7b" }, 3000);
+    const span = machineEventFrom({ kind: "load.complete", model: "registry.ollama.ai/library/m:7b" }, 8000);
+    assert.ok(span, "the span closed");
+    assert.deepEqual(span.phases, [{ kind: "weights", until: 3000 }, { kind: "context", until: 8000 }]);
+});
+
+test("a NON-default registry keeps its prefix — ps keeps it too", () => {
+    reset();
+    // Stripping to the last path segment would collide two genuinely different models that share a name.
+    machineEventFrom({ kind: "load.start", model: "hf.co/someone/m:7b" }, 1000);
+    const span = machineEventFrom({ kind: "load.complete", model: "hf.co/someone/m:7b" }, 4000);
+    assert.equal(span.model, "hf.co/someone/m:7b");
+});
+
+test("the split is read from the closing edge when the server sends it", () => {
+    reset();
+    // `weights_ms`/`context_ms` arrive on `load.complete`. Preferred over differencing two frames because a
+    // panel that subscribes MID-load never saw the `load.weights` edge and would draw no divider at all.
+    machineEventFrom({ kind: "load.start", model: "m" }, 1000);
+    const span = machineEventFrom({ kind: "load.complete", model: "m", weights_ms: 604, context_ms: 5251 }, 7855);
+    assert.deepEqual(span.phases, [{ kind: "weights", until: 2604 }, { kind: "context", until: 7855 }]);
+});
+
+test("a bare unload — no model — is dropped rather than drawn anonymously", () => {
+    reset();
+    // The server really does emit these (three in a ten-minute capture). A lane that assumed a name drew an
+    // instant with no colour and no explanation.
+    assert.equal(machineEventFrom({ kind: "unload" }, 5000), null);
+});

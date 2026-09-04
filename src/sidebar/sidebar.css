@@ -279,7 +279,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: help; z-index: 3; }
 .rc-rule::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;
     background: repeating-linear-gradient(to bottom, var(--fg-dim) 0 3px, transparent 3px 6px); }
-.rc-rule-evict::before { background: repeating-linear-gradient(to bottom, var(--danger, #ef4444) 0 3px, transparent 3px 6px); opacity: .85; }
+/* The model's OWN colour when the event names one — a rule is an annotation on that model's trace, and
+   matching it to the band above is what makes the two read as one thing. `--model` is set inline per rule;
+   the danger colour is the fallback for an event with no model (the server does emit bare unloads). */
+.rc-rule-evict::before { background: repeating-linear-gradient(to bottom, var(--model, var(--danger, #ef4444)) 0 3px, transparent 3px 6px); opacity: .85; }
+.rc-rule-load::before { background: repeating-linear-gradient(to bottom, var(--model, var(--fg-dim)) 0 3px, transparent 3px 6px); opacity: .85; }
 /* Hovered — in THIS plot or any other, since one eviction is drawn in all of them. */
 .rc-rule:hover::before, .rc-rule.hot::before { width: 3px; left: 3px; opacity: 1; }
 .rc-lane { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 0; }
@@ -422,6 +426,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip-size { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 /* Hovering either the band or its row lights the other — they describe the same model. */
 .vram-row.hot { background: var(--panel-2); border-radius: 3px; }
+/* The fold under a SCOPED model list. Quiet — it is the way to a fact, not a fact — and a full-width row so
+   it reads as belonging to the list rather than floating beside it. */
+.vram-others { width: 100%; background: none; border: 0; cursor: pointer; color: var(--fg-faint); text-align: left; font: inherit; }
+.vram-others:hover { color: var(--fg-dim); }
+.vram-others .vram-dot { opacity: 0.5; }
 /* The model row's follow-along tip. `position: fixed` because the row is outside the plot and the panel's
    own scrolling would otherwise clip it. */
 /* The row tip carries .rc-tip for the shared look; it only differs in being FIXED (the row is outside the

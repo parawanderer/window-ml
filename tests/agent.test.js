@@ -3747,6 +3747,25 @@ test("server tools: `token` is stripped before the call leaves the machine", asy
     assert.deepEqual(sent, { q: "hello" });
 });
 
+// A consent card may not say something that is not happening. `crossOrigin` means ONE thing — a privileged
+// debugger click reaching into an embedded third-party frame — and the card states it in those words, so a
+// remote tool borrowing the field for emphasis made a web-search call warn about a debugger click into an
+// iframe that was never involved.
+test("server tools: the approval says the ARGUMENTS leave, not that a frame is being clicked", async () => {
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const [tool] = buildServerTools({}, [{
+        id: "srv1", name: "SearXNG", description: "", kind: "local",
+        functions: [{ name: "search_web", description: "", parameters: { type: "object", properties: { q: { type: "string" } } } }],
+    }], ["srv1"]);
+    const r = tool.render(null, { q: "pricing" });
+    assert.equal(r.type, "action");
+    assert.equal(r.crossOrigin, undefined, "nothing here is a cross-origin frame click");
+    // Named from the BUNDLE, the same identity the background mints its grant from — a friendly tool name
+    // cannot make the card say one destination while the grant authorises another.
+    assert.equal(r.offMachine, "SearXNG");
+    assert.match(r.target, /search_web/);
+});
+
 // Curation is what makes a forty-tool backend usable: a tool the model can SEE is a tool it will try, so a
 // disabled function must not be built at all rather than built and hidden.
 test("server tools: a curated-out function is never built, while its siblings still are", async () => {

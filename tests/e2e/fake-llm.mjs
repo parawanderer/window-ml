@@ -97,6 +97,15 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
     let resident = [];
     /** @type {any} */
     let boxInfo = null;
+    // The event stream (a PATCHED ollama only — docs/FORKED-BACKENDS.md). `frames` is what a new subscriber
+    // is backfilled with; `pushFrame` sends to everyone connected NOW. Frames go out verbatim, so a fixture
+    // captured off the real box exercises the real shapes — fully-qualified model names included, which is
+    // exactly what the short names in `/api/ps` have to be reconciled against.
+    /** @type {any[]} */
+    let frames = [];
+    /** @type {Set<import("node:http").ServerResponse>} */
+    const streamSubs = new Set();
+    let eventsSupported = false;
     /** @type {StepOrFn[]} */
     let script = [];
     let idx = 0;
@@ -170,6 +179,21 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
             // since "unknown capacity" arriving as unparseable HTML is the case worth exercising.
             if (!boxInfo) { res.writeHead(200, { "content-type": "text/html" }); return res.end("<!doctype html><html><body>app</body></html>"); }
             return json(res, 200, boxInfo);
+        }
+        if (req.method === "GET" && (path === "/api/events" || path === "/ollama/api/events")) {
+            // Unsupported reproduces a STOCK server: OpenWebUI answers an unknown route with the SPA's HTML
+            // at 200, never a 404, so "no stream here" has to be read off the content type.
+            if (!eventsSupported) { res.writeHead(200, { "content-type": "text/html" }); return res.end("<!doctype html><html><body>app</body></html>"); }
+            res.writeHead(200, { "content-type": "application/x-ndjson", "cache-control": "no-cache" });
+            // `hello` first, then the retained ring as BACKFILL with negative offsets — every connection
+            // anchors on its own hello, so a frame that predates it says so rather than being restamped.
+            const since = Number(new URL(req.url || "/", "http://x").searchParams.get("since") || 0);
+            const back = frames.filter((f) => !since || -f.t <= since);
+            res.write(JSON.stringify({ v: 1, kind: "hello", t: 0, serverTime: new Date().toISOString(), box: "fake-box", retainedMs: 600000, backfilled: back.length }) + "\n");
+            for (const f of back) res.write(JSON.stringify(f) + "\n");
+            streamSubs.add(res);
+            req.on("close", () => streamSubs.delete(res));
+            return;
         }
         if (req.method === "GET" && path === "/api/version") return json(res, 200, { version: "fake" });
         // The patched OpenWebUI's tool surface: the bundle list, and running ONE function from a bundle
@@ -268,6 +292,19 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
                 setResident: (/** @type {any[]} */ models) => { resident = models; },
                 /** What /api/info reports as capacity; null = a server that doesn't serve the route at all. */
                 setCapacity: (/** @type {any} */ info) => { boxInfo = info; },
+                /**
+                 * Turn the event stream ON and seed the retained ring. Frames are the server's own shape
+                 * (`{v, kind, t, model?, …}`) with `t` NEGATIVE for backfill — capture a real one with
+                 * tests/e2e/capture-frames.mjs. Off by default: most specs want the polling path.
+                 */
+                setEvents: (/** @type {any[]} */ list) => { eventsSupported = true; frames = (list || []).slice(); },
+                /** Send a frame to everyone connected now, and retain it for later subscribers. */
+                pushFrame: (/** @type {any} */ f) => {
+                    frames.push(f);
+                    for (const r of streamSubs) { try { r.write(JSON.stringify(f) + "\n"); } catch { streamSubs.delete(r); } }
+                },
+                /** How many panels are subscribed — the worker holds ONE connection however many are open. */
+                streamSubscribers: () => streamSubs.size,
                 /** The tool BUNDLES `/api/v1/tools/` lists — `[{ id, name, description, specs: [{name, description, parameters}] }]`. */
                 setServerTools: (/** @type {any[]} */ tools) => { serverTools = tools.slice(); },
                 /**
@@ -280,7 +317,8 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
                 calls: () => calls.slice(),
                 /** Every `/execute` request body, with the `toolId` from the path. */
                 toolCalls: () => toolCalls.slice(),
-                stop: () => new Promise((r) => server.close(r)),
+                // A held-open NDJSON response keeps the server alive forever, so close() would hang.
+                stop: () => new Promise((r) => { for (const s2 of streamSubs) { try { s2.end(); } catch { /* gone */ } } streamSubs.clear(); server.close(() => r(undefined)); }),
             });
         });
     });

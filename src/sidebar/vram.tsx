@@ -211,6 +211,9 @@ export const sampleGraceMs = (): number => (streamLive.value ? STREAM_SAMPLE_MS 
  *  box accumulates them and the lane only ever draws a window. */
 export const MACHINE_EVENTS_CAP = 400;
 export const machineEvents = signal<ResourceEvent[]>([]);
+/** Whether the model list is showing the models this session did NOT use. Off by default and NOT persisted:
+ *  it answers a question you had once ("what else is on the box?"), not a preference. */
+export const othersOpen = signal(false);
 /** Loads that have started and not yet completed, so `load.complete` can close the span it opened. */
 const openLoads = new Map<string, { t: number; weightsAt?: number }>();
 /** Models currently SERVING, by the instant they started. A signal because a span that is still open has to
@@ -227,8 +230,12 @@ const pushMachine = (e: ResourceEvent): void => {
 /** One edge frame → what the lane draws. Returns nothing for the frames that are not events in their own
  *  right (`sample`, `heartbeat`, `hello`) and for a `load.complete` with no start to close, which is what a
  *  reconnect mid-load looks like — half a span is worse than none, since its left edge would be invented. */
-export function machineEventFrom(frame: { kind: string; model?: string; reason?: string; duration_ms?: number }, at: number): ResourceEvent | null {
-    const model = frame.model;
+export function machineEventFrom(frame: { kind: string; model?: string; reason?: string; duration_ms?: number; weights_ms?: number; context_ms?: number }, at: number): ResourceEvent | null {
+    // CANONICALISED ONCE, here at the boundary, so nothing downstream has to know that the same model has two
+    // spellings on one server: the stream says `registry.ollama.ai/library/gemma4:31b`, `/api/ps` says
+    // `gemma4:31b`. Matching them late — at the colour, at the legend, at the off-box check — means every new
+    // comparison is a fresh chance to forget, and forgetting draws a second model that does not exist.
+    const model = frame.model ? normModel(frame.model) : undefined;
     switch (frame.kind) {
         case "load.start":
             if (model) openLoads.set(model, { t: at });
@@ -244,7 +251,13 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
             const open = model ? openLoads.get(model) : undefined;
             if (!model || !open) return null;
             openLoads.delete(model);
-            const w = open.weightsAt;
+            // The server reports the split DIRECTLY when it can (`weights_ms`/`context_ms` on the closing
+            // edge), and that is the form to prefer: differencing two frames only works for a client that was
+            // already connected when the load began, so a panel opened mid-load lost the divider entirely.
+            // The `load.weights` edge stays as the fallback for a server that does not send the durations.
+            const w = frame.weights_ms != null && frame.context_ms != null
+                ? at - frame.context_ms
+                : open.weightsAt;
             return {
                 t: open.t, until: at, kind: "load", label: `loading ${model}`, model,
                 // "Resident at 4s, usable at 10s" — the two halves are weights and context, and the divider
@@ -554,11 +567,23 @@ export function scopedHash(): string | null {
 
 /** The filter as the lane sees it. */
 export function laneFilter(): LaneFilter {
+    const hash = scopedHash();
     return {
-        hash: scopedHash(),
+        hash,
         scope: laneScoped.value ? "session" : "all",
         hidden: laneHidden.value as LaneFilter["hidden"],
+        // Which models THIS session ran — the ledger already answers it, delegated readers charged to the
+        // reader, which is what makes a sub-call's load belong to the session that caused it.
+        models: hash ? sessionModels(hash) : undefined,
     };
+}
+
+/** The models a session ran, for scoping the machine half of the lane. Undefined when the session is not
+ *  known — "no models" and "not known" must not collapse, since one hides nothing and the other hides all. */
+export function sessionModels(hash: string): readonly string[] | undefined {
+    const s = sessionMap.get(hash);
+    if (!s) return undefined;
+    return Object.keys(usageByModel([s] as UsageSource[])).map(normModel);
 }
 
 /** The cost line under a model's name: what it spent, and how fast — with the rate's BASIS said out loud,
@@ -1085,6 +1110,16 @@ export function VramPanel() {
         for (const e of timeline()) if (e.model && !known.has(e.model)) out.add(e.model);
         return [...out].sort();
     })();
+    // SCOPED, the same way the lane is. The rows are the lane's legend, so a lane showing one session's
+    // models beside a list showing the whole box reads as the panel contradicting itself — and on a shared
+    // box most of the box is another tenant. Folded rather than hidden: what else is resident is exactly the
+    // context for why YOUR model got evicted, so it stays one click away instead of being a fact the panel
+    // knows and won't say.
+    const mine = laneScoped.value && scopedHash() ? sessionModels(scopedHash()!) : undefined;
+    const isMine = (name: string) => !mine || mine.includes(name);
+    const otherCount = mine ? [...rows.map((m) => m.model), ...ghosts, ...offBox].filter((n) => !isMine(n)).length : 0;
+    const show = (name: string) => isMine(name) || othersOpen.value;
+
     // Recompute every point's visible-total each render, so toggling redraws the
     // full line retroactively (not just going forward).
     const series = history.map((h) => sumVisible(h.models));
@@ -1184,7 +1219,7 @@ export function VramPanel() {
                     </span>
                 </>}
             {showModels.value && rows.length
-                ? rows.map(m => {
+                ? rows.filter((m) => show(m.model)).map(m => {
                     const off = hidden.has(m.model);
                     return (
                         <div class={`vram-row${off ? " off" : ""}${hoverModel.value === m.model ? " hot" : ""}${poolHover.value && latestSample && !poolFacts(poolHover.value.bandsOf(latestSample)).consumers.some((c) => c.label === m.model) ? " away" : ""}`} key={m.model}
@@ -1204,7 +1239,7 @@ export function VramPanel() {
                 : ghosts.length || !showModels.value ? null : <div class="vram-empty">Nothing loaded.</div>}
             {/* Models the LANE draws that were never resident — see `offBox`. Listed before the ghosts because
                 a cloud model is a standing fact about the setup, where a ghost is a thing that just happened. */}
-            {(showModels.value ? offBox : []).map((name) => (
+            {(showModels.value ? offBox : []).filter(show).map((name) => (
                 <div class={`vram-row ghost${hoverModel.value === name ? " hot" : ""}`} key={`off:${name}`}
                     onPointerEnter={() => (hoverModel.value = name)}
                     onPointerLeave={() => (hoverModel.value = null)}>
@@ -1215,7 +1250,7 @@ export function VramPanel() {
                     </span>
                 </div>
             ))}
-            {(showModels.value ? ghosts : []).map((name) => (
+            {(showModels.value ? ghosts : []).filter(show).map((name) => (
                 <div class={`vram-row ghost${hoverModel.value === name ? " hot" : ""}`} key={`ghost:${name}`}
                     onPointerEnter={() => (hoverModel.value = name)}
                     onPointerLeave={() => (hoverModel.value = null)}>
@@ -1227,6 +1262,14 @@ export function VramPanel() {
                     <span class="sp" />
                 </div>
             ))}
+            {/* What the scope is NOT showing, and the way to see it. A count rather than a silent
+                omission: a list that just gets shorter reads as models having been evicted. */}
+            {showModels.value && otherCount ? (
+                <button class="vram-row vram-others" onClick={() => (othersOpen.value = !othersOpen.value)}>
+                    <i class="vram-dot ghost-dot" />
+                    <span class="vram-name">{othersOpen.value ? "hide" : "show"} {otherCount} other model{otherCount === 1 ? "" : "s"} on the box</span>
+                </button>
+            ) : null}
         <div class="vram-grip" role="separator" aria-label="Drag to resize the resource panel"
                 title="Drag to resize" onPointerDown={onGrab} />
         </div>

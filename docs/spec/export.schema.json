@@ -1247,6 +1247,9 @@
                 "crossOrigin": {
                   "type": "string"
                 },
+                "offMachine": {
+                  "type": "string"
+                },
                 "ask": {
                   "type": "string"
                 },
@@ -1748,6 +1751,9 @@
                   "type": "string"
                 },
                 "crossOrigin": {
+                  "type": "string"
+                },
+                "offMachine": {
                   "type": "string"
                 },
                 "ask": {

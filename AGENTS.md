@@ -1377,6 +1377,20 @@ rate includes the network; that whole matrix (openai/ollama x streamed/not) is p
   is the only thing that exercises the real background worker, its host permissions and the real consent
   path. Each site is visited first and fetched from its OWN origin, so the fetch is same-origin and needs no
   approval. Not in CI — the sites are live.
+- **`capture-frames.mjs`** — a **capture probe, not a test**: `node --import tsx tests/e2e/capture-frames.mjs
+  > tests/e2e/fixtures/events-<name>.json` connects straight to the `.env` box's `/api/events` and dumps the
+  retained ring, so a stream fixture is a RECORDING rather than a guess (`SECS`, `SINCE`; it exits saying so
+  if the backend does not serve the route). Reach for it whenever the event stream's shapes are in question.
+  Its motivating find is the standing reason the fixtures must be recorded: **the stream names models
+  fully-qualified (`registry.ollama.ai/library/gemma4:31b`) while `/api/ps`, in the very same frame, names
+  them short (`gemma4:31b`)**. Every hand-written fixture agreed with itself, so the panel shipped drawing
+  each streamed model TWICE — once as its real row and once as an "off-box" model that had never been
+  resident. `normModel` reconciles them (the inverse of Ollama's own ShortName: the default registry, then
+  the default `library` namespace, then the implicit `:latest`), applied ONCE at the `machineEventFrom`
+  boundary so no later comparison can forget. The replay half is `fake-llm.mjs`'s **`setEvents(frames)`** /
+  **`pushFrame(frame)`** / `streamSubscribers()`, and `tests/e2e/resource-stream.spec.mjs` is what drives
+  them — the stream transport had NO e2e coverage before it, which is why every bug on this path was
+  live-only. Not in CI: only a patched Ollama serves the route.
 - **`stream-demo.mjs`** — a **narrated demo, not a test** of LIVE tool-output streaming: `npm run build &&
   node --import tsx tests/e2e/stream-demo.mjs` opens a headful browser, slides the overlay open on a real
   (background-hosted) run, and drives a deliberately SLOW `exec` (paced `console.log`) and `python_exec`
@@ -1434,15 +1448,29 @@ body rather than chased or silently re-run.
 
 ## Forked backends (two features need a patched server)
 
-Most of this runs against stock Ollama + stock OpenWebUI. Two capabilities do not, and
+Most of this runs against stock Ollama + stock OpenWebUI. Three capabilities do not, and
 **`docs/FORKED-BACKENDS.md`** is the accounting — read it before assuming a resource-panel field is
 broken:
 
 - **`GET /api/info`** (machine capacity) and **`gpus[]` on `/api/ps`** (which card a model is on, and how
-  a split is divided) come from `parawanderer/ollama`, branch `local/ps-gpu-attribution`. Stock Ollama
+  a split is divided) come from `parawanderer/ollama`, branch `slop` (the old `local/ps-gpu-attribution`
+  name is stale). Stock Ollama
   doesn't serve `/api/info` at all — OpenWebUI answers with its SPA's HTML, which is why a non-JSON body
   is read as "unknown", never as an error. Without them `ml.info()` is `null`, the panel draws no ceiling
   and says so, and a multi-GPU box cannot attribute a model to a card.
+- **`GET /api/events`** (the same branch) is an NDJSON stream of the scheduler's own transitions, and it
+  is the one thing polling cannot approximate: for most of a load there is no runner object in Ollama at
+  all, so `/api/ps` is not coarse during a load, it is EMPTY (measured: `load.start` t=4102,
+  `load.complete` t=48053, every poll across it empty). It also tells `evict` (made room) from `unload`
+  (idle expiry), which diffing polls sees as one disappearance either way. `sw-events.ts` holds ONE
+  connection per worker while a panel is open, `resource-events.ts` is the pure frame model + NDJSON
+  reader, and `machineEventFrom` (vram.tsx) turns edges into lane spans. Everything falls back to polling
+  when the route answers with HTML. Three protocol details: `t` is ms from THAT CONNECTION'S hello and is
+  negative for backfill; `?since=` is a DURATION, not an offset; and **the stream names models
+  fully-qualified while `/api/ps` names them short**, which `normModel` reconciles at the
+  `machineEventFrom` boundary — miss it and every model is drawn twice, once as a phantom "off-box" row.
+  Recorded fixtures come from `tests/e2e/capture-frames.mjs`; the fake backend replays them via
+  `setEvents`/`pushFrame` and `tests/e2e/resource-stream.spec.mjs` is the coverage.
 - **`POST /api/v1/tools/id/{id}/execute`** comes from `parawanderer/open-webui`, branch
   `ml/tool-execute-api` — it runs the callable the chat pipeline would, so an external client can
   drive its own loop over OpenWebUI-configured tools. **The extension does not call it yet**: server

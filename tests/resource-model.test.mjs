@@ -926,6 +926,33 @@ test("filterEvents: scope answers whose, kinds answer which — and machine even
     assert.deepEqual(M.countByKind(evs), { run: 2, tool: 1, embed: 1, evict: 1 });
 });
 
+// On a SHARED box most of the machine half of the lane is someone else's traffic. "This session" was drawing
+// all of it, because an event with no ref was read as "belongs to everyone" — so a qwen session showed gemma
+// loading, serving and evicting, in gemma's colour, with no way to tell it was another tenant.
+test("filterEvents: a scoped lane keeps the machine events about ITS models", () => {
+    const evs = [
+        { t: 1, kind: "run", label: "run a", id: "run:a", ref: { hash: "a" } },
+        { t: 2, kind: "load", label: "loading qwen:7b", model: "qwen:7b" },
+        { t: 3, kind: "evict", label: "qwen:7b evicted", model: "qwen:7b" },
+        { t: 4, kind: "serve", label: "gemma:2b serving", model: "gemma:2b" },
+        { t: 5, kind: "evict", label: "gemma:2b evicted", model: "gemma:2b" },
+        // The server emits bare unloads with no model at all.
+        { t: 6, kind: "evict", label: "something left memory" },
+    ];
+    const scoped = M.filterEvents(evs, { hash: "a", scope: "session", hidden: [], models: ["qwen:7b"] });
+    // Its own model's load and eviction EXPLAIN the session — an eviction mid-run is why the next turn paid
+    // a load. The other tenant's do not.
+    assert.deepEqual(scoped.map((e) => e.label), ["run a", "loading qwen:7b", "qwen:7b evicted"]);
+
+    // Unattributable is not the same as unrelated — but a lane asked for one session should not answer with
+    // something it cannot place. Kept in full, where there is nothing to be outside of.
+    assert.deepEqual(M.filterEvents(evs, { hash: "a", scope: "all", hidden: [], models: ["qwen:7b"] }).length, 6);
+
+    // NOT KNOWN must not collapse into NONE: one hides nothing, the other hides the lot.
+    assert.equal(M.filterEvents(evs, { hash: "a", scope: "session", hidden: [] }).length, 6);
+    assert.equal(M.filterEvents(evs, { hash: "a", scope: "session", hidden: [], models: [] }).length, 1);
+});
+
 // Where you GRAB decides what the drag does. Recentring on the cursor wherever it lands is what made the
 // window impossible to widen once narrowed: every grab was a pan, including a grab on a handle.
 // Double-clicking a short step scoped to a window with one sample in it. Everything here needs a segment of
