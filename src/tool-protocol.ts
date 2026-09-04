@@ -101,6 +101,17 @@ export interface ToolOutputFrame {
  * Something structural the executor reported that is not text: a progress counter, an attached file, a
  * citation. Forwarded VERBATIM, with no text derived from it.
  *
+ * NOT NECESSARILY SMALL, and this is the part that misleads. "A citation" reads like metadata; measured
+ * against real tools it carries DOCUMENT TEXT and is routinely the largest payload in a run — larger than
+ * every {@link ToolOutputFrame} combined. Even fetching example.com, the smallest page there is, the
+ * citation frame matched the entire summary in bytes. A run of five search results is five documents.
+ *
+ * So a consumer should DECIDE what to do with these rather than defaulting to keeping them all: rendering,
+ * storing or discarding is a choice, and {@link ToolStreamState.events} accumulates every one it is given.
+ * In practice a well-behaved executor caps its whole stream (events included) and drops an over-budget
+ * frame WHOLE rather than clipping it, since half a structural payload does not parse — but that is the
+ * executor's discipline, not a guarantee of this type.
+ *
  * Deriving text is what makes this necessary rather than convenient — the payloads are inconsistent by
  * nature (one carries a description, another a body, another only structure), so a rule that extracts
  * text silently drops the ones that have none.
@@ -206,7 +217,8 @@ export interface ToolStreamState {
      *  chunks whose producer stamped an offset get a mark; the UI never invents one for the rest. */
     marks: [number, number][];
     /** Structural frames, in order. Deliberately kept apart from `output`: they are not text, and folding
-     *  them in is how UI plumbing ends up in something a model reads. */
+     *  them in is how UI plumbing ends up in something a model reads. UNBOUNDED — see
+     *  {@link ToolEventFrame}, whose payloads are frequently the largest thing on the wire. */
     events: ToolEventFrame[];
     /** The terminal frame, once it arrives. */
     result?: ToolResultFrame;

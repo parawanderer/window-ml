@@ -1313,6 +1313,15 @@ rate includes the network; that whole matrix (openai/ollama x streamed/not) is p
   unified track and the old box's history is dropped, since an 18 GiB reading redrawn against an 11.84 GiB
   pool clips and looks like a measurement), the tiling at width, the drag floor, and the tooltip/hit-target
   invariants.
+- **`server-tool-live.mjs`** — a **debug probe, not a test**: `npm run build && node --import tsx
+  tests/e2e/server-tool-live.mjs` drives `ml.execServerTool` against the REAL OpenWebUI in `.env`, through
+  the built extension. Everything in `server-tools.spec.mjs` drives frames this repo also wrote, which is a
+  closed loop; this is the only thing that exercises the service-worker fetch, the `chrome-extension://`
+  origin, the real auth header and frames a server we did not write produced. `TOOL`/`FN`/`ARGS` pick the
+  call. Spends real GPU time (fetch_page summarises with a local model), so it runs one small page by
+  default, and it is NOT in CI — the backend is live. It prints arrival time beside PRODUCED time per chunk,
+  which is the number to read: equal everywhere means either the server is not stamping or something
+  between buffered the whole stream and delivered it at once.
 - **`md-ladder-live.mjs`** — a **debug probe, not a test**: `npm run build && node --import tsx
   tests/e2e/md-ladder-live.mjs` drives the Markdown negotiation ladder against LIVE docs sites through the
   built extension and prints each resolution tree. Every other ladder test drives a SCRIPTED fetch, so this
