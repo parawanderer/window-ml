@@ -843,12 +843,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     // An APPROVED exec may fetch inline (ml.fetch): the human saw the code, so allow its fetches
                     // for THIS run (ephemeral — cleared below). Persisting a URL is button #3, not this.
                     if (name === "exec") grantsFor(tabId).fetchOpen = true;
-                    // A server tool's args LEAVE THE MACHINE, so the grant is minted for the exact call the
-                    // human saw — never for the tool in general.
-                    if (name.startsWith("server:")) {
-                        const a = args as { tool?: unknown; function?: unknown; arguments?: unknown };
-                        grantsFor(tabId).serverTools.add(serverToolKey(String(a.tool ?? ""), String(a.function ?? ""), (a.arguments ?? {}) as Record<string, unknown>));
-                    }
+                    // A remote tool's args LEAVE THE MACHINE, so the grant is minted for the exact call the
+                    // human saw — never for the tool in general. The identity comes from the tool's declared
+                    // `remote` target rather than its name, which is what keeps the approval card and the
+                    // grant reading the same thing: a friendly name cannot make the card say one callable
+                    // while the grant authorises another.
+                    const remote = p.tools.find(t => t.name === name)?.remote;
+                    if (remote) grantsFor(tabId).serverTools.add(serverToolKey(remote.toolId, remote.fn, args as Record<string, unknown>));
                     if (name === "python_exec") {
                         const g = grantsFor(tabId);
                         for (const id of externalSheetIds(args)) g.sheets.add(id);

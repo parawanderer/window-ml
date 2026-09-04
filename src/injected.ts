@@ -55,7 +55,7 @@ import { toolNameError } from "./token-id";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
-import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
+import { buildServerTools, buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
 import { executeTool, toolContext, currentAnswer, currentDeref } from "./tool-exec";
@@ -512,9 +512,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, images = [], _control = null }: {
+        agent: async function(task: string, { tools = null, extraTools = [], serverTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, images = [], _control = null }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
+            serverTools?: string[];
             system?: string | null;
             hints?: string | null;
             maxSteps?: number;
@@ -554,6 +555,16 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // cap / seq from it, so there's a single code path — a handle just persists it across turns.
             const control: AgentControl = _control ?? { hash: null, messages: [], inbox: [], maxSteps, running: false, seqBase: 0, stepBase: 0 };
             let toolset = [...(tools || this.domTools || []), ...extraTools];
+            // Server-side tools, opt-in by bundle id. Resolved here rather than by the caller so the
+            // function schemas the model sees are the server's own. A bundle that does not resolve (a stock
+            // backend, a revoked key, a wrong id) is simply absent — a run should degrade to the tools it
+            // does have rather than failing before it starts.
+            if (serverTools.length) {
+                try {
+                    const bundles = await this.serverTools();
+                    toolset = [...toolset, ...buildServerTools(this as unknown as MlApi, bundles, serverTools)];
+                } catch { /* unreachable backend → no server tools, run anyway */ }
+            }
             // Vision facts resolved ONCE below and carried on every tool's ToolContext, so nothing re-derives
             // them: `driverSees` = the agent's own model sees the pixels natively this run (drove native vs
             // delegated `look`; read by `locate`'s snap-feedback); `runVisionModel` = the resolved reader a
@@ -846,6 +857,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     name: t.name, description: t.description, parameters: t.parameters,
                     requiresApproval: !!t.requiresApproval, capabilities: t.capabilities || [], summary: t.summary,
                     precheck: typeof t.precheck === "function",   // has a doomed-action precheck → the background delegates it before gating
+                    // Where a remote tool actually dispatches to. Travels so the background's approval card
+                    // and its per-call grant read the SAME identity — a page cannot make one say search_web
+                    // while the other authorises send_email.
+                    ...(t.remote ? { remote: t.remote } : {}),
                 }));
                 enterAgentRun();   // suppress orphan chat sessions from a delegated tool's internal ml.chat
                 try {
@@ -916,7 +931,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // PAGE-SIDE deps: tools execute inline (executeTool), the caller's approve/onStep run directly,
             // and the debug-render / argIssues enrichment happens in `emit` here. One loop body, two
             // dep-sets (these vs the background's delegating deps in agent-host.ts): no drift.
-            const toolMetas = toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, capabilities: t.capabilities }));
+            const toolMetas = toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, capabilities: t.capabilities, ...(t.remote ? { remote: t.remote } : {}) }));
             // runAgentLoop restarts its per-step `seq` at 0 each call, but the sidebar patches steps by
             // (hash, seq) — so a later turn would collide with an earlier one. control.seqBase offsets each
             // turn's seqs past the previous turn's, keeping them unique per SESSION across run()/say().
