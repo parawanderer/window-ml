@@ -938,6 +938,25 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
 - **The lane and the model list each hide** (Settings live in the panel's own track editor, beside which
   tracks it draws — the same question). Both compete with the chart for whatever height the panel was
   dragged to, and which of the three you want depends on what you are doing.
+- **The panel HEADER holds its height.** It gains and loses controls as you use the panel — the zoom chip
+  arrives when you scrub, the view picker only once capacity is known — and a row that reflows when one
+  appears shifts every surface below it, the scrub strip included. Adding one control to that row made the
+  chip's arrival push the strip 12px down mid-drag, so every later drag landed above the track and did
+  nothing at all, which reads as the scrubber being broken rather than as the row growing. It never wraps,
+  carries a `min-height`, and the total gives up width first (it is the longest item and still legible at
+  half length).
+- **ONE switch decides what the panel is about** (`ScopeSwitch`, in the panel header): `session` or `full`.
+  It drives the time window (`sessionWindow` — the session's own stretch, floored so a short run is not a
+  slit), which model rows are listed, and which events the lane draws. These were three separate controls
+  and they disagreed: a qwen session's lane drew gemma loading and evicting, above a list of gemma models,
+  on a chart showing ten minutes of a shared box either side of the run. Scoping a machine event asks
+  whether the model is one the session RAN, since such an event has no session of its own; the model list
+  FOLDS the rest into a count rather than hiding them, because what else is resident is exactly the context
+  for why your model got evicted. As a chip in the lane's filter row it read as one more kind-filter beside
+  "loads 4", which is why it moved. **A memo over the lane's events must key on `events.length`, never on
+  `events`** — `timeline()` rebuilds that array every render, so keying on it recomputes per render rather
+  than per poll, and a window that closes over `Date.now()` then walks its right edge ahead of the last
+  sample between a render and the drag that reads it, silently emptying the scrub strip.
 - **A wheel over the panel scrolls the transcript underneath it** (`wheelThroughPanel` in `app.tsx`). The
   panel is a fixed-height sibling of the scroll container rather than content inside it, so the gesture used
   to do nothing at all; it is forwarded only when the panel cannot take the scroll itself, and `deltaMode`
@@ -1091,6 +1110,11 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
 - **Document functions with JSDoc** (`/** … */`, `@param`/`@returns` where useful),
   not a plain `//` block — so callers get the explanation on IDE hover at the call
   site. Inline `//` comments are for logic *inside* a body.
+- **A FAILED build leaves `dist/` alone** — `build.mjs` bundles into `dist.stage/` and swaps only on
+  success, because the old order (delete, then build) left a loaded extension with no manifest whenever
+  anything threw. The consequence to remember: a build you silenced (`npm run build >/dev/null 2>&1`) that
+  FAILED now looks exactly like one that worked, and everything you run next tests the previous bundle —
+  which will mislead a bisect. It exits non-zero and says so on stderr; do not discard that stream.
 - **Tests: `npm test`** (Node ≥ 20, `node:test`). `tests/helpers.js` loads the
   real extension files into `node:vm` sandboxes with mocked `chrome`/`fetch`/
   `window`, so tests exercise the shipped code with no build step. Add a

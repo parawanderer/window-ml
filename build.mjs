@@ -148,6 +148,7 @@ if (watch) {
     copyPyodide(); copyKatexFonts();   // once — static, not worth recopying on every rebuild
     console.log(`watching… (${OUTDIR}/)`);
 } else {
+    try {
     await esbuild.build({ ...base, entryPoints: coreEntries });
     await esbuild.build({ ...base, entryPoints: { "sidebar-app": sidebarApp }, minify: true });
     // NOTE: the pure modules (locate, readonly-exec, python-runtime, agent-loop, auto-approve,
@@ -168,4 +169,14 @@ if (watch) {
     rmSync(OUTDIR, { recursive: true, force: true });
     renameSync(BUILD_DIR, OUTDIR);
     console.log(`built ${OUTDIR}/ (+ tools/annotate-preview.html, tools/legend-notebook.html)`);
+    } catch (err) {
+        // SAY that the old build is still there. Not keeping dist/ was its own failure mode — a loaded
+        // extension with no manifest — but "your last good build is still installed" is the sort of good
+        // news that misleads if it is silent: a silenced build now looks exactly like a successful one, and
+        // whatever you were about to test is the PREVIOUS bundle. Which is how this line got written.
+        rmSync(BUILD_DIR, { recursive: true, force: true });
+        console.error(`\n✗ build FAILED — ${OUTDIR}/ is untouched and still holds the PREVIOUS build.`);
+        console.error(`  Anything you run now tests that older bundle, not your current source.\n`);
+        throw err;
+    }
 }

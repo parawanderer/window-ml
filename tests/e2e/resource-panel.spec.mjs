@@ -1316,6 +1316,13 @@ test("resource panel: the scrubber resizes from its edges and pans from its midd
         const before = await winAt();
         expect(pct(before.width), "a window narrower than the strip").toBeLessThan(60);
 
+        // The header GAINS a control when you scrub (the zoom chip), and the panel's header must hold its
+        // height when it does — everything below it, including the strip you are still dragging, moves
+        // otherwise. It really did: adding one control to that row made the chip's arrival push the strip
+        // 12px down, so every later drag in this test landed above the track and silently did nothing.
+        const after = await frame.locator(".rc-scrub-track").boundingBox();
+        expect(Math.abs(after.y - track.y), "the strip did not move when the header gained a control").toBeLessThan(4);
+
         // ---- the RIGHT EDGE widens it, and the left edge stays put ----
         // "Held" is measured against the window's OWN width, not an absolute slice of the strip: how many
         // percent a pixel is worth depends on how long the session has grown, so a fixed tolerance is really

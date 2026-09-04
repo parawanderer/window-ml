@@ -18,7 +18,7 @@ import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_H
 import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
 import { parseInfo, holdCapacity, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
-import { ResourceTracks } from "./resource-chart";
+import { ResourceTracks, ScopeSwitch } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
 /** Is this model resident right now? `undefined` when we have no `/api/ps` answer yet — the caller must not
@@ -1146,6 +1146,11 @@ export function VramPanel() {
                         <span class="tt-pop wrap" role="tooltip">Showing the range you selected instead of the rolling window. Click, or press Esc, to go back to live.</span>
                     </button>
                 ) : null}
+                {/* BEFORE the view picker: what the panel is ABOUT comes before how it is drawn. Not gated on
+                    capacity like the picker is — scoping still governs the lane and the model list on a box
+                    that answers no /api/info, and hiding the switch there would leave a scoped panel with no
+                    way to say so. */}
+                <ScopeSwitch />
                 {capacity.value && latestSample ? (
                     <>
                         <select class="rc-preset" aria-label="View" value={presetId.value}

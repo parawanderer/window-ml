@@ -163,15 +163,19 @@ export function armMenuDismiss(): void {
 // RESHAPES: the blob stretches into a capsule that spells out what it's doing ("👁 Looking at the
 // screen…") — the shell springs the container wider, the label fades in. Draggable + right-click move
 // like every HUD state. (Emoji for now; a looping custom SVG per tool slots into `.card-orb-ic` later.)
-export function Orb({ icon, label, wide, prose }: { icon: string; label: string; wide: boolean; prose?: boolean }) {
+export function Orb({ icon, label, suffix, wide, prose }: { icon: string; label: string; suffix?: string; wide: boolean; prose?: boolean }) {
     return (
         <div class="card-app" data-rev={rev.value}>
             <div class={`card-orb${wide ? " wide" : ""}${prose ? " prose" : ""}`}
                 onPointerEnter={orbEnter} onPointerLeave={orbLeave}
                 onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}
-                title={prose ? label : undefined}>
+                title={prose ? label + (suffix || "") : undefined}>
                 <span class="card-orb-ic" aria-hidden="true">{icon}</span>
+                {/* The label ellipsizes; the live readout does NOT. Two spans rather than one string because
+                    the pill cuts on width, and concatenated it cut the number — the one part still saying
+                    something — leaving "· 1…" where "· 10s" was the whole point. */}
                 {wide ? <span class="card-orb-label">{label}</span> : null}
+                {wide && suffix ? <span class="card-orb-live">{suffix}</span> : null}
             </div>
         </div>
     );
@@ -449,10 +453,10 @@ export function CardApp() {
 
     if (state === "orbprose") {
         // The live caption: current phase + a live token count (streaming) / narration / stall heartbeat.
-        return <Orb icon={orb!.icon} label={orb!.label} wide prose />;
+        return <Orb icon={orb!.icon} label={orb!.label} suffix={orb!.suffix} wide prose />;
     }
     if (state === "orb" || state === "orblabel") {
-        return <Orb icon={orb!.icon} label={orb!.label} wide={state === "orblabel"} />;
+        return <Orb icon={orb!.icon} label={orb!.label} suffix={orb!.suffix} wide={state === "orblabel"} />;
     }
     if (state === "toast") {
         // MULTI-RUN collapsed → a calm SUMMARY: 🤖 + a generic status + a count badge, no per-run title, no
@@ -520,7 +524,7 @@ export function CardApp() {
                                 // HUD is answer-first: no "Running JavaScript…" activity line and no model-chip /
                                 // reply-bubble chrome (that's DevTools/sidebar detail — the LiveStream component).
                                 ? <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.liveStream.content, { math: true }) }} />
-                                : (() => { const o = orbStatus(run, nowTick.value || Date.now(), residentNow(run.model)); return <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{o.icon}</span>{o.label}<span class="pill-dots"><i /><i /><i /></span></div>; })()}
+                                : (() => { const o = orbStatus(run, nowTick.value || Date.now(), residentNow(run.model)); return <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{o.icon}</span>{o.label}{o.suffix ? <span class="card-orb-live">{o.suffix}</span> : null}<span class="pill-dots"><i /><i /><i /></span></div>; })()}
                           </>
                         : <>
                             {/* "Show work" sits ABOVE the answer now — the audit trail is the header, the answer

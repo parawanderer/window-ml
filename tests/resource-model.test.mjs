@@ -926,6 +926,40 @@ test("filterEvents: scope answers whose, kinds answer which — and machine even
     assert.deepEqual(M.countByKind(evs), { run: 2, tool: 1, embed: 1, evict: 1 });
 });
 
+// Scoping the lane and the model list but not the AXIS left the two disagreeing about what "this session"
+// means: the list said one model while the chart still drew ten minutes of a shared box either side of it.
+test("sessionWindow: frames the session, follows a live one, and floors a short one", () => {
+    const T = 1_700_000_000_000;
+    const evs = [
+        { t: T, until: T + 60_000, kind: "run", label: "run", ref: { hash: "a" } },
+        { t: T + 10_000, until: T + 20_000, kind: "tool", label: "exec", ref: { hash: "a", seq: 1 } },
+        // Another session, and a machine event with no session at all — neither frames this one.
+        { t: T - 500_000, until: T - 400_000, kind: "run", label: "other", ref: { hash: "b" } },
+        { t: T + 900_000, kind: "evict", label: "m evicted", model: "m" },
+    ];
+    // Long finished: the window is the session's own extent plus a little padding, and nothing else's.
+    const w = M.sessionWindow(evs, "a", T + 600_000);
+    assert.ok(w.from > T - 10_000 && w.from < T, "starts just before the run");
+    assert.ok(w.to > T + 60_000 && w.to < T + 80_000, "…and ends just after it, not at `now`");
+
+    // STILL GOING: the right edge follows the clock, or the window sits behind the memory trace it is
+    // meant to be read against.
+    const live = M.sessionWindow(evs, "a", T + 70_000);
+    assert.ok(live.to >= T + 70_000, "a live session's window reaches the present");
+
+    // A three-second session is a slit: a window narrower than a couple of samples contains no measurements
+    // and draws as an empty plot, which reads as the panel breaking rather than as a short run.
+    const brief = M.sessionWindow([{ t: T, until: T + 3000, kind: "run", label: "r", ref: { hash: "c" } }], "c", T + 500_000);
+    assert.ok(brief.to - brief.from >= 30_000, "floored");
+    // …and it is CENTRED in it, rather than pinned against an edge.
+    const mid = (brief.from + brief.to) / 2;
+    assert.ok(Math.abs(mid - (T + 1500)) < 2000, "the run sits in the middle of its window");
+
+    // Nothing to frame is not a window: inventing one would be a claim about when the session happened.
+    assert.equal(M.sessionWindow(evs, "zz", T), null);
+    assert.equal(M.sessionWindow(evs, null, T), null);
+});
+
 // On a SHARED box most of the machine half of the lane is someone else's traffic. "This session" was drawing
 // all of it, because an event with no ref was read as "belongs to everyone" — so a qwen session showed gemma
 // loading, serving and evicting, in gemma's colour, with no way to tell it was another tenant.

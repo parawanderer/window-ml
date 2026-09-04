@@ -80,7 +80,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-grip::after { content: ""; width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2);
                     opacity: .55; transition: width .12s ease, opacity .12s ease; }
 .vram-grip:hover::after { width: 52px; opacity: 1; background: var(--panel-2-hover); }
-.vram-head { display: flex; align-items: center; }
+/* ONE ROW, always. The header gains and loses controls as you use the panel — the zoom chip appears when you
+   scrub, the view picker only once capacity is known — and a row that reflows when one arrives shifts every
+   surface below it, including the strip you are mid-drag on. So it never wraps, and the total (the longest
+   item, and the one you can still read at half length) is what gives up width. */
+.vram-head { display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; min-height: 2.4em; }
+.vram-head > .vram-total { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vram-total { color: var(--fg); font-weight: 600; font-size: 0.92em; font-variant-numeric: tabular-nums; }
 .vram-free { background: var(--panel-2); color: var(--fg); border: none; border-radius: 4px; padding: 3px 8px; font-size: 0.83em; cursor: pointer; }
 .vram-free:hover { background: var(--panel-2-hover); }
@@ -224,6 +229,17 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* What the lane draws, and what it leaves out. Each chip carries its count: a filter that makes you toggle
    blindly to find out what it hides is worse than none. */
 .rc-lane-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin: 3px 0 0; }
+/* The scope switch: a two-segment control in the panel header. A SEGMENTED pair rather than one toggling
+   label, because a toggle that reads "this session" has to be read twice — once for the text, once to work
+   out whether that is the current state or the thing it will do. Both options visible, one lit, answers it
+   at a glance. The lit segment is a filled chip rather than accent-coloured text, which is what made the
+   old chip hard to read: accent on the panel ground has too little contrast in dark mode. */
+.rc-scope { display: inline-flex; align-items: stretch; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.rc-scope-seg { padding: 0 7px; font-size: 0.7em; line-height: 1.9; border: 0; background: none; color: var(--fg-faint); cursor: pointer; position: relative; }
+.rc-scope-seg + .rc-scope-seg { border-left: 1px solid var(--border); }
+.rc-scope-seg:hover { background: var(--panel-2-hover); color: var(--fg-dim); }
+.rc-scope-seg.on { background: var(--accent); color: var(--accent-fg, #fff); font-weight: 600; }
+.rc-scope-seg.on:hover { background: var(--accent); }
 .rc-lane-chip { padding: 0 5px; font-size: 0.7em; line-height: 1.6; cursor: pointer; color: var(--fg-dim);
                 background: var(--panel-2); border: 1px solid var(--border); border-radius: 3px;
                 font-variant-numeric: tabular-nums; }
@@ -1545,6 +1561,12 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 /* Prose caption: the model's narration (not a tool label) — lighter weight, and flex so a long line
    ellipsizes within the wider pill instead of overflowing. */
 .card-orb.prose .card-orb-label { flex: 1 1 auto; min-width: 0; font-weight: 500; }
+/* The live readout — a climbing token count, or a stall's elapsed seconds. NEVER shrinks and never
+   ellipsizes: it is the only part of the pill that is still saying something, and it was the part being cut.
+   Tabular figures so the digits do not shuffle the pill's width as the number ticks, and a reserved minimum
+   so the pill stops resizing every time "~990 tok" becomes "~1.0k tok". */
+.card-orb-live { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums;
+    min-width: 5.5ch; text-align: right; opacity: .75; font-weight: 500; }
 @keyframes orb-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.22); } }
 @keyframes orb-label-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .card-orb-ic, .card-orb-label { animation: none; } }

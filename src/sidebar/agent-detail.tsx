@@ -8,7 +8,7 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { RenderDescriptor, DebugAgentConfig, PersistGrant } from "../contract";
 import { resolveOutputCap, runStats, fmtTokPerSec, runStatsProvenance } from "../contract";
 import { externalSheetIds } from "../dom";
-import { config, surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs } from "./store";
+import { config, surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode } from "./store";
 import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
@@ -275,8 +275,14 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const open = expanded || awaiting;
     // Keep the step expanded after you decide (setExpanded), so it doesn't collapse when `awaiting`
     // clears — you see the Out result fill in on the same open cell.
+    //
+    // FOCUS MODE inverts that, because it is reading the run as a conversation: a call you have just
+    // decided on is finished being the thing you are looking at, and leaving it open means every approval
+    // permanently widens the transcript you came to read. It collapses to its one-line preview instead,
+    // which still fills in with the result. Deciding is also the one moment a collapse cannot lose you
+    // anything — you have just read the call in order to approve it.
     const decide = (ok: boolean, persist = false) => {
-        setExpanded(true); setDecided(true);
+        setExpanded(!focusMode.value); setDecided(true);
         if (hash && st.seq != null) decidedSteps.add(stepKey(hash, st.seq));
         void decideGate(st, hash!, st.seq!, ok, persist);   // fetch_url: grant its host in-gesture, then post
         rev.value++;   // re-render the run footer so it drops "waiting for your approval" at once

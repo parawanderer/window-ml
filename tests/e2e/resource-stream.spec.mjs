@@ -189,8 +189,10 @@ test("a scoped panel shows the session's models, and folds the rest away", async
         await frame.locator(".row", { hasText: "task qwen" }).first().click();
         await expect.poll(() => frame.locator(".astep").count(), { timeout: 10000 }).toBeGreaterThan(0);
 
-        // Scoped is the default; assert it rather than assuming, since the whole test turns on it.
-        await expect(frame.locator(".rc-lane-chip.scope")).toHaveText(/this session/);
+        // Scoped is the default; assert it rather than assuming, since the whole test turns on it. The
+        // control is a segmented pair in the panel header — it decides the window, the model list and the
+        // lane together, so it does not sit among the per-kind filter chips.
+        await expect(frame.locator(".rc-scope-seg.on")).toHaveText(/session/);
 
         const names = () => frame.locator(".vram-row .vram-name").allTextContents();
         await expect.poll(names, { timeout: 10000 }).toContain("qwen3.5:35b");

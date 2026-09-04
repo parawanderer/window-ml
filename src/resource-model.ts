@@ -865,6 +865,42 @@ export function filterEvents(events: readonly ResourceEvent[], filter: LaneFilte
     });
 }
 
+/** The stretch of time a SESSION occupies, for a panel scoped to it. Scoping the lane and the model list but
+ *  not the axis left the two disagreeing about what "this session" means: the list said one model, the chart
+ *  still drew ten minutes of a shared box either side of it.
+ *
+ *  Derived from the session's own events rather than from its turns, so it covers whatever the lane draws —
+ *  including a tool that was still running when the snapshot was taken. `now` extends a LIVE session to the
+ *  present instead of stopping at its last finished event, which would otherwise pin the window behind the
+ *  memory trace it is meant to sit under.
+ *
+ *  `minMs` is a floor, because a three-second session is a slit: a window narrower than a couple of samples
+ *  contains no measurements and draws as an empty plot, which reads as the panel breaking rather than as a
+ *  short run. Returns null when the session has no events at all — there is nothing to frame, and inventing
+ *  a window would be a claim about when it happened. */
+export function sessionWindow(
+    events: readonly ResourceEvent[], hash: string | null, now: number,
+    { minMs = 30_000, padFrac = 0.04 }: { minMs?: number; padFrac?: number } = {},
+): { from: number; to: number } | null {
+    if (!hash) return null;
+    let from = Infinity, to = -Infinity;
+    for (const e of events) {
+        if (e.ref?.hash !== hash) continue;
+        from = Math.min(from, e.t);
+        // An OPEN span has no end; `until` is where it had reached, which is the right right-edge for it.
+        to = Math.max(to, e.until ?? e.t);
+    }
+    if (!Number.isFinite(from)) return null;
+    // Still going, or only just finished: follow the clock rather than stopping short of it.
+    if (now - to < minMs) to = now;
+    const pad = Math.max((to - from) * padFrac, 1000);
+    from -= pad; to += pad;
+    // Widen around the CENTRE, so a short session sits in the middle of its window instead of against an edge.
+    const grow = minMs - (to - from);
+    if (grow > 0) { from -= grow / 2; to += grow / 2; }
+    return { from, to };
+}
+
 /** How many of each kind are in a set — for a filter control that says what it is hiding rather than making
  *  you toggle blindly. */
 export function countByKind(events: readonly ResourceEvent[]): Record<string, number> {

@@ -437,6 +437,27 @@ test("button #3 (sidebar step): 'Approve + remember' renders, unfurls its URLs, 
     assert.equal(msg.seq, 1);
 });
 
+// Focus mode reads the run as a conversation. A tool call is kept OPEN after you decide so the result fills
+// in on the same cell — right when you are debugging, wrong when you are reading: every approval would
+// permanently widen the transcript, which is the thing focus mode exists to narrow.
+test("focus mode: a decided step collapses; outside focus mode it stays open", async () => {
+    const openAfterDecide = async (focus) => {
+        const w = await loadSidebarWorld(focus ? { local: { ml_debug_focus: true } } : undefined);
+        await w.dispatch(agentStart("fm", "fetch stuff"));
+        await w.dispatch(grantStep("fm"));
+        w.shadow.querySelector(".row").click();
+        await w.tick();
+        // An awaiting step auto-unfurls, so you review the call before deciding — true in both modes.
+        assert.ok(!w.shadow.querySelector(".astep-preview"), "a gate is open before you decide");
+        w.window.postMessage = () => {};
+        w.shadow.querySelector(".astep-approve .appr-btn:not(.remember)").click();
+        await w.tick();
+        return !w.shadow.querySelector(".astep-preview");   // a preview line only shows while COLLAPSED
+    };
+    assert.equal(await openAfterDecide(false), true, "debugging: it stays open and the Out fills in there");
+    assert.equal(await openAfterDecide(true), false, "reading: it collapses back to its one-line preview");
+});
+
 test("button #3 (sidebar step): plain Approve posts persist:false (one-off)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("b3s2", "fetch stuff"));
@@ -5212,7 +5233,10 @@ test("HUD orb (streaming): the thinking phase carries a LIVE token count in the 
     await w.flush();
     const label = w.shadow.querySelector(".card-orb-label");
     assert.ok(label, "the streaming orb auto-expands to a caption (there's live detail to show)");
-    assert.match(label.textContent, /~1\.2k tok/, "the live token count rides the thinking phase");
+    // The count is its OWN span, not part of the label: the pill ellipsizes on width, and concatenated it
+    // was the number that got cut — the one part of the pill still saying something.
+    assert.doesNotMatch(label.textContent, /tok/, "the label is the phase, and it is what may be truncated");
+    assert.match(w.shadow.querySelector(".card-orb-live").textContent, /~1\.2k tok/, "the live count rides beside it");
 });
 
 test("HUD orb (non-streaming): a STALLED run shows an elapsed heartbeat + phase, and NO token count", async () => {
@@ -5224,8 +5248,12 @@ test("HUD orb (non-streaming): a STALLED run shows an elapsed heartbeat + phase,
     await w.flush();
     const label = w.shadow.querySelector(".card-orb-label");
     assert.ok(label, "the stalled orb auto-expands so the liveness readout is visible");
-    assert.match(label.textContent, /Viewing the screen… · \d+s/, "the elapsed heartbeat proves the pipe is alive");
-    assert.doesNotMatch(label.textContent, /tok/, "non-streaming has no live token count (can't know mid-generation)");
+    assert.match(label.textContent, /^Viewing the screen…$/, "the phase");
+    // The elapsed readout is what proves the pipe is alive, so it sits where truncation cannot reach it —
+    // a cut "· 1…" is the liveness proof saying nothing at the moment you most need it.
+    const live = w.shadow.querySelector(".card-orb-live");
+    assert.match(live.textContent, /· \d+s/, "the elapsed heartbeat");
+    assert.doesNotMatch(live.textContent, /tok/, "non-streaming has no live token count (can't know mid-generation)");
 });
 
 // The DevTools run-stats bar (RunStatsBar) — cumulative token SPEND + generation rate below the detail
@@ -7424,17 +7452,23 @@ test("lane filter: chips say what they hide, kinds persist, scope follows what y
     await w.flush();
     assert.equal(bars(), before, "and toggling back restores them");
 
-    // Scoping is the DEFAULT and the chip is offered everywhere — in the list view it is the only thing that
-    // says why there are no run events, and the only way to get them.
-    const scope = () => chip("all sessions") || chip("this session");
-    assert.ok(scope(), "the scope chip is offered in the list view too");
+    // Scoping is the DEFAULT, and its control is offered everywhere — in the list view it is the only thing
+    // that says why there are no run events, and the only way to get them. It is a SEGMENTED pair in the
+    // panel header rather than a chip in this filter row: it decides the window, the model list and the lane
+    // together, where these chips each hide one kind, and sitting among them said it was one of them.
+    const seg = (label) => [...w.shadow.querySelectorAll(".rc-scope-seg")].find(b => b.textContent.trim().startsWith(label));
+    assert.ok(seg("session") && seg("full"), "the scope switch is offered in the list view too");
+    // Both states are VISIBLE, one lit — a single toggling label has to be read twice to work out whether it
+    // names the current state or the thing it will do.
+    assert.ok(seg("full").getAttribute("aria-pressed") === "true", "starts on full (the fixture's default)");
     const all = runBars();
 
     // Scoping with NOTHING open shows no run's events at all — that is the intended overview, not an empty
     // panel: there is no session to scope to.
-    scope().click();
+    seg("session").click();
     await w.flush();
     assert.equal(runBars(), 0, "nothing open, so no run events");
+    assert.equal(seg("session").getAttribute("aria-pressed"), "true", "…and the switch says which it is on");
     assert.deepEqual(w.localStore.ml_lane_scope, true, "remembered, like the kind chips");
 
     // Reading ONE run: its events come back, the other run's stay gone.
@@ -7442,6 +7476,9 @@ test("lane filter: chips say what they hide, kinds persist, scope follows what y
     await w.flush();
     const scoped = runBars();
     assert.ok(scoped > 0 && scoped < all, `only this session's events (${scoped} of ${all})`);
+    // And the AXIS follows too — one switch, one meaning. The window is the session's own stretch, not the
+    // rolling one, so the chart cannot draw ten minutes of a shared box around a list showing one model.
+    assert.ok(w.shadow.querySelector(".rc-scope-seg.on").textContent.trim().startsWith("session"));
     // …but NOT the machine's own: an eviction has no run to belong to, and hiding it would remove the events
     // the chart exists for. (Covered exactly in resource-model.test.mjs; here it is the scope chip working.)
 });

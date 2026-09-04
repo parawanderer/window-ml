@@ -14,12 +14,12 @@ import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
     placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubNudge, wheelScrubFraction,
-    filterEvents, countByKind, type ResourceEvent, type EventPlacement, type PhaseKind,
+    filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
-import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, streamLive, sampleGapMs, sampleGraceMs } from "./vram";
+import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs } from "./vram";
 import { models, ollamaIds, loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, showLane, laneLitSeqs } from "./store";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
@@ -1269,7 +1269,6 @@ function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number
         laneHidden.value = next;
         try { chrome.storage.local.set({ [LANE_HIDDEN_KEY]: next }); } catch { /* opaque origin */ }
     };
-    const inDetail = view.value.name === "detail";
     return (
         <div class="rc-lane-filter">
             {KINDS.filter((k) => counts[k.kind]).map((k) => (
@@ -1277,17 +1276,40 @@ function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number
                     title={hidden.has(k.kind) ? `Show ${k.label}` : `Hide ${k.label}`}
                     onClick={() => toggle(k.kind)}>{k.label} {counts[k.kind]}</button>
             ))}
-            {/* Offered EVERYWHERE, not only in a detail view: scoping is the default, so in the overview this
-                chip is the only thing that says why there are no run events and the only way to get them. */}
-            <button class={`rc-lane-chip scope${laneScoped.value ? " on" : ""}`}
-                title={laneScoped.value
-                    ? (inDetail ? "Showing only this session — click for every session" : "Scoped to the open session; nothing is open, so no run events. Click to show every session.")
-                    : "Showing every session — click to scope to the one you are reading"}
-                onClick={() => {
-                    laneScoped.value = !laneScoped.value;
-                    try { chrome.storage.local.set({ [LANE_SCOPE_KEY]: laneScoped.value }); } catch { /* opaque origin */ }
-                }}>{laneScoped.value ? "this session" : "all sessions"}</button>
+            {/* The scope switch used to live here, as one more chip in a row of chips — which said it was a
+                filter over KINDS like the others, when it decides the window, the model list and the lane
+                together. It is in the panel HEADER now (`ScopeSwitch`), beside the view picker it belongs
+                with. */}
             {shown < total ? <span class="rc-lane-count">{shown}/{total}</span> : null}
+        </div>
+    );
+}
+
+/** SESSION or FULL — the one switch that decides what the whole panel is about. It drives three things at
+ *  once and that is the point: the time window (the session's own stretch, or the rolling one), which model
+ *  rows are listed, and which events the lane draws. As a chip in the filter row it read as one more
+ *  kind-filter beside "loads 4"; here, beside the view picker, it reads as what it is.
+ *
+ *  Offered in the OVERVIEW too, where nothing is open to scope to — because scoping is the default, so it is
+ *  the only thing that explains an empty lane and the only way out of it. */
+export function ScopeSwitch() {
+    const inDetail = view.value.name === "detail";
+    const set = (scoped: boolean) => {
+        laneScoped.value = scoped;
+        try { chrome.storage.local.set({ [LANE_SCOPE_KEY]: scoped }); } catch { /* opaque origin */ }
+    };
+    return (
+        <div class="rc-scope" role="group" aria-label="Scope">
+            <button class={`tt rc-scope-seg${laneScoped.value ? " on" : ""}`} aria-pressed={laneScoped.value} onClick={() => set(true)}>
+                session
+                <span class="tt-pop wrap" role="tooltip">{inDetail
+                    ? "The window, the model list and the lane all follow the session you are reading."
+                    : "Scoped to the open session — nothing is open, so no run events are drawn. Switch to full for the whole box."}</span>
+            </button>
+            <button class={`tt rc-scope-seg${laneScoped.value ? "" : " on"}`} aria-pressed={!laneScoped.value} onClick={() => set(false)}>
+                full
+                <span class="tt-pop wrap left" role="tooltip">The whole box: every session's events, every resident model, and the rolling time window from Settings.</span>
+            </button>
         </div>
     );
 }
@@ -1299,14 +1321,30 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     // The visible window as an explicit RANGE, so the scrub strip can say where it sits in the session and
     // move it. A zoom (or a scrub) REPLACES the rolling window: you asked for a stretch, so the panel stops
     // sliding away from it.
+    // SCOPED to a session: the axis is that session's own stretch. One switch drives the lane, the model list
+    // and the window, so the three cannot say different things about what "this session" means — the list
+    // naming one model while the chart drew ten minutes of a shared box either side of it is exactly the
+    // disagreement this collapses. Null in the overview, where there is no session to be the extent of.
+    //
+    // Its OWN memo, and the rolling window below keeps the key it always had. The separation is load-bearing
+    // rather than tidy: the rolling window closes over `Date.now()`, so every extra recomputation walks its
+    // right edge further ahead of the last sample — and the scrub drag reads that window to decide what a
+    // resize means, so widening its key by one dependency moving at a different cadence made a drag on the
+    // right handle snap back to live instead of resizing, and emptied the strip outright in another test.
+    // Here the value is a stable `null` whenever nothing is scoped, so it cannot disturb the memo below.
+    // (`events.length`, never `events`: `timeline()` rebuilds that array every render.)
+    const scopedWindow = useMemo(
+        () => (laneScoped.value ? sessionWindow(events, scopedHash(), Date.now()) : null),
+        [laneScoped.value, scopedHash(), events.length, samples.length]);
     const window_ = useMemo(() => {
         const z = zoomRange.value;
         if (z) return z;
+        if (scopedWindow) return scopedWindow;
         const secs = resWindowS.value;
         if (!secs) return null;                    // "everything" — no window to draw
         const now = Date.now();
         return { from: now - secs * 1000, to: now };
-    }, [resWindowS.value, zoomRange.value, samples.length]);
+    }, [resWindowS.value, zoomRange.value, samples.length, scopedWindow]);
     const windowed = useMemo(
         () => (window_ ? samples.filter((s) => s.t >= window_.from && s.t <= window_.to) : samples),
         [samples, window_]);
