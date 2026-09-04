@@ -30,7 +30,8 @@ import type {
     TokenUsage,
     MlHistory,
     TableSource,
-    TablePreview
+    TablePreview,
+    ServerToolResult
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } from "./contract";
 import { evalReadonly } from "./readonly-exec";
@@ -2316,6 +2317,47 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          */
         serverTools: async function(): Promise<ServerTool[]> {
             return makeBackgroundTaskPromise("LIST_SERVER_TOOLS_REQUEST", "LIST_SERVER_TOOLS_RESPONSE", {});
+        },
+        /**
+         * Run ONE server-side tool ourselves, in our own loop, with the arguments we chose — as opposed to
+         * `ml.chat`'s `toolIds`, which hands the whole loop to the model and gets back a finished answer.
+         *
+         * PRIVILEGED, and gated accordingly: the fetch spends the user's API key and the tool is
+         * caller-chosen, so from an untrusted page this only runs a call an agent run already approved.
+         * Needs the patched OpenWebUI (see docs/FORKED-BACKENDS.md); a stock one has no such endpoint.
+         *
+         * The two failure kinds are kept apart, because only one is something a model can act on. A tool
+         * that THREW resolves with `ok: true` and an `error` on its result — a normal outcome to read and
+         * react to. A stream that could not be read at all resolves with `ok: false` and a
+         * `transportError`, which must never be reported to a model as a tool that returned nothing.
+         *
+         * @param {string} toolId The tool BUNDLE's id, as `ml.serverTools()` lists it.
+         * @param {string} name The function within that bundle.
+         * @param {object} [args] The function's arguments.
+         * @param {object} [options]
+         * @param {(text: string, ts?: number) => void} [options.onOutput] Live output as it is produced —
+         *   `ts` is when the EXECUTOR produced it, not when we saw it.
+         * @param {AbortSignal} [options.signal] Cancels the call; the executor sees the connection close.
+         * @returns {Promise<ServerToolResult>} What the tool produced, and how long it took.
+         */
+        execServerTool: async function(
+            toolId: string,
+            name: string,
+            args: Record<string, unknown> = {},
+            options: { onOutput?: (text: string, ts?: number) => void; signal?: AbortSignal } = {},
+        ): Promise<ServerToolResult> {
+            const { onOutput, signal } = options;
+            return makeBackgroundTaskPromise("SERVER_TOOL_REQUEST", "SERVER_TOOL_RESPONSE",
+                { toolId, name, args, stream: !!onOutput }, undefined, signal,
+                onOutput ? {
+                    type: "SERVER_TOOL_STREAM",
+                    onProgress: (d) => {
+                        const f = (d as { frame?: { type?: string; text?: string } }).frame;
+                        // Only OUTPUT frames are text. An `event` frame is structural — feeding it here is
+                        // how UI plumbing ends up in something a model reads.
+                        if (f?.type === "output") onOutput(String(f.text ?? ""), (d as { at?: number }).at);
+                    },
+                } : undefined) as Promise<ServerToolResult>;
         },
         /**
          * The machine's memory CAPACITY — per-device VRAM totals/free and system RAM, from Ollama's

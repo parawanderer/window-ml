@@ -808,7 +808,7 @@ export async function streamAgentTurn(
              usage: timed && phases.length ? { ...timed, genPhases: phases } : timed };
 }
 
-function authHeaders(config: MlConfig): Record<string, string> {
+export function authHeaders(config: MlConfig): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (config.apiKey) headers["Authorization"] = `Bearer ${config.apiKey}`;
     return headers;

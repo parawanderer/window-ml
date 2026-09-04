@@ -916,3 +916,56 @@ test("ml.schema refuses prose, naming WHICH argument", async () => {
     // a single bad argument is named as "the argument", not "argument 1" — there is only one
     await assert.rejects(() => world.ml.schema("prose"), /the argument is plain text/);
 });
+
+
+// ---- ml.execServerTool: the page relay for running one server-side tool ----
+// The primitive's three-file contract (injected → content HANDLE_MAP → background), exercised end to end
+// through the real postMessage bridge.
+
+test("ml.execServerTool relays the call and resolves with the tool's result", async () => {
+    let seen = null;
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type !== "SERVER_TOOL_EXEC") return undefined;
+            seen = m;
+            return { data: { ok: true, result: { result: { hits: 3 }, durationMs: 9400, queuedMs: 120 }, output: "searching\n", marks: [[0, 1000]], events: [] } };
+        },
+    });
+    const r = await world.ml.execServerTool("srv1", "search_web", { q: "ollama" });
+
+    // A tool id names a BUNDLE, so the function travels beside it — the same pair a model emits.
+    assert.equal(seen.payload.toolId, "srv1");
+    assert.equal(seen.payload.name, "search_web");
+    assert.deepEqual(seen.payload.args, { q: "ollama" });
+    assert.equal(seen.payload.stream, false, "no output callback → don't ask the server to stream");
+
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.result.result, { hits: 3 });
+    assert.equal(r.result.durationMs, 9400, "the executor's own timing survives the relay");
+    assert.equal(r.output, "searching\n");
+});
+
+test("ml.execServerTool: a transport failure arrives as one, distinct from a tool that threw", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => (m.type === "SERVER_TOOL_EXEC"
+            ? { data: { ok: false, transportError: "the tool stream ended without a result frame", output: "half", marks: [], events: [] } }
+            : undefined),
+    });
+    const r = await world.ml.execServerTool("srv1", "x");
+    assert.equal(r.ok, false, "a caller must not hand this to a model as a tool that returned nothing");
+    assert.match(r.transportError, /without a result frame/);
+    assert.equal(r.output, "half", "and the partial output is still available to a human");
+});
+
+test("ml.execServerTool: passing onOutput asks the server to stream", async () => {
+    let payload = null;
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type !== "SERVER_TOOL_EXEC") return undefined;
+            payload = m.payload;
+            return { data: { ok: true, result: { result: 1, durationMs: 1 }, output: "", marks: [], events: [] } };
+        },
+    });
+    await world.ml.execServerTool("srv1", "x", {}, { onOutput: () => {} });
+    assert.equal(payload.stream, true, "streaming is opt-in: a caller with nowhere to put frames doesn't ask for them");
+});

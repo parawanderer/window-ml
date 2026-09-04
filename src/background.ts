@@ -18,6 +18,7 @@ import { BUILD_INFO } from "./build-info.gen";
 import { browserInfo } from "./util";   // the fork's settings scheme (page-context Browser line)
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpEval, cdpScreenshot, cdpShadowResolve, cdpKeyType } from "./sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
 import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
+import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 
 
@@ -263,7 +264,7 @@ if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
 // `fetchOpen` = an approved `exec` is running: its inline `ml.fetch()` calls are allowed FOR THIS RUN (the
 // human approved the code containing them). Ephemeral like the rest — cleared when the exec delegation
 // returns; persisting a fetched URL for the session is the separate, explicit button-#3 path (not this).
-type TabGrants = { sheets: Set<string>; pyCode: Set<string>; fetchOpen?: boolean };
+type TabGrants = { sheets: Set<string>; pyCode: Set<string>; fetchOpen?: boolean; serverTools: Set<string> };
 const pendingGrants = new Map<number, TabGrants>();
 // PERSISTENT per-tab consent for `ml.fetch` — the exact URLs the user has approved fetching this session
 // (per-URL, not per-origin: the human sees + approves each). Grown ONLY inside a background run's approval
@@ -302,9 +303,17 @@ const persistGrants = (tabId: number, grants: import("./contract").PersistGrant[
         if (g.kind === "fetch-url") for (const u of g.urls) consentFetch(tabId, u);
     }
 };
+/** The grant key for one server-tool call: the bundle, the function AND the arguments. Hashing the whole
+ *  call rather than the tool id is the point — approving "run the search tool for THIS query" must not
+ *  authorise running it for another one. Key order is normalised so an equivalent object still matches. */
+export const serverToolKey = (toolId: string, name: string, args: Record<string, unknown>): string => {
+    let a = "";
+    try { a = JSON.stringify(args, Object.keys(args || {}).sort()); } catch { a = String(args); }
+    return `${toolId}\u0000${name}\u0000${a}`;
+};
 const grantsFor = (tabId: number): TabGrants => {
     let g = pendingGrants.get(tabId);
-    if (!g) { g = { sheets: new Set(), pyCode: new Set() }; pendingGrants.set(tabId, g); }
+    if (!g) { g = { sheets: new Set(), pyCode: new Set(), serverTools: new Set() }; pendingGrants.set(tabId, g); }
     return g;
 };
 
@@ -350,6 +359,9 @@ const pendingPrints = new Map<string, { html: string; timer: ReturnType<typeof s
 // chunk the offscreen doc forwards can be relayed to the RIGHT page. Set when a streaming PYTHON_EXEC starts,
 // deleted when it resolves. Only populated for opt-in streaming runs (a bounded, short-lived map).
 const pyStreamTabs = new Map<string, number>();
+// The same, for a server tool's frames: streamId (the page's requestId) → tabId, so a frame reaches the
+// page that asked for it and no other.
+const serverToolTabs = new Map<string, number>();
 
 // Pointer resolvers for background-hosted runs, keyed by runId — handed over by the loop at start (tokenSink)
 // so a page-side tool's `ml.dereference` can read THIS run's captured outputs. Deleted when the run ends.
@@ -831,6 +843,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     // An APPROVED exec may fetch inline (ml.fetch): the human saw the code, so allow its fetches
                     // for THIS run (ephemeral — cleared below). Persisting a URL is button #3, not this.
                     if (name === "exec") grantsFor(tabId).fetchOpen = true;
+                    // A server tool's args LEAVE THE MACHINE, so the grant is minted for the exact call the
+                    // human saw — never for the tool in general.
+                    if (name.startsWith("server:")) {
+                        const a = args as { tool?: unknown; function?: unknown; arguments?: unknown };
+                        grantsFor(tabId).serverTools.add(serverToolKey(String(a.tool ?? ""), String(a.function ?? ""), (a.arguments ?? {}) as Record<string, unknown>));
+                    }
                     if (name === "python_exec") {
                         const g = grantsFor(tabId);
                         for (const id of externalSheetIds(args)) g.sheets.add(id);
@@ -1270,6 +1288,50 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const tabId = pyStreamTabs.get(message.streamId);
         if (tabId != null) chrome.tabs.sendMessage(tabId, { type: "PYTHON_STREAM", requestId: message.streamId, chunk: message.chunk, ts: message.ts }).catch(() => { /* page gone → drop */ });
         return false;
+    }
+    if (message.type === "SERVER_TOOL_EXEC") {
+        // Run ONE OpenWebUI-configured tool. CHOKE POINT, and a real one: the fetch spends the user's API
+        // key, and the tool it runs is caller-chosen — a hostile page reaching this handler directly could
+        // invoke any tool the user has configured, which is a different capability from spending tokens on
+        // a chat call. So an untrusted page may only run a call it holds a per-call grant for, minted when
+        // its agent run APPROVED that exact call. Same shape as full-mode Python and FETCH_SHEET.
+        (async () => {
+            const toolId = String(message.payload?.toolId ?? "");
+            const name = String(message.payload?.name ?? "");
+            const args = (message.payload?.args ?? {}) as Record<string, unknown>;
+            if (await senderTrust(sender) === "untrusted") {
+                const key = serverToolKey(toolId, name, args);
+                if (!(sender.tab?.id != null && pendingGrants.get(sender.tab.id)?.serverTools.has(key))) {
+                    sendResponse({ error: "Refused: running a server-side tool needs approval on this page — run it through an agent and approve it, or add this site to the approval whitelist." });
+                    return;
+                }
+            }
+            // LIVE frames (opt-in), keyed by the page's requestId exactly as python's stdout is.
+            const streamId: string | undefined = message.payload?.stream ? message.requestId : undefined;
+            if (streamId && sender.tab?.id != null) serverToolTabs.set(streamId, sender.tab.id);
+            const ctl = new AbortController();
+            if (message.requestId) inflight.set(message.requestId, ctl);
+            try {
+                const end = await executeServerTool({
+                    toolId, name, args, signal: ctl.signal,
+                    onFrame: streamId ? (frame, at) => {
+                        const tabId = serverToolTabs.get(streamId);
+                        if (tabId != null) chrome.tabs.sendMessage(tabId, { type: "SERVER_TOOL_STREAM", requestId: streamId, frame, at }).catch(() => { /* page gone */ });
+                    } : undefined,
+                });
+                // The ok/not-ok split is carried through verbatim rather than flattened: a tool that THREW is
+                // a step outcome the model reads, and a stream that never completed is not.
+                sendResponse(end.ok
+                    ? { data: { ok: true, result: end.result, output: end.state.output, marks: end.state.marks, events: end.state.events } }
+                    : { data: { ok: false, transportError: end.transportError, output: end.state.output, marks: end.state.marks, events: end.state.events } });
+            } catch (e) {
+                sendResponse({ error: String((e as Error)?.message || e) });
+            } finally {
+                if (streamId) serverToolTabs.delete(streamId);
+                if (message.requestId) inflight.delete(message.requestId);
+            }
+        })();
+        return true;
     }
     if (message.type === "FETCH_SHEET") {
         // Fetch a Google Sheet's CSV export CREDENTIALED (the user's own Google session), so it works on

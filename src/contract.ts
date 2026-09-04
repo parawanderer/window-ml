@@ -1238,6 +1238,7 @@ export type PageRequestType =
     | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST" | "FETCH_URL_REQUEST"
     | "CDP_SHADOW_RESOLVE_REQUEST"   // read-only: resolve a `>>>` selector into a SEALED closed shadow root via CDP (discovery)
     | "LIST_SERVER_TOOLS_REQUEST"   // discover the OpenWebUI server-side tools this key may use (valid `toolIds`)
+    | "SERVER_TOOL_REQUEST"   // run ONE of them ourselves, in our own loop, streaming its frames back
     | "INFO_REQUEST"                // machine CAPACITY: per-device VRAM totals/free + system RAM (Ollama /api/info)
     | "INVOCATION_REQUEST"   // how the user can open the HUD here (live shortcut — user-rebindable, never hardcode it)
     | "START_RUN_REQUEST"   // design A: kick off a background-hosted ml.agent loop
@@ -1253,6 +1254,7 @@ export type BackgroundMessageType =
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE" | "FETCH_URL"
     | "CDP_SHADOW_RESOLVE"   // read-only CDP resolve of a `>>>` selector across sealed shadow roots (discovery half of sealed reach)
     | "LIST_SERVER_TOOLS"   // GET OpenWebUI /api/v1/tools/ — the server-side tools, with their function specs
+    | "SERVER_TOOL_EXEC"   // run ONE of them ourselves (privileged: the user's API key), streaming NDJSON frames back
     | "OLLAMA_INFO"         // GET Ollama /api/info — machine capacity (per-device VRAM, system RAM)
     | "GET_INVOCATION"   // read chrome.commands' LIVE shortcut for the HUD (+ whether the user rebound it)
     | "ABORT_TASK"    // abort the AbortController registered for a requestId (only FETCH_LLM registers one today)
@@ -1615,6 +1617,29 @@ export interface ServerTool {
     description: string;
     kind: "local" | "openapi" | "mcp";
     functions: ServerToolFunction[];
+}
+
+/**
+ * What `ml.execServerTool` resolves to.
+ *
+ * The two failure kinds are DIFFERENT SHAPES on purpose, because only one is something a model can act on.
+ * `ok: true` with an `error` on the result is a tool that ran and threw — a normal step outcome to read and
+ * correct. `ok: false` is a stream that could not be read at all, and reporting THAT to a model as a tool
+ * returning nothing is a wrong answer dressed as an empty one, which it has no way to detect.
+ */
+export interface ServerToolResult {
+    ok: boolean;
+    /** The terminal frame, when the stream completed. Carries the tool's value or its `error`, plus the
+     *  executor's own `durationMs`/`queuedMs` — which is what makes a remote span attributable at all. */
+    result?: { result?: unknown; error?: string; name?: string; durationMs?: number; queuedMs?: number; truncated?: number };
+    /** Why the stream could not be read, when `ok` is false. Never a tool's own failure. */
+    transportError?: string;
+    /** Everything the tool streamed. Human-facing: what the MODEL receives is `result.result`. */
+    output: string;
+    /** `[offset in output, epoch ms]`, anchored from the executor's offsets. Only where it stamped one. */
+    marks: [number, number][];
+    /** Structural frames (progress, attachments) — deliberately not folded into `output`. */
+    events: { type: "event"; event: Record<string, unknown>; atMs?: number }[];
 }
 
 /* ------------------- debug sidebar contract (core → sidebar, window bus) ------------------- */
@@ -2003,6 +2028,11 @@ export interface MlApi {
      *  the valid ids for `ml.chat`'s `toolIds`, with each one's function specs.
      *  Empty on a bare-Ollama endpoint (no such concept). */
     serverTools(): Promise<ServerTool[]>;
+    /** Run ONE of them ourselves, in our own loop, with the arguments we chose — as opposed to `ml.chat`'s
+     *  `toolIds`, which hands the whole loop to the model. PRIVILEGED (the user's API key, a caller-chosen
+     *  tool), so from an untrusted page it only runs a call an agent run already approved. Needs the
+     *  patched OpenWebUI — see docs/FORKED-BACKENDS.md. */
+    execServerTool(toolId: string, name: string, args?: Record<string, unknown>, options?: { onOutput?: (text: string, ts?: number) => void; signal?: AbortSignal }): Promise<ServerToolResult>;
     /** The machine's memory CAPACITY — per-device VRAM totals/free and system RAM (Ollama `/api/info`).
      *  `ml.ps()` says what is RESIDENT; this says what there is room for. Returns `null` when the route
      *  isn't available (stock Ollama, or an OpenWebUI without the passthrough) — treat that as "capacity

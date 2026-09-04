@@ -1417,8 +1417,19 @@ up on a slow link), accepts a final line with no newline (a server ending withou
 dropping its `result` would turn a completed call into a failure), ignores an unreadable or UNKNOWN line
 rather than abandoning the rest, and treats **a stream that ends with no `result` frame as a TRANSPORT
 FAILURE** — partial output reported as a tool that returned nothing is a wrong answer dressed as an empty
-one, and the model cannot tell the difference. Not wired to anything yet: the privileged fetch, the
-approval gate and the dispatch phase are the next slice.
+one, and the model cannot tell the difference. **`ml.execServerTool(toolId, name, args, {onOutput, signal})`**
+runs ONE OpenWebUI-configured tool in OUR loop with OUR arguments — the other shape from `toolIds` +
+`function_calling`, which hands the whole loop to the model. The usual three files (`SERVER_TOOL_REQUEST` →
+`SERVER_TOOL_EXEC`), with `sw-tools.ts` doing the privileged fetch and `SERVER_TOOL_STREAM` as the reverse
+channel for live frames (the twin of `PYTHON_STREAM`). **CHOKE POINT, and a real escalation if missed**: the
+fetch spends the user's API key and the tool is caller-chosen, so a hostile page reaching the handler could
+otherwise invoke any tool the user has configured — "send an email" is a different capability from spending
+tokens. An untrusted page therefore needs a per-call grant (`TabGrants.serverTools`), minted in
+`delegateTool` when a run APPROVED that exact call; `serverToolKey` hashes the bundle, the function AND the
+arguments, because approving "search for THIS" must not authorise searching for something else. A
+non-streaming endpoint degrades to one `result` frame rather than failing, so a server without the patch
+still works, just without liveness. Still to come: the agent-facing tool (toolset entry, approval prompt,
+the dispatch phase).
 
 A patched Ollama behind a STOCK OpenWebUI is fine — the `/ollama/*` passthrough is generic, so the
 OpenWebUI fork is not needed for the capacity work.
