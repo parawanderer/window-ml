@@ -1933,9 +1933,11 @@ export interface MlApi {
      *  `ml.answer`: live inside a tool call (an approved `exec`), throws from the console outside a run.
      *
      *  SYNCHRONOUS inside `exec` for a reference written LITERALLY — `@tool:abc1234`, or the same string
-     *  passed directly — because every such reference is resolved before the script starts. So
-     *  `@tool:abc1234.length` is a number, not `undefined` on a promise. A COMPUTED reference (one built at
-     *  runtime) or a call with `pipe` cannot be known in advance and stays a promise. `await` is safe on
+     *  passed directly — and for the no-argument listing, because all of those are resolved before the
+     *  script starts. So `@tool:abc1234.length` is a number, not `undefined` on a promise, and the macro
+     *  and the longhand call it expands to are the same object. Two cases stay a promise: a COMPUTED
+     *  reference (built at runtime, so no static pass can see it), and a call with `pipe`, which mints its
+     *  own pointer for the reduction and so has to go back to the run rather than reduce what is in hand. `await` is safe on
      *  both, since awaiting a non-promise is a no-op — so if in doubt, await. */
     dereference(ref: string, options?: { pipe?: string | string[] | null }): DerefValue | Promise<DerefValue>;
     /** The TS-like type of some JSON — one document's shape, or the JOINED type of several. Same-shaped

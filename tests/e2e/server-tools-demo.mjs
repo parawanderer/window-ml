@@ -57,9 +57,11 @@ const FRAMES = [
 ];
 
 // The pointer macro, reading the remote tool's own output back. No `await`: every reference written
-// literally is resolved before the script starts, so this is an ordinary synchronous read.
+// literally is resolved before the script starts, so this is an ordinary synchronous read — and the macro
+// expands to exactly the call written out longhand above it, so the two spellings are the SAME object.
 const EXEC_JS = `
-const summary = @tool:web_page_fetch_summarize__fetch_page;
+const summary = ml.dereference("@tool:web_page_fetch_summarize__fetch_page");
+console.log("are equal: " + (summary === @tool:web_page_fetch_summarize__fetch_page));
 console.log("read " + summary.length + " characters back through a pointer");
 console.log("first sentence:", summary.split(".")[0] + ".");
 return summary.split(" ").length + " words";

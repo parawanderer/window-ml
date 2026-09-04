@@ -17,7 +17,8 @@ export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | n
 import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom";
 import { expandPointers } from "./pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
 import { runPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
-import { DEREF_TOOL } from "./token-pipe";
+import { DEREF_TOOL, type DerefRead } from "./token-pipe";
+import { DerefText } from "./ml-agent";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";
@@ -35,6 +36,26 @@ import { answerItemFromString, type AnswerSet } from "./answer-set";
 const answerEcho = (set: AnswerSet): string =>
     set.length ? set.dump().map(d => `  [${d.i}] ${d.kind}: ${d.preview}`).join("\n") : "  (empty)";
 import { BUILD_INFO } from "./build-info.gen";
+
+/**
+ * Wrap a pre-resolved pointer read as the SAME value the asynchronous `ml.dereference` returns.
+ *
+ * `ctx.deref` hands back the transport envelope (`{ value, meta, warning }`); the method the model actually
+ * calls returns a {@link DerefText} — a String subclass, which is what makes `.length`, `.split`, template
+ * interpolation and `JSON.parse` work on a pointer without any further explanation. Returning the envelope
+ * from the synchronous path instead would give `.length` of `undefined` and a TypeError on `.split`: the
+ * plausible-wrong-answer shape the sync pointers exist to remove, reintroduced one layer down.
+ *
+ * `.pipe()` re-reads through the real asynchronous method, because a piped read mints its own pointer.
+ */
+function derefValue(read: DerefRead): DerefText {
+    // The advisory goes to the console rather than into the value, exactly as the async path does — this is
+    // about to be split or parsed by the calling script, and exec captures console output into the result.
+    if (read.warning) { try { console.warn(read.warning); } catch { /* no console in this realm */ } }
+    const g = globalThis as unknown as { ml?: { dereference?: (r: string, o: { pipe: string | string[] }) => Promise<DerefText> } };
+    const id = read.meta?.id ? `@tool:${read.meta.id}` : "";
+    return new DerefText(read.value, read.meta, (stages) => Promise.resolve(g.ml!.dereference!(id, { pipe: stages })));
+}
 
 // A single-element tool (describeElement/ancestors) uses the FIRST of N matches — say so, so
 // a loose selector's wrong pick doesn't silently mislead the run (the model can narrow it).
@@ -577,13 +598,19 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // `DerefRead` is a String subclass, so a synchronous return is directly usable — `.length`,
                 // `.split`, template interpolation, `JSON.parse` — with nothing else to explain.
                 const handles = [...new Set(expansions.map(e => e.from))];
-                const pointers = new Map<string, { value?: unknown; error?: string }>();
-                if (handles.length && ctx?.deref) {
+                // The empty key is the NO-ARGUMENT listing ("what does this session hold?"). Pre-resolving it
+                // keeps `ml.dereference()` synchronous — the read a model makes before it knows any id, so
+                // leaving it async would put a promise in the call most likely to be written without an await.
+                // Only when the source actually contains one: on the background path every pre-resolve is a
+                // round trip, and a listing nobody asked for is a wasted one on every exec call.
+                const wantsList = /\bml\s*\.\s*dereference\s*\(\s*\)/.test(js) ? [""] : [];
+                const pointers = new Map<string, { read?: DerefRead; value?: DerefText; error?: string }>();
+                if ((handles.length || wantsList.length) && ctx?.deref) {
                     // Concurrently, and a FAILED read is stored rather than thrown: a bad handle sitting in a
                     // branch the script never reaches must not turn a working program into a failing one.
                     // Eager fetch, lazy failure.
-                    await Promise.all(handles.map(async (ref) => {
-                        try { pointers.set(ref, { value: await ctx.deref!(ref) }); }
+                    await Promise.all([...handles, ...wantsList].map(async (ref) => {
+                        try { pointers.set(ref, { read: await ctx.deref!(ref) }); }
                         catch (e) { pointers.set(ref, { error: errText(e) }); }
                     }));
                 }
@@ -620,14 +647,22 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 const mlSync = realMl && pointers.size
                     ? new Proxy(realMl, {
                         get: (t, prop, r) => (prop === "dereference"
-                            ? (ref: unknown, options?: unknown) => {
-                                const hit = pointers.get(String(ref));
-                                // Not pre-resolved: a COMPUTED handle, which no static pass can see, or a
-                                // `pipe` option that changes what the read returns. Fall through to the real async
-                                // method rather than refusing — a literal is a value, and anything else keeps
-                                // working exactly as it did. Nothing loses a capability by this being sync.
+                            ? (ref: unknown, options?: { pipe?: string | string[] | null }) => {
+                                const hit = pointers.get(ref === undefined ? "" : String(ref));
+                                // TWO cases stay asynchronous, and only these two. A COMPUTED handle, which no
+                                // static pass can see — a literal is a value, a handle built at runtime keeps
+                                // working exactly as it did, so nothing loses a capability by this being sync.
+                                // And a `pipe`, because a piped read MINTS ITS OWN POINTER for the reduction:
+                                // running the dialect locally over the text we already hold would return the
+                                // right string and silently skip the mint, leaving the model unable to cite
+                                // what it just built.
                                 if (!hit || options !== undefined) return (t as unknown as { dereference: (r: unknown, o?: unknown) => unknown }).dereference(ref, options);
                                 if (hit.error) throw new Error(hit.error);
+                                // Constructed once per handle and CACHED, so the macro and the longhand call it
+                                // expands to return the same object and `===` holds between them. Lazily, because
+                                // building it emits the read's advisory to the console and the capture that
+                                // collects console output for the model is not installed until below.
+                                if (!hit.value) hit.value = derefValue(hit.read!);
                                 return hit.value;
                             }
                             : Reflect.get(t, prop, r)),

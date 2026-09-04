@@ -3623,22 +3623,57 @@ test("exec Out: a raised (approved) output cap moves where the model's view ends
 
 // ---- exec: pointers are SYNC, because the lexical pass knows them before anything runs ----
 
+/** The shape `ToolContext.deref` actually resolves to — the run loop's read envelope, not the text. */
+const read = (value, id) => ({ value, meta: { id, kind: "text", tool: "python_exec", step: 1 } });
+
 test("exec: a @tool: pointer is a VALUE, not a promise", async () => {
     // The whole reason the macro is worth having. On a promise, `.length` is `undefined` with no error —
     // the plausible-wrong-answer shape this codebase keeps designing out.
     const world = loadPageWorld({});
     const tool = world.ml.domTools.find(t => t.name === "exec");
-    const ctx = { deref: async (ref) => (ref === "@tool:a39f599" ? "alpha\nbeta\ngamma" : (() => { throw new Error("no such pointer"); })()) };
+    // The envelope the real resolver returns (agent-loop's `derefLocally`) — `{ value, meta }`, NOT a bare
+    // string. Stubbing a string here is what hid the shim handing the script the envelope itself, whose
+    // `.length` is undefined: the exact failure this test claims to be about.
+    const ctx = { deref: async (ref) => (ref === "@tool:a39f599" ? read("alpha\nbeta\ngamma", "a39f599") : (() => { throw new Error("no such pointer"); })()) };
 
     const out = await tool.run({ js: `@tool:a39f599.split("\\n").length` }, ctx);
     assert.match(typeof out === "string" ? out : out.content, /\b3\b/, "read, split and counted — no await anywhere");
+
+    // It is the SAME value the asynchronous method returns: a String subclass, so `.length` and `.split`
+    // work, `.type`/`.id` answer what it is, and it interpolates without a cast.
+    const shape = await tool.run({ js: `const v = @tool:a39f599; return [typeof v.length, v.type, v.id, \`\${v}\`.length].join("|")` }, ctx);
+    assert.match(typeof shape === "string" ? shape : shape.content, /number\|text\|a39f599\|16/);
+});
+
+test("exec: the macro and the longhand call are the SAME object", async () => {
+    // `@tool:x` expands to `ml.dereference("@tool:x")`, so the two spellings must be interchangeable — which
+    // includes identity. A fresh wrapper per read would make `===` false between a line and its own macro.
+    const world = loadPageWorld({});
+    const tool = world.ml.domTools.find(t => t.name === "exec");
+    let calls = 0;
+    const ctx = { deref: async (ref) => { calls++; return read("alpha", "a39f599"); } };
+
+    const out = await tool.run({ js: `const v = ml.dereference("@tool:a39f599"); return v === @tool:a39f599;` }, ctx);
+    assert.match(typeof out === "string" ? out : out.content, /true/);
+    assert.equal(calls, 1, "resolved once, then cached — not re-read per mention");
+});
+
+test("exec: `ml.dereference()` with no argument is synchronous too", async () => {
+    // The listing is the read a model makes BEFORE it knows any id, so leaving it on the async path would put
+    // a promise in the one call most likely to be written without an await.
+    const world = loadPageWorld({});
+    const tool = world.ml.domTools.find(t => t.name === "exec");
+    const ctx = { deref: async (ref) => read(ref ? "a value" : "a39f599 text python_exec 2 steps ago", "") };
+
+    const out = await tool.run({ js: `return ml.dereference().split(" ")[0];` }, ctx);
+    assert.match(typeof out === "string" ? out : out.content, /a39f599/);
 });
 
 test("exec: several pointers resolve concurrently, before a line runs", async () => {
     const world = loadPageWorld({});
     const tool = world.ml.domTools.find(t => t.name === "exec");
     const seen = [];
-    const ctx = { deref: async (ref) => { seen.push(ref); return ref === "@tool:a39f599" ? "one" : "two"; } };
+    const ctx = { deref: async (ref) => { seen.push(ref); return ref === "@tool:a39f599" ? read("one", "a39f599") : read("two", "b4c8d10"); } };
 
     const out = await tool.run({ js: `[@tool:a39f599, @tool:python_exec].join("-")` }, ctx);
     assert.match(typeof out === "string" ? out : out.content, /one-two/);
@@ -3650,7 +3685,7 @@ test("exec: a BAD pointer fails only when read, not when hydrated", async () => 
     // program into a failing one.
     const world = loadPageWorld({});
     const tool = world.ml.domTools.find(t => t.name === "exec");
-    const ctx = { deref: async (ref) => { if (ref === "@tool:baaaaad") throw new Error("MemoryFault: no such pointer"); return "fine"; } };
+    const ctx = { deref: async (ref) => { if (ref === "@tool:baaaaad") throw new Error("MemoryFault: no such pointer"); return read("fine", "a39f599"); } };
 
     const ok = await tool.run({ js: `false ? @tool:baaaaad : @tool:a39f599` }, ctx);
     assert.match(typeof ok === "string" ? ok : ok.content, /fine/, "the unreachable bad pointer never surfaced");
@@ -3665,7 +3700,7 @@ test("exec: a COMPUTED handle still works — it just stays asynchronous", async
     // capability that worked before.
     const world = loadPageWorld({});
     const tool = world.ml.domTools.find(t => t.name === "exec");
-    const ctx = { deref: async () => "computed-value" };
+    const ctx = { deref: async () => read("computed-value", "a39f599") };
     const out = await tool.run({ js: `const r = "@tool:a39f599"; @tool:a39f599; return await ml.dereference(r);` }, ctx);
     assert.match(typeof out === "string" ? out : out.content, /computed-value/);
 });
