@@ -74,6 +74,8 @@ export interface ToolEnvelope {
     cdpType?: { text: string; submit?: boolean; append?: boolean; x?: number; y?: number; selector?: string; index?: number; verify?: boolean; verifyElement?: string; verifyFocus?: boolean };
     /** what the tool fed into the model's context (locate's snap-inject) → surfaced in the debug render + export */
     feedback?: ToolFeedback;
+    /** A remote executor's own timing — see ToolResult.remoteMs. Rides to the timeline, not to the model. */
+    remoteMs?: import("./contract").RemoteTiming;
     /** the built-in `answer` tool already added these to the run's answer set — the loop must not re-add them */
     answerManaged?: boolean;
 }
@@ -113,7 +115,7 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         // also hand back real DOM nodes / a screenshot (routed to onStep/the transcript, never the model).
         if (raw && typeof raw === "object" && typeof (raw as ToolResult).content === "string") {
             const r = raw as ToolResult;
-            return { result: r.content + note, elements: r.elements, answerMedia: r.answerMedia, answerManaged: r.answerManaged, image: r.image, imageLabel: r.imageLabel, images: r.images, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick, cdpExec: r.cdpExec, cdpShadowClick: r.cdpShadowClick, cdpType: r.cdpType, feedback: r.feedback };
+            return { result: r.content + note, elements: r.elements, answerMedia: r.answerMedia, answerManaged: r.answerManaged, image: r.image, imageLabel: r.imageLabel, images: r.images, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick, cdpExec: r.cdpExec, cdpShadowClick: r.cdpShadowClick, cdpType: r.cdpType, feedback: r.feedback, remoteMs: r.remoteMs };
         }
         return { result: String(raw) + note };
     } catch (e) { return { result: `Error: ${errText(e)}` + note }; }

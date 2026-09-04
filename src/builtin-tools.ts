@@ -1660,7 +1660,16 @@ export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: reado
                     if (r.result?.error) return `Error: ${r.result.error}`;
                     const value = r.result?.result;
                     const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
-                    return { content: text, ...(r.output ? { renderOut: { type: "code" as const, code: r.output, lang: "text" } } : {}) };
+                    return {
+                        content: text,
+                        ...(r.output ? { renderOut: { type: "code" as const, code: r.output, lang: "text" } } : {}),
+                        // The executor's own measurement. Our wall clock around this call also contains the
+                        // network and the far end's overhead, so without this the timeline charges the whole
+                        // span to the tool and a slow hop is indistinguishable from a slow tool.
+                        ...(r.result?.durationMs != null
+                            ? { remoteMs: { durationMs: r.result.durationMs, ...(r.result.queuedMs != null ? { queuedMs: r.result.queuedMs } : {}) } }
+                            : {}),
+                    };
                 },
             });
         }

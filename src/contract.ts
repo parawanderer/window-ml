@@ -744,6 +744,10 @@ export interface ToolResult {
     render?: RenderDescriptor;
     /** the In slot: a visualization of the CALL (e.g. python's notebook-cell header) */
     renderIn?: RenderDescriptor;
+    /** A REMOTE executor's own measurement of itself. Only a tool that ran somewhere else reports this, and
+     *  without it that step's span is the tool plus the network as one unattributable number — the same
+     *  confound `prompt_eval_duration` closed for model calls. Rides to the timeline, never to the model. */
+    remoteMs?: RemoteTiming;
     /** RESERVED-surface click signal: the target is a cross-origin iframe / sealed closed shadow root that a
      *  synthetic click can't reach, so the tool declines to click and asks the executor to do a CDP click at
      *  this viewport coordinate instead (page loop → CDP_CLICK message; background → cdpClick directly). See
@@ -973,6 +977,16 @@ export interface MlTool {
      * another, because both read the same field.
      */
     remote?: RemoteToolTarget;
+}
+
+/** What a remote executor says it spent, distinct from what we measured around it. The DIFFERENCE is the
+ *  network and the far end's overhead, and it is only recoverable because the executor reports its own
+ *  number — see docs/spec/REMOTE_TOOL_EXECUTION.md. Absent means unknown, never instant. */
+export interface RemoteTiming {
+    /** Time spent EVALUATING, excluding transport. */
+    durationMs: number;
+    /** Elapsed before evaluation began — resolution, scheduling, a downstream connect. */
+    queuedMs?: number;
 }
 
 /** Where a remote tool actually runs. `via` names the dispatch mechanism, because "an HTTP endpoint
@@ -1789,6 +1803,10 @@ export interface DebugAgentStep extends DebugBase {
     /** How long the approval gate was OPEN, in ms — a human deciding, which is the step's wall time but not
      *  the machine's work. Absent when nothing was gated (auto-approved, read-only, denied without a prompt). */
     approveMs?: number;
+    /** A REMOTE executor's own measurement, when the tool ran somewhere else. `toolMs` above is OUR wall
+     *  clock around the whole dispatch, so it contains the network and the far end's overhead too; this is
+     *  what lets the timeline draw those apart instead of charging the difference to the tool. */
+    remoteMs?: RemoteTiming;
     /** A monotonic id per TOOL-call step in a run, so the sidebar can correlate the in-flight START
      *  (pending: true, no result yet) with the completed DONE and patch the row in place. Thoughts
      *  have no seq. `pending` marks the START (render "running…" until the DONE arrives). */

@@ -25,7 +25,7 @@ export interface ToolMeta { name: string; requiresApproval?: boolean; capabiliti
 // executor's world (page-side for the delegated path) so the emitter can show a rendered In/Out.
 // `image` is a screenshot a vision tool (native `look`) captured — INLINE VISION: it's injected into
 // the model's next turn as a user image (via pushToolImages) so the model reasons over the real pixels.
-export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; image?: string; imageLabel?: string; images?: { image: string; label?: string }[]; feedback?: ToolFeedback; reused?: import("./contract").ReusedGrant[]; }
+export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; image?: string; imageLabel?: string; images?: { image: string; label?: string }[]; feedback?: ToolFeedback; reused?: import("./contract").ReusedGrant[]; remoteMs?: import("./contract").RemoteTiming; }
 
 export interface AgentLoopDeps {
     // One model turn → the assistant message (content + normalized tool_calls + usage + the separate
@@ -78,7 +78,7 @@ export interface AgentLoopDeps {
      *  the request goes out, so a surface can draw the call while it happens rather than back-dating a
      *  finished block over memory it already drew. Optional: a host that has no live surface omits it. */
     emitTurn?(ev: { step: number; phases?: import("./contract").GenPhase[] }): void;
-    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[]; streamOutput?: string; streamMarks?: [number, number][] }): void;
+    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[]; streamOutput?: string; streamMarks?: [number, number][]; remoteMs?: import("./contract").RemoteTiming }): void;
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
@@ -658,7 +658,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 : result;
             // The DONE event carries the clean `result` for the pretty Out AND — when a token line was appended —
             // `modelResult` (what the model ACTUALLY saw), so the log's raw view stays complete (the AGENTS rule).
-            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}), ...(lastApproveMs != null ? { approveMs: lastApproveMs } : {}) });   // DONE (patches the START)
+            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}), ...(lastApproveMs != null ? { approveMs: lastApproveMs } : {}), ...(tr?.remoteMs ? { remoteMs: tr.remoteMs } : {}) });   // DONE (patches the START)
             deps.pushToolResult(messages, call, forModel);
             if (tr?.image) pendingImages.push({ image: tr.image, label: tr.imageLabel || "screenshot" });
             // Multiple images from one call (look's overlay + no-overlay) → each becomes its own inline image.

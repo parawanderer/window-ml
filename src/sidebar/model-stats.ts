@@ -34,6 +34,9 @@ export interface UsageSource {
         awaitingApproval?: boolean;
         /** How long the tool itself ran (the loop measures it around the dispatch, excluding the gate). */
         toolMs?: number;
+        /** What a REMOTE executor said IT spent. `toolMs` is our wall clock around the whole dispatch, so it
+         *  also contains the network; this is what lets the two be drawn apart. */
+        remoteMs?: { durationMs: number; queuedMs?: number } | null;
         /** How long the approval gate was open — the human's time, measured separately for exactly that
          *  reason: it is the step's wall clock but not the machine's work. */
         approveMs?: number;
@@ -199,6 +202,18 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
                 // fragments, and back again if it interleaved.
                 if (genMs > 0) phases.push(...genPhases(from, genMs, turnU?.genPhases));
                 if (waitMs > 0) phases.push({ kind: "wait", until: from + genMs + waitMs });
+                // A REMOTE tool splits further, and only because it reported its own numbers: what it spent
+                // evaluating, what it spent getting started, and — by subtraction — what the network cost.
+                // Drawn network-FIRST: the request has to get there before anything else happens, and the
+                // return leg is folded in with it because nothing measures the two halves separately.
+                const rm = st.remoteMs;
+                const toolStart = from + genMs + waitMs;
+                if (rm && rm.durationMs >= 0 && st.toolMs != null && rm.durationMs <= st.toolMs) {
+                    const q = Math.max(0, Math.min(rm.queuedMs ?? 0, st.toolMs - rm.durationMs));
+                    const net = Math.max(0, st.toolMs - rm.durationMs - q);
+                    if (net > 0) phases.push({ kind: "net", until: toolStart + net });
+                    if (q > 0) phases.push({ kind: "queue", until: toolStart + net + q });
+                }
                 phases.push({ kind: "tool", until: st.ts });
                 const stepId = `step:${s.hash}:${st.seq ?? st.step ?? 0}`;
                 out.push({
