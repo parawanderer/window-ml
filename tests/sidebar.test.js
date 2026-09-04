@@ -7300,3 +7300,54 @@ test("lane filter: chips say what they hide, kinds persist, scope follows what y
     // the chart exists for. (Covered exactly in resource-model.test.mjs; here it is the scope chip working.)
     assert.ok(scope.classList.contains("on"));
 });
+
+// ---- Settings → Server-side tools: the read-only browser for what the backend exposes ----
+// Reuses the SAME ToolDefsView an agent run's "agent options" block uses for its local toolset, so a remote
+// tool and a local one read the same way rather than in two dialects.
+
+test("server tools: listed on demand, one entry per FUNCTION", async () => {
+    const w = await loadSidebarWorld({ serverTools: [{
+        id: "searxng_web_search", name: "SearXNG", description: "Web search.", kind: "local",
+        functions: [{ name: "search_web", description: "Search the web.", parameters: { type: "object", properties: { q: { type: "string" } }, required: ["q"] } }],
+    }, {
+        id: "web_page_fetch_summarize", name: "Fetch", description: "Read a page.", kind: "local",
+        functions: [{ name: "fetch_page", description: "Fetch one page.", parameters: { type: "object", properties: { url: { type: "string" } } } }],
+    }] });
+    await openSettings(w, "Advanced");
+
+    // Fetched on EXPAND, not on mount: a settings panel opening should not call the backend for a section
+    // nobody looked at.
+    const btn = [...w.shadow.querySelectorAll(".raw-btn")].find(b => /list server tools/i.test(b.textContent));
+    assert.ok(btn, `the section offers to list them — buttons: ${[...w.shadow.querySelectorAll(".raw-btn")].map(b => b.textContent.trim()).join(" | ")} — has heading: ${/server-side tools/i.test(w.shadow.textContent)}`);
+    btn.click();
+    await w.flush();
+
+    // One per function, named the way ml.agent({serverTools}) would expose it — so what you read here is
+    // what a run would actually be given, not a bundle summary to unpack.
+    const html = w.shadow.body.innerHTML;
+    assert.ok(/searxng_web_search__search_web/.test(html), "bundle__function");
+    assert.ok(/web_page_fetch_summarize__fetch_page/.test(html));
+    assert.match(html, /2 bundles, 2 functions/);
+});
+
+test("server tools: an EMPTY list explains itself instead of reading as an error", async () => {
+    // A bare-Ollama backend has no such concept and a stock OpenWebUI has none configured — neither is a
+    // failure, and a blank panel would look like one.
+    const w = await loadSidebarWorld({ serverTools: [] });
+    await openSettings(w, "Advanced");
+    const b2 = [...w.shadow.querySelectorAll(".raw-btn")].find(b => /list server tools/i.test(b.textContent));
+    assert.ok(b2, `no list button — buttons: ${[...w.shadow.querySelectorAll(".raw-btn")].map(b => b.textContent.trim()).join(" | ")}`);
+    b2.click();
+    await w.flush();
+    assert.match(w.shadow.body.innerHTML, /no server-side tools configured/i);
+});
+
+test("server tools: an unreachable backend says so, and does not look empty", async () => {
+    const w = await loadSidebarWorld({ serverTools: () => { throw new Error("Failed to fetch"); } });
+    await openSettings(w, "Advanced");
+    const b3 = [...w.shadow.querySelectorAll(".raw-btn")].find(b => /list server tools/i.test(b.textContent));
+    assert.ok(b3, "no list button");
+    b3.click();
+    await w.flush();
+    assert.match(w.shadow.body.innerHTML, /could not reach the backend/i);
+});

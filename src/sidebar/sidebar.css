@@ -1857,3 +1857,5 @@ html[data-surface="card"] .appr-btn.no:hover {
 /* A caption above a rendered block saying it is not literally what the caller wrote — `exec` uses it for
    expanded pointer macros. Quiet: it explains the render, it is not part of it. */
 .rp-note { font-size: .85em; color: var(--fg-dim); margin: 0 0 4px; font-style: italic; }
+/* A hint REPORTING a failure rather than explaining a control. */
+.hint.err { color: var(--err, #ef4444); }

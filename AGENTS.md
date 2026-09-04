@@ -1447,7 +1447,16 @@ bundle is skipped rather than failing the run. **The tool declares `remote: {via
 the approval card and the background's grant read THAT rather than the tool's name — so a page choosing a
 friendly name cannot make the card say `search_web` while the grant authorises `send_email`. Its `render`
 is an `action` descriptor whose note says the arguments leave the machine, styled like a navigation because
-something is departing. **`ml.dynamicTools.<bundle>.<fn>(args)`** is the same tools as a callable NAMESPACE (`dynamic-tools.ts`).
+something is departing. **Settings → Advanced → "Server-side tools"** is the read-only browser for what the backend exposes, since
+discovery otherwise meant calling `ml.serverTools()` and reading JSON. It renders through the SAME
+`ToolDefsView` an agent run's "agent options" block uses for the LOCAL toolset, so a remote tool and a local
+one are read the same way rather than in two dialects, and it lists ONE ENTRY PER FUNCTION under the name
+`ml.agent({serverTools})` would expose — what a run would actually be given, not a bundle to unpack.
+Fetched on EXPAND, not on mount: a settings panel opening should not call the backend for a section nobody
+looked at. An empty list SAYS it is empty (a bare-Ollama endpoint has no such concept) rather than
+rendering blank, which would read as a failure.
+
+**`ml.dynamicTools.<bundle>.<fn>(args)`** is the same tools as a callable NAMESPACE (`dynamic-tools.ts`).
 Namespaced by BUNDLE, not flattened: function names come from the server and two bundles can both expose
 `search`, so flattening would silently call the wrong one. Each callable carries **`.schema`** (the
 function's JSON Schema) and `.spec` — the SAME object the call is validated against by `validateArgs`

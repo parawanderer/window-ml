@@ -465,7 +465,7 @@ function closeSidebarWorlds() {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null } = {}) {
     const unloadCalls = [];
     const pyCalls = [];   // PYTHON_EXEC payloads the app sent (the bench)
     const printCalls = [];   // PRINT_SESSION payloads (the PDF export routes its rendered doc to the background)
@@ -515,6 +515,14 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
                     else cb({ data: now ?? null });
                 }
                 else if (type === "OLLAMA_UNLOAD") { unloadCalls.push(msg.payload); cb({ data: [] }); }
+                // The Settings → Server-side tools browser. A function may THROW to play an unreachable
+                // backend, since "empty" and "could not reach it" must not look the same in the UI.
+                else if (type === "LIST_SERVER_TOOLS") {
+                    let reply = { data: [] };
+                    if (typeof serverTools === "function") { try { reply = { data: serverTools() }; } catch (e) { reply = { error: String(e.message || e) }; } }
+                    else if (serverTools) reply = { data: serverTools };
+                    cb(reply);
+                }
                 else if (type === "PYTHON_EXEC") { pyCalls.push(msg.payload); cb({ data: typeof pythonExec === "function" ? pythonExec(msg.payload) : (pythonExec || { ok: true, value: 42, stdout: "" }) }); }   // background wraps: { data: PyResult }
                 else cb({ data: null });
             },
