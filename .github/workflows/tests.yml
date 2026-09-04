@@ -17,14 +17,21 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # Is this change DOCS-ONLY? The browser jobs below take five to seven minutes, and a markdown edit
-  # cannot affect them — but a wrong answer here silently skips a real check, which is worse than the
-  # minutes it saves. So the rule is: a skip must be POSITIVELY PROVEN, and everything else runs.
+  # Can this change POSSIBLY affect the browser jobs? They take five to fifteen minutes, and a markdown
+  # edit cannot reach them — but a wrong answer here silently skips a real check, which is worse than
+  # the minutes it saves. So the rule is: a skip must be POSITIVELY PROVEN, and everything else runs.
   #
-  # Two traps this repo has, both worth stating because the obvious version gets them wrong:
+  # Two things qualify. Prose (markdown, images, the agent skills), and `openwebui/**`, which is the
+  # Python source of the OpenWebUI-side workspace tools: it is never bundled, never imported, and
+  # nothing under tests/ or build.mjs reads it, so it cannot change what a browser does. Its own tests
+  # are the `tools` job below, which runs either way.
+  #
+  # Three traps this repo has, all worth stating because the obvious version gets them wrong:
   #   - `docs/**` is NOT docs. docs/spec/export.schema.json is GENERATED and checked in, and
   #     tests/export-schema.test.mjs diffs it. Ignoring docs/ wholesale would let a stale contract land.
   #   - the workflow itself is not docs: a change to this file must run everything it describes.
+  #   - `examples/**` is NOT excludable the way openwebui/ is: the e2e harness serves those pages, so
+  #     a change to one is a change to what the browser jobs actually exercise.
   #
   # The decision is written to the run summary rather than being an invisible skip, so a job that did not
   # run says so on the page you are already looking at.
@@ -53,15 +60,15 @@ jobs:
             exit 0
           fi
           files=$(git diff --name-only "$base" HEAD)
-          # Docs = markdown, images, and the agent skills. Everything else — including any .json under
-          # docs/ — counts as code.
-          other=$(echo "$files" | grep -vE '(\.md$|\.png$|\.jpe?g$|\.gif$|^\.claude/)' || true)
+          # Prose, plus the OpenWebUI tool sources. Everything else — including any .json under
+          # docs/ — counts as code. See the note above this job for why each entry is safe.
+          other=$(echo "$files" | grep -vE '(\.md$|\.png$|\.jpe?g$|\.gif$|^\.claude/|^openwebui/)' || true)
           if [ -n "$files" ] && [ -z "$other" ]; then
             echo "code=false" >> "$GITHUB_OUTPUT"
             {
-              echo "### Docs-only change — skipped \`e2e\` and \`bench\`"
+              echo "### Nothing here can reach a browser — skipped \`e2e\` and \`bench\`"
               echo ""
-              echo "No source file changed, so the browser jobs cannot be affected. Files:"
+              echo "Only prose and/or \`openwebui/\` Python changed, so the browser jobs cannot be affected. Files:"
               echo ""
               echo '```'
               echo "$files"
@@ -128,6 +135,16 @@ jobs:
 
   # Build the loadable extension and upload it, so users can grab a ready-to-load
   # dist/ from any run instead of building locally (the extension now needs a build).
+  # The OpenWebUI workspace tools are Python and run inside someone else's server, so `npm test`
+  # cannot see them at all. These drive the shipped files with `requests` and `pydantic` stubbed —
+  # stdlib only, no install step, a couple of seconds — so the streaming contract has a check rather
+  # than a deployment and a hope.
+  tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 -m unittest discover -s openwebui/tests -v
+
   build:
     runs-on: ubuntu-latest
     steps:
