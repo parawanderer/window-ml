@@ -47,16 +47,54 @@ export const DEFAULT_TASK = "What code is shown on this page? Use findByText to 
  * OPENWEBUI_* out of .env). Returns null when neither is set, meaning "use the fake-LLM".
  * @returns {Promise<{chatUrl: string, model: string, key: string, utilityModel?: string, visionModel?: string} | null>}
  */
+/** The route to append when `OPENWEBUI_URL` names only a host. Keyed by wire format. */
+const DEFAULT_CHAT_PATH = { openai: "/api/chat/completions", ollama: "/api/chat" };
+
+/**
+ * Build a backend from a parsed `.env`. Pure, so the rules below are testable without a file on disk.
+ *
+ * The wire format is a property of the ENDPOINT, not of the server: OpenWebUI serves the OpenAI shape at
+ * `/api/chat/completions` and a raw Ollama passthrough at `/ollama/api/chat`, so the same host is either
+ * depending on where you point. That is why it cannot be inferred from "is this OpenWebUI" and has to be
+ * said. `openai` is the default because it is the one that supports server-side tools.
+ *
+ * `OPENWEBUI_URL` may be a bare host (the route is appended) or a full chat URL (used as given). Appending
+ * unconditionally is what made "or Ollama" in `.env.example` untrue: a bare Ollama at :11434 was sent an
+ * OpenAI-shaped body at `/api/chat/completions`, a route it does not serve.
+ */
+export function backendFromDotenv(dotenv, env = {}) {
+    const apiFormat = (dotenv.OPENWEBUI_API_FORMAT || "openai").trim().toLowerCase();
+    if (!DEFAULT_CHAT_PATH[apiFormat]) {
+        throw new Error(`OPENWEBUI_API_FORMAT must be "openai" or "ollama", got ${JSON.stringify(apiFormat)}`);
+    }
+    const raw = (dotenv.OPENWEBUI_URL || "").trim().replace(/\/$/, "");
+    // A path means the URL is already the endpoint. `new URL` rather than a regex so a port is not read
+    // as one, and so a malformed value fails here rather than as a confusing fetch error later.
+    let chatUrl = raw;
+    try {
+        const u = new URL(raw);
+        if (u.pathname === "/" || u.pathname === "") chatUrl = raw + DEFAULT_CHAT_PATH[apiFormat];
+    } catch { /* not a URL — hand it back as given and let the request fail with the value in it */ }
+    return {
+        chatUrl, apiFormat,
+        model: env.E2E_MODEL || dotenv.OPENWEBUI_MODEL || "",
+        key: dotenv.OPENWEBUI_KEY || "",
+        utilityModel: dotenv.OPENWEBUI_UTILITY_MODEL || "",
+        visionModel: dotenv.OPENWEBUI_VISION_MODEL || "",
+    };
+}
+
 export async function resolveBackendFromEnv(env = process.env) {
-    if (env.E2E_BACKEND) return { chatUrl: env.E2E_BACKEND, model: env.E2E_MODEL || "", key: env.E2E_KEY || "" };
+    if (env.E2E_BACKEND) {
+        return {
+            chatUrl: env.E2E_BACKEND, model: env.E2E_MODEL || "", key: env.E2E_KEY || "",
+            apiFormat: (env.E2E_FORMAT || "openai").toLowerCase(),
+        };
+    }
     if (env.USE_ENV) {
         const dotenv = Object.fromEntries((await readFile(path.resolve(".env"), "utf8")).split("\n")
             .map((l) => l.trim()).filter((l) => l && !l.startsWith("#")).map((l) => { const i = l.indexOf("="); return [l.slice(0, i), l.slice(i + 1)]; }));
-        const base = (dotenv.OPENWEBUI_URL || "").replace(/\/$/, "");
-        return {
-            chatUrl: `${base}/api/chat/completions`, model: env.E2E_MODEL || dotenv.OPENWEBUI_MODEL || "", key: dotenv.OPENWEBUI_KEY || "",
-            utilityModel: dotenv.OPENWEBUI_UTILITY_MODEL || "", visionModel: dotenv.OPENWEBUI_VISION_MODEL || "",
-        };
+        return backendFromDotenv(dotenv, env);
     }
     return null;   // → fake-LLM
 }
@@ -351,7 +389,7 @@ export async function runOnce(cfg = {}) {
         const seedCfg = seed && fake ? { chatUrl: fake.url, apiKey: "", model: "fake-model" } : null;
         await configureExtension(ext.sw, {
             ...(seedCfg || realCfg),
-            apiFormat: "openai",
+            apiFormat: backend?.apiFormat || "openai",
             utilityModel: backend?.utilityModel || "",
             ocrModel: backend?.visionModel || "",
             modelFilter: "",
@@ -498,7 +536,7 @@ export async function runOnce(cfg = {}) {
                 seedBoundaryStep = maxStep();
                 // Swap to the MEASURED backend mid-session. Config is chrome.storage.sync — the run's history,
                 // its pointer store and its session hash are all untouched by the change.
-                await configureExtension(ext.sw, { ...realCfg, apiFormat: "openai" });
+                await configureExtension(ext.sw, { ...realCfg, apiFormat: backend?.apiFormat || "openai" });
                 if (fake) fake.setScript(script);
                 log(`  seeded through step ${seedBoundaryStep}; measuring on ${backendLabel}`);
             }

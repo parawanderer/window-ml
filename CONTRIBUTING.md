@@ -123,8 +123,13 @@ real-CPython tests want `pyodide-wheels/` (step 4), and the live-backend tests w
 ### Talking to a real model in tests
 
 ```bash
-cp .env.example .env      # then fill in your backend URL, key and model
+cp .env.example .env      # then fill in your backend URL, format, key and model
 ```
+
+`OPENWEBUI_API_FORMAT` is the one worth reading the comment for: it is a property of the ENDPOINT rather
+than of the server (OpenWebUI serves both wire shapes at different paths), so it has to match the URL and
+cannot be guessed. Getting it wrong does not fail cleanly — an unknown route returns OpenWebUI's SPA HTML,
+so the symptom is "the response was not JSON".
 
 That enables the opt-in live tests, and lets the observation and benchmark harnesses run against your own
 box (`USE_ENV=1`). Without it they use a scripted fake backend, which is what CI does.
