@@ -50,6 +50,21 @@ alone, so the rule is the same for both: **never merge on the watch's exit statu
 `gh pr checks <PR>` and read that every check says `pass`.** The tell is a watch that ends far too early,
 or whose final output still contains `pending`.
 
+**When a push supersedes the run you are watching**, the watch loses it and ends with `no checks reported`
+while its last table still says `pending` — both spurious-zero cases at once, and the likeliest way to see
+them, since pushing a docs fixup mid-run is normal. Rather than re-entering the watch (which can race the
+new run's registration all over again), poll for a TERMINAL state and print it:
+
+```bash
+# 1. wait for the new run to register, then 2. wait until nothing is pending.
+until gh pr checks "$PR" 2>/dev/null | grep -qE "pass|fail|pending"; do sleep 10; done
+until out=$(gh pr checks "$PR" 2>&1); ! grep -qE "pending" <<<"$out"; do sleep 25; done
+echo "$out"    # every line must say pass (or skipping) before merging
+```
+
+This is the "confirm with a real poll" step above, done once instead of after the fact, and it is immune to
+both traps because it never trusts an exit code.
+
 **Do not run it in the foreground and wait.** Use `run_in_background: true` and carry on; the result
 arrives as a task notification. A full run of this workflow is ~5 minutes (matrix + build + e2e).
 
