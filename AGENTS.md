@@ -1395,6 +1395,22 @@ broken:
   output: OpenWebUI has no streaming tool protocol, so frames come from `__event_emitter__` and a tool that
   only `print()`s streams nothing.
 
+**Remote tool execution — `src/tool-protocol.ts`.** Two things that must not be confused. A PUBLISHED MCP
+EXTENSION: one `_meta` key (`dev.wander.windowml/timing` → `{durationMs, queuedMs?}`) that anyone can
+implement, because MCP results carry no timing at all and a client's own wall clock is the tool plus the
+network as one unattributable number. Documented here rather than by forking MCP's schema — MCP's own rules
+say a vendor extension is specified in its owner's docs, and a fork would be a large surface we do not
+control, going stale every revision, published as something that looks like MCP and is not. And OUR
+NORMALIZED MODEL (`ToolFrame`: `output`/`event`/`result`), which every source is adapted into — MCP
+notifications, OpenWebUI's NDJSON, a local container over IPC. Typed and schema-generated so a consumer gets
+real models, NOT advertised as a wire format: inventing a rival to MCP is the mistake the shape avoids.
+`anchorFor`/`anchorOffset` are shared because a remote host's clock is not the user's, so frames carry
+OFFSETS and the client anchors at the first frame's arrival — two adapters each inventing that rule is the
+drift a normalized model exists to prevent. **The schema pins frame SHAPES, never sequencing**: "result is
+last and mandatory", "output frames are deltas", "a closed connection means cancel" live in the spec.
+The generator is now TABLE-DRIVEN (`SCHEMAS` in `scripts/gen-export-schema.mjs`) — three documents from one
+line scanner, because two copies of a scanner drift exactly the way a generated schema is meant to prevent.
+
 A patched Ollama behind a STOCK OpenWebUI is fine — the `/ollama/*` passthrough is generic, so the
 OpenWebUI fork is not needed for the capacity work.
 

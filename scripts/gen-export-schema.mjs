@@ -35,7 +35,6 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const OUT = join(ROOT, "docs/spec/export.schema.json");
 
 /** Types borrowed from contract.ts that ARE part of the version promise: resolved and inlined. */
 const RESOLVE_FROM_CONTRACT = [
@@ -333,51 +332,116 @@ function interfaceToSchema(name, iface, ctx) {
     };
 }
 
-/** Build the whole document. Exported so the test can regenerate without shelling out. */
-export function buildSchema() {
-    const schemaSrc = readFileSync(join(ROOT, "src/export-schema.ts"), "utf8");
+/**
+ * The documents this generates. Table-driven rather than one hardcoded path, because the second one
+ * arrived and the alternative was a copied generator — and two copies of a line scanner drift in
+ * exactly the way that produces a schema quietly describing less than it claims.
+ *
+ * `source` is the normative TypeScript; `root` is the interface the document describes. Every type
+ * either file reaches is resolved transitively from `src/contract.ts` and the source itself.
+ */
+export const SCHEMAS = [
+    {
+        key: "export",
+        source: "src/export-schema.ts",
+        root: "ExportDocument",
+        out: "docs/spec/export.schema.json",
+        title: "window.ml run export",
+        versionConst: "EXPORT_SCHEMA_VERSION",
+        blurb: "A window.ml session export",
+    },
+    {
+        // The MCP extension, as its own document: someone implementing the `_meta` key validates their
+        // payload against this, and has no reason to care about our frame model.
+        key: "tool-timing",
+        source: "src/tool-protocol.ts",
+        root: "ToolTiming",
+        out: "docs/spec/tool-timing.schema.json",
+        title: "window.ml tool timing (MCP _meta extension)",
+        versionConst: "TOOL_PROTOCOL_VERSION",
+        blurb: 'The payload of the `dev.wander.windowml/timing` key on an MCP tools/call result',
+    },
+    {
+        key: "tool-protocol",
+        source: "src/tool-protocol.ts",
+        root: "ToolFrame",
+        out: "docs/spec/tool-protocol.schema.json",
+        title: "window.ml tool execution frame",
+        versionConst: "TOOL_PROTOCOL_VERSION",
+        blurb: "One frame of a streaming tool execution",
+    },
+];
+
+const specFor = (key) => {
+    const spec = SCHEMAS.find((s) => s.key === key);
+    if (!spec) throw new Error(`gen-export-schema: no schema named "${key}" — one of ${SCHEMAS.map((s) => s.key).join(", ")}`);
+    return spec;
+};
+
+/** Build one document. Exported so the test can regenerate without shelling out. */
+export function buildSchema(key = "export") {
+    const spec = specFor(key);
+    const schemaSrc = readFileSync(join(ROOT, spec.source), "utf8");
     const contractSrc = readFileSync(join(ROOT, "src/contract.ts"), "utf8");
 
-    const own = scanInterfaces(schemaSrc, "export-schema.ts");
-    if (!own.has("ExportDocument")) throw new Error("gen-export-schema: export-schema.ts no longer declares ExportDocument");
+    const own = scanInterfaces(schemaSrc, spec.source);
     const contract = scanInterfaces(contractSrc, "contract.ts");
+    const aliases = new Map([...scanAliases(contractSrc), ...scanAliases(schemaSrc)]);
 
-    const version = (schemaSrc.match(/EXPORT_SCHEMA_VERSION\s*=\s*(\d+)/) || [])[1];
-    if (!version) throw new Error("gen-export-schema: EXPORT_SCHEMA_VERSION not found");
+    const version = (schemaSrc.match(new RegExp(`${spec.versionConst}\\s*=\\s*(\\d+)`)) || [])[1];
+    if (!version) throw new Error(`gen-export-schema: ${spec.versionConst} not found in ${spec.source}`);
 
     const ctx = {
-        // export-schema.ts wins a name clash: it is the normative file.
+        // The normative file wins a name clash with contract.ts.
         ifaces: new Map([...contract, ...own]),
-        aliases: new Map([...scanAliases(contractSrc), ...scanAliases(schemaSrc)]),
+        aliases,
         unstable: new Set([...scanUnstable(contractSrc), ...scanUnstable(schemaSrc)]),
         resolving: new Set(),
         defs: {},
     };
-    const root = interfaceToSchema("ExportDocument", own.get("ExportDocument"), ctx);
+    // A root may be an interface or a union alias (a frame protocol's root is the union of its frames).
+    let root;
+    if (own.has(spec.root)) {
+        root = interfaceToSchema(spec.root, own.get(spec.root), ctx);
+    } else if (aliases.has(spec.root)) {
+        ctx.unstableUnion = ctx.unstable.has(spec.root);
+        root = typeToSchema(aliases.get(spec.root), ctx);
+        ctx.unstableUnion = false;
+    } else {
+        throw new Error(`gen-export-schema: ${spec.source} no longer declares ${spec.root}`);
+    }
     const $defs = ctx.defs;
-    delete $defs.ExportDocument;
+    delete $defs[spec.root];
+    const file = spec.source.replace(/^src\//, "");
     return {
         $schema: "https://json-schema.org/draft/2020-12/schema",
-        $id: "https://raw.githubusercontent.com/parawanderer/window-ml/main/docs/spec/export.schema.json",
-        title: "window.ml run export",
-        description: `A window.ml session export, schema version ${version}. GENERATED from export-schema.ts by scripts/gen-export-schema.mjs — do not edit by hand. The TypeScript file is normative; this is its language-neutral twin, for writing a parser or generating models in another language.`,
+        $id: `https://raw.githubusercontent.com/parawanderer/window-ml/main/${spec.out}`,
+        title: spec.title,
+        description: `${spec.blurb}, schema version ${version}. GENERATED from ${file} by scripts/gen-export-schema.mjs — do not edit by hand. The TypeScript file is normative; this is its language-neutral twin, for writing a parser or generating models in another language.`,
         "x-schemaVersion": Number(version),
         ...root,
         $defs,
     };
 }
 
-export function writeSchema() {
-    const doc = buildSchema();
-    const text = JSON.stringify(doc, null, 2) + "\n";
-    mkdirSync(dirname(OUT), { recursive: true });
+/** Write one document, or every document when called with no key. Returns the text of the last one. */
+export function writeSchema(key) {
+    if (key === undefined) {
+        let text = "";
+        for (const s of SCHEMAS) text = writeSchema(s.key);
+        return text;
+    }
+    const spec = specFor(key);
+    const out = join(ROOT, spec.out);
+    const text = JSON.stringify(buildSchema(key), null, 2) + "\n";
+    mkdirSync(dirname(out), { recursive: true });
     let prev = "";
-    try { prev = readFileSync(OUT, "utf8"); } catch { /* first run */ }
-    if (prev !== text) writeFileSync(OUT, text);   // rewrite only on change, so --watch doesn't self-trigger
+    try { prev = readFileSync(out, "utf8"); } catch { /* first run */ }
+    if (prev !== text) writeFileSync(out, text);   // rewrite only on change, so --watch doesn't self-trigger
     return text;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
     writeSchema();
-    console.log(`wrote ${OUT.replace(ROOT + "/", "")}`);
+    for (const s of SCHEMAS) console.log(`wrote ${s.out}`);
 }
