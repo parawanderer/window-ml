@@ -1045,8 +1045,13 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   cd window-ml-<what-you-are-doing>
   ln -s ../window-ml/.env .env                       # the backend + key, for USE_ENV=1
   ln -s ../window-ml/pyodide-wheels pyodide-wheels   # 28MB of static wheels, don't re-download
+  git config core.hooksPath .githooks                # LOCAL config: it does not clone
   npm ci && npm run build
   ```
+
+  The `core.hooksPath` line is easy to skip and its absence is silent in the worst direction: commits keep
+  working, so nothing looks wrong, and the pre-commit checks (formatting, and regenerating
+  `docs/spec/export.schema.json` to catch a stale one) simply never run. You find out in review.
 
   **Tell the user to open both directories in one VS Code window** (File > Add Folder to Workspace, or
   `code ~/git/window-ml ~/git/window-ml-bench`). Each session then edits its own tree while the human
