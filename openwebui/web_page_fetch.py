@@ -8,7 +8,7 @@ description: Fetch a single web page, strip it to readable text, and (by default
 
 requirements: requests, trafilatura, beautifulsoup4
 
-version: 0.1.0
+version: 0.2.0
 
 license: MIT
 """
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import socket
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -93,6 +94,15 @@ class Tools:
         SUMMARY_TIMEOUT: int = Field(
             default=180,
             description="Summarizer model timeout, seconds. Local models can be slow.",
+        )
+        STREAM_SUMMARY: bool = Field(
+            default=True,
+            description=(
+                "Emit the summary as it is generated instead of only when it is finished. "
+                "A local model can take a minute on a long page, and a client that streams "
+                "tool output shows the answer being written rather than a bar that sits "
+                "still and then jumps."
+            ),
         )
         ALLOW_PRIVATE_HOSTS: bool = Field(
             default=False,
@@ -204,9 +214,30 @@ class Tools:
         clipped = len(text) > self.valves.MAX_PAGE_CHARS
 
         await emit(f"Reading {host} with {self.valves.SUMMARY_MODEL}")
+
+        on_delta = None
+        if self.valves.STREAM_SUMMARY and __event_emitter__:
+            loop = asyncio.get_running_loop()
+
+            async def stream_out(delta: str):
+                # A dedicated type rather than "message": OpenWebUI APPENDS a message event
+                # into the assistant's reply and persists it, so streaming tokens through it
+                # would print the summary twice in the chat UI, once here and once when the
+                # calling model reads this tool's result. An unrecognised type is forwarded
+                # to clients verbatim and stored nowhere, which is exactly what is wanted.
+                await __event_emitter__(
+                    {"type": "tool:output", "data": {"content": delta}}
+                )
+
+            def on_delta(delta: str) -> None:  # noqa: F811
+                # _summarize runs in a worker thread and the emitter is not thread-safe, so
+                # each token hops back to the loop. Waiting on the result keeps the deltas in
+                # order and lets a slow consumer push back on a fast model.
+                asyncio.run_coroutine_threadsafe(stream_out(delta), loop).result()
+
         try:
             answer = await asyncio.to_thread(
-                self._summarize, url, title, page, query, clipped
+                self._summarize, url, title, page, query, clipped, on_delta
             )
         except Exception as e:
             await emit(f"Summarization failed: {e}", "error", True)
@@ -318,8 +349,20 @@ class Tools:
         )
 
     def _summarize(
-        self, url: str, title: str, page: str, query: str, clipped: bool
+        self,
+        url: str,
+        title: str,
+        page: str,
+        query: str,
+        clipped: bool,
+        on_delta: Callable[[str], None] | None = None,
     ) -> str:
+        """Compress the page against the question, optionally reporting the answer as it arrives.
+
+        :param on_delta: called with each token as the model emits it. When given, the request is
+            made in streaming mode; when not, one response is awaited as before.
+        :returns: the finished summary, identical either way.
+        """
         user_prompt = (
             f"QUESTION: {query.strip() or 'Summarize the key points of this page.'}\n\n"
             f"PAGE URL: {url}\n"
@@ -340,23 +383,57 @@ class Tools:
                     {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
                 ],
-                "stream": False,
+                "stream": on_delta is not None,
                 "temperature": 0.1,
             },
             timeout=self.valves.SUMMARY_TIMEOUT,
+            stream=on_delta is not None,
         )
         resp.raise_for_status()
-        data = resp.json()
 
-        try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError):
-            raise ValueError(f"unexpected response shape: {str(data)[:300]}")
+        content = (
+            self._consume_stream(resp, on_delta)
+            if on_delta is not None
+            else self._consume_response(resp)
+        )
 
         content = (content or "").strip()
         if not content:
             raise ValueError("the summarizer returned an empty response")
         return content
+
+    @staticmethod
+    def _consume_response(resp: Any) -> str:
+        """Read a single non-streamed chat completion."""
+        data = resp.json()
+        try:
+            return data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            raise ValueError(f"unexpected response shape: {str(data)[:300]}")
+
+    @staticmethod
+    def _consume_stream(resp: Any, on_delta: Callable[[str], None]) -> str:
+        """Read an SSE chat completion, reporting each token and returning the whole.
+
+        A malformed or unexpected line is skipped rather than raising: the summary that did
+        arrive is worth more than an exception about one frame, and an empty result is caught
+        by the caller anyway.
+        """
+        parts: list[str] = []
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data:"):
+                continue
+            payload = line[len("data:") :].strip()
+            if payload == "[DONE]":
+                break
+            try:
+                delta = json.loads(payload)["choices"][0]["delta"].get("content")
+            except (ValueError, KeyError, IndexError, TypeError):
+                continue
+            if delta:
+                parts.append(delta)
+                on_delta(delta)
+        return "".join(parts)
 
     @staticmethod
     async def _cite(
