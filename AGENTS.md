@@ -925,7 +925,21 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
 - **A wheel over the panel scrolls the transcript underneath it** (`wheelThroughPanel` in `app.tsx`). The
   panel is a fixed-height sibling of the scroll container rather than content inside it, so the gesture used
   to do nothing at all; it is forwarded only when the panel cannot take the scroll itself, and `deltaMode`
-  is honoured because a wheel reports LINES, not pixels.
+  is honoured because a wheel reports LINES, not pixels.  A wheel over the CHART means something more specific and claims the
+  gesture first (`scrubNudge`): the plot is a viewport onto a timeline, so scrolling it scrolls the window
+  along the session, by a fraction of the window's OWN width so one notch travels the same visible distance
+  at any zoom. It only fires when there IS a window to move, and signals that by calling `preventDefault` —
+  which is what `wheelThroughPanel` then checks, so a gesture the chart declined still scrolls the page.
+- **WHERE you grab the scrub window decides what the drag does** (`scrubZone` → `scrubResize`/`scrubTo`, all
+  pure/tested): the edges resize, the middle pans. Recentring on the cursor wherever it landed is what made
+  a narrowed window impossible to widen again, since every grab was a pan including a grab on a handle. The
+  handle is a constant PIXEL size converted to a fraction of the track, capped at a third of the window so a
+  very narrow one is not all handle; a resize reads from the window captured AT the grab, so the fixed edge
+  does not drift as each move rewrites the range it is measured from.
+- **A person at the approval gate is STRIPED, like a model load** — it is the step's wall time but none of
+  the machine's work, and flat, a wide block reads as a lot of work having happened. Drawn as an overlay
+  element over the flat neutral (`phaseSpans` → `.rc-ev-wait`) rather than into the phase gradient, because
+  a gradient stop takes a colour and a stripe is a pattern.
 - **Cursor tooltips share `useTipPlacement`** and are placed against the VIEWPORT from their own MEASURED
   size: they flip when they do not FIT (not at an arbitrary fraction of the width), never sit under the
   pointer, and only the surface the pointer is on renders one. Pinned by `tests/e2e/tooltips.spec.mjs`, which

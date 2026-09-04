@@ -799,3 +799,63 @@ test("filterEvents: scope answers whose, kinds answer which — and machine even
     // And the control can say what it would hide rather than making you toggle blindly.
     assert.deepEqual(M.countByKind(evs), { run: 2, tool: 1, embed: 1, evict: 1 });
 });
+
+// Where you GRAB decides what the drag does. Recentring on the cursor wherever it lands is what made the
+// window impossible to widen once narrowed: every grab was a pan, including a grab on a handle.
+test("scrubZone: the edges resize, the middle pans, and outside is neither", () => {
+    const ex = { windowFrom: 0.30, windowTo: 0.70 };
+    const W = 400;   // 7px of handle ≈ 0.0175 of the track
+    assert.equal(M.scrubZone(ex, 0.50, W), "pan");
+    assert.equal(M.scrubZone(ex, 0.30, W), "from");
+    assert.equal(M.scrubZone(ex, 0.70, W), "to");
+    assert.equal(M.scrubZone(ex, 0.10, W), "outside");
+    assert.equal(M.scrubZone(ex, 0.95, W), "outside");
+    // Just OUTSIDE the box but within a handle's reach still grabs the handle — a 7px target you have to hit
+    // from exactly one side is not a 7px target.
+    assert.equal(M.scrubZone(ex, 0.29, W), "from");
+
+    // A window narrower than two handles would otherwise be all handle, leaving no way to pan it. The handle
+    // is capped at a third of the window, so the middle third always pans.
+    const narrow = { windowFrom: 0.50, windowTo: 0.53 };
+    assert.equal(M.scrubZone(narrow, 0.515, W), "pan");
+    assert.equal(M.scrubZone(narrow, 0.501, W), "from");
+});
+
+test("scrubResize: one edge moves, the other stays exactly put", () => {
+    const ex = { from: 0, to: 100_000 };
+    const win = { from: 40_000, to: 60_000 };
+
+    const wider = M.scrubResize(ex, win, "from", 0.10);
+    assert.equal(wider.to, 60_000, "the far edge did not drift");
+    assert.equal(wider.from, 10_000);
+
+    const narrower = M.scrubResize(ex, win, "to", 0.50);
+    assert.equal(narrower.from, 40_000, "…in either direction");
+    assert.equal(narrower.to, 50_000);
+
+    // Dragging an edge PAST the other parks against a minimum rather than inverting the range into a
+    // negative duration every consumer would then have to defend against.
+    const crossed = M.scrubResize(ex, win, "from", 0.90);
+    assert.ok(crossed.from < crossed.to, "still a forward range");
+    assert.equal(crossed.to - crossed.from, M.MIN_SCOPE_MS);
+
+    // And it cannot be dragged outside the session.
+    assert.equal(M.scrubResize(ex, win, "from", -1).from, 0);
+    assert.equal(M.scrubResize(ex, win, "to", 2).to, 100_000);
+});
+
+test("scrubNudge: one notch moves the same VISIBLE distance at any zoom", () => {
+    const ex = { from: 0, to: 600_000 };
+    const tight = M.scrubNudge(ex, { from: 300_000, to: 310_000 }, 0.25);
+    const loose = M.scrubNudge(ex, { from: 200_000, to: 400_000 }, 0.25);
+    assert.equal(tight.from - 300_000, 2_500, "a quarter of a 10s window");
+    assert.equal(loose.from - 200_000, 50_000, "…and a quarter of a 200s one");
+    // Widths are preserved: this scrolls, it does not zoom.
+    assert.equal(tight.to - tight.from, 10_000);
+    assert.equal(loose.to - loose.from, 200_000);
+    // Parks against the end rather than scrolling into time nobody sampled.
+    const end = M.scrubNudge(ex, { from: 590_000, to: 600_000 }, 0.25);
+    assert.equal(end.to, 600_000);
+    // A window already covering everything has nowhere to go.
+    assert.deepEqual(M.scrubNudge(ex, { from: 0, to: 600_000 }, 0.25), { from: 0, to: 600_000 });
+});

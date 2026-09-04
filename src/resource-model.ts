@@ -663,6 +663,61 @@ export function scrubTo(
     return { from: start, to: start + width };
 }
 
+/** Which part of the scrub window a pointer landed on. The EDGES resize, the middle pans — the same
+ *  vocabulary every timeline control uses, and the reason a drag on the box must not silently mean
+ *  "recentre on the cursor" when the cursor is on a handle.
+ *
+ *  `edgePx` is converted to a fraction against the track's width so the handles are a constant, clickable
+ *  size on screen rather than a constant slice of a window that may be 2% wide. A window narrower than two
+ *  handles is ALL handles, which would leave no way to pan it, so the nearer edge wins only if the pointer
+ *  is genuinely in the outer third of it. */
+export function scrubZone(
+    extent: { windowFrom: number; windowTo: number },
+    frac: number,
+    trackPx: number,
+    edgePx = 7,
+): "from" | "to" | "pan" | "outside" {
+    const { windowFrom: a, windowTo: b } = extent;
+    const edge = trackPx > 0 ? Math.min(edgePx / trackPx, (b - a) / 3) : 0;
+    if (frac < a - edge || frac > b + edge) return "outside";
+    if (frac <= a + edge) return "from";
+    if (frac >= b - edge) return "to";
+    return "pan";
+}
+
+/** Move ONE edge of the window, keeping the other fixed. Clamped to the session and to a minimum span, so a
+ *  drag past the opposite edge parks against it rather than inverting the range into something with a
+ *  negative duration that every consumer would then have to defend against. */
+export function scrubResize(
+    extent: { from: number; to: number },
+    window: { from: number; to: number },
+    edge: "from" | "to",
+    frac: number,
+    minMs = MIN_SCOPE_MS,
+): { from: number; to: number } {
+    const span = extent.to - extent.from;
+    const at = extent.from + Math.min(1, Math.max(0, frac)) * span;
+    const min = Math.min(minMs, span);
+    return edge === "from"
+        ? { from: Math.max(extent.from, Math.min(at, window.to - min)), to: window.to }
+        : { from: window.from, to: Math.min(extent.to, Math.max(at, window.from + min)) };
+}
+
+/** Slide the window along the strip by a fraction of ITS OWN width, for a wheel gesture over the plot.
+ *  Relative to the window rather than to the session, so one notch moves the same visible distance whether
+ *  you are looking at ten seconds of a ten-minute session or all of it. */
+export function scrubNudge(
+    extent: { from: number; to: number },
+    window: { from: number; to: number },
+    byWindowFraction: number,
+): { from: number; to: number } {
+    const width = window.to - window.from;
+    const span = extent.to - extent.from;
+    if (width >= span) return { from: extent.from, to: extent.to };
+    const center = (window.from + window.to) / 2 + width * byWindowFraction;
+    return scrubTo(extent, window, (center - extent.from) / span);
+}
+
 /** The TIME at a fraction across the whole plot — the inverse of `placeEvents`, for turning a drag into a
  *  time range. The plot is segments laid out with flex weights proportional to their sample counts, so the
  *  fraction is spent across the segments in those proportions and then interpolated INSIDE the one it lands

@@ -13,7 +13,7 @@ import { useMemo, useRef, useState, useLayoutEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
     placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
-    scopeToSpan,
+    scopeToSpan, scrubZone, scrubResize, scrubNudge,
     filterEvents, countByKind, type ResourceEvent, type EventPlacement,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
@@ -41,6 +41,9 @@ const hoverPool = signal<string | null>(null);
 //     same signals — so hovering a lane bar (which cross-highlights a model) made every track's band tip
 //     appear at once. A tip renders only for the surface the pointer is actually on.
 const hoverAt = signal<{ x: number; y: number; w: number; surface: string } | null>(null);
+/** Which part of the scrub window the pointer is over, so the cursor can say a handle is there before you
+ *  try to use it. A resize affordance you can only discover by failing to pan is not an affordance. */
+const scrubGrab = signal<"from" | "to" | "pan" | "outside" | null>(null);
 /** Read the cursor for a surface, or null when the pointer is somewhere else. */
 const cursorOn = (surface: string) => (hoverAt.value?.surface === surface ? hoverAt.value : null);
 /** Track a pointer against the viewport, tagged with the surface it is over. */
@@ -485,6 +488,19 @@ const loadStripes = (model?: string): string => {
     return `repeating-linear-gradient(45deg, ${c} 0 3px, var(--panel) 3px 8px)`;
 };
 
+/** Each phase as a [start, end] FRACTION of the block. Phases carry only their end, so a start is the
+ *  previous end — which every consumer would otherwise re-derive, and one of them would get wrong. */
+function phaseSpans(phases: { kind: string; until: number }[], from: number, total: number) {
+    const clamp = (v: number) => Math.min(1, Math.max(0, v));
+    let at = 0;
+    return phases.map((ph) => {
+        const end = clamp((ph.until - from) / total);
+        const span = { kind: ph.kind, start: at, end };
+        at = end;
+        return span;
+    });
+}
+
 function phaseGradient(phases: { kind: string; until: number }[], from: number, total: number, model?: string): string {
     const fill = (kind: string) => phaseFill(kind, model);
     const stops: string[] = [];
@@ -537,14 +553,23 @@ function ScrubStrip({ samples, window: win }: { samples: ResourceSample[]; windo
     if (!ex || !win) return null;   // nothing to scrub: the window already covers the session
     const span = ex.to - ex.from;
     const runs = segments(samples);
+    // WHERE you grabbed decides what the drag does, which is the vocabulary every timeline control uses:
+    // the middle pans, an edge resizes. Recentring on the cursor wherever it lands is what made the window
+    // impossible to widen once it had been narrowed — every grab was a pan, including a grab on a handle.
     const drag = (e: PointerEvent) => {
         if (e.button !== 0) return;
         const el = e.currentTarget as HTMLElement;
         const box = el.getBoundingClientRect();
         const at = (x: number) => Math.min(1, Math.max(0, (x - box.left) / Math.max(1, box.width)));
+        // The window at the moment of the grab. A resize reads from THIS rather than from the live signal, so
+        // the fixed edge stays fixed instead of drifting as each move rewrites the range it is measured from.
+        const start = { ...win };
+        const zone = scrubZone(ex, at(e.clientX), box.width);
         const move = (ev: PointerEvent) => {
             if (ev.buttons === 0 && ev.type === "pointermove") return up();
-            zoomRange.value = scrubTo(ex, win, at(ev.clientX));
+            zoomRange.value = zone === "from" || zone === "to"
+                ? scrubResize(ex, start, zone, at(ev.clientX))
+                : scrubTo(ex, win, at(ev.clientX));
         };
         const up = () => {
             window.removeEventListener("pointermove", move);
@@ -560,7 +585,13 @@ function ScrubStrip({ samples, window: win }: { samples: ResourceSample[]; windo
     };
     return (
         <div class="rc-scrub">
-            <div class="rc-scrub-track" onPointerDown={drag}>
+            <div class={`rc-scrub-track${scrubGrab.value ? ` z-${scrubGrab.value}` : ""}`} onPointerDown={drag}
+                onPointerMove={(ev: PointerEvent) => {
+                    // The cursor is the only thing that says a handle is there before you try to use it.
+                    const b = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+                    scrubGrab.value = scrubZone(ex, Math.min(1, Math.max(0, (ev.clientX - b.left) / Math.max(1, b.width))), b.width);
+                }}
+                onPointerLeave={() => (scrubGrab.value = null)}>
                 {runs.map((run, i) => {
                     const a = (run[0].t - ex.from) / span, b = (run.at(-1)!.t - ex.from) / span;
                     return <div class="rc-scrub-run" key={i}
@@ -826,7 +857,20 @@ function EventLane({ samples, events: all }: { samples: ResourceSample[]; events
                                         title=""
                                         onPointerEnter={(ev: PointerEvent) => { eventHover.value = { p, scope: "lane" }; hoverModel.value = e.model ?? null; trackCursor("lane")(ev); }}
                                         onClick={() => open(e)}
-                                        onDblClick={() => scope(e)} />
+                                        onDblClick={() => scope(e)}>
+                                        {/* A person at the approval gate is the step's wall time but none of
+                                            the machine's work, so it is STRIPED for the same reason a model
+                                            load is: a wide flat block reads as a lot of work having happened.
+                                            Drawn over the flat neutral rather than into the gradient, because
+                                            a gradient stop takes a colour and a stripe is a pattern. */}
+                                        {e.phases && total > 0
+                                            ? phaseSpans(e.phases, e.t, total).filter((ph) => ph.kind === "wait" && ph.end > ph.start)
+                                                .map((ph, wi) => (
+                                                    <i class="rc-ev-wait" key={wi}
+                                                        style={{ left: `${ph.start * 100}%`, width: `${(ph.end - ph.start) * 100}%` }} />
+                                                ))
+                                            : null}
+                                    </button>
                                 );
                             })}
                         </div>
@@ -893,9 +937,27 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     const latest = filled.at(-1);
     if (!latest?.capacity) return null;
     const tracks = layout && layout.length ? layout : (presetsFor(latest)[0]?.tracks ?? []);
+    // Wheeling over the CHART moves the window along the session — the plot is a viewport onto a timeline, so
+    // a scroll gesture on it should scroll the timeline. It nudges by a fraction of the window's own width, so
+    // one notch travels the same visible distance whether you are looking at ten seconds or at everything.
+    //
+    // It only means anything once there is a window to move: with no zoom and no rolling window the plot
+    // already shows the whole session, and `scrubExtent` returns null there. In that case the event is left
+    // alone so the panel's wheel-through still scrolls the transcript underneath.
+    const wheelScrub = (e: WheelEvent) => {
+        const w = window_;
+        if (!w) return;
+        const ex = scrubExtent(samples, w);
+        if (!ex) return;
+        const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+        if (!dy) return;
+        zoomRange.value = scrubNudge({ from: ex.from, to: ex.to }, w, Math.sign(dy) * 0.25);
+        e.preventDefault();
+        e.stopPropagation();
+    };
     return (
         <>
-            <div class="rc">
+            <div class="rc" onWheel={wheelScrub}>
                 {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} events={events} />)}
             </div>
             {/* Below every track, sharing their x-axis: what happened, against what was in memory while it did. */}

@@ -1875,3 +1875,31 @@ html[data-surface="card"] .appr-btn.no:hover {
    `help` because the original is in the tooltip. */
 code .expanded { border-bottom: 1px dashed var(--ok, #22c55e); cursor: help; }
 code .expanded:hover { background: color-mix(in srgb, var(--ok, #22c55e) 12%, transparent); }
+
+/* The scrub window's handles. The middle pans, the edges resize — so the cursor has to say which is which
+   before the drag starts, since the two gestures are indistinguishable until you have already made one. */
+.rc-scrub-track.z-from, .rc-scrub-track.z-to { cursor: ew-resize; }
+.rc-scrub-track.z-pan { cursor: grab; }
+.rc-scrub-track.z-pan:active { cursor: grabbing; }
+/* A visible grip on each edge, for the same reason: a handle nobody can see is one nobody reaches for. */
+.rc-scrub-win::before, .rc-scrub-win::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 2px;
+    background: var(--accent); opacity: .75; border-radius: 1px;
+}
+.rc-scrub-win::before { left: 0; }
+.rc-scrub-win::after { right: 0; }
+
+/* A tooltip trigger INSIDE a code block. `.tt` is inline-flex, which would take the marked span out of the
+   line's normal inline flow and break the code's alignment; this keeps it plain inline text that happens to
+   carry a tooltip. */
+.tt.tt-code { display: inline; }
+.tt-layer code { font-family: var(--mono, ui-monospace, monospace); font-size: 0.95em; }
+
+/* Time spent WAITING at the approval gate — the step's wall clock, none of the machine's work. Striped for
+   exactly the reason a model load is: flat, a wide block reads as a lot of work having happened. The gaps
+   are transparent so the neutral fill beneath still shows through. */
+.rc-ev-wait {
+    position: absolute; top: 0; bottom: 0; pointer-events: none; border-radius: inherit;
+    background: repeating-linear-gradient(45deg,
+        color-mix(in srgb, var(--fg-faint) 60%, transparent) 0 3px, transparent 3px 8px);
+}

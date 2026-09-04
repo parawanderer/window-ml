@@ -234,7 +234,13 @@ function App() {
      * by a few pixels for a gesture that meant a screenful.
      */
     const wheelThroughPanel = (e: WheelEvent) => {
-        const panel = (e.target as Element | null)?.closest?.(".vram") as HTMLElement | null;
+        const target = e.target as Element | null;
+        // The CHART claims the wheel for itself — there it scrubs the window along the session (see
+        // `wheelScrub`), which is a different and more specific meaning than "scroll the page". It calls
+        // preventDefault when it acts, so anything still arriving here from inside the chart is a gesture it
+        // declined, and should scroll like everywhere else in the panel.
+        if (e.defaultPrevented) return;
+        const panel = target?.closest?.(".vram") as HTMLElement | null;
         if (!panel) return;
         const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * panel.clientHeight : e.deltaY;
         const room = panel.scrollHeight - panel.clientHeight;

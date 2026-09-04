@@ -1154,3 +1154,81 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
         await fake.stop();
     }
 });
+
+// The scrub window's two gestures. Only meaningful with layout and a real pointer: the difference between
+// them is WHERE the drag started relative to a box whose position is computed at render time.
+test("resource panel: the scrubber resizes from its edges and pans from its middle", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        // A short rolling window, so the session outgrows it and the strip appears.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 4 }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-scrub").count(), { timeout: 30000 }).toBe(1);
+        await sleep(14000);
+
+        // Read the window as PERCENTAGES off its own style, the way the sibling scrub test does: the box is a
+        // few pixels tall and a boundingBox on it is not a stable measurement.
+        const pct = (v) => parseFloat(v);
+        const winAt = async () => frame.locator(".rc-scrub-win").evaluate((e) => ({ left: e.style.left, width: e.style.width }));
+        const track = await frame.locator(".rc-scrub-track").boundingBox();
+        const y = track.y + track.height / 2;
+        const xOf = (p) => track.x + track.width * (p / 100);
+        const dragFromTo = async (fromPct, toPct) => {
+            await page.mouse.move(xOf(fromPct), y);
+            await page.mouse.down();
+            await page.mouse.move(xOf(toPct), y, { steps: 10 });
+            await page.mouse.up();
+            await sleep(400);
+        };
+
+        // Park it away from the tail first, so a resize is not immediately snapped back to live.
+        const w0 = await winAt();
+        await dragFromTo(pct(w0.left) + pct(w0.width) / 2, 40);
+        const before = await winAt();
+        expect(pct(before.width), "a window narrower than the strip").toBeLessThan(60);
+
+        // ---- the RIGHT EDGE widens it, and the left edge stays put ----
+        const rightEdge = pct(before.left) + pct(before.width);
+        await dragFromTo(rightEdge, Math.min(92, rightEdge + 25));
+        const widened = await winAt();
+        expect(pct(widened.width), "the window got wider").toBeGreaterThan(pct(before.width) + 5);
+        expect(Math.abs(pct(widened.left) - pct(before.left)), "…and the far edge did not move").toBeLessThan(3);
+
+        // ---- the LEFT EDGE narrows it, and the RIGHT edge stays put ----
+        const rightBefore = pct(widened.left) + pct(widened.width);
+        await dragFromTo(pct(widened.left), pct(widened.left) + 15);
+        const narrowed = await winAt();
+        expect(pct(narrowed.width), "the window got narrower").toBeLessThan(pct(widened.width) - 5);
+        expect(Math.abs((pct(narrowed.left) + pct(narrowed.width)) - rightBefore), "…and this time the RIGHT edge held")
+            .toBeLessThan(3);
+
+        // ---- the MIDDLE moves it without changing its width ----
+        const mid = pct(narrowed.left) + pct(narrowed.width) / 2;
+        await dragFromTo(mid, Math.max(pct(narrowed.width) / 2 + 1, mid - 20));
+        const panned = await winAt();
+        expect(Math.abs(pct(panned.width) - pct(narrowed.width)), "a pan does not resize").toBeLessThan(3);
+        expect(pct(panned.left), "…it moved").toBeLessThan(pct(narrowed.left) - 3);
+
+        // ---- and a wheel over the CHART scrubs, rather than scrolling the page ----
+        const scrolled = await frame.evaluate(() => document.querySelector(".view")?.scrollTop ?? 0);
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width / 2, plot.y + plot.height / 2);
+        await page.mouse.wheel(0, 300);
+        await sleep(400);
+        const nudged = await winAt();
+        expect(pct(nudged.left), "the window moved along the session").toBeGreaterThan(pct(panned.left) + 1);
+        expect(Math.abs(pct(nudged.width) - pct(panned.width)), "…without resizing").toBeLessThan(3);
+        expect(await frame.evaluate(() => document.querySelector(".view")?.scrollTop ?? 0),
+            "and the transcript underneath did NOT scroll — the chart claimed the gesture").toBe(scrolled);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});

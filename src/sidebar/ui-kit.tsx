@@ -49,7 +49,13 @@ function markedHtml(text: string, lang: string | undefined, marks: CodeMark[]): 
     for (const m of ordered) {
         if (m.start < at) continue;   // overlapping marks: keep the first, never emit crossed spans
         out += highlight(text.slice(at, m.start), lang);
-        out += `<span class="expanded" title="${escapeAttr(`expanded from ${m.from}`)}">${highlight(text.slice(m.start, m.end), lang)}</span>`;
+        // The panel's own tooltip, not the browser's `title`: a native tooltip cannot render the pointer as
+        // code, waits half a second before appearing, and looks like an OS artefact rather than part of the
+        // panel. `.tt-pop` is display:none and read into the floating layer on hover (see .tt-layer), so its
+        // prose is never selected along with the code it annotates.
+        out += `<span class="tt tt-code expanded">`
+            + `<span class="tt-pop">Expanded from <code>${escapeAttr(m.from)}</code></span>`
+            + `${highlight(text.slice(m.start, m.end), lang)}</span>`;
         at = m.end;
     }
     return out + highlight(text.slice(at), lang);
