@@ -844,8 +844,13 @@ export interface ResourceEvent {
      *  `think`/`answer`/`call` SUBDIVIDE the model's own time, and only on a STREAMED call, where the channel
      *  each chunk arrived on is observable. `model` is the undifferentiated fallback — a non-streamed call,
      *  and the stretch before the first token (prompt eval, queue, network), which is the model's time but
-     *  not any of its channels. */
-    phases?: { kind: "model" | "wait" | "tool" | "think" | "answer" | "call"; until: number }[];
+     *  not any of its channels.
+     *
+     *  `queue`/`net` subdivide a REMOTE tool's time the same way, and for the same reason — because the
+     *  executor reported its own numbers. What it said it spent evaluating is `tool`, what it spent getting
+     *  started is `queue`, and whatever is left of OUR wall clock is `net`: the network and the far end's
+     *  overhead. A local tool is all `tool`, which is exactly true rather than a fallback. */
+    phases?: { kind: "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net"; until: number }[];
     /** This span has NOT FINISHED: `until` is where it had reached when the snapshot was taken, not where it
      *  ended. Only ever set by an `eventsFrom` given a `now` — a surface drawing live. It exists so the UI can
      *  say "still going" rather than drawing a bar whose right edge looks like a measured end. */

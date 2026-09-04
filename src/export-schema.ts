@@ -498,7 +498,7 @@ export interface ExportEvent {
  *
  * Switch on the kinds you know and fall through on the rest.
  */
-export type ExportPhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call";
+export type ExportPhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net";
 
 export interface ExportEventPhase {
     kind: ExportPhaseKind;

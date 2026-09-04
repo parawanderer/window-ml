@@ -1447,7 +1447,14 @@ bundle is skipped rather than failing the run. **The tool declares `remote: {via
 the approval card and the background's grant read THAT rather than the tool's name — so a page choosing a
 friendly name cannot make the card say `search_web` while the grant authorises `send_email`. Its `render`
 is an `action` descriptor whose note says the arguments leave the machine, styled like a navigation because
-something is departing. Still to come: the dispatch phase in the timeline.
+something is departing. **The timeline splits a remote step** into `net` / `queue` / `tool` phases — but ONLY because the executor
+reports its own numbers (`ToolResult.remoteMs` → the step → `model-stats`). Our `toolMs` is wall clock
+around the whole dispatch, so it contains the network and the far end's overhead; `tool` is what the
+executor said it spent evaluating, `queue` what it spent getting started, and `net` is the REMAINDER, drawn
+first because the request has to arrive before anything happens (the return leg is folded in with it, since
+nothing measures the two halves apart). A local tool is all `tool`, which is exactly true rather than a
+fallback. An executor claiming MORE time than we measured is ignored rather than drawn backwards, and a
+queue longer than what remains is clamped.
 
 A patched Ollama behind a STOCK OpenWebUI is fine — the `/ollama/*` passthrough is generic, so the
 OpenWebUI fork is not needed for the capacity work.

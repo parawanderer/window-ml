@@ -470,6 +470,12 @@ const phaseFill = (kind: string, model?: string): string => {
         : kind === "think" ? `color-mix(in srgb, ${base} 62%, transparent)`
         : kind === "call" ? `color-mix(in srgb, ${base} 30%, transparent)`
         : kind === "wait" ? "color-mix(in srgb, var(--fg-faint) 45%, transparent)"
+        // Time that is NOT the tool and NOT the machine's work: the network getting there and back, and the
+        // far end queueing before it started. Both borrow the neutral the approval wait uses rather than the
+        // model's colour, because neither is the model or the tool doing anything — `net` fainter still,
+        // since it is the one figure we DERIVE by subtraction rather than being told.
+        : kind === "net" ? "color-mix(in srgb, var(--fg-faint) 26%, transparent)"
+        : kind === "queue" ? "color-mix(in srgb, var(--fg-faint) 38%, transparent)"
         : `color-mix(in srgb, ${base} 38%, transparent)`;
 };
 
@@ -669,6 +675,10 @@ function EventTip({ scope }: { scope: string }) {
         : kind === "answer" ? "answering"
         : kind === "call" ? "emitting the tool call"
         : kind === "wait" ? "waiting for approval"
+        // Said as what it IS rather than as a label: the point of splitting a remote step is that these two
+        // are not the tool being slow, and a reader should not have to know that to read the bar.
+        : kind === "net" ? "network, there and back"
+        : kind === "queue" ? "queued before it started"
         : e.tool || "tool");
     // A run span has no phases and no cost of its own — it is the CONTAINER. Saying "click to open this step"
     // under it was wrong twice over: it is not a step, and its ref carries no seq to scroll to.

@@ -416,3 +416,49 @@ test("…and it is simply absent where the route does not report it, never a zer
         turns: [{ ts: 10_000, usage: usage(100, 90, { genMs: 3600 }) }] }]);
     assert.equal(ev.cost.promptEvalMs, undefined, "a cloud route reports no prompt timing to split out");
 });
+
+/* --------------------------- a REMOTE tool's span --------------------------- */
+// Our wall clock around a remote call contains the network and the far end's overhead. The executor's own
+// number is the only thing that separates them, and without it a slow hop is indistinguishable from a slow
+// tool — the same confound prompt_eval_duration closed for model calls.
+
+const remoteStep = (over = {}) => ({
+    hash: "h", model: "m", createdTs: 0, lastTs: 30_000,
+    steps: [
+        turn(1, 5000, usage(100, 20, { genMs: 900 })),
+        { step: 1, seq: 2, ts: 12_000, tool: "srv1__search_web", toolMs: 4000, ...over },
+    ],
+});
+
+test("a remote tool's span splits into network, queue and the tool itself", () => {
+    // 4000ms measured by us; the executor says 3000 evaluating after 200 queued — so 800 is the network.
+    const [ev] = M.eventsFrom([remoteStep({ remoteMs: { durationMs: 3000, queuedMs: 200 } })]).filter(e => e.kind === "tool");
+    assert.deepEqual(kinds(ev.phases), ["model", "net", "queue", "tool"]);
+    assert.deepEqual(durs(ev.t, ev.phases), [900, 800, 200, 3000]);
+    assert.equal(ev.until, 12_000, "and it still ends where the step ended");
+});
+
+test("a LOCAL tool is all tool — not a fallback, but exactly true", () => {
+    const [ev] = M.eventsFrom([remoteStep()]).filter(e => e.kind === "tool");
+    assert.deepEqual(kinds(ev.phases), ["model", "tool"]);
+});
+
+test("no queue reported → no queue phase, rather than a zero-width one", () => {
+    const [ev] = M.eventsFrom([remoteStep({ remoteMs: { durationMs: 3500 } })]).filter(e => e.kind === "tool");
+    assert.deepEqual(kinds(ev.phases), ["model", "net", "tool"]);
+    assert.deepEqual(durs(ev.t, ev.phases), [900, 500, 3500]);
+});
+
+test("an executor claiming MORE time than we measured is ignored, not drawn backwards", () => {
+    // Clock skew, or a server timing something we did not. Either way the phases must stay monotonic: a
+    // negative network span would render as a bar running the wrong way.
+    const [ev] = M.eventsFrom([remoteStep({ remoteMs: { durationMs: 9999 } })]).filter(e => e.kind === "tool");
+    assert.deepEqual(kinds(ev.phases), ["model", "tool"], "fall back to the honest undifferentiated span");
+    for (let i = 1; i < ev.phases.length; i++) assert.ok(ev.phases[i].until >= ev.phases[i - 1].until);
+});
+
+test("a queue longer than what is left after evaluating is clamped, never negative", () => {
+    const [ev] = M.eventsFrom([remoteStep({ remoteMs: { durationMs: 3900, queuedMs: 5000 } })]).filter(e => e.kind === "tool");
+    assert.deepEqual(kinds(ev.phases), ["model", "queue", "tool"]);
+    assert.deepEqual(durs(ev.t, ev.phases), [900, 100, 3900], "the queue takes what remains, and no more");
+});

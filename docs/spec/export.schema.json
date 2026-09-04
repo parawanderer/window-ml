@@ -2111,7 +2111,9 @@
                 "tool",
                 "think",
                 "answer",
-                "call"
+                "call",
+                "queue",
+                "net"
               ]
             },
             {
