@@ -110,6 +110,14 @@ try {
     await page.goto(site.url + "/");
     await waitForMl(page);
 
+    // The run's own debug stream, so the terminal can echo what a step actually produced rather than only
+    // pointing at the rendered block.
+    const events = [];
+    await page.exposeFunction("__demoEvent", (e) => { events.push(e); });
+    await page.evaluate(() => window.addEventListener("message", (m) => {
+        if (m.data?.__mlDebug) window.__demoEvent(m.data.__mlDebug);
+    }));
+
     // A console-first look at the namespace BEFORE the run: the schema is on the callable, and it is the
     // same object the call is validated against.
     log("ml.dynamicTools — the namespace, from the console:");
@@ -127,7 +135,11 @@ try {
     log("starting the run (serverTools, streaming) …");
     await page.evaluate(() => {
         window.ml.agent("read example.com and tell me what it is for", {
-            serverTools: ["web_page_fetch_summarize"], stream: true, approvalRouting: "both", maxSteps: 6,
+            // `toolTokens` is what MINTS a pointer onto each citable step. Without it the remote tool runs and
+            // renders exactly as it does here, and the pointer read in step 4 faults with "nothing has been
+            // captured in this run" — which reads as a product bug and is a missing option.
+            serverTools: ["web_page_fetch_summarize"], toolTokens: true,
+            stream: true, approvalRouting: "both", maxSteps: 6,
         });
     });
 
@@ -191,6 +203,15 @@ try {
 
     await sleep(2500);
     await page.screenshot({ path: path.join(ART, "4-run-done.png") }).catch(() => {});
+
+    // What the pointer read actually returned, echoed to the terminal — the UI shows it, but the point of
+    // this step is that a pointer behaves like the string it stands for, and that is easiest to believe as
+    // the script's own console output rather than as a rendered block.
+    const execOut = events.filter((e) => e.kind === "agent-step" && e.tool === "exec" && !e.pending).pop();
+    if (execOut) {
+        log("what the exec step read back through the pointer:");
+        for (const line of String(execOut.result ?? "").split("\n")) if (line.trim()) console.log(`      ${line}`);
+    }
 
     // The event lane: the remote step drawn as net / queue / tool. Open the resource panel and let it poll.
     log("opening the resource panel — the remote step splits into net / queue / tool …");

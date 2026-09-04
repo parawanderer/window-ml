@@ -3281,3 +3281,58 @@ test("SERVER_TOOL_EXEC: an UNTRUSTED page cannot run a tool it holds no grant fo
     assert.match(res.error, /needs approval/);
     assert.equal(fetched, false, "refused BEFORE the privileged fetch, not after");
 });
+
+// A remote tool's output is CITABLE by DECLARATION (`remote`), never by name — its name is generated from
+// the server's bundle, so no hardcoded list can hold it. The background builds the loop's ToolMeta from the
+// START_RUN payload, and dropping `remote` there made the whole feature page-path-only in a way nothing
+// surfaced: the tool ran, streamed and rendered exactly as it should, and only reading the pointer back
+// faulted with "nothing has been captured in this run", which reads as a pointer bug.
+test("START_RUN: a REMOTE tool's output is citable on the background path, so a pointer read resolves", async () => {
+    let turn = 0;
+    let derefResult = null;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            const msgs = call.body?.messages || [];
+            turn++;
+            if (turn === 1) return jsonResponse({ choices: [{ message: { content: null, tool_calls: [
+                { id: "c1", type: "function", function: { name: "srv1__search", arguments: JSON.stringify({ q: "pricing" }) } },
+            ] } }] });
+            if (turn === 2) return jsonResponse({ choices: [{ message: { content: null, tool_calls: [
+                { id: "c2", type: "function", function: { name: "dereference", arguments: JSON.stringify({ token: "@tool:srv1__search" }) } },
+            ] } }] });
+            const tr = [...msgs].reverse().find(m => m.role === "tool");
+            derefResult = tr ? (typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content)) : null;
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            }
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "srv1__search"
+                && !msg.payload?.renderOnly && !msg.payload?.precheck) {
+                return { result: "Plans start at $12/month." };
+            }
+            return undefined;
+        },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "rt", task: "search then read it back", systemPrompt: "S", toolTokens: true,
+        tools: [
+            { name: "srv1__search", requiresApproval: true, description: "", capabilities: [],
+              parameters: { type: "object", properties: { q: { type: "string" } } },
+              remote: { via: "openwebui", toolId: "srv1", fn: "search" } },
+            { name: "dereference", requiresApproval: false, description: "", capabilities: [],
+              parameters: { type: "object", properties: { token: { type: "string" } } } },
+        ],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    // Two tool calls with an approval round-trip between them, so this settles over several ticks rather
+    // than the single one a one-step run needs.
+    for (let i = 0; i < 50 && derefResult == null; i++) await new Promise(r => setTimeout(r, 10));
+
+    assert.ok(derefResult, `the dereference call produced a tool result (reached turn ${turn})`);
+    assert.doesNotMatch(derefResult, /MemoryFault|has been captured/i,
+        `the remote output was citable, so the read resolved — got: ${derefResult}`);
+    assert.match(derefResult, /\$12\/month/, "…and it read back the remote tool's own output");
+});

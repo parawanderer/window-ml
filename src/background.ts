@@ -677,7 +677,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // Durable resume: snapshot the run NOW (before the first step) + after each step (the checkpoint dep),
         // so an SW evicted mid-run rehydrates from storage. Cleared when the run settles (finally).
         persistRun(runId, { p, tabId, messages: resumeMessages || [], sub: snapSub() });
-        const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities }));
+        // `remote` has to survive into the loop's ToolMeta: it is what makes a remote tool's output CITABLE
+        // (`meta?.remote` in agent-loop), and it cannot be recovered from the name — the name is generated
+        // from the server's own bundle, so no hardcoded list can hold it. Dropping it here made the whole
+        // feature page-path-only, silently: the tool ran, streamed and rendered exactly as it should, and
+        // only reading the pointer back faulted with "nothing has been captured in this run".
+        const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities, ...(t.remote ? { remote: t.remote } : {}) }));
         const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
         // Cross-origin navigation consent: origins this run may navigate to WITHOUT re-prompting — seeded
@@ -793,7 +798,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             resumed: resurrected || undefined,   // the sidebar can mark it "resumed after interruption"
             config: {
                 system: p.systemPrompt, customSystem: false,
-                tools: p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, vision: t.capabilities.includes("vision"), description: t.description, parameters: t.parameters, summary: t.summary })),
+                tools: p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, vision: t.capabilities.includes("vision"), description: t.description, parameters: t.parameters, summary: t.summary, ...(t.remote ? { remote: t.remote } : {}) })),
                 maxSteps: p.maxSteps, think: p.think, env: true, vision: null, hints: null, unattended: p.unattended, silent: p.silent,
                 stream: p.stream,
             },
