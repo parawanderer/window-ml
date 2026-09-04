@@ -490,10 +490,10 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // and it exists nowhere else. Naming it as a PROMISE is the load-bearing half — a model that
                 // thinks `@tool:x` is a value writes `.length` on a Promise and gets `undefined` with no error.
                 "POINTERS: write `@tool:abc1234` (or `@tool:python_exec`, or `@tool:\"a label\"`) directly in the " +
-                "code — it is real syntax here and expands to a read of that output. It evaluates to a PROMISE, " +
-                "so `await` it: `const rows = await @tool:abc1234;` or " +
-                "`const [a, b] = await Promise.all([@tool:abc1234, @tool:python_exec]);`. Inside a string or a " +
-                "comment it stays literal text, so you can still log one. " +
+                "code — it is real syntax here and reads that output. It is a plain VALUE, not a promise: no " +
+                "`await`, no `.then`. `const rows = @tool:abc1234.split(\"\\n\");` works as written, because " +
+                "every pointer you name is resolved before the script starts. Inside a string or a comment it " +
+                "stays literal text, so you can still log one. " +
                 "FILTERING TEXT: `ml.pipe(text, \"grep -i pricing | head -20\")` runs the same small dialect the " +
                 "tools' `pipe` parameter takes, over ANY string — a survey's output, a fetch, python's stdout. " +
                 "Cheaper to write (and to get right) than the equivalent `.split`/`.filter`/`.slice` chain. " +
@@ -565,6 +565,28 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // here on is the EXPANDED source; the model's own text stays in `arguments.js` for the raw
                 // view, and the render below shows the expansion so the two are never confused.
                 const { code: js, expansions } = expandPointers(source);
+                // SYNC POINTERS. Every handle the script mentions is known before a line of it runs — that is
+                // what a lexical pass buys — so they are resolved UP FRONT and `ml.dereference` becomes an
+                // ordinary synchronous read for the duration of this call.
+                //
+                // Which is what makes the macro worth having. A model that writes `@tool:abc.length` on a
+                // promise gets `undefined` and no error, and that is the exact plausible-wrong-answer shape
+                // this codebase keeps having to design out. Sync also removes a line of prompt surface
+                // ("it is a promise") that models get wrong regardless of being told.
+                //
+                // `DerefRead` is a String subclass, so a synchronous return is directly usable — `.length`,
+                // `.split`, template interpolation, `JSON.parse` — with nothing else to explain.
+                const handles = [...new Set(expansions.map(e => e.from))];
+                const pointers = new Map<string, { value?: unknown; error?: string }>();
+                if (handles.length && ctx?.deref) {
+                    // Concurrently, and a FAILED read is stored rather than thrown: a bad handle sitting in a
+                    // branch the script never reaches must not turn a working program into a failing one.
+                    // Eager fetch, lazy failure.
+                    await Promise.all(handles.map(async (ref) => {
+                        try { pointers.set(ref, { value: await ctx.deref!(ref) }); }
+                        catch (e) { pointers.set(ref, { error: errText(e) }); }
+                    }));
+                }
                 // Effective per-slot output cap. Default 500; a raise past it is only reachable AFTER the human
                 // gate (the readonly try refuses to auto-approve an escalated call), clamped to the ceiling.
                 const { cap, clamped } = resolveOutputCap("exec", maxChars, maxCharsReason);
@@ -587,6 +609,31 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     };
                 }
 
+                // `ml` is SHADOWED as a parameter rather than mutated globally: a run must not leave the page's
+                // own `window.ml.dereference` swapped out, and two evaluations must not race over it. The
+                // shim forwards everything untouched except the one method whose asynchrony we just removed.
+                //
+                // Reading the global here is the one concession — this module is otherwise ml-free — and it
+                // is only to shadow it for the user's code, never to call it.
+                const g = globalThis as unknown as { ml?: Record<string, unknown>; window?: { ml?: Record<string, unknown> } };
+                const realMl = g.ml ?? g.window?.ml;
+                const mlSync = realMl && pointers.size
+                    ? new Proxy(realMl, {
+                        get: (t, prop, r) => (prop === "dereference"
+                            ? (ref: unknown, options?: unknown) => {
+                                const hit = pointers.get(String(ref));
+                                // Not pre-resolved: a COMPUTED handle, which no static pass can see, or a
+                                // `pipe` option that changes what the read returns. Fall through to the real async
+                                // method rather than refusing — a literal is a value, and anything else keeps
+                                // working exactly as it did. Nothing loses a capability by this being sync.
+                                if (!hit || options !== undefined) return (t as unknown as { dereference: (r: unknown, o?: unknown) => unknown }).dereference(ref, options);
+                                if (hit.error) throw new Error(hit.error);
+                                return hit.value;
+                            }
+                            : Reflect.get(t, prop, r)),
+                    })
+                    : null;
+
                 let result: unknown;
                 let failed: unknown;
                 try {
@@ -595,7 +642,13 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         // persistent `state` scratchpad in scope (a direct eval INSIDE a fresh Function → the
                         // source sees `state` + globals, NOT this module's internals). `new Function`/eval are
                         // the same effectful, approval-gated capability the plain eval already needed.
-                        result = new Function("state", "src", "return eval(src);")(agentState, js);
+                        // The `ml` parameter is only introduced when there is actually something to
+                        // substitute. Passing it unconditionally would SHADOW the page's real `ml` with
+                        // whatever we resolved — including `undefined` when the lookup failed — and break
+                        // every other `ml.*` call in exec for no reason.
+                        result = mlSync
+                            ? new Function("state", "ml", "src", "return eval(src);")(agentState, mlSync, js)
+                            : new Function("state", "src", "return eval(src);")(agentState, js);
                     } catch (e) {
                         // eval rejects top-level `await`/`return` with a SyntaxError,
                         // thrown at parse time before anything runs — so retry the
@@ -603,7 +656,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         // must `return` its value here (no last-expression auto-return).
                         // A genuine syntax error re-throws from this attempt and is reported.
                         if (e instanceof SyntaxError) {
-                            const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as { new (arg: string, body: string): (state: unknown) => Promise<unknown> };
+                            const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as { new (...args: string[]): (...a: unknown[]) => Promise<unknown> };
                             // eval threw away the completion value when it rejected top-level
                             // await/return. Re-run as an async body — but first preserve the REPL
                             // trailing-expression convention (the fast-path eval and python_exec
@@ -612,10 +665,11 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                             // valid parenthesized expression → SyntaxError at construction → fall
                             // back to the plain body (there the model must `return` explicitly).
                             const expr = js.trim().replace(/;\s*$/, "");
-                            let fn: (state: unknown) => Promise<unknown>;
-                            try { fn = new AsyncFunction("state", `return (${expr})`); }
-                            catch { fn = new AsyncFunction("state", js); }
-                            result = fn(agentState);
+                            let fn: (...a: unknown[]) => Promise<unknown>;
+                            const params = mlSync ? ["state", "ml"] : ["state"];
+                            try { fn = new AsyncFunction(...params, `return (${expr})`); }
+                            catch { fn = new AsyncFunction(...params, js); }
+                            result = mlSync ? fn(agentState, mlSync) : fn(agentState);
                         } else throw e;
                     }
                     if (result && typeof (result as Promise<unknown>).then === "function") result = await result;

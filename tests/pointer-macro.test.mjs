@@ -23,12 +23,12 @@ test("all three reference forms expand — id, bare tool name, quoted label", ()
     assert.equal(x('@tool:"the pricing table"'), 'ml.dereference("@tool:\\"the pricing table\\"")');
 });
 
-test("it is NOT awaited — a pointer expression evaluates to a promise", () => {
-    // Auto-awaiting breaks the moment a model writes one in a non-async callback, and it would hide the
-    // asynchrony the model needs in order to write Promise.all over several.
+test("no `await` is inserted — the read is SYNCHRONOUS by the time the code runs", () => {
+    // Every handle is resolved before the script starts (exec pre-resolves what this scanner found), so
+    // `ml.dereference` is an ordinary call here. Inserting `await` would also break inside a non-async
+    // callback, e.g. `list.map(x => @tool:a)`.
     assert.ok(!x(`@tool:${ID}`).includes("await"));
-    assert.equal(x(`await Promise.all([@tool:${ID}, @tool:python_exec])`),
-        `await Promise.all([ml.dereference("@tool:${ID}"), ml.dereference("@tool:python_exec")])`);
+    assert.equal(x(`@tool:${ID}.split("\\n")`), `ml.dereference("@tool:${ID}").split("\\n")`);
 });
 
 /* ------------------------- what it must NOT touch ------------------------- */

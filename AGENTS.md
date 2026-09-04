@@ -1471,10 +1471,17 @@ place a model writes a pointer being a line it is logging. Template `${…}` re-
 are skipped, and pointer-free source comes back BYTE-IDENTICAL (exec already works; rewriting code that
 contains no macros would be pure downside). The AST still gets a job — the EXPANDED source parses, so acorn
 can verify what the un-expanded source never could.
-**Deliberately NOT awaited**: auto-await breaks inside a non-async callback (`list.map(x => @tool:a)`), and
-it would hide that these are promises — which the model needs in order to write
-`await Promise.all([@tool:a, @tool:b])`. So `exec`'s description says outright that a pointer expression IS
-a promise. The In render shows the EXPANDED source (`@tool:` is not JS, so a highlighter mangles the line or
+**And the pointers are SYNCHRONOUS**, which is the point of the macro rather than a detail of it. The
+lexical pass knows every handle before a line runs, so `exec` resolves them all up front (concurrently) and
+shadows `ml` with a shim whose `dereference` is an ordinary call — `@tool:abc.length` is a number, not
+`undefined` on a promise, which is the plausible-wrong-answer shape this codebase keeps designing out. It
+also deletes a line of prompt surface. `DerefRead` is a String subclass, so a sync return needs no further
+explanation. Three rules make it safe: a FAILED pre-read is stored and thrown only when READ (a bad handle
+in a branch the script never reaches must not fail a working program — eager fetch, lazy failure); a
+COMPUTED handle or a `pipe` falls through to the real async method, so nothing loses a capability; and the
+`ml` parameter is introduced ONLY when there is something to substitute, since passing it unconditionally
+would shadow the page's real `ml` with `undefined` whenever the lookup failed and break every other `ml.*`
+call in exec. The In render shows the EXPANDED source (`@tool:` is not JS, so a highlighter mangles the line or
 gives up) with a `note` saying how many expanded and `marks` for where; the model's own text stays in
 `arguments.js` for the raw view, and the note is what stops the two reading as a contradiction.
 

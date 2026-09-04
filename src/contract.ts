@@ -1927,8 +1927,14 @@ export interface MlApi {
      *  made it. Reaches the FULL capture, not the truncated copy the model was shown. `pipe` reduces it first,
      *  as a dialect string (".rows | head 5") or an array with one stage per entry ([".rows", "head 5"]) —
      *  an array entry is never re-split, so use it when a stage holds a `|` (["grep -E error|warn"]). Run-bound like
-     *  `ml.answer`: live inside a tool call (an approved `exec`), throws from the console outside a run. */
-    dereference(ref: string, options?: { pipe?: string | string[] | null }): Promise<DerefValue>;
+     *  `ml.answer`: live inside a tool call (an approved `exec`), throws from the console outside a run.
+     *
+     *  SYNCHRONOUS inside `exec` for a reference written LITERALLY — `@tool:abc1234`, or the same string
+     *  passed directly — because every such reference is resolved before the script starts. So
+     *  `@tool:abc1234.length` is a number, not `undefined` on a promise. A COMPUTED reference (one built at
+     *  runtime) or a call with `pipe` cannot be known in advance and stays a promise. `await` is safe on
+     *  both, since awaiting a non-promise is a no-op — so if in doubt, await. */
+    dereference(ref: string, options?: { pipe?: string | string[] | null }): DerefValue | Promise<DerefValue>;
     /** The TS-like type of some JSON — one document's shape, or the JOINED type of several. Same-shaped
      *  documents collapse into one object with optional keys where they differ; different ones stay a
      *  union. Arguments are awaited, so `ml.schema(ml.dereference(a), ml.dereference(b))` works. */

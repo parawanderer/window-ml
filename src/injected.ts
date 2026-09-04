@@ -164,7 +164,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // answer what the caller used to have to sniff out of the bytes. `.pipe()` re-reads the SAME
             // pointer with more stages rather than piping the text it already holds — the store keeps the
             // fuller capture, so going back to it can return more than this text has.
-            const again = (stages: string | string[]): Promise<DerefValue> => (window.ml.dereference(ref, { pipe: stages }));
+            // Always a promise here: a `pipe` re-read cannot be pre-resolved (the stages are only known now),
+            // so the sync path in `exec` deliberately falls through to this one. Wrapped so the type is the
+            // promise it actually is rather than the union the declaration allows.
+            const again = (stages: string | string[]): Promise<DerefValue> => Promise.resolve(window.ml.dereference(ref, { pipe: stages }));
             return new DerefText(read.value, read.meta, again);
         },
         /**

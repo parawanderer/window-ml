@@ -3620,3 +3620,52 @@ test("exec Out: a raised (approved) output cap moves where the model's view ends
     const tighter = await exec.run({ js, maxChars: 100 }, {});
     assert.equal(tighter.render.seen, 100, "a smaller cap is honoured too");
 });
+
+// ---- exec: pointers are SYNC, because the lexical pass knows them before anything runs ----
+
+test("exec: a @tool: pointer is a VALUE, not a promise", async () => {
+    // The whole reason the macro is worth having. On a promise, `.length` is `undefined` with no error —
+    // the plausible-wrong-answer shape this codebase keeps designing out.
+    const world = loadPageWorld({});
+    const tool = world.ml.domTools.find(t => t.name === "exec");
+    const ctx = { deref: async (ref) => (ref === "@tool:a39f599" ? "alpha\nbeta\ngamma" : (() => { throw new Error("no such pointer"); })()) };
+
+    const out = await tool.run({ js: `@tool:a39f599.split("\\n").length` }, ctx);
+    assert.match(typeof out === "string" ? out : out.content, /\b3\b/, "read, split and counted — no await anywhere");
+});
+
+test("exec: several pointers resolve concurrently, before a line runs", async () => {
+    const world = loadPageWorld({});
+    const tool = world.ml.domTools.find(t => t.name === "exec");
+    const seen = [];
+    const ctx = { deref: async (ref) => { seen.push(ref); return ref === "@tool:a39f599" ? "one" : "two"; } };
+
+    const out = await tool.run({ js: `[@tool:a39f599, @tool:python_exec].join("-")` }, ctx);
+    assert.match(typeof out === "string" ? out : out.content, /one-two/);
+    assert.deepEqual(seen.sort(), ["@tool:a39f599", "@tool:python_exec"]);
+});
+
+test("exec: a BAD pointer fails only when read, not when hydrated", async () => {
+    // Eager fetch, lazy failure: a bad handle in a branch the script never reaches must not turn a working
+    // program into a failing one.
+    const world = loadPageWorld({});
+    const tool = world.ml.domTools.find(t => t.name === "exec");
+    const ctx = { deref: async (ref) => { if (ref === "@tool:baaaaad") throw new Error("MemoryFault: no such pointer"); return "fine"; } };
+
+    const ok = await tool.run({ js: `false ? @tool:baaaaad : @tool:a39f599` }, ctx);
+    assert.match(typeof ok === "string" ? ok : ok.content, /fine/, "the unreachable bad pointer never surfaced");
+
+    const bad = await tool.run({ js: `@tool:baaaaad` }, ctx);
+    assert.match(typeof bad === "string" ? bad : bad.content, /MemoryFault/, "…and reading it does surface it");
+});
+
+test("exec: a COMPUTED handle still works — it just stays asynchronous", async () => {
+    // No static pass can see `ml.dereference(someVar)`, so it cannot be pre-resolved. It falls through to
+    // the real async method rather than being refused: making literals synchronous must not cost a
+    // capability that worked before.
+    const world = loadPageWorld({});
+    const tool = world.ml.domTools.find(t => t.name === "exec");
+    const ctx = { deref: async () => "computed-value" };
+    const out = await tool.run({ js: `const r = "@tool:a39f599"; @tool:a39f599; return await ml.dereference(r);` }, ctx);
+    assert.match(typeof out === "string" ? out : out.content, /computed-value/);
+});
