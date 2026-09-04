@@ -1176,6 +1176,9 @@
                 },
                 "token": {
                   "type": "string"
+                },
+                "stdoutLabel": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -1675,6 +1678,9 @@
                   "type": "string"
                 },
                 "token": {
+                  "type": "string"
+                },
+                "stdoutLabel": {
                   "type": "string"
                 }
               },

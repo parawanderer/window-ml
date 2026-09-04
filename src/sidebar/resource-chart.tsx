@@ -13,7 +13,7 @@ import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/ho
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
     placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
-    scopeToSpan, scrubZone, scrubResize, scrubNudge, wheelScrubFraction,
+    scopeToSpan, scopeAround, scrubZone, scrubResize, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, type ResourceEvent, type EventPlacement,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
@@ -22,7 +22,7 @@ import {
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter } from "./vram";
 import { loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, showLane, laneLitSeqs } from "./store";
 import { clockAt, hhmmssms } from "./timestamps";
-import { scrollToStepSeq } from "./answer-render";
+import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
 import { signal } from "@preact/signals";
 
@@ -552,6 +552,19 @@ function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; ru
  *  about the session that an overview should show at its true width rather than collapse. The runs are drawn
  *  as filled blocks with the gaps left empty, so "nothing was measured here" reads as a hole. */
 function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSample[]; window: { from: number; to: number } | null; events?: ResourceEvent[] }) {
+    const wrapRef = useRef<HTMLDivElement>(null);
+    const trackRef = useRef<HTMLDivElement>(null);
+    // Where the TRACK sits inside the strip, as percentages of the strip — the connector below is drawn in
+    // the strip's coordinates but its top ends belong to the track's, and the two differ by the live button.
+    const [geom, setGeom] = useState<{ left: number; width: number } | null>(null);
+    useLayoutEffect(() => {
+        const w = wrapRef.current, t = trackRef.current;
+        if (!w || !t) return;
+        const wb = w.getBoundingClientRect(), tb = t.getBoundingClientRect();
+        if (!(wb.width > 0)) return;
+        const next = { left: ((tb.left - wb.left) / wb.width) * 100, width: (tb.width / wb.width) * 100 };
+        setGeom((v) => (v && Math.abs(v.left - next.left) < 0.2 && Math.abs(v.width - next.width) < 0.2 ? v : next));
+    });
     const ex = scrubExtent(samples, win);
     if (!ex || !win) return null;   // nothing to scrub: the window already covers the session
     const span = ex.to - ex.from;
@@ -587,8 +600,8 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
         window.addEventListener("pointerup", up);
     };
     return (
-        <div class="rc-scrub">
-            <div class={`rc-scrub-track${scrubGrab.value ? ` z-${scrubGrab.value}` : ""}`} onPointerDown={drag}
+        <div class="rc-scrub" ref={wrapRef}>
+            <div class={`rc-scrub-track${scrubGrab.value ? ` z-${scrubGrab.value}` : ""}`} ref={trackRef} onPointerDown={drag}
                 // Scrolling over the strip PANS the window, never resizes it — the same thing dragging its
                 // middle does, and the same mapping the chart uses, so one gesture means one thing on both
                 // surfaces. Resizing stays a deliberate grab on a handle: a wheel has no way to say which
@@ -617,11 +630,24 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
                     about which stretch is worth looking at. Carries each event's model colour, the same one
                     its lane bar and its row already use. Runs are skipped — a run spans everything, so a tick
                     for it would just be a wash across the strip. */}
-                {events.filter((e) => e.kind !== "run" && e.t >= ex.from && e.t <= ex.to).map((e, i) => (
-                    <i class="rc-scrub-ev" key={i}
-                        style={{ left: `${((e.t - ex.from) / span) * 100}%`,
-                                 ...(e.model ? { background: colorFor(e.model) } : {}) }} />
-                ))}
+                {/* OVERLAP, not containment. Filtering on the start dropped every event that began before the
+                    first sample — and the panel only samples while it is open, so a run started before you
+                    looked lost exactly its opening steps, leaving the strip blank on the left while the lane
+                    below still drew them. Clamped into the strip instead, so a span that began earlier starts
+                    at the edge rather than disappearing. */}
+                {events.filter((e) => e.kind !== "run" && (e.until ?? e.t) >= ex.from && e.t <= ex.to).map((e, i) => {
+                    // A SPAN, not a tick. Drawing every event at its start made a step that ran for seconds
+                    // look identical to an instant, so a busy stretch read as two hairlines instead of as the
+                    // block of activity it was. A genuine instant (an eviction) still gets a minimum width so
+                    // it stays visible.
+                    const from = Math.max(0, (e.t - ex.from) / span);
+                    const to = Math.min(1, ((e.until ?? e.t) - ex.from) / span);
+                    return (
+                        <i class="rc-scrub-ev" key={i}
+                            style={{ left: `${from * 100}%`, width: `${Math.max(0.35, (to - from) * 100)}%`,
+                                     ...(e.model ? { background: colorFor(e.model) } : {}) }} />
+                    );
+                })}
                 <div class="rc-scrub-win" style={{ left: `${ex.windowFrom * 100}%`,
                     width: `${Math.max(1, (ex.windowTo - ex.windowFrom) * 100)}%` }} />
             </div>
@@ -629,6 +655,28 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
                 live is the failure this prevents. */}
             <button class={`rc-scrub-live${ex.atTail ? " on" : ""}`} title={ex.atTail ? "Following new samples" : "Jump back to live"}
                 onClick={() => (zoomRange.value = null)}>{ex.atTail ? "live" : "⏸ live"}</button>
+            {/* Two lines from the window's edges down to the LANE's, so the magnification between them is
+                visible. The strip and the lane are different axes and can never line up — the strip is linear
+                across the whole session with the window as a sub-range, the lane is only that window spread
+                across the full width — and side by side with nothing joining them that reads as two views
+                disagreeing rather than as one being the other, opened out.
+
+                The top ends are in the TRACK's coordinates and the bottom ends in the panel's: the track is
+                inset by the live button, so drawing both in one space put every line beside the box it was
+                supposed to touch. Hence the measurement. And with the lane HIDDEN there is nothing at the
+                other end, so lines pointing into empty space are worse than none. */}
+            {geom && showLane.value ? (
+                <svg class="rc-zoomlink" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">
+                    {/* S-curves, not straight diagonals: each arm leaves the window edge going straight DOWN
+                        and arrives at the lane edge going straight down too. A straight line from a window
+                        sitting mid-strip cuts across at an arbitrary angle and reads as a stray rule; a curve
+                        that starts and ends vertically reads as the selection widening into the view below. */}
+                    <path d={`M ${geom.left + ex.windowFrom * geom.width} 0 C ${geom.left + ex.windowFrom * geom.width} 6, 0 4, 0 10`}
+                        vector-effect="non-scaling-stroke" />
+                    <path d={`M ${geom.left + ex.windowTo * geom.width} 0 C ${geom.left + ex.windowTo * geom.width} 6, 100 4, 100 10`}
+                        vector-effect="non-scaling-stroke" />
+                </svg>
+            ) : null}
         </div>
     );
 }
@@ -819,7 +867,7 @@ function EventTip({ scope }: { scope: string }) {
  *
  *  Spans are bars in the lane; instants (an eviction) are rules. Both are placed inside the run that contains
  *  them, because the axis is segmented by gaps and is not linear in time. */
-function EventLane({ samples, events: all }: { samples: ResourceSample[]; events: ResourceEvent[] }) {
+function EventLane({ samples, events: all, session }: { samples: ResourceSample[]; events: ResourceEvent[]; session: ResourceSample[] }) {
     // Filtered before anything is placed, so the rows pack against what is actually drawn — a hidden kind
     // must not leave a hole where it would have been.
     const filter = laneFilter();
@@ -835,6 +883,7 @@ function EventLane({ samples, events: all }: { samples: ResourceSample[]; events
     if (!runs.length || (!placed.length && !all.length)) return null;
     const spans = placed.filter((p) => p.event.until != null);
     const rows = laneRows(spans);
+    const [pulsed, setPulsed] = useState<string | null>(null);
     const lit = lineageOf(events, eventHover.value?.p.event.id);
     // The same focus, carried into the transcript: the log dims every step outside the hovered lineage, so a
     // bar and the rows it is about light up together. Derived from the lineage rather than from the one
@@ -862,13 +911,28 @@ function EventLane({ samples, events: all }: { samples: ResourceSample[]; events
     const open = (e: ResourceEvent) => {
         if (!e.ref) return;
         view.value = { name: "detail", hash: e.ref.hash };
-        scrollToStepSeq(e.ref.seq, e.ref.hash);
+        // A generation with no step seq IS the answer — it is the only event in a run that points at a
+        // message rather than a step, so it needs the other destination or the click lands nowhere.
+        if (e.ref.seq == null) scrollToAnswer(e.ref.hash);
+        else scrollToStepSeq(e.ref.seq, e.ref.hash);
     };
     // Double-click scopes the panel to the block: the shortest path from "something happened there" to
     // reading it at a scale where it is legible. Every block, not only a run — zooming to one tool call is
     // the same gesture as zooming to the turn that contains it. The single click still navigates, since
     // going to the step and framing the time around it are the same intent from two sides.
-    const scope = (e: ResourceEvent) => { zoomRange.value = scopeToSpan(e.t, e.until, Date.now()); };
+    // Widened to cover a few SAMPLES, not just a few milliseconds: scoping to a 400ms tool call on a box
+    // polled every two seconds produced a window with one sample in it, and everything here needs a segment
+    // of at least two — so the tracks, the lane and the strip all drew nothing and the panel looked like it
+    // had disappeared.
+    // Measured against the WHOLE session, not `samples` — those are already windowed, so widening against
+    // them would ask "does the new window fit inside the old one", which is the wrong question and answers
+    // yes right up until the panel is empty.
+    // …and SAY which block you landed on. The window has to be wider than a short block (it needs samples in
+    // it to draw at all), so the answer to "which one did I zoom to" is otherwise "somewhere in here".
+    const scope = (e: ResourceEvent) => {
+        zoomRange.value = scopeAround(session, e.t, e.until, Date.now());
+        if (e.id) { setPulsed(e.id); setTimeout(() => setPulsed((v) => (v === e.id ? null : v)), 1400); }
+    };
     return (
         <div class="rc-lane" onPointerLeave={() => { eventHover.value = null; hoverAt.value = null; hoverModel.value = null; }}>
             {rows.map((row, ri) => (
@@ -889,7 +953,7 @@ function EventLane({ samples, events: all }: { samples: ResourceSample[]; events
                                 // something next to the step that spawned it and the run that contains it.
                                 const away = lit.size > 0 && !(e.id && lit.has(e.id));
                                 return (
-                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}${e.open ? " open" : ""}`} key={k}
+                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}${e.open ? " open" : ""}${e.id && e.id === pulsed ? " pulse" : ""}`} key={k}
                                         style={{ left: `${p.from * 100}%`, width: `${w}%`,
                                                  // A `run` is the CONTAINER every other block sits inside, so it is
                                                  // drawn as a pattern rather than a solid fill (see .rc-ev-run) —
@@ -1028,8 +1092,9 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
                 can add a row — and anything below a control whose height changes shifts out from under the
                 pointer mid-drag. The strip is the thing being dragged, so it goes where nothing moves it. */}
             <ScrubStrip samples={samples} window={window_} events={stripEvents} />
-            {/* And below that, sharing the tracks' x-axis: what happened, against what memory was doing. */}
-            {showLane.value ? <EventLane samples={filled} events={shown} /> : null}
+            {/* And below that, sharing the tracks' x-axis: what happened, against what memory was doing. The
+                connector says the second is the first opened out — see ZoomLink. */}
+            {showLane.value ? <EventLane samples={filled} events={shown} session={samples} /> : null}
         </>
     );
 }

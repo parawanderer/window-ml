@@ -802,6 +802,46 @@ test("filterEvents: scope answers whose, kinds answer which — and machine even
 
 // Where you GRAB decides what the drag does. Recentring on the cursor wherever it lands is what made the
 // window impossible to widen once narrowed: every grab was a pan, including a grab on a handle.
+// Double-clicking a short step scoped to a window with one sample in it. Everything here needs a segment of
+// at least two — `segments()` drops shorter ones — so the tracks, the lane and the strip all drew nothing and
+// the panel looked like it had disappeared. A time floor cannot promise samples; only counting them can.
+// The hover is held in a signal, so it outlives what it pointed at: a click that navigates, a filter chip, the
+// window moving on. An id matching nothing used to yield a lineage of one unmatchable member, which dimmed
+// every bar and every step at once — read as the whole lane disappearing rather than a stale highlight.
+test("lineageOf: an id that is no longer drawn focuses NOTHING, rather than everything-but-nothing", () => {
+    const events = [
+        { id: "a", kind: "tool" },
+        { id: "b", kind: "embed", parent: "a" },
+    ];
+    assert.deepEqual([...M.lineageOf(events, "a")].sort(), ["a", "b"], "a live id still lights its lineage");
+    assert.equal(M.lineageOf(events, "gone").size, 0, "a stale id lights nothing");
+    assert.equal(M.lineageOf(events, undefined).size, 0);
+    assert.equal(M.lineageOf([], "a").size, 0, "…including when everything was filtered away");
+});
+
+test("scopeAround: widens until the window actually contains samples to draw", () => {
+    const every2s = Array.from({ length: 30 }, (_, i) => ({ t: 100_000 + i * 2000 }));
+    const inWindow = (w) => every2s.filter((s) => s.t >= w.from && s.t <= w.to).length;
+
+    // A 400ms tool call on a box polled every 2s: the raw span, and even the 2.5s floor, can hold one sample.
+    const tight = M.scopeToSpan(140_000, 140_400, 200_000);
+    assert.ok(inWindow(tight) < 3, "the plain floor is not enough — this is the bug");
+
+    const safe = M.scopeAround(every2s, 140_000, 140_400, 200_000);
+    assert.ok(inWindow(safe) >= 3, `widened until it covers samples (got ${inWindow(safe)})`);
+    // Still CENTRED on the step: widening must not slide the window off the thing you double-clicked.
+    assert.ok(safe.from <= 140_000 && safe.to >= 140_400, "the step is still inside it");
+
+    // A span that already covers plenty is left alone.
+    const long = M.scopeAround(every2s, 120_000, 150_000, 200_000);
+    assert.equal(long.from, 120_000);
+    assert.equal(long.to, 150_000);
+
+    // A session too short to satisfy the floor gives back the whole session rather than an empty window.
+    const two = [{ t: 5000 }, { t: 7000 }];
+    assert.deepEqual(M.scopeAround(two, 5500, 5600, 9000), { from: 5000, to: 7000 });
+});
+
 test("scrubZone: the edges resize, the middle pans, and outside is neither", () => {
     const ex = { windowFrom: 0.30, windowTo: 0.70 };
     const W = 400;   // 7px of handle ≈ 0.0175 of the track

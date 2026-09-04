@@ -72,8 +72,12 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
     // also has content to show (it's filling in), so it renders the body too.
     const hasReply = (status !== "pending" && !error) || !!streaming;
     const preview = hasReply ? collapsedPreview(content) : null;
+    // `data-answer-hash` is an ANCHOR for the run this answer belongs to. The event lane's final generation IS
+    // this message, but it carries no step seq — nothing else in the transcript identifies it, so clicking
+    // that bar navigated to the run and then had nothing to scroll to or highlight.
     return (
-        <div class={`msg asst ${status}${capped ? " capped" : ""}${streaming ? " streaming" : ""}`}>
+        <div class={`msg asst ${status}${capped ? " capped" : ""}${streaming ? " streaming" : ""}`}
+            {...(tokenRun?.hash ? { "data-answer-hash": tokenRun.hash } : {})}>
             <div class="mrow">
                 {/* Chevron (collapse affordance) · status dot · an optional label for an exceptional state
                     (e.g. an agent step-cap stop). Same structure while STREAMING — the chevron stays and a live

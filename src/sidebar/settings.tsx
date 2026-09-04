@@ -82,7 +82,10 @@ function ServerToolsSection() {
     return (
         <Section id="servertools" title="Server-side tools">
             <div class="set-row col">
-                <div class="hint">
+                {/* `set-note`, like every other section's explanation — this was bare `hint` prose, which is
+                    the style used for a short inline status beside a control, not for the paragraph that
+                    explains what a section is. */}
+                <div class="set-note">
                     Tools configured in OpenWebUI that a run can be given with <code>serverTools</code>, and that
                     you can call from the console as <code>ml.dynamicTools.&lt;bundle&gt;.&lt;fn&gt;()</code>. They
                     run on the server, so their arguments leave this machine and every call needs approval.
@@ -753,6 +756,18 @@ export function Settings() {
     // out not to embed is a runtime surprise, where a shorter list costs nothing — a user can still type one.
     const embedListed = models.value.filter(m => modelFilterAllows(m, c.modelFilter) && producesEmbeddings(modelKinds.value[m] ?? null));
     const notListed = (v: string) => !!v.trim() && models.value.length > 0 && !models.value.includes(v.trim());
+    // What is WRONG with the configured embedding model, if anything — said on the field rather than left to
+    // fail at request time. Only complains about what it can actually establish: a model whose capabilities
+    // the server never reported is unknown, not wrong, so it passes.
+    const embedProblem = (() => {
+        const v = c.embeddingModel.trim();
+        if (!v) return "";
+        if (!modelFilterAllows(v, c.modelFilter)) return "The model access filter excludes this model, so ml.embed would be refused.";
+        const kinds = modelKinds.value[v];
+        if (kinds && !producesEmbeddings(kinds)) return `${v} does not report the embedding capability — ml.embed would fail against it.`;
+        if (models.value.length > 0 && !models.value.includes(v)) return `${v} is not on this server's model list.`;
+        return "";
+    })();
     const filterValid = (() => { if (!c.modelFilter.trim()) return true; try { new RegExp(c.modelFilter); return true; } catch { return false; } })();
     // A configured model id the current filter excludes (non-empty + no match) → flag it (ModelPicker cls).
     const excl = (v: string) => !!v.trim() && !modelFilterAllows(v, c.modelFilter);
@@ -853,28 +868,6 @@ export function Settings() {
 
                 <Section id="grounding" title="Visual grounding">
                 <div class="set-note">Optional coordinate model for the agent's <code>locate</code> tool. <b>Loads an extra model into VRAM</b> — leave off if memory is tight. Off = <code>locate</code> still works via the Set-of-Marks screenshot tool (no extra model). Recommended: <code>qwen2.5vl:7b</code> (or <code>:3b</code>); accuracy is unproven.</div>
-                <label class="set-field"><span>Resource chart window</span>
-                    <select value={String(resWindowS.value)}
-                        onChange={(e: any) => { resWindowS.value = Number(e.target.value); chrome.storage.local.set({ [RESWIN_KEY]: resWindowS.value }); }}>
-                        <option value="60">1 minute</option>
-                        <option value="180">3 minutes</option>
-                        <option value={String(RESWIN_DEFAULT)}>5 minutes</option>
-                        <option value="900">15 minutes</option>
-                        <option value="1800">30 minutes</option>
-                        <option value="0">Everything kept</option>
-                    </select></label>
-                <label class="set-field"><span>Model colours</span>
-                    <select value={vramPalette.value}
-                        onChange={(e: any) => { vramPalette.value = e.target.value; chrome.storage.local.set({ [VRAM_PALETTE_KEY]: vramPalette.value }); }}>
-                        <option value="vivid">Vivid</option>
-                        <option value="grafana">Grafana</option>
-                        <option value="cool">Cool</option>
-                        <option value="warm">Warm</option>
-                    </select></label>
-                <div class="set-note">Which palette a model's colour is drawn from. A model's colour is its identity across the whole panel — the line, its band, its row, its blocks in the event lane, its ticks on the strip — so which hues read as distinct is worth choosing rather than being stuck with. The assignment is a hash of the model's name, so a given model keeps the same colour within a palette.
-                    <span class="pal-swatches">{(VRAM_PALETTES[vramPalette.value] ?? []).map((c) => <i key={c} style={{ background: c }} />)}</span>
-                </div>
-                <div class="set-note">How much history the VRAM/RAM chart DRAWS. Samples are kept for the whole session either way — this only sets how far back the chart looks, because a long window squeezed into a narrow panel smears into an unreadable blur. Gaps stay gaps: while the panel is closed nothing is sampled, so the line breaks rather than being drawn across.</div>
                 <label class="set-check">
                     <input type="checkbox" checked={c.groundingEnabled}
                         onChange={(e: any) => setField("groundingEnabled", e.target.checked)} />
@@ -943,6 +936,35 @@ export function Settings() {
                         onChange={(e: any) => setField("agentHudInDevtools", e.target.checked)} />
                     <span>Also show the HUD alongside the DevTools panel</span>
                 </label>
+                </Section>
+
+                {/* The resource panel's own APPEARANCE. Both of these lived inside "Visual grounding" on the
+                    Models tab, which is where they were written rather than where they belong — one is how far
+                    back a chart draws and the other is which hues it draws in, and neither has anything to do
+                    with a coordinate model. */}
+                <Section id="resourcepanel" title="Resource panel">
+                <label class="set-field"><span>Chart window</span>
+                    <select value={String(resWindowS.value)}
+                        onChange={(e: any) => { resWindowS.value = Number(e.target.value); chrome.storage.local.set({ [RESWIN_KEY]: resWindowS.value }); }}>
+                        <option value="60">1 minute</option>
+                        <option value="180">3 minutes</option>
+                        <option value={String(RESWIN_DEFAULT)}>5 minutes</option>
+                        <option value="900">15 minutes</option>
+                        <option value="1800">30 minutes</option>
+                        <option value="0">Everything kept</option>
+                    </select></label>
+                <div class="set-note">How much history the VRAM/RAM chart DRAWS. Samples are kept for the whole session either way — this only sets how far back the chart looks, because a long window squeezed into a narrow panel smears into an unreadable blur. Gaps stay gaps: while the panel is closed nothing is sampled, so the line breaks rather than being drawn across.</div>
+                <label class="set-field"><span>Model colours</span>
+                    <select value={vramPalette.value}
+                        onChange={(e: any) => { vramPalette.value = e.target.value; chrome.storage.local.set({ [VRAM_PALETTE_KEY]: vramPalette.value }); }}>
+                        <option value="vivid">Vivid</option>
+                        <option value="grafana">Grafana</option>
+                        <option value="cool">Cool</option>
+                        <option value="warm">Warm</option>
+                    </select></label>
+                <div class="set-note">Which palette a model's colour is drawn from. A model's colour is its identity across the whole panel — the line, its band, its row, its blocks in the event lane, its ticks on the strip — so which hues read as distinct is worth choosing rather than being stuck with. The assignment is a hash of the model's name, so a given model keeps the same colour within a palette.
+                    <span class="pal-swatches">{(VRAM_PALETTES[vramPalette.value] ?? []).map((c) => <i key={c} style={{ background: c }} />)}</span>
+                </div>
                 </Section>
 
                 <Section id="codeblocks" title="Code blocks">
@@ -1016,8 +1038,14 @@ export function Settings() {
                 <div class="set-note">Model for <code>ml.embed</code> — comparing text by meaning rather than spelling. Only models that report the <b>embedding</b> capability are listed; these are small and fast, so they default to living on the CPU and staying loaded.</div>
                 <div class="set-field">
                     <Lbl tip={TIP.embeddingModel}>Embedding model</Lbl>
-                    <input list="embedModels" {...text("embeddingModel")} placeholder="none configured" />
+                    <input list="embedModels" class={embedProblem ? "err" : ""} {...text("embeddingModel")} placeholder="none configured" />
                     <datalist id="embedModels">{embedListed.map(m => <option key={m} value={m} />)}</datalist>
+                    {/* The field accepts anything typed — a server we cannot interrogate is not a reason to
+                        refuse a model that works. But a model we CAN see, and that does not report the
+                        capability, fails at request time with nothing on screen to explain it. */}
+                    {embedProblem ? <div class="hint err">{embedProblem}</div> : null}
+                    {!embedProblem && !embedListed.length && models.value.length
+                        ? <div class="hint">No model on this server reports the <b>embedding</b> capability, so there is nothing to suggest. Anything typed here is still accepted.</div> : null}
                     {c.embeddingModel.trim() && embedDims.value[c.embeddingModel.trim()]
                         ? <div class="set-hint">{embedDims.value[c.embeddingModel.trim()]} dimensions</div> : null}
                 </div>

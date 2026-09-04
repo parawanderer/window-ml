@@ -483,11 +483,14 @@ function PythonOutRender({ d, marks }: { d: Extract<RenderDescriptor, { type: "p
             {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout"><OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell></PyOutSection> : null}
             {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
-            {d.error ? <PyOutSection label="error" cls="r-py-err"><Code text={d.error} lang="text" /></PyOutSection> : null}
+            {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell><Code text={d.error} lang="text" /></OutputCell></PyOutSection> : null}
             {d.df && !d.error ? <PyOutSection label="value (DataFrame)" cls="r-py-val"><PyDfTable columns={d.df.columns} rows={d.df.rows} /></PyOutSection> : null}
             {/* A sympy return auto-flagged `latex` → typeset the value (display mode), not a raw code block. */}
             {d.latex && d.value != null && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value (LaTeX)" cls="r-py-val"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} /></PyOutSection> : null}
-            {d.value != null && !d.latex && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
+            {/* In the same cell as the output above it: a returned value can be as long as anything printed
+                on the way there, and it is the half you most often want to search. Capped, scrollable and
+                Ctrl+F-able for free by being wrapped, rather than each section inventing its own. */}
+            {d.value != null && !d.latex && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value" cls="r-py-val"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
         </div>
     );
 }
@@ -498,10 +501,12 @@ function PythonOutRender({ d, marks }: { d: Extract<RenderDescriptor, { type: "p
 function ExecOutRender({ d, marks }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][] }) {
     return (
         <div class="r-python r-py-out">
-            {d.stdout ? <PyOutSection label="console" cls="r-py-stdout"><OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell></PyOutSection> : null}
+            {/* "console" for exec, but a REMOTE tool's streamed frames are not a console — the section is the
+                same shape (progress produced as it worked) and only the word differs. */}
+            {d.stdout ? <PyOutSection label={d.stdoutLabel ?? "console"} cls="r-py-stdout"><OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell></PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
-            {d.error ? <PyOutSection label="error" cls="r-py-err"><Code text={d.error} lang="text" /></PyOutSection> : null}
-            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
+            {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell><Code text={d.error} lang="text" /></OutputCell></PyOutSection> : null}
+            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
         </div>
     );
 }

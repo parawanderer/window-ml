@@ -814,6 +814,11 @@ export function lineageOf(events: readonly ResourceEvent[], id: string | undefin
     const out = new Set<string>();
     if (!id) return out;
     const byId = new Map(events.filter((e) => e.id).map((e) => [e.id!, e]));
+    // A focus on an event that is NOT DRAWN is not a focus. The hover is held in a signal, so it outlives the
+    // thing it pointed at — a click that navigates, a filter chip, the window moving — and an id that matches
+    // nothing produced a lineage of exactly one unmatchable member, which dimmed every bar and every step at
+    // once. That reads as the whole lane disappearing rather than as a stale highlight.
+    if (!byId.has(id)) return out;
     out.add(id);
     // ANCESTORS: straight up the chain.
     for (let cur = byId.get(id)?.parent; cur && !out.has(cur); cur = byId.get(cur)?.parent) out.add(cur);
@@ -857,10 +862,38 @@ export const MIN_SCOPE_MS = 2500;
  * An OPEN event (work still in flight) has no end, so `now` stands in for one — scoping to it while it
  * runs is the case where this is most useful and least able to know where it stops.
  */
-export function scopeToSpan(from: number, until: number | null | undefined, now: number): { from: number; to: number } {
+export function scopeToSpan(from: number, until: number | null | undefined, now: number, minMs = MIN_SCOPE_MS): { from: number; to: number } {
     const to = until ?? now;
-    const pad = Math.max(0, (MIN_SCOPE_MS - (to - from)) / 2);
+    const pad = Math.max(0, (minMs - (to - from)) / 2);
     return { from: from - pad, to: to + pad };
+}
+
+/**
+ * The same thing, but guaranteed to contain enough SAMPLES to draw.
+ *
+ * A window is only as useful as the trace inside it, and everything here needs a segment of at least two
+ * samples: `segments()` drops shorter ones, so the tracks, the lane and the strip all render nothing and the
+ * panel appears to vanish. A time floor cannot promise that — scoping to a 400ms tool call on a box polled
+ * every two seconds is a window with one sample in it, or none — so this widens symmetrically until the
+ * window actually covers `minSamples`, and gives up only when the session does not have that many.
+ */
+export function scopeAround(
+    samples: readonly { t: number }[],
+    from: number,
+    until: number | null | undefined,
+    now: number,
+    minSamples = 3,
+): { from: number; to: number } {
+    let w = scopeToSpan(from, until, now);
+    if (samples.length <= minSamples) return { from: samples[0]?.t ?? w.from, to: samples[samples.length - 1]?.t ?? w.to };
+    const covered = (r: { from: number; to: number }) => samples.reduce((n, s) => n + (s.t >= r.from && s.t <= r.to ? 1 : 0), 0);
+    // Grow by the window's own width each round, so a very short scope reaches a useful size in a few steps
+    // rather than crawling, and a long one is left alone.
+    for (let i = 0; i < 40 && covered(w) < minSamples; i++) {
+        const grow = Math.max(1000, (w.to - w.from) / 2);
+        w = { from: w.from - grow, to: w.to + grow };
+    }
+    return w;
 }
 
 /** A hair of separation reserved BETWEEN bars in a row. Two bars that merely touch read as one bar with a

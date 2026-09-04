@@ -649,6 +649,47 @@ test("Settings CDP toggle: flag ON but the debugger permission is INACTIVE → a
     assert.match(hint, /isn't active|reload the extension/i, "guides the user to reload + accept, not a dead end");
 });
 
+// The macro's mark is a byte RANGE, and the renderer highlights around it segment by segment — so the span
+// it wraps has to be exactly the generated call and nothing either side of it. `expandPointers` is tested for
+// producing the right range; this is the other half, that the range is what actually gets underlined.
+test("pointer macro: the underline wraps EXACTLY the expanded call, not the code around it", async () => {
+    const w = await loadSidebarWorld();
+    const src = `const n = ml.dereference("@tool:a39f599").length; console.log("@tool:not-a-macro", n);`;
+    const at = src.indexOf('ml.dereference');
+    await w.dispatch(agentStart("mac", "read it"));
+    await w.dispatch(agentStep("mac", 1, {
+        seq: 1, tool: "exec", arguments: { js: src }, result: "ok",
+        renderIn: { type: "code", text: src, lang: "javascript", note: "1 pointer macro expanded",
+                    marks: [{ start: at, end: at + 'ml.dereference("@tool:a39f599")'.length, from: "@tool:a39f599" }] },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const head = w.shadow.querySelector('[data-astep-seq="1"] .astep-head');
+    head.click();
+    await w.tick();
+
+    const marks = w.shadow.querySelectorAll('[data-astep-seq="1"] code .expanded');
+    assert.equal(marks.length, 1, "one mark, for the one expansion");
+    // The tooltip lives INSIDE the mark, so read the mark's own text without it.
+    const markText = [...marks[0].childNodes]
+        .filter((n) => !(n.classList && n.classList.contains("tt-pop")))
+        .map((n) => n.textContent).join("");
+    assert.equal(markText, 'ml.dereference("@tool:a39f599")',
+        "exactly the generated call — no leading `const n = `, no trailing `.length`");
+    // (Whether the tooltip is display:none — which is what stops its prose being selected along with the
+    // code — is a CSS fact, and this world loads no stylesheet, so asserting it here would assert nothing.)
+    // The pointer written INSIDE A STRING is not a macro and must not be underlined: the renderer marks what
+    // the expander marked, and marking by search would have caught this one too.
+    const body = w.shadow.querySelector('[data-astep-seq="1"] .astep-body').textContent;
+    assert.ok(body.includes("@tool:not-a-macro"), "the string literal is still shown verbatim");
+
+    // The original spelling rides the tooltip, so hovering the underline says what the model actually wrote.
+    const pop = marks[0].querySelector(".tt-pop");
+    assert.ok(pop, "the mark carries a tooltip");
+    assert.match(pop.textContent, /Expanded from/);
+    assert.match(pop.textContent, /@tool:a39f599/);
+});
+
 test("output-cap raise: the approval card calls out the raised limit + the model's justification", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("orc", "big dump"));
@@ -5257,9 +5298,14 @@ test("tool output cell: python_exec AND exec both render into the shared capped/
     await w.dispatch(agentResult("outcell", "done", 3));
     await openRun(w);
     for (const head of [...w.shadow.querySelectorAll(".astep.tool .astep-head")]) { head.click(); await w.tick(); }
-    // Each code tool's OUT renders its captured output through the shared cell…
+    // Each code tool's OUT renders its captured output through the shared cell — every text section of it,
+    // since a returned VALUE can be as long as anything printed on the way there and is the half you most
+    // often want to search. So: both tools, and both of their sections (stdout + value).
     const outCells = w.shadow.querySelectorAll(".r-py-out .r-outcell");
-    assert.equal(outCells.length, 2, "BOTH tools' Out use the shared cell (not one bespoke each)");
+    assert.equal(outCells.length, 4, "BOTH tools' stdout AND value use the shared cell (not one bespoke each)");
+    for (const cls of [".r-py-stdout", ".r-py-val"]) {
+        assert.equal(w.shadow.querySelectorAll(`${cls} .r-outcell`).length, 2, `both tools' ${cls} is a cell`);
+    }
     // …and the SAME component wraps a descriptor-less tool's plain OUT, so a big fetch_url page is
     // scrollable + findable too. (The IN block is the call — short, already a code block — so it gets no cell.)
     assert.equal(w.shadow.querySelectorAll(".r-outcell").length, outCells.length + 1,
@@ -5720,7 +5766,7 @@ test("the resource chart window is configurable, and short by default", async ()
     assert.equal(RESWIN_DEFAULT, 300, "5 minutes — 30 squeezed into a narrow panel is an unreadable smear");
     // The knob belongs in DevTools Settings (the superset), per the AGENTS rule for user-editable config.
     const settings = await import("node:fs").then((fs) => fs.readFileSync("src/sidebar/settings.tsx", "utf8"));
-    assert.match(settings, /Resource chart window/, "surfaced in Settings → Appearance");
+    assert.match(settings, /Chart window/, "surfaced in Settings → Appearance → Resource panel");
     assert.match(settings, /RESWIN_KEY/, "and persisted");
     assert.match(settings, /Samples are kept for the whole session either way/,
         "the note distinguishes what is DRAWN from what is retained");

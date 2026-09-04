@@ -18,6 +18,26 @@ import { RenderPanel, PyDfTable } from "./render-panel";
 // lives inside a per-task BLOCK that may be collapsed, so it sets `revealSeq` to force THAT block open too (the
 // bug: it only worked when the run wasn't segmented into blocks). Then it retries the scroll for a few frames,
 // since the block open → re-render → paint is async.
+/**
+ * Scroll to a run's ANSWER and highlight it, the same gesture `scrollToStepSeq` performs for a step.
+ *
+ * The lane's final generation is the answer, and it carries no step seq — so a click on that bar could
+ * navigate to the run and then had nothing to reach. The LAST matching anchor is the target: a multi-turn run
+ * has several answers and the event names only the run, so the newest is the honest choice.
+ */
+export function scrollToAnswer(hash?: string): void {
+    if (!hash) return;
+    const attempt = (tries = 0): void => {
+        const all = document.querySelectorAll(`[data-answer-hash="${CSS.escape(hash)}"]`);
+        const el = all[all.length - 1];
+        if (!el) { if (tries < 8) requestAnimationFrame(() => attempt(tries + 1)); return; }
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.classList.add("astep-pulse");
+        setTimeout(() => el.classList.remove("astep-pulse"), 1400);
+    };
+    attempt();
+}
+
 export function scrollToStepSeq(seq?: number, hash?: string): void {
     if (seq == null) return;
     if (hash) cardShowWorkHash.value = hash;   // open the HUD "Show work" so the step exists to scroll to

@@ -844,6 +844,16 @@ export function VramPanel() {
             <div class="vram-head">
                 <span class="vram-total">{formatBytes(total)} in use</span>
                 <span class="sp" />
+                {/* What the drag selected, and the way out of it. Esc does the same — a zoom you can't leave is
+                    a trap, and the panel otherwise keeps showing a stretch that scrolled into the past.
+                    LEFT of the view picker: it appears and disappears as you scrub, so anything after it in
+                    the row would slide sideways every time a range is taken or dropped. */}
+                {zoomRange.value ? (
+                    <button class="tt vram-zoom" onClick={() => (zoomRange.value = null)}>
+                        {zoomSpan(zoomRange.value)} ✕
+                        <span class="tt-pop wrap" role="tooltip">Showing the range you selected instead of the rolling window. Click, or press Esc, to go back to live.</span>
+                    </button>
+                ) : null}
                 {capacity.value && latestSample ? (
                     <>
                         <select class="rc-preset" aria-label="View" value={presetId.value}
@@ -855,14 +865,6 @@ export function VramPanel() {
                             {customTracks.value ? <option value="custom">Custom</option> : null}
                         </select>
                     </>
-                ) : null}
-                {/* What the drag selected, and the way out of it. Esc does the same — a zoom you can't leave is
-                    a trap, and the panel otherwise keeps showing a stretch that scrolled into the past. */}
-                {zoomRange.value ? (
-                    <button class="tt vram-zoom" onClick={() => (zoomRange.value = null)}>
-                        {zoomSpan(zoomRange.value)} ✕
-                        <span class="tt-pop wrap" role="tooltip">Showing the range you selected instead of the rolling window. Click, or press Esc, to go back to live.</span>
-                    </button>
                 ) : null}
                 {rows.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
                 {/* Last in the row: the picker is what you reach for, the editor is the rarer follow-up. */}

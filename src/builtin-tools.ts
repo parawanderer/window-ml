@@ -1708,7 +1708,18 @@ export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: reado
                     const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
                     return {
                         content: text,
-                        ...(r.output ? { renderOut: { type: "code" as const, code: r.output, lang: "text" } } : {}),
+                        // BOTH halves, in the shared output cell exec and python already use. The streamed
+                        // frames and the returned value are different things — progress the tool produced as
+                        // it worked, and what it answered with — so replacing one with the other made the
+                        // output you watched arrive vanish the moment the step landed. (The old descriptor
+                        // also set `code`, which is not a field of the `code` render: it drew an empty block,
+                        // which is why only the result survived.)
+                        // `render` is the OUT slot — this returned `renderOut`, which nothing reads, so the
+                        // descriptor was silently dropped and the Out fell back to the raw result every time.
+                        // That is why the output you watched stream in vanished the moment the step landed.
+                        ...(r.output
+                            ? { render: { type: "exec-out" as const, stdout: r.output, stdoutLabel: "output", value: text } }
+                            : {}),
                         // The executor's own measurement. Our wall clock around this call also contains the
                         // network and the far end's overhead, so without this the timeline charges the whole
                         // span to the tool and a slow hop is indistinguishable from a slow tool.

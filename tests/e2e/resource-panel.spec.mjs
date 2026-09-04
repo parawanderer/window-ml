@@ -1075,8 +1075,13 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
         });
         fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        // A short rolling window, so the session outgrows it and the scrub strip (and its connector to the
+        // lane) actually exist — with the default window covering everything there is no strip, and the
+        // assertions about it would pass by describing nothing.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 4 }));
         const { page, frame } = await openPanel(fake, ext);
         await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await expect.poll(() => frame.locator(".rc-scrub").count(), { timeout: 30000 }).toBe(1);
         await sleep(9000);
 
         // A run long enough to have somewhere to scroll to, and a load in front of a step so the abutting
@@ -1109,8 +1114,11 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
         // The panel is a fixed-height sibling of the scroll container, so the pointer resting on the chart
         // used to mean the gesture did nothing at all.
         await frame.evaluate(() => { document.querySelector(".view").scrollTop = 0; });
-        const panelBox = await frame.locator(".vram").boundingBox();
-        await page.mouse.move(panelBox.x + panelBox.width / 2, panelBox.y + panelBox.height / 2);
+        // Over the panel's HEADER, not its middle: the middle is the chart, and once there is a window to
+        // move the chart claims the wheel for scrubbing (which the scrubber test covers). This is about the
+        // rest of the panel still passing the gesture through to the transcript.
+        const headBox = await frame.locator(".vram-head").boundingBox();
+        await page.mouse.move(headBox.x + headBox.width / 2, headBox.y + headBox.height / 2);
         await page.mouse.wheel(0, 500);
         await expect.poll(() => frame.evaluate(() => document.querySelector(".view").scrollTop), { timeout: 5000 })
             .toBeGreaterThan(0);
@@ -1123,6 +1131,12 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
         expect(await frame.locator(".vram-zoom").count(), "nothing scoped yet").toBe(0);
         await frame.locator(".rc-ev-tool").first().dblclick();
         await expect(frame.locator(".vram-zoom")).toBeVisible();
+        // The window is necessarily WIDER than a short block (it needs samples in it to draw at all), so the
+        // block says which one you landed on rather than leaving the answer as "somewhere in here".
+        await expect.poll(() => frame.locator(".rc-ev.pulse").count(), { timeout: 5000 }).toBeGreaterThan(0);
+        // And the strip's window is joined to the lane, so the magnification between the two is visible
+        // instead of reading as two charts disagreeing.
+        await expect.poll(() => frame.locator(".rc-zoomlink path").count(), { timeout: 5000 }).toBe(2);
         // It scoped to the BLOCK, not to some default window: a single step is seconds, and the chip names
         // the span it framed.
         const span = await frame.locator(".vram-zoom").innerText();
@@ -1131,22 +1145,29 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
         await expect.poll(() => frame.locator(".vram-zoom").count()).toBe(0);
 
         // ---- a run block is drawn as a container, not as the heaviest work in the lane ----
-        const runBg = await frame.locator(".rc-ev-run").first().evaluate((e) => getComputedStyle(e).backgroundImage);
-        expect(runBg, "the run is patterned").toContain("conic-gradient");
-        const toolBg = await frame.locator(".rc-ev-tool").first().evaluate((e) => getComputedStyle(e).backgroundImage);
-        expect(toolBg, "…and a step is not, so the widest bar can't read as the busiest").not.toContain("conic-gradient");
+        // HEIGHT is what says so: the top row is always a run wrapper, so a half-height bar reads as the span
+        // everything below happens within, where a full-height one read as the biggest piece of work.
+        const runH = await frame.locator(".rc-ev-run").first().evaluate((e) => e.getBoundingClientRect().height);
+        const toolH = await frame.locator(".rc-ev-tool").first().evaluate((e) => e.getBoundingClientRect().height);
+        expect(runH, "the run bar is shorter than a step's").toBeLessThan(toolH * 0.75);
+        expect(runH, "…but still drawn").toBeGreaterThan(1);
 
         // ---- both sections hide, and come back ----
         await frame.locator('[aria-label="Edit tracks"]').click();
         const lane = frame.locator('.rc-esections label', { hasText: "event lane" }).locator("input");
         const list = frame.locator('.rc-esections label', { hasText: "model list" }).locator("input");
+        expect(await frame.locator(".rc-zoomlink").count(), "the connector is drawn while the lane is").toBe(1);
         await lane.uncheck();
         await expect.poll(() => frame.locator(".rc-lane").count()).toBe(0);
         expect(await frame.locator(".rc-track").count(), "the chart stays").toBeGreaterThan(0);
+        // The connector joins the scrub window to the LANE, so with the lane hidden it points into empty
+        // space — lines to nothing are worse than no lines.
+        expect(await frame.locator(".rc-zoomlink").count(), "the connector goes with it").toBe(0);
         await list.uncheck();
         await expect.poll(() => frame.locator(".vram-row").count()).toBe(0);
         await lane.check();
         await expect.poll(() => frame.locator(".rc-lane").count()).toBeGreaterThan(0);
+        await expect.poll(() => frame.locator(".rc-zoomlink").count(), { timeout: 5000 }).toBe(1);
         await list.check();
         await expect.poll(() => frame.locator(".vram-row").count()).toBeGreaterThan(0);
     } finally {

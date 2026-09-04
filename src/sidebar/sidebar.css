@@ -231,7 +231,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* The scrub strip: the whole session in one bar, with a box for the slice the chart is drawing. Its axis is
    LINEAR in time (an overview should show a ten-minute hole at its true width), so the runs are blocks and
    the gaps are the spaces between them. */
-.rc-scrub { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; }
+/* `gap` has to be column-only: the connector wraps onto its own row, and a row-gap pushed it away from the
+   track it is supposed to start at. */
+.rc-scrub { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; margin: 4px 0 0; }
 .rc-scrub-track { position: relative; flex: 1 1 auto; height: 14px; cursor: ew-resize;
                   background: var(--panel-2); border-radius: 3px; overflow: hidden; }
 .rc-scrub-run { position: absolute; top: 3px; bottom: 3px; background: var(--fg-faint); opacity: .5; border-radius: 2px; }
@@ -253,7 +255,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
             border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); }
 .rc-plot { cursor: crosshair; }
 /* The way out of a zoom, beside the view picker. */
-.vram-zoom { background: var(--panel-2); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px;
+/* The label is a DURATION that changes as you scrub — "7s" one moment, "1m 28s" the next — so without a
+   floor and tabular figures the chip resizes under the cursor and shoves its neighbours along the row. */
+.vram-zoom { min-width: 5.5em; text-align: center; font-variant-numeric: tabular-nums; margin-right: 6px;
+    background: var(--panel-2); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px;
              padding: 2px 7px; font-size: 0.8em; cursor: pointer; font-variant-numeric: tabular-nums; }
 .vram-zoom:hover { background: var(--panel-2-hover); }
 .rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: help; z-index: 3; }
@@ -293,16 +298,14 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* A background embedding call: a small model working BESIDE the driver rather than in its sequence, so it is
    quieter and reads as something happening underneath. */
 .rc-ev-embed { background: color-mix(in srgb, var(--ok, #22c55e) 60%, transparent); }
-/* A run is the CONTAINER the other blocks sit inside, and it is the widest bar in the lane — as a solid
-   fill it read as the heaviest piece of work rather than as the thing holding the work. A checkerboard
-   says "scaffold" at a 9px row height where a lighter shade would just look like a dimmer bar, and it is
-   built from the run's own --model so it keeps the identity the rest of the lane reads by. */
+/* A run is the CONTAINER the other blocks sit inside, and it is the widest bar in the lane — as a full-height
+   solid fill it read as the heaviest piece of work rather than as the thing holding it. HEIGHT carries that
+   distinction instead of texture: the top row is always a run wrapper and never anything else, so a solid bar
+   at half height says "this is the span everything below happens within" more plainly than a pattern did, and
+   it keeps the model colour the rest of the lane reads by. */
 .rc-ev-run {
-    background:
-        repeating-conic-gradient(from 0deg,
-            color-mix(in srgb, var(--model, var(--fg-dim)) 70%, transparent) 0 25%,
-            transparent 0 50%) 0 0 / 4px 4px,
-        color-mix(in srgb, var(--model, var(--fg-dim)) 18%, transparent);
+    top: 50%; height: 50%; transform: translateY(-50%);
+    background: var(--model, var(--fg-dim));
 }
 /* A load is the wait before a token — striped, because it is time spent NOT generating. The real fill is
    built inline from the model's colour (loadStripes); this is what it falls back to. */
@@ -1917,7 +1920,7 @@ code .expanded:hover { background: color-mix(in srgb, var(--ok, #22c55e) 12%, tr
    which stretch you are looking at, and a dense run of events must not turn it into a solid bar that hides
    the window. Under .rc-scrub-win, so the window box still reads clearly on top of them. */
 .rc-scrub-ev {
-    position: absolute; top: 1px; bottom: 1px; width: 2px; margin-left: -1px;
+    position: absolute; top: 1px; bottom: 1px; min-width: 2px;
     border-radius: 1px; opacity: .55; pointer-events: none;
     background: var(--fg-dim);
 }
@@ -1943,10 +1946,42 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* A step's pointer: a handle you can take away with you. Quiet by default — it is metadata about the step,
    not part of its output — and it announces itself as clickable on hover, because a chip that copies is not
    something a reader would otherwise try. */
-.astep-token { margin: 0 0 6px; }
-.tok-chip { display: inline-flex; align-items: center; gap: 6px; padding: 1px 6px; cursor: pointer;
-    color: var(--fg-dim); background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; }
-.tok-chip code { font-size: .92em; color: var(--fg); }
-.tok-chip-hint { font-size: .74em; text-transform: uppercase; letter-spacing: .04em; opacity: .55; }
-.tok-chip:hover { background: var(--panel-2-hover); }
-.tok-chip:hover .tok-chip-hint { opacity: 1; }
+/* Bottom RIGHT of the step card. It is a handle to take away, not something to read on the way down, so it
+   sits out of the reading column the In/Out share and out of the way of the next step's header. */
+.astep-token { display: flex; justify-content: flex-end; margin: 3px 0 0; }
+/* METADATA about the step, not part of its output — so it is smaller and quieter than the Out it names, the
+   same weight as the other small chips in this card. Two things had made it read as a broken input field:
+   it inherited the body's full size, and the hover-only "copy" label was hidden with opacity, which leaves
+   its box in the layout — so the chip carried a wide dead margin nothing was in. */
+/* The same size as the APPROVED badge on the step's own header (.appr, 0.72em): both are chips ABOUT the
+   step rather than content of it, and two pieces of step metadata at two different sizes is the
+   inconsistency. Rounded the same way too, so they read as one family. */
+.tok-chip { display: inline-flex; align-items: center; gap: 5px; padding: 0 6px; cursor: pointer;
+    font-size: 0.72em; line-height: 1.6; color: var(--fg-dim); background: none;
+    border: 1px solid var(--border); border-radius: 999px; }
+.tok-chip code { font-family: var(--mono, ui-monospace, monospace); font-size: 1em; color: var(--fg-dim); }
+/* A fixed-size glyph rather than a hover-only word: the chip is right-aligned, so anything that changes its
+   width on hover slides the pointer text sideways under the cursor that just arrived at it. The copy and
+   check icons share a box, so the confirmation does not move it either. */
+.tok-chip-icon { display: inline-flex; width: 11px; height: 11px; color: var(--fg-faint); }
+.tok-chip-icon svg { width: 11px; height: 11px; }
+.tok-chip:hover { border-color: var(--fg-faint); background: var(--panel-2); }
+.tok-chip:hover code, .tok-chip:hover .tok-chip-icon { color: var(--fg); }
+
+/* `.set-row` had no rule at all, so its children were plain inline boxes and a control sat flush against the
+   text beside it. One row, laid out. `.col` stacks instead, for a section whose parts are full-width. */
+.set-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.set-row.col { flex-direction: column; align-items: stretch; }
+
+/* The scrub window's edges, joined to the lane's. Hairlines in the accent, so it reads as the same selection
+   continuing rather than as a third thing drawn between two charts. */
+/* Spans the gap between the strip and the lane EXACTLY: the lane's own top margin sits below this, so a
+   height alone left the lines ending in mid-air a couple of pixels short of the thing they point at. */
+.rc-zoomlink { display: block; flex: 0 0 100%; width: 100%; height: 11px; margin: 0 0 -6px; overflow: visible; }
+.rc-zoomlink path { fill: none; stroke: var(--accent); stroke-width: 1; opacity: .45; }
+
+/* The block you double-clicked, after the window has moved to it — the window is necessarily wider than a
+   short block, so this is what turns "somewhere in here" into "this one". */
+@keyframes rcEvPulse { 0% { outline-color: var(--accent); } 100% { outline-color: transparent; } }
+.rc-ev.pulse { outline: 2px solid var(--accent); outline-offset: 1px; animation: rcEvPulse 1.4s ease-out forwards; }
+@media (prefers-reduced-motion: reduce) { .rc-ev.pulse { animation: none; } }

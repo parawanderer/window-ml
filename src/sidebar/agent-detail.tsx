@@ -12,7 +12,7 @@ import { config, surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTo
 import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
-import { IconChevron, IconWarn } from "./icons";
+import { IconChevron, IconWarn, IconCopy, IconCheck } from "./icons";
 import {
     Code, CopyBtn, SheetChip, Hash, Stamp, ClickableImg, Dot,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText,
@@ -231,7 +231,11 @@ function TokenChip({ token }: { token: string }) {
         <div class="astep-token">
             <button class="tt tok-chip" onClick={copy} aria-label={`Copy ${ref}`}>
                 <code>{ref}</code>
-                <span class="tok-chip-hint">{done ? "copied" : "copy"}</span>
+                {/* A GLYPH, not a word. A hover-only label changes the chip's width, and the chip is
+                    right-aligned, so the pointer text jumped sideways every time the cursor arrived. Two
+                    icons of the same box mean the affordance is always visible and the confirmation costs
+                    no layout either. */}
+                <span class="tok-chip-icon">{done ? <IconCheck /> : <IconCopy />}</span>
                 <span class="tt-pop wrap left" role="tooltip">This step's output kept as a pointer. Copy it and paste it into the composer to ask about this exact output, or read it in `exec` as {ref}.</span>
             </button>
         </div>
@@ -305,15 +309,6 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
             </button>
             {open
                 ? <div class="astep-body">
-                    {/* The step's POINTER, when the run minted one. It is a first-class handle — the model
-                        reads its own outputs back through it and can cite it in an answer — but until now it
-                        only existed in the model's context, so a human watching a run had no way to name the
-                        thing they were looking at. Click to copy, which is what you do with it: paste it into
-                        the composer to ask about that exact output.
-
-                        DevTools only. The HUD is a glance surface for someone driving a task, and a hex
-                        handle there is noise; this is for the surface you open when you are debugging. */}
-                    {st.token && surface.value !== "card" ? <TokenChip token={st.token} /> : null}
                     {issues ? <div class="tt tt-row arg-issues"><IconWarn /><span>arg schema: {issues.join("; ")}</span><span class="tt-pop wrap left" role="tooltip">The args don't match this tool's parameter schema.</span></div> : null}
                     {st.reused?.length ? <ReusedBlock reused={st.reused} /> : null}
                     {args || inRender
@@ -330,6 +325,16 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                                 : <span class="dim">running…</span>)
                             : (st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">(no output)</span>} />
                     {st.feedback ? <FeedbackBlock fb={st.feedback} /> : null}
+                    {/* The step's POINTER, when the run minted one — a first-class handle the model reads its
+                        own outputs back through and can cite in an answer, which until now existed only in
+                        the model's context. Click to copy: paste it into the composer to ask about this exact
+                        output. Under the Out it names, because it is a handle ON that output, not a property
+                        of the call — putting it above made it the first thing you read about a step, which it
+                        is not.
+
+                        DevTools only. The HUD is a glance surface for someone driving a task and a hex handle
+                        there is noise; this belongs on the surface you open when you are debugging. */}
+                    {st.token && surface.value !== "card" ? <TokenChip token={st.token} /> : null}
                 </div>
                 : null}
             {/* On-demand plain-English gloss for a code step — CARD's Show-work trace only (the debug panel
