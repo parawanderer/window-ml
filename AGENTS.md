@@ -1032,16 +1032,40 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   `npm test` stays green. CI fetches the wheels (cached by pyodide version) for
   both the test job (so these run) and the build job (so the uploaded extension
   artifact can actually run `python_exec`).
-- **Working in a git worktree** (`.claude/worktrees/<name>`): two gitignored directories do
-  NOT come with it, and neither absence is loud. `node_modules` is obvious (nothing runs);
-  `pyodide-wheels/` is not — the build prints one `⚠ pyodide-wheels/ missing` line and
-  carries on, `npm test` stays green because the CPython tests self-skip, and the failure
-  only surfaces at RUNTIME as `ModuleNotFoundError: No module named 'numpy'` inside a
-  `python_exec` step, which reads like a sandbox bug. Symlink both to the main checkout
-  rather than re-downloading 28MB of wheels:
-  `ln -s ../../../node_modules node_modules && ln -s ../../../pyodide-wheels pyodide-wheels`,
-  then rebuild. (`node_modules/` in `.gitignore` has a trailing slash, so a symlink shows as
-  untracked — leave it out of commits.)
+- **Running several sessions at once? Give each one its own CLONE**, as a sibling directory
+  (`../window-ml-bench`, `../window-ml-md-negotiation`), and never work in whichever checkout the other
+  sessions are using. Sharing one working tree costs real time, all of it observed rather than
+  hypothetical: changes swept into another session's commit; their uncommitted files sitting in your
+  `git status`, so `git add -A` is never safe; and the pre-commit hook regenerating
+  `docs/spec/export.schema.json` from THEIR in-flight `export-schema.ts`, blocking an unrelated commit and
+  telling you to stage their generated output.
+
+  ```bash
+  cd .. && git clone git@github.com:parawanderer/window-ml.git window-ml-<what-you-are-doing>
+  cd window-ml-<what-you-are-doing>
+  ln -s ../window-ml/.env .env                       # the backend + key, for USE_ENV=1
+  ln -s ../window-ml/pyodide-wheels pyodide-wheels   # 28MB of static wheels, don't re-download
+  npm ci && npm run build
+  ```
+
+  **Tell the user to open both directories in one VS Code window** (File > Add Folder to Workspace, or
+  `code ~/git/window-ml ~/git/window-ml-bench`). Each session then edits its own tree while the human
+  reads both side by side, and a file the user opens is unambiguous about which checkout it came from.
+
+  A `git worktree` is the lighter alternative and shares the object store, but prefer a clone: a worktree
+  has to symlink `node_modules` back into the shared checkout, and that coupling is what produced a
+  self-referential symlink that replaced the real `node_modules` and left every dependency UNMET. Its own
+  `npm ci` has no such edge. A worktree also refuses to check out a branch another worktree holds, which
+  is occasionally what you want and occasionally just in the way.
+- **Three gitignored things do NOT come with a fresh checkout, and no absence is loud.** `node_modules` is
+  obvious (nothing runs); `pyodide-wheels/` is not — the build prints one `⚠ pyodide-wheels/ missing`
+  line and carries on, `npm test` stays green because the CPython tests self-skip, and the failure only
+  surfaces at RUNTIME as `ModuleNotFoundError: No module named 'numpy'` inside a `python_exec` step,
+  which reads like a sandbox bug. **`.env` is the third**: `USE_ENV=1` (observe, the bench) then dies on
+  `ENOENT ... /.env` before anything runs. Symlink `.env` and `pyodide-wheels` as above; run `npm ci` for
+  `node_modules` rather than symlinking it. All three are ignored as plain names, so the symlinks cannot
+  be committed — they previously had trailing slashes, which match a DIRECTORY only, and a `node_modules`
+  symlink duly got committed and then replaced the real directory on the next pull.
 - **Coverage: `npm run coverage`** — Node's built-in coverage (no dependency), writing
   `coverage/lcov.info` (the **Coverage Gutters** VSCode extension reads it with no configuration) plus a
   table on stdout. `node scripts/coverage-lines.mjs <file>` prints the gaps AS SOURCE, separating **NEVER
