@@ -918,6 +918,10 @@ export interface ToolContext {
     /** Read a `@tool:<id>` pointer from THIS run — what `ml.dereference` binds to inside a tool call. Absent
      *  outside a run, which is why the page can't reach it from its own console. */
     deref?: (ref: string, pipe?: string | string[]) => Promise<DerefRead>;
+    /** Bundle ids this run exposed via `serverTools`, and therefore the ONLY ones `ml.dynamicTools` reaches
+     *  from inside one of its tool calls. An empty array narrows it to nothing, which is what a run that
+     *  asked for no server tools must get; absent is treated the same way. */
+    serverAllow?: readonly string[];
     /** LIVE partial output — a GENERIC tool-streaming capability. A tool's `run` may call `ctx.stream(text)`
      *  to stream output AS IT WORKS (Jupyter-style: `exec`'s console.log, `python_exec`'s print), so the step's
      *  Out fills in live instead of only appearing at completion. Present ONLY when the run opted into
@@ -2081,6 +2085,12 @@ export interface MlApi {
      *  tool), so from an untrusted page it only runs a call an agent run already approved. Needs the
      *  patched OpenWebUI — see docs/FORKED-BACKENDS.md. */
     execServerTool(toolId: string, name: string, args?: Record<string, unknown>, options?: { onOutput?: (text: string, ts?: number) => void; signal?: AbortSignal }): Promise<ServerToolResult>;
+    /** The same tools as a callable NAMESPACE — `ml.dynamicTools.<bundle>.<fn>(args)`, with the function's
+     *  own `.schema` on the callable and the arguments checked against it before anything is dispatched.
+     *  See `dynamic-tools.ts`. */
+    dynamicTools: import("./dynamic-tools").DynamicToolNamespace;
+    /** @internal memoised namespace behind {@link dynamicTools}. */
+    _dynamicTools?: import("./dynamic-tools").DynamicToolNamespace;
     /** The machine's memory CAPACITY — per-device VRAM totals/free and system RAM (Ollama `/api/info`).
      *  `ml.ps()` says what is RESIDENT; this says what there is room for. Returns `null` when the route
      *  isn't available (stock Ollama, or an OpenWebUI without the passthrough) — treat that as "capacity

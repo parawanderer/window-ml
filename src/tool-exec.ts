@@ -39,6 +39,19 @@ let activeDeref: ((ref: string, pipe?: string | string[]) => Promise<DerefRead>)
 /** The pointer resolver for the tool currently running, or null (→ `ml.dereference` throws outside a run). */
 export function currentDeref(): ((ref: string, pipe?: string | string[]) => Promise<DerefRead>) | null { return activeDeref; }
 
+// And the same for `ml.dynamicTools`, which is where the whitelist LIVES rather than being checked.
+//
+// There is no caller identity to test: an approved `exec` runs in the page's main world, the same realm as
+// the console, so nothing distinguishes "the model wrote this line" from "the human typed it". Narrowing
+// the object for the duration of the call is therefore the only mechanism available — and it is a better
+// one than a check, because a tool the run may not use is not merely refused, it is not THERE.
+//
+// Null means unrestricted, which is the console: a human may reach any tool their key can, gated by the
+// same approval every privileged call goes through.
+let activeServerAllow: readonly string[] | null = null;
+/** Bundle ids the RUNNING tool call may reach, or null outside a run (→ the console's unrestricted view). */
+export function currentServerAllow(): readonly string[] | null { return activeServerAllow; }
+
 // How many NON-docs tool calls may fall between two `agent_api_docs` calls before the dig counts as "over" and
 // the shown-set is purged. 1 = tolerate a single quick detour (an `exec` check) mid-dig without re-printing;
 // a second intervening step means the model has moved on, so a later re-pull re-reads the definitions fresh.
@@ -50,7 +63,11 @@ const DOCS_STREAK_LENIENCY = 1;
 export function toolContext(byName: Record<string, MlTool>, model: string | null = null, capabilities: string[] | null = null, driverSees = false, visionModel: string | null = null): ToolContext {
     let docsMemory = docsMemories.get(byName);
     if (!docsMemory) { docsMemory = { shown: new Set(), sinceDocs: 0 }; docsMemories.set(byName, docsMemory); }
-    return { tools: Object.keys(byName), hasTool: (n) => n in byName, model, capabilities, driverSees, visionModel, docsMemory, answer: answerSetFor(byName) };
+    // The server-tool whitelist is DERIVED from the toolset, never passed alongside it. A run exposed a
+    // bundle by being given tools that dispatch to it, so the tools ARE the list — and a second list would
+    // be a thing that can disagree with the first, silently, in the direction of allowing more.
+    const serverAllow = [...new Set(Object.values(byName).map((t) => t.remote?.toolId).filter((x): x is string => !!x))];
+    return { tools: Object.keys(byName), hasTool: (n) => n in byName, model, capabilities, driverSees, visionModel, docsMemory, serverAllow, answer: answerSetFor(byName) };
 }
 
 export interface ToolEnvelope {
@@ -96,9 +113,12 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
     const note = issues.length ? `\n\n⚠ Argument schema issue(s): ${issues.join("; ")}` : "";
     // Bind `window.ml.answer` to THIS run's set for the duration of the tool call (an approved exec that calls
     // ml.answer resolves it; outside a run it throws). Save/restore for nested runs.
-    const prevAnswer = activeAnswer, prevDeref = activeDeref;
+    const prevAnswer = activeAnswer, prevDeref = activeDeref, prevAllow = activeServerAllow;
     if (ctx?.answer) activeAnswer = ctx.answer;
     if (ctx?.deref) activeDeref = ctx.deref;
+    // Set even when ABSENT, unlike the two above: a run that exposed no server tools must narrow the
+    // namespace to nothing, and leaving the previous value would hand it whatever the last run allowed.
+    activeServerAllow = ctx?.serverAllow ?? [];   // absent → nothing, see the note on the binding
     // Drive `agent_api_docs`'s burst-scoped dedup: a NON-docs tool call is a step away from the dig, so count
     // it, and once the model has moved on (past the leniency) purge what it was shown so a later re-pull re-reads
     // definitions fresh. The docs tool itself resets `sinceDocs` when it runs (it's the streak).
@@ -119,5 +139,5 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         }
         return { result: String(raw) + note };
     } catch (e) { return { result: `Error: ${errText(e)}` + note }; }
-    finally { activeAnswer = prevAnswer; activeDeref = prevDeref; }
+    finally { activeAnswer = prevAnswer; activeDeref = prevDeref; activeServerAllow = prevAllow; }
 }
