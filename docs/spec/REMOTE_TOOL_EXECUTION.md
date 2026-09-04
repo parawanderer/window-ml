@@ -45,8 +45,15 @@ JSON-RPC notifications related to the originating request before the final respo
 - **`notifications/progress`** — opted into by the client putting a `progressToken` in the request's
   `_meta`. Carries that token, a `progress` value that must increase, an optional `total`, and an optional
   human-readable `message`.
-- **Logging notifications** — the client sets `io.modelcontextprotocol/logLevel` in the request's `_meta`
-  to the minimum level it wants emitted for that request.
+- **Logging notifications** — the client asks for a minimum level, and *where* it asks is version-dependent.
+  The DRAFT specification puts `io.modelcontextprotocol/logLevel` in a request's `_meta`, i.e. per call.
+  The shipped Python SDK (`mcp==1.27.2`) has no such key: what exists is `logging/setLevel`, a request in
+  its own right that sets the level for the **session**. Treat per-request level as not yet reachable.
+
+  The practical consequence outlives the version question: log verbosity is a property of the connection,
+  so two concurrent calls sharing one connection cannot ask for different levels. Nothing here depends on
+  that — OpenWebUI's `/execute` connects per call — but a future client that pools connections would be
+  surprised, and should raise the level per connection rather than per call.
 
 Cancellation, error semantics (protocol errors as JSON-RPC errors, tool execution errors as `isError` on
 the result) and structured results (`structuredContent` against a declared `outputSchema`) are all
@@ -103,17 +110,29 @@ The extension normalizes every source into one internal frame model. For MCP:
 
 | MCP | frame | why |
 | --- | --- | --- |
-| logging notification | `output` | this is log output, and it is what the output cell is for |
-| `notifications/progress` | `event` | progress is a bar, not output — see below |
+| logging notification | `output` | a log line is a line, and concatenates correctly |
+| `notifications/progress` | `event` | a monotonic counter plus a bar label — see below |
 | result `content` / `structuredContent` | `result` | the tool's return value |
 | `isError: true` on the result | `result` with `error` | a normal step outcome the model reads and reacts to |
 | JSON-RPC error response | transport failure | not a tool result, and must never reach the model as one |
 | `_meta["dev.wander.windowml/timing"]` | `result.durationMs` / `queuedMs` | the attribution above |
 
-**Progress is not output**, and conflating them is the mistake to avoid. `progress` is a number that must
-increase and `message` is a status line; appending "Reticulating splines..." repeatedly into the text the
-model reads is noise it pays for and has to reason about. It goes to the human-facing render slot, which
-is precisely the half of the two-slot render that exists for things the model did not see.
+**Progress is not output**, but the reason is narrower than it first looks, and getting the reason right
+decides a second question below.
+
+It is NOT about the model's context. Streamed output never reaches the model: `makeStreamFan` in
+`agent-loop.ts` feeds `deps.emit` and nothing else, so `ctx.stream` drives the output cell and the model
+receives the tool's returned RESULT. Streaming is a human-facing preview throughout.
+
+The reason is that `progress` is a monotonic number whose `message` is a label for a bar. Appended as
+deltas it renders "step 1step 2step 3" — each one replaces the last conceptually while accumulating
+literally. A log line is a line and concatenates correctly; a progress label does not. So progress goes to
+the human-facing render slot as structure, and logging goes to `output` as text.
+
+**Which settles the OpenWebUI `status` question the other way.** An emitter `status` description is prose,
+not a counter, and it is frequently the only text such a tool ever emits — routing it to `event` would
+mean many tools stream nothing at all. It maps to `output`, as Part 2 describes and as the implementation
+does. Since streamed text is human-facing, there is no context cost to weigh against that.
 
 ---
 
@@ -231,22 +250,32 @@ always the useful part.
 Worth stating, because it is the reason MCP is the primary target rather than something reached through
 OpenWebUI.
 
-`backend/open_webui/utils/mcp/client.py` connects with `streamablehttp_client` — the streaming-capable
-transport — and then discards everything that streams:
+**FIXED** on `ml/tool-execute-api` (`682524b93`): `MCPClient` gained `listen(sink, level)` /
+`stop_listening()`, wiring `logging_callback` and `call_tool`'s `progress_callback`, and `/execute` feeds
+both into the same frame queue as its own emitter events. Three details worth keeping: the level is raised
+in `listen()` rather than at connect (so a connection nobody watches asks for nothing) and is gated on the
+server declaring the `logging` capability; a progress token is attached only while something is listening,
+since the SDK minting the token is also what opts the call into progress at all; and a sink that raises is
+swallowed, because a broken consumer must not take a tool call down. `message_handler` is deliberately
+left unwired — it also receives logging notifications, so wiring both double-delivers.
+
+`structuredContent` is still discarded, and deliberately so: returning it changes what every existing
+caller receives, including the chat pipeline, which is a behaviour change rather than a repair.
+
+What follows is what was wrong, kept because it is the shape of mistake worth recognising elsewhere.
+
+`backend/open_webui/utils/mcp/client.py` connected with `streamablehttp_client` — the streaming-capable
+transport — and then discarded everything that streams:
 
 ```python
 self._session_context = ClientSession(read_stream, write_stream)      # no callbacks wired
 result = await self.session.call_tool(function_name, function_args)   # no progress callback
 ```
 
-No logging callback, no message handler, no progress callback. An MCP server that faithfully emits progress
-and log notifications during a two-minute call has every one of them dropped. `structuredContent` is
-discarded too — there is a `# TODO: handle outputSchema if needed` beside it.
-
-So proxying MCP through OpenWebUI is strictly lossier than talking to it directly, and `/execute`'s `event`
-frames can never carry anything from an MCP-backed tool until those callbacks are wired. That is a small
-patch, plausibly acceptable upstream in a way a new endpoint is not, and it serves the fork's own endpoint
-at the same time.
+No logging callback, no message handler, no progress callback. An MCP server that faithfully emitted
+progress and log notifications during a two-minute call had every one of them dropped — a streaming
+transport connected to nothing that reads. The general form: a capability is not acquired by choosing a
+transport that has it.
 
 ---
 
