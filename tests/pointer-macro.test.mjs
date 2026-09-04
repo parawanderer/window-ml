@@ -111,3 +111,37 @@ test("what it produces PARSES — the check the unexpanded source could never ha
             `should parse: ${code}`);
     }
 });
+
+/* ------------------------- adversarial: can the macro inject? ------------------------- */
+// The expansion builds a string literal out of matched text, which is the one place a crafted payload could
+// try to break out. Per the dialect rule, a new pattern that reaches an allowed method has to be probed for
+// whether it can reach anything else.
+
+test("a quoted label cannot break out of the generated string literal", () => {
+    // The obvious attempt: close the argument and append a call.
+    const evil = String.raw`@tool:"a\") + evil() + (\""`;
+    const { code } = expandPointers(`const v = ${evil};`);
+    // Whatever it produced must PARSE and must contain exactly one call to dereference — not a second call.
+    assert.doesNotThrow(() => acorn.parse(code, { ecmaVersion: "latest" }), code);
+    assert.equal((code.match(/ml\.dereference\(/g) || []).length, 1, code);
+    assert.ok(!/evil\(\)/.test(code.replace(/"(?:[^"\\]|\\.)*"/g, '""')), "any `evil()` survives only INSIDE the string literal");
+});
+
+test("the expansion is always a literal — no interpolation reaches the emitted code", () => {
+    for (const payload of [
+        String.raw`@tool:"x\\"`,
+        '@tool:"${process}"',
+        String.raw`@tool:"a\nb"`,
+    ]) {
+        const { code } = expandPointers(`f(${payload})`);
+        assert.doesNotThrow(() => acorn.parse(code, { ecmaVersion: "latest" }), code);
+        assert.equal((code.match(/ml\.dereference\(/g) || []).length, 1, code);
+    }
+});
+
+test("a backtick payload cannot introduce a template literal", () => {
+    // A template would make the argument executable rather than inert.
+    const { code } = expandPointers('@tool:"`${1+1}`"');
+    assert.doesNotThrow(() => acorn.parse(code, { ecmaVersion: "latest" }), code);
+    assert.ok(!/`/.test(code.replace(/"(?:[^"\\]|\\.)*"/g, '""')), "the backtick stays inside the string");
+});

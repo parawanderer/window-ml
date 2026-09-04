@@ -1481,7 +1481,16 @@ in a branch the script never reaches must not fail a working program — eager f
 COMPUTED handle or a `pipe` falls through to the real async method, so nothing loses a capability; and the
 `ml` parameter is introduced ONLY when there is something to substitute, since passing it unconditionally
 would shadow the page's real `ml` with `undefined` whenever the lookup failed and break every other `ml.*`
-call in exec. The In render shows the EXPANDED source (`@tool:` is not JS, so a highlighter mangles the line or
+call in exec.
+**And it is expanded BEFORE the read-only dialect sees the source too**, which is not an optimisation but a
+correction: `@tool:abc` is not JavaScript, so the tokenizer rejects it and the whole survey falls through to
+the approval gate — while the same read spelled `ml.dereference("@tool:abc")` is FREE, since `dereference`
+is in `ML_READONLY_METHODS`. Without expanding first, the macro would have taught the model the more
+expensive spelling of a read it is allowed to do for nothing. Nothing is pre-hydrated on that path: the
+dialect auto-awaits a facade call, so a pointer is a value there too — same semantics, reached differently.
+Adversarial tests per the dialect rule: a crafted quoted label cannot break out of the generated string
+literal, introduce a template, or name a method other than `dereference` (the expansion is a fixed template
+around a `JSON.stringify`d match). The In render shows the EXPANDED source (`@tool:` is not JS, so a highlighter mangles the line or
 gives up) with a `note` saying how many expanded and `marks` for where; the model's own text stays in
 `arguments.js` for the raw view, and the note is what stops the two reading as a contradiction.
 
