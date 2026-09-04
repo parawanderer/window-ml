@@ -20,7 +20,7 @@ import { toolToken } from "./util";
 import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "./token-pipe";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
-export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
+export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; remote?: import("./contract").RemoteToolTarget; }
 // The tool's serializable result. `renderIn`/`renderOut` are the debug-render slots computed by the
 // executor's world (page-side for the delegated path) so the emitter can show a rendered In/Out.
 // `image` is a screenshot a vision tool (native `look`) captured — INLINE VISION: it's injected into
@@ -623,7 +623,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // `dereference` is never citable: it produces no new data, only a VIEW of a pointer that already
             // exists, so minting one would clutter the store with self-referential handles. It also has its own
             // `token` PARAMETER — the pointer being read — which would otherwise be misread here as a label.
-            const citable = call.name !== DEREF_TOOL && (CITABLE_TOOLS.has(call.name) || wantsToken) && !failed;
+            // A REMOTE tool is citable too, and by DECLARATION rather than by name: its name is generated from
+            // the server's own bundle, so it can never be in a hardcoded list — and its schema comes from the
+            // server, so it has no `token` parameter for the model to opt in with either. Which would leave
+            // the one kind of output pointers most exist for — large, expensive to reproduce, fetched from
+            // off the machine — as the only kind that can never become one.
+            const citable = call.name !== DEREF_TOOL && (CITABLE_TOOLS.has(call.name) || !!meta?.remote || wantsToken) && !failed;
             // Seed the id from the GLOBAL seq (base + per-turn) so a multi-turn run never mints a colliding id
             // (turn 2's step 1 vs turn 1's step 1) that a citation would then resolve to the wrong, earlier step.
             const tokenId = (opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, (opts.seqBase ?? 0) + s) : undefined;

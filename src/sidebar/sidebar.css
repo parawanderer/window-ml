@@ -1859,3 +1859,9 @@ html[data-surface="card"] .appr-btn.no:hover {
 .rp-note { font-size: .85em; color: var(--fg-dim); margin: 0 0 4px; font-style: italic; }
 /* A hint REPORTING a failure rather than explaining a control. */
 .hint.err { color: var(--err, #ef4444); }
+
+/* A span of code that was SUBSTITUTED for something the author did not write — `exec`'s expanded pointer
+   macros. Underlined rather than filled, so it marks a region without competing with syntax highlighting;
+   `help` because the original is in the tooltip. */
+code .expanded { border-bottom: 1px dashed var(--ok, #22c55e); cursor: help; }
+code .expanded:hover { background: color-mix(in srgb, var(--ok, #22c55e) 12%, transparent); }

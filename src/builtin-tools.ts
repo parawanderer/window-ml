@@ -4,7 +4,7 @@
 // window.ml keeps thin delegating method wrappers. Not in the default read-only
 // domTools; opt in via extraTools, gated by the approval flow.
 
-import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext, ServerTool } from "./contract";
+import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext, ServerTool, JsonSchema } from "./contract";
 import { DEFAULT_GROUNDING_RANGE, resolveOutputCap, outputCapPrecheck, UI_OUT_CAP } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
 import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed, clickSelector } from "./dom";
@@ -1601,6 +1601,37 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
 
 
 /**
+ * A remote function's schema with an optional `token` beside its own properties, so the model can NAME the
+ * output at call time instead of coming back for it.
+ *
+ * A remote output is minted as a pointer either way (it is citable by declaration), so this is about giving
+ * it a name the model chose — `@tool:"the page summary"` rather than `@tool:<the generated tool name>`.
+ */
+function withToken(schema: JsonSchema | null, bundle: string): JsonSchema {
+    const base = (schema && typeof schema === "object" ? schema : { type: "object", properties: {} }) as JsonSchema & { properties?: Record<string, unknown> };
+    if (base.type !== "object" || !base.properties || "token" in base.properties) return base;
+    return {
+        ...base,
+        properties: {
+            ...base.properties,
+            token: { type: "string", description: `Optional: a SHORT label for this output, e.g. "the ${bundle} results". The output is kept either way, but a label is what you will actually remember — cite it later as @tool:"your label" instead of re-running this.` },
+        },
+    } as JsonSchema;
+}
+
+/** The arguments as ONE readable line for the consent sentence. Pretty-printed JSON inside the card's
+ *  quoted "what you typed" slot renders as nested quotes and wraps over three lines — for the one gate whose
+ *  entire risk is the VALUES, that is worse than useless. The full, exact object is still one click away in
+ *  the In block's raw view, per the raw-view rule. */
+function compactArgs(args: Record<string, unknown> | undefined): string {
+    const entries = Object.entries(args || {});
+    if (!entries.length) return "no arguments";
+    return entries
+        .map(([k, v]) => `${k}=${typeof v === "string" ? v : (() => { try { return JSON.stringify(v); } catch { return String(v); } })()}`)
+        .join(", ");
+}
+
+/**
  * One agent-callable tool per FUNCTION of a server-side tool bundle.
  *
  * Per function rather than one generic `run_server_tool(tool, function, args)`, because the model calls a
@@ -1632,7 +1663,15 @@ export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: reado
                 name,
                 summary: `Runs ${fn.name} on the ${b.name} server.`,
                 description: `${fn.description || `The ${fn.name} function of the ${b.name} tool.`} RUNS ON THE SERVER, not in this browser — its arguments leave this machine, so it needs approval every time. ${b.description || ""}`.trim(),
-                parameters: fn.parameters || { type: "object", properties: {} },
+                // The server's schema VERBATIM, plus `token` as a SIBLING of its own properties — never a
+                // wrapper around them. `{args: {...}, token}` would nest every remote tool's arguments to add
+                // one optional field, which is the same opaque-object problem that made this one tool per
+                // FUNCTION rather than one generic dispatcher. Sibling also matches how the citable builtins
+                // already spell it, so there is one spelling rather than two.
+                //
+                // Skipped when the function already HAS a `token` property: shadowing a real parameter to add
+                // a convenience is worse than the model reaching for `@tool:<toolname>` instead, which works.
+                parameters: withToken(fn.parameters, b.name),
                 requiresApproval: true,
                 capabilities: [],
                 remote: { via: "openwebui", toolId: b.id, fn: fn.name },
@@ -1643,15 +1682,22 @@ export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: reado
                 // name cannot make this say one thing while the grant authorises another.
                 render: (_input, args) => ({
                     type: "action" as const,
-                    verb: "Run",
-                    target: `${fn.name} on ${b.name}`,
-                    note: "on the server — these arguments leave this machine",
-                    input: (() => { try { return JSON.stringify(args ?? {}, null, 1); } catch { return String(args); } })(),
+                    // The sentence is "Send <these values> to <this callable>", because that is what is being
+                    // approved — not "run a tool". The card composes verb + input + target in that order, so
+                    // the target carries its own preposition and the whole thing reads as English.
+                    verb: "Send",
+                    input: compactArgs(args),
+                    target: `to ${fn.name} on ${b.name}`,
+                    note: "off this machine, to the configured server",
                     // Styled like a navigation or a fetch: something is leaving, and that is the part to see.
                     crossOrigin: b.id,
                 }),
                 async run(args: Record<string, unknown>, ctx?: ToolContext) {
-                    const r = await ml.execServerTool(b.id, fn.name, args || {}, {
+                    // `token` is OURS, added above — the server never declared it and would reject or ignore
+                    // it. The loop reads it off the call's own arguments, so it must be stripped here and
+                    // nowhere earlier.
+                    const { token: _token, ...forServer } = (args || {}) as Record<string, unknown>;
+                    const r = await ml.execServerTool(b.id, fn.name, forServer, {
                         onOutput: ctx?.stream ? (text, ts) => ctx.stream!(text, ts) : undefined,
                     });
                     // A stream that could not be read is NOT a tool that returned nothing, and the model

@@ -542,7 +542,7 @@ export function RenderPanel({ d, marks }: { d: RenderDescriptor; marks?: [number
                 pointer macros before running, so a reader comparing this against the raw args would
                 otherwise conclude the log is lying to them. */}
             {d.note ? <div class="rp-note">{d.note}</div> : null}
-            <Code text={d.text} lang={d.lang} format={d.format} />
+            <Code text={d.text} lang={d.lang} format={d.format} marks={d.marks} />
         </>);
         case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;

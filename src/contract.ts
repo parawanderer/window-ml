@@ -1755,7 +1755,10 @@ export interface DebugAgentConfig {
     /** caller supplied their own `system` (vs the built-in preamble) */
     customSystem: boolean;
     /** description/parameters let the sidebar show the FULL tool definitions (a JSON tree), not just names. */
-    tools: { name: string; requiresApproval: boolean; vision?: boolean; description?: string; parameters?: JsonSchema; summary?: string }[];
+    /** The run's resolved toolset. `remote` is present when a tool dispatches somewhere else — the single
+     *  most important fact about one in a RECORD of a run, since an export listing it beside the local tools
+     *  cannot otherwise say that its arguments left the machine. */
+    tools: { name: string; requiresApproval: boolean; vision?: boolean; description?: string; parameters?: JsonSchema; summary?: string; remote?: RemoteToolTarget }[];
     maxSteps: number;
     think: boolean | null;
     env: boolean;

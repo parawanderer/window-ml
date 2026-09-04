@@ -268,7 +268,7 @@
           "type": "boolean"
         },
         "tools": {
-          "description": "description/parameters let the sidebar show the FULL tool definitions (a JSON tree), not just names.",
+          "description": "The run's resolved toolset. `remote` is present when a tool dispatches somewhere else — the single most important fact about one in a RECORD of a run, since an export listing it beside the local tools cannot otherwise say that its arguments left the machine.",
           "type": "array",
           "items": {
             "type": "object",
@@ -290,6 +290,9 @@
               },
               "summary": {
                 "type": "string"
+              },
+              "remote": {
+                "$ref": "#/$defs/RemoteToolTarget"
               }
             },
             "required": [
@@ -402,6 +405,30 @@
           "items": {}
         }
       },
+      "additionalProperties": true
+    },
+    "RemoteToolTarget": {
+      "type": "object",
+      "description": "Where a remote tool actually runs. `via` names the dispatch mechanism, because \"an HTTP endpoint evaluates this\" is a fact about our own dispatch and the only one we can honestly record — an in-process tool can reach a container over IPC and nothing here would see it.",
+      "properties": {
+        "via": {
+          "type": "string",
+          "const": "openwebui"
+        },
+        "toolId": {
+          "description": "The tool BUNDLE's id.",
+          "type": "string"
+        },
+        "fn": {
+          "description": "The function within it.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "via",
+        "toolId",
+        "fn"
+      ],
       "additionalProperties": true
     },
     "ExportPage": {

@@ -3669,3 +3669,42 @@ test("exec: a COMPUTED handle still works — it just stays asynchronous", async
     const out = await tool.run({ js: `const r = "@tool:a39f599"; @tool:a39f599; return await ml.dereference(r);` }, ctx);
     assert.match(typeof out === "string" ? out : out.content, /computed-value/);
 });
+
+// ---- a remote tool's output is a pointer, and can be NAMED at call time ----
+
+test("server tools: `token` is a SIBLING of the server's own properties, never a wrapper", async () => {
+    // A wrapper (`{args: {...}, token}`) would nest every remote tool's arguments to add one optional field
+    // — the same opaque-object problem that made this one tool per FUNCTION rather than one dispatcher.
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const [tool] = buildServerTools({}, [{
+        id: "srv1", name: "Search", description: "", kind: "local",
+        functions: [{ name: "search_web", description: "", parameters: { type: "object", properties: { q: { type: "string" } }, required: ["q"] } }],
+    }], ["srv1"]);
+
+    assert.deepEqual(Object.keys(tool.parameters.properties).sort(), ["q", "token"]);
+    assert.deepEqual(tool.parameters.required, ["q"], "ours is optional and does not touch theirs");
+    assert.ok(!("args" in tool.parameters.properties), "the server's schema is not nested inside an envelope");
+});
+
+test("server tools: a function that ALREADY has `token` keeps its own", async () => {
+    // Shadowing a real parameter to add a convenience is worse than the model reaching for the name alias.
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const [tool] = buildServerTools({}, [{
+        id: "srv1", name: "S", description: "", kind: "local",
+        functions: [{ name: "f", description: "", parameters: { type: "object", properties: { token: { type: "number", description: "theirs" } } } }],
+    }], ["srv1"]);
+    assert.equal(tool.parameters.properties.token.type, "number", "the server's own, untouched");
+});
+
+test("server tools: `token` is stripped before the call leaves the machine", async () => {
+    // It is ours, added to their schema. The server never declared it and must not receive it.
+    let sent = null;
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const ml = { execServerTool: async (id, name, args) => { sent = args; return { ok: true, result: { result: "x", durationMs: 1 }, output: "", marks: [], events: [] }; } };
+    const [tool] = buildServerTools(ml, [{
+        id: "srv1", name: "S", description: "", kind: "local",
+        functions: [{ name: "f", description: "", parameters: { type: "object", properties: { q: { type: "string" } } } }],
+    }], ["srv1"]);
+    await tool.run({ q: "hello", token: "my label" });
+    assert.deepEqual(sent, { q: "hello" });
+});

@@ -26,9 +26,42 @@ export const Dot = ({ status }: { status: Status }) => (
 // Syntax-highlighted code block (highlight() returns safe token HTML). `format`
 // beautifies JS first (exec source). Reads the codeLineNumbers signal so the
 // gutter toggle re-renders live; wrap vs. scroll is a global CSS attribute.
-export const Code = ({ text, lang, format }: { text: string; lang?: string; format?: boolean }) => {
-    const src = format && (lang === "javascript" || lang === "js") ? beautifyJs(text) : text;
-    const html = highlight(src, lang);
+/** A span of `text` that was substituted for something the author did not write, with the original for a
+ *  tooltip — `exec`'s expanded pointer macros. */
+export interface CodeMark { start: number; end: number; from: string }
+
+/**
+ * Highlight `text`, wrapping each marked range so a reader can see WHICH part is not what was typed and
+ * hover it for the original.
+ *
+ * Segment-by-segment rather than post-processing the highlighted HTML, because highlighting rewrites the
+ * string and the offsets no longer index it. That is safe here for a specific reason: the macro never
+ * expands inside a string or a comment, so every boundary falls at a token boundary and no segment can cut
+ * a literal in half.
+ *
+ * Beautification is skipped when there are marks, for the same offset reason — reformatting moves
+ * everything after the first change. Losing it costs a little on code a model wrote (usually already
+ * formatted); guessing at shifted offsets would underline the wrong text, which is worse than plain.
+ */
+function markedHtml(text: string, lang: string | undefined, marks: CodeMark[]): string {
+    const ordered = [...marks].filter(m => m.start >= 0 && m.end <= text.length && m.end > m.start).sort((a, b) => a.start - b.start);
+    let out = "", at = 0;
+    for (const m of ordered) {
+        if (m.start < at) continue;   // overlapping marks: keep the first, never emit crossed spans
+        out += highlight(text.slice(at, m.start), lang);
+        out += `<span class="expanded" title="${escapeAttr(`expanded from ${m.from}`)}">${highlight(text.slice(m.start, m.end), lang)}</span>`;
+        at = m.end;
+    }
+    return out + highlight(text.slice(at), lang);
+}
+
+const escapeAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+export const Code = ({ text, lang, format, marks }: { text: string; lang?: string; format?: boolean; marks?: CodeMark[] }) => {
+    const src = format && !marks?.length && (lang === "javascript" || lang === "js") ? beautifyJs(text) : text;
+    // An expansion is a single call and never contains a newline, so a marked span cannot straddle one —
+    // which is what lets the line-number path below split this HTML as it always has.
+    const html = marks?.length ? markedHtml(src, lang, marks) : highlight(src, lang);
     if (!codeLineNumbers.value)
         return <pre class="code"><code class="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>;
     return (
