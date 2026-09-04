@@ -60,7 +60,7 @@ import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyE
 import { buildServerTools, buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
-import { executeTool, toolContext, currentAnswer, currentDeref } from "./tool-exec";
+import { executeTool, toolContext, currentAnswer, currentDeref, currentServerAllow } from "./tool-exec";
 import { runAgentLoop, shotTurnMessage, CITABLE_TOOLS } from "./agent-loop";
 import type { AgentLoopDeps } from "./agent-loop";
 import { installToolDelegation, registerRun, endRun, runAnswer } from "./run-delegation";
@@ -2354,7 +2354,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * agent run already approved. Inside a run, the loop narrows this to the tools that run whitelisted.
          */
         get dynamicTools(): DynamicToolNamespace {
-            return (this._dynamicTools ||= makeDynamicTools(this as unknown as MlApi));
+            return (this._dynamicTools ||= makeDynamicTools(this as unknown as MlApi, undefined, currentServerAllow));
         },
         /**
          * Run ONE server-side tool ourselves, in our own loop, with the arguments we chose — as opposed to

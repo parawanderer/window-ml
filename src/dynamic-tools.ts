@@ -64,16 +64,26 @@ function makeTool(ml: MlApi, bundle: ServerTool, fn: ServerToolFunction): Dynami
  * The namespace.
  *
  * @param ml the live API (for `serverTools()` and `execServerTool`)
- * @param allow when present, the ONLY bundles reachable — the run-scoped whitelist. A tool outside it
- *   throws rather than being absent, so a model that reaches for one is told why instead of seeing
- *   `undefined is not a function`.
+ * @param allow when present, the ONLY bundles reachable — a fixed whitelist, for tests and for a namespace
+ *   built for one purpose. A tool outside it throws rather than being absent, so a model that reaches for
+ *   one is told why instead of seeing `undefined is not a function`.
+ * @param scope the LIVE whitelist, consulted per access: what the currently-running tool call may reach, or
+ *   null outside a run (the console, unrestricted). This is how one memoised namespace can be narrow inside
+ *   an approved `exec` and wide in the console — there is no caller identity to test, so the object itself
+ *   is what changes.
  */
-export function makeDynamicTools(ml: MlApi, allow?: readonly string[]): DynamicToolNamespace {
+export function makeDynamicTools(ml: MlApi, allow?: readonly string[], scope?: () => readonly string[] | null): DynamicToolNamespace {
     const bundles = new Map<string, ServerTool>();
     const built = new Map<string, Record<string, DynamicTool>>();
     let loading: Promise<string[]> | null = null;
 
-    const permitted = (id: string) => !allow || allow.includes(id);
+    // The whitelist is read PER ACCESS, not captured: `ml.dynamicTools` is one memoised object on the page,
+    // and a tool call narrows it for its duration. Capturing at construction would mean the namespace a run
+    // sees is whatever the FIRST caller happened to build — the console's unrestricted one, in practice.
+    const permitted = (id: string) => {
+        const active = allow ?? scope?.();
+        return !active || active.includes(id);
+    };
 
     const namespaceFor = (id: string): Record<string, DynamicTool> => {
         const known = built.get(id);
@@ -102,7 +112,9 @@ export function makeDynamicTools(ml: MlApi, allow?: readonly string[]): DynamicT
         loading ||= (async () => {
             const list = await ml.serverTools();
             bundles.clear(); built.clear();
-            for (const b of list) if (permitted(b.id)) bundles.set(b.id, b);
+            // Every bundle the KEY can reach. What a given run may use is decided per access, not here: the
+            // list is a fact about the credentials, and load() usually happens outside any run at all.
+            for (const b of list) bundles.set(b.id, b);
             // Real keys, so the console can complete them. This is the half a Proxy cannot provide.
             for (const id of bundles.keys()) Object.defineProperty(root, id, {
                 configurable: true, enumerable: true, get: () => namespaceFor(id),
@@ -114,16 +126,30 @@ export function makeDynamicTools(ml: MlApi, allow?: readonly string[]): DynamicT
 
     const root = new Proxy({ load } as DynamicToolNamespace, {
         get(target, prop) {
-            if (typeof prop !== "string" || prop === "load" || prop in target) return (target as Record<string, unknown>)[prop as string];
-            // Told outright rather than left undefined: a run whose whitelist excludes this bundle should
-            // explain itself, because `undefined is not a function` sends the reader looking for a typo.
-            if (!permitted(prop)) throw new Error(`ml.dynamicTools: this run may not use ${JSON.stringify(prop)}. Allowed: ${(allow || []).join(", ") || "(none)"}`);
+            if (typeof prop !== "string" || prop === "load") return (target as Record<string, unknown>)[prop as string];
+            // The permission check comes BEFORE the own-property short-circuit, because `load()` defines real
+            // keys and they would otherwise bypass it entirely — the namespace would narrow only for bundles
+            // nobody had listed yet, which is backwards.
+            //
+            // Only a KNOWN bundle throws. An unfamiliar name is left to dispatch and be refused at the
+            // background gate, both because we may simply not have listed it and because this trap also sees
+            // `then`, `constructor` and whatever else the runtime probes — throwing on those would make the
+            // namespace unusable in ways that have nothing to do with permissions.
+            if (bundles.has(prop) && !permitted(prop)) {
+                const active = allow ?? scope?.() ?? [];
+                throw new Error(`ml.dynamicTools: this run may not use ${JSON.stringify(prop)}. It was given: ${active.join(", ") || "(no server tools)"}`);
+            }
+            if (prop in target) return (target as Record<string, unknown>)[prop as string];
             return namespaceFor(prop);
         },
-        // So `Object.keys` and the console's completion see what has been listed.
-        ownKeys: (target) => [...new Set([...Reflect.ownKeys(target), ...bundles.keys()])],
+        // So `Object.keys` and the console's completion see what has been listed — MINUS whatever the live
+        // scope forbids. The target's own keys are filtered too, not just the map: `load()` defines real
+        // properties for every bundle the key can reach, and a run must not see them enumerated any more
+        // than it can reach them. Safe to omit because those properties are configurable.
+        ownKeys: (target) => [...new Set([...Reflect.ownKeys(target), ...bundles.keys()])]
+            .filter((k) => typeof k !== "string" || !bundles.has(k) || permitted(k)),
         getOwnPropertyDescriptor: (target, prop) =>
-            (typeof prop === "string" && bundles.has(prop))
+            (typeof prop === "string" && bundles.has(prop) && permitted(prop))
                 ? { configurable: true, enumerable: true, value: namespaceFor(prop) }
                 : Reflect.getOwnPropertyDescriptor(target, prop),
     });

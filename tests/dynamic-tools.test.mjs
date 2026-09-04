@@ -128,3 +128,41 @@ test("streaming options pass straight through", async () => {
     await ns.web_page_fetch_summarize.fetch_page({ url: "https://a" }, { onOutput });
     assert.equal(ml.calls[0].options.onOutput, onOutput);
 });
+
+/* --------------------------- the LIVE run scope --------------------------- */
+// The whitelist is not a check, it is the object. There is no caller identity to test — an approved `exec`
+// runs in the page's main world, the same realm as the console — so what changes is what `ml.dynamicTools`
+// IS for the duration of a tool call.
+
+test("the scope is read PER ACCESS, so one namespace is narrow in a run and wide in the console", async () => {
+    const ml = stub();
+    let scope = null;                       // null = outside a run
+    const ns = makeDynamicTools(ml, undefined, () => scope);
+    await ns.load();
+
+    // Console: everything the key can reach.
+    assert.ok(ns.web_page_fetch_summarize.fetch_page);
+    assert.ok(Object.keys(ns).includes("web_page_fetch_summarize"));
+
+    // Inside a tool call that was given only the search bundle — the SAME object.
+    scope = ["searxng_web_search"];
+    assert.ok(ns.searxng_web_search.search_web);
+    assert.throws(() => ns.web_page_fetch_summarize, /may not use "web_page_fetch_summarize"/);
+    assert.ok(!Object.keys(ns).includes("web_page_fetch_summarize"), "and it is not enumerable either");
+
+    // …and back, when the call returns.
+    scope = null;
+    assert.ok(ns.web_page_fetch_summarize.fetch_page);
+});
+
+test("a run that was given NO server tools reaches none", async () => {
+    // The case a captured-at-construction whitelist would get wrong: the namespace a run sees would be
+    // whatever the first caller built, which in practice is the console's unrestricted one.
+    const ml = stub();
+    let scope = null;
+    const ns = makeDynamicTools(ml, undefined, () => scope);
+    await ns.load();
+    scope = [];
+    assert.throws(() => ns.searxng_web_search, /no server tools/);
+    assert.deepEqual(Object.keys(ns).filter(k => k !== "load"), []);
+});

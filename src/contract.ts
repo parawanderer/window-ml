@@ -918,6 +918,10 @@ export interface ToolContext {
     /** Read a `@tool:<id>` pointer from THIS run — what `ml.dereference` binds to inside a tool call. Absent
      *  outside a run, which is why the page can't reach it from its own console. */
     deref?: (ref: string, pipe?: string | string[]) => Promise<DerefRead>;
+    /** Bundle ids this run exposed via `serverTools`, and therefore the ONLY ones `ml.dynamicTools` reaches
+     *  from inside one of its tool calls. An empty array narrows it to nothing, which is what a run that
+     *  asked for no server tools must get; absent is treated the same way. */
+    serverAllow?: readonly string[];
     /** LIVE partial output — a GENERIC tool-streaming capability. A tool's `run` may call `ctx.stream(text)`
      *  to stream output AS IT WORKS (Jupyter-style: `exec`'s console.log, `python_exec`'s print), so the step's
      *  Out fills in live instead of only appearing at completion. Present ONLY when the run opted into
