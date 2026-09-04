@@ -1,16 +1,18 @@
 # Remote tool execution: streaming and timing
 
-A spec for the OpenWebUI-side endpoint that evaluates a tool on the server, written for whoever
-implements it there. It covers two things the current endpoint does not do, both of which are much
-cheaper to build in now than to retrofit: **streaming its output**, and **reporting how long it
-actually spent**.
+The OpenWebUI-side endpoint that evaluates a tool on the server: how it streams its output, and how it
+reports the time it actually spent.
 
-Nothing here needs the extension to change first. The client side already accepts both.
+**Status: BUILT server-side, unconsumed here.** `parawanderer/open-webui`, branch
+`ml/tool-execute-api` (`a4ee697c8` the endpoint, `b27f4d485` streaming and timing), not yet proposed
+upstream. The extension still drives server tools through upstream's `tool_ids` + `function_calling`
+loop, so nothing here is live — this is now the contract to write the client against rather than a
+proposal. Sections marked BUILT AS record where the implementation corrected the original draft.
 
 ## What exists
 
 `POST /api/v1/tools/id/{id}/execute` (fork `parawanderer/open-webui`, branch
-`ml/tool-execute-endpoint`) runs the callable the chat pipeline would, so an external client can drive
+`ml/tool-execute-api`) runs the callable the chat pipeline would, so an external client can drive
 its own loop over OpenWebUI-configured tools. It returns a single response when the tool finishes.
 The extension does not call it yet — server tools currently go through upstream's `tool_ids` +
 `function_calling` loop.
@@ -53,10 +55,15 @@ Two modes, selected by the request. Keep the existing non-streaming shape workin
 ```jsonc
 POST /api/v1/tools/id/{id}/execute
 {
-  "params": { ... },        // the tool's arguments, as today
-  "stream": true            // NEW, optional, default false → today's single response
+  "name": "search_web",     // the function WITHIN the bundle this tool id names
+  "arguments": { "q": "…" },
+  "stream": true            // optional, default false → the single-response shape
 }
 ```
+
+> **BUILT AS.** The original draft showed `{"params": {…}}`, which was simply wrong: a tool id names a
+> *bundle* of functions, so the call has always been `{name, arguments}` — the same pair a model emits
+> as a tool call. `stream` was added beside them.
 
 ### Streaming response
 
@@ -65,10 +72,9 @@ Ollama's native route already uses it and the extension has a parser for that sh
 fine if it is more natural on your side, but pick one and say which.
 
 ```jsonc
-{"type":"output","text":"resolving deps\n","atMs":12}
-{"type":"output","text":"building\n","atMs":840}
-{"type":"output","text":"done\n","atMs":9310}
-{"type":"result","result":{ ... },"durationMs":9400,"queuedMs":120,"truncated":0}
+{"type":"output","text":"Searching the web","atMs":12}
+{"type":"event","event":{"type":"chat:message:files","data":{"files":[…]}},"atMs":840}
+{"type":"result","tool_id":"…","name":"search_web","result":{…},"durationMs":9400,"queuedMs":120}
 ```
 
 **`output` frames** carry a DELTA, not the accumulated text. The client appends. This matches
@@ -85,15 +91,47 @@ For the record, the anchoring rule the client uses: the first frame's arrival ti
 `atMs`. The residual error is bounded by one-way network latency, which is not measurable from one
 side — so it is bounded and acknowledged rather than pretended away.
 
+**`event` frames** forward an emitter payload verbatim, with no text derived from it. A client that
+only knows `output` and `result` ignores the type and loses nothing it could have used.
+
+> **BUILT AS.** Two corrections here, and the first changes what to expect from this endpoint.
+>
+> **There is no stdout to stream.** A tool callable is awaited once and returns a value; OpenWebUI has
+> no streaming tool protocol. The only progress channel is `__event_emitter__`, which this endpoint was
+> discarding and which now becomes frames — so a tool that only `print()`s streams nothing at all.
+> (Capturing stdout was rejected deliberately: it is process-global, so concurrent requests would
+> interleave into each other's streams.) Practical consequence: output volume is whatever the tool
+> author chose to emit for the chat UI, typically a handful of status lines rather than a build log.
+> The output cell will often have very little to show, and that is a property of the ecosystem rather
+> than of this transport.
+>
+> **Hence the third frame type.** Emitter payloads are UI-shaped and inconsistent — `status` carries
+> its text in `data.description`, message kinds in `data.content`, and some (attached files,
+> citations) are purely structural with no text at all. Deriving text from those would mean dropping
+> them, so they are forwarded whole.
+>
+> `__event_call__` — an emitter that asks the user a question and expects an answer — stays a no-op.
+> There is no channel to answer on, and emitting a question nothing can resolve is worse than dropping
+> it. It becomes possible if bidirectional streaming ever comes into scope.
+
 **The `result` frame is last and mandatory**, even on failure. Fields:
 
 | field | required | meaning |
 | --- | --- | --- |
-| `result` | yes | the tool's return value, same shape as the non-streaming response |
+| `tool_id`, `name` | yes | which callable this was, echoed back |
+| `result` | yes* | the tool's return value. Present unless `error` is |
 | `durationMs` | yes | how long YOU spent evaluating. The whole point of this document |
-| `queuedMs` | no | time between accepting the request and starting to evaluate, if you queue. A third bucket, exactly like Ollama's `load_duration`: "the tool was slow" and "the tool had not started" are different answers |
-| `truncated` | no | characters dropped if you cap output (see below). Omit or `0` when nothing was |
-| `error` | no | present instead of `result` when the tool threw. A string the model can read |
+| `queuedMs` | yes | elapsed time before evaluation began — see below |
+| `truncated` | no | characters dropped if output was capped. Absent when nothing was |
+| `error` | yes* | a string the model can read, present INSTEAD of `result` when the tool threw. Never both |
+
+> **BUILT AS.** `queuedMs` measures RESOLUTION, not scheduling: nothing queues in front of the tool,
+> and what happens before evaluation is access checks, a DB fetch, a module compile, or an MCP connect.
+> Real elapsed non-work time, which is the bucket the field was asked for — but do not render it as
+> "waiting for a slot".
+>
+> The non-streaming response carries `durationMs` and `queuedMs` too. The draft said to leave that
+> shape unchanged; adding two keys is compatible, and the numbers are just as useful there.
 
 ### Errors
 
@@ -105,6 +143,11 @@ exist".
 Partial output already streamed before a failure stays valid — do not retract it. Local tools behave
 the same way: `python_exec` captures the traceback and keeps the stdout that preceded it, because what
 the tool printed before dying is usually what explains the dying.
+
+> **BUILT AS.** Streaming loses the 400. A wrong-arguments `TypeError` genuinely is "the request was
+> bad", but by the time it is raised the response has started, so it arrives as an `error` frame.
+> Non-200 still covers everything decided before the first byte: unknown tool, no access, malformed
+> body.
 
 ### Cancellation
 
@@ -118,7 +161,8 @@ running a cancelled tool is burning someone's machine for output nobody will rea
 Cap what you stream, and say how much you dropped via `truncated`. The client caps too (12 000
 characters for the UI, less for what reaches the model), but a runaway `while true; do echo` should
 not become a network problem before it becomes a display problem. Keep the HEAD and count the rest —
-the first output is nearly always the useful part.
+the first output is nearly always the useful part. Built as `TOOL_STREAM_OUTPUT_CAP`, 100 000
+characters, head-keeping.
 
 ## What the client does with each field
 
@@ -128,9 +172,18 @@ is what it is:
 - `output.text` → `ctx.stream(text, ts)` → the live output cell, then the step's `streamOutput`.
 - `output.atMs` → anchored to local time → `streamMarks`, the per-line "produced at" gutter, which is
   explicitly documented as stamped by whoever produced the line rather than by whoever displays it.
+  Anchor at the FIRST frame's arrival minus its own `atMs`, then add each subsequent offset. Never
+  treat `atMs` as an epoch.
+- `event` frames carry no text and must NOT join the accumulated output — the model would then be
+  reading UI plumbing. Ignore them, or surface them in the render descriptor, which is the half of the
+  two-slot render that exists for exactly this: a human-facing visualisation that is not what the model
+  saw.
 - `result.durationMs` → the tool phase of the step's span, with the remainder of the client's own
   measurement rendered as network. Without it, that split cannot exist.
 - `result.queuedMs` → its own phase, drawn like a model load: real elapsed time that is not work.
+- An `error` frame is a normal step outcome the model reads. **A truncated stream with no `result`
+  frame is a transport failure**, and must not reach the model as a tool that returned nothing — that
+  is a wrong answer dressed as an empty one, and the model has no way to tell.
 
 ## The phase this creates, and what it may not claim
 

@@ -37,9 +37,9 @@ as an error. Then:
 generically, so a patched Ollama behind a *stock* OpenWebUI answers `/ollama/api/info` fine — the
 OpenWebUI fork below is not needed for any of this.
 
-## OpenWebUI — `parawanderer/open-webui`, branch `ml/tool-execute-endpoint`
+## OpenWebUI — `parawanderer/open-webui`, branch `ml/tool-execute-api`
 
-One commit ahead of upstream: `POST /api/v1/tools/id/{id}/execute`, which runs exactly the callable the
+Two commits ahead of upstream: `POST /api/v1/tools/id/{id}/execute`, which runs exactly the callable the
 chat pipeline would — local tools, OpenAPI tool servers, and MCP servers — so an external client can
 drive its own agent loop while still using the tools configured in OpenWebUI. Upstream, tool execution
 happens only *inside* the chat pipeline, so the only way to reach a tool from outside is to hand the
@@ -51,9 +51,10 @@ mechanism: `tool_ids` on the request plus the `function_calling` execution loop,
 the *other* shape possible (the extension running one tool itself, in its own loop, with the arguments
 it chose), and this file is where to look when that lands.
 
-Two additions it needs before the extension calls it — streaming its output as it works, and reporting
-how long it actually spent, without which a remote tool's span is the tool plus the network as one
-unattributable number. Both are specified in **[REMOTE_TOOL_EXECUTION.md](spec/REMOTE_TOOL_EXECUTION.md)**.
+It now also STREAMS its output and reports its own `durationMs`/`queuedMs` — without the latter a remote
+tool's span is the tool plus the network as one unattributable number. Both are specified, as built, in
+**[REMOTE_TOOL_EXECUTION.md](spec/REMOTE_TOOL_EXECUTION.md)**. Neither is proposed upstream yet, and
+nothing on this side consumes them.
 
 ## Running them
 

@@ -1386,7 +1386,7 @@ broken:
   is read as "unknown", never as an error. Without them `ml.info()` is `null`, the panel draws no ceiling
   and says so, and a multi-GPU box cannot attribute a model to a card.
 - **`POST /api/v1/tools/id/{id}/execute`** comes from `parawanderer/open-webui`, branch
-  `ml/tool-execute-endpoint` — it runs the callable the chat pipeline would, so an external client can
+  `ml/tool-execute-api` — it runs the callable the chat pipeline would, so an external client can
   drive its own loop over OpenWebUI-configured tools. **The extension does not call it yet**: server
   tools go through upstream's `tool_ids` + `function_calling` loop (hence the `SERVER_TOOL_MODES` probe).
 
