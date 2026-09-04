@@ -907,6 +907,25 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   without it the newest events, the ones you are watching for, were the only ones that never appeared.
 - **Instants rule through the plot** (dashed — a solid line reads as part of the chart), and one eviction is
   drawn in every track, so hovering it anywhere thickens it everywhere.
+- **A ROW is a claim that two bars OVERLAP**, so the lane spends one only when they do. Bars are packed at
+  their DRAWN width (a very short event is widened to stay visible, so packing has to reserve the same
+  width), with a hair of separation reserved after each — but that separation is dropped rather than
+  costing a row, because a bar pushed below the bar it merely ABUTS asserts an overlap that is not there.
+  Not an edge case: a model `load` ends exactly where the step it precedes begins, so every load was drawn
+  under its own step. A `run` is the container the rest sit inside and the widest bar on screen, so it is
+  drawn as a CHECKERBOARD rather than a solid fill (built from its own `--model`, so it keeps the identity
+  the lane reads by) — solid, it read as the heaviest work in the lane rather than the thing holding it.
+- **Double-clicking any block scopes the panel to it** (`scopeToSpan`, pure/tested), widening a block too
+  short to frame around its own centre — a 40ms window contains no samples and draws as an empty plot. An
+  open block has no end, so `now` stands in. A single click still navigates to the step: framing the time
+  around a step and going to read it are the same intent from two sides.
+- **The lane and the model list each hide** (Settings live in the panel's own track editor, beside which
+  tracks it draws — the same question). Both compete with the chart for whatever height the panel was
+  dragged to, and which of the three you want depends on what you are doing.
+- **A wheel over the panel scrolls the transcript underneath it** (`wheelThroughPanel` in `app.tsx`). The
+  panel is a fixed-height sibling of the scroll container rather than content inside it, so the gesture used
+  to do nothing at all; it is forwarded only when the panel cannot take the scroll itself, and `deltaMode`
+  is honoured because a wheel reports LINES, not pixels.
 - **Cursor tooltips share `useTipPlacement`** and are placed against the VIEWPORT from their own MEASURED
   size: they flip when they do not FIT (not at an arbitrary fraction of the width), never sit under the
   pointer, and only the surface the pointer is on renders one. Pinned by `tests/e2e/tooltips.spec.mjs`, which

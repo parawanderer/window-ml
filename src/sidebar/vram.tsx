@@ -13,7 +13,7 @@ import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
 import { useTipPlacement } from "./use-tip";
-import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels } from "./store";
 import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
 import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
@@ -564,8 +564,27 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
     const tracks = layout.value ?? [];
     const cat = seriesCatalog(sample);
     const setTrack = (i: number, next: TrackDef) => editLayout(tracks.map((t, k) => (k === i ? next : t)));
+    // Which SECTIONS the panel shows, beside which tracks it draws — the same question ("what is in this
+    // panel"), so it belongs in the same place rather than as two more controls competing for the header.
+    const setSections = (lane: boolean, models: boolean) => {
+        showLane.value = lane; showModels.value = models;
+        try { chrome.storage.local.set({ [SECTIONS_KEY]: { lane, models } }); } catch { /* opaque origin */ }
+    };
     return (
         <div class="rc-editor">
+            <div class="rc-erow rc-esections">
+                <span class="rc-esection-label">Show</span>
+                <label class="rc-eopt">
+                    <input type="checkbox" checked={showLane.value}
+                        onChange={() => setSections(!showLane.value, showModels.value)} />
+                    event lane
+                </label>
+                <label class="rc-eopt">
+                    <input type="checkbox" checked={showModels.value}
+                        onChange={() => setSections(showLane.value, !showModels.value)} />
+                    model list
+                </label>
+            </div>
             {tracks.map((t, i) => (
                 <div class="rc-etrack" key={t.id}>
                     <div class="rc-erow">
@@ -850,7 +869,7 @@ export function VramPanel() {
                         <span class="tt-pop wrap" role="tooltip">This server doesn't answer /api/info, so how much memory the machine HAS is unknown. The line is auto-scaled to whatever has been resident, not drawn against a real capacity — no bands, no free space, no per-device split.</span>
                     </span>
                 </>}
-            {rows.length
+            {showModels.value && rows.length
                 ? rows.map(m => {
                     const off = hidden.has(m.model);
                     return (
@@ -868,8 +887,8 @@ export function VramPanel() {
                         </div>
                     );
                 })
-                : ghosts.length ? null : <div class="vram-empty">Nothing loaded.</div>}
-            {ghosts.map((name) => (
+                : ghosts.length || !showModels.value ? null : <div class="vram-empty">Nothing loaded.</div>}
+            {(showModels.value ? ghosts : []).map((name) => (
                 <div class={`vram-row ghost${hoverModel.value === name ? " hot" : ""}`} key={`ghost:${name}`}
                     onPointerEnter={() => (hoverModel.value = name)}
                     onPointerLeave={() => (hoverModel.value = null)}>

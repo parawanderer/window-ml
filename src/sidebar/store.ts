@@ -113,6 +113,13 @@ export const LANE_HIDDEN_KEY = "ml_lane_hidden";
 export const laneHidden = signal<string[]>([]);
 /** Restrict the lane to the session being read, when one is open. */
 export const laneScoped = signal(false);
+// The panel's two SECTIONS, remembered. Both compete with the chart for whatever height the panel has been
+// dragged to, and which of the three you want depends on what you are doing: reading a run's shape wants the
+// lane, watching memory move wants the plot, deciding what to evict wants the model list. Hidden, not
+// removed — the data behind each keeps being collected either way.
+export const SECTIONS_KEY = "ml_res_sections";
+export const showLane = signal(true);
+export const showModels = signal(true);
 export const crosshair = signal<{ frac: number; t: number | null; msPerPx?: number } | null>(null);
 export const resWindowS = signal(RESWIN_DEFAULT);  // seconds of history the resource chart shows (Settings → Appearance)
 export const outMaxH = signal(OUTMAX_DEFAULT); // max height of a tool output cell (Settings → Appearance); 0 = uncapped

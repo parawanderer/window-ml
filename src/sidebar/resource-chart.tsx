@@ -13,13 +13,14 @@ import { useMemo, useRef, useState, useLayoutEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
     placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
+    scopeToSpan,
     filterEvents, countByKind, type ResourceEvent, type EventPlacement,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter } from "./vram";
-import { loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY } from "./store";
+import { loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, showLane } from "./store";
 import { clockAt, hhmmssms } from "./timestamps";
 import { scrollToStepSeq } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
@@ -783,6 +784,11 @@ function EventLane({ samples, events: all }: { samples: ResourceSample[]; events
         view.value = { name: "detail", hash: e.ref.hash };
         scrollToStepSeq(e.ref.seq, e.ref.hash);
     };
+    // Double-click scopes the panel to the block: the shortest path from "something happened there" to
+    // reading it at a scale where it is legible. Every block, not only a run — zooming to one tool call is
+    // the same gesture as zooming to the turn that contains it. The single click still navigates, since
+    // going to the step and framing the time around it are the same intent from two sides.
+    const scope = (e: ResourceEvent) => { zoomRange.value = scopeToSpan(e.t, e.until, Date.now()); };
     return (
         <div class="rc-lane" onPointerLeave={() => { eventHover.value = null; hoverAt.value = null; hoverModel.value = null; }}>
             {rows.map((row, ri) => (
@@ -805,7 +811,13 @@ function EventLane({ samples, events: all }: { samples: ResourceSample[]; events
                                 return (
                                     <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}${e.open ? " open" : ""}`} key={k}
                                         style={{ left: `${p.from * 100}%`, width: `${w}%`,
-                                                 ...(e.model && !bg ? { background: colorFor(e.model) } : {}),
+                                                 // A `run` is the CONTAINER every other block sits inside, so it is
+                                                 // drawn as a pattern rather than a solid fill (see .rc-ev-run) —
+                                                 // otherwise the widest, most prominent bar in the lane reads as the
+                                                 // heaviest piece of work in it. The pattern is built from `--model`
+                                                 // below, so it keeps the same identity; an inline `background`
+                                                 // shorthand here would reset the background-image that draws it.
+                                                 ...(e.model && !bg && e.kind !== "run" ? { background: colorFor(e.model) } : {}),
                                                  // A model's events carry ITS colour — the same one its row and
                                                  // its band already use, so the lane reads against the list
                                                  // without a legend of its own.
@@ -813,7 +825,8 @@ function EventLane({ samples, events: all }: { samples: ResourceSample[]; events
                                                  ...(bg ? { background: bg } : {}) }}
                                         title=""
                                         onPointerEnter={(ev: PointerEvent) => { eventHover.value = { p, scope: "lane" }; hoverModel.value = e.model ?? null; trackCursor("lane")(ev); }}
-                                        onClick={() => open(e)} />
+                                        onClick={() => open(e)}
+                                        onDblClick={() => scope(e)} />
                                 );
                             })}
                         </div>
@@ -886,7 +899,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
                 {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} events={events} />)}
             </div>
             {/* Below every track, sharing their x-axis: what happened, against what was in memory while it did. */}
-            <EventLane samples={filled} events={events} />
+            {showLane.value ? <EventLane samples={filled} events={events} /> : null}
             {/* And below THAT: where this window sits in the whole session. */}
             <ScrubStrip samples={samples} window={window_} />
         </>

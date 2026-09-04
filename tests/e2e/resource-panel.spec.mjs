@@ -1062,3 +1062,95 @@ test("resource panel: scrubbing back unpins live, and the live button returns", 
         await fake.stop();
     }
 });
+
+// Three panel behaviours that only exist once there is layout and a real input device: a wheel over a fixed
+// header region, a double-click that reframes the window, and a section toggle that changes what is drawn.
+test("resource panel: wheel scrolls through, double-click scopes, and the sections hide", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(9000);
+
+        // A run long enough to have somewhere to scroll to, and a load in front of a step so the abutting
+        // case the packing was getting wrong is actually present.
+        await page.evaluate(() => {
+            const now = Date.now(), span = 7000;
+            const at = (f) => now - Math.round(span * f);
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const hash = "e2e-scope";
+            post({ kind: "agent", id: hash, ts: at(1), save: false, session: { hash, turn: 0 },
+                   task: "a long run", model: "gemma4:31b", maxSteps: 20, config: null });
+            for (let i = 1; i <= 12; i++) {
+                post({ kind: "agent-step", id: hash, ts: at(0.9 - i * 0.07), save: false, session: { hash, turn: i },
+                       step: i, seq: i, tool: "exec", toolMs: 200, arguments: { js: `step ${i}` },
+                       result: `line\n`.repeat(40),
+                       usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, genMs: 300,
+                                ...(i % 3 === 0 ? { loadMs: 1500 } : {}) } });
+            }
+        });
+        await expect.poll(() => frame.locator(".rc-ev").count(), { timeout: 15000 }).toBeGreaterThan(4);
+        await frame.locator(".rc-ev.linked").first().click();
+        // Enough transcript to actually have somewhere to scroll to — asserted rather than assumed, since a
+        // wheel test against a view that already fits would pass by doing nothing.
+        await expect.poll(() => frame.evaluate(() => {
+            const v = document.querySelector(".view");
+            return v ? v.scrollHeight - v.clientHeight : 0;
+        }), { timeout: 10000 }).toBeGreaterThan(120);
+
+        // ---- the wheel goes THROUGH the panel to the transcript underneath it ----
+        // The panel is a fixed-height sibling of the scroll container, so the pointer resting on the chart
+        // used to mean the gesture did nothing at all.
+        await frame.evaluate(() => { document.querySelector(".view").scrollTop = 0; });
+        const panelBox = await frame.locator(".vram").boundingBox();
+        await page.mouse.move(panelBox.x + panelBox.width / 2, panelBox.y + panelBox.height / 2);
+        await page.mouse.wheel(0, 500);
+        await expect.poll(() => frame.evaluate(() => document.querySelector(".view").scrollTop), { timeout: 5000 })
+            .toBeGreaterThan(0);
+        // …and back the other way, so it is a scroll and not a one-directional nudge.
+        await page.mouse.wheel(0, -500);
+        await expect.poll(() => frame.evaluate(() => document.querySelector(".view").scrollTop), { timeout: 5000 })
+            .toBeLessThan(40);
+
+        // ---- double-click scopes the window to that block ----
+        expect(await frame.locator(".vram-zoom").count(), "nothing scoped yet").toBe(0);
+        await frame.locator(".rc-ev-tool").first().dblclick();
+        await expect(frame.locator(".vram-zoom")).toBeVisible();
+        // It scoped to the BLOCK, not to some default window: a single step is seconds, and the chip names
+        // the span it framed.
+        const span = await frame.locator(".vram-zoom").innerText();
+        expect(span, `chip read "${span}"`).toMatch(/^\d+s/);
+        await frame.locator(".vram-zoom").click();
+        await expect.poll(() => frame.locator(".vram-zoom").count()).toBe(0);
+
+        // ---- a run block is drawn as a container, not as the heaviest work in the lane ----
+        const runBg = await frame.locator(".rc-ev-run").first().evaluate((e) => getComputedStyle(e).backgroundImage);
+        expect(runBg, "the run is patterned").toContain("conic-gradient");
+        const toolBg = await frame.locator(".rc-ev-tool").first().evaluate((e) => getComputedStyle(e).backgroundImage);
+        expect(toolBg, "…and a step is not, so the widest bar can't read as the busiest").not.toContain("conic-gradient");
+
+        // ---- both sections hide, and come back ----
+        await frame.locator('[aria-label="Edit tracks"]').click();
+        const lane = frame.locator('.rc-esections label', { hasText: "event lane" }).locator("input");
+        const list = frame.locator('.rc-esections label', { hasText: "model list" }).locator("input");
+        await lane.uncheck();
+        await expect.poll(() => frame.locator(".rc-lane").count()).toBe(0);
+        expect(await frame.locator(".rc-track").count(), "the chart stays").toBeGreaterThan(0);
+        await list.uncheck();
+        await expect.poll(() => frame.locator(".vram-row").count()).toBe(0);
+        await lane.check();
+        await expect.poll(() => frame.locator(".rc-lane").count()).toBeGreaterThan(0);
+        await list.check();
+        await expect.poll(() => frame.locator(".vram-row").count()).toBeGreaterThan(0);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});

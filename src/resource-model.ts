@@ -762,24 +762,52 @@ export function lineageOf(events: readonly ResourceEvent[], id: string | undefin
  *  visible — which means packing has to reserve the same width, or two events that do not overlap in time
  *  are drawn overlapping and read as one longer bar. */
 export const MIN_EV_SPAN = 0.006;
+/** The narrowest window double-clicking a bar will scope to. A tool call that took 40ms is a real event
+ *  worth pointing at, but a 40ms window contains no samples at all and draws as an empty plot — so a short
+ *  block is widened around its own centre rather than scoped to exactly itself. */
+export const MIN_SCOPE_MS = 2500;
+
+/**
+ * The time window to scope the panel to when a lane block is double-clicked: the block's own extent,
+ * widened symmetrically if it is shorter than {@link MIN_SCOPE_MS}.
+ *
+ * An OPEN event (work still in flight) has no end, so `now` stands in for one — scoping to it while it
+ * runs is the case where this is most useful and least able to know where it stops.
+ */
+export function scopeToSpan(from: number, until: number | null | undefined, now: number): { from: number; to: number } {
+    const to = until ?? now;
+    const pad = Math.max(0, (MIN_SCOPE_MS - (to - from)) / 2);
+    return { from: from - pad, to: to + pad };
+}
+
 /** A hair of separation reserved BETWEEN bars in a row. Two bars that merely touch read as one bar with a
  *  seam — which is the same misreading as an overlap, arrived at differently. */
 export const EV_ROW_GAP = 0.004;
 
 export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN): EventPlacement[][] {
     const rows: EventPlacement[][] = [];
-    const ends: number[] = [];   // per row: [run, to] as a comparable number
+    const padded: number[] = [];   // per row: the drawn end PLUS the separation reserved after it
+    const tight: number[] = [];    // per row: the same end without it
     // The END is the DRAWN end, not the true one: see MIN_EV_SPAN.
-    const key = (p: EventPlacement, edge: "from" | "to") =>
-        p.run + (edge === "from" ? p.from : Math.max(p.to, p.from + minSpan) + EV_ROW_GAP);
-    for (const p of [...placed].sort((a, b) => key(a, "from") - key(b, "from"))) {
-        let r = ends.findIndex((e) => e <= key(p, "from"));
+    const start = (p: EventPlacement) => p.run + p.from;
+    const end = (p: EventPlacement, pad: boolean) =>
+        p.run + Math.max(p.to, p.from + minSpan) + (pad ? EV_ROW_GAP : 0);
+    for (const p of [...placed].sort((a, b) => start(a) - start(b))) {
+        let r = padded.findIndex((e) => e <= start(p));
+        // Nothing fits WITH the separation reserved. Before opening a row, try again without it. Rows are the
+        // lane's scarcest resource and its only claim about time: two bars on separate rows say they OVERLAP.
+        // Spending a row to buy a bar 0.4% of clearance therefore asserts an overlap that isn't there, which
+        // is the same misreading the separation exists to prevent, arrived at from the other side. This is the
+        // ordinary case rather than an edge one — a model LOAD ends exactly where the block it precedes
+        // begins, so every load abutted its own step and was pushed below it.
+        if (r < 0) r = tight.findIndex((e) => e <= start(p));
         if (r < 0) {
             if (rows.length >= maxRows) r = rows.length - 1;   // out of rows: crowd the last one rather than drop the event
-            else { rows.push([]); ends.push(0); r = rows.length - 1; }
+            else { rows.push([]); padded.push(0); tight.push(0); r = rows.length - 1; }
         }
         rows[r].push(p);
-        ends[r] = Math.max(ends[r], key(p, "to"));
+        padded[r] = Math.max(padded[r], end(p, true));
+        tight[r] = Math.max(tight[r], end(p, false));
     }
     return rows;
 }

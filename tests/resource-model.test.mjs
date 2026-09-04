@@ -652,6 +652,35 @@ test("laneRows: packs at the DRAWN width, not the true one", () => {
     assert.equal(M.laneRows([p("a", 0.1, 0.11), p("b", 0.5, 0.51)]).length, 1);
 });
 
+// Two bars on separate rows is the lane's only claim that they OVERLAP. Spending a row to buy a hair of
+// clearance therefore asserts an overlap that isn't there — and it was the ordinary case, not an edge one: a
+// model LOAD ends exactly where the step it precedes begins, so every load was pushed below its own step.
+test("laneRows: a bar that merely ABUTS another shares its row rather than claiming an overlap", () => {
+    const p = (kind, from, to) => ({ event: { t: from, until: to, kind }, run: 0, from, to, clipped: false });
+    const rows = M.laneRows([p("load", 0.20, 0.30), p("tool", 0.30, 0.45)]);
+    assert.equal(rows.length, 1, "they touch, they do not overlap");
+
+    // The separation is still taken where it costs nothing — a third bar with room after the second sits on
+    // the same row, and a bar that genuinely overlaps still gets its own.
+    assert.equal(M.laneRows([p("load", 0.2, 0.3), p("tool", 0.3, 0.45), p("tool", 0.6, 0.7)]).length, 1);
+    assert.equal(M.laneRows([p("tool", 0.2, 0.5), p("embed", 0.3, 0.4)]).length, 2, "a real overlap still stacks");
+});
+
+test("scopeToSpan: a block's own extent, widened only when it is too short to frame", () => {
+    // A long block is scoped to exactly itself — nothing invented around it.
+    assert.deepEqual(M.scopeToSpan(1000, 21_000, 99_000), { from: 1000, to: 21_000 });
+
+    // A 40ms tool call is a real event worth pointing at, but a 40ms window contains no samples and draws as
+    // an empty plot — so it is widened around its own CENTRE, which stays put.
+    const tiny = M.scopeToSpan(10_000, 10_040, 99_000);
+    assert.equal(tiny.to - tiny.from, M.MIN_SCOPE_MS);
+    assert.equal((tiny.from + tiny.to) / 2, 10_020, "centred on the block, not shifted to one side");
+
+    // Work still IN FLIGHT has no end, so `now` stands in for one — scoping to it while it runs is exactly
+    // when this is most useful and least able to know where it stops.
+    assert.deepEqual(M.scopeToSpan(50_000, null, 99_000), { from: 50_000, to: 99_000 });
+});
+
 // A card can stop being reported mid-session: a driver crash, a GPU reset, a container losing its device.
 // That is an INCIDENT, and the samples leading up to it are the most valuable ones on screen — so it must not
 // be treated as "a different machine", which is what drops the history.

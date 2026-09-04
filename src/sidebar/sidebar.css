@@ -291,7 +291,17 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* A background embedding call: a small model working BESIDE the driver rather than in its sequence, so it is
    quieter and reads as something happening underneath. */
 .rc-ev-embed { background: color-mix(in srgb, var(--ok, #22c55e) 60%, transparent); }
-.rc-ev-run { background: color-mix(in srgb, var(--fg-dim) 45%, transparent); }
+/* A run is the CONTAINER the other blocks sit inside, and it is the widest bar in the lane — as a solid
+   fill it read as the heaviest piece of work rather than as the thing holding the work. A checkerboard
+   says "scaffold" at a 9px row height where a lighter shade would just look like a dimmer bar, and it is
+   built from the run's own --model so it keeps the identity the rest of the lane reads by. */
+.rc-ev-run {
+    background:
+        repeating-conic-gradient(from 0deg,
+            color-mix(in srgb, var(--model, var(--fg-dim)) 70%, transparent) 0 25%,
+            transparent 0 50%) 0 0 / 4px 4px,
+        color-mix(in srgb, var(--model, var(--fg-dim)) 18%, transparent);
+}
 /* A load is the wait before a token — striped, because it is time spent NOT generating. The real fill is
    built inline from the model's colour (loadStripes); this is what it falls back to. */
 .rc-ev-load { background: repeating-linear-gradient(45deg, var(--warn, #f59e0b) 0 3px, var(--panel) 3px 8px);

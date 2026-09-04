@@ -9,7 +9,7 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { MlDebugEvent, MlConfig, ElementContext } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 import {
-    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden,
+    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, SECTIONS_KEY, showLane, showModels,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
     vramOpen, sidebarOpen, backendError, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
@@ -221,6 +221,30 @@ function App() {
         atBottom.v = dist < 40;
     };
     const endPin = () => { pinning.current = false; };   // a user scroll gesture cancels the auto-follow
+    /**
+     * A wheel over the RESOURCE PANEL scrolls the transcript underneath it.
+     *
+     * The panel is a fixed-height sibling of the scroll container rather than content inside it, so a wheel
+     * with the pointer resting on the chart had nothing to scroll and the gesture simply did nothing. Where
+     * the pointer happens to be sitting is not a reason for the page to stop responding.
+     *
+     * Forwarded only when the panel cannot take the scroll itself: dragged tall enough to overflow, it
+     * scrolls its own content first and this hands over only at the ends. `deltaMode` is honoured because a
+     * mouse wheel reports LINES and a page key reports PAGES, and treating either as pixels moves the view
+     * by a few pixels for a gesture that meant a screenful.
+     */
+    const wheelThroughPanel = (e: WheelEvent) => {
+        const panel = (e.target as Element | null)?.closest?.(".vram") as HTMLElement | null;
+        if (!panel) return;
+        const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * panel.clientHeight : e.deltaY;
+        const room = panel.scrollHeight - panel.clientHeight;
+        if (room > 1 && ((dy < 0 && panel.scrollTop > 0) || (dy > 0 && panel.scrollTop < room - 1))) return;
+        const el = viewRef.current;
+        if (!el) return;
+        endPin();
+        el.scrollTop += dy;
+        e.preventDefault();
+    };
     const pinBottom = (smooth: boolean) => {
         const el = viewRef.current;
         if (!el) return;
@@ -242,7 +266,7 @@ function App() {
         return () => ro.disconnect();
     }, [detailKey]);
     return (
-        <div class="app">
+        <div class="app" onWheel={wheelThroughPanel}>
             <ContextMenu />
             <div class="head">
                 {v.name !== "list" ? <button class="tt nav" aria-label="Back to sessions" onClick={() => (view.value = { name: "list" })}>‹<span class="tt-pop left" role="tooltip">Back to sessions</span></button> : null}
@@ -340,13 +364,19 @@ function mount(): void {
     // ONE floating tooltip layer for the whole surface (see tooltip-layer.ts): nothing clips it, it opens
     // whichever way there is room, and the source nodes stay display:none so their prose is never copied.
     try { installTooltipLayer(document); } catch { /* no DOM in a test harness */ }
-    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [] }, (d: any) => {
+    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [SECTIONS_KEY]: null }, (d: any) => {
         if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont();
         codeWrap.value = d[WRAP_KEY] !== false; codeLineNumbers.value = !!d[LINES_KEY]; applyCodePrefs();
         showStatsTokens.value = d[STATS_TOKENS_KEY] !== false; showStatsTps.value = !!d[STATS_TPS_KEY];
         if (typeof d[OUTMAX_KEY] === "number") outMaxH.value = d[OUTMAX_KEY];
         if (typeof d[RESWIN_KEY] === "number") resWindowS.value = d[RESWIN_KEY];
         if (Array.isArray(d[LANE_HIDDEN_KEY])) laneHidden.value = d[LANE_HIDDEN_KEY];
+        // Absent means never set, which is BOTH shown — not both hidden, which is what reading a missing
+        // object as falsy would give and would look like the panel had lost half of itself.
+        if (d[SECTIONS_KEY] && typeof d[SECTIONS_KEY] === "object") {
+            showLane.value = d[SECTIONS_KEY].lane !== false;
+            showModels.value = d[SECTIONS_KEY].models !== false;
+        }
         if (typeof d[VRAMH_KEY] === "number") vramH.value = d[VRAMH_KEY];
         showOutTimes.value = d[OUTTS_KEY] !== false;
     });
