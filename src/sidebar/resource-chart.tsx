@@ -20,7 +20,7 @@ import {
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter } from "./vram";
-import { loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, showLane, laneLitSeqs } from "./store";
+import { models, ollamaIds, loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, showLane, laneLitSeqs } from "./store";
 import { clockAt, hhmmssms } from "./timestamps";
 import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
@@ -551,6 +551,19 @@ function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; ru
  *  Its own axis is LINEAR in time, unlike the chart's: this is an overview, and a ten-minute hole is a fact
  *  about the session that an overview should show at its true width rather than collapse. The runs are drawn
  *  as filled blocks with the gaps left empty, so "nothing was measured here" reads as a hole. */
+/**
+ * Apply a scrubbed window — and REJOIN LIVE when it reaches the tail.
+ *
+ * A pinned window that merely happens to sit at the end is not the same as following: new samples arrive,
+ * the window stays where it was pinned, and the view silently falls behind while the button still reads
+ * live (which is computed from where the window sits, not from whether it is following). The drag path has
+ * always done this on release; the wheel paths did not, so scrolling to the end looked like rejoining live
+ * and then drifted away from it.
+ */
+function applyScrub(next: { from: number; to: number }, ex: { to: number }): void {
+    zoomRange.value = next.to >= ex.to - TAIL_SLACK_MS ? null : next;
+}
+
 function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSample[]; window: { from: number; to: number } | null; events?: ResourceEvent[] }) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const trackRef = useRef<HTMLDivElement>(null);
@@ -610,7 +623,7 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
                     const b = (ev.currentTarget as HTMLElement).getBoundingClientRect();
                     const by = wheelScrubFraction(ev.deltaX, ev.deltaY, ev.deltaMode, b.width);
                     if (!by) return;
-                    zoomRange.value = scrubNudge({ from: ex.from, to: ex.to }, win, by);
+                    applyScrub(scrubNudge({ from: ex.from, to: ex.to }, win, by), ex);
                     ev.preventDefault();
                     ev.stopPropagation();
                 }}
@@ -653,8 +666,13 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
             </div>
             {/* Says which state you are in, and is the way back. A view that has silently stopped following
                 live is the failure this prevents. */}
+            {/* The icon slot is ALWAYS filled — playing or paused. An icon present in only one state changes
+                the button's width, so the control jumped every time the view left or rejoined live, which is
+                exactly the moment you are looking at it. */}
             <button class={`rc-scrub-live${ex.atTail ? " on" : ""}`} title={ex.atTail ? "Following new samples" : "Jump back to live"}
-                onClick={() => (zoomRange.value = null)}>{ex.atTail ? "live" : "⏸ live"}</button>
+                onClick={() => (zoomRange.value = null)}>
+                <span class="rc-live-icon" aria-hidden="true">{ex.atTail ? "▶" : "⏸"}</span>live
+            </button>
             {/* Two lines from the window's edges down to the LANE's, so the magnification between them is
                 visible. The strip and the lane are different axes and can never line up — the strip is linear
                 across the whole session with the window as a sub-range, the lane is only that window spread
@@ -758,6 +776,14 @@ const hotEvent = signal<string | null>(null);
  *  owner every one of them rendered the same tooltip at once, four deep on a three-track panel. */
 const eventHover = signal<{ p: EventPlacement; scope: string } | null>(null);
 
+/** "local (ollama)" or "cloud" for a model, or "" when the server never told us. Provenance comes from the
+ *  ollama id list; without it an absence is not evidence of anything, so nothing is said. */
+function modelWhere(model: string): string {
+    const ollama = ollamaIds.value;
+    if (!ollama) return "";
+    return ollama.includes(model) ? "local · ollama" : (models.value.includes(model) ? "cloud" : "");
+}
+
 function EventTip({ scope }: { scope: string }) {
     const h = eventHover.value, at = cursorOn(scope);
     if (!h || !at || h.scope !== scope) return null;
@@ -788,7 +814,7 @@ function EventTip({ scope }: { scope: string }) {
         : e.tool || "tool");
     // A run span has no phases and no cost of its own — it is the CONTAINER. Saying "click to open this step"
     // under it was wrong twice over: it is not a step, and its ref carries no seq to scroll to.
-    const isRun = e.kind === "run";
+    const isRun = e.kind === "run" || e.kind === "session";
     // An INSTANT has no duration and no cost — it is a moment, and the tooltip built for spans reported it as
     // "0ms" with its label dropped entirely, which said nothing at all about the thing you were pointing at.
     const instant = e.until == null;
@@ -813,8 +839,24 @@ function EventTip({ scope }: { scope: string }) {
                 {/* Each section carries the swatch of the stripe it describes, so the tooltip and the block
                     read as the same three things. */}
                 {first || e.model ? <i class="rc-tip-dot" style={{ background: phaseFill(first?.kind ?? "model", e.model) }} /> : null}
-                <span class="rc-tip-name">{first ? nameFor(first.kind) : isRun ? <>run · {e.model || "agent"}</> : e.model || e.label}</span>
+                {/* The container's own LABEL, not a hardcoded "run": a `ml.chat()` session gets a container
+                    too, and calling it a run asserts something that never happened. */}
+                <span class="rc-tip-name">{first ? nameFor(first.kind) : isRun ? e.label : e.model || e.label}</span>
                 <span class="rc-tip-size">{first ? ms(first.until - first.from) : ms(dur)}</span></div>
+            {/* WHICH SESSION this belongs to — only while the lane is showing every session. Scoped, every
+                block on screen is from the one you are reading, and the pill would repeat the same eight
+                characters on every tooltip to say nothing. */}
+            {/* WHERE this model runs. A cloud model occupies no local memory ever, so a span with no matching
+                line in the chart above is expected of it and puzzling for a local one — the tooltip is the
+                place that difference belongs. Omitted when provenance is UNKNOWN (an unpatched server lists
+                no ollama ids), because guessing "cloud" from an absence would be a claim we cannot make. */}
+            {(!laneScoped.value && e.ref?.hash) || (e.model && modelWhere(e.model))
+                ? <div class="rc-tip-chips">
+                    {e.model && modelWhere(e.model)
+                        ? <span class="rc-chip rc-chip-dim">{modelWhere(e.model)}</span> : null}
+                    {!laneScoped.value && e.ref?.hash
+                        ? <span class="rc-chip rc-chip-hash">{e.ref.hash}</span> : null}
+                </div> : null}
             {/* The figures as BADGES, the same little blocks the model rows use. Loose text on two dim lines
                 gave no way to tell which numbers belonged together; a chip is visibly one fact. */}
             {e.cost ? (
@@ -871,7 +913,7 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
     // Filtered before anything is placed, so the rows pack against what is actually drawn — a hidden kind
     // must not leave a hole where it would have been.
     const filter = laneFilter();
-    const events = useMemo(() => filterEvents(all, filter), [all, filter.hash, filter.hidden]);
+    const events = useMemo(() => filterEvents(all, filter), [all, filter.hash, filter.scope, filter.hidden]);
     const counts = useMemo(() => countByKind(all), [all]);
     const runs = useMemo(() => segments(samples).filter((r) => r.length > 1), [samples]);
     const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
@@ -889,7 +931,13 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
     // bar and the rows it is about light up together. Derived from the lineage rather than from the one
     // hovered event, so a sub-call still points at the step that spawned it.
     useEffect(() => {
-        const on = lit.size > 0;
+        // The log belongs to ONE session. A hovered block from another run shares no step with it, so
+        // "everything outside the lineage" was the whole transcript — hovering run B greyed out run A's log
+        // entirely. The lane still dims its OWN bars by lineage; that is within one surface and correct.
+        const hovered = eventHover.value?.p.event;
+        const open = view.value.name === "detail" ? view.value.hash : null;
+        const mine = !!hovered?.ref && !!open && hovered.ref.hash === open;
+        const on = lit.size > 0 && mine;
         laneLitSeqs.value = on
             ? new Set(events.filter((e) => e.id && lit.has(e.id) && e.ref?.seq != null).map((e) => e.ref!.seq as number))
             : null;
@@ -935,8 +983,14 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
     };
     return (
         <div class="rc-lane" onPointerLeave={() => { eventHover.value = null; hoverAt.value = null; hoverModel.value = null; }}>
+            {/* Rows carry the SAME drag-select the plot has. The lane shares the plot's axis, so a range
+                picked out here means exactly what one picked out above does — and having to go up to the
+                chart to select the stretch you are looking at down here reads as the lane being a picture
+                rather than a control. A short press is not a drag (see startBrush), so a bar's own click and
+                double-click still work. */}
             {rows.map((row, ri) => (
                 <div class="rc-lane-row" key={ri}
+                    onPointerDown={startBrush(runs)}
                     onPointerMove={trackCursor("lane")}>
                     {runs.map((run, i) => (
                         <div class="rc-lane-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
@@ -1001,7 +1055,8 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
 function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number>; shown: number; total: number }) {
     const hidden = new Set(laneHidden.value);
     const KINDS: { kind: ResourceEvent["kind"]; label: string }[] = [
-        { kind: "run", label: "runs" }, { kind: "tool", label: "steps" }, { kind: "gen", label: "calls" },
+        { kind: "run", label: "runs" }, { kind: "session", label: "sessions" },
+        { kind: "tool", label: "steps" }, { kind: "gen", label: "calls" },
         { kind: "embed", label: "sub-calls" }, { kind: "load", label: "loads" }, { kind: "evict", label: "evictions" },
     ];
     const toggle = (k: string) => {
@@ -1017,12 +1072,16 @@ function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number
                     title={hidden.has(k.kind) ? `Show ${k.label}` : `Hide ${k.label}`}
                     onClick={() => toggle(k.kind)}>{k.label} {counts[k.kind]}</button>
             ))}
-            {/* Scope follows what you are READING, so it is only offered where "this run" names something. */}
-            {inDetail ? (
-                <button class={`rc-lane-chip scope${laneScoped.value ? " on" : ""}`}
-                    title={laneScoped.value ? "Showing only this run" : "Show only this run"}
-                    onClick={() => (laneScoped.value = !laneScoped.value)}>this run</button>
-            ) : null}
+            {/* Offered EVERYWHERE, not only in a detail view: scoping is the default, so in the overview this
+                chip is the only thing that says why there are no run events and the only way to get them. */}
+            <button class={`rc-lane-chip scope${laneScoped.value ? " on" : ""}`}
+                title={laneScoped.value
+                    ? (inDetail ? "Showing only this session — click for every session" : "Scoped to the open session; nothing is open, so no run events. Click to show every session.")
+                    : "Showing every session — click to scope to the one you are reading"}
+                onClick={() => {
+                    laneScoped.value = !laneScoped.value;
+                    try { chrome.storage.local.set({ [LANE_SCOPE_KEY]: laneScoped.value }); } catch { /* opaque origin */ }
+                }}>{laneScoped.value ? "this session" : "all sessions"}</button>
             {shown < total ? <span class="rc-lane-count">{shown}/{total}</span> : null}
         </div>
     );
@@ -1030,8 +1089,8 @@ function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number
 
 export function ResourceTracks({ samples, capacity, hidden, layout, events = [] }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null; events?: ResourceEvent[] }) {
     // Capacity is fetched once per open and arrives AFTER the first ps poll, so the earliest samples carry
-    // none. Backfill the current one rather than dropping them: capacity is slow-moving (a card doesn't change
-    // size), and the alternative is a panel that renders nothing for the first two seconds every time.
+    // none — see the note on `filled` below.
+    //
     // The visible window as an explicit RANGE, so the scrub strip can say where it sits in the session and
     // move it. A zoom (or a scrub) REPLACES the rolling window: you asked for a stretch, so the panel stops
     // sliding away from it.
@@ -1046,6 +1105,17 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     const windowed = useMemo(
         () => (window_ ? samples.filter((s) => s.t >= window_.from && s.t <= window_.to) : samples),
         [samples, window_]);
+    // KNOWN BUG, diagnosed and deliberately still here: this backfills the CURRENT capacity into a sample
+    // that has none, and a capacity carries FREE BYTES — which is what usage is computed from. So a sample
+    // taken before `/api/info` first answered is drawn with TODAY's usage and MOVES as the present moves: the
+    // history changes shape behind you, a flat opening becoming a valley the moment something loads.
+    //
+    // Three fixes were tried and each was worse. Dropping such samples, or not recording them, blanks the
+    // panel whenever the window holds only one or two — which is every fresh open, and which broke twenty-odd
+    // tests that assert on exactly that frame. Deriving their free from what they saw resident assumes
+    // everything unattributed is free, erasing a card holding memory nobody claims. The real fix is a sample
+    // that can say its usage is UNKNOWN and render as a GAP in the line — the same treatment this panel
+    // already gives time nobody measured — which the band model cannot express yet.
     const filled = useMemo(() => windowed.map((s) => (s.capacity ? s : { ...s, capacity })), [windowed, capacity]);
     const latest = filled.at(-1);
     if (!latest?.capacity) return null;
@@ -1062,7 +1132,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     // it: a filter you have to toggle blindly to discover what it hides is worse than none.
     const stripFilter = laneFilter();
     const stripEvents = useMemo(() => filterEvents(shown, stripFilter),
-        [shown, stripFilter.hash, stripFilter.hidden]);
+        [shown, stripFilter.hash, stripFilter.scope, stripFilter.hidden]);
     // Wheeling over the CHART moves the window along the session — the plot is a viewport onto a timeline, so
     // a scroll gesture on it should scroll the timeline. It nudges by a fraction of the window's own width, so
     // one notch travels the same visible distance whether you are looking at ten seconds or at everything.
@@ -1078,7 +1148,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
         const width = (e.currentTarget as HTMLElement).getBoundingClientRect().width;
         const by = wheelScrubFraction(e.deltaX, e.deltaY, e.deltaMode, width);
         if (!by) return;
-        zoomRange.value = scrubNudge({ from: ex.from, to: ex.to }, w, by);
+        applyScrub(scrubNudge({ from: ex.from, to: ex.to }, w, by), ex);
         e.preventDefault();
         e.stopPropagation();
     };

@@ -10,7 +10,7 @@ const usage = (p, c, extra = {}) => ({ promptTokens: p, completionTokens: c, tot
 test("usageByModel: attributed to the model that RAN, sub-calls included", () => {
     const by = M.usageByModel([
         {
-            hash: "aaa", model: "qwen3.8:27b",
+            kind: "agent", hash: "aaa", model: "qwen3.8:27b",
             turns: [
                 { ts: 1000, usage: usage(100, 50, { evalMs: 1000 }) },                       // no model → the session's
                 { ts: 2000, model: "gemma4:12b", usage: usage(10, 20, { evalMs: 500 }) },    // resolved elsewhere
@@ -39,12 +39,12 @@ test("usageByModel: attributed to the model that RAN, sub-calls included", () =>
 
 test("usageByModel: nothing to report is an empty ledger, not zeroes", () => {
     assert.deepEqual(M.usageByModel([]), {});
-    assert.deepEqual(M.usageByModel([{ hash: "a", model: "m", turns: [{ ts: 1, usage: null }] }]), {},
+    assert.deepEqual(M.usageByModel([{ kind: "agent", hash: "a", model: "m", turns: [{ ts: 1, usage: null }] }]), {},
         "a turn whose server reported no counts contributes nothing — never a fabricated 0");
 });
 
 test("eventsFrom: a generation is a span backwards from when it finished", () => {
-    const [ev] = M.eventsFrom([{ hash: "abc", model: "qwen3.8:27b", turns: [{ ts: 10_000, usage: usage(100, 50, { genMs: 4000 }) }] }]);
+    const [ev] = M.eventsFrom([{ kind: "agent", hash: "abc", model: "qwen3.8:27b", turns: [{ ts: 10_000, usage: usage(100, 50, { genMs: 4000 }) }] }]);
     assert.equal(ev.kind, "gen");
     assert.equal(ev.until, 10_000, "the timestamp we have is when it FINISHED");
     assert.equal(ev.t, 6000, "…so the span runs back over where the time actually went");
@@ -55,7 +55,7 @@ test("eventsFrom: a generation is a span backwards from when it finished", () =>
 
 test("eventsFrom: a real model load is its own span; resident bookkeeping is not", () => {
     const evs = M.eventsFrom([{
-        hash: "abc", model: "gemma4:31b",
+        kind: "agent", hash: "abc", model: "gemma4:31b",
         steps: [
             // 30s of a 34s call spent loading the model off disk.
             { seq: 4, ts: 100_000, usage: usage(10, 100, { genMs: 34_000, loadMs: 30_000 }) },
@@ -75,7 +75,7 @@ test("eventsFrom: a real model load is its own span; resident bookkeeping is not
 
 test("eventsFrom: a run spans its steps, and events are ordered by time", () => {
     const evs = M.eventsFrom([{
-        hash: "run1", model: "m",
+        kind: "agent", hash: "run1", model: "m",
         steps: [{ seq: 1, ts: 5000 }, { seq: 2, ts: 9000 }, { seq: 3, ts: 20_000 }],
     }]);
     const run = evs.find((e) => e.kind === "run");
@@ -87,8 +87,8 @@ test("eventsFrom: a run spans its steps, and events are ordered by time", () => 
 
 test("eventsFrom: events from DIFFERENT sessions share one timeline", () => {
     const evs = M.eventsFrom([
-        { hash: "one", model: "a", turns: [{ ts: 3000, usage: usage(1, 1, { genMs: 500 }) }] },
-        { hash: "two", model: "b", turns: [{ ts: 1000, usage: usage(1, 1, { genMs: 500 }) }] },
+        { kind: "agent", hash: "one", model: "a", turns: [{ ts: 3000, usage: usage(1, 1, { genMs: 500 }) }] },
+        { kind: "agent", hash: "two", model: "b", turns: [{ ts: 1000, usage: usage(1, 1, { genMs: 500 }) }] },
     ]);
     // A model load belongs to the BOX, not to whichever chat provoked it — so the lane is not per-session, and
     // the ref is what gets you back to the one that did.
@@ -97,7 +97,7 @@ test("eventsFrom: events from DIFFERENT sessions share one timeline", () => {
 
 test("eventsFrom: a tool step is ONE block, phased by who was working", () => {
     const evs = M.eventsFrom([{
-        hash: "run9", model: "qwen3.8:27b",
+        kind: "agent", hash: "run9", model: "qwen3.8:27b",
         steps: [{
             seq: 7, ts: 50_000, tool: "python_exec", toolMs: 3000,
             usage: usage(900, 60, { genMs: 2000 }),
@@ -119,7 +119,7 @@ test("eventsFrom: a tool step is ONE block, phased by who was working", () => {
 
 test("eventsFrom: a load before a tool call stays its OWN span", () => {
     const evs = M.eventsFrom([{
-        hash: "r", model: "gemma4:31b",
+        kind: "agent", hash: "r", model: "gemma4:31b",
         steps: [{ seq: 1, ts: 100_000, tool: "exec", toolMs: 1000, usage: usage(10, 10, { genMs: 2000, loadMs: 20_000 }) }],
     }]);
     const tool = evs.find((e) => e.kind === "tool");
@@ -135,7 +135,7 @@ test("eventsFrom: a load before a tool call stays its OWN span", () => {
 test("eventsFrom: a step with no tool execution is not a composite", () => {
     // A denial, a doomed-action skip, or a thought-only step: nothing ran, so there is no second half.
     const evs = M.eventsFrom([{
-        hash: "r", model: "m",
+        kind: "agent", hash: "r", model: "m",
         steps: [{ seq: 1, ts: 10_000, tool: "click", usage: usage(5, 5, { genMs: 800 }) }],
     }]);
     assert.equal(evs.filter((e) => e.kind === "tool").length, 0);
@@ -144,7 +144,7 @@ test("eventsFrom: a step with no tool execution is not a composite", () => {
 
 test("eventsFrom: an approval gate is its OWN phase — the human's time, not the machine's", () => {
     const evs = M.eventsFrom([{
-        hash: "gated", model: "qwen3.8:27b",
+        kind: "agent", hash: "gated", model: "qwen3.8:27b",
         steps: [{
             // 2s generating, 47s waiting for a click, 1s actually running.
             seq: 3, ts: 100_000, tool: "python_exec", toolMs: 1000, approveMs: 47_000,
@@ -168,7 +168,7 @@ test("eventsFrom: an approval gate is its OWN phase — the human's time, not th
 
 test("eventsFrom: plumbing between the model and the tool is its own phase, and the block still starts where the work did", () => {
     const evs = M.eventsFrom([{
-        hash: "plumb", model: "qwen3.8:27b",
+        kind: "agent", hash: "plumb", model: "qwen3.8:27b",
         steps: [{
             // 2s generating, 300ms of dispatch, 1s running.
             seq: 1, ts: 100_000, tool: "exec", toolMs: 1000, dispatchMs: 300,
@@ -189,7 +189,7 @@ test("eventsFrom: plumbing between the model and the tool is its own phase, and 
 
 test("eventsFrom: dispatch and an approval gate are separate spans, never the same seconds twice", () => {
     const evs = M.eventsFrom([{
-        hash: "both", model: "qwen3.8:27b",
+        kind: "agent", hash: "both", model: "qwen3.8:27b",
         steps: [{
             seq: 1, ts: 100_000, tool: "python_exec", toolMs: 1000, dispatchMs: 200, approveMs: 5000,
             usage: usage(500, 40, { genMs: 2000 }),
@@ -201,7 +201,7 @@ test("eventsFrom: dispatch and an approval gate are separate spans, never the sa
         "in the order they happen: the model, the plumbing, the human, the tool");
     // A step with no dispatch reported is unchanged — the phase is absent rather than zero-width.
     const none = M.eventsFrom([{
-        hash: "none", model: "qwen3.8:27b",
+        kind: "agent", hash: "none", model: "qwen3.8:27b",
         steps: [{ seq: 1, ts: 100_000, tool: "exec", toolMs: 1000, usage: usage(500, 40, { genMs: 2000 }) }],
     }]).find((e) => e.kind === "tool");
     assert.deepEqual(none.phases.map((p) => p.kind), ["model", "tool"]);
@@ -210,7 +210,7 @@ test("eventsFrom: dispatch and an approval gate are separate spans, never the sa
 
 test("eventsFrom: a delegated sub-call is its own span, parented to the step that spawned it", () => {
     const evs = M.eventsFrom([{
-        hash: "r", model: "qwen3.8:27b",
+        kind: "agent", hash: "r", model: "qwen3.8:27b",
         steps: [{
             seq: 2, ts: 20_000, tool: "look", toolMs: 3000,
             usage: usage(100, 20, { genMs: 1000 }),
@@ -235,7 +235,7 @@ test("eventsFrom: a delegated sub-call is its own span, parented to the step tha
 
 test("eventsFrom: a run starts when it STARTED, so it contains its own first call", () => {
     const evs = M.eventsFrom([{
-        hash: "r", model: "gemma4:31b", createdTs: 1000, lastTs: 40_000,
+        kind: "agent", hash: "r", model: "gemma4:31b", createdTs: 1000, lastTs: 40_000,
         // One step, finishing at 30s: 20s of it was waiting for the model to load.
         steps: [{ seq: 1, ts: 30_000, tool: "exec", toolMs: 500,
                   usage: usage(10, 10, { genMs: 2000, loadMs: 20_000 }) }],
@@ -251,7 +251,7 @@ test("eventsFrom: a run starts when it STARTED, so it contains its own first cal
 
 test("eventsFrom: both timings ride along, so the network cost is recoverable", () => {
     const [ev] = M.eventsFrom([{
-        hash: "n", model: "m",
+        kind: "agent", hash: "n", model: "m",
         // Ollama says it generated for 3.0s; we measured 3.6s around the fetch. The 600ms difference is the
         // network and the queue — a different diagnosis from a slow model, and not recoverable from the rate.
         turns: [{ ts: 10_000, usage: usage(100, 90, { genMs: 3600, evalMs: 3000 }) }],
@@ -263,7 +263,7 @@ test("eventsFrom: both timings ride along, so the network cost is recoverable", 
 
     // A cloud route reports no eval_duration, so there is nothing to subtract — and the tooltip must not
     // invent an overhead from a single number.
-    const [cloud] = M.eventsFrom([{ hash: "c", model: "m", turns: [{ ts: 10_000, usage: usage(100, 90, { genMs: 3600 }) }] }]);
+    const [cloud] = M.eventsFrom([{ kind: "agent", hash: "c", model: "m", turns: [{ ts: 10_000, usage: usage(100, 90, { genMs: 3600 }) }] }]);
     assert.equal(cloud.cost.evalMs, undefined);
     assert.equal(cloud.cost.genBasis, "wall");
 });
@@ -310,7 +310,7 @@ test("genPhases: a mark past the end of the call contributes nothing, never a ba
 
 test("a streamed tool step's model phase is SPLIT, inside the same one block", () => {
     const [ev] = M.eventsFrom([{
-        hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
+        kind: "agent", hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
         steps: [{ seq: 1, ts: 10_000, tool: "exec", toolMs: 1000,
                   usage: usage(10, 5, { genMs: 3000, genPhases: [{ kind: "think", atMs: 0 }, { kind: "call", atMs: 2000 }] }) }],
     }]).filter(e => e.kind === "tool");
@@ -325,7 +325,7 @@ test("a streamed tool step's model phase is SPLIT, inside the same one block", (
 // memory the chart already drew. `now` is what makes the same spans visible while they are happening.
 
 const liveRun = (over = {}) => ({
-    hash: "h", model: "gemma4:31b", createdTs: 1000, lastTs: 5000, steps: [], ...over,
+    kind: "agent", hash: "h", model: "gemma4:31b", createdTs: 1000, lastTs: 5000, steps: [], ...over,
 });
 
 test("in flight: nothing is drawn WITHOUT a `now` — that is what an export gets", () => {
@@ -391,7 +391,7 @@ const toolStep = (step, seq, ts, over = {}) => ({ step, seq, ts, tool: "exec", t
 
 test("a tool block takes its MODEL phase from the turn's own record, not the tool's", () => {
     const evts = M.eventsFrom([{
-        hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
+        kind: "agent", hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
         steps: [turn(1, 5000, usage(100, 20, { genMs: 900 })), toolStep(1, 2, 8000)],
     }]);
     const tool = evts.find(e => e.kind === "tool");
@@ -402,7 +402,7 @@ test("a tool block takes its MODEL phase from the turn's own record, not the too
 
 test("…and the generation is not ALSO drawn on its own — that would report the same seconds twice", () => {
     const evts = M.eventsFrom([{
-        hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
+        kind: "agent", hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
         steps: [turn(1, 5000, usage(100, 20, { genMs: 900 })), toolStep(1, 2, 8000)],
     }]);
     assert.equal(evts.filter(e => e.kind === "gen").length, 0);
@@ -412,7 +412,7 @@ test("a turn with SEVERAL tool calls keeps its generation separate — one call 
     // Parallel calls share one generation, so folding it into each would draw those seconds two or three
     // times. The honest shape for work that fans out is a generation span with the calls after it.
     const evts = M.eventsFrom([{
-        hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
+        kind: "agent", hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
         steps: [turn(1, 5000, usage(100, 20, { genMs: 900 })), toolStep(1, 2, 8000), toolStep(1, 3, 9000)],
     }]);
     assert.equal(evts.filter(e => e.kind === "gen").length, 1, "drawn once, on its own");
@@ -423,7 +423,7 @@ test("a turn with SEVERAL tool calls keeps its generation separate — one call 
 
 test("a turn that answers WITHOUT calling anything still gets its generation span", () => {
     const evts = M.eventsFrom([{
-        hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
+        kind: "agent", hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
         steps: [turn(2, 12_000, usage(120, 9, { genMs: 700 }))],
     }]);
     const gen = evts.find(e => e.kind === "gen");
@@ -433,7 +433,7 @@ test("a turn that answers WITHOUT calling anything still gets its generation spa
 
 test("a LOAD the turn waited through is drawn in front of the tool block it delayed", () => {
     const evts = M.eventsFrom([{
-        hash: "h", model: "m", createdTs: 0, lastTs: 30_000,
+        kind: "agent", hash: "h", model: "m", createdTs: 0, lastTs: 30_000,
         steps: [turn(1, 5000, usage(100, 20, { genMs: 900, loadMs: 6000 })), toolStep(1, 2, 8000)],
     }]);
     const load = evts.find(e => e.kind === "load");
@@ -446,7 +446,7 @@ test("prompt eval is reported apart from the network — one number cannot be at
     // wall 4200 = prompt eval 900 + generation 3000 + 300 of queue/network. Reported as a single
     // wall-minus-generation remainder it charges the box 1200ms, 900 of which the MODEL spent reading the
     // conversation — and a gap between two models then cannot be attributed to either.
-    const [ev] = M.eventsFrom([{ hash: "h", model: "m",
+    const [ev] = M.eventsFrom([{ kind: "agent", hash: "h", model: "m",
         turns: [{ ts: 10_000, usage: usage(1840, 90, { genMs: 4200, evalMs: 3000, promptEvalMs: 900 }) }] }]);
     assert.equal(ev.cost.promptEvalMs, 900);
     assert.equal(ev.cost.evalMs, 3000);
@@ -454,7 +454,7 @@ test("prompt eval is reported apart from the network — one number cannot be at
 });
 
 test("…and it is simply absent where the route does not report it, never a zero", () => {
-    const [ev] = M.eventsFrom([{ hash: "h", model: "m",
+    const [ev] = M.eventsFrom([{ kind: "agent", hash: "h", model: "m",
         turns: [{ ts: 10_000, usage: usage(100, 90, { genMs: 3600 }) }] }]);
     assert.equal(ev.cost.promptEvalMs, undefined, "a cloud route reports no prompt timing to split out");
 });
@@ -465,7 +465,7 @@ test("…and it is simply absent where the route does not report it, never a zer
 // tool — the same confound prompt_eval_duration closed for model calls.
 
 const remoteStep = (over = {}) => ({
-    hash: "h", model: "m", createdTs: 0, lastTs: 30_000,
+    kind: "agent", hash: "h", model: "m", createdTs: 0, lastTs: 30_000,
     steps: [
         turn(1, 5000, usage(100, 20, { genMs: 900 })),
         { step: 1, seq: 2, ts: 12_000, tool: "srv1__search_web", toolMs: 4000, ...over },

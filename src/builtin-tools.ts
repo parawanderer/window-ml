@@ -1647,8 +1647,12 @@ function compactArgs(args: Record<string, unknown> | undefined): string {
  * @param bundles the bundles to expose, from `ml.serverTools()`
  * @param wanted bundle ids the caller asked for; anything else is left out
  */
-export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: readonly string[]): MlTool[] {
+export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: readonly string[], off: readonly string[] = []): MlTool[] {
     const want = new Set(wanted);
+    // Curated OUT by the user, by the same `<bundle>__<fn>` name a run would see. Not built at all rather
+    // than built and hidden: a tool the model can see is a tool it will try, and the point of curating a
+    // forty-tool backend down is that the ones left out never reach the prompt.
+    const disabled = new Set(off);
     const out: MlTool[] = [];
     for (const b of bundles) {
         if (!want.has(b.id)) continue;
@@ -1659,6 +1663,7 @@ export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: reado
             // display name cannot change what runs.
             const safe = (x: string) => String(x).replace(/[^A-Za-z0-9_]/g, "_").replace(/^(\d)/, "_$1");
             const name = `${safe(b.id)}__${safe(fn.name)}`;
+            if (disabled.has(name)) continue;
             out.push({
                 name,
                 summary: `Runs ${fn.name} on the ${b.name} server.`,

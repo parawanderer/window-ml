@@ -208,6 +208,9 @@ export function onDebug(ev: MlDebugEvent): void {
         if (!s) {
             s = {
                 hash: ev.session.hash, model: ev.request.model, tag: ev.save ? "saved" : "session",
+                // What this session IS, when it is not an ordinary chat — `ml.embed()` reports through the
+                // chat events but is not a chat, and every surface that names it should say so.
+                ...(ev.sessionKind ? { kind: ev.sessionKind } : {}),
                 createdTs: ev.ts, lastTs: ev.ts, status: "pending", config: ev.config, turns: [],
             };
             sessionMap.set(ev.session.hash, s);
@@ -338,7 +341,9 @@ export function maybeGenerateTitles(): void {
     // main model — a user who hasn't set one hasn't asked for auto-titles.
     if (!sidebarOpen.value || !config.value.autoTitles || !config.value.utilityModel.trim()) return;
     for (const s of sessionMap.values()) {
-        if (s.title || titleTried.has(s.hash)) continue;
+        // An EMBED session is named by its invocation (`ml.embed() · N calls`), not summarised: its "prompt"
+        // is a description WE wrote, so a model asked to summarise it would be summarising our own text.
+        if (s.title || titleTried.has(s.hash) || s.kind === "embed") continue;
         // A CHAT session titles off its first completed turn; an AGENT run has no chat turns, so it titles off
         // its `task` (known from agent-start) — same utility-model summariser, so both surfaces read alike.
         const first = s.turns[0];

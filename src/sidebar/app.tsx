@@ -9,14 +9,14 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { MlDebugEvent, MlConfig, ElementContext } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 import {
-    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, SECTIONS_KEY, showLane, showModels,
+    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, showLane, showModels,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
     vramOpen, sidebarOpen, backendError, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
 import { ContextMenu, Hash, highlightPos } from "./ui-kit";
 import type { InvocationInfo } from "../contract";
 import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
-import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge } from "./reply";
+import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge, EmbedRunView } from "./reply";
 import { AgentRunView, RunStatsBar } from "./agent-detail";
 import { Composer } from "./composer";
 import { fetchModels, pollPs, pollBackendHealth, VramPanel, PythonBench, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
@@ -27,8 +27,8 @@ import {
 import { shownModel, sessionProfile } from "./model";
 import { exportSession, exportSessionJson, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
-import { IconWarn, IconGear, IconExport, IconVram, IconBench } from "./icons";
-import { Settings } from "./settings";
+import { IconWarn, IconGear, IconExport, IconVram, IconBench, IconTools } from "./icons";
+import { Settings, openSettingsAt } from "./settings";
 
 
 /* ------------------------------ components ------------------------------- */
@@ -89,7 +89,11 @@ function DetailView({ hash }: { hash: string }) {
     const s = sessionMap.get(hash);
     if (!s) return <div class="empty">Session not found.</div>;
     if (s.kind === "agent") return <AgentRunView s={s} />;
-    return <><OptionsBlock s={s} />{s.turns.map(t => <MessageTurn key={t.id} t={t} />)}</>;
+    // An EMBED session is not a conversation. It reports through the chat events — a model call is a model
+    // call, and reusing the machinery costs no new event kind — but rendering it as user/assistant bubbles
+    // presents a request for vectors as something somebody said, which is where the confusion starts.
+    if (s.kind === "embed") return <EmbedRunView s={s} />;
+    return <><OptionsBlock s={s} />{s.turns.map(t => <MessageTurn key={t.id} t={t} hash={s.hash} />)}</>;
 }
 
 
@@ -289,6 +293,9 @@ function App() {
                 {v.name === "detail" ? <ExportMenu hash={v.hash} /> : null}
                 {!inSettings && !inBench ? <button class={`tt hbtn${vramOpen.value ? " on" : ""}`} aria-label="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /><span class="tt-pop" role="tooltip">VRAM monitor</span></button> : null}
                 {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Python bench" onClick={() => (view.value = { name: "bench" })}><IconBench /><span class="tt-pop" role="tooltip">Python bench — run scripts in the sandbox</span></button> : null}
+                {/* Straight to the server-tool list, which is a thing you go looking for rather than a
+                    setting you happen to pass — it is where you choose what an agent may reach for. */}
+                {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Server tools" onClick={() => { fetchModels(); openSettingsAt("advanced", "servertools"); }}><IconTools /><span class="tt-pop" role="tooltip">Server-side tools — choose what agents can call</span></button> : null}
                 {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
             </div>
             <BackendOfflineBanner />
@@ -370,13 +377,14 @@ function mount(): void {
     // ONE floating tooltip layer for the whole surface (see tooltip-layer.ts): nothing clips it, it opens
     // whichever way there is room, and the source nodes stay display:none so their prose is never copied.
     try { installTooltipLayer(document); } catch { /* no DOM in a test harness */ }
-    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [SECTIONS_KEY]: null, [VRAM_PALETTE_KEY]: "" }, (d: any) => {
+    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [VRAM_PALETTE_KEY]: "" }, (d: any) => {
         if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont();
         codeWrap.value = d[WRAP_KEY] !== false; codeLineNumbers.value = !!d[LINES_KEY]; applyCodePrefs();
         showStatsTokens.value = d[STATS_TOKENS_KEY] !== false; showStatsTps.value = !!d[STATS_TPS_KEY];
         if (typeof d[OUTMAX_KEY] === "number") outMaxH.value = d[OUTMAX_KEY];
         if (typeof d[RESWIN_KEY] === "number") resWindowS.value = d[RESWIN_KEY];
         if (Array.isArray(d[LANE_HIDDEN_KEY])) laneHidden.value = d[LANE_HIDDEN_KEY];
+        if (typeof d[LANE_SCOPE_KEY] === "boolean") laneScoped.value = d[LANE_SCOPE_KEY];
         // An unknown palette name (a downgrade, a typo in storage) falls back rather than leaving every model
         // colourless, which is what indexing an absent palette would do.
         if (d[VRAM_PALETTE_KEY] && VRAM_PALETTES[d[VRAM_PALETTE_KEY]]) vramPalette.value = d[VRAM_PALETTE_KEY];

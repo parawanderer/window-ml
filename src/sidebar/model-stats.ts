@@ -13,6 +13,10 @@ import type { ResourceEvent } from "../resource-model";
 /** The little a session must expose for these to work. */
 export interface UsageSource {
     hash: string;
+    /** What this session IS. Only an AGENT session carries this — a chat leaves it unset — so the container
+     *  is a run when it says "agent" and a session otherwise. The bar reads "run · <model>" for an agent,
+     *  which is simply untrue of a `ml.chat()`: there is no run, and the lane should not assert one. */
+    kind?: "chat" | "agent" | "embed";
     /** The model the run/chat resolved to — the fallback owner of any usage a turn doesn't name itself. */
     model?: string | null;
     /** When the run STARTED and when it was last heard from. A step's timestamp is when it FINISHED, so a run
@@ -305,8 +309,14 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
             // `now` into the minimum would make a clock that disagrees with the run's own stamps move its
             // beginning — which is how a skewed reading turns into a span that runs backwards.
             const until = Math.max(...stamps, ...(live ? [now] : []));
-            out.push({ t: Math.min(...stamps), until, kind: "run", ...(live ? { open: true as const } : {}),
-                       label: s.model ? `run · ${s.model}` : "run", model: s.model || undefined,
+            // A container is a RUN only when the session IS an agent run. Testing for `kind === "chat"`
+            // instead never fired: the reducer sets `kind` on an agent session and leaves it UNSET on a chat,
+            // so every container stayed a run and the lane's counter credited an embedding model with runs it
+            // never had. Absence of the marker is the chat case, not a third state.
+            out.push({ t: Math.min(...stamps), until, kind: s.kind === "agent" ? "run" : "session",
+                       ...(live ? { open: true as const } : {}),
+                       label: `${s.kind === "agent" ? "run" : s.kind === "embed" ? "embed" : "chat"}${s.model ? ` · ${s.model}` : ""}`,
+                       model: s.model || undefined,
                        id: runId, ref: { hash: s.hash },
                        ...(runCost.calls ? { cost: { inTokens: runCost.inTokens, outTokens: runCost.outTokens,
                                                      tokPerSec: runCost.tokPerSec, genBasis: runCost.genBasis } } : {}) });

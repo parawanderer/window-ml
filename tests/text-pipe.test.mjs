@@ -119,8 +119,10 @@ test("a trailing newline doesn't create a phantom empty last line", () => {
 
 // ---- the modeled-dialect boundary ----
 test("an un-modeled command is an actionable error (not a real shell)", () => {
-    assert.throws(() => runPipe("x", "sed 's/a/b/'"), /sed.*NOT a real shell.*process the text in a script/s);
-    assert.throws(() => runPipe("x", "awk '{print $1}'"), /awk.*NOT a real shell/s);
+    // `sed` used to be the example here; it is modelled now (substitution only), so the un-modelled case
+    // needs a command that genuinely is one.
+    assert.throws(() => runPipe("x", "awk '{print $1}'"), /awk.*NOT a real shell.*process the text in a script/s);
+    assert.throws(() => runPipe("x", "cut -f2"), /cut.*NOT a real shell/s);
 });
 test("an unknown flag names the allowed ones", () => {
     assert.throws(() => runPipe("x", "grep -Z foo"), /grep.*doesn't support -Z/s);
@@ -317,4 +319,40 @@ test("mlPipe: no pipe returns the source unchanged; a bad source or stage throws
     assert.throws(() => mlPipe(null, "head"), /got null/);
     // A bad stage raises the dialect's own error, naming the real verb set.
     assert.throws(() => mlPipe(LOG, "jq .x"), /isn't a supported text command/);
+});
+
+// `sed` is SUBSTITUTION only. Not sed the language — addresses, ranges, `d`, `y` and the rest would be a
+// second language inside this one, and the dialect refuses what it does not model rather than half-doing it.
+test("sed: substitutes on each line, with g and i", () => {
+    const P = (t, p) => runPipe(t, p);
+    assert.equal(P("foo bar foo", "sed s/foo/baz/"), "baz bar foo", "first match on the line, like sed");
+    assert.equal(P("foo bar foo", "sed s/foo/baz/g"), "baz bar baz");
+    assert.equal(P("FOO", "sed s/foo/baz/i"), "baz");
+    assert.equal(P("a\nb", "sed s/./X/"), "X\nX", "every line, not just the first");
+    // Backreferences work, because the replacement is passed through as written.
+    assert.equal(P("2026-09-04", "sed s/(\\d+)-(\\d+)-(\\d+)/$3\\/$2\\/$1/"), "04/09/2026");
+});
+
+test("sed: another delimiter for a pattern full of slashes — QUOTED, since | separates stages", () => {
+    // Unquoted, `|` would split the pipeline itself, which is why the description says to quote it.
+    assert.equal(runPipe("https://a/b", "sed 's|https://a|X|'"), "X/b");
+    // …and an escaped delimiter is still literal.
+    assert.equal(runPipe("a/b", "sed 's/a\\/b/Z/'"), "Z");
+});
+
+test("sed: refuses what it does not model, and says what it does", () => {
+    assert.throws(() => runPipe("x", "sed 2d"), /only SUBSTITUTION/);
+    assert.throws(() => runPipe("x", "sed s/a/b/q"), /unknown flag "q"/);
+    assert.throws(() => runPipe("x", "sed s/a"), /unterminated/);
+    assert.throws(() => runPipe("x", "sed"), /nothing to do/);
+    // An invalid regex is an actionable error, not a crash — the same treatment grep gives it.
+    assert.throws(() => runPipe("x", "sed s/([/y/"), /Escape a literal metacharacter|grep -F/);
+});
+
+test("sed: named in the dialect's own advertised verb list", async () => {
+    // PIPE_CMDS is the single source for every message that names the verbs, so a verb that works but is
+    // never advertised costs a model a whole turn to discover.
+    const { PIPE_CMDS, PIPE_SYNTAX } = await import("../src/text-pipe.ts");
+    assert.ok(PIPE_CMDS.includes("sed"));
+    assert.match(PIPE_SYNTAX, /sed s\/PATTERN\/REPLACEMENT\//);
 });

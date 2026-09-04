@@ -6811,6 +6811,9 @@ test("model tooltips: carry what the model has cost, with the rate's basis said 
 // answers alone (did that slow turn spend its time LOADING a model, or was the model already there?).
 test("event lane: spans render, a tool step is one phased block, and clicking opens its step", async () => {
     const w = await loadSidebarWorld({
+        // The lane scopes to the OPEN session by default, and these render it in the list view — so they ask
+        // for every session's events explicitly. What the scoping itself does has its own test.
+        local: { ml_lane_scope: false },
         vram: [{ model: "qwen3.8:27b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
                  gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
         info: INFO_2CARD,
@@ -6944,6 +6947,9 @@ test("event lane: an eviction rules through the plot and names itself", async ()
 // step, and the run that contains it — and drops everything else back.
 test("event lane: hovering a sub-call lights its lineage and dims the rest", async () => {
     const w = await loadSidebarWorld({
+        // The lane scopes to the OPEN session by default, and these render it in the list view — so they ask
+        // for every session's events explicitly. What the scoping itself does has its own test.
+        local: { ml_lane_scope: false },
         vram: [{ model: "qwen3.8:27b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
                  gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
         info: INFO_2CARD,
@@ -6996,6 +7002,9 @@ test("event lane: hovering a sub-call lights its lineage and dims the rest", asy
 // bands use, so the tip is identifiable at a glance from the list below it.
 test("event lane: the tooltip's model line carries the model's colour", async () => {
     const w = await loadSidebarWorld({
+        // The lane scopes to the OPEN session by default, and these render it in the list view — so they ask
+        // for every session's events explicitly. What the scoping itself does has its own test.
+        local: { ml_lane_scope: false },
         vram: [{ model: "gemma4:31b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
                  gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
         info: INFO_2CARD,
@@ -7160,6 +7169,9 @@ test("every displayed figure updates: no stale number survives a change", async 
 // fetch. Their difference is what getting TO the model cost, which is a different diagnosis from a slow model.
 test("event lane: the tooltip separates generation time from the network", async () => {
     const w = await loadSidebarWorld({
+        // The lane scopes to the OPEN session by default, and these render it in the list view — so they ask
+        // for every session's events explicitly. What the scoping itself does has its own test.
+        local: { ml_lane_scope: false },
         vram: [{ model: "gemma4:31b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
                  gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
         info: INFO_2CARD,
@@ -7294,6 +7306,9 @@ test("scrub strip: appears once the session outgrows the window, and the box fol
 test("lane filter: chips say what they hide, kinds persist, scope follows what you're reading", async () => {
     const GB = 1024 ** 3;
     const w = await loadSidebarWorld({
+        // The kind-chip half needs events on screen, and scoping (the default) hides every run's while
+        // nothing is open — so this world starts unscoped and the scope half toggles it on below.
+        local: { ml_lane_scope: false },
         vram: [{ model: "gemma4:31b", vramGB: 19, vramBytes: 19 * GB, sizeBytes: 19 * GB,
                  gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * GB }], expiresAt: null }],
         info: INFO_2CARD,
@@ -7316,6 +7331,9 @@ test("lane filter: chips say what they hide, kinds persist, scope follows what y
     await w.flush();
 
     const bars = () => w.shadow.querySelectorAll(".rc-ev").length;
+    // Only the bars a RUN owns. Machine events (a load, an eviction) belong to no session and survive every
+    // scoping — counting them would make "scoped to nothing" look like it had failed to hide anything.
+    const runBars = () => w.shadow.querySelectorAll(".rc-ev-run, .rc-ev-tool, .rc-ev-gen, .rc-ev-embed").length;
     const chip = (label) => [...w.shadow.querySelectorAll(".rc-lane-chip")].find((c) => c.textContent.startsWith(label));
     assert.ok(bars() >= 4, "both runs' events are drawn");
     // A chip carries its COUNT: a filter that makes you toggle blindly to learn what it hides is worse than none.
@@ -7332,19 +7350,26 @@ test("lane filter: chips say what they hide, kinds persist, scope follows what y
     await w.flush();
     assert.equal(bars(), before, "and toggling back restores them");
 
-    // Scope is only offered where "this run" names something — not in the list view.
-    assert.equal(chip("this run"), undefined, "no scope chip in the list");
+    // Scoping is the DEFAULT and the chip is offered everywhere — in the list view it is the only thing that
+    // says why there are no run events, and the only way to get them.
+    const scope = () => chip("all sessions") || chip("this session");
+    assert.ok(scope(), "the scope chip is offered in the list view too");
+    const all = runBars();
+
+    // Scoping with NOTHING open shows no run's events at all — that is the intended overview, not an empty
+    // panel: there is no session to scope to.
+    scope().click();
+    await w.flush();
+    assert.equal(runBars(), 0, "nothing open, so no run events");
+    assert.deepEqual(w.localStore.ml_lane_scope, true, "remembered, like the kind chips");
+
+    // Reading ONE run: its events come back, the other run's stay gone.
     w.shadow.querySelectorAll(".row")[0].click();
     await w.flush();
-    const scope = chip("this run");
-    assert.ok(scope, "reading a run, the scope chip appears");
-    const all = bars();
-    scope.click();
-    await w.flush();
-    assert.ok(bars() < all, "scoping drops the other run's events");
+    const scoped = runBars();
+    assert.ok(scoped > 0 && scoped < all, `only this session's events (${scoped} of ${all})`);
     // …but NOT the machine's own: an eviction has no run to belong to, and hiding it would remove the events
     // the chart exists for. (Covered exactly in resource-model.test.mjs; here it is the scope chip working.)
-    assert.ok(scope.classList.contains("on"));
 });
 
 // ---- Settings → Server-side tools: the read-only browser for what the backend exposes ----
@@ -7396,4 +7421,36 @@ test("server tools: an unreachable backend says so, and does not look empty", as
     b3.click();
     await w.flush();
     assert.match(w.shadow.body.innerHTML, /could not reach the backend/i);
+});
+
+// A session may carry NO config — `ml.embed()` reports through the chat events and has none to speak of.
+// Dereferencing it blanked the whole detail view: one absent field took the entire transcript with it, so
+// clicking that session's bar in the event lane showed nothing at all.
+test("a session with no config opens instead of blanking the view", async () => {
+    const w = await loadSidebarWorld();
+    const hash = "embedsess";
+    await w.dispatch({ kind: "chat", id: "e1", ts: 1000, save: false, session: { hash, turn: 0 },
+                       streaming: false, sessionKind: "embed", config: null,
+                       request: { model: "nomic-embed-text", extend: null,
+                                  messages: [{ role: "user", content: "embed 24 inputs" }],
+                                  images: null, toolIds: null, schema: false, think: null, maxTokens: null } });
+    await w.dispatch({ kind: "chat-result", id: "e1", ts: 1400, save: false, session: { hash, turn: 0 },
+                       content: "24 vectors · 1024 dimensions", sources: null, structured: false,
+                       model: "nomic-embed-text", extend: null, reasoning: null,
+                       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, genMs: 400 } });
+
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    // The transcript is THERE — the failure was a blank view, not a missing options block.
+    const body = w.shadow.body.innerHTML;
+    assert.match(body, /24 vectors/, "the session's own content renders");
+
+    // …and it renders as a list of CALLS, not a conversation: an embed reports through the chat events, but
+    // drawing it as user/assistant bubbles presents a request for vectors as something somebody said.
+    assert.equal(w.shadow.querySelectorAll(".embed-call").length, 1, "one row per embed call");
+    assert.equal(w.shadow.querySelectorAll(".msg.user, .msg.asst").length, 0, "no chat bubbles");
+    assert.match(w.shadow.querySelector(".embed-call").textContent, /embed 24 inputs/, "what went in");
+    assert.match(w.shadow.querySelector(".embed-call").textContent, /24 vectors/, "…and what came back");
+    assert.match(w.shadow.querySelector(".embed-call").textContent, /400ms/, "…and how long it took");
 });

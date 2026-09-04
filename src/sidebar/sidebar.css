@@ -226,6 +226,14 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
                 font-variant-numeric: tabular-nums; }
 .rc-lane-chip:hover { background: var(--panel-2-hover); }
 .rc-lane-chip.off { opacity: .45; text-decoration: line-through; }
+/* The SCOPE chip is a mode switch, not a fifth kind filter — the kind chips subtract from what is drawn,
+   this one changes whose events are drawn at all. Pushed to its own end of the row with a rule before it, so
+   it stops reading as one more thing to untick. */
+.rc-lane-chip.scope { margin-left: auto; border-left-width: 1px; }
+.rc-lane-chip.scope::before {
+    content: ""; position: absolute; left: -7px; top: 2px; bottom: 2px; width: 1px; background: var(--border);
+}
+.rc-lane-chip.scope { position: relative; }
 .rc-lane-chip.scope.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
 .rc-lane-count { margin-left: auto; font-size: 0.7em; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
 /* The scrub strip: the whole session in one bar, with a box for the slice the chart is drawing. Its axis is
@@ -303,9 +311,18 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    distinction instead of texture: the top row is always a run wrapper and never anything else, so a solid bar
    at half height says "this is the span everything below happens within" more plainly than a pattern did, and
    it keeps the model colour the rest of the lane reads by. */
-.rc-ev-run {
+.rc-ev-run, .rc-ev-session {
     top: 50%; height: 50%; transform: translateY(-50%);
     background: var(--model, var(--fg-dim));
+}
+/* A SESSION container is not a run: nothing was driven, it is just the stretch some `ml.chat()` or
+   `ml.embed()` calls happened in. Drawn HOLLOW — a bracket around its own spans rather than a bar of work —
+   so a glance tells the two apart without reading the chip counts. */
+.rc-ev-session {
+    background: none;
+    border: 1px solid var(--model, var(--fg-dim));
+    border-radius: 3px;
+    opacity: .85;
 }
 /* A load is the wait before a token — striped, because it is time spent NOT generating. The real fill is
    built inline from the model's colour (loadStripes); this is what it falls back to. */
@@ -461,7 +478,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .model-pick-opt:hover { background: var(--panel-2); }
 .model-pick-opt.on { color: var(--accent); font-weight: 600; }
 .model-pick-none { padding: 8px 9px; color: var(--fg-faint); font-size: .85em; line-height: 1.4; }
-.set-note { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: var(--fg-dim); font-size: 0.92em; line-height: 1.4; }
+/* A note explains the control ABOVE it, and had no margin at all — so it sat flush against that control and
+   the two read as one box with a seam. */
+.set-note { margin: 6px 0 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: var(--fg-dim); font-size: 0.92em; line-height: 1.4; }
 .set-note b { color: var(--fg); }
 .set-note code { background: var(--panel-2); border-radius: 3px; padding: 0 3px; font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; }
 .set-hint { color: var(--fg-faint); font-size: 0.83em; line-height: 1.35; margin: 4px; }
@@ -470,9 +489,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .set-warn { color: var(--warn); font-size: 0.83em; line-height: 1.35; margin: 4px; }
 /* "Override ignored" badge — a small red pill flagging a moot setting (e.g. a vision override on an
    Ollama model whose capability we auto-detect). */
-.set-moot { display: inline-block; margin: 4px; font-size: 0.78em; color: var(--err);
-    border: 1px solid color-mix(in srgb, var(--err) 55%, transparent); border-radius: 999px; padding: 2px 9px;
-    background: color-mix(in srgb, var(--err) 12%, transparent); }
+/* A control that is MOOT, not one that is wrong: the setting is fine, it just cannot apply because something
+   was detected for you. In the error colour it read as a problem to fix — this is information. */
+.set-moot { display: inline-block; margin: 4px; font-size: 0.78em; color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 2px 9px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 /* model liveness test */
 /* Model-status card: a bordered panel so the role/status grid reads as one unit. */
@@ -1985,3 +2006,47 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 @keyframes rcEvPulse { 0% { outline-color: var(--accent); } 100% { outline-color: transparent; } }
 .rc-ev.pulse { outline: 2px solid var(--accent); outline-offset: 1px; animation: rcEvPulse 1.4s ease-out forwards; }
 @media (prefers-reduced-motion: reduce) { .rc-ev.pulse { animation: none; } }
+
+/* Server-tool curation: a bundle, then its functions. Indented under their bundle so "which server is this
+   from" is answered by position rather than by repeating the prefix on every row. */
+.srv-curate { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 0; }
+.srv-bundle { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; background: var(--panel); }
+.srv-bundle-head { display: flex; align-items: center; gap: 8px; }
+.srv-bundle-name { font-weight: 600; }
+.srv-fn { margin-left: 10px; gap: 6px; }
+.srv-fn code { color: var(--fg); }
+.srv-fn .hint { min-width: 0; overflow-wrap: anywhere; }
+
+/* A fixed slot, so "playing" and "paused" are the same width and the button does not move under the cursor
+   at the moment the view leaves or rejoins live. */
+.rc-live-icon { display: inline-block; width: 1em; margin-right: 4px; text-align: center; }
+
+/* The session a block belongs to, in the all-sessions view. Monospace because it is an id you might match
+   against the header's hash, not a word. */
+.rc-chip-hash { font-family: var(--mono, ui-monospace, monospace); letter-spacing: .02em; }
+
+/* The curation filter. Full width, because what you type into it is a name that may be long. */
+.srv-find { margin: 6px 0 0; }
+.srv-find input { flex: 1 1 auto; min-width: 0; }
+
+/* A generating model, beside the embedding badge. Quieter than `embed`: it is the ordinary case, and only
+   worth saying because the two are otherwise indistinguishable in a list of names. */
+.vram-chat { font-size: .7em; padding: 0 5px; border-radius: 999px; color: var(--fg-faint);
+    border: 1px solid var(--border); line-height: 1.6; }
+/* What a model IS, on its row tooltip — the same fact the badge carries, repeated where the name is named. */
+.vram-rowtip-kind { margin-left: 6px; color: var(--fg-faint); font-weight: 400; }
+
+/* An `ml.embed()` session: a list of CALLS, not a conversation. One row per call — what went in, what came
+   back, how long it took — so a request for vectors never reads as something somebody said. */
+.embed-run { display: flex; flex-direction: column; gap: 4px; }
+.embed-call { display: flex; align-items: baseline; gap: 8px; padding: 5px 8px;
+    border: 1px solid var(--border); border-radius: 6px; background: var(--panel); font-size: .92em; }
+.embed-call.err { border-color: color-mix(in srgb, var(--err) 45%, transparent); }
+.embed-in { color: var(--fg); font-family: var(--mono, ui-monospace, monospace); }
+.embed-arrow { color: var(--fg-faint); }
+.embed-out { color: var(--fg-dim); overflow-wrap: anywhere; }
+.embed-ms { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+
+/* An embed session in the list. Same shape as the agent badge — it answers the same question, "what IS this"
+   — in the neutral colour, since an embed is a side errand rather than a run to go and read. */
+.agent-badge.embed-badge { background: var(--panel-2); color: var(--fg-dim); border: 1px solid var(--border); }

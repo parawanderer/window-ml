@@ -71,6 +71,14 @@ import type { AgentControl } from "./ml-agent";
 
 /** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
  *  builds a DataFrame from (rows or read_html html). Internal to injected.ts. */
+/** ONE session for every `ml.embed()` on this page, created lazily. Embedding is usually done in a loop, so
+ *  a session per call would flood the list with one-turn entries; a single accumulating session keeps the
+ *  spans on the lane without burying everything else. */
+let _embedHash: string | null = null;
+let _embedTurn = 0;
+const embedSession = () => ({ hash: (_embedHash ||= `embed${Math.random().toString(16).slice(2, 8)}`), turn: _embedTurn });
+const embedTurn = () => ++_embedTurn;
+
 type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } };
 
 (function() {
@@ -518,10 +526,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], serverTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, images = [], _control = null }: {
+        agent: async function(task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, images = [], _control = null }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
             serverTools?: string[];
+            /** HUD-only: also give this run the server-tool bundles marked always-present in Settings. A run
+             *  driven from the Commander bar has no code to name one; a scripted call said what it wanted. */
+            commanderTools?: boolean;
             system?: string | null;
             hints?: string | null;
             maxSteps?: number;
@@ -565,10 +576,25 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // function schemas the model sees are the server's own. A bundle that does not resolve (a stock
             // backend, a revoked key, a wrong id) is simply absent — a run should degrade to the tools it
             // does have rather than failing before it starts.
-            if (serverTools.length) {
+            // The user's curation is read beside the resolution it shapes. A config that cannot be read
+            // curates NOTHING out and adds nothing: a run losing its tools because a message failed is worse
+            // than one offering a tool the user had hidden.
+            let srvOff: string[] = [], srvAlways: string[] = [];
+            if (serverTools.length || commanderTools) {
+                try {
+                    const cfg = await this.config();
+                    srvOff = cfg?.serverToolsOff || [];
+                    // Bundles marked always-present, for a run started from the HUD. Only that surface: a
+                    // scripted `ml.agent()` said exactly what it wanted and must not gain tools behind its
+                    // back.
+                    if (commanderTools) srvAlways = cfg?.commanderServerTools || [];
+                } catch { /* no curation, no additions */ }
+            }
+            const wantBundles = [...new Set([...serverTools, ...srvAlways])];
+            if (wantBundles.length) {
                 try {
                     const bundles = await this.serverTools();
-                    toolset = [...toolset, ...buildServerTools(this as unknown as MlApi, bundles, serverTools)];
+                    toolset = [...toolset, ...buildServerTools(this as unknown as MlApi, bundles, wantBundles, srvOff)];
                 } catch { /* unreachable backend → no server tools, run anyway */ }
             }
             // Vision facts resolved ONCE below and carried on every tool's ToolContext, so nothing re-derives
@@ -2481,8 +2507,41 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
         embed: async function<T extends string | string[]>(input: T, opts?: { model?: string }): Promise<T extends string[] ? Embedding[] : Embedding> {
             const many = Array.isArray(input);
             const inputs = (many ? input as string[] : [input as string]).map(String);
+            // An embed is a real model call: it occupies VRAM and takes time, and it emitted NOTHING — so an
+            // embedding model's footprint moved on the memory trace with no event beside it to explain why.
+            // Reported through the ordinary chat machinery so it needs no new event kind, and into ONE
+            // session for the page rather than a session per call: embedding is usually done in a loop, and
+            // a hundred one-turn sessions is a flood, not a record.
+            const t0 = Date.now();
+            const session = embedSession();
+            const turn = embedTurn();
+            emitDebug({ kind: "chat", id: session.hash, ts: t0, save: false, session, streaming: false, sessionKind: "embed",
+                        // A real config, not null: an embed has no chat options to speak of, but every
+                        // consumer of a session expects the shape.
+                        config: { model: opts?.model || null, system: null, think: null, schema: false,
+                                  toolIds: null, maxTokens: null, save: false } as never,
+                        request: {
+                model: opts?.model || null, extend: null,
+                messages: [{ role: "user", content: `embed ${inputs.length} input${inputs.length === 1 ? "" : "s"}` }],
+                images: null, toolIds: null, schema: false, think: null, maxTokens: null,
+            } });
             const r = await makeBackgroundTaskPromise<{ model: string; vectors: number[][] }>(
-                "EMBED_REQUEST", "EMBED_RESPONSE", { inputs, ...(opts?.model ? { model: opts.model } : {}) });
+                "EMBED_REQUEST", "EMBED_RESPONSE", { inputs, ...(opts?.model ? { model: opts.model } : {}) })
+                .catch((e) => {
+                    emitDebug({ kind: "chat-result", id: session.hash, ts: Date.now(), save: false, session,
+                                content: `embed failed: ${String((e as Error)?.message || e)}`, model: opts?.model || null,
+                                sources: null, structured: false, extend: null, reasoning: null, usage: null });
+                    throw e;
+                });
+            // Wall clock only — the endpoint reports no eval timings and no token counts, so the span says
+            // how long it took and claims nothing about how much it read.
+            emitDebug({ kind: "chat-result", id: session.hash, ts: Date.now(), save: false, session,
+                        content: `${r.vectors.length} vector${r.vectors.length === 1 ? "" : "s"} · ${r.vectors[0]?.length ?? 0} dimensions`,
+                        // Token counts are UNKNOWN here — the endpoint reports none — so they are zero rather than invented,
+                        // and `genBasis` says the rate is wall clock.
+                        model: r.model || opts?.model || null, sources: null, structured: false, extend: null, reasoning: null,
+                        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, genMs: Date.now() - t0 } });
+            void turn;
             const out = r.vectors.map(v => Embedding.from(v));
             // The one cast a conditional return type always needs; the SHAPE is checked by the branch above.
             return (many ? out : out[0]) as T extends string[] ? Embedding[] : Embedding;
@@ -2738,6 +2797,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
         opts.toolTokens = true;   // HUD runs auto-enable tool tokens (the rich answer card is where citing exact outputs pays off)
         // createAgent (not ml.agent) so the run registers a HANDLE the sidebar/HUD composer can drive —
         // follow-up run()s + say() steering from the "Send a message to this session…" box.
+        // Bundles the user marked always-present. Read HERE rather than inside `ml.agent`, because this is
+        // the surface that needs them: a Commander run has no code to name a bundle, while a scripted
+        // `ml.agent()` said exactly what it wanted and must not have tools added behind its back.
+        // `commanderTools` rather than resolving the bundles HERE: reading the config first made starting a
+        // run wait on a message round-trip, so a slow or unanswered read delayed — or never started — a run
+        // the user had already typed. The loop already reads the config in its own async setup.
+        opts.commanderTools = true;
         try { void ml.createAgent(opts).run(task, images); }
         catch (err) { console.error("ml: UI-started run failed:", err); }
     });

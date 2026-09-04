@@ -417,7 +417,7 @@ export interface ExportStep {
  * kind cannot fail a validator built against an older version.
  */
 export type ExportEventKind =
-    | "run" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
+    | "run" | "session" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
 
 export interface ExportEvent {
     /** What kind of thing happened — see {@link ExportEventKind}, which GROWS. */

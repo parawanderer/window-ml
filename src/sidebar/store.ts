@@ -46,8 +46,10 @@ export interface Session {
     createdTs: number; lastTs: number; status: Status;
     config: DebugSessionConfig; turns: Turn[];
     title?: string;   // AI-summarised title (lazy; see title generation below)
-    // ml.agent runs (kind === "agent"): a task + a list of steps + a final summary.
-    kind?: "agent";
+    // What this session IS. `agent` is an ml.agent run — a task, a list of steps, a final summary. `embed`
+    // is `ml.embed()`, which reports through the chat events (a model call is a model call) but is not a
+    // chat. ABSENT means an ordinary `ml.chat()`.
+    kind?: "agent" | "embed";
     task?: string;
     taskImages?: string[];   // composer attachments the user pasted with the initial task (data URLs)
     pageUrl?: string;        // the page the run STARTED on (a run that navigates ends elsewhere)
@@ -111,8 +113,11 @@ export const brush = signal<{ from: number; to: number } | null>(null);
 // events on a later visit for a reason nothing on screen explains.
 export const LANE_HIDDEN_KEY = "ml_lane_hidden";
 export const laneHidden = signal<string[]>([]);
-/** Restrict the lane to the session being read, when one is open. */
-export const laneScoped = signal(false);
+/** Restrict the lane to the session being read. ON by default and remembered: the lane sits above a
+ *  transcript, and events from runs you are not reading are noise against it. With nothing open there is
+ *  nothing to scope to, so the overview shows no run events at all — turn this off to see every session's. */
+export const LANE_SCOPE_KEY = "ml_lane_scope";
+export const laneScoped = signal(true);
 // The panel's two SECTIONS, remembered. Both compete with the chart for whatever height the panel has been
 // dragged to, and which of the three you want depends on what you are doing: reading a run's shape wants the
 // lane, watching memory move wants the plot, deciding what to evict wants the model list. Hidden, not

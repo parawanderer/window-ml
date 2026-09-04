@@ -1032,7 +1032,7 @@ test("resource panel: scrubbing back unpins live, and the live button returns", 
         await sleep(14000);
 
         const live = frame.locator(".rc-scrub-live");
-        await expect(live).toHaveText("live");
+        await expect(live).toHaveText(/▶\s*live/);
         const before = await frame.locator(".rc-scrub-win").evaluate((e) => e.style.left);
 
         // Drag the window box to the start of the session.
@@ -1055,7 +1055,7 @@ test("resource panel: scrubbing back unpins live, and the live button returns", 
         // And back to live — a view that has silently stopped following is the failure this prevents.
         await live.click();
         await sleep(600);
-        await expect(live).toHaveText("live");
+        await expect(live).toHaveText(/▶\s*live/);
         expect(await frame.locator(".vram-zoom").count()).toBe(0);
     } finally {
         await ext.close();
@@ -1216,11 +1216,16 @@ test("resource panel: the scrubber resizes from its edges and pans from its midd
         expect(pct(before.width), "a window narrower than the strip").toBeLessThan(60);
 
         // ---- the RIGHT EDGE widens it, and the left edge stays put ----
+        // "Held" is measured against the window's OWN width, not an absolute slice of the strip: how many
+        // percent a pixel is worth depends on how long the session has grown, so a fixed tolerance is really
+        // a bet on the machine's speed. A tenth of the window is the same claim either way.
+        const held = (w) => Math.max(2, pct(w) * 0.12);
         const rightEdge = pct(before.left) + pct(before.width);
         await dragFromTo(rightEdge, Math.min(92, rightEdge + 25));
         const widened = await winAt();
         expect(pct(widened.width), "the window got wider").toBeGreaterThan(pct(before.width) + 5);
-        expect(Math.abs(pct(widened.left) - pct(before.left)), "…and the far edge did not move").toBeLessThan(3);
+        expect(Math.abs(pct(widened.left) - pct(before.left)), "…and the far edge did not move")
+            .toBeLessThan(held(widened.width));
 
         // ---- the LEFT EDGE narrows it, and the RIGHT edge stays put ----
         const rightBefore = pct(widened.left) + pct(widened.width);
@@ -1228,13 +1233,13 @@ test("resource panel: the scrubber resizes from its edges and pans from its midd
         const narrowed = await winAt();
         expect(pct(narrowed.width), "the window got narrower").toBeLessThan(pct(widened.width) - 5);
         expect(Math.abs((pct(narrowed.left) + pct(narrowed.width)) - rightBefore), "…and this time the RIGHT edge held")
-            .toBeLessThan(3);
+            .toBeLessThan(held(widened.width));
 
         // ---- the MIDDLE moves it without changing its width ----
         const mid = pct(narrowed.left) + pct(narrowed.width) / 2;
         await dragFromTo(mid, Math.max(pct(narrowed.width) / 2 + 1, mid - 20));
         const panned = await winAt();
-        expect(Math.abs(pct(panned.width) - pct(narrowed.width)), "a pan does not resize").toBeLessThan(3);
+        expect(Math.abs(pct(panned.width) - pct(narrowed.width)), "a pan does not resize").toBeLessThan(held(narrowed.width));
         expect(pct(panned.left), "…it moved").toBeLessThan(pct(narrowed.left) - 3);
 
         // ---- and a wheel over the CHART scrubs, rather than scrolling the page ----
@@ -1413,6 +1418,180 @@ test("resource panel: hiding a model hides its events too, and unhiding brings t
         // …and it comes back, rather than being dropped for the session.
         await frame.locator('.vram-row', { hasText: "gemma4:31b" }).locator(".vram-dot").click();
         await expect.poll(() => frame.locator(".rc-ev-tool").count(), { timeout: 5000 }).toBe(bars);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
+
+// Scrolling to the end must REJOIN live, not park a pinned window that happens to sit at the end. The drag
+// path has always unpinned on release; the wheel paths did not, so scrolling to the end looked like rejoining
+// live and then silently fell behind as new samples arrived — with the button still reading live, because
+// that is computed from where the window sits rather than from whether it is following.
+test("resource panel: scrolling the window to the end sticks to live, and stays stuck", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 4 }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-scrub").count(), { timeout: 30000 }).toBe(1);
+        await sleep(12000);
+
+        // Scrub BACK first, so there is a pinned range to leave.
+        const track = await frame.locator(".rc-scrub-track").boundingBox();
+        const y = track.y + track.height / 2;
+        await page.mouse.move(track.x + track.width * 0.9, y);
+        await page.mouse.down();
+        await page.mouse.move(track.x + 2, y, { steps: 8 });
+        await page.mouse.up();
+        await expect(frame.locator(".vram-zoom")).toBeVisible();
+        await expect(frame.locator(".rc-scrub-live")).toHaveText(/⏸\s*live/);
+
+        // Now WHEEL forward to the end. Several notches, because one is a fraction of the window's width.
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        for (let i = 0; i < 25; i++) {
+            if (!(await frame.locator(".vram-zoom").count())) break;
+            await page.mouse.move(plot.x + plot.width / 2, plot.y + plot.height / 2);
+            await page.mouse.wheel(0, 200);
+            await sleep(120);
+        }
+        // Reaching the end IS rejoining live: no pinned range left behind.
+        await expect.poll(() => frame.locator(".vram-zoom").count(), { timeout: 5000 }).toBe(0);
+        await expect(frame.locator(".rc-scrub-live")).toHaveText(/▶\s*live/);
+
+        // …and it STAYS live as new samples arrive. This is the half that failed: a window pinned at the tail
+        // reads as live for one moment and then falls behind, because nothing moves it forward.
+        await sleep(6000);
+        expect(await frame.locator(".vram-zoom").count(), "still following, not pinned at where the end was").toBe(0);
+        await expect(frame.locator(".rc-scrub-live")).toHaveText(/▶\s*live/);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
+
+// The log belongs to ONE session. A hovered block from ANOTHER run shares no step with it, so "dim everything
+// outside the lineage" was the whole transcript — hovering run B greyed out run A's log entirely.
+test("resource panel: hovering another session's block leaves the open session's log alone", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        // Both sessions' events, or there is nothing from the other run to hover.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(9000);
+
+        await page.evaluate(() => {
+            const now = Date.now(), span = 7000;
+            const at = (f) => now - Math.round(span * f);
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            for (const [hash, model, off] of [["sess-a", "gemma4:31b", 0], ["sess-b", "qwen3.5:35b", 0.35]]) {
+                post({ kind: "agent", id: hash, ts: at(0.95 - off), save: false, session: { hash, turn: 0 },
+                       task: `task ${hash}`, model, maxSteps: 4, config: null });
+                for (let i = 1; i <= 2; i++) {
+                    post({ kind: "agent-step", id: hash, ts: at(0.8 - off - i * 0.15), save: false,
+                           session: { hash, turn: i }, step: i, seq: i, tool: "exec", toolMs: 300,
+                           arguments: { js: `s${i}` }, result: "ok",
+                           usage: { promptTokens: 90, completionTokens: 10, totalTokens: 100, genMs: 250 } });
+                }
+            }
+        });
+        await expect.poll(() => frame.locator(".rc-ev-tool").count(), { timeout: 15000 }).toBeGreaterThanOrEqual(4);
+
+        // Open session A.
+        await frame.locator('.row', { hasText: "task sess-a" }).first().click();
+        await expect.poll(() => frame.locator(".astep").count(), { timeout: 10000 }).toBeGreaterThan(0);
+
+        // Hovering a bar belonging to the OTHER session must not touch this log.
+        const other = frame.locator(".rc-ev").filter({ hasNot: frame.locator("nothing") });
+        const bars = await frame.locator(".rc-ev-tool").all();
+        const boxes = [];
+        for (const b of bars) boxes.push({ b, box: await b.boundingBox() });
+        // The rightmost tool bars belong to sess-b (it starts later).
+        const foreign = boxes.sort((x, y) => y.box.x - x.box.x)[0];
+        await page.mouse.move(foreign.box.x + foreign.box.width / 2, foreign.box.y + foreign.box.height / 2);
+        await sleep(400);
+        expect(await frame.locator(".astep.away").count(),
+            "another session's block must not dim this session's steps").toBe(0);
+        expect(await frame.evaluate(() => document.documentElement.hasAttribute("data-lane-focus")),
+            "…nor its messages").toBe(false);
+        void other;
+
+        // A bar of THIS session still focuses the log — the feature is intact, only its scope is fixed.
+        const own = boxes.sort((x, y) => x.box.x - y.box.x)[0];
+        await page.mouse.move(own.box.x + own.box.width / 2, own.box.y + own.box.height / 2);
+        await expect.poll(() => frame.evaluate(() => document.documentElement.hasAttribute("data-lane-focus")),
+            { timeout: 5000 }).toBe(true);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
+
+// `ml.embed()` reports through the chat events — a model call is a model call, and reusing the machinery
+// costs no new event kind — but it is NOT a conversation, and every surface that presents it as one is
+// claiming something that never happened. The session is the invocation; the calls are its history.
+test("resource panel: an ml.embed() session is never presented as a chat", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(9000);
+
+        await page.evaluate(() => {
+            const now = Date.now();
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const hash = "e2e-embed";
+            post({ kind: "chat", id: "c1", ts: now - 6000, save: false, session: { hash, turn: 0 },
+                   streaming: false, sessionKind: "embed", config: null,
+                   request: { model: "nomic-embed-text", extend: null,
+                              messages: [{ role: "user", content: "embed 24 inputs" }],
+                              images: null, toolIds: null, schema: false, think: null, maxTokens: null } });
+            post({ kind: "chat-result", id: "c1", ts: now - 5000, save: false, session: { hash, turn: 0 },
+                   content: "24 vectors · 1024 dimensions", sources: null, structured: false,
+                   model: "nomic-embed-text", extend: null, reasoning: null,
+                   usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, genMs: 1000 } });
+        });
+
+        // The LIST names it by what was invoked, and badges it as an embed rather than a generic session.
+        const row = frame.locator(".row", { hasText: "ml.embed()" });
+        await expect.poll(() => row.count(), { timeout: 10000 }).toBe(1);
+        expect(await row.locator(".embed-badge").count(), "badged as an embed, not left generic").toBe(1);
+        expect(await row.innerText(), "the title is the invocation, not a call's description")
+            .not.toContain("embed 24 inputs");
+
+        // The LANE counts it as a session, never a run, and draws its container hollow.
+        expect(await frame.locator(".rc-lane-chip", { hasText: /^sessions/ }).count()).toBe(1);
+        expect(await frame.locator(".rc-ev-session").count(), "a container, not a run bar").toBeGreaterThan(0);
+
+        // And OPENING it shows CALLS, not a conversation — this used to blank the view entirely.
+        await row.click();
+        await expect.poll(() => frame.locator(".embed-call").count(), { timeout: 10000 }).toBe(1);
+        expect(await frame.locator(".msg.user, .msg.asst").count(), "no chat bubbles anywhere").toBe(0);
+        const call = await frame.locator(".embed-call").innerText();
+        expect(call).toContain("embed 24 inputs");
+        expect(call).toContain("24 vectors");
     } finally {
         await ext.close();
         await fake.stop();

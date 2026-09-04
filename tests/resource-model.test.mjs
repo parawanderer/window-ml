@@ -655,6 +655,132 @@ test("laneRows: packs at the DRAWN width, not the true one", () => {
 // Two bars on separate rows is the lane's only claim that they OVERLAP. Spending a row to buy a hair of
 // clearance therefore asserts an overlap that isn't there — and it was the ordinary case, not an edge one: a
 // model LOAD ends exactly where the step it precedes begins, so every load was pushed below its own step.
+// Two runs at once — a second model, or the SAME model run twice against a server or cloud backend. Packing
+// everything together by start time interleaves them into shared rows, so a step of one lands between two
+// steps of the other and the shape of neither survives. Each run gets a contiguous BAND instead.
+test("laneRows: concurrent runs get their own BANDS, so neither tree is interleaved with the other", () => {
+    const ev = (hash, kind, from, to, seq) => ({
+        event: { t: from, until: to, kind, ...(hash ? { ref: { hash, ...(seq != null ? { seq } : {}) } } : {}) },
+        run: 0, from, to, clipped: false,
+    });
+    // The sketch: run A spans the first two thirds with four steps and some sub-calls; run B starts halfway
+    // and overlaps it.
+    const rows = M.laneRows([
+        ev("a", "run", 0.00, 0.62),
+        ev("a", "tool", 0.02, 0.16, 1), ev("a", "tool", 0.17, 0.31, 2),
+        ev("a", "tool", 0.32, 0.46, 3), ev("a", "tool", 0.47, 0.61, 4),
+        ev("a", "embed", 0.05, 0.11, 1), ev("a", "embed", 0.20, 0.28, 2),
+        ev("b", "run", 0.50, 1.00),
+        ev("b", "tool", 0.52, 0.64, 1), ev("b", "tool", 0.65, 0.77, 2), ev("b", "tool", 0.78, 0.99, 3),
+        ev("b", "embed", 0.90, 0.97, 3),
+    ], 8);
+
+    const hashOf = (row) => [...new Set(row.map((p) => p.event.ref.hash))];
+    for (const row of rows) assert.equal(hashOf(row).length, 1, "no row mixes two runs");
+    // A's rows all come before B's — a band's position says when its run began.
+    const first = rows.map((r) => hashOf(r)[0]);
+    assert.deepEqual([...new Set(first)], ["a", "b"], "A's band, then B's");
+    // And within each band the tree survives: the container bar alone on top, its steps below it.
+    const aRows = rows.filter((r) => hashOf(r)[0] === "a");
+    assert.deepEqual(aRows[0].map((p) => p.event.kind), ["run"], "the run bar has its own row");
+    assert.ok(aRows.length >= 3, "run, steps, sub-calls");
+    const bRows = rows.filter((r) => hashOf(r)[0] === "b");
+    assert.deepEqual(bRows[0].map((p) => p.event.kind), ["run"]);
+});
+
+test("laneRows: the SAME model running twice at once is still two bands — grouping is by RUN", () => {
+    const ev = (hash, kind, from, to) => ({
+        event: { t: from, until: to, kind, model: "qwen3.8:27b", ref: { hash } },
+        run: 0, from, to, clipped: false,
+    });
+    const rows = M.laneRows([
+        ev("r1", "run", 0, 0.8), ev("r1", "tool", 0.1, 0.4), ev("r1", "tool", 0.45, 0.75),
+        ev("r2", "run", 0.2, 1.0), ev("r2", "tool", 0.25, 0.6), ev("r2", "tool", 0.65, 0.95),
+    ], 8);
+    for (const row of rows) {
+        assert.equal([...new Set(row.map((p) => p.event.ref.hash))].length, 1,
+            "one model, two concurrent runs — still not interleaved");
+    }
+});
+
+// An eviction belongs to the machine rather than to any run, and must not push a run's rows apart.
+// Banding made the per-run cap insufficient: the number of bands is the number of concurrent runs, so ten
+// agents at once would push the transcript off the screen. There is a TOTAL cap, and it crowds rather than
+// drops — a bar drawn overlapping is a legibility problem, a run not drawn at all is a lie about what ran.
+// Banding keeps a tree from being interleaved with another. Two runs that never overlap in TIME cannot
+// interleave, so stacking them costs rows for nothing — and most runs are sequential, not concurrent.
+// `ps` and `/api/info` are separate samples. A model reported resident a poll before the free bytes catch up
+// used to draw the pool COLLAPSING to the floor and springing back — memory that looked freed and re-taken.
+test("bands: a model resident before the free bytes catch up does not collapse the pool", () => {
+    const TOTAL = 24 * GB;
+    const cap = {
+        devices: [{ id: "0", name: "CUDA0", runner: "CUDA", totalBytes: TOTAL, freeBytes: TOTAL - 0.5 * GB, unified: false }],
+        host: { cores: 8, totalBytes: 64 * GB, freeBytes: 32 * GB },
+        unified: false,
+    };
+    // The skewed sample: ps says 18 GiB is resident, info still says almost everything is free.
+    const sample = { t: 1, capacity: cap, models: [{ model: "m", vramBytes: 18 * GB, ramBytes: 0, perDevice: { 0: 18 * GB }, contextLength: null, expiresAt: null }] };
+    const bands = M.deviceBands(sample, "0");
+    const total = bands.filter((b) => b.kind !== "free").reduce((a, b) => a + b.bytes, 0);
+    assert.ok(total >= 18 * GB, `what is resident is in use whatever the other sample says yet (got ${total})`);
+    const model = bands.find((b) => b.kind === "model");
+    assert.equal(model.bytes, 18 * GB, "…and it is still attributed to the model, not to a residual");
+});
+
+test("laneRows: SEQUENTIAL runs share the same rows; overlapping ones still get their own", () => {
+    const ev = (hash, kind, from, to) => ({
+        event: { t: from, until: to, kind, ref: { hash } }, run: 0, from, to, clipped: false,
+    });
+    // A finishes at 0.45, B starts at 0.55 — no overlap at all.
+    const sequential = M.laneRows([
+        ev("a", "run", 0.00, 0.45), ev("a", "tool", 0.02, 0.20), ev("a", "tool", 0.22, 0.44),
+        ev("b", "run", 0.55, 1.00), ev("b", "tool", 0.57, 0.75), ev("b", "tool", 0.77, 0.99),
+    ]);
+    assert.equal(sequential.length, 2, "one container row and one step row, shared by both runs");
+    // …and the rows still say which run each bar is: sharing a row is not merging the trees.
+    assert.deepEqual(sequential[0].map((p) => p.event.kind), ["run", "run"]);
+    assert.deepEqual([...new Set(sequential[0].map((p) => p.event.ref.hash))].sort(), ["a", "b"]);
+
+    // The overlapping case is unchanged: B starts while A is still going, so it gets its own band.
+    const overlapping = M.laneRows([
+        ev("a", "run", 0.00, 0.70), ev("a", "tool", 0.02, 0.30), ev("a", "tool", 0.32, 0.68),
+        ev("b", "run", 0.40, 1.00), ev("b", "tool", 0.42, 0.70), ev("b", "tool", 0.72, 0.99),
+    ]);
+    assert.equal(overlapping.length, 4, "two bands of two");
+    for (const row of overlapping) {
+        assert.equal([...new Set(row.map((p) => p.event.ref.hash))].length, 1, "no row mixes the two");
+    }
+});
+
+test("laneRows: many concurrent runs are capped in TOTAL, and nothing is dropped", () => {
+    const runs = 12, perRun = 3;
+    const placed = [];
+    for (let r = 0; r < runs; r++) {
+        const hash = `r${r}`;
+        placed.push({ event: { t: 0, until: 1, kind: "run", ref: { hash } }, run: 0, from: 0, to: 1, clipped: false });
+        for (let i = 0; i < perRun; i++) {
+            const from = i / perRun, to = (i + 0.9) / perRun;
+            placed.push({ event: { t: from, until: to, kind: "tool", ref: { hash } }, run: 0, from, to, clipped: false });
+        }
+    }
+    const rows = M.laneRows(placed);
+    assert.ok(rows.length <= M.MAX_LANE_ROWS, `capped at ${M.MAX_LANE_ROWS}, got ${rows.length}`);
+    assert.equal(rows.flat().length, placed.length, "every event is still drawn somewhere");
+});
+
+test("laneRows: machine events are packed last, in a band of their own", () => {
+    const ev = (hash, kind, from, to) => ({
+        event: { t: from, until: to, kind, ...(hash ? { ref: { hash } } : {}) },
+        run: 0, from, to, clipped: false,
+    });
+    const rows = M.laneRows([
+        ev(null, "load", 0.3, 0.45),
+        ev("a", "run", 0.0, 0.9), ev("a", "tool", 0.1, 0.8),
+    ], 8);
+    assert.equal(rows.at(-1).every((p) => !p.event.ref), true, "the machine's band is last");
+    assert.equal(rows[0].map((p) => p.event.kind).join(), "run", "the run still leads its own band");
+});
+
 test("laneRows: a bar that merely ABUTS another shares its row rather than claiming an overlap", () => {
     const p = (kind, from, to) => ({ event: { t: from, until: to, kind }, run: 0, from, to, clipped: false });
     const rows = M.laneRows([p("load", 0.20, 0.30), p("tool", 0.30, 0.45)]);
@@ -786,12 +912,12 @@ test("filterEvents: scope answers whose, kinds answer which — and machine even
 
     // Scoped to one run: the other run goes, and the machine's own event STAYS — it is what the memory trace
     // is doing, and hiding it for having no owner would remove the events the chart exists for.
-    const scoped = M.filterEvents(evs, { hash: "a", hidden: [] });
+    const scoped = M.filterEvents(evs, { hash: "a", scope: "session", hidden: [] });
     assert.deepEqual(scoped.map((e) => e.label), ["run a", "exec", "reader", "m evicted"]);
 
     // Kinds are an EXCLUSION list, so a kind added later shows up by default instead of being filtered out by
     // a stored preference that predates it.
-    assert.deepEqual(M.filterEvents(evs, { hash: null, hidden: ["embed"] }).map((e) => e.label),
+    assert.deepEqual(M.filterEvents(evs, { hash: null, scope: "all", hidden: ["embed"] }).map((e) => e.label),
         ["run a", "exec", "run b", "m evicted"]);
     assert.deepEqual(M.filterEvents(evs, { hash: "a", hidden: ["embed", "run"] }).map((e) => e.label),
         ["exec", "m evicted"]);

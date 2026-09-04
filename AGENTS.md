@@ -728,6 +728,10 @@ background-hosted paths with no page round-trip and no approval.
   (comments + string literals), because five verb names are ordinary identifiers and `|` is TypeScript's
   union operator, so every false positive was code; and an explicit `…` or `e.g.` is honoured as the
   author's own "not exhaustive" disclaimer.
+- **`sed` is SUBSTITUTION only** — `s/PATTERN/REPLACEMENT/` with the `g` and `i` flags and any delimiter
+  (`sed 's|http://a|X|'`, quoted, since a bare `|` separates stages). No addresses, no `-n`, no other
+  commands: a model reaching for `sed -n '2p'` gets a refusal naming what the verb does accept, and `head`
+  is what it wanted. It is a LINE verb, so it composes with the structural stages in either order.
 - The pointer carries the value's **TYPE**, from the render descriptor the step already produced — so `keys`
   on a DataFrame means its COLUMNS, and two casts the line dialect can't express work: `latex`, and `img`,
   which never dumps the payload but says it IS base64 image data, how large, and what to do instead.

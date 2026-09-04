@@ -7,6 +7,9 @@
 //
 // Env: HOLD=0 exits at the end instead of holding the browser open. PACE scales every wait.
 //      ONLY=events skips the memory narrative and goes straight to the event lane (~20s instead of ~2min).
+//      ONLY=overlap scripts TWO CONCURRENT runs, so the lane's per-run banding is visible; SAME=1 runs both
+//      on one model (the server/cloud case, where grouping by model would merge them back into one tree);
+//      SEQ=1 makes them SEQUENTIAL instead, where the second run reuses the first's rows rather than stacking.
 //      The final beats script a RUN (posted as the same __mlDebug events a real one emits) so the event lane
 //      has something in it: a model load, a delegated vision sub-call, and a step that waited at an approval
 //      gate — the three shapes the lane exists to tell apart.
@@ -103,6 +106,8 @@ const BOXES = {
 const SHAPE = BOXES[BOX] || BOXES.cuda;
 const M = SHAPE.models;                       // M.a[0] is a name, M.a[1] its size on this machine
 const DEVS = SHAPE.devices.length;
+const SEQ = process.env.SEQ === "1";   // ONLY=overlap SEQ=1 → the two runs do not overlap at all
+const EMBED_MODEL = "nomic-embed-text";   // small, CPU-resident — the ONLY model here that is not a chat model
 const devTotal = (i) => SHAPE.devices[i % DEVS].total_memory;
 const IDLE = (i = 0) => devTotal(i) - SHAPE.idleHeld;   // an idle card still holds ollama's discovery context
 
@@ -195,6 +200,76 @@ const scriptRun = (page, spanMs) => page.evaluate((span) => {
            session: { hash, turn: 3 }, summary: "done", steps: 3, hitCap: false });
 }, spanMs);
 
+/**
+ * TWO RUNS AT ONCE, overlapping in time — the shape a lane has to get right and the one a single scripted
+ * run can never show. The second starts while the first is still going, and each is a TREE: a container bar,
+ * its steps, its sub-calls. Packed together by start time they would interleave into shared rows, so a step
+ * of one would sit between two steps of the other and neither shape would survive.
+ *
+ * `sameModel` runs BOTH on one model, which is not a contrived case: a server or cloud backend runs the same
+ * model several times concurrently, and grouping by model rather than by RUN would merge them back together.
+ */
+const scriptOverlap = (page, spanMs, sameModel = false, models = ["gemma4:31b", "qwen3.8:27b"], embedModel = null, seq = false) => page.evaluate(({ span, sameModel, models, embedModel, seq }) => {
+    const now = Date.now();
+    const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+    const at = (f) => now - Math.round(span * (1 - f));
+
+    const run = (hash, model, task, from, to, steps) => {
+        post({ kind: "agent", id: hash, ts: at(from), save: false, session: { hash, turn: 0 },
+               task, model, maxSteps: 8, config: null });
+        steps.forEach((st, i) => {
+            post({ kind: "agent-step", id: hash, ts: at(st.to), save: false, session: { hash, turn: i + 1 },
+                   step: i + 1, seq: i + 1, tool: st.tool, toolMs: Math.round(span * (st.to - st.from) * 0.6),
+                   arguments: { js: st.tool }, result: "ok",
+                   usage: { promptTokens: 2000 + i * 200, completionTokens: 80, totalTokens: 2080 + i * 200,
+                            genMs: Math.round(span * (st.to - st.from) * 0.4) },
+                   ...(st.sub ? { subUsage: { calls: 1, prompt: 700, completion: 25,
+                                              byModel: [{ model: "minicpm-v:8b", prompt: 700, completion: 25, calls: 1 }],
+                                              calls_: [{ model: "minicpm-v:8b", ts: at(st.sub[1]),
+                                                         ms: Math.round(span * (st.sub[1] - st.sub[0])), prompt: 700, completion: 25 }] } } : {}) });
+        });
+        post({ kind: "agent-result", id: hash, ts: at(to), save: false, session: { hash, turn: steps.length },
+               summary: "done", steps: steps.length, hitCap: false });
+    };
+
+    // Run A: the first two thirds, four steps, two of them delegating.
+    run("demo-run-a", models[0], "summarise the spreadsheet", 0.02, 0.64, [
+        { tool: "exec", from: 0.04, to: 0.18, sub: [0.07, 0.13] },
+        { tool: "python_exec", from: 0.19, to: 0.33, sub: [0.22, 0.30] },
+        { tool: "exec", from: 0.34, to: 0.47 },
+        { tool: "look", from: 0.48, to: 0.62 },
+    ]);
+    // An EMBEDDING session, in the middle of both. `ml.embed()` reports through the ordinary chat machinery
+    // (one accumulating session per page, not one per call), so it has no steps and no run — just a container
+    // and its generation spans. It is here because an embedding model occupies VRAM like any other, and
+    // hovering one of its blocks should light ITS line in the chart, not a chat model's.
+    if (embedModel) {
+        const eh = "demo-embed";
+        post({ kind: "chat", id: eh, ts: at(0.30), save: false, session: { hash: eh, turn: 0 }, streaming: false,
+               config: null, request: { model: embedModel, extend: null, messages: [{ role: "user", content: "embed 24 inputs" }],
+                                        images: null, toolIds: null, schema: false, think: null, maxTokens: null } });
+        [[0.31, 0.36], [0.40, 0.44], [0.55, 0.61]].forEach(([a, b], i) => {
+            post({ kind: "chat-result", id: eh, ts: at(b), save: false, session: { hash: eh, turn: i },
+                   content: "24 vectors · 1024 dimensions", model: embedModel, sources: null, structured: false,
+                   extend: null, reasoning: null,
+                   usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, genMs: Math.round(span * (b - a)) } });
+        });
+    }
+
+    // Run B. Overlapping by default — it starts halfway through A. SEQUENTIAL (`seq`) instead starts it
+    // after A has finished, which is the case where the two trees share one set of rows rather than stacking:
+    // they cannot interleave if they never overlap, so spending rows on them would cost height for nothing.
+    run("demo-run-b", sameModel ? models[0] : models[1], "check the other page", seq ? 0.68 : 0.50, 0.99, seq ? [
+        { tool: "exec", from: 0.70, to: 0.79 },
+        { tool: "click", from: 0.80, to: 0.88 },
+        { tool: "python_exec", from: 0.89, to: 0.98, sub: [0.93, 0.97] },
+    ] : [
+        { tool: "exec", from: 0.52, to: 0.64 },
+        { tool: "click", from: 0.65, to: 0.77 },
+        { tool: "python_exec", from: 0.78, to: 0.97, sub: [0.90, 0.96] },
+    ]);
+}, { span: spanMs, sameModel, models, embedModel, seq });
+
 async function main() {
     mkdirSync(ART, { recursive: true });
     const fake = await startFakeLlm({ model: "fake-model" });
@@ -211,6 +286,10 @@ async function main() {
             chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
             model: "fake-model", debugMode: "overlay",
         });
+        // The lane scopes to the OPEN session by default, and two concurrent runs are by definition not the
+        // one session you are reading — so this scene has to ask for every session's events. Set before the
+        // app mounts, since the preference is read once at startup.
+        if (ONLY === "overlap") await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
         fake.setCapacity(box(freeWith([]), 12.3 * GiB));
         fake.setResident([]);
 
@@ -274,6 +353,38 @@ async function main() {
             await scriptRun(page, warm * 0.75);
             await sleep(4000);
             await capture(page, "events");
+            console.log(`\n  screenshots in ${ART}`);
+            if (HOLD) { log("holding the browser open (HOLD=0 to skip)."); await new Promise(() => {}); }
+            return;
+        }
+
+        // ONLY=overlap — two concurrent runs, which is the case a single scripted run cannot show. SAME=1
+        // runs both on ONE model, the server/cloud case where grouping by model would merge them back.
+        if (ONLY === "overlap") {
+            const warm = 16_000;
+            const sameModel = process.env.SAME === "1";
+            log(`ONLY=overlap — warming the axis for 16s, then two ${SEQ ? "SEQUENTIAL" : "concurrent"} runs${sameModel ? " of the SAME model" : ""}.`);
+            fake.setResident([resident(M.a[0], M.a[1], 0)]);
+            fake.setCapacity(box(freeWith([M.a[1]]), 10 * GiB));
+            await sleep(warm / 2);
+            // …and an EMBEDDING model beside them: small, and CPU-resident by default, which is exactly why it
+            // needs its own line — its footprint moves with no chat event to explain it.
+            fake.setResident([resident(M.a[0], M.a[1], 0), resident(M.b[0], M.b[1], 1 % DEVS),
+                              resident(EMBED_MODEL, 0, 0, Math.round(0.6 * GiB))]);
+            fake.setCapacity(box(freeWith(DEVS > 1 ? [M.a[1], M.b[1]] : [M.a[1] + M.b[1]]), 8.4 * GiB));
+            await sleep(warm / 2);
+            log(SEQ
+                ? "sequential: the second run REUSES the first's rows — they cannot interleave if they never overlap."
+                : "overlap: each run gets its OWN band — container, steps, sub-calls — never interleaved.");
+            // The runs use the models that are actually RESIDENT, so each band's colour is the one its row
+            // carries in the list below. Inventing names gave the second run a third colour and made the
+            // lane look like it disagreed with the legend.
+            await scriptOverlap(page, warm * 0.8, sameModel, [M.a[0], M.b[0]], EMBED_MODEL, SEQ);
+            await sleep(4000);
+            await capture(page, SEQ ? "sequential" : sameModel ? "overlap-same-model" : "overlap");
+            // The lane scopes to the open session by DEFAULT, so this scene needs every session's events —
+            // which is the toggle's whole point, and worth seeing.
+            log("(scoping is OFF for this scene — the chip switches back to just the session you are reading)");
             console.log(`\n  screenshots in ${ART}`);
             if (HOLD) { log("holding the browser open (HOLD=0 to skip)."); await new Promise(() => {}); }
             return;

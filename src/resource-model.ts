@@ -323,7 +323,12 @@ export function deviceBands(sample: ResourceSample, deviceId: string): Band[] {
     if (unknown > 0) bands.push({ key: "unknown", label: "placement unknown", bytes: unknown, kind: "unknown" });
     // Everything in use that we cannot attribute to a model of ours. Clamped: `free` is sampled independently
     // of `ps`, so a race can make the arithmetic go slightly negative.
-    const used = Math.max(0, cap.totalBytes - cap.freeBytes);
+    // `ps` and `/api/info` are SEPARATE samples, so a model can be reported resident a poll before the free
+    // bytes catch up. Read literally, `total - free` is then just the idle overhead while attribution is the
+    // whole model — the residual clamps to zero and the line COLLAPSES to the floor for one sample before
+    // springing back, which looks like memory that was freed and re-taken. Attribution is a lower bound on
+    // what is in use: what we can see resident is in use whatever the other sample says yet.
+    const used = Math.max(0, cap.totalBytes - cap.freeBytes, attributed + unknown);
     const residual = Math.max(0, used - attributed - unknown);
     // Name the residual by MAGNITUDE: under the floor it is the driver's own context (present even on an idle
     // card), above it there is genuinely something else on the card worth telling the reader about.
@@ -777,14 +782,19 @@ export function timeAtFraction(runs: { t: number }[][], frac: number): number | 
  *  "which of them" — sub-calls are the numerous ones (a vision reader fires several per step) and loads and
  *  evictions are the rare, expensive ones you may want alone. */
 export interface LaneFilter {
-    /** A session hash to restrict to, or null for every session. */
+    /** The session being read, or null when none is (the overview list). */
     hash: string | null;
+    /** Whether the lane shows only that session's events, or every session's. Scoping is the DEFAULT: the
+     *  lane sits above a transcript, and events from runs you are not reading are noise against it. With
+     *  scoping on and no session open there is nothing to scope to, so a run's events are shown NOWHERE —
+     *  which is the intended overview, not an empty-looking bug. */
+    scope: "session" | "all";
     /** Kinds to HIDE. An exclusion list, so a kind added later is visible by default rather than silently
      *  filtered out by a stored preference that predates it. */
     hidden: readonly ResourceEvent["kind"][];
 }
 
-export const EMPTY_LANE_FILTER: LaneFilter = { hash: null, hidden: [] };
+export const EMPTY_LANE_FILTER: LaneFilter = { hash: null, scope: "all", hidden: [] };
 
 /** Apply a filter. An event with no `ref` (an eviction — it belongs to the machine, not to a run) survives a
  *  session scope: it is what the memory trace is DOING, and hiding it because it has no owner would remove
@@ -793,7 +803,9 @@ export function filterEvents(events: readonly ResourceEvent[], filter: LaneFilte
     const hidden = new Set(filter.hidden);
     return events.filter((e) => {
         if (hidden.has(e.kind)) return false;
-        if (filter.hash && e.ref && e.ref.hash !== filter.hash) return false;
+        // An event with NO ref belongs to the machine rather than to a run — an eviction is a fact about
+        // memory and survives every scoping, including "no session open".
+        if (filter.scope === "session" && e.ref) return e.ref.hash === filter.hash;
         return true;
     });
 }
@@ -900,7 +912,77 @@ export function scopeAround(
  *  seam — which is the same misreading as an overlap, arrived at differently. */
 export const EV_ROW_GAP = 0.004;
 
-export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN): EventPlacement[][] {
+/**
+ * Pack placed events into rows, ONE RUN AT A TIME.
+ *
+ * A run and everything under it — its steps, their sub-calls — is a tree, and the tree is what a reader is
+ * following. Packing every event together by start time interleaves two concurrent runs into the same rows,
+ * so a step of one sits between two steps of the other and the shape of neither survives. Each run instead
+ * gets a contiguous BAND: its own container bar, its steps beneath, its sub-calls beneath those. A second
+ * run overlapping in time starts a new band below rather than filling gaps in the first.
+ *
+ * This is not only a multi-model case: a server or cloud backend runs the SAME model several times at once,
+ * so the grouping is by RUN, never by model.
+ *
+ * Events belonging to no run (an eviction — a fact about the machine) are packed last, in a band of their
+ * own, so they cannot push a run's rows apart.
+ */
+/** The most rows the lane will ever draw, across every band. Each row is a few pixels, so without a TOTAL
+ *  cap a box running ten agents at once would push the transcript off the screen — banding made the per-run
+ *  cap insufficient, because the number of bands is the number of concurrent runs. */
+export const MAX_LANE_ROWS = 10;
+
+export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN, maxTotal = MAX_LANE_ROWS): EventPlacement[][] {
+    const groups = new Map<string, EventPlacement[]>();
+    for (const p of placed) {
+        const key = p.event.ref?.hash ?? "";
+        (groups.get(key) ?? groups.set(key, []).get(key)!).push(p);
+    }
+    // Runs in the order they STARTED, and the machine's own events last: a band's position should say when
+    // its run began, and an eviction belongs to no run at all.
+    const order = [...groups.entries()].sort((a, b) => {
+        if (!a[0] !== !b[0]) return a[0] ? -1 : 1;
+        return Math.min(...a[1].map((p) => p.run + p.from)) - Math.min(...b[1].map((p) => p.run + p.from));
+    });
+    const out: EventPlacement[][] = [];
+    // The drawn end of each existing row, so a later band can be told whether it would collide.
+    const ends: number[] = [];
+    const endOf = (p: EventPlacement) => p.run + Math.max(p.to, p.from + minSpan) + EV_ROW_GAP;
+    const startOf = (p: EventPlacement) => p.run + p.from;
+
+    for (const [, band] of order) {
+        const rows = packBand(band, maxRows, minSpan);
+        // REUSE rows where the band cannot collide. Banding exists so a tree is never interleaved with
+        // another — but two runs that never overlap in TIME cannot interleave, so stacking them costs rows
+        // for nothing, and most runs are sequential rather than concurrent. The band is placed as a WHOLE at
+        // the first depth where every one of its rows clears what is already there: moving rows independently
+        // would let one run's steps slide under another's container, which is the interleaving this prevents.
+        // Placed at the TOP only when everything already drawn has finished before this band begins — which
+        // is exactly the sequential case. Anything else appends. Allowing a band to start partway down would
+        // let it share a row with another run's sub-calls while overlapping that run's container, so the two
+        // trees would interleave by depth: the thing banding exists to prevent, arrived at sideways.
+        const bandStart = Math.min(...band.map(startOf));
+        const clearsEverything = ends.length > 0 && ends.every((e) => bandStart >= e);
+        let at = clearsEverything ? 0 : out.length;
+        // Out of room even appending: everything left CROWDS into the last row rather than being dropped. A
+        // bar drawn overlapping is a legibility problem; a run not drawn at all is a lie about what ran.
+        if (at >= out.length && out.length + rows.length > maxTotal) {
+            const last = out[out.length - 1] ?? (out.push([]), ends.push(0), out[0]);
+            for (const r of rows) last.push(...r);
+            continue;
+        }
+        rows.forEach((row, i) => {
+            const k = at + i;
+            if (!out[k]) { out[k] = []; ends[k] = 0; }
+            out[k].push(...row);
+            ends[k] = Math.max(ends[k], ...row.map(endOf));
+        });
+    }
+    return out;
+}
+
+/** One run's own rows — the greedy first-fit the whole lane used to get, applied within a band. */
+function packBand(placed: EventPlacement[], maxRows: number, minSpan: number): EventPlacement[][] {
     const rows: EventPlacement[][] = [];
     const padded: number[] = [];   // per row: the drawn end PLUS the separation reserved after it
     const tight: number[] = [];    // per row: the same end without it
@@ -966,7 +1048,7 @@ export interface ResourceEvent {
      *  the driver runs. It is NOT produced yet; the kind exists so that when it is, it renders and hovers like
      *  everything else instead of arriving as an unlabelled bar. Its whole point is that it OVERLAPS the
      *  driver's own events rather than following them, which the lane's row packing already handles. */
-    kind: "run" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
+    kind: "run" | "session" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
     label: string;
     model?: string;
     /** This event's own id, and the event that SPAWNED it. A delegated sub-call — a vision reader, an

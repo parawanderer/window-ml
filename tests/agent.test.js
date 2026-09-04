@@ -28,13 +28,16 @@ test("_truncate tolerates null/undefined", () => {
     assert.equal(ml._truncate(undefined, 5), "");
 });
 
-test("__mlStartAgent (HUD composer relay) runs a REAL createAgent().run() in the page", () => {
+test("__mlStartAgent (HUD composer relay) runs a REAL createAgent().run() in the page", async () => {
     // The Spotlight composer → shell → page: injected must start a genuine session via createAgent().run()
     // (so it registers a HANDLE the composer can then steer), not a bare ml.agent(). Stub createAgent.
     const { ml, window } = loadDomWorld();
     let createdOpts = null, ranWith = null;
     ml.createAgent = (opts) => { createdOpts = opts; return { run: (task) => { ranWith = task; return Promise.resolve({ summary: "" }); } }; };
     window.dispatchEvent(new window.MessageEvent("message", { data: { __mlStartAgent: { task: "do a thing", maxSteps: 20 } }, source: window }));
+    // The handler reads the config first (for bundles marked always-present), so the run starts a microtask
+    // later — the message is an extension round-trip, not a network one.
+    await new Promise((r) => setTimeout(r, 0));
     assert.equal(ranWith, "do a thing", "the page ran createAgent().run() with the composer's task");
     assert.equal(createdOpts?.maxSteps, 20, "the composer's step budget threads through");
     // A UI-started run gets a capable default kit (click/type/python) via extraTools — the model tried to
@@ -2285,11 +2288,11 @@ test("fetch_url pipe: filters the returned text through the grep/head pipeline (
 
     // A command outside the dialect → an actionable error. The exec escape hatch is GATED on exec being wired.
     const withExec = { hasTool: (n) => n === "exec", tools: ["exec"], model: null, capabilities: null };
-    const err = await tool.run({ url, pipe: "sed 's/a/b/'" }, withExec);
+    const err = await tool.run({ url, pipe: "awk '{print $1}'" }, withExec);
     assert.match(String(err), /Pipe error/, "surfaces the interpreter error");
     assert.match(String(err), /const \{ markdown \} = await ml\.fetch/, "with exec wired → points at the exec escape hatch");
     // Without exec wired, the hint is omitted (no misleading suggestion to use a tool it doesn't have).
-    const errNoExec = await tool.run({ url, pipe: "sed 's/a/b/'" }, { hasTool: () => false, tools: [], model: null, capabilities: null });
+    const errNoExec = await tool.run({ url, pipe: "awk '{print $1}'" }, { hasTool: () => false, tools: [], model: null, capabilities: null });
     assert.match(String(errNoExec), /not a real shell/i, "still explains the dialect");
     assert.doesNotMatch(String(errNoExec), /use exec/, "no exec suggestion when exec isn't available");
 
@@ -3742,4 +3745,28 @@ test("server tools: `token` is stripped before the call leaves the machine", asy
     }], ["srv1"]);
     await tool.run({ q: "hello", token: "my label" });
     assert.deepEqual(sent, { q: "hello" });
+});
+
+// Curation is what makes a forty-tool backend usable: a tool the model can SEE is a tool it will try, so a
+// disabled function must not be built at all rather than built and hidden.
+test("server tools: a curated-out function is never built, while its siblings still are", async () => {
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const bundle = {
+        id: "srv1", name: "Search", description: "", kind: "local",
+        functions: [
+            { name: "search_web", description: "", parameters: { type: "object", properties: {} } },
+            { name: "send_email", description: "", parameters: { type: "object", properties: {} } },
+        ],
+    };
+    const all = buildServerTools({}, [bundle], ["srv1"]);
+    assert.deepEqual(all.map(t => t.name).sort(), ["srv1__search_web", "srv1__send_email"]);
+
+    // Disabled by the SAME `<bundle>__<fn>` name a run would see — two spellings of one identity is how a
+    // curation list ends up disabling nothing.
+    const curated = buildServerTools({}, [bundle], ["srv1"], ["srv1__send_email"]);
+    assert.deepEqual(curated.map(t => t.name), ["srv1__search_web"], "the other function is untouched");
+
+    // The bundle can still be asked for with everything in it turned off — that is an empty toolset, not an
+    // error, and a run should degrade rather than fail before it starts.
+    assert.deepEqual(buildServerTools({}, [bundle], ["srv1"], ["srv1__search_web", "srv1__send_email"]), []);
 });

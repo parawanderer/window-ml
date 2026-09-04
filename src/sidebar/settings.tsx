@@ -11,7 +11,7 @@ import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundin
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS, modelKinds, embedDims } from "./store";
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS, modelKinds, embedDims, view } from "./store";
 import { VRAM_PALETTES, VRAM_PALETTE_KEY, vramPalette } from "./vram";
 import { truncate } from "./format";
 import { ToolDefsView } from "./agent-detail";   // the SAME viewer an agent run uses for its local toolset
@@ -20,7 +20,9 @@ import { IconCheck } from "./icons";
 
 // Update one config field: mirror it into the signal (live UI), optionally
 // persist to chrome.storage.sync (which the popup also reads → they sync).
-function setField(key: keyof MlConfig, value: string | number | boolean, persist = true): void {
+// String LISTS are config values too (the server-tool curation) — the signature took scalars only, so a
+// list field could not be written at all without a cast at every call site.
+function setField(key: keyof MlConfig, value: string | number | boolean | string[], persist = true): void {
     config.value = { ...config.value, [key]: value };
     if (persist) chrome.storage.sync.set({ [key]: value });
     if (key === "theme") applyTheme();
@@ -56,7 +58,19 @@ function Section({ id, title, children }: { id: string; title: ComponentChildren
  * Fetched on EXPAND, not on mount: it is a network call to the backend, and a settings panel opening should
  * not make one for a section nobody looked at.
  */
+/** The `<bundle>__<fn>` name a run would see — the SAME flattening `buildServerTools` applies, so what is
+ *  ticked here is what is (or is not) built there. Two spellings of one identity is how a curation list ends
+ *  up silently disabling nothing. */
+const srvToolName = (bundleId: string, fn: string) => {
+    const safe = (x: string) => String(x).replace(/[^A-Za-z0-9_]/g, "_").replace(/^(\d)/, "_$1");
+    return `${safe(bundleId)}__${safe(fn)}`;
+};
+/** Add or remove one entry, without duplicates. */
+const toggled = (list: readonly string[], name: string, present: boolean): string[] =>
+    present ? [...new Set([...list, name])] : list.filter((x) => x !== name);
+
 function ServerToolsSection() {
+    const c = config.value;
     const [state, setState] = useState<{ status: "idle" | "loading" | "done" | "error"; tools: ServerTool[]; error?: string }>({ status: "idle", tools: [] });
 
     const load = () => {
@@ -71,6 +85,16 @@ function ServerToolsSection() {
 
     // One tool per FUNCTION, which is also how `ml.agent({serverTools})` exposes them — so what you read
     // here is what a run would actually be given, not a bundle summary it has to be unpacked from.
+    // Free-text filter over the curation list. A bundle survives if IT matches (so a server name shows all of
+    // its tools) or if any of its functions does; a function survives if it matches or its bundle does.
+    const [srvQuery, setSrvQuery] = useState("");
+    const q = srvQuery.trim().toLowerCase();
+    const hit = (...parts: (string | undefined)[]) => !q || parts.some((p) => (p || "").toLowerCase().includes(q));
+    const bundleHit = (b: ServerTool) => hit(b.id, b.name, b.description);
+    const fnMatches = (b: ServerTool, f: { name: string; description?: string }) =>
+        bundleHit(b) || hit(f.name, f.description);
+    const matching = state.tools.filter((b) => bundleHit(b) || (b.functions || []).some((f) => fnMatches(b, f)));
+
     const defs = state.tools.flatMap((b) => (b.functions || []).map((f) => ({
         name: `${b.id}__${f.name}`,
         description: f.description || "",
@@ -105,6 +129,56 @@ function ServerToolsSection() {
                     : state.status === "done" && !defs.length
                         ? <div class="hint">none — this backend has no server-side tools configured (a bare Ollama endpoint has no such concept).</div>
                         : null}
+                {/* CURATION. A backend with forty tools is not a toolset — it is a list to choose from, and a
+                    tool a model can see is a tool it will try. A disabled function is not built at all, so it
+                    never reaches a prompt; the bundle can still be asked for by a run. "Commander" is the
+                    other half: a HUD-started run has no code to name a bundle, so this is the only way to
+                    give it one. */}
+                {/* A backend can expose dozens; curating them means finding one first. Matches the bundle's
+                    name AND the function's, so "search" finds it whether you remember the tool or the server
+                    it came from — and a bundle with no match disappears entirely rather than sitting there
+                    empty, which would read as a bundle that has no functions. */}
+                {state.status === "done" && state.tools.length > 1 ? (
+                    <label class="set-field srv-find">
+                        <span>Find</span>
+                        <input type="search" value={srvQuery} placeholder="filter by tool or server name…"
+                            onInput={(e: any) => setSrvQuery(e.target.value)} />
+                    </label>
+                ) : null}
+                {state.status === "done" && state.tools.length ? (
+                    <div class="srv-curate">
+                        {matching.length === 0
+                            ? <div class="hint">Nothing matches “{srvQuery}”.</div> : null}
+                        {matching.map((b) => (
+                            <div class="srv-bundle" key={b.id}>
+                                <div class="srv-bundle-head">
+                                    <span class="srv-bundle-name">{b.name || b.id}</span>
+                                    <span class="sp" />
+                                    <label class="set-check tt">
+                                        <input type="checkbox" checked={(c.commanderServerTools || []).includes(b.id)}
+                                            onChange={(e: any) => setField("commanderServerTools",
+                                                toggled(c.commanderServerTools || [], b.id, e.target.checked))} />
+                                        <span>Commander</span>
+                                        <span class="tt-pop wrap left" role="tooltip">Give this bundle to every run started from the HUD/Commander bar. A run driven from there has no code to ask for it.</span>
+                                    </label>
+                                </div>
+                                {(b.functions || []).filter((f) => fnMatches(b, f)).map((f) => {
+                                    const name = srvToolName(b.id, f.name);
+                                    const on = !(c.serverToolsOff || []).includes(name);
+                                    return (
+                                        <label class="set-check srv-fn" key={name}>
+                                            <input type="checkbox" checked={on}
+                                                onChange={(e: any) => setField("serverToolsOff",
+                                                    toggled(c.serverToolsOff || [], name, !e.target.checked))} />
+                                            <code>{f.name}</code>
+                                            {f.description ? <span class="hint">{f.description}</span> : null}
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                        ))}
+                    </div>
+                ) : null}
                 {defs.length ? <ToolDefsView tools={defs} /> : null}
             </div>
         </Section>
@@ -425,6 +499,18 @@ const SETTINGS_TABS = [
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number]["id"];
 const settingsTab = signal<SettingsTab>("connection");
+/**
+ * Open Settings at a particular section, for a shortcut elsewhere in the UI.
+ *
+ * Selects the tab AND force-opens the section: sections remember whether you collapsed them, so a shortcut
+ * that only switched tabs could land you on a heading you had shut weeks ago and look like it did nothing.
+ */
+export function openSettingsAt(tab: SettingsTab, section: string): void {
+    settingsTab.value = tab;
+    collapsedSections.value = { ...collapsedSections.value, [section]: false };
+    try { localStorage.setItem(SECT_KEY, JSON.stringify(collapsedSections.value)); } catch { /* private mode */ }
+    view.value = { name: "settings" };
+}
 
 // ── Permissions tab ──────────────────────────────────────────────────────────
 // Two grants the USER manages here (the page never touches either): the per-domain
@@ -866,6 +952,38 @@ export function Settings() {
                 </label>
                 </Section>
 
+                {/* An embedding model is a MODEL, and this sat under Advanced — where you would look for it
+                    only after failing to find it here. */}
+                <Section id="embeddings" title="Embeddings">
+                <div class="set-note">Model for <code>ml.embed</code> — comparing text by meaning rather than spelling. Only models that report the <b>embedding</b> capability are listed; these are small and fast, so they default to living on the CPU and staying loaded.</div>
+                <div class="set-field">
+                    <Lbl tip={TIP.embeddingModel}>Embedding model</Lbl>
+                    {/* The same picker every other model field uses. This was a bare input with a datalist,
+                        so it had no dropdown to open — you had to already know the name of a model whose whole
+                        point is that you cannot tell it apart from a chat model by looking. */}
+                    <ModelPicker fieldKey="embeddingModel" options={embedListed} placeholder="none configured"
+                        cls={embedProblem ? "err" : ""} />
+                    {/* The field accepts anything typed — a server we cannot interrogate is not a reason to
+                        refuse a model that works. But a model we CAN see, and that does not report the
+                        capability, fails at request time with nothing on screen to explain it. */}
+                    {embedProblem ? <div class="hint err">{embedProblem}</div> : null}
+                    {!embedProblem && !embedListed.length && models.value.length
+                        ? <div class="hint">No model on this server reports the <b>embedding</b> capability, so there is nothing to suggest. Anything typed here is still accepted.</div> : null}
+                    {c.embeddingModel.trim() && embedDims.value[c.embeddingModel.trim()]
+                        ? <div class="set-hint">{embedDims.value[c.embeddingModel.trim()]} dimensions</div> : null}
+                </div>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.embeddingKeepAlive}
+                        onChange={(e: any) => setField("embeddingKeepAlive", e.target.checked)} />
+                    <Lbl tip={TIP.embeddingKeepAlive}>Keep loaded (no expiry)</Lbl>
+                </label>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.embeddingForceCpu}
+                        onChange={(e: any) => setField("embeddingForceCpu", e.target.checked)} />
+                    <Lbl tip={TIP.embeddingForceCpu}>Run on CPU (uses no VRAM)</Lbl>
+                </label>
+                </Section>
+
                 <Section id="grounding" title="Visual grounding">
                 <div class="set-note">Optional coordinate model for the agent's <code>locate</code> tool. <b>Loads an extra model into VRAM</b> — leave off if memory is tight. Off = <code>locate</code> still works via the Set-of-Marks screenshot tool (no extra model). Recommended: <code>qwen2.5vl:7b</code> (or <code>:3b</code>); accuracy is unproven.</div>
                 <label class="set-check">
@@ -1031,33 +1149,6 @@ export function Settings() {
                     <input type="checkbox" checked={c.autoApproveReadonly}
                         onChange={(e: any) => setField("autoApproveReadonly", e.target.checked)} />
                     <Lbl tip={TIP.autoApproveReadonly}>Auto-approve read-only exec calls</Lbl>
-                </label>
-                </Section>
-
-                <Section id="embeddings" title="Embeddings">
-                <div class="set-note">Model for <code>ml.embed</code> — comparing text by meaning rather than spelling. Only models that report the <b>embedding</b> capability are listed; these are small and fast, so they default to living on the CPU and staying loaded.</div>
-                <div class="set-field">
-                    <Lbl tip={TIP.embeddingModel}>Embedding model</Lbl>
-                    <input list="embedModels" class={embedProblem ? "err" : ""} {...text("embeddingModel")} placeholder="none configured" />
-                    <datalist id="embedModels">{embedListed.map(m => <option key={m} value={m} />)}</datalist>
-                    {/* The field accepts anything typed — a server we cannot interrogate is not a reason to
-                        refuse a model that works. But a model we CAN see, and that does not report the
-                        capability, fails at request time with nothing on screen to explain it. */}
-                    {embedProblem ? <div class="hint err">{embedProblem}</div> : null}
-                    {!embedProblem && !embedListed.length && models.value.length
-                        ? <div class="hint">No model on this server reports the <b>embedding</b> capability, so there is nothing to suggest. Anything typed here is still accepted.</div> : null}
-                    {c.embeddingModel.trim() && embedDims.value[c.embeddingModel.trim()]
-                        ? <div class="set-hint">{embedDims.value[c.embeddingModel.trim()]} dimensions</div> : null}
-                </div>
-                <label class="set-check">
-                    <input type="checkbox" checked={c.embeddingKeepAlive}
-                        onChange={(e: any) => setField("embeddingKeepAlive", e.target.checked)} />
-                    <Lbl tip={TIP.embeddingKeepAlive}>Keep loaded (no expiry)</Lbl>
-                </label>
-                <label class="set-check">
-                    <input type="checkbox" checked={c.embeddingForceCpu}
-                        onChange={(e: any) => setField("embeddingForceCpu", e.target.checked)} />
-                    <Lbl tip={TIP.embeddingForceCpu}>Run on CPU (uses no VRAM)</Lbl>
                 </label>
                 </Section>
 

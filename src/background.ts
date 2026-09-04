@@ -1594,6 +1594,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     defaultModelVision: config.defaultModelVision,
                     utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
                     autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
+                    serverToolsOff: config.serverToolsOff || [], commanderServerTools: config.commanderServerTools || [],
                     autoApproveSameOriginAuth: config.autoApproveSameOriginAuth, autoApproveSelfSource: config.autoApproveSelfSource,
                     pierceClosedShadow: config.pierceClosedShadow, cdp: config.cdp,
                     groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,

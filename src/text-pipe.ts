@@ -15,7 +15,7 @@ import { jsonShape } from "./dom";
 /** Every verb the dialect implements — the SINGLE SOURCE for the refusal message AND for the system prompt's
  *  "here is what you can pipe" list. A prompt that advertises a verb the dialect lacks costs the model a whole
  *  turn to discover, which has happened once already; deriving both from this makes that drift impossible. */
-export const PIPE_CMDS = ["grep", "head", "tail", "wc", "count", "sort", "uniq", "keys", "values", "schema", "type"] as const;
+export const PIPE_CMDS = ["grep", "sed", "head", "tail", "wc", "count", "sort", "uniq", "keys", "values", "schema", "type"] as const;
 const CMDS = `${PIPE_CMDS.join(" · ")} · a .path`;
 
 /** What each verb ACCEPTS, in the model's words — the flags and the one-line semantics. Typed as a total
@@ -23,6 +23,7 @@ const CMDS = `${PIPE_CMDS.join(" · ")} · a .path`;
  *  quietly goes stale. Feeds {@link PIPE_SYNTAX}; nothing else should spell a verb list out by hand. */
 const PIPE_USAGE: Record<(typeof PIPE_CMDS)[number], string> = {
     grep: "grep PATTERN (-i -v -n -c -F -w -o -E, context -A/-B/-C N)",
+    sed: "sed s/PATTERN/REPLACEMENT/ (flags g i; SUBSTITUTION only — no addresses, no other commands). Another delimiter works for a pattern full of slashes, but QUOTE it, since | separates stages: sed 's|http://a|X|'",
     head: "head (-n N)",
     tail: "tail (-n N)",
     wc: "wc (-l -w -c)",
@@ -213,6 +214,55 @@ function sortLines(lines: string[], argv: string[]): string[] {
     return out;
 }
 
+/**
+ * SUBSTITUTION only: `sed s/PATTERN/REPLACEMENT/[gi]`.
+ *
+ * Not sed the language — addresses, ranges, `d`, `y`, hold spaces and the rest would be a second language
+ * living inside this one, and the dialect's whole discipline is that it refuses what it does not model
+ * rather than half-implementing it. What is left is the thing a substitution is actually reached for:
+ * rewriting matches on each line.
+ *
+ * Any delimiter is accepted, because a pattern containing `/` is the common case (a path, a URL) and
+ * `s|a|b|` is how a shell user already writes that. `$1`-style backreferences work, since the replacement is
+ * handed to `String.replace` as written.
+ */
+function sed(lines: string[], argv: string[]): string[] {
+    // argv[0] is the verb itself (the dispatcher passes the whole stage), and the expression is everything
+    // after it — rejoined, because a substitution may legitimately contain spaces.
+    const expr = argv.slice(1).join(" ").trim();
+    if (!expr) throw new Error("sed: nothing to do — write a substitution, e.g. sed s/old/new/g.");
+    if (expr[0] !== "s") {
+        throw new Error(`sed: only SUBSTITUTION is supported (s/PATTERN/REPLACEMENT/), not "${expr.split(/\s/)[0]}". `
+            + "Addresses, ranges and sed's other commands are deliberately not modelled.");
+    }
+    const delim = expr[1];
+    if (!delim || /[a-zA-Z0-9\\]/.test(delim)) {
+        throw new Error("sed: expected a delimiter after s, e.g. s/old/new/ or s|old|new| — got " + JSON.stringify(expr) + ".");
+    }
+    // Split on UNESCAPED delimiters, so a pattern may contain the delimiter as \/ the way a shell user
+    // would write it.
+    const parts: string[] = [];
+    let cur = "";
+    for (let i = 2; i < expr.length; i++) {
+        const c = expr[i];
+        if (c === "\\" && expr[i + 1] === delim) { cur += delim; i++; continue; }
+        if (c === delim) { parts.push(cur); cur = ""; continue; }
+        cur += c;
+    }
+    parts.push(cur);
+    if (parts.length < 2) {
+        throw new Error(`sed: unterminated substitution — expected s${delim}PATTERN${delim}REPLACEMENT${delim}.`);
+    }
+    const [pattern, replacement, rawFlags = ""] = parts;
+    const flags = rawFlags.trim();
+    const bad = [...flags].find((f) => !"gi".includes(f));
+    if (bad) throw new Error(`sed: unknown flag "${bad}" — only g (every match on a line) and i (ignore case) are supported.`);
+    let re: RegExp;
+    try { re = new RegExp(pattern, flags.includes("g") ? (flags.includes("i") ? "gi" : "g") : (flags.includes("i") ? "i" : "")); }
+    catch (e) { throw new Error(`sed: ${String((e as Error).message)}. Escape a literal metacharacter, or use grep -F to match one literally.`); }
+    return lines.map((l) => l.replace(re, replacement));
+}
+
 function uniq(lines: string[], argv: string[]): string[] {
     const { flags } = parseArgs("uniq", argv, "ci", "");
     const ci = flags.has("i"), showCount = flags.has("c");
@@ -341,6 +391,7 @@ export function runPipe(text: string, pipe: string | string[]): string {
             case "wc": lines = wc(lines, argv); break;
             case "sort": lines = sortLines(lines, argv); break;
             case "uniq": lines = uniq(lines, argv); break;
+            case "sed": lines = sed(lines, argv); break;
             case "cat": break;   // a harmless no-op if the model prefixes `cat |` out of habit
             // `count` is the STRUCTURE-AWARE size: elements of an array, rows of a table, keys of an object,
             // lines of text. `wc -l` counts LINES, which after a path stage means the lines of pretty-printed

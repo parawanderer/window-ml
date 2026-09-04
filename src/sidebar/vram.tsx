@@ -6,7 +6,7 @@ import type { RenderDescriptor } from "../contract";
 import { fmtCtx, isBackendUnreachable } from "../contract";
 import { signal } from "@preact/signals";
 import {
-    config, models, ollamaIds, loadedModels, psError, vramOpen, backendError, rev, sessionMap,
+    config, models, ollamaIds, modelKinds, loadedModels, psError, vramOpen, backendError, rev, sessionMap,
     sidebarOpen, view,
 } from "./store";
 import { truncate } from "./format";
@@ -46,10 +46,14 @@ import { RenderPanel } from "./render-panel";
 // Fetch the server's model list via the background worker (privileged fetch);
 // degrade silently if unreachable. Populates the datalists.
 export function fetchModels(): void {
-    chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: {} }, (resp: any) => {
+    // `kinds: true` so the panel knows what each model IS, not just that it exists. An embedding model and a
+    // chat model occupy memory identically and read identically in a list of names; the difference is the
+    // first thing you want when a row you did not expect is holding a card.
+    chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: { kinds: true } }, (resp: any) => {
         if (chrome.runtime.lastError || !resp || resp.error) return;
         models.value = resp.data || [];
         ollamaIds.value = resp.ollamaModels ?? null;   // null = provenance unknown (skip cloud detection)
+        if (resp.kinds) modelKinds.value = resp.kinds;
     });
 }
 
@@ -315,6 +319,15 @@ export function probeCaps(model: string): void {
 /** Only a POSITIVE answer counts: a cloud model or an old Ollama reports nothing, and "unknown" must not be
  *  rendered as a claim either way. */
 export const isEmbedding = (model: string): boolean => !!modelCaps.value[model]?.includes("embedding");
+/** The counterpart: a model that GENERATES. Also positive-only — a model whose capabilities nobody reported
+ *  gets no badge at all, because "chat" would be a guess and the two are indistinguishable by name. */
+export const isChatModel = (model: string): boolean => {
+    const caps = modelCaps.value[model];
+    return !!caps && caps.includes("completion") && !caps.includes("embedding");
+};
+/** One phrase for what a model IS, for every tooltip that names one. Empty when nobody said. */
+export const modelKindLabel = (model: string): string =>
+    isEmbedding(model) ? "embedding model" : isChatModel(model) ? "chat model" : "";
 
 /** What this model has COST this browsing session, across every chat and run in the list. Recomputed from the
  *  session map on each render rather than kept as its own accumulator: the map IS the record, and a second
@@ -347,12 +360,16 @@ export function timeline(): ResourceEvent[] {
  *  "this session" names nothing. */
 export function scopedHash(): string | null {
     const v = view.value;
-    return laneScoped.value && v.name === "detail" ? v.hash : null;
+    return v.name === "detail" ? v.hash : null;
 }
 
 /** The filter as the lane sees it. */
 export function laneFilter(): LaneFilter {
-    return { hash: scopedHash(), hidden: laneHidden.value as LaneFilter["hidden"] };
+    return {
+        hash: scopedHash(),
+        scope: laneScoped.value ? "session" : "all",
+        hidden: laneHidden.value as LaneFilter["hidden"],
+    };
 }
 
 /** The cost line under a model's name: what it spent, and how fast — with the rate's BASIS said out loud,
@@ -391,9 +408,16 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
                     {tips ? <span class="tt-pop left above" role="tooltip">Still resident on {orphaned.length > 1 ? "devices" : "device"} {orphaned.join(", ")}, which the server has stopped reporting — a driver crash, a GPU reset, or a container that lost the device. Its memory is real but has no pool to be drawn against, so it appears here and not in the chart.</span> : null}
                 </span>
             ) : null}
+            {/* What the model IS, beside what it costs. An embedding model and a chat model occupy memory
+                identically and read identically in a list of names, so the row says which — and says NOTHING
+                when the server never reported capabilities, since "chat" would then be a guess. */}
             {isEmbedding(m.model) ? (
                 <span class={tips ? "tt vram-embed" : "vram-embed"} {...yieldTip}>embed
                     {tips ? <span class="tt-pop left above" role="tooltip">An EMBEDDING model — it turns text into vectors for search and retrieval; it doesn't chat. It holds its VRAM like any other resident model, and evicts the same way.</span> : null}
+                </span>
+            ) : isChatModel(m.model) ? (
+                <span class={tips ? "tt vram-chat" : "vram-chat"} {...yieldTip}>chat
+                    {tips ? <span class="tt-pop left above" role="tooltip">A generating model — what <code>ml.chat</code> and <code>ml.agent</code> run on. Shown beside the embedding badge so a row you did not expect to be holding a card says which kind it is.</span> : null}
                 </span>
             ) : null}
             {m.contextLength ? (
@@ -673,6 +697,7 @@ function RowTip({ sample }: { sample: ResourceSample | null }) {
             <div class="vram-rowtip-name">
                 <i class="rc-tip-dot" style={{ background: colorFor(name) }} />{name}
                 {where ? <span class={`vram-rowtip-where${isSplit(m) ? " vram-rowtip-split" : ""}`}>{isSplit(m) ? "split: " : "on "}{where}</span> : null}
+                {modelKindLabel(name) ? <span class="vram-rowtip-kind">{modelKindLabel(name)}</span> : null}
             </div>
             <div class="vram-rowtip-dim">{formatBytes((m.vramBytes || 0) + (m.ramBytes || 0))} resident</div>
             {/* Residency answers "what is loaded"; this answers "and was it worth the VRAM". */}
@@ -828,6 +853,16 @@ export function VramPanel() {
         }
         return [...seen].sort();
     })();
+    // Models the LANE draws that were NEVER resident here. A cloud model is the ordinary case — it occupies
+    // no local memory, ever — and a delegated reader may also have finished before the panel opened. The rows
+    // are the chart's legend, so a block in a colour with no row explains nothing. Called off-box rather than
+    // a ghost, because "evicted" would claim it had been here and left.
+    const offBox = (() => {
+        const known = new Set([...(loaded || []).map((m) => m.model), ...ghosts]);
+        const out = new Set<string>();
+        for (const e of timeline()) if (e.model && !known.has(e.model)) out.add(e.model);
+        return [...out].sort();
+    })();
     // Recompute every point's visible-total each render, so toggling redraws the
     // full line retroactively (not just going forward).
     const series = history.map(sumVisible);
@@ -924,6 +959,19 @@ export function VramPanel() {
                     );
                 })
                 : ghosts.length || !showModels.value ? null : <div class="vram-empty">Nothing loaded.</div>}
+            {/* Models the LANE draws that were never resident — see `offBox`. Listed before the ghosts because
+                a cloud model is a standing fact about the setup, where a ghost is a thing that just happened. */}
+            {(showModels.value ? offBox : []).map((name) => (
+                <div class={`vram-row ghost${hoverModel.value === name ? " hot" : ""}`} key={`off:${name}`}
+                    onPointerEnter={() => (hoverModel.value = name)}
+                    onPointerLeave={() => (hoverModel.value = null)}>
+                    <i class="vram-dot ghost-dot" style={{ background: colorFor(name) }} />
+                    <span class="vram-name">{name}</span>
+                    <span class="tt vram-embed">off-box
+                        <span class="tt-pop left above" role="tooltip">Never resident here — a cloud model, or one already gone before the panel opened. It is drawn in the lane because it RAN; this row is what says whose colour that is.</span>
+                    </span>
+                </div>
+            ))}
             {(showModels.value ? ghosts : []).map((name) => (
                 <div class={`vram-row ghost${hoverModel.value === name ? " hot" : ""}`} key={`ghost:${name}`}
                     onPointerEnter={() => (hoverModel.value = name)}

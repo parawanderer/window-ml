@@ -100,6 +100,14 @@ export interface MlConfig {
     exportToolDefs: boolean;
     /** experimental: auto-approve read-only exec surveys via the mediated interpreter */
     autoApproveReadonly: boolean;
+    /** Server-side tool FUNCTIONS the user has turned off, as the `<bundle>__<fn>` names a run would see.
+     *  A run can still ask for the bundle; the disabled functions are simply not built, so a backend with
+     *  forty tools can be curated down to the handful worth offering a model. Per FUNCTION rather than per
+     *  bundle, because a bundle usually mixes something worth calling with several that are not. */
+    serverToolsOff: string[];
+    /** Server-side tool bundles a HUD-started run always gets, without naming them. A run driven from the
+     *  Commander bar has no code to pass `serverTools`, so without this there is no way to give it one. */
+    commanderServerTools: string[];
     /** experimental: auto-approve python_exec (the sandbox is isolated by construction) */
     autoApprovePython: boolean;
     /** also pierce CLOSED shadow roots. A document_start patch (shadow-patch.ts, main world) wraps
@@ -490,6 +498,8 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoTitles: true,
     exportToolDefs: false,
     autoApproveReadonly: true,
+    serverToolsOff: [],
+    commanderServerTools: [],
     autoApprovePython: true,
     autoApproveSameOriginAuth: false,   // Advanced, default off: a same-origin as-you fetch always asks
     autoApproveSelfSource: true,        // default on: an uncredentialed read of the agent's OWN repo source is free
@@ -520,7 +530,7 @@ export const detectGroundingModel = (models: string[]): string =>
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch"> & {
+    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "serverToolsOff" | "commanderServerTools" | "autoApprovePython" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
@@ -1738,7 +1748,14 @@ interface DebugBase {
     save: boolean;
     session: SessionRef;
 }
-export interface DebugChatStart extends DebugBase { kind: "chat"; streaming: boolean; request: DebugChatRequest; config: DebugSessionConfig; }
+export interface DebugChatStart extends DebugBase {
+    kind: "chat"; streaming: boolean; request: DebugChatRequest; config: DebugSessionConfig;
+    /** What KIND of call this session holds, when it is not an ordinary chat. `ml.embed()` reports through
+     *  this same event — it is a model call that occupies VRAM and takes time, and reusing the machinery
+     *  costs no new event kind — but it is not a chat, and labelling it one is a claim about something that
+     *  never happened. Absent means chat. */
+    sessionKind?: "embed";
+}
 export interface DebugChatResult extends DebugBase { kind: "chat-result"; content: string; sources: unknown[] | null; structured: boolean; model: string | null; extend: ExtendProfile | null; reasoning: string | null; usage: TokenUsage | null; }
 export interface DebugChatError extends DebugBase { kind: "chat-error"; error: string; }
 
