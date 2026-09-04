@@ -4,7 +4,7 @@
 // window.ml keeps thin delegating method wrappers. Not in the default read-only
 // domTools; opt in via extraTools, gated by the approval flow.
 
-import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext } from "./contract";
+import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext, ServerTool } from "./contract";
 import { DEFAULT_GROUNDING_RANGE, resolveOutputCap, outputCapPrecheck, UI_OUT_CAP } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
 import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed, clickSelector } from "./dom";
@@ -1598,3 +1598,72 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
         },
     });
 };
+
+
+/**
+ * One agent-callable tool per FUNCTION of a server-side tool bundle.
+ *
+ * Per function rather than one generic `run_server_tool(tool, function, args)`, because the model calls a
+ * tool far better when it can see that function's own JSON Schema. A generic dispatcher would hand it an
+ * opaque `arguments` object and make it guess — which is the difference between a tool it uses correctly
+ * and one it fumbles.
+ *
+ * Always `requiresApproval`. This is the first gate in the extension where the risk is not "this might
+ * change your page" but "this sends your data somewhere else", and there is no read-only version of that
+ * to auto-approve.
+ *
+ * @param ml the API (for `execServerTool` and `ctx.stream` plumbing)
+ * @param bundles the bundles to expose, from `ml.serverTools()`
+ * @param wanted bundle ids the caller asked for; anything else is left out
+ */
+export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: readonly string[]): MlTool[] {
+    const want = new Set(wanted);
+    const out: MlTool[] = [];
+    for (const b of bundles) {
+        if (!want.has(b.id)) continue;
+        for (const fn of b.functions || []) {
+            // A tool name must be an identifier (defineTool enforces it) and must not collide with a
+            // builtin, so it is namespaced by the bundle rather than trusted to be unique. Non-identifier
+            // characters in either half are flattened; the REAL identity travels in `remote`, so a mangled
+            // display name cannot change what runs.
+            const safe = (x: string) => String(x).replace(/[^A-Za-z0-9_]/g, "_").replace(/^(\d)/, "_$1");
+            const name = `${safe(b.id)}__${safe(fn.name)}`;
+            out.push({
+                name,
+                summary: `Runs ${fn.name} on the ${b.name} server.`,
+                description: `${fn.description || `The ${fn.name} function of the ${b.name} tool.`} RUNS ON THE SERVER, not in this browser — its arguments leave this machine, so it needs approval every time. ${b.description || ""}`.trim(),
+                parameters: fn.parameters || { type: "object", properties: {} },
+                requiresApproval: true,
+                capabilities: [],
+                remote: { via: "openwebui", toolId: b.id, fn: fn.name },
+                // The consent surface. The human is not approving "a tool call" here — they are approving
+                // sending these arguments off the machine — so the sentence says the callable that will run
+                // and where, and the arguments are the body of it rather than a JSON blob underneath.
+                // Rendered from the SAME identity the background mints its grant from, so a friendly tool
+                // name cannot make this say one thing while the grant authorises another.
+                render: (_input, args) => ({
+                    type: "action" as const,
+                    verb: "Run",
+                    target: `${fn.name} on ${b.name}`,
+                    note: "on the server — these arguments leave this machine",
+                    input: (() => { try { return JSON.stringify(args ?? {}, null, 1); } catch { return String(args); } })(),
+                    // Styled like a navigation or a fetch: something is leaving, and that is the part to see.
+                    crossOrigin: b.id,
+                }),
+                async run(args: Record<string, unknown>, ctx?: ToolContext) {
+                    const r = await ml.execServerTool(b.id, fn.name, args || {}, {
+                        onOutput: ctx?.stream ? (text, ts) => ctx.stream!(text, ts) : undefined,
+                    });
+                    // A stream that could not be read is NOT a tool that returned nothing, and the model
+                    // cannot tell the difference on its own — so it is said outright.
+                    if (!r.ok) return `Error: the tool did not complete — ${r.transportError}. This is a transport failure, not a result: the tool may or may not have run. Do not treat it as an empty answer.`;
+                    if (r.result?.error) return `Error: ${r.result.error}`;
+                    const value = r.result?.result;
+                    const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
+                    return { content: text, ...(r.output ? { renderOut: { type: "code" as const, code: r.output, lang: "text" } } : {}) };
+                },
+            });
+        }
+    }
+    return out;
+}

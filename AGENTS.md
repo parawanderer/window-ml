@@ -1428,8 +1428,17 @@ tokens. An untrusted page therefore needs a per-call grant (`TabGrants.serverToo
 `delegateTool` when a run APPROVED that exact call; `serverToolKey` hashes the bundle, the function AND the
 arguments, because approving "search for THIS" must not authorise searching for something else. A
 non-streaming endpoint degrades to one `result` frame rather than failing, so a server without the patch
-still works, just without liveness. Still to come: the agent-facing tool (toolset entry, approval prompt,
-the dispatch phase).
+still works, just without liveness. **Agent-facing:** `ml.agent({ serverTools: ["srv1"] })` exposes a bundle as ONE TOOL PER FUNCTION
+(`buildServerTools`), named `<bundle>__<fn>` and carrying that function's own JSON Schema — a generic
+`run_server_tool(tool, fn, args)` would hand the model an opaque `arguments` object to guess at, which is
+the difference between a tool it uses and one it fumbles. Opt-in BY ID, never "all of them", and always
+`requiresApproval`: this is the first gate where the risk is not "this might change your page" but "this
+sends your data somewhere", and there is no read-only version of that to auto-approve. An unresolvable
+bundle is skipped rather than failing the run. **The tool declares `remote: {via, toolId, fn}`** and BOTH
+the approval card and the background's grant read THAT rather than the tool's name — so a page choosing a
+friendly name cannot make the card say `search_web` while the grant authorises `send_email`. Its `render`
+is an `action` descriptor whose note says the arguments leave the machine, styled like a navigation because
+something is departing. Still to come: the dispatch phase in the timeline.
 
 A patched Ollama behind a STOCK OpenWebUI is fine — the `/ollama/*` passthrough is generic, so the
 OpenWebUI fork is not needed for the capacity work.

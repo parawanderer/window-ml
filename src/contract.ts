@@ -964,6 +964,26 @@ export interface MlTool {
      *  action that would only fail — approving something that can't do anything is pointless friction.
      *  Must not mutate the DOM or navigate. `click`/`type` implement it (their run() calls it first too). */
     precheck?: (args: any) => string | null;
+    /**
+     * This tool runs somewhere ELSE — the identity of the remote callable it dispatches to.
+     *
+     * Not decoration and not derivable from the tool's name: the approval card renders from this, and the
+     * background mints its per-call grant from this, so the human sees exactly the callable that will run.
+     * A page choosing a friendly tool name cannot make the card say one thing and the grant authorise
+     * another, because both read the same field.
+     */
+    remote?: RemoteToolTarget;
+}
+
+/** Where a remote tool actually runs. `via` names the dispatch mechanism, because "an HTTP endpoint
+ *  evaluates this" is a fact about our own dispatch and the only one we can honestly record — an
+ *  in-process tool can reach a container over IPC and nothing here would see it. */
+export interface RemoteToolTarget {
+    via: "openwebui";
+    /** The tool BUNDLE's id. */
+    toolId: string;
+    /** The function within it. */
+    fn: string;
 }
 
 export interface ApprovalRequest {
@@ -1095,6 +1115,16 @@ export interface AgentOptions {
     tools?: MlTool[] | null;
     /** appended to `tools` */
     extraTools?: MlTool[];
+    /**
+     * Server-side tool BUNDLE ids (from `ml.serverTools()`) to expose to the model — one agent-callable
+     * tool per function, with that function's own schema.
+     *
+     * Opt-in by id, never "all of them": these run on the server with the user's credentials and their
+     * arguments leave the machine, so which ones a run may reach is the caller's decision rather than a
+     * default. Every call requires approval. Needs the patched OpenWebUI (docs/FORKED-BACKENDS.md); an id
+     * that does not resolve is skipped rather than failing the run.
+     */
+    serverTools?: string[];
     /** REPLACES the built-in preamble */
     system?: string | null;
     /** APPENDED to the built-in preamble */
@@ -1285,7 +1315,7 @@ export interface StartRunPayload {
     runId: string;
     task: string;
     systemPrompt: string;
-    tools: { name: string; description: string; parameters: JsonSchema; requiresApproval: boolean; capabilities: string[]; precheck?: boolean; summary?: string }[];
+    tools: { name: string; description: string; parameters: JsonSchema; requiresApproval: boolean; capabilities: string[]; precheck?: boolean; summary?: string; remote?: RemoteToolTarget }[];
     model: string | null;
     think: boolean | null;
     maxSteps: number;
