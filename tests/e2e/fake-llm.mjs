@@ -102,6 +102,12 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
     let idx = 0;
     /** @type {any[]} */
     const calls = [];
+    /** @type {any[]} */
+    const toolCalls = [];
+    /** @type {any[]} */
+    let serverTools = [];
+    /** @type {any} */
+    let serverToolScript = null;
     // Stream a step as SSE (when the request asks for stream:true) — reasoning_content word-by-word, then the
     // content words (or the tool_call whole), then [DONE]. A step's `reasoning` field feeds the thinking channel.
     // `streamDelayMs` paces the words so a test can screenshot MID-stream. Mirrors the OpenAI SSE shape
@@ -166,6 +172,31 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
             return json(res, 200, boxInfo);
         }
         if (req.method === "GET" && path === "/api/version") return json(res, 200, { version: "fake" });
+        // The patched OpenWebUI's tool surface: the bundle list, and running ONE function from a bundle
+        // ourselves. `setServerTools()` scripts both — the list, and what each call streams.
+        if (req.method === "GET" && path === "/api/v1/tools/") {
+            return json(res, 200, serverTools.map((t) => ({ id: t.id, name: t.name, meta: { description: t.description || "" }, specs: t.specs || [] })));
+        }
+        const exec = path.match(/^\/api\/v1\/tools\/id\/([^/]+)\/execute$/);
+        if (req.method === "POST" && exec) {
+            const body = await readBody(req);
+            toolCalls.push({ toolId: decodeURIComponent(exec[1]), ...body });
+            const script = serverToolScript;
+            if (script?.status && script.status !== 200) return json(res, script.status, { detail: script.detail || "nope" });
+            const frames = typeof script?.frames === "function" ? script.frames(body) : (script?.frames || [
+                { type: "output", text: `ran ${body.name}\n`, atMs: 5 },
+                { type: "result", result: { ok: true }, name: body.name, durationMs: 42, queuedMs: 1 },
+            ]);
+            if (!body.stream) {
+                const last = frames.filter((/** @type {any} */ f) => f.type === "result").pop() || {};
+                return json(res, 200, { tool_id: decodeURIComponent(exec[1]), name: body.name, result: last.result, durationMs: last.durationMs, queuedMs: last.queuedMs });
+            }
+            res.writeHead(200, { "content-type": "application/x-ndjson", "access-control-allow-origin": "*", "cache-control": "no-store" });
+            for (const f of frames) { res.write(JSON.stringify(f) + "\n"); await sleep(streamDelayMs); }
+            // `endless: true` never sends a result frame — the transport-failure case, which a client must
+            // not report to the model as a tool that returned nothing.
+            return res.end();
+        }
         // OLLAMA-NATIVE (`/ollama/api/chat`, the passthrough OpenWebUI exposes and the `ollama` apiFormat
         // targets). A genuinely different wire shape, not a spelling: NDJSON rather than SSE, thinking on
         // `message.thinking` rather than `reasoning_content`, tool calls delivered WHOLE in one chunk rather
@@ -237,7 +268,18 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
                 setResident: (/** @type {any[]} */ models) => { resident = models; },
                 /** What /api/info reports as capacity; null = a server that doesn't serve the route at all. */
                 setCapacity: (/** @type {any} */ info) => { boxInfo = info; },
+                /** The tool BUNDLES `/api/v1/tools/` lists — `[{ id, name, description, specs: [{name, description, parameters}] }]`. */
+                setServerTools: (/** @type {any[]} */ tools) => { serverTools = tools.slice(); },
+                /**
+                 * What `/execute` streams. `{ frames }` is the NDJSON frame list (or a function of the
+                 * request body); `{ status, detail }` fails before the first byte instead. Omitting a
+                 * `result` frame reproduces the transport-failure case, which a client must NOT report to
+                 * the model as a tool that returned nothing.
+                 */
+                setServerToolScript: (/** @type {any} */ script) => { serverToolScript = script; },
                 calls: () => calls.slice(),
+                /** Every `/execute` request body, with the `toolId` from the path. */
+                toolCalls: () => toolCalls.slice(),
                 stop: () => new Promise((r) => server.close(r)),
             });
         });

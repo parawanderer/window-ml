@@ -3174,3 +3174,110 @@ test("EMBED: keep-alive and CPU placement ride every request, and both are switc
     assert.equal(onGpu.options, undefined, "off -> no placement override, so the server decides");
     assert.equal(onGpu.keep_alive, -1);
 });
+
+
+// ---- SERVER_TOOL_EXEC: running ONE OpenWebUI-configured tool ourselves ----
+// The other shape from `toolIds` + function_calling, which hands the whole loop to the model. Privileged:
+// the fetch spends the user's API key and the tool is caller-chosen, so the gate matters as much as the
+// transport.
+
+/** A fetch stub answering the execute endpoint with NDJSON frames. */
+const execResponse = (lines, { status = 200, ctype = "application/x-ndjson" } = {}) => {
+    const body = lines.map((l) => (typeof l === "string" ? l : JSON.stringify(l))).join("\n") + "\n";
+    const chunks = [new TextEncoder().encode(body)];
+    return {
+        ok: status >= 200 && status < 300, status,
+        headers: { get: (k) => (/content-type/i.test(k) ? ctype : null) },
+        text: async () => body,
+        body: { getReader: () => ({ read: async () => (chunks.length ? { done: false, value: chunks.shift() } : { done: true }) }) },
+    };
+};
+
+test("SERVER_TOOL_EXEC streams frames and returns the tool's value with the executor's own timing", async () => {
+    let call = null;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (c) => { call = c; return execResponse([
+            { type: "output", text: "searching\n", atMs: 5 },
+            { type: "event", event: { type: "mcp:progress", progress: 1, total: 2 }, atMs: 60 },
+            { type: "result", result: { hits: 3 }, name: "search_web", durationMs: 9400, queuedMs: 120 },
+        ]); },
+    });
+    const res = await bg.send({ type: "SERVER_TOOL_EXEC", payload: { toolId: "srv1", name: "search_web", args: { q: "ollama" } } });
+
+    assert.equal(res.data.ok, true);
+    assert.deepEqual(res.data.result.result, { hits: 3 });
+    // The number that makes a remote span attributable at all: without it the client's wall clock is the
+    // tool plus the network as one figure.
+    assert.equal(res.data.result.durationMs, 9400);
+    assert.equal(res.data.result.queuedMs, 120);
+    assert.equal(res.data.output, "searching\n");
+    assert.equal(res.data.events.length, 1, "structural frames stay OUT of the output text");
+
+    assert.match(call.url, /\/api\/v1\/tools\/id\/srv1\/execute$/);
+    assert.equal(call.opts.method, "POST");
+    // {name, arguments} — a tool id names a BUNDLE of functions, so the call carries which one.
+    assert.deepEqual(JSON.parse(call.opts.body), { name: "search_web", arguments: { q: "ollama" }, stream: true });
+    assert.match(call.opts.headers.Authorization || "", /^Bearer /, "the user's key — which is why this is gated");
+});
+
+test("SERVER_TOOL_EXEC: a tool that THREW is a successful stream, not a transport failure", async () => {
+    // The distinction the model can act on: it reads the error and corrects the call.
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => execResponse([
+            { type: "output", text: "connecting\n", atMs: 0 },
+            { type: "result", error: "TypeError: q must be a string", durationMs: 12 },
+        ]),
+    });
+    const res = await bg.send({ type: "SERVER_TOOL_EXEC", payload: { toolId: "srv1", name: "search_web", args: {} } });
+    assert.equal(res.data.ok, true, "the TOOL failed; the stream did not");
+    assert.equal(res.data.result.error, "TypeError: q must be a string");
+    assert.equal(res.data.output, "connecting\n", "output before the failure is never retracted");
+});
+
+test("SERVER_TOOL_EXEC: a stream with no result frame is a TRANSPORT failure, kept distinct", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => execResponse([{ type: "output", text: "half a log", atMs: 0 }]),
+    });
+    const res = await bg.send({ type: "SERVER_TOOL_EXEC", payload: { toolId: "srv1", name: "x", args: {} } });
+    assert.equal(res.data.ok, false, "reporting this as a tool that returned nothing is a wrong answer dressed as an empty one");
+    assert.match(res.data.transportError, /without a result frame/);
+    assert.equal(res.data.output, "half a log", "what did arrive is still there for a human");
+});
+
+test("SERVER_TOOL_EXEC: a non-200 is a transport failure carrying the server's own explanation", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => ({ ok: false, status: 404, headers: { get: () => "application/json" }, text: async () => '{"detail":"Tool not found"}' }),
+    });
+    const res = await bg.send({ type: "SERVER_TOOL_EXEC", payload: { toolId: "nope", name: "x", args: {} } });
+    assert.equal(res.data.ok, false);
+    assert.match(res.data.transportError, /404/);
+    assert.match(res.data.transportError, /Tool not found/, "the body explains it better than the status");
+});
+
+test("SERVER_TOOL_EXEC: a NON-streaming endpoint still works, as one result frame", async () => {
+    // A server without the streaming patch degrades to working-without-liveness, not to not-working.
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => ({ ok: true, status: 200, headers: { get: () => "application/json" },
+                          text: async () => JSON.stringify({ tool_id: "srv1", name: "x", result: 7, durationMs: 30 }) }),
+    });
+    const res = await bg.send({ type: "SERVER_TOOL_EXEC", payload: { toolId: "srv1", name: "x", args: {} } });
+    assert.equal(res.data.ok, true);
+    assert.equal(res.data.result.result, 7);
+    assert.equal(res.data.result.durationMs, 30);
+});
+
+test("SERVER_TOOL_EXEC: an UNTRUSTED page cannot run a tool it holds no grant for", async () => {
+    // The escalation this closes: a hostile page reaching the handler directly could otherwise invoke any
+    // tool the user has configured, spending their API key — a different capability from a chat call.
+    let fetched = false;
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => { fetched = true; return execResponse([]); } });
+    const page = { tab: { id: 7, url: "https://evil.test/" }, url: "https://evil.test/" };
+    const res = await bg.send({ type: "SERVER_TOOL_EXEC", payload: { toolId: "srv1", name: "send_email", args: { to: "a@b.c" } } }, page);
+    assert.match(res.error, /needs approval/);
+    assert.equal(fetched, false, "refused BEFORE the privileged fetch, not after");
+});

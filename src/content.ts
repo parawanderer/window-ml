@@ -46,6 +46,7 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     SAVE_SESSION_REQUEST: { type: "SAVE_SESSION", responseType: "SAVE_SESSION_RESPONSE" },
     GET_SESSION_REQUEST: { type: "GET_SESSION", responseType: "GET_SESSION_RESPONSE" },
     PYTHON_EXEC_REQUEST: { type: "PYTHON_EXEC", responseType: "PYTHON_EXEC_RESPONSE" },
+    SERVER_TOOL_REQUEST: { type: "SERVER_TOOL_EXEC", responseType: "SERVER_TOOL_RESPONSE" },
     FETCH_SHEET_REQUEST: { type: "FETCH_SHEET", responseType: "FETCH_SHEET_RESPONSE" },
     FETCH_URL_REQUEST: { type: "FETCH_URL", responseType: "FETCH_URL_RESPONSE" },
     CDP_SHADOW_RESOLVE_REQUEST: { type: "CDP_SHADOW_RESOLVE", responseType: "CDP_SHADOW_RESOLVE_RESPONSE" },
@@ -134,6 +135,13 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
     }
     // A LIVE python_exec stdout chunk (opt-in streaming) → re-post on the page window so ml.pythonExec's
     // in-flight promise (keyed by requestId) resolves it as a progress event to the tool's ctx.stream.
+    if (message && message.type === "SERVER_TOOL_STREAM") {
+        // A live frame from a running server-side tool → the page's awaiting call (keyed by requestId), which
+        // hands it to the tool's ctx.stream. Same one-way shape as PYTHON_STREAM.
+        const m = message as { requestId?: string; frame?: unknown; at?: number };
+        window.postMessage({ type: "SERVER_TOOL_STREAM", requestId: m.requestId, frame: m.frame, at: m.at }, "*");
+        return;
+    }
     if (message && message.type === "PYTHON_STREAM") {
         window.postMessage({ type: "PYTHON_STREAM", requestId: (message as { requestId?: string }).requestId, chunk: (message as { chunk?: string }).chunk, ts: (message as { ts?: number }).ts }, "*");
         return undefined;
