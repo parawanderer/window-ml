@@ -9,7 +9,7 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { MlDebugEvent, MlConfig, ElementContext } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 import {
-    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, showLane, showModels,
+    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, showLane, showModels, FOCUS_KEY, focusMode,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
     vramOpen, sidebarOpen, backendError, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
@@ -17,7 +17,7 @@ import { ContextMenu, Hash, highlightPos } from "./ui-kit";
 import type { InvocationInfo } from "../contract";
 import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge, EmbedRunView } from "./reply";
-import { AgentRunView, RunStatsBar } from "./agent-detail";
+import { AgentRunView } from "./agent-detail";
 import { Composer } from "./composer";
 import { fetchModels, pollPs, pollBackendHealth, VramPanel, PythonBench, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
 import { CardApp, endActiveCardDrag } from "./hud-card";
@@ -26,8 +26,8 @@ import {
 } from "./card-state";
 import { shownModel, sessionProfile } from "./model";
 import { exportSession, exportSessionJson, printSession } from "./export";
-import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
-import { IconWarn, IconGear, IconExport, IconVram, IconBench, IconTools } from "./icons";
+import { applyTheme, applyFont, applyCodePrefs, applyFocus, initThemeStyle } from "./prefs";
+import { IconWarn, IconGear, IconExport, IconVram, IconBench, IconTools, IconEye, IconEyeOff } from "./icons";
 import { Settings, openSettingsAt } from "./settings";
 
 
@@ -291,6 +291,16 @@ function App() {
                 <span class="sp" />
                 {v.name === "detail" ? <Hash hash={v.hash} /> : null}
                 {v.name === "detail" ? <ExportMenu hash={v.hash} /> : null}
+                {/* Focus mode: read the transcript as a conversation. Only offered on a DETAIL view, because
+                    it quiets things that only exist there. Nothing is removed from the session — every
+                    disclosure still opens, the export is unchanged, and turning it off brings it all back. */}
+                {v.name === "detail"
+                    ? <button class={`tt hbtn${focusMode.value ? " on" : ""}`} aria-label="Focus mode" aria-pressed={focusMode.value}
+                        onClick={() => { focusMode.value = !focusMode.value; applyFocus(); chrome.storage.local.set({ [FOCUS_KEY]: focusMode.value }); }}>
+                        {focusMode.value ? <IconEyeOff /> : <IconEye />}
+                        <span class="tt-pop" role="tooltip">{focusMode.value ? "Focus mode on — show the step counters, badges and controls again" : "Focus mode — read it as a conversation, quieting step counters, badges and controls"}</span>
+                    </button>
+                    : null}
                 {!inSettings && !inBench ? <button class={`tt hbtn${vramOpen.value ? " on" : ""}`} aria-label="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /><span class="tt-pop" role="tooltip">VRAM monitor</span></button> : null}
                 {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Python bench" onClick={() => (view.value = { name: "bench" })}><IconBench /><span class="tt-pop" role="tooltip">Python bench — run scripts in the sandbox</span></button> : null}
                 {/* Straight to the server-tool list, which is a thing you go looking for rather than a
@@ -308,7 +318,9 @@ function App() {
                                 : <DetailView hash={v.hash} />}
                 </div>
             </div>
-            {detailSession ? <RunStatsBar s={detailSession} /> : null}
+            {/* The run-stats readout lives in the composer's own footer, opposite the context gauge — the two
+                are the same kind of fact (what this session has spent, how full it is) and were split across
+                the composer, which made the spend line read as part of the transcript above it. */}
             {detailSession ? <Composer s={detailSession} /> : null}
         </div>
     );
@@ -377,7 +389,7 @@ function mount(): void {
     // ONE floating tooltip layer for the whole surface (see tooltip-layer.ts): nothing clips it, it opens
     // whichever way there is room, and the source nodes stay display:none so their prose is never copied.
     try { installTooltipLayer(document); } catch { /* no DOM in a test harness */ }
-    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [VRAM_PALETTE_KEY]: "" }, (d: any) => {
+    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [VRAM_PALETTE_KEY]: "", [FOCUS_KEY]: false }, (d: any) => {
         if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont();
         codeWrap.value = d[WRAP_KEY] !== false; codeLineNumbers.value = !!d[LINES_KEY]; applyCodePrefs();
         showStatsTokens.value = d[STATS_TOKENS_KEY] !== false; showStatsTps.value = !!d[STATS_TPS_KEY];
@@ -396,9 +408,11 @@ function mount(): void {
         }
         if (typeof d[VRAMH_KEY] === "number") vramH.value = d[VRAMH_KEY];
         showOutTimes.value = d[OUTTS_KEY] !== false;
+        focusMode.value = !!d[FOCUS_KEY]; applyFocus();
     });
     applyTheme();
     applyCodePrefs();
+    applyFocus();
     fetchModels();
     render(<Root />, root);
 

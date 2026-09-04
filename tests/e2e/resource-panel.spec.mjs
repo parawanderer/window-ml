@@ -497,6 +497,48 @@ test("resource panel: a closed editor takes no space, an open one takes its own"
     }
 });
 
+test("resource panel: clicking a legend key switches that pool's line off, and back on", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.5:35b", 22 * GiB, 1)]);
+        const { frame } = await openPanel(fake, ext);
+        // Overview is the default: one track, a line per pool, a key per line.
+        await expect.poll(() => frame.locator(".rc-legend .rc-key").count(), { timeout: 20000 }).toBeGreaterThan(1);
+        const keys = frame.locator(".rc-legend .rc-key");
+        const lines = () => frame.locator(".rc-line").count();
+        const drawn = await lines();
+        expect(drawn).toBeGreaterThan(1);
+
+        // The key IS the line's identity, so it is the switch. Clicking removes the line entirely rather than
+        // dimming it: the point of switching a pool off is to get it out of the way of the ones being read,
+        // and a ghost still crosses them.
+        await keys.first().click();
+        await expect.poll(() => lines(), { timeout: 5000 }).toBe(drawn - 1);
+        await expect(keys.first()).toHaveClass(/off/);
+        expect(await keys.first().getAttribute("aria-pressed")).toBe("false");
+
+        // The tooltip reads the LINES, so a pool that is not drawn gets no row in it either — reporting a
+        // series the reader deliberately removed would be answering about something not on screen.
+        await frame.locator(".rc-plot").first().hover();
+        const tipRows = frame.locator(".rc-tip-pools .rc-tip-poolrow");
+        await expect.poll(() => tipRows.count(), { timeout: 5000 }).toBe(drawn - 1);
+
+        // And back. Nothing about this is persisted — it is a reading choice about what is on screen now.
+        await keys.first().click();
+        await expect.poll(() => lines(), { timeout: 5000 }).toBe(drawn);
+        await expect(keys.first()).not.toHaveClass(/off/);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
+
 test("resource panel: a BUSY runner holds its countdown, and a LOADING one has no deadline to show", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();

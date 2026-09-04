@@ -235,7 +235,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 }
 .rc-lane-chip.scope { position: relative; }
 .rc-lane-chip.scope.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
-.rc-lane-count { margin-left: auto; font-size: 0.7em; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+/* NO second auto margin. Both this and the scope chip claimed `margin-left: auto`, and a flex row spends the
+   free space on the FIRST one — so the chip landed mid-row with a second gap opening after it, reading as a
+   control that had come loose from everything. The chip takes the row's slack; the count follows it, and the
+   two read as one right-hand group: whose events, and how many of them are drawn. */
+.rc-lane-count { margin-left: 4px; font-size: 0.7em; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
 /* The scrub strip: the whole session in one bar, with a box for the slice the chart is drawing. Its axis is
    LINEAR in time (an overview should show a ten-minute hole at its true width), so the runs are blocks and
    the gaps are the spaces between them. */
@@ -349,6 +353,54 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip-pct { opacity: .7; font-variant-numeric: tabular-nums; }
 .rc-tip-gone { padding: 0 4px; font-size: 0.9em; color: var(--fg-faint); border: 1px solid var(--border); border-radius: 3px; }
 .rc-tip-dim { color: var(--fg-faint); }
+/* WHEN the figures above were measured. Ruled off, because it is a different kind of fact from the rest of
+   the tip: those describe a quantity, this one says which instant the quantity is from. */
+.rc-tip-when { margin-top: 2px; padding-top: 3px; border-top: 1px solid var(--border); color: var(--fg-faint);
+  font-size: 0.92em; font-variant-numeric: tabular-nums; display: flex; gap: 6px; }
+.rc-tip-ago { opacity: .75; }
+.rc-tip-holders { display: flex; flex-wrap: wrap; gap: 2px 8px; }
+/* The swatch sits flush against the name without this — it reads as part of the word. */
+.rc-tip-name .rc-swatch { margin-right: 5px; }
+/* The stacked reading: one row per series at the hovered datapoint. The nearest to the pointer is marked
+   rather than being the only one shown, because where two lines CROSS the one underneath is unreachable by
+   hover and that crossing is the moment worth reading. */
+/* A COLUMN of full-width sections, not the base tip's centred row-wrap — otherwise every rule spans only its
+   own text and no two readings line up. The base .rc-tip is a centred flex-WRAP row, which is right for the
+   one-line tips and wrong for a table; the overrides here are what make this one a table. */
+.rc-tip-pools { flex-direction: column; align-items: stretch; gap: 0; min-width: 250px; padding: 7px 9px; }
+/* EVERY row is the same three columns: name (takes the slack), amount, share. Nesting is expressed by
+   indenting inside the NAME column, so a consumer's figures land on the same right edge as its pool's —
+   which is the whole reason this is a grid rather than a stack of flex rows each formatting its own tail. */
+.rc-tip-pools .rc-tip-row { display: grid; grid-template-columns: 1fr auto auto; align-items: baseline;
+  column-gap: 10px; line-height: 1.55; }
+.rc-tip-pools .rc-tip-label { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.rc-tip-pools .rc-tip-cname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-tip-pools .rc-tip-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Fixed width so the percentages form a column of their own — ragged ones ("<1%", "39%", "6.1%") otherwise
+   push the amounts around and nothing above lines up with anything below. */
+.rc-tip-pools .rc-tip-pct { min-width: 40px; text-align: right; font-variant-numeric: tabular-nums;
+  color: var(--fg-faint); margin-left: 0; }
+/* The denominator is context, not a reading, so it recedes — and it only appears on a POOL row, because a
+   consumer's share is already of that same pool. */
+.rc-tip-pools .rc-tip-of { color: var(--fg-faint); }
+/* The stamp leads (it applies to everything below it), so its rule sits UNDER it and spans the whole tip. */
+.rc-tip-pools .rc-tip-when { margin: 0 0 5px; padding: 0 0 5px; border-top: none;
+  border-bottom: 1px solid var(--border); justify-content: space-between; }
+/* One rule between pools. Not above the first — a line directly under the stamp's own rule reads as a gap
+   rather than as a divider. */
+.rc-tip-pools .rc-tip-sect + .rc-tip-sect { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border); }
+.rc-tip-pools .rc-tip-poolrow { color: var(--fg-dim); }
+.rc-tip-pools .rc-tip-poolrow.near { color: var(--fg); }
+.rc-tip-pools .rc-tip-poolrow.near .rc-tip-label { font-weight: 600; }
+/* What is resident on the pool ABOVE, so it hangs off a rail inside the NAME column — the indent says
+   "belongs to" without moving its figures out of line with the pool's. */
+.rc-tip-pools .rc-tip-consumer-row { color: var(--fg-faint); }
+.rc-tip-pools .rc-tip-consumer-row .rc-tip-label { margin-left: 3px; padding-left: 9px; border-left: 1px solid var(--border); }
+/* The fallback line's hover: a rule at the datapoint and a dot on it, so the figure in the tip is visibly a
+   reading of one point rather than of wherever the pointer happens to be. */
+.vram-spark-wrap { position: relative; cursor: crosshair; }
+.vram-spark-rule { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 2; }
+.vram-spark-dot { fill: var(--accent); }
 .rc-tip-name { color: var(--fg); font-weight: 600; }
 .rc-tip-size { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 /* Hovering either the band or its row lights the other — they describe the same model. */
@@ -382,6 +434,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Every model on this pool is hidden from the totals — the same treatment its row gets, so a selection is
    legible from the chart as well as from the list. */
 .rc-key.off { opacity: .45; text-decoration: line-through; }
+/* It is a switch now, so it has to look like one — the legend was previously inert text and a click target
+   that reads as a label is one nobody finds. */
+.rc-key[role="button"] { cursor: pointer; border-radius: 3px; padding: 0 3px; }
+.rc-key[role="button"]:hover { background: var(--panel-2); }
+.rc-key[role="button"]:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 .rc-swatch { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
 .rc-swatch-other { background: var(--fg-faint); opacity: .5; }
 .rc-swatch-free { border: 1px solid var(--border); }
@@ -1059,10 +1116,31 @@ details.io[open] > summary .io-preview { display: none; }
 
 /* DevTools run-stats readout — a thin muted bar above the detail composer (cumulative in/out tokens + tok/s).
    Reuses `.tt` for the provenance tooltip; overrides its inline-flex so the bar can right-align full width. */
-.run-stats { display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding: 2px 12px 0; font-size: 11px; color: var(--fg-faint); font-variant-numeric: tabular-nums; cursor: default; }
+/* Sits in the composer footer, at the opposite end from the context gauge — so no padding or justification
+   of its own: the footer is the row. */
+.run-stats { display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--fg-faint); font-variant-numeric: tabular-nums; cursor: default; }
 .run-stats .rstat { white-space: nowrap; }
 .run-stats .rstat-ic { opacity: .7; margin-right: 3px; }
 .run-stats .rstat-tps { color: var(--fg-dim); }
+
+/* ---------------------------------- FOCUS MODE ----------------------------------
+   Read the transcript as a conversation. Everything here is a HIDE, never a restructure: the elements stay
+   in the DOM, so search, copy, export and the mode's own off switch all see the same document. What goes is
+   the machinery a debugger wants and a reader does not — the step counters, the approval badges, the "you"
+   label, the model pill, the copy/raw controls, and the collapsed tool row's output preview. What STAYS is
+   everything that carries meaning: the tool name and its status dot (a run is a sequence of actions and
+   hiding them would hide what happened), the thinking disclosures, timestamps, and every expandable body. */
+html[data-focus] .step-pill,
+html[data-focus] .appr-badge,
+html[data-focus] .astep-preview,
+/* The "you" label, scoped to the user bubble. The same class carries an EXCEPTIONAL label on a reply (a
+   step-cap stop), which is not chrome and stays. */
+html[data-focus] .msg.user .who,
+html[data-focus] .msg .mrow .raw-btn { display: none; }
+/* The model pill and the copy button each sit inside a tooltip wrapper, so hiding the inner element alone
+   would leave its empty shell holding a gap in the header row. */
+html[data-focus] .msg .mrow .tt:has(> .model-name),
+html[data-focus] .msg .mrow .tt:has(> .icon-btn) { display: none; }
 
 /* Shared tool OUTPUT CELL (python_exec / exec / any future tool): capped height → scrolls, with a drag grip.
    Jupyter's output area — tall output can't bury the transcript, and tail-follow keeps the newest line in view. */

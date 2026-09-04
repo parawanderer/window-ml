@@ -228,7 +228,9 @@ test("eventsFrom: a delegated sub-call is its own span, parented to the step tha
     assert.equal(sub.t, 17_200, "a span, back over its own generation");
     assert.equal(sub.until, 19_000);
     assert.equal(sub.parent, step.id, "…owned by the step that spawned it");
-    assert.equal(step.parent, "run:r", "…which is owned by the run");
+    // A run's id now carries its INDEX in the session: a session is a sequence of runs (turns ending
+    // in an answer), not one, so a child names the block it belongs to rather than the whole conversation.
+    assert.equal(step.parent, "run:r:0", "…which is owned by the run it happened in");
     assert.equal(sub.cost.inTokens, 700, "and it carries its own cost, not the driver's");
     assert.deepEqual(sub.ref, { hash: "r", seq: 2 }, "clicking it opens the step it belongs to");
 });
@@ -503,4 +505,53 @@ test("a queue longer than what is left after evaluating is clamped, never negati
     const [ev] = M.eventsFrom([remoteStep({ remoteMs: { durationMs: 3900, queuedMs: 5000 } })]).filter(e => e.kind === "tool");
     assert.deepEqual(kinds(ev.phases), ["model", "queue", "tool"]);
     assert.deepEqual(durs(ev.t, ev.phases), [900, 100, 3900], "the queue takes what remains, and no more");
+});
+
+// A run is a set of turns terminating in an ANSWER. This drew one container per SESSION for a long time, so a
+// three-turn conversation was one bar — and since the container is the widest shape on screen, and what every
+// hover, double-click and scope-to-span reads off, "this run" meant "everything you have done in this tab".
+test("eventsFrom: a session with three answers draws THREE runs, not one", () => {
+    const s = {
+        hash: "m", kind: "agent", model: "gemma4:31b", createdTs: 1000, lastTs: 9000,
+        answers: [{ ts: 3000, atStep: 2 }, { ts: 6000, atStep: 4 }, { ts: 9000, atStep: 6 }],
+        steps: [
+            { step: 1, seq: 1, ts: 2000, tool: "exec", toolMs: 100, usage: { promptTokens: 5, completionTokens: 1, totalTokens: 6, genMs: 200 } },
+            { step: 3, seq: 3, ts: 5000, tool: "exec", toolMs: 100, usage: { promptTokens: 5, completionTokens: 1, totalTokens: 6, genMs: 200 } },
+            { step: 5, seq: 5, ts: 8000, tool: "exec", toolMs: 100, usage: { promptTokens: 5, completionTokens: 1, totalTokens: 6, genMs: 200 } },
+        ],
+    };
+    const runs = M.eventsFrom([s]).filter((e) => e.kind === "run");
+    assert.equal(runs.length, 3, "one container per answered run");
+    assert.deepEqual(runs.map((r) => r.id), ["run:m:0", "run:m:1", "run:m:2"]);
+    // They TILE rather than overlapping: a later run begins where the previous one ended, because a follow-up
+    // starts when you ask for it and its first step's stamp is when that step FINISHED.
+    assert.ok(runs[0].until <= runs[1].t && runs[1].until <= runs[2].t, "runs do not overlap");
+    // Numbered only because there are several — a single-run session must not gain a "1/1".
+    assert.match(runs[1].label, /run 2\/3/);
+    // Each carries ITS OWN spend, not the session's: charging every run the whole conversation would make the
+    // first one look as expensive as the last.
+    assert.equal(runs[0].cost?.inTokens, 5, "a run's cost is the sum of its own steps");
+    // And each step is owned by the run it happened in.
+    const steps = M.eventsFrom([s]).filter((e) => e.kind === "tool");
+    assert.deepEqual(steps.map((e) => e.parent), ["run:m:0", "run:m:1", "run:m:2"]);
+});
+
+test("eventsFrom: steps after the last answer are a run STILL GOING, and a single-run session is unnumbered", () => {
+    const base = (answers, steps) => ({ hash: "n", kind: "agent", model: "m", createdTs: 1000, lastTs: 6000, answers, steps });
+    const step = (n, ts) => ({ step: n, seq: n, ts, tool: "exec", toolMs: 10, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, genMs: 10 } });
+
+    // One answer, then more work: that trailing work is a second run, not an extension of the first.
+    const two = M.eventsFrom([base([{ ts: 3000, atStep: 2 }], [step(1, 2000), step(3, 5000)])]).filter((e) => e.kind === "run");
+    assert.equal(two.length, 2, "the trailing steps are a run of their own");
+
+    // No answer at all — a run you are watching. One container, and no "1/1" on it.
+    const one = M.eventsFrom([base([], [step(1, 2000)])]).filter((e) => e.kind === "run");
+    assert.equal(one.length, 1);
+    assert.doesNotMatch(one[0].label, /\d\/\d/, "a lone run is not numbered");
+
+    // A CHAT session has no runs to segment by and keeps its single container.
+    const chat = M.eventsFrom([{ hash: "c", model: "m", createdTs: 1000, lastTs: 4000,
+        turns: [{ ts: 3000, usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2, genMs: 100 } }] }]);
+    assert.equal(chat.filter((e) => e.kind === "session").length, 1);
+    assert.equal(chat.filter((e) => e.kind === "run").length, 0, "a chat is not a run");
 });

@@ -1522,7 +1522,14 @@ test("VRAM monitor shows the context a model was LOADED with (Ollama preallocate
     assert.deepEqual(chips, ["256K", "8K"], "compact context chip per reporting model, none for the old server");
     assert.equal(w.shadow.querySelectorAll(".vram-row").length, 3, "the non-reporting model still gets a row");
     // The tooltip explains WHY it matters (preallocation), not just what it is.
-    assert.match(w.shadow.querySelector(".vram-ctx .tt-pop").textContent, /preallocates/i);
+    const tip = w.shadow.querySelector(".vram-ctx .tt-pop").textContent;
+    assert.match(tip, /preallocates/i);
+    // …and it RECONCILES the chip with the exact count. 262,144 tokens IS 256K, binary — but a chip reading
+    // "256K" beside a tooltip reading "262,144" looks like two different numbers, and the reader has nothing
+    // on screen telling them which to trust. Both forms, chip's first, plus the word that explains the gap.
+    assert.match(tip, /256K-token context window/, "the chip's own figure leads");
+    assert.match(tip, /262,144 tokens exactly/, "…then the exact count the server reported");
+    assert.match(tip, /binary/, "…and why the two look different");
 });
 
 test("VRAM monitor: clicking a colour dot hides that model from the total", async () => {
@@ -5818,7 +5825,7 @@ test("overview: the line tooltip gives size, usage and the consumers", async () 
     w.shadow.querySelector(".rc-plot").dispatchEvent(new w.window.PointerEvent("pointermove", { bubbles: true }));
     await w.flush();
 
-    const tip = w.shadow.querySelector(".rc-tip-pool");
+    const tip = w.shadow.querySelector(".rc-tip-pools");
     assert.ok(tip, "hovering a pool's line opens the tip");
     assert.match(tip.textContent, /CUDA0/, "which device");
     assert.match(tip.textContent, /of 23\.99 GiB/, "how big the pool is");
@@ -6375,8 +6382,12 @@ test("resource figures: bytes always come with the percentage of the pool", asyn
     const key = w.shadow.querySelector(".rc-legend .rc-key");
     key.dispatchEvent(new w.window.MouseEvent("pointerenter", {}));
     await w.flush();
-    assert.match(w.shadow.querySelector(".rc-tip-pool").textContent, /GiB of .*GiB \(\d[\d.]*%\)/,
-        "the key's figure is a share");
+    // The tip is a TABLE, so the share is its own column rather than a parenthetical at the end of a
+    // sentence — the parens existed to separate it from the prose it used to sit in, and in a column they
+    // are noise. What must survive is that the amount is still quoted against the ceiling it is a share of.
+    const poolRow = w.shadow.querySelector(".rc-tip-pools .rc-tip-poolrow");
+    assert.match(poolRow.querySelector(".rc-tip-amt").textContent, /GiB of .*GiB/, "the amount, against its ceiling");
+    assert.match(poolRow.querySelector(".rc-tip-pct").textContent, /^\s*<?\d[\d.]*%\s*$/, "…and the share, in its own column");
 
     // A device track's header says the same thing in its compact form.
     w.shadow.querySelector('[aria-label="Edit tracks"]').click();
@@ -6400,7 +6411,51 @@ async function untilTrue(w, fn, why) {
 }
 const mouse = (w, el, type, init = {}) => el.dispatchEvent(new w.window.MouseEvent(type, { bubbles: true, ...init }));
 
-test("tooltips: the band and row tips track the newest sample, not the moment you hovered", async () => {
+// Focus mode: read a run as a conversation. Every rule is a HIDE, never a restructure — the elements stay in
+// the document, so search, copy and the export see the same transcript whichever way the toggle is set, and
+// turning it off brings everything back. What must SURVIVE it is the point of the test: a run is a sequence of
+// actions, so the tool names and their bodies are content, not chrome.
+test("focus mode: quiets the machinery, keeps what happened, and is fully reversible", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("f1", "find the login button", "qwen3:14b"));
+    await w.dispatch(agentStep("f1", 1, { thought: "Let me look" }));
+    await w.dispatch(agentStep("f1", 1, { tool: "exec", arguments: { js: "1" }, result: "a top navigation bar", approval: "readonly" }));
+    await w.dispatch(agentResult("f1", "Top-right.", 2));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    // jsdom applies no stylesheet, so VISIBILITY is not observable here — the rules themselves are asserted
+    // against a real browser in tests/e2e. What this checks is the contract the CSS rests on: the toggle sets
+    // the attribute, and every element the rules name is still in the document either way.
+    const present = (sel) => w.shadow.querySelectorAll(sel).length;
+    const before = {
+        step: present(".step-pill"), appr: present(".appr-badge"),
+        you: present(".msg.user .who"), preview: present(".astep-preview"),
+    };
+    assert.ok(before.step && before.appr && before.you && before.preview, `all four are there to begin with (${JSON.stringify(before)})`);
+
+    const btn = w.shadow.querySelector('[aria-label="Focus mode"]');
+    assert.ok(btn, "the detail header offers the toggle");
+    btn.click();
+    await w.tick();
+
+    assert.equal(w.shadow.documentElement.hasAttribute("data-focus"), true,
+        "it rides a root attribute, so CSS owns all of it and no component learns about the mode");
+    // The elements are still THERE — hidden by CSS, not removed. That is what keeps the export, a text search
+    // and the toggle's own reversal reading the same document.
+    assert.ok(w.shadow.querySelector(".step-pill"), "hidden, not deleted");
+    assert.ok(w.shadow.querySelector(".appr-badge"), "hidden, not deleted");
+    // …and what stays visible is everything that says what actually happened.
+    assert.ok(w.shadow.querySelector(".astep.tool .tool-name"), "the tool name survives — it IS the transcript");
+    assert.ok(w.shadow.querySelector(".utext"), "the user's own message survives");
+    assert.match(w.shadow.body.textContent, /Top-right\./, "and the answer");
+
+    btn.click();
+    await w.tick();
+    assert.equal(w.shadow.documentElement.hasAttribute("data-focus"), false, "off again");
+});
+
+test("tooltips: a chart tip reads the DATAPOINT under the cursor; the row tip reads the present", async () => {
     const w = await loadSidebarWorld({ vram: growModel(19), info: INFO_2CARD, ...STACKED_LAYOUT });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
@@ -6410,7 +6465,7 @@ test("tooltips: the band and row tips track the newest sample, not the moment yo
     // A band needs two samples to have a shape at all.
     await untilTrue(w, () => w.shadow.querySelector(".rc-band"), "no model band was ever drawn");
     mouse(w, w.shadow.querySelector(".rc-band"), "pointerenter");
-    mouse(w, w.shadow.querySelector(".rc-plot"), "pointermove");
+    mouse(w, w.shadow.querySelector(".rc-plot"), "pointermove", { clientX: 10, clientY: 10 });
     const row = w.shadow.querySelector(".vram-row");
     mouse(w, row, "pointerenter");
     mouse(w, row, "pointermove", { clientX: 40, clientY: 40 });
@@ -6420,16 +6475,20 @@ test("tooltips: the band and row tips track the newest sample, not the moment yo
     const rowTip = () => w.shadow.querySelector(".vram-rowtip")?.textContent || "";
     assert.match(bandTip(), /19\.00 GiB/, "the band tip opens on what is resident");
     assert.match(rowTip(), /19\.00 GiB/, "so does the row tip");
+    // The chart is a history, so a reading off it is only meaningful with the instant attached.
+    assert.match(bandTip(), /\d\d:\d\d:\d\d/, "the band tip stamps the datapoint it read");
 
-    // The model grows while both are open.
+    // The model grows while both are open. The ROW is a list of what is resident NOW, so its tip follows; the
+    // pointer is over the newest datapoint, which is that same reading, so the chart's does too. Reading an
+    // OLDER datapoint needs real layout (jsdom reports every element as zero-sized, so every fraction clamps
+    // to the right edge) and is asserted in tests/e2e/resource-panel.spec.mjs against a real plot.
     w.setVram(growModel(31));
     await untilTrue(w, () => rowTip().includes("31.00 GiB"), `the row tip froze at hover time (${rowTip()})`);
-    assert.match(bandTip(), /31\.00 GiB/, "the band tip follows the band it is naming");
-    assert.doesNotMatch(bandTip(), /19\.00 GiB/);
     assert.doesNotMatch(rowTip(), /19\.00 GiB/);
+    await untilTrue(w, () => bandTip().includes("31.00 GiB"), `hovering the newest point still read stale (${bandTip()})`);
 });
 
-test("tooltips: the pool tip follows the newest sample too", async () => {
+test("tooltips: the overview pool tip reads its datapoint, and carries the line's own swatch", async () => {
     const w = await loadSidebarWorld({ vram: growModel(19), info: INFO_2CARD });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
@@ -6440,13 +6499,19 @@ test("tooltips: the pool tip follows the newest sample too", async () => {
     const key = w.shadow.querySelector(".rc-legend .rc-key");
     assert.ok(key, "the overview draws pool keys");
     mouse(w, key, "pointerenter");                       // → the cursor-following pool tip
-    mouse(w, w.shadow.querySelector(".rc-plot"), "pointermove");
+    mouse(w, w.shadow.querySelector(".rc-plot"), "pointermove", { clientX: 10_000, clientY: 10 });
     await w.flush();
 
-    const poolTip = () => w.shadow.querySelector(".rc-tip-pool")?.textContent || "";
+    const tip = () => w.shadow.querySelector(".rc-tip-pools");
+    const poolTip = () => tip()?.textContent || "";
     assert.match(poolTip(), /19\.00 GiB of /, "the pool tip opens on what is on that pool");
-    assert.match(poolTip(), /\(\d+[\d.]*%\)/, "…quoting the figure AND its share");
+    // The share is a COLUMN now, not a parenthetical — see the table note above.
+    assert.match(tip().querySelector(".rc-tip-pct").textContent, /\d[\d.]*%/, "…quoting the figure AND its share");
+    // Several lines cross in one plot, so the tip carries the same swatch the legend key does — without it
+    // you are matching a device name to a stroke by eye.
+    assert.ok(tip().querySelector(".rc-swatch"), "the pool tip carries its line's colour");
 
+    // Hovering the newest datapoint, it tracks live.
     w.setVram(growModel(31));
     await untilTrue(w, () => poolTip().includes("31.00 GiB"), `the pool tip froze at hover time (${poolTip()})`);
     assert.doesNotMatch(poolTip(), /19\.00 GiB/);
@@ -6691,7 +6756,9 @@ test("history: an evicted model keeps its colour, and says it is gone", async ()
     const tip = w.shadow.querySelector(".rc-tip:not(.vram-rowtip)");
     assert.ok(tip, "the band is still hoverable after the model evicted");
     assert.match(tip.textContent, /gemma4:31b/, "it names what was there");
-    assert.match(tip.textContent, /evicted/, "…and says it no longer is");
+    // "not resident now", not "evicted": the figure beside it is a reading from an instant that has passed,
+    // and "evicted" reads as something that happened AT that instant rather than since.
+    assert.match(tip.textContent, /not resident now/, "…and says it no longer is");
 });
 
 // A box with more cards than the curated palette. Eight A100s plus system RAM is NINE pools, and
@@ -7056,12 +7123,12 @@ test("pool tooltip: each model consumer carries its colour, the residual doesn't
     key.dispatchEvent(new w.window.MouseEvent("pointerenter", {}));
     await w.flush();
 
-    const tip = w.shadow.querySelector(".rc-tip-pool");
-    const modelLine = [...tip.querySelectorAll(".rc-tip-line")].find((l) => l.textContent.includes("qwen3.5:35b"));
+    const tip = w.shadow.querySelector(".rc-tip-pools");
+    const modelLine = [...tip.querySelectorAll(".rc-tip-row")].find((l) => l.textContent.includes("qwen3.5:35b"));
     assert.ok(modelLine.querySelector(".rc-tip-dot"), "the model consumer has a dot");
     assert.equal(modelLine.querySelector(".rc-tip-dot").getAttribute("style"),
         w.shadow.querySelector(".vram-row .vram-dot").getAttribute("style"), "…in the colour its row uses");
-    const residual = [...tip.querySelectorAll(".rc-tip-line")].find((l) => /driver overhead|unattributed/.test(l.textContent));
+    const residual = [...tip.querySelectorAll(".rc-tip-row")].find((l) => /driver overhead|unattributed/.test(l.textContent));
     if (residual) assert.equal(residual.querySelector(".rc-tip-dot"), null, "the residual is not a model");
 });
 

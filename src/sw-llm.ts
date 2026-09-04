@@ -6,6 +6,7 @@
 // and chrome/fetch. All server JSON is genuinely opaque, so it's typed `any`; our own data uses the contract.
 import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, GenPhase } from "./contract";
 import { DEFAULT_CONFIG, modelFilterAllows, generatesText, producesEmbeddings } from "./contract";   // single source of truth (see contract.ts)
+import { loadedFrom } from "./resource-events";
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {
@@ -941,7 +942,7 @@ export async function setModel(model: unknown): Promise<string> {
 // OpenWebUI /ollama passthrough or a direct Ollama server — and returns it
 // along with the currently loaded models. /api/ps only exists on Ollama, so
 // it doubles as the discriminator.
-async function findOllamaBase(config: MlConfig): Promise<{ base: string; loaded: any[] }> {
+export async function findOllamaBase(config: MlConfig): Promise<{ base: string; loaded: any[] }> {
     const origin = new URL(config.chatUrl).origin;
     for (const base of [`${origin}/ollama`, origin]) {
         try {
@@ -959,31 +960,10 @@ async function findOllamaBase(config: MlConfig): Promise<{ base: string; loaded:
 export async function listLoadedModels(): Promise<LoadedModel[]> {
     const config = await getConfig();
     const { loaded } = await findOllamaBase(config);
-    return loaded.map((m: any) => ({
-        model: m.model || m.name,
-        vramGB: m.size_vram ? +(m.size_vram / 1e9).toFixed(1) : null,
-        sizeGB: m.size ? +(m.size / 1e9).toFixed(1) : null,
-        // EXACT bytes alongside the rounded GB: the resource panel's bands subtract these from exact capacity
-        // figures, so rounding here would accumulate into visibly wrong sums.
-        vramBytes: typeof m.size_vram === "number" ? m.size_vram : null,
-        sizeBytes: typeof m.size === "number" ? m.size : null,
-        // Which devices it occupies. `gpus` is ABSENT for a CPU-resident model — the server's way of saying
-        // so — and that absence is preserved here rather than normalised to an empty array.
-        ...(Array.isArray(m.gpus) ? { gpus: m.gpus.map((g: any) => ({
-            id: String(g.gpu_id ?? ""), runner: String(g.runner ?? ""), vramBytes: Number(g.size_vram) || 0,
-        })) } : {}),
-        // The context window it was loaded with. Ollama preallocates KV cache for the
-        // FULL window, so this explains a big share of size_vram (a 256K-ctx load is
-        // mostly cache). Older servers don't report it → null, and the UI hides it.
-        contextLength: typeof m.context_length === "number" ? m.context_length : null,
-        // A LOADING entry carries its name and zeros for everything else, so its `expires_at` is Go's zero
-        // time — which parses to a deadline in year 1 and renders as a countdown of minus two thousand years.
-        // Zero there means "not known yet", so it is dropped rather than passed on as a stamp.
-        expiresAt: (m.state === "loading" ? null : m.expires_at) || null,
-        // Both need a patched Ollama; absent means "not known", never "idle" / "resident".
-        ...(typeof m.busy === "boolean" ? { busy: m.busy } : {}),
-        ...(m.state ? { state: String(m.state) } : {}),
-    }));
+    // The row -> LoadedModel mapping lives in resource-events.ts because the event stream's `sample` frames
+    // embed this same body verbatim. Two transports, one parser: the polled panel and the streamed one
+    // cannot end up disagreeing about what a model IS.
+    return loadedFrom(loaded);
 }
 
 /** GET Ollama `/api/info` — the machine's CAPACITY (per-device VRAM, system RAM), through the same base

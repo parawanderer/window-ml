@@ -12,6 +12,12 @@ export const BASE_FS = 12, MIN_FS = 0.8, MAX_FS = 1.6;   // font-scale bounds (�
 // of the ml config the popup/background share).
 export const WRAP_KEY = "ml_debug_codewrap";     // true = break-line (default); false = horizontal scroll
 export const LINES_KEY = "ml_debug_codelines";   // line-number gutter on code blocks
+// FOCUS MODE: read the transcript as a conversation. It hides the machinery a debugger wants and a reader
+// does not — step counters, approval badges, the "you" label, the model pill, the copy/raw controls, the
+// collapsed tool row's output preview. It is a DISPLAY pref, not a filter: nothing is dropped from the
+// session, every disclosure still opens, and turning it off brings it all back. Sidebar-only (storage.local,
+// like the font scale), because it is how you are reading right now rather than how the agent should run.
+export const FOCUS_KEY = "ml_debug_focus";
 export const STATS_TOKENS_KEY = "ml_debug_stats_tokens";   // DevTools run-stats bar: cumulative in/out tokens (default on)
 export const STATS_TPS_KEY = "ml_debug_stats_tps";         // DevTools run-stats bar: generation tok/s (default off)
 export const OUTTS_KEY = "ml_debug_outts";                 // show per-line timestamps on streamed tool output
@@ -94,6 +100,7 @@ export const view = signal<{ name: "list" } | { name: "detail"; hash: string } |
 export const fontScale = signal(1);
 export const codeWrap = signal(true);          // wrap long code lines vs. horizontal scroll
 export const codeLineNumbers = signal(false);  // show a line-number gutter on code blocks
+export const focusMode = signal(false);
 export const showStatsTokens = signal(true);   // DevTools run-stats bar: cumulative in/out tokens (default on)
 export const showStatsTps = signal(false);     // DevTools run-stats bar: generation tok/s (default off)
 export const OUTMAX_DEFAULT = 260;             // px — roughly 14 lines; enough to read, small enough not to bury the page

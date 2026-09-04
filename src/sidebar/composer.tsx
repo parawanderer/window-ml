@@ -10,6 +10,7 @@ import { truncate } from "./format";
 import { IconSend, IconStop } from "./icons";
 import { clearHighlight, highlightEl } from "./ui-kit";
 import { UsageBar } from "./usage";
+import { RunStatsBar } from "./agent-detail";
 
 // The session composer: drive a live createAgent session from the sidebar. Sending routes to the page
 // (via the parent shell/panel) → the handle by hash: STEER a running loop (say) or start a new turn (run),
@@ -113,6 +114,7 @@ export function Composer({ s }: { s: Session }) {
                 </button>
             </div>
             <div class="composer-foot">
+                <RunStatsBar s={s} />
                 <span class="sp" />
                 <UsageBar s={s} />
             </div>

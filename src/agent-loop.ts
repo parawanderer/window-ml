@@ -279,6 +279,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // Per-step render data for citable steps, so the outputs resolver can turn a cited/designated token into its
     // structured value (res.outputs — the headless-scripting payload).
     const tokenRenders: TokenRender[] = [];
+    /** seq -> the id a PIPED dereference minted for its reduction, so the emit path can carry it onto that
+     *  step. Keyed by seq because that is what both sides already agree on. */
+    const mintedViews = new Map<number, string>();
     // Values addressable by `@tool:<id>` for THIS run — what `dereference` reads. Populated at mint time below,
     // so the pointer store and the citation ids can never disagree. Owned by the LOOP (not the page), which is
     // why dereference resolves here instead of being delegated: it is a pure read of run state, identical on
@@ -302,6 +305,11 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             in: JSON.stringify(args), t: Date.now(), step,
         });
         tokenRenders.push({ id, tool: DEREF_TOOL, render: undefined, result: text });   // citable in the answer
+        // …and onto the STEP. The answer renderer resolves a citation by matching `step.token`, and this id is
+        // minted outside the generic path (dereference is not `citable`), so without this the model was handed
+        // a pointer, told to cite it, and the citation rendered as "unresolved @tool:…" — a handle the run had
+        // genuinely produced, reported as one it had invented.
+        mintedViews.set(seq, id);
         return `\n\n[this view is @tool:${id} — to SHOW this reduction rather than the whole output, embed it with image syntax: ![label](@tool:${id}:out). It expands in place; don't retype it.]`;
     };
     /** Resolve a `dereference` call against this run's pointer store. Side-effect-free by construction (it only
@@ -319,7 +327,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // Still answer with the inventory (that is what it needs to recover), but say the pipe was dropped
         // rather than silently ignoring an argument it deliberately wrote.
         if (!ref) return { result: pipe.trim() ? `${inventory()}\n\n(Your \`pipe\` was not applied: no pointer was named to apply it to.)` : inventory() };
-        const { value: v, matched, score } = tokenStore.resolveRef(ref, opts.labelMatch);
+        const { value: v, matched, score, via } = tokenStore.resolveRef(ref, opts.labelMatch);
         // A pointer that doesn't resolve is usually a HALLUCINATED id (six plausible hex characters that were
         // never minted), so name the closest real ones rather than just saying no — the model can then correct
         // itself in one step instead of guessing again.
@@ -355,8 +363,17 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const soft = matched
                 ? `\n\n[resolved by similarity, not an exact name: you asked for ${JSON.stringify(parseLabel(ref) ?? ref)} and the closest label was ${JSON.stringify(matched)} (${score?.toFixed(2)}). If that is not what you meant, list what you have with dereference and no token.]`
                 : "";
-            const pin = isAliasRef(ref, v.id)
-                ? `\n\n[pinned: this call is @tool:${v.id}. "${nameOf(v)}" always means the LATEST ${v.tool} call and will move when you run it again — @tool:${v.id} always means THIS one. Cite it with ![label](@tool:${v.id}:out).]`
+            // Only the BARE TOOL NAME is a moving target. It was keyed on "the ref is not the id", which is
+            // also true of a LABEL — so a label read was told its own handle "always means the LATEST call and
+            // will move", which is false, and the model repeated it back as a rule it had learned. A label
+            // names one captured value; the id is what it resolves to, worth handing over so the model can
+            // cite it, but nothing about it moves. And the alias message quoted `nameOf(v)` — a DISPLAY string
+            // (`look: "hud render check"`) that is not a reference form at all — where it had to quote the
+            // alias actually used, or it teaches a spelling that does not resolve.
+            const pin = via === "tool"
+                ? `\n\n[pinned: this call is @tool:${v.id}. @tool:${v.tool} always means the LATEST ${v.tool} call and will move when you run it again — @tool:${v.id} always means THIS one. Cite it with ![label](@tool:${v.id}:out).]`
+                : via === "label"
+                ? `\n\n[this label names @tool:${v.id}. Cite it with ![label](@tool:${v.id}:out) — the id stays with this capture even if you label something else the same way later.]`
                 : "";
             return { result: `${head}\n\n${text}${derived}${soft}${pin}` };
         } catch (e) {
@@ -644,11 +661,17 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const citable = call.name !== DEREF_TOOL && (CITABLE_TOOLS.has(call.name) || !!meta?.remote || wantsToken) && !failed;
             // Seed the id from the GLOBAL seq (base + per-turn) so a multi-turn run never mints a colliding id
             // (turn 2's step 1 vs turn 1's step 1) that a citation would then resolve to the wrong, earlier step.
-            const tokenId = (opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, (opts.seqBase ?? 0) + s) : undefined;
-            if (tokenId) tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs (only if CITED)
+            // A PIPED dereference mints its own id (mintView) and has already registered it — carry that one
+            // rather than minting a second, so the step the answer resolves to is the step that produced it.
+            const mintedView = mintedViews.get(s);
+            const tokenId = mintedView
+                ?? ((opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, (opts.seqBase ?? 0) + s) : undefined);
+            if (tokenId && !mintedView) tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs (only if CITED)
             // The pointer carries the value's TYPE, taken from the render descriptor the step already produced —
             // so `dereference … | keys` on a DataFrame means its COLUMNS, without re-parsing a rendered grid.
-            if (tokenId) {
+            // A minted VIEW was already stored by mintView, with the label and kind that describe the
+            // reduction. Re-noting it here would overwrite that with the dereference step's own result.
+            if (tokenId && !mintedView) {
                 const r = tr?.renderOut;
                 const df = r?.type === "python-out" ? r.df : undefined;
                 const tbl = df ? { columns: df.columns, rows: df.rows as unknown[][] }
@@ -671,7 +694,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 const latex = r?.type === "python-out" && r.latex && r.value != null ? String(r.value) : undefined;
                 tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, ...(full ? { full } : {}), ...(image ? { image } : {}), ...(latex ? { latex } : {}), ...(label ? { label } : {}), in: JSON.stringify(args), t: Date.now(), step, ...(tbl ? { table: tbl } : {}) });
             }
-            const forModel = (tokenId && wantsToken)
+            // Not for a minted view: mintView appended its own line explaining what the reduction is, and
+            // `dereference`'s `token` PARAMETER is the pointer being READ, so `wantsToken` is true for every
+            // call — which would staple a second, contradictory citation instruction onto the same result.
+            const forModel = (tokenId && wantsToken && !mintedView)
                 ? `${result}\n\n[output token @tool:${tokenId} — EMBED this exact output in your final answer with image syntax: ![label](@tool:${tokenId}:out) (use ":in" for the call/code). It expands in place; don't retype it.]`
                 : result;
             // The DONE event carries the clean `result` for the pretty Out AND — when a token line was appended —

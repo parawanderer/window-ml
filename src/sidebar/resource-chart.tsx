@@ -12,16 +12,16 @@
 import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
+    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, type ResourceEvent, type EventPlacement,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
-import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter } from "./vram";
+import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter } from "./vram";
 import { models, ollamaIds, loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, showLane, laneLitSeqs } from "./store";
-import { clockAt, hhmmssms } from "./timestamps";
+import { clockAt, hhmmss, hhmmssms } from "./timestamps";
 import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
 import { signal } from "@preact/signals";
@@ -40,7 +40,7 @@ const hoverPool = signal<string | null>(null);
 //   • A surface, because every track renders a BandTip and the lane renders an EventTip, all reading these
 //     same signals — so hovering a lane bar (which cross-highlights a model) made every track's band tip
 //     appear at once. A tip renders only for the surface the pointer is actually on.
-const hoverAt = signal<{ x: number; y: number; w: number; surface: string } | null>(null);
+const hoverAt = signal<{ x: number; y: number; w: number; surface: string; yFrac?: number } | null>(null);
 /** Which part of the scrub window the pointer is over, so the cursor can say a handle is there before you
  *  try to use it. A resize affordance you can only discover by failing to pan is not an affordance. */
 const scrubGrab = signal<"from" | "to" | "pan" | "outside" | null>(null);
@@ -48,7 +48,16 @@ const scrubGrab = signal<"from" | "to" | "pan" | "outside" | null>(null);
 const cursorOn = (surface: string) => (hoverAt.value?.surface === surface ? hoverAt.value : null);
 /** Track a pointer against the viewport, tagged with the surface it is over. */
 const trackCursor = (surface: string) => (e: PointerEvent) => {
-    hoverAt.value = { x: e.clientX, y: e.clientY, w: typeof window !== "undefined" ? window.innerWidth : 1024, surface };
+    // `yFrac` is the pointer's height within the PLOT (0 = top, 1 = bottom), which is the only thing that can
+    // say which of several overlaid lines the pointer is nearest. Read off the plot element rather than the
+    // event target: the hit targets are strokes inside it, so measuring against those would give the pointer's
+    // position within a 10px band and mean nothing.
+    const plot = (e.currentTarget as HTMLElement)?.closest?.(".rc-plot") as HTMLElement | null;
+    const box = plot?.getBoundingClientRect();
+    hoverAt.value = {
+        x: e.clientX, y: e.clientY, w: typeof window !== "undefined" ? window.innerWidth : 1024, surface,
+        ...(box && box.height > 0 ? { yFrac: Math.min(1, Math.max(0, (e.clientY - box.top) / box.height)) } : {}),
+    };
 };
 
 const W = 300, H = 72;
@@ -155,6 +164,9 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     const runs = useMemo(() => segments(samples).filter((r) => r.length > 1), [samples]);
     // Only the instants: a span is a duration and belongs in the lane, where its length can be read.
     const instants = useInstants(runs, events);
+    // The DATAPOINT under the pointer, resolved through the same segmented geometry the crosshair uses, so
+    // the tooltip's figures and the instant the crosshair names are the same sample and cannot drift apart.
+    const hoverSample = hoveredSample(runs, scope);
     return (
         <div class="rc-track">
             <div class="rc-head">
@@ -181,7 +193,14 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 <Crosshair />
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
                     title={soft.label} /> : null}
-                <BandTip bands={bands} history={samples.map(bandsOf)} ceiling={ceiling} scope={scope} />
+                <BandTip bands={bands} frame={hoverSample ? bandsOf(hoverSample) : null}
+                    history={samples.map(bandsOf)} ceiling={ceiling} scope={scope} at={hoverSample} />
+                {/* Hovering the plot ANYWHERE, not just a model's band, answers the question this track's
+                    header answers for the present: how full was this pool, then. Without it the free area
+                    and the space above the stack were the only parts of the chart that said nothing. */}
+                {hoverSample && !hoverModel.value
+                    ? <PlotTip at={hoverSample} bands={bandsOf(hoverSample)} ceiling={ceiling} label={label} hidden={hidden} scope={scope} />
+                    : null}
                 <EventTip scope={scope} />
             </div>
             <div class="rc-legend">
@@ -205,17 +224,55 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     );
 }
 
+/** The sample under the pointer, or null when the pointer is not over this plot. The fraction comes from the
+ *  crosshair — one pointermove sets both — so a tooltip can never name a different datapoint than the line
+ *  the crosshair is drawn at, which is the drift you get from measuring the pointer twice. */
+function hoveredSample(runs: ResourceSample[][], scope: string): ResourceSample | null {
+    const c = crosshair.value;
+    if (!c || !cursorOn(scope)) return null;
+    return sampleAtFraction(runs, c.frac);
+}
+
+/** WHEN the figures above were measured. A tooltip that reads a historical datapoint has to say which one,
+ *  or every reading in it is ambiguous between "now" and "some time back". Nothing is shown when the pointer
+ *  is not over the plotted area (a legend key), because there is no datapoint to stamp — inventing "now"
+ *  there would be the same wrong claim from the other direction. */
+function SampleStamp({ at }: { at: ResourceSample | null }) {
+    if (!at) return null;
+    const ago = Math.max(0, Date.now() - at.t);
+    return (
+        <div class="rc-tip-line rc-tip-when">
+            <span>{hhmmss(at.t)}</span>
+            {/* "how long ago" is what makes a clock time mean something at a glance on a plot with no axis
+                labels; the clock time is what makes it comparable with the transcript and the event lane. */}
+            <span class="rc-tip-ago">{ago < 1500 ? "now" : `${fmtAgo(ago)} ago`}</span>
+        </div>
+    );
+}
+
+/** A compact age: seconds under a minute, then minutes, then hours. */
+function fmtAgo(ms: number): string {
+    const s = Math.round(ms / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.round(s / 60);
+    return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
 /** What the hovered band is, shown over the plot. Deliberately the SAME facts as the legend row (ModelFacts),
  *  because a band and its row describe one model — an SVG <title> could carry none of it: no colour, no live
  *  TTL, no badge, and a half-second delay before it appears. */
-function BandTip({ bands, history, ceiling, scope }: { bands: Band[]; history: Band[][]; ceiling: number; scope: string }) {
+function BandTip({ bands, frame, history, ceiling, scope, at: hoverSample }: { bands: Band[]; frame: Band[] | null; history: Band[][]; ceiling: number; scope: string; at: ResourceSample | null }) {
     const name = hoverModel.value;
     const at = cursorOn(scope);
     if (!name || !at) return null;
-    // A band drawn in the HISTORY belongs to a model that may have evicted since. Fall back to the last frame
-    // that held it, so hovering the shape still answers what it was — silence there would leave a coloured
-    // area on the chart with nothing below it to explain the colour.
-    const band = bands.find((b) => b.model === name)
+    // READ THE DATAPOINT UNDER THE CURSOR, not the newest one. The chart is a history, so the shape being
+    // hovered is a measurement from some earlier instant — often of a model that has since evicted, and
+    // almost always of a different figure than the model holds now. Answering with the current value would
+    // put a number in the tooltip that was never true at the place the pointer is.
+    const band = (frame ?? bands).find((b) => b.model === name && b.bytes > 0)
+        // Nothing at this instant: the pointer is over the model's shape in a neighbouring column, or the
+        // hover fell in a gap. The last frame that held it still answers what the colour IS, rather than
+        // leaving a coloured area on the chart with nothing below it to explain it.
         ?? [...history].reverse().flatMap((f) => f.filter((b) => b.model === name && b.bytes > 0)).at(0);
     if (!band) return null;   // hovering a model that isn't on THIS device — its own track shows the tip
     const gone = !bands.some((b) => b.model === name);
@@ -231,9 +288,12 @@ function BandTip({ bands, history, ceiling, scope }: { bands: Band[]; history: B
                 <span class="rc-tip-name">{name}</span></div>
             {/* Bytes AND the share of this device — a model is "big" only relative to the card it is on. */}
             <div class="rc-tip-line"><span class="rc-tip-size">{formatBytes(band.bytes)} <span class="rc-tip-pct">({percentOf(band.bytes, ceiling)})</span></span></div>
-            {/* Its row is gone from the list below, so the tip is the only place that can say why the colour
-                is still on the chart: this is history, not something resident now. */}
-            {gone ? <span class="rc-tip-gone">evicted</span> : null}
+            <SampleStamp at={hoverSample} />
+            {/* The figure above is from an instant that has passed, so the tip has to say whether the model is
+                STILL there — otherwise a reader takes a historical reading for a current one, which is the
+                one misreading a time-travelling tooltip makes easy. Its row is also gone from the list
+                below, so this is the only place that can explain why the colour is still on the chart. */}
+            {gone ? <span class="rc-tip-gone">not resident now</span> : null}
             {/* Badges and cost each break onto their OWN line. On one line the tip grew past the panel and was
                 clipped at the window edge — and the figure that matters (how much, what share) is the part
                 that got cut. */}
@@ -243,34 +303,112 @@ function BandTip({ bands, history, ceiling, scope }: { bands: Band[]; history: B
     );
 }
 
-/** Which device the hovered line is, and what is resident on it — following the cursor, like the band tip.
- *  The model list is deliberately SHORT here: the full detail is the rows below, which grey out to show the
- *  same answer, so this only has to name the device and confirm the selection. */
-function PoolTip({ latest }: { latest: ResourceSample }) {
-    const h = poolHover.value, at = cursorOn("overlay");
-    if (!h || !at) return null;
-    const { ref, style } = useTipPlacement(at);
-    // Read from the NEWEST sample, not from what was true when the pointer arrived: a model can load or evict
-    // while you hold the cursor still, and the tip has to say the same thing as the chart under it.
-    const { used, consumers } = poolFacts(h.bandsOf(latest));
+/** The whole pool's occupancy at the hovered instant — the stacked view's answer to "how full was it then",
+ *  which is the reading a memory chart is hovered for most often and the one the band tips could not give
+ *  (they each describe one model). Suppressed while a band IS hovered, so one pointer never opens two tips. */
+function PlotTip({ at, bands, ceiling, label, hidden, scope }: { at: ResourceSample; bands: Band[]; ceiling: number; label: string; hidden: Set<string>; scope: string }) {
+    const cur = cursorOn(scope);
+    if (!cur) return null;
+    const { ref, style } = useTipPlacement(cur);
+    // Hidden models are excluded, exactly as they are from the drawn stack and the header total: the figure
+    // has to match the shape under the pointer, and hiding a model changes that shape retroactively.
+    const used = bands.filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
+    const models = bands.filter((b) => b.kind === "model" && b.bytes > 0 && !(b.model && hidden.has(b.model)));
     return (
         <div class="rc-tip rc-tip-pool" role="tooltip" ref={ref} style={style}>
-            <div class="rc-tip-line"><span class="rc-tip-name">{h.name}</span>
-                <span class="rc-tip-size">{formatShare(used, h.ceiling)}</span></div>
-            {consumers.length
-                ? consumers.map((c) => (
-                    <div class="rc-tip-line rc-tip-dim" key={c.label}>
-                        <span class="rc-tip-consumer">
-                            {/* A model's own dot, the same one its row carries. The residual gets none: it is
-                                not a model, and a dot would say it was. */}
-                            {c.model ? <i class="rc-tip-dot" style={{ background: colorFor(c.model) }} /> : null}
-                            {c.label}
-                        </span>
-                        {/* Its own share of THIS pool: the question a per-consumer line is asked is "how much
-                            of the card is this", which bytes alone only answer after arithmetic. */}
-                        <span>{formatBytes(c.bytes)} <span class="rc-tip-pct">{percentOf(c.bytes, h.ceiling)}</span></span></div>
-                ))
+            <div class="rc-tip-line"><span class="rc-tip-name">{label}</span>
+                <span class="rc-tip-size">{formatShare(used, ceiling)}</span></div>
+            <SampleStamp at={at} />
+            {/* Named, because "62% full" invites "of what" as the immediate next question, and the answer is
+                on the screen already but only in a list that shows the PRESENT. */}
+            {models.length
+                ? <div class="rc-tip-line rc-tip-dim rc-tip-holders">{models.map((b) => (
+                    <span class="rc-tip-consumer" key={b.key}>
+                        <i class="rc-tip-dot" style={{ background: colorFor(b.model!) }} />{b.model}</span>))}</div>
                 : <div class="rc-tip-line rc-tip-dim">nothing resident</div>}
+        </div>
+    );
+}
+
+/** EVERY series at the datapoint under the cursor, one row each — the Grafana reading. Hovering a single line
+ *  could only ever answer for the line that happened to be drawn on top: where two lines meet, the one
+ *  underneath is unreachable, and that crossing is exactly the moment worth reading (one pool filling as
+ *  another empties). So the plot itself opens the tip and every pool gets a row, with the nearest one marked
+ *  rather than being the only one present.
+ *
+ *  Each row carries the pool's own swatch, its occupancy and its share — the shares are what the lines plot,
+ *  since the pools have different capacities and a common axis of bytes would compare nothing. */
+function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf }: {
+    pools: { id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] }[];
+    latest: ResourceSample;
+    at: ResourceSample | null;
+    fracOf: (s: ResourceSample, p: any) => number;
+    usedOf: (s: ResourceSample, p: any) => number;
+}) {
+    const cur = cursorOn("overlay");
+    if (!cur || !pools.length) return null;
+    const frame = hoverSample ?? latest;
+    const { ref, style } = useTipPlacement(cur);
+    // Nearest by the pointer's height in the plot, which is where the lines are: a line at 92% is drawn near
+    // the TOP, so the comparison is against 1 - frac.
+    // A pool that is not drawn gets no row: the tip reads the LINES, and reporting a series that is not on
+    // screen would be answering about something the reader deliberately removed.
+    const rows = pools.filter((p) => !hiddenPools.value.has(p.id)).map((p) => {
+        const frac = fracOf(frame, p);
+        return { p, frac, used: usedOf(frame, p), dy: cur.yFrac == null ? Infinity : Math.abs((1 - frac) - cur.yFrac) };
+    });
+    // A DELIBERATE hover wins over proximity: pointing at a line, or at its key in the legend, says which pool
+    // you mean more precisely than the pointer's height can. Height decides only when the pointer is just
+    // somewhere on the plot, which is the case the stacked reading exists for.
+    const picked = poolHover.value ? rows.find((r) => r.p.id === poolHover.value!.id) : null;
+    const near = picked ?? rows.reduce((a, b) => (b.dy < a.dy ? b : a), rows[0]);
+    const hasNear = !!picked || near.dy < Infinity;
+    return (
+        // ONE GRID, not a stack of independently-laid-out rows. Every row — a pool's and a consumer's alike —
+        // places its name, its amount and its share in the SAME three columns, so the numbers line up on one
+        // right edge whatever their nesting depth. Formatting each row's tail separately is what produced
+        // three different right edges and two different percent styles in the same tooltip.
+        <div class="rc-tip rc-tip-pools" role="tooltip" ref={ref} style={style}>
+            <SampleStamp at={hoverSample} />
+            {rows.map((r) => {
+                const isNear = r === near && hasNear;
+                // Only the NEAREST pool is decomposed. Listing what is resident on all three at once is the
+                // detail the model rows below already carry, and it turns a reading into a wall — the stack
+                // exists so a crossing can be read at a glance.
+                const consumers = isNear ? poolFacts(r.p.bandsOf(frame)).consumers : [];
+                const now = isNear ? new Set(poolFacts(r.p.bandsOf(latest)).consumers.map((c) => c.label)) : new Set<string>();
+                return (
+                    // One SECTION per pool: the pool's own line, then whatever is resident on it. The rule
+                    // between sections is what stops a consumer reading as another device.
+                    <div class="rc-tip-sect" key={r.p.id}>
+                        <div class={`rc-tip-row rc-tip-poolrow${isNear ? " near" : ""}`}>
+                            <span class="rc-tip-label"><i class="rc-swatch" style={{ background: r.p.color }} />{r.p.name}</span>
+                            {/* Split into the grid's own columns rather than one formatted string: the whole
+                                point is that the amount and the share are COLUMNS, and formatShare renders
+                                them as a sentence. "of <ceiling>" rides with the amount, since it is what the
+                                share is a share OF. */}
+                            <span class="rc-tip-amt">{formatBytes(r.used)}<span class="rc-tip-of"> of {formatBytes(r.p.ceiling)}</span></span>
+                            <span class="rc-tip-pct">{percentOf(r.used, r.p.ceiling)}</span>
+                        </div>
+                        {consumers.map((c) => (
+                            <div class="rc-tip-row rc-tip-consumer-row" key={c.label}>
+                                <span class="rc-tip-label">
+                                    {/* A model's own dot, the same one its row carries. The residual gets
+                                        none: it is not a model, and a dot would say it was. */}
+                                    {c.model ? <i class="rc-tip-dot" style={{ background: colorFor(c.model) }} /> : null}
+                                    <span class="rc-tip-cname">{c.label}</span>
+                                    {c.model && !now.has(c.label) ? <span class="rc-tip-gone">gone</span> : null}
+                                </span>
+                                <span class="rc-tip-amt">{formatBytes(c.bytes)}</span>
+                                <span class="rc-tip-pct">{percentOf(c.bytes, r.p.ceiling)}</span>
+                            </div>
+                        ))}
+                        {isNear && !consumers.length
+                            ? <div class="rc-tip-row rc-tip-consumer-row"><span class="rc-tip-label rc-tip-dim">nothing resident</span></div>
+                            : null}
+                    </div>
+                );
+            })}
         </div>
     );
 }
@@ -282,10 +420,13 @@ function PoolTip({ latest }: { latest: ResourceSample }) {
  *  every resident model, so they are the legend: rows not on this pool grey out, and a tooltip on the plot
  *  names the device. That reuses what is on screen instead of injecting a row that pushes the layout around
  *  under the cursor. */
-function enterPool(p: { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }): void {
+function enterPool(p: { id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] }): void {
     hoverPool.value = p.id;
-    // The pool itself, not a reading of it — every figure is derived from the latest sample at render time.
-    poolHover.value = { id: p.id, name: p.name, ceiling: p.ceiling, bandsOf: p.bandsOf };
+    // The pool itself, not a reading of it — every figure is derived from the sample under the cursor at
+    // render time. Its COLOUR rides along so the tip can carry the same swatch its legend key does: several
+    // lines cross in one plot, and a tip that only names a device leaves you matching a name to a stroke by
+    // eye, which is the work the legend's swatches already do everywhere else.
+    poolHover.value = { id: p.id, name: p.name, ceiling: p.ceiling, color: p.color, bandsOf: p.bandsOf };
 }
 function leavePool(): void { hoverPool.value = null; poolHover.value = null; }
 
@@ -389,7 +530,8 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
                 onPointerLeave={() => { hoverAt.value = null; leavePool(); crosshair.value = null; }}>
                 <BrushOverlay />
                 <Crosshair />
-                <PoolTip latest={latest} />
+                <PoolsTip pools={pools.map((p, pi) => ({ ...p, color: poolColor(pi, pools.length) }))}
+                    latest={latest} at={hoveredSample(runs, "overlay")} fracOf={frac} usedOf={usedOf} />
                 {/* This view has rules of its own now, so it needs the tip that explains them. */}
                 <EventTip scope="overlay" />
                 {runs.map((run, ri) => (
@@ -403,6 +545,10 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
                                 // Two directions of the same question. Hovering this pool highlights it; and
                                 // hovering a MODEL row dims every pool that model is NOT resident on, so the
                                 // chart points back at the row rather than only the other way round.
+                                // Switched off in the legend: no line at all, rather than a dimmed one. The
+                                // point of turning a pool off is to get it out of the way of the ones you are
+                                // reading, and a ghost still crosses them.
+                                if (hiddenPools.value.has(p.id)) return null;
                                 const holdsHovered = !!hoverModel.value && p.bandsOf(latest).some((b) => b.model === hoverModel.value);
                                 const on = hoverPool.value === p.id || holdsHovered;
                                 const muted = (!!hoverPool.value && hoverPool.value !== p.id)
@@ -416,7 +562,7 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
                                             target cannot move out from under a still pointer. */}
                                         <polyline points={pts} fill="none" stroke="transparent" stroke-width="10"
                                             vector-effect="non-scaling-stroke" class="rc-hit"
-                                            onPointerEnter={(e: PointerEvent) => { enterPool(p); trackCursor("overlay")(e); }}
+                                            onPointerEnter={(e: PointerEvent) => { enterPool({ ...p, color: poolColor(pi, pools.length) }); trackCursor("overlay")(e); }}
                                             onPointerLeave={() => leavePool()} />
                                         {/* The visible line takes NO pointer events. Painted on top of the hit
                                             target, it would take them by default — and since it THICKENS on
@@ -442,9 +588,17 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
                     // NO `tt` class here: this key opens the cursor-following pool tip (below), and a static
                     // popup as well meant two tooltips for one hover. The pool tip carries the same figure
                     // plus what is resident, so the static one had nothing left to add.
+                    // CLICK toggles the line, the way clicking a series in Grafana does — and the way a model
+                    // row already works here. Two different "off" states share the styling deliberately: a
+                    // pool you switched off, and one whose models you have ALL hidden, both read as a line
+                    // that is absent by choice rather than by measurement.
                     <span class={`rc-key${(hoverModel.value && !p.bandsOf(latest).some((b) => b.model === hoverModel.value))
-                            || (hoverPool.value && hoverPool.value !== p.id) ? " away" : ""}${allHidden(p) ? " off" : ""}`} key={p.id}
-                        onPointerEnter={(e: PointerEvent) => { enterPool(p); trackCursor("overlay")(e); }} onPointerLeave={() => leavePool()}>
+                            || (hoverPool.value && hoverPool.value !== p.id) ? " away" : ""}${allHidden(p) || hiddenPools.value.has(p.id) ? " off" : ""}`} key={p.id}
+                        role="button" tabIndex={0} aria-pressed={!hiddenPools.value.has(p.id)}
+                        title={hiddenPools.value.has(p.id) ? `Show ${p.name}` : `Hide ${p.name}`}
+                        onClick={() => togglePool(p.id)}
+                        onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); togglePool(p.id); } }}
+                        onPointerEnter={(e: PointerEvent) => { enterPool({ ...p, color: poolColor(pi, pools.length) }); trackCursor("overlay")(e); }} onPointerLeave={() => leavePool()}>
                         <i class="rc-swatch" style={{ background: poolColor(pi, pools.length) }} />
                         {p.name} {pct(frac(latest, p))}
                     </span>

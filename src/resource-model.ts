@@ -756,7 +756,7 @@ export function wheelScrubFraction(deltaX: number, deltaY: number, deltaMode: nu
  *  fraction is spent across the segments in those proportions and then interpolated INSIDE the one it lands
  *  in. A fraction landing in a gap between segments resolves to that gap's near edge: nothing was measured
  *  there, so the honest answer is the last moment that was. */
-export function timeAtFraction(runs: { t: number }[][], frac: number): number | null {
+export function locateFraction<T extends { t: number }>(runs: T[][], frac: number): { run: T[]; within: number } | null {
     const live = runs.filter((r) => r.length > 0);
     if (!live.length) return null;
     const weights = live.map((r) => Math.max(1, r.length));
@@ -765,14 +765,37 @@ export function timeAtFraction(runs: { t: number }[][], frac: number): number | 
     const f = Math.min(1, Math.max(0, frac));
     for (let i = 0; i < live.length; i++) {
         const share = weights[i] / total;
-        if (f <= acc + share || i === live.length - 1) {
-            const within = share > 0 ? Math.min(1, Math.max(0, (f - acc) / share)) : 0;
-            const from = live[i][0].t, to = live[i].at(-1)!.t;
-            return from + (to - from) * within;
-        }
+        if (f <= acc + share || i === live.length - 1)
+            return { run: live[i], within: share > 0 ? Math.min(1, Math.max(0, (f - acc) / share)) : 0 };
         acc += share;
     }
-    return live.at(-1)!.at(-1)!.t;
+    return { run: live.at(-1)!, within: 1 };
+}
+
+export function timeAtFraction(runs: { t: number }[][], frac: number): number | null {
+    const at = locateFraction(runs, frac);
+    if (!at) return null;
+    // Interpolate along the INDEX axis, not between the segment's first and last stamps. A polyline places
+    // sample i at i/(n-1) of the width, so samples are evenly spaced by POSITION and not by time; reading the
+    // label off the elapsed time assumes a fixed cadence. The event stream's cadence is adaptive by design
+    // (1s while a load is in flight, 15s idle), so under it the two mappings diverge, and the crosshair would
+    // name an instant several seconds from the datapoint drawn beneath it.
+    const { run, within } = at;
+    if (run.length === 1) return run[0].t;
+    const pos = within * (run.length - 1);
+    const i = Math.min(run.length - 2, Math.floor(pos));
+    return run[i].t + (run[i + 1].t - run[i].t) * (pos - i);
+}
+
+/** The DATAPOINT under a fraction of the plot's width — what a Grafana-style hover reads, as opposed to the
+ *  interpolated instant the crosshair labels. It snaps to a real sample rather than interpolating between
+ *  two, because the values in the tooltip are measurements: a figure halfway between two polls was never
+ *  observed, and presenting one as though it had been is the whole failure mode a memory panel must not have. */
+export function sampleAtFraction<T extends { t: number }>(runs: T[][], frac: number): T | null {
+    const at = locateFraction(runs, frac);
+    if (!at) return null;
+    const { run, within } = at;
+    return run[Math.round(within * (run.length - 1))] ?? null;
 }
 
 /** What the lane draws. Everything is shown by default; this is how a busy session is narrowed.

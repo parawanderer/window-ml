@@ -13,6 +13,7 @@ import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
 import { useTipPlacement } from "./use-tip";
+import { hhmmss } from "./timestamps";
 import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels } from "./store";
 import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
@@ -158,6 +159,17 @@ export const toggleHidden = (model: string): void => {
     const next = new Set(hiddenModels.value);
     next.has(model) ? next.delete(model) : next.add(model);
     hiddenModels.value = next;
+};
+
+/** Pools (a card, or the host) the user has clicked OFF in the Overview legend. The legend key already IS the
+ *  line's identity — its swatch, its name, its figure — so making it the switch adds an affordance rather than
+ *  a control, which is the same bargain the model rows make. Session-only, like {@link hiddenModels}: it is a
+ *  reading choice about what is on screen now, not a setting about the box. */
+export const hiddenPools = signal<Set<string>>(new Set());
+export const togglePool = (id: string): void => {
+    const next = new Set(hiddenPools.value);
+    next.has(id) ? next.delete(id) : next.add(id);
+    hiddenPools.value = next;
 };
 
 // Poll Ollama's resident-model set (/api/ps) into the shared signals, for BOTH
@@ -431,7 +443,12 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
             ) : null}
             {m.contextLength ? (
                 <span class={tips ? "tt vram-ctx" : "vram-ctx"} {...yieldTip}>{fmtCtx(m.contextLength)}
-                    {tips ? <span class="tt-pop left above" role="tooltip">Loaded with a {m.contextLength.toLocaleString()}-token context window. Ollama preallocates the KV cache for the FULL window, even when your prompts are short. Load with a smaller <code>num_ctx</code> to reclaim it.</span> : null}
+                    {/* The chip's figure LEADS, then the exact count. They are the same number — 262,144 tokens
+                        is 256K, binary, the way every context window is sized — but a chip reading "256K" beside
+                        a tooltip reading "262,144" looks like the panel contradicting itself, and the reader has
+                        no way to know which one to trust. Saying both, in that order, is what reconciles them.
+                        Same rule as the memory figures: the round number is the binary one. */}
+                    {tips ? <span class="tt-pop left above" role="tooltip">Loaded with a {fmtCtx(m.contextLength)}-token context window — {m.contextLength.toLocaleString()} tokens exactly ({fmtCtx(m.contextLength)} is binary, like memory sizes). Ollama preallocates the KV cache for the FULL window, even when your prompts are short. Load with a smaller <code>num_ctx</code> to reclaim it.</span> : null}
                 </span>
             ) : null}
             {ttl ? (
@@ -448,10 +465,10 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
 /** The pool (card or host) currently hovered in the chart, and which models sit on it. The model rows below
  *  ARE the legend, so rows not on that pool grey out — reusing what is already on screen instead of injecting
  *  a row that shifts the layout under the cursor. */
-// WHICH pool is hovered, not what it held when you got there. The numbers are recomputed from the newest
-// sample every render (poolFacts) — the panel polls every 2s, and a tooltip that froze at hover time would
-// quietly disagree with the chart moving underneath it.
-export const poolHover = signal<{ id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] } | null>(null);
+// WHICH pool is hovered, not what it held when you got there — the pool is identified by the LINE, while the
+// figures come from the DATAPOINT the pointer is on (see PoolTip). Keeping the reading out of this signal is
+// what lets the tip follow the cursor along a line and report a different instant at each x.
+export const poolHover = signal<{ id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] } | null>(null);
 /** What a hovered pool holds RIGHT NOW: total in use, and each consumer that has any of it. */
 export function poolFacts(bands: Band[]): { used: number; consumers: { label: string; bytes: number; model?: string }[] } {
     return {
@@ -687,6 +704,29 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
 /** What a hovered model row is, following the cursor. The single VRAM total hides how a model is PLACED — the
  *  same 18 GiB reads identically whether it sits on one card, is split across two, or is partly offloaded to
  *  system RAM, and that last one is why a "GPU" model can still be slow. */
+/** Which datapoint of the no-ceiling fallback line the pointer is on, and where the pointer is. */
+export const sparkAt = signal<{ i: number; x: number; y: number } | null>(null);
+
+/** The fallback line's readout: what was in use, and when. There is no ceiling on this server, so there is no
+ *  share to report — saying "80%" of an unknown total is the exact invention the no-ceiling fallback exists to
+ *  refuse. The absolute figure and the instant are what this view genuinely knows. */
+function SparkTip({ series, history }: { series: number[]; history: { t: number; models: Record<string, number> }[] }) {
+    const at = sparkAt.value;
+    if (!at || !series.length) return null;
+    const i = Math.min(series.length - 1, Math.max(0, at.i));
+    const t = history[i]?.t;
+    const { ref, style } = useTipPlacement({ x: at.x, y: at.y, w: typeof window !== "undefined" ? window.innerWidth : 1e4 });
+    const ago = t ? Math.max(0, Date.now() - t) : 0;
+    return (
+        <div class="rc-tip rc-tip-pool" role="tooltip" ref={ref} style={style}>
+            <div class="rc-tip-line"><span class="rc-tip-name">in use</span>
+                <span class="rc-tip-size">{formatBytes(series[i] * 1e9)}</span></div>
+            {t ? <div class="rc-tip-line rc-tip-when"><span>{hhmmss(t)}</span>
+                <span class="rc-tip-ago">{ago < 1500 ? "now" : `${Math.round(ago / 1000) < 60 ? `${Math.round(ago / 1000)}s` : `${Math.round(ago / 60000)}m`} ago`}</span></div> : null}
+        </div>
+    );
+}
+
 function RowTip({ sample }: { sample: ResourceSample | null }) {
     const name = hoverModel.value, at = rowTipAt.value;
     if (!name || !at || !sample || rowTipSuppressed.value) return null;
@@ -724,7 +764,10 @@ export function VramPanel() {
     // Per-model snapshots (not pre-summed totals) so hiding/showing a model
     // redraws the WHOLE line against the current visibility set, not just new
     // points. (This is also the per-model VRAM log panel-v2 will build on.)
-    const [history, setHistory] = useState<Record<string, number>[]>([]);
+    // Each snapshot carries WHEN it was taken. The line is a history, so a hover on it has to be able to say
+    // which instant it is reading — without the stamp the fallback view is the one variant of the chart that
+    // could show a figure and not what time it was measured.
+    const [history, setHistory] = useState<{ t: number; models: Record<string, number> }[]>([]);
     const sumVisible = (snap: Record<string, number>) =>
         Object.entries(snap).reduce((s, [m, v]) => s + (hidden.has(m) ? 0 : v), 0);
     // Tick once a second so the TTL countdowns tick down smoothly between the
@@ -778,7 +821,7 @@ export function VramPanel() {
         if (!loaded) return;
         const snap: Record<string, number> = {};
         for (const m of loaded) snap[m.model] = m.vramGB || 0;
-        setHistory(h => [...h, snap].slice(-VRAM_HISTORY));
+        setHistory(h => [...h, { t: Date.now(), models: snap }].slice(-VRAM_HISTORY));
     }, [loaded]);
 
     const evict = (model?: string) =>
@@ -876,7 +919,7 @@ export function VramPanel() {
     })();
     // Recompute every point's visible-total each render, so toggling redraws the
     // full line retroactively (not just going forward).
-    const series = history.map(sumVisible);
+    const series = history.map((h) => sumVisible(h.models));
     const W = 240, H = 34;
     const yMax = Math.max(1, ...series) * 1.15;
     const pts = series.length > 1
@@ -942,9 +985,30 @@ export function VramPanel() {
                    passthrough): capacity is UNKNOWN, so fall back to the old auto-scaled shape rather than
                    drawing a ceiling we don't have. */
                 : <>
-                    <svg class="vram-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-                        {pts ? <polyline points={pts} fill="none" stroke="var(--accent)" stroke-width="1.5" /> : null}
-                    </svg>
+                    {/* Hoverable like every other variant. This one has no ceiling to be a share OF, so the
+                        readout is the absolute figure and the instant — which is all this view ever knew. */}
+                    <div class="vram-spark-wrap"
+                        onPointerMove={(e: PointerEvent) => {
+                            const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                            const f = Math.min(1, Math.max(0, (e.clientX - box.left) / Math.max(1, box.width)));
+                            sparkAt.value = series.length > 1
+                                ? { i: Math.round(f * (series.length - 1)), x: e.clientX, y: e.clientY } : null;
+                        }}
+                        onPointerLeave={() => (sparkAt.value = null)}>
+                        <svg class="vram-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                            {pts ? <polyline points={pts} fill="none" stroke="var(--accent)" stroke-width="1.5" /> : null}
+                            {sparkAt.value && series.length > 1 ? (
+                                <>
+                                    <line class="vram-spark-rule" x1={(sparkAt.value.i / (series.length - 1)) * W} x2={(sparkAt.value.i / (series.length - 1)) * W}
+                                        y1={0} y2={H} vector-effect="non-scaling-stroke" />
+                                    <circle class="vram-spark-dot" r="3" vector-effect="non-scaling-stroke"
+                                        cx={(sparkAt.value.i / (series.length - 1)) * W}
+                                        cy={H - (series[sparkAt.value.i] / yMax) * H} />
+                                </>
+                            ) : null}
+                        </svg>
+                    </div>
+                    <SparkTip series={series} history={history} />
                     {/* An unexplained plain line just looks like the panel regressed to an older design. Say
                         what is missing and why, so a shape with no ceiling is legible as a degraded view. */}
                     <span class="tt vram-nocap">no ceiling — capacity unknown
