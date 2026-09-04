@@ -537,7 +537,13 @@ export function RenderPanel({ d, marks }: { d: RenderDescriptor; marks?: [number
             return <div class={`r-image${th.onPointerEnter ? " r-hoverable" : ""}`} {...th}>
                 <ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
         }
-        case "code": return <Code text={d.text} lang={d.lang} format={d.format} />;
+        case "code": return (<>
+            {/* Said out loud, because the rendered text is not always what the caller typed: `exec` expands
+                pointer macros before running, so a reader comparing this against the raw args would
+                otherwise conclude the log is lying to them. */}
+            {d.note ? <div class="rp-note">{d.note}</div> : null}
+            <Code text={d.text} lang={d.lang} format={d.format} />
+        </>);
         case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;

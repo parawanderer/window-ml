@@ -812,7 +812,11 @@ export interface TablePreview { name: string; source: TableSource; columns?: str
  *  than pinning it. Adding to it is NOT a breaking export change. */
 export type RenderDescriptor = (
     | { type: "image"; src: string; label?: string }
-    | { type: "code"; text: string; lang?: string; format?: boolean }   // format: let the sidebar beautify the source (e.g. exec's JS)
+    // `note`: a one-line caption for when the rendered text is not literally what the caller wrote — `exec`
+    // uses it to say that pointer macros were expanded, so a reader comparing this against the raw args does
+    // not conclude the log is lying to them. `marks`: byte ranges in `text` a renderer may highlight, each
+    // with the original it replaced (hover fodder).
+    | { type: "code"; text: string; lang?: string; format?: boolean; note?: string; marks?: { start: number; end: number; from: string }[] }
     | { type: "table"; columns: string[]; rows: (string | number)[][] }
     | { type: "keyval"; pairs: [string, string][] }
     | { type: "elements"; items: { path: string; text?: string; index?: number }[] }
@@ -1923,8 +1927,14 @@ export interface MlApi {
      *  made it. Reaches the FULL capture, not the truncated copy the model was shown. `pipe` reduces it first,
      *  as a dialect string (".rows | head 5") or an array with one stage per entry ([".rows", "head 5"]) —
      *  an array entry is never re-split, so use it when a stage holds a `|` (["grep -E error|warn"]). Run-bound like
-     *  `ml.answer`: live inside a tool call (an approved `exec`), throws from the console outside a run. */
-    dereference(ref: string, options?: { pipe?: string | string[] | null }): Promise<DerefValue>;
+     *  `ml.answer`: live inside a tool call (an approved `exec`), throws from the console outside a run.
+     *
+     *  SYNCHRONOUS inside `exec` for a reference written LITERALLY — `@tool:abc1234`, or the same string
+     *  passed directly — because every such reference is resolved before the script starts. So
+     *  `@tool:abc1234.length` is a number, not `undefined` on a promise. A COMPUTED reference (one built at
+     *  runtime) or a call with `pipe` cannot be known in advance and stays a promise. `await` is safe on
+     *  both, since awaiting a non-promise is a no-op — so if in doubt, await. */
+    dereference(ref: string, options?: { pipe?: string | string[] | null }): DerefValue | Promise<DerefValue>;
     /** The TS-like type of some JSON — one document's shape, or the JOINED type of several. Same-shaped
      *  documents collapse into one object with optional keys where they differ; different ones stay a
      *  union. Arguments are awaited, so `ml.schema(ml.dereference(a), ml.dereference(b))` works. */

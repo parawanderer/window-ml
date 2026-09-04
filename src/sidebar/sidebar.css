@@ -1853,3 +1853,7 @@ html[data-surface="card"] .appr-btn.no:hover {
     100% { background: transparent; } }
 .astep-pulse { animation: astepPulse 1.4s ease-out; }
 @media (prefers-reduced-motion: reduce) { .astep-pulse { animation: none; outline: 2px solid var(--ok); } }
+
+/* A caption above a rendered block saying it is not literally what the caller wrote — `exec` uses it for
+   expanded pointer macros. Quiet: it explains the render, it is not part of it. */
+.rp-note { font-size: .85em; color: var(--fg-dim); margin: 0 0 4px; font-style: italic; }

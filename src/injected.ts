@@ -35,6 +35,7 @@ import type {
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } from "./contract";
 import { evalReadonly } from "./readonly-exec";
+import { expandPointers } from "./pointer-macro";   // `@tool:` → a real dereference call, before the dialect sees it
 import { htmlToMarkdown } from "./html-to-md";
 import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine } from "./dom";
@@ -164,7 +165,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // answer what the caller used to have to sniff out of the bytes. `.pipe()` re-reads the SAME
             // pointer with more stages rather than piping the text it already holds — the store keeps the
             // fuller capture, so going back to it can return more than this text has.
-            const again = (stages: string | string[]): Promise<DerefValue> => (window.ml.dereference(ref, { pipe: stages }));
+            // Always a promise here: a `pipe` re-read cannot be pre-resolved (the stages are only known now),
+            // so the sync path in `exec` deliberately falls through to this one. Wrapped so the type is the
+            // promise it actually is rather than the union the declaration allows.
+            const again = (stages: string | string[]): Promise<DerefValue> => Promise.resolve(window.ml.dereference(ref, { pipe: stages }));
             return new DerefText(read.value, read.meta, again);
         },
         /**
@@ -1050,7 +1054,16 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return null;
                     if (outputCapEscalated("exec", args)) return null;   // a raised output cap must hit the human gate, never auto-approve
                     try {
-                        const ro = await evalReadonly((args as { js: string }).js, document, this, makeAnswerFacade(answerSet, elLine));
+                        // Expand pointer macros BEFORE the dialect sees the source. `@tool:abc` is not
+                        // JavaScript, so the tokenizer rejects it and the whole survey falls through to the
+                        // approval gate — while the same read spelled `ml.dereference("@tool:abc")` is free,
+                        // since `dereference` is in ML_READONLY_METHODS. Without this the macro would teach
+                        // the model the MORE expensive spelling of a read it is allowed to do for nothing.
+                        //
+                        // Nothing is pre-hydrated here: the dialect auto-awaits a facade call, so a pointer
+                        // is a value on this path too — the same semantics, arrived at differently.
+                        const { code: roSrc } = expandPointers((args as { js: string }).js);
+                        const ro = await evalReadonly(roSrc, document, this, makeAnswerFacade(answerSet, elLine));
                         const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
                         const { in: renderIn, out: renderOut } = descriptorFor(byName[name], { result, elements }, args);
                         // Cached ml.fetch URLs this survey re-read → a "reused a grant you approved" note (transparency).

@@ -1106,3 +1106,29 @@ test("ADVERSARIAL: the result's own METHODS stay out of dialect (a name grant wo
     // wrapper reachable here, and it must stay a plain read.
     assert.equal((await runS(`return ml.dereference("@tool:a").toString()`)).value, '{"id":1,"name":"a"}');
 });
+
+// ---- the @tool: macro is FREE in the dialect, because a pointer read already is ----
+
+test("a pointer read stays in-dialect once the macro is expanded", async () => {
+    // The failure this guards: `@tool:abc` is not JavaScript, so the tokenizer rejects it and the whole
+    // survey falls through to the approval gate — while `ml.dereference("@tool:abc")` is free, since
+    // `dereference` is in ML_READONLY_METHODS. Expanding first is what stops the macro teaching the model
+    // the more expensive spelling of a read it may do for nothing.
+    const { expandPointers } = await import("../src/pointer-macro.ts");
+    const { code } = expandPointers("return @tool:a1b2c3f.length");
+    assert.equal(code, 'return ml.dereference("@tool:a1b2c3f").length');
+    // The dialect auto-awaits a facade call, so the pointer is a VALUE here too — the same semantics exec
+    // reaches by pre-resolving, arrived at a different way.
+    assert.equal((await run(code)).value, "VALUE(@tool:a1b2c3f)".length);
+});
+
+test("the macro cannot smuggle a non-readonly method past the dialect", async () => {
+    // The expansion is a fixed template naming ONE method; nothing in a payload chooses which.
+    const { expandPointers } = await import("../src/pointer-macro.ts");
+    const { code } = expandPointers(String.raw`return @tool:"x\") ; ml.pythonExec(\"1\") ; ("`);
+    // Either it is refused, or it resolves to the harmless read — never the smuggled call.
+    let value = null;
+    try { value = (await run(code)).value; } catch { value = "refused"; }
+    assert.ok(value === "refused" || String(value).startsWith("VALUE("), `unexpected: ${value}`);
+    assert.ok(!ML_CALLS.some(([m]) => m === "pythonExec"), "pythonExec was never reached");
+});
