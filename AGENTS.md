@@ -1410,6 +1410,15 @@ drift a normalized model exists to prevent. **The schema pins frame SHAPES, neve
 last and mandatory", "output frames are deltas", "a closed connection means cancel" live in the spec.
 The generator is now TABLE-DRIVEN (`SCHEMAS` in `scripts/gen-export-schema.mjs`) — three documents from one
 line scanner, because two copies of a scanner drift exactly the way a generated schema is meant to prevent.
+**`createToolStream`** is the contract's reference reader: NDJSON chunks in, `{output, marks, events,
+result}` out, shared so the OpenWebUI reader and a future MCP one differ only in where frames come FROM.
+It buffers a partial trailing line (a frame split across two network reads is the failure that only shows
+up on a slow link), accepts a final line with no newline (a server ending without one is not malformed, and
+dropping its `result` would turn a completed call into a failure), ignores an unreadable or UNKNOWN line
+rather than abandoning the rest, and treats **a stream that ends with no `result` frame as a TRANSPORT
+FAILURE** — partial output reported as a tool that returned nothing is a wrong answer dressed as an empty
+one, and the model cannot tell the difference. Not wired to anything yet: the privileged fetch, the
+approval gate and the dispatch phase are the next slice.
 
 A patched Ollama behind a STOCK OpenWebUI is fine — the `/ollama/*` passthrough is generic, so the
 OpenWebUI fork is not needed for the capacity work.
