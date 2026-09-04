@@ -6,13 +6,14 @@
 import { signal } from "@preact/signals";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LoadedModel, VisionSupport, LexicalMetric } from "../contract";
+import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LoadedModel, VisionSupport, LexicalMetric, ServerTool } from "../contract";
 import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows, generatesText, producesEmbeddings } from "../contract";
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
     MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS, modelKinds, embedDims } from "./store";
 import { truncate } from "./format";
+import { ToolDefsView } from "./agent-detail";   // the SAME viewer an agent run uses for its local toolset
 import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
 import { IconCheck } from "./icons";
 
@@ -41,6 +42,68 @@ function Section({ id, title, children }: { id: string; title: ComponentChildren
             <summary class="set-group">{title}</summary>
             {children}
         </details>
+    );
+}
+
+/**
+ * What server-side tools this key can reach, and their function schemas.
+ *
+ * Read-only, and the only place to see them without calling `ml.serverTools()` and reading JSON. It reuses
+ * `ToolDefsView` — the same viewer an agent run's "agent options" block uses for the LOCAL toolset — so a
+ * remote tool and a local one are read the same way rather than in two dialects.
+ *
+ * Fetched on EXPAND, not on mount: it is a network call to the backend, and a settings panel opening should
+ * not make one for a section nobody looked at.
+ */
+function ServerToolsSection() {
+    const [state, setState] = useState<{ status: "idle" | "loading" | "done" | "error"; tools: ServerTool[]; error?: string }>({ status: "idle", tools: [] });
+
+    const load = () => {
+        if (state.status === "loading") return;
+        setState((v) => ({ ...v, status: "loading" }));
+        chrome.runtime.sendMessage({ type: "LIST_SERVER_TOOLS", payload: {} }, (res?: { data?: ServerTool[]; error?: string }) => {
+            const err = chrome.runtime.lastError?.message || res?.error;
+            if (err) return setState({ status: "error", tools: [], error: err });
+            setState({ status: "done", tools: Array.isArray(res?.data) ? res!.data! : [] });
+        });
+    };
+
+    // One tool per FUNCTION, which is also how `ml.agent({serverTools})` exposes them — so what you read
+    // here is what a run would actually be given, not a bundle summary it has to be unpacked from.
+    const defs = state.tools.flatMap((b) => (b.functions || []).map((f) => ({
+        name: `${b.id}__${f.name}`,
+        description: f.description || "",
+        parameters: f.parameters as never,
+        requiresApproval: true,   // always: their arguments leave this machine
+        vision: false,
+    })));
+
+    return (
+        <Section id="servertools" title="Server-side tools">
+            <div class="set-row col">
+                <div class="hint">
+                    Tools configured in OpenWebUI that a run can be given with <code>serverTools</code>, and that
+                    you can call from the console as <code>ml.dynamicTools.&lt;bundle&gt;.&lt;fn&gt;()</code>. They
+                    run on the server, so their arguments leave this machine and every call needs approval.
+                </div>
+                <div class="set-row">
+                    <button class="raw-btn" onClick={load} disabled={state.status === "loading"}>
+                        {state.status === "loading" ? "loading…" : state.status === "done" ? "refresh" : "list server tools"}
+                    </button>
+                    {state.status === "done"
+                        ? <span class="hint">{state.tools.length} bundle{state.tools.length === 1 ? "" : "s"}, {defs.length} function{defs.length === 1 ? "" : "s"}</span>
+                        : null}
+                </div>
+                {/* An empty list is not an error and must not read as one: a bare-Ollama backend has no such
+                    concept, and a stock OpenWebUI has none configured. Say which. */}
+                {state.status === "error"
+                    ? <div class="hint err">could not reach the backend: {state.error}</div>
+                    : state.status === "done" && !defs.length
+                        ? <div class="hint">none — this backend has no server-side tools configured (a bare Ollama endpoint has no such concept).</div>
+                        : null}
+                {defs.length ? <ToolDefsView tools={defs} /> : null}
+            </div>
+        </Section>
     );
 }
 
@@ -924,6 +987,10 @@ export function Settings() {
             </> : null}
 
             {tab === "advanced" ? <>
+
+                {/* A read-only probe of the BACKEND, like the Python sandbox one below it. */}
+
+                <ServerToolsSection />
                 <Section id="javascript" title="JavaScript">
                 <div class="set-note">Auto-approve <b>read-only</b> <code>exec</code> surveys (querySelectorAll → filter → map, no mutation). They run through a mediated interpreter that never touches <code>window</code>/<code>fetch</code> and never <code>eval</code>s a string (so it also works on Trusted-Types pages). Anything mutating or unrecognised still asks for approval.</div>
                 <label class="set-check">
