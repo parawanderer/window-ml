@@ -175,3 +175,118 @@ export function anchorFor(atMs: number | undefined, arrivedAt: number): number |
     if (atMs == null || !Number.isFinite(atMs)) return null;
     return arrivedAt - atMs;
 }
+
+
+/* ----------------------------- reading a stream ----------------------------- */
+
+/**
+ * One NDJSON line to a frame, or null for anything that is not one.
+ *
+ * Null rather than throwing, for blank lines, keep-alives and whatever a proxy inserts: a stream is a
+ * sequence of independent lines and one unreadable line is not a reason to abandon the ones after it.
+ * A line that parses but is not a frame we know is also null — the union is `@unstable`, so an unfamiliar
+ * `type` is a version skew rather than corruption.
+ */
+export function parseFrame(line: string): ToolFrame | null {
+    const t = line.trim();
+    if (!t) return null;
+    let obj: unknown;
+    try { obj = JSON.parse(t); } catch { return null; }
+    if (!obj || typeof obj !== "object") return null;
+    const f = obj as { type?: unknown };
+    if (f.type === "output" || f.type === "event" || f.type === "result") return obj as ToolFrame;
+    return null;
+}
+
+/** What a stream has produced so far. */
+export interface ToolStreamState {
+    /** Every `output` delta, appended in order. */
+    output: string;
+    /** `[offset in output, epoch ms]` per chunk, as the rest of the codebase spells stream timings. Only
+     *  chunks whose producer stamped an offset get a mark; the UI never invents one for the rest. */
+    marks: [number, number][];
+    /** Structural frames, in order. Deliberately kept apart from `output`: they are not text, and folding
+     *  them in is how UI plumbing ends up in something a model reads. */
+    events: ToolEventFrame[];
+    /** The terminal frame, once it arrives. */
+    result?: ToolResultFrame;
+}
+
+/** How a stream ended. A `result` frame is the only successful ending. */
+export type ToolStreamEnd =
+    | { ok: true; result: ToolResultFrame; state: ToolStreamState }
+    | { ok: false; transportError: string; state: ToolStreamState };
+
+/**
+ * Fold an NDJSON tool stream into output, marks, events and a result.
+ *
+ * Stateful because it has to be: chunks arrive split at arbitrary byte boundaries, offsets are anchored
+ * against the first stamped frame, and marks are positions in text that is still growing. Shared rather
+ * than written per adapter — the OpenWebUI reader and an MCP one differ in where frames come FROM, and
+ * agreeing on what a stream MEANS is the whole point of the frame model.
+ *
+ * @param onFrame called for each frame as it completes, for a caller streaming live
+ */
+export function createToolStream(onFrame?: (frame: ToolFrame, at: number) => void) {
+    const state: ToolStreamState = { output: "", marks: [], events: [] };
+    let buffer = "";
+    let anchor: number | null = null;
+    let ended = false;
+
+    const take = (frame: ToolFrame, arrivedAt: number): void => {
+        if (frame.type === "result") { state.result = frame; ended = true; onFrame?.(frame, arrivedAt); return; }
+        // The first stamped frame fixes the origin every later offset is measured against.
+        if (anchor == null) anchor = anchorFor(frame.atMs, arrivedAt);
+        const at = anchorOffset(anchor, frame.atMs, arrivedAt);
+        if (frame.type === "event") { state.events.push(frame); onFrame?.(frame, at); return; }
+        // A mark only where the producer actually stamped one: an offset nobody reported is not a time.
+        if (frame.atMs != null && Number.isFinite(frame.atMs)) state.marks.push([state.output.length, at]);
+        state.output += frame.text;
+        onFrame?.(frame, at);
+    };
+
+    return {
+        /**
+         * Feed a chunk of the response body. Buffers a partial trailing line, so a frame split across two
+         * network reads is not lost — the failure this exists to prevent, and one that only shows up under
+         * load or on a slow link.
+         *
+         * @returns the frames completed by this chunk
+         */
+        push(chunk: string, arrivedAt: number = Date.now()): ToolFrame[] {
+            buffer += chunk;
+            const out: ToolFrame[] = [];
+            let nl: number;
+            while ((nl = buffer.indexOf("\n")) >= 0) {
+                const line = buffer.slice(0, nl);
+                buffer = buffer.slice(nl + 1);
+                const frame = parseFrame(line);
+                if (frame) { take(frame, arrivedAt); out.push(frame); }
+            }
+            return out;
+        },
+        /**
+         * The stream is over. A trailing line with no newline is still a frame — a server that ends without
+         * one is not malformed, and dropping its `result` would turn a completed call into a transport
+         * failure.
+         *
+         * A stream that ends with no `result` frame IS a transport failure, and says so rather than
+         * returning what it collected. Reporting the partial output as a tool that returned nothing is a
+         * wrong answer dressed as an empty one, and the model has no way to tell the difference.
+         */
+        end(arrivedAt: number = Date.now()): ToolStreamEnd {
+            const tail = parseFrame(buffer);
+            buffer = "";
+            if (tail) take(tail, arrivedAt);
+            if (state.result) return { ok: true, result: state.result, state };
+            return {
+                ok: false,
+                transportError: ended
+                    ? "the tool stream ended after its result frame in an unreadable state"
+                    : `the tool stream ended without a result frame after ${state.output.length} characters of output`,
+                state,
+            };
+        },
+        state: () => state,
+    };
+}
