@@ -392,26 +392,59 @@ export interface ExportStep {
  *    bookkeeping on every call, which is floored out.
  *  - Delegated sub-calls (a vision reader) are separate events carrying {@link ExportEvent.parent}, so a
  *    different model's work is attributable instead of hidden inside the step that spawned it.
+ *  - A STREAMED call's generation is subdivided further — thinking, tool-call fragments, answering, in the
+ *    order they actually happened. See {@link ExportEventPhase}.
+ *
+ * Finished work by default. A snapshot of a session still running can also carry the work IN FLIGHT — see
+ * `ExportProvenance.includeInFlight` and {@link ExportEvent.open} — which is what a live dashboard wants; a
+ * document of a completed run has none, because a span whose right edge is "when the file was written" is not
+ * a measurement of anything.
  *
  * The panel's own lane draws EVICTIONS too, read off consecutive `/api/ps` polls. Those are facts about the
  * BOX rather than about a session — nothing in a session records them — so they are not exported here.
  */
+/**
+ * What a timeline event IS.
+ *
+ * `run` the whole session · `gen` one model call · `tool` a tool step (with {@link ExportEvent.phases}) ·
+ * `embed` a delegated sub-call · `load` a model arriving in memory. `evict`, `error` and `note` are drawn by
+ * the resource panel but are not derivable from a session, so they do not appear in a session export.
+ *
+ * @unstable This set GROWS — the timeline is a general format, not a session-specific one, and other
+ * producers (a benchmark sweep, say) time spans a session has no concept of. Switch on the kinds you know
+ * and fall through on the rest; do NOT write an exhaustive switch that treats an unknown kind as an error.
+ * The generated schema keeps these values as an enum for codegen while still accepting others, so an added
+ * kind cannot fail a validator built against an older version.
+ */
+export type ExportEventKind =
+    | "run" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
+
 export interface ExportEvent {
-    /**
-     * `run` the whole session · `gen` one model call · `tool` a tool step (with {@link ExportEvent.phases})
-     * · `embed` a delegated sub-call · `load` a model arriving in memory. The remaining kinds the panel
-     * models (`evict`, `error`, `note`) are not derivable from a session and do not appear in an export;
-     * they are listed so a consumer's switch is written against the whole set.
-     */
-    kind: "run" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
+    /** What kind of thing happened — see {@link ExportEventKind}, which GROWS. */
+    kind: ExportEventKind;
     /** Human-readable, as the panel labels it — the model id for a generation, the tool name for a step. */
     label: string;
     /** When it BEGAN. Volatile. */
     at: IsoTimestamp;
-    /** When it ended. Absent means an instant (a point on the timeline, not a span). Volatile. */
+    /** When it ended. Absent on an instant (a point on the timeline, not a span) and on an event that had
+     *  not finished — {@link ExportEvent.open} tells those two apart. Volatile. */
     endedAt?: IsoTimestamp;
-    /** `endedAt - at`, which is the number a timeline is usually read for. Absent on an instant. Volatile. */
+    /** `endedAt - at`, which is the number a timeline is usually read for. Absent on an instant, and on an
+     *  open event, which has {@link ExportEvent.elapsedMs} instead. Volatile. */
     durationMs?: number;
+    /**
+     * This had NOT FINISHED when the document was written — a model still generating, a tool still running, a
+     * person still at an approval gate. Present only in a snapshot of a live session (see
+     * `ExportProvenance.includeInFlight`); a document of finished work never contains one.
+     *
+     * It is a separate flag rather than a missing `endedAt` because that spelling already means an INSTANT,
+     * and the two are opposites: one is a moment with no duration, the other a duration with no end yet.
+     */
+    open?: true;
+    /** How long an {@link ExportEvent.open} event had been going, measured to the document's `exportedAt`.
+     *  Deliberately NOT `durationMs`: that field means a measured length, and a consumer summing the two
+     *  together would be adding a fact to a reading that is still moving. Volatile. */
+    elapsedMs?: number;
     /** The model that did the work, where one did. A sub-call names the READER, not the driver. */
     model?: string;
     /**
@@ -436,9 +469,39 @@ export interface ExportEvent {
     cost?: ExportEventCost;
 }
 
+/**
+ * A stretch WITHIN one event, by what was happening during it.
+ *
+ * `model` the model working · `wait` a human at the approval gate · `tool` the call running.
+ *
+ * `think` / `answer` / `call` SUBDIVIDE the model's own time, by which channel it was emitting on. They
+ * appear only for a STREAMED call, where that is observable line by line; a non-streamed response is one
+ * object with one duration, and splitting it by text length would be inventing a boundary. `model` is
+ * therefore both the unsplit fallback and, on a streamed call, the stretch before the first token — prompt
+ * eval, queue and network, which is the model's time but none of its channels.
+ *
+ * @unstable This set GROWS, for the same reason {@link ExportEventKind} does: a phase is a distinction
+ * someone found worth drawing, and there are more of them than are drawn today.
+ *
+ * The one already in sight is how a tool was DISPATCHED — in process, or by calling an HTTP endpoint that
+ * evaluates it. Note what that is and is not: it is a fact about our own dispatch, not about where the work
+ * ended up. An in-process tool can itself attach to something outside the web engine (a VM or container over
+ * IPC), and we cannot see that; what we can always answer is whether WE made an HTTP request to evaluate it.
+ * Claiming "local" would be claiming the part we cannot observe.
+ *
+ * It is worth a phase of its own because equal spans mean different things: an HTTP-dispatched one also
+ * contains the network and somebody else's queue. Which is the requirement that falls out of it — a remote
+ * executor MUST report its own measured evaluation time, exactly as Ollama reports `eval_duration` beside
+ * our wall clock. Without that the span is uninterpretable in precisely the way {@link
+ * ExportEventCost.promptEvalMs} exists to fix: one number that is the tool plus the network, and a
+ * difference between two runs attributable to neither.
+ *
+ * Switch on the kinds you know and fall through on the rest.
+ */
+export type ExportPhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call";
+
 export interface ExportEventPhase {
-    /** `model` generating the call · `wait` a human at the approval gate · `tool` the call running. */
-    kind: "model" | "wait" | "tool";
+    kind: ExportPhaseKind;
     ms: number;
 }
 
@@ -451,10 +514,17 @@ export interface ExportEventCost {
      *  clock, or a mix across several calls. A rate that silently mixed the two would imply a precision it
      *  does not have. Absent alongside the rate. */
     genBasis?: "eval" | "wall" | "mixed";
-    /** Ollama's generation-only time and our wall clock for the SAME call, when both are known. Their
-     *  difference is what the network and the queue cost, which no rate can recover. Volatile. */
+    /** Ollama's generation-only time and our wall clock for the SAME call, when both are known. Volatile. */
     evalMs?: number;
     wallMs?: number;
+    /** Reading the prompt, before a token came back. Real model work, and it scales with the conversation —
+     *  a system prompt re-sent every turn is paid for every turn.
+     *
+     *  It is here because the remainder is otherwise uninterpretable: `wallMs - evalMs` is prompt eval PLUS
+     *  queue PLUS network, and those are not the same kind of thing. Prompt eval belongs to the model and
+     *  should count against it; queue and network are facts about the box and the moment. As one number a
+     *  difference between two models cannot be attributed to either. Volatile. */
+    promptEvalMs?: number;
 }
 
 /* ------------------------------- diffing ------------------------------- */
@@ -482,6 +552,7 @@ export const VOLATILE_FIELDS: readonly string[] = [
     "session.messages[].usage.genMs",
     "session.messages[].usage.evalMs",
     "session.messages[].usage.loadMs",
+    "session.messages[].usage.promptEvalMs",
     "session.steps[].at",
     "session.steps[].durationMs",
     "session.steps[].streamMarks",
@@ -489,15 +560,18 @@ export const VOLATILE_FIELDS: readonly string[] = [
     "session.steps[].usage.genMs",
     "session.steps[].usage.evalMs",
     "session.steps[].usage.loadMs",
+    "session.steps[].usage.promptEvalMs",
     // The timeline is mostly clock: what survives stripping is the SHAPE of the run — which events, in
     // what order, spawned by what, costing how many tokens — which is the behaviour worth diffing.
     "session.events[].at",
     "session.events[].endedAt",
     "session.events[].durationMs",
+    "session.events[].elapsedMs",
     "session.events[].phases",
     "session.events[].cost.tokPerSec",
     "session.events[].cost.evalMs",
     "session.events[].cost.wallMs",
+    "session.events[].cost.promptEvalMs",
 ];
 
 /**

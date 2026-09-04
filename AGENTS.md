@@ -867,6 +867,33 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   the tool running. `toolMs` and `approveMs` are measured separately in `agent-loop.ts` for exactly that
   reason — a human deciding is the step's wall time but not the machine's work, and the wait draws as a
   hollow neutral so a wide bar can never read as work.
+- **A generation is SPLIT by what the model was emitting** — `think` / `call` / `answer` phases inside the
+  model's own stretch, beside `wait` and `tool`. Observable in exactly one place: `handleLine` in
+  `streamAgentTurn` (sw-llm.ts), where the parsed chunk still says which channel each SSE line arrived on;
+  everything downstream sees only the accumulated strings. So the marks are stamped THERE, in the service
+  worker — the executor, per the same rule as the output gutter — appended only on a CHANGE, and carried as
+  `TokenUsage.genPhases` (offsets from the call's start, so they line up with `genMs` instead of drifting
+  against it). They are a SEQUENCE, not three buckets: a model that resumes reasoning after emitting
+  tool-call fragments is ordinary, and bucketing collapses the re-entry into a block that never happened.
+  **Streamed calls only** — a non-streamed response is one object with one `eval_duration`, so we know the
+  composition of the text but not when the boundary fell, and splitting it by length would be inventing a
+  timestamp. That case stays one `model` phase, which is also what the stretch before the first token is
+  (prompt eval, queue, network — the model's time but none of its channels).
+- **A turn's usage rides the model's OWN record**, not the tool call it decided on: the loop emits the prose
+  and usage as one event and the call as another sharing its `step`, and only the second has a `seq`. So a
+  composite block's model half is a CROSS-RECORD lookup — reading `st.usage` on the tool record finds
+  nothing, which is what shipped, invisibly, because `resource-demo.mjs` fabricated both on one record and
+  drew a shape the product never emits. Folded only when the turn made exactly one call; parallel calls
+  share one generation and charging it to each draws the same seconds twice.
+- **Work IN FLIGHT is drawn while it happens.** `eventsFrom(sessions, now)` synthesizes OPEN spans
+  (`event.open`, `until` = where it had reached): a generation underway, a tool running, a person at an
+  approval gate. Without a `now` you get finished work only, which is what a durable document takes. A
+  generation had no stamp at all before this — the pending step START fires when a TOOL is about to run,
+  i.e. AFTER the generation, and a turn emitting nothing but a tool call produces no stream deltas either —
+  so the loop emits **`agent-turn`** the instant the request goes out, and again on each phase change; the
+  reducer holds it as the transient `Session.liveTurn`, cleared when the step lands and ignored for an
+  already-ended session so a replayed event cannot strand a live bar. The export carries open events only
+  on request (`ExportProvenance.includeInFlight`), as `open: true` + `elapsedMs` and no `endedAt`.
 - **`load_duration`** (captured as `TokenUsage.loadMs`) is the only place the difference between "the model
   was slow" and "the model wasn't there yet" exists. Drawn as its own span in front of the block, floored at
   a second so a resident model's few ms of bookkeeping doesn't fill the lane.
@@ -1186,7 +1213,24 @@ in the same three places every time a consumer redoes it (spans run BACKWARDS fr
 step is ONE event with `phases` splitting model/human-at-the-gate/tool, not three; a model load is its own
 event because "slow" and "not there yet" are different answers). Sub-calls carry `parent`, so a reader
 model's cost is attributable. `evict` is in the kind union but never exported — it is read off `/api/ps`
-polls, a fact about the box rather than about a session.
+polls, a fact about the box rather than about a session. The kind union is **`@unstable`**: the timeline is
+a general format, and other producers (a benchmark sweep) time spans a session has no concept of. Tagging a
+LITERAL union needed a generator fix — `typeToSchema` recognises one as an enum and returns before the
+branch that appends the permissive variant, so an `@unstable` enum stayed closed while its prose promised
+otherwise. `ExportPhaseKind` is open for the same reason; the variant in sight is how a tool was DISPATCHED
+(in process vs an HTTP evaluation endpoint) — a fact about OUR dispatch, never a claim about where the work
+ended up, since an in-process tool can reach a VM/container over IPC unobservably. When that endpoint ships
+it must report its own measured eval time, or the span is the tool plus the network as one number — the trap
+`promptEvalMs` was added to close for model calls.
+
+**Three durations, three diagnoses (`TokenUsage`).** Ollama-native reports `load_duration`, `prompt_eval_duration`
+and `eval_duration`; we also stamp our own `genMs` wall clock on every route. `prompt_eval_duration` (→
+`promptEvalMs`) was being dropped, which made `genMs - evalMs` — rendered as "+Nms network" — charge the BOX
+for reading the prompt, which is the model's own work and scales with a system prompt re-sent every turn. The
+tooltip now subtracts it and shows both. The OpenAI route reports none of the three, so `genBasis` says the
+rate includes the network; that whole matrix (openai/ollama x streamed/not) is pinned in
+`tests/e2e/gen-phases.spec.mjs`, and the fake backend serves BOTH wire shapes — it grew an
+`/ollama/api/chat` NDJSON route because only the OpenAI one had ever been exercised end to end.
 
 - **`run-once.mjs`** — the run-driving CORE both CLIs share: `runOnce(config)` drives ONE agent run in a
   real Chromium and RETURNS `{ events, session, runMd, result, … }` instead of only writing files.

@@ -225,3 +225,194 @@ test("eventsFrom: both timings ride along, so the network cost is recoverable", 
     assert.equal(cloud.cost.evalMs, undefined);
     assert.equal(cloud.cost.genBasis, "wall");
 });
+
+/* --------------------------- the generation phase split --------------------------- */
+// What the model was DOING across a call — thinking, emitting the tool call, answering. Observable only on a
+// streamed call, where the service worker marks which channel each chunk arrived on.
+
+const kinds = (phases) => phases.map(p => p.kind);
+const durs = (from, phases) => phases.map((p, i) => p.until - (i ? phases[i - 1].until : from));
+
+test("genPhases: marks become contiguous phases, and the pre-first-token gap is the model's too", () => {
+    // 300ms of prompt eval + network before the first chunk, then thinking, then the answer.
+    const p = M.genPhases(1000, 5000, [{ kind: "think", atMs: 300 }, { kind: "answer", atMs: 2000 }]);
+    assert.deepEqual(kinds(p), ["model", "think", "answer"]);
+    assert.deepEqual(durs(1000, p), [300, 1700, 3000]);
+    assert.equal(p.at(-1).until, 6000, "the phases end where the call did");
+});
+
+test("genPhases: an INTERLEAVED turn keeps its order — think, call, think, answer", () => {
+    // The case that decides the data structure. A model that resumes reasoning after emitting tool-call
+    // fragments produces four phases; bucketing by kind would collapse it to three and draw a block that
+    // never happened.
+    const p = M.genPhases(0, 1000, [
+        { kind: "think", atMs: 0 }, { kind: "call", atMs: 200 },
+        { kind: "think", atMs: 400 }, { kind: "answer", atMs: 700 },
+    ]);
+    assert.deepEqual(kinds(p), ["think", "call", "think", "answer"]);
+    assert.deepEqual(durs(0, p), [200, 200, 300, 300]);
+});
+
+test("genPhases: no marks (a NON-streamed call) stays one undifferentiated block", () => {
+    // We know the composition of the text but not when the boundary fell; splitting it by length would be
+    // inventing a timestamp.
+    assert.deepEqual(M.genPhases(0, 4000, undefined), [{ kind: "model", until: 4000 }]);
+    assert.deepEqual(M.genPhases(0, 4000, []), [{ kind: "model", until: 4000 }]);
+});
+
+test("genPhases: a mark past the end of the call contributes nothing, never a backwards phase", () => {
+    const p = M.genPhases(0, 1000, [{ kind: "think", atMs: 0 }, { kind: "answer", atMs: 1400 }]);
+    assert.deepEqual(kinds(p), ["think"]);
+    assert.ok(p.every(x => x.until <= 1000));
+});
+
+test("a streamed tool step's model phase is SPLIT, inside the same one block", () => {
+    const [ev] = M.eventsFrom([{
+        hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
+        steps: [{ seq: 1, ts: 10_000, tool: "exec", toolMs: 1000,
+                  usage: usage(10, 5, { genMs: 3000, genPhases: [{ kind: "think", atMs: 0 }, { kind: "call", atMs: 2000 }] }) }],
+    }]).filter(e => e.kind === "tool");
+
+    assert.deepEqual(kinds(ev.phases), ["think", "call", "tool"],
+        "still ONE event — you read the model's channels against the tool run in the same block");
+    assert.equal(ev.until, 10_000);
+});
+
+/* --------------------------- work still in flight --------------------------- */
+// Derived from finish stamps, none of this exists until it is over — and then it appears back-dated across
+// memory the chart already drew. `now` is what makes the same spans visible while they are happening.
+
+const liveRun = (over = {}) => ({
+    hash: "h", model: "gemma4:31b", createdTs: 1000, lastTs: 5000, steps: [], ...over,
+});
+
+test("in flight: nothing is drawn WITHOUT a `now` — that is what an export gets", () => {
+    const s = liveRun({ liveTurn: { step: 1, startedTs: 2000 }, steps: [{ seq: 1, ts: 3000, tool: "exec", pending: true }] });
+    assert.ok(M.eventsFrom([s]).every(e => !e.open), "a document must not carry a span whose end is 'when the file was written'");
+});
+
+test("in flight: a generation underway is an OPEN span from when the call went out", () => {
+    const [gen] = M.eventsFrom([liveRun({ liveTurn: { step: 1, startedTs: 2000 } })], 9000).filter(e => e.kind === "gen");
+    assert.equal(gen.t, 2000);
+    assert.equal(gen.until, 9000, "it reaches the moment being drawn, not an end it does not have");
+    assert.equal(gen.open, true);
+    assert.match(gen.label, /generating/);
+});
+
+test("in flight: a live generation gains its DIVIDERS as it crosses phases", () => {
+    const [gen] = M.eventsFrom([liveRun({
+        liveTurn: { step: 1, startedTs: 2000, phases: [{ kind: "think", atMs: 100 }, { kind: "call", atMs: 3000 }] },
+    })], 9000).filter(e => e.kind === "gen");
+    assert.deepEqual(kinds(gen.phases), ["model", "think", "call"]);
+});
+
+test("in flight: a pending step is built FORWARDS — its stamp is a START, not a finish", () => {
+    const [tool] = M.eventsFrom([liveRun({ steps: [{ seq: 2, ts: 4000, tool: "exec", pending: true }] })], 9000)
+        .filter(e => e.kind === "tool");
+    assert.equal(tool.t, 4000, "a finished step's ts is when it ENDED; a pending one's is when it began");
+    assert.equal(tool.until, 9000);
+    assert.deepEqual(kinds(tool.phases), ["tool"]);
+    assert.equal(tool.ref.seq, 2, "and it still links back to the step");
+});
+
+test("in flight: a step at an approval GATE is a wait, not work", () => {
+    const [gate] = M.eventsFrom([liveRun({
+        steps: [{ seq: 2, ts: 4000, tool: "python_exec", pending: true, awaitingApproval: true }],
+    })], 60_000).filter(e => e.kind === "tool");
+    assert.deepEqual(kinds(gate.phases), ["wait"], "a human deciding is the step's wall clock but not the machine's");
+    assert.match(gate.label, /awaiting approval/);
+});
+
+test("in flight: the run CONTAINER grows to now, so an open span never sticks out of it", () => {
+    const evts = M.eventsFrom([liveRun({ liveTurn: { step: 1, startedTs: 2000 } })], 9000);
+    const run = evts.find(e => e.kind === "run");
+    assert.equal(run.until, 9000);
+    assert.equal(run.open, true);
+    for (const e of evts) assert.ok(e.until <= run.until, `${e.kind} escapes its run`);
+});
+
+test("in flight: a FINISHED run is not open, even when a `now` is given", () => {
+    const s = liveRun({ steps: [{ seq: 1, ts: 3000, tool: "exec", toolMs: 200 }] });
+    const evts = M.eventsFrom([s], 99_000);
+    assert.ok(evts.every(e => !e.open), "nothing is in flight — the run just happens to be in the past");
+    assert.equal(evts.find(e => e.kind === "run").until, 5000, "and it ends where it ended, not at now");
+});
+
+/* --------------------------- the turn's usage lives on another record --------------------------- */
+// The loop emits a turn as TWO records: the model's prose and usage (no `seq`), then the tool call it decided
+// on (with one). So the model's half of a composite block has to be found ACROSS records. Reading `usage` off
+// the tool record alone finds nothing — and that is exactly what shipped, invisibly, because the demo put both
+// on one record and therefore drew a shape the product never emits.
+
+const turn = (step, ts, u) => ({ step, seq: step * 10, ts, thought: "hm", usage: u });
+const toolStep = (step, seq, ts, over = {}) => ({ step, seq, ts, tool: "exec", toolMs: 500, ...over });
+
+test("a tool block takes its MODEL phase from the turn's own record, not the tool's", () => {
+    const evts = M.eventsFrom([{
+        hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
+        steps: [turn(1, 5000, usage(100, 20, { genMs: 900 })), toolStep(1, 2, 8000)],
+    }]);
+    const tool = evts.find(e => e.kind === "tool");
+    assert.deepEqual(kinds(tool.phases), ["model", "tool"]);
+    assert.equal(tool.until - tool.t, 1400, "the generation plus the tool run");
+    assert.equal(tool.cost.inTokens, 100, "and the turn's cost belongs to the block it paid for");
+});
+
+test("…and the generation is not ALSO drawn on its own — that would report the same seconds twice", () => {
+    const evts = M.eventsFrom([{
+        hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
+        steps: [turn(1, 5000, usage(100, 20, { genMs: 900 })), toolStep(1, 2, 8000)],
+    }]);
+    assert.equal(evts.filter(e => e.kind === "gen").length, 0);
+});
+
+test("a turn with SEVERAL tool calls keeps its generation separate — one call cannot own it", () => {
+    // Parallel calls share one generation, so folding it into each would draw those seconds two or three
+    // times. The honest shape for work that fans out is a generation span with the calls after it.
+    const evts = M.eventsFrom([{
+        hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
+        steps: [turn(1, 5000, usage(100, 20, { genMs: 900 })), toolStep(1, 2, 8000), toolStep(1, 3, 9000)],
+    }]);
+    assert.equal(evts.filter(e => e.kind === "gen").length, 1, "drawn once, on its own");
+    for (const t of evts.filter(e => e.kind === "tool")) {
+        assert.deepEqual(kinds(t.phases), ["tool"], "…and not charged to either call");
+    }
+});
+
+test("a turn that answers WITHOUT calling anything still gets its generation span", () => {
+    const evts = M.eventsFrom([{
+        hash: "h", model: "m", createdTs: 0, lastTs: 20_000,
+        steps: [turn(2, 12_000, usage(120, 9, { genMs: 700 }))],
+    }]);
+    const gen = evts.find(e => e.kind === "gen");
+    assert.equal(gen.t, 11_300);
+    assert.equal(gen.until, 12_000);
+});
+
+test("a LOAD the turn waited through is drawn in front of the tool block it delayed", () => {
+    const evts = M.eventsFrom([{
+        hash: "h", model: "m", createdTs: 0, lastTs: 30_000,
+        steps: [turn(1, 5000, usage(100, 20, { genMs: 900, loadMs: 6000 })), toolStep(1, 2, 8000)],
+    }]);
+    const load = evts.find(e => e.kind === "load");
+    const tool = evts.find(e => e.kind === "tool");
+    assert.equal(load.until, tool.t, "the model arrived, then the turn could start");
+    assert.equal(load.until - load.t, 6000);
+});
+
+test("prompt eval is reported apart from the network — one number cannot be attributed", () => {
+    // wall 4200 = prompt eval 900 + generation 3000 + 300 of queue/network. Reported as a single
+    // wall-minus-generation remainder it charges the box 1200ms, 900 of which the MODEL spent reading the
+    // conversation — and a gap between two models then cannot be attributed to either.
+    const [ev] = M.eventsFrom([{ hash: "h", model: "m",
+        turns: [{ ts: 10_000, usage: usage(1840, 90, { genMs: 4200, evalMs: 3000, promptEvalMs: 900 }) }] }]);
+    assert.equal(ev.cost.promptEvalMs, 900);
+    assert.equal(ev.cost.evalMs, 3000);
+    assert.equal(ev.cost.wallMs, 4200);
+});
+
+test("…and it is simply absent where the route does not report it, never a zero", () => {
+    const [ev] = M.eventsFrom([{ hash: "h", model: "m",
+        turns: [{ ts: 10_000, usage: usage(100, 90, { genMs: 3600 }) }] }]);
+    assert.equal(ev.cost.promptEvalMs, undefined, "a cloud route reports no prompt timing to split out");
+});

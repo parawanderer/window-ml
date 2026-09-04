@@ -309,7 +309,11 @@ export const zoomSpan = (z: { from: number; to: number }): string => {
  *  Recomputed per render for the same reason the cost ledger is — the session map IS the record. */
 export function timeline(): ResourceEvent[] {
     void rev.value;
-    const fromSessions = eventsFrom([...sessionMap.values()] as UsageSource[]);
+    // `now` is what turns IN-FLIGHT work into open spans — a generation being generated, a tool running, a
+    // human at a gate. The lane is the live surface, so it asks for them; anything durable (the export) calls
+    // eventsFrom with no `now` and gets finished work only. It advances per render, which is per poll, so a
+    // live bar grows at the same cadence as the memory trace beside it.
+    const fromSessions = eventsFrom([...sessionMap.values()] as UsageSource[], Date.now());
     return [...fromSessions, ...residencyEvents(resourceHistory.value, fromSessions)].sort((a, b) => a.t - b.t);
 }
 

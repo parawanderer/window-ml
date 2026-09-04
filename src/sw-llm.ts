@@ -4,7 +4,7 @@
 // server-tool-mode handback probe. Also the model-list/server-tool/setModel/unload plumbing. Extracted from
 // background.ts verbatim; it depends only on the shared contract (types + DEFAULT_CONFIG/modelFilterAllows)
 // and chrome/fetch. All server JSON is genuinely opaque, so it's typed `any`; our own data uses the contract.
-import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage } from "./contract";
+import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, GenPhase } from "./contract";
 import { DEFAULT_CONFIG, modelFilterAllows, generatesText, producesEmbeddings } from "./contract";   // single source of truth (see contract.ts)
 
 // The wire body we assemble for a chat request (grows per format/options).
@@ -64,9 +64,14 @@ export const normalizeUsage = (u: any): TokenUsage | null => {
     // How long this call spent LOADING the model before generating a token. Ollama reports it on every native
     // call — a few ms when the model was already resident, tens of seconds when it had to come off disk.
     const loadNs = n(u.load_duration);
+    // Reading the PROMPT — real model work, and the half of "time to first token" that belongs to the model
+    // rather than to the box. Without it, wall-minus-generation lumps prompt eval in with queue and network,
+    // and a difference between two models cannot be attributed to either.
+    const promptNs = n(u.prompt_eval_duration);
     const out: TokenUsage = { promptTokens, completionTokens, totalTokens: n(u.total_tokens) ?? promptTokens + completionTokens };
     if (evalNs != null && evalNs > 0) out.evalMs = evalNs / 1e6;
     if (loadNs != null && loadNs > 0) out.loadMs = loadNs / 1e6;
+    if (promptNs != null && promptNs > 0) out.promptEvalMs = promptNs / 1e6;
     return out;
 };
 
@@ -732,7 +737,7 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
  *  agent loop uses client-side `tools` (not `tool_ids`), so no SERVER_TOOL_MODES probe is needed here. */
 export async function streamAgentTurn(
     payload: FetchLlmPayload,
-    onDelta: (acc: { reasoning: string; content: string }) => void,
+    onDelta: (acc: { reasoning: string; content: string; phases: GenPhase[]; phaseChanged: boolean }) => void,
     signal?: AbortSignal,
 ): Promise<{ content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null }> {
     const { format, body, send } = await prepareRequest(payload, signal);
@@ -743,17 +748,28 @@ export async function streamAgentTurn(
     const byIndex = new Map<number, { id?: string; name?: string; args: string }>();
     let ollamaCalls: unknown[] | null = null;
     let usage: TokenUsage | null = null;
+    // WHAT the model is doing, moment to moment. This is the only place it is observable: the parsed chunk
+    // says which channel a line carried, and everything downstream sees just the accumulated strings. Stamped
+    // HERE because the service worker is the executor — a mark taken after the port hop measures the hop.
+    // Appended only on a CHANGE, so a turn costs a handful of entries rather than one per line.
+    const phases: GenPhase[] = [];
+    const mark = (kind: GenPhase["kind"]): boolean => {
+        if (phases.length && phases[phases.length - 1].kind === kind) return false;
+        phases.push({ kind, atMs: Date.now() - _t0 });
+        return true;
+    };
     const reader = (await send(body, true)).body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
     const handleLine = (line: string) => {
         const chunk = format.streamChunk(line);
         if (!chunk) return;
-        let changed = false;
-        if (chunk.delta) { content += chunk.delta; changed = true; }
-        if (chunk.reasoning) { reasoning += chunk.reasoning; changed = true; }
+        let changed = false, phaseChanged = false;
+        if (chunk.delta) { content += chunk.delta; changed = true; phaseChanged = mark("answer") || phaseChanged; }
+        if (chunk.reasoning) { reasoning += chunk.reasoning; changed = true; phaseChanged = mark("think") || phaseChanged; }
         if (chunk.usage) usage = chunk.usage;
         if (Array.isArray(chunk.toolCallDelta)) {
+            phaseChanged = mark("call") || phaseChanged;
             for (const tc of chunk.toolCallDelta as any[]) {
                 if (typeof tc?.index === "number") {   // OpenAI fragment
                     const cur = byIndex.get(tc.index) || { args: "" };
@@ -764,7 +780,9 @@ export async function streamAgentTurn(
                 } else { ollamaCalls = chunk.toolCallDelta; }   // Ollama whole array
             }
         }
-        if (changed) onDelta({ reasoning, content });
+        // A phase change is reported even with no new TEXT: a turn that only calls a tool produces no content
+        // or reasoning deltas at all, so a caller throttling on text alone would never hear that it started.
+        if (changed || phaseChanged) onDelta({ reasoning, content, phases, phaseChanged });
     };
     for (;;) {
         const { done, value } = await reader.read();
@@ -785,7 +803,9 @@ export async function streamAgentTurn(
         const arr = [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => ({ id: v.id, type: "function", function: { name: v.name, arguments: v.args } }));
         tool_calls = format.extractToolCalls({ choices: [{ message: { tool_calls: arr } }] } as any);
     }
-    return { content: content || null, tool_calls, reasoning: reasoning || null, usage: withGenMs(usage, Date.now() - _t0) };
+    const timed = withGenMs(usage, Date.now() - _t0);
+    return { content: content || null, tool_calls, reasoning: reasoning || null,
+             usage: timed && phases.length ? { ...timed, genPhases: phases } : timed };
 }
 
 function authHeaders(config: MlConfig): Record<string, string> {

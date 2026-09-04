@@ -627,12 +627,47 @@
         "loadMs": {
           "description": "Ollama-native `load_duration` (ns → ms): how long THIS call spent loading the model before generating. Small and constant when the model was already resident; seconds-to-a-minute when it was not — which is the difference between \"the model was slow\" and \"the model wasn't there yet\", and the only place that answer exists. Absent for cloud / OpenWebUI-OpenAI, which don't report it.",
           "type": "number"
+        },
+        "promptEvalMs": {
+          "description": "Ollama-native `prompt_eval_duration` (ns → ms): reading the prompt, before a token comes back. Real model work, and it scales with the conversation — a system prompt re-sent every turn is paid for every turn. It is the difference between a model that is slow to answer and a BOX that is slow to reach: without it, `genMs - evalMs` lumps prompt eval together with queue and network, and a gap between two models cannot be attributed to either. Absent for cloud / OpenWebUI-OpenAI.",
+          "type": "number"
+        },
+        "genPhases": {
+          "description": "WHAT the model was doing across this call, when we could observe it — see GenPhase. STREAMED CALLS ONLY: a non-streaming response is one object with one `eval_duration`, which says how long the generation took but not when it stopped thinking and started answering. Splitting that by text length would be inventing a timestamp, so it stays absent and the surfaces draw one undifferentiated block.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GenPhase"
+          }
         }
       },
       "required": [
         "promptTokens",
         "completionTokens",
         "totalTokens"
+      ],
+      "additionalProperties": true
+    },
+    "GenPhase": {
+      "type": "object",
+      "description": "One stretch of a generation, by what the model was emitting: its thinking channel, its reply, or the fragments of a tool call. A MARK, not a span: `atMs` is where the phase STARTED, as an offset from the call's own start, and it runs until the next mark (or the end of the call). Offsets rather than absolute stamps so the marks stay meaningful without carrying a clock alongside them, and so they line up with `genMs` — which is measured from the same origin — instead of drifting against it. A SEQUENCE, deliberately, not three buckets. Models interleave: reasoning resumes after a tool call's fragments, and a run that thinks-calls-thinks is a real shape. Bucketing would collapse the re-entry and draw one long block that never happened.",
+      "properties": {
+        "kind": {
+          "description": "`think` the reasoning channel · `answer` the reply content · `call` tool-call fragments.",
+          "type": "string",
+          "enum": [
+            "think",
+            "answer",
+            "call"
+          ]
+        },
+        "atMs": {
+          "description": "Offset in ms from the START of the model call.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "atMs"
       ],
       "additionalProperties": true
     },
@@ -899,12 +934,20 @@
                   "const": "locate"
                 },
                 "mode": {
-                  "type": "string",
-                  "enum": [
-                    "grounding",
-                    "marks",
-                    "grid",
-                    "grid-grounding"
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "grounding",
+                        "marks",
+                        "grid",
+                        "grid-grounding"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                    }
                   ]
                 },
                 "model": {
@@ -920,10 +963,18 @@
                   "type": "string"
                 },
                 "pickedBy": {
-                  "type": "string",
-                  "enum": [
-                    "model",
-                    "snap"
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "model",
+                        "snap"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                    }
                   ]
                 }
               },
@@ -943,11 +994,19 @@
                   "const": "python-in"
                 },
                 "mode": {
-                  "type": "string",
-                  "enum": [
-                    "script",
-                    "pt",
-                    "box"
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "script",
+                        "pt",
+                        "box"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                    }
                   ]
                 },
                 "code": {
@@ -1160,12 +1219,20 @@
                   }
                 },
                 "resolvedBy": {
-                  "type": "string",
-                  "enum": [
-                    "accept",
-                    "declared",
-                    "sibling",
-                    "convert"
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "accept",
+                        "declared",
+                        "sibling",
+                        "convert"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                    }
                   ]
                 }
               },
@@ -1341,12 +1408,20 @@
                   "const": "locate"
                 },
                 "mode": {
-                  "type": "string",
-                  "enum": [
-                    "grounding",
-                    "marks",
-                    "grid",
-                    "grid-grounding"
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "grounding",
+                        "marks",
+                        "grid",
+                        "grid-grounding"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                    }
                   ]
                 },
                 "model": {
@@ -1362,10 +1437,18 @@
                   "type": "string"
                 },
                 "pickedBy": {
-                  "type": "string",
-                  "enum": [
-                    "model",
-                    "snap"
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "model",
+                        "snap"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                    }
                   ]
                 }
               },
@@ -1385,11 +1468,19 @@
                   "const": "python-in"
                 },
                 "mode": {
-                  "type": "string",
-                  "enum": [
-                    "script",
-                    "pt",
-                    "box"
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "script",
+                        "pt",
+                        "box"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                    }
                   ]
                 },
                 "code": {
@@ -1602,12 +1693,20 @@
                   }
                 },
                 "resolvedBy": {
-                  "type": "string",
-                  "enum": [
-                    "accept",
-                    "declared",
-                    "sibling",
-                    "convert"
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "accept",
+                        "declared",
+                        "sibling",
+                        "convert"
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+                    }
                   ]
                 }
               },
@@ -1770,11 +1869,19 @@
       "description": "Where a `python_exec` DataFrame came from — for the debug render's source label + tooltip. `dom` = a table on the current page (label = the selector); `sheet-current` = the Google Sheet you're on (label = its page title); `sheet-external` = a Google Sheet fetched by URL with the user's approval (label = its spreadsheet id).",
       "properties": {
         "kind": {
-          "type": "string",
-          "enum": [
-            "dom",
-            "sheet-current",
-            "sheet-external"
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "dom",
+                "sheet-current",
+                "sheet-external"
+              ]
+            },
+            {
+              "type": "string",
+              "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+            }
           ]
         },
         "label": {
@@ -1799,12 +1906,20 @@
       "properties": {
         "strategy": {
           "description": "`accept` = the same URL with `Accept: text/markdown`; `declared` = the `<link rel=\"alternate\">` the page named; `sibling` = the derived `.md`/`index.md`; `convert` = our own HTML→Markdown.",
-          "type": "string",
-          "enum": [
-            "accept",
-            "declared",
-            "sibling",
-            "convert"
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "accept",
+                "declared",
+                "sibling",
+                "convert"
+              ]
+            },
+            {
+              "type": "string",
+              "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+            }
           ]
         },
         "url": {
@@ -1823,12 +1938,20 @@
           "type": "number"
         },
         "outcome": {
-          "type": "string",
-          "enum": [
-            "hit",
-            "not-markdown",
-            "error",
-            "skipped"
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "hit",
+                "not-markdown",
+                "error",
+                "skipped"
+              ]
+            },
+            {
+              "type": "string",
+              "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+            }
           ]
         },
         "note": {
@@ -1886,20 +2009,27 @@
     },
     "ExportEvent": {
       "type": "object",
-      "description": "One thing that HAPPENED, on the wall clock: a run, a model call, a tool step, a delegated sub-call, a model being loaded. This is the session's timeline, and it is DERIVED — like ExportOutcome and ExportTotals, and for the same reason. Every input is already elsewhere in the document, but the arithmetic that turns step records into spans is easy to get subtly wrong and easy to disagree about, so it is published rather than left to each consumer: - A step's timestamp is when it FINISHED, so every span runs BACKWARDS from it. Reconstructed naively, each bar sits one generation to the right of the work it describes. - A tool step is ONE event with phases, because the model deciding, the human at the approval gate and the tool running are three different kinds of time inside one step. The wait is the step's wall clock but not the machine's work, and it is frequently the largest part. - A model LOAD is its own event rather than slow generation — the difference between \"the model was slow\" and \"the model wasn't there yet\". Only real loads appear: a resident model reports a few ms of bookkeeping on every call, which is floored out. - Delegated sub-calls (a vision reader) are separate events carrying parent, so a different model's work is attributable instead of hidden inside the step that spawned it. The panel's own lane draws EVICTIONS too, read off consecutive `/api/ps` polls. Those are facts about the BOX rather than about a session — nothing in a session records them — so they are not exported here.",
       "properties": {
         "kind": {
-          "description": "`run` the whole session · `gen` one model call · `tool` a tool step (with phases) · `embed` a delegated sub-call · `load` a model arriving in memory. The remaining kinds the panel models (`evict`, `error`, `note`) are not derivable from a session and do not appear in an export; they are listed so a consumer's switch is written against the whole set.",
-          "type": "string",
-          "enum": [
-            "run",
-            "gen",
-            "tool",
-            "embed",
-            "load",
-            "evict",
-            "error",
-            "note"
+          "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "run",
+                "gen",
+                "tool",
+                "embed",
+                "load",
+                "evict",
+                "error",
+                "note"
+              ]
+            },
+            {
+              "type": "string",
+              "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+            }
           ]
         },
         "label": {
@@ -1912,12 +2042,21 @@
           "format": "date-time"
         },
         "endedAt": {
-          "description": "When it ended. Absent means an instant (a point on the timeline, not a span). Volatile.",
+          "description": "When it ended. Absent on an instant (a point on the timeline, not a span) and on an event that had not finished — open tells those two apart. Volatile.",
           "type": "string",
           "format": "date-time"
         },
         "durationMs": {
-          "description": "`endedAt - at`, which is the number a timeline is usually read for. Absent on an instant. Volatile.",
+          "description": "`endedAt - at`, which is the number a timeline is usually read for. Absent on an instant, and on an open event, which has elapsedMs instead. Volatile.",
+          "type": "number"
+        },
+        "open": {
+          "description": "This had NOT FINISHED when the document was written — a model still generating, a tool still running, a person still at an approval gate. Present only in a snapshot of a live session (see `ExportProvenance.includeInFlight`); a document of finished work never contains one. It is a separate flag rather than a missing `endedAt` because that spelling already means an INSTANT, and the two are opposites: one is a moment with no duration, the other a duration with no end yet.",
+          "type": "boolean",
+          "const": true
+        },
+        "elapsedMs": {
+          "description": "How long an open event had been going, measured to the document's `exportedAt`. Deliberately NOT `durationMs`: that field means a measured length, and a consumer summing the two together would be adding a fact to a reading that is still moving. Volatile.",
           "type": "number"
         },
         "model": {
@@ -1962,12 +2101,23 @@
       "type": "object",
       "properties": {
         "kind": {
-          "description": "`model` generating the call · `wait` a human at the approval gate · `tool` the call running.",
-          "type": "string",
-          "enum": [
-            "model",
-            "wait",
-            "tool"
+          "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "model",
+                "wait",
+                "tool",
+                "think",
+                "answer",
+                "call"
+              ]
+            },
+            {
+              "type": "string",
+              "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
+            }
           ]
         },
         "ms": {
@@ -2003,10 +2153,14 @@
           ]
         },
         "evalMs": {
-          "description": "Ollama's generation-only time and our wall clock for the SAME call, when both are known. Their difference is what the network and the queue cost, which no rate can recover. Volatile.",
+          "description": "Ollama's generation-only time and our wall clock for the SAME call, when both are known. Volatile.",
           "type": "number"
         },
         "wallMs": {
+          "type": "number"
+        },
+        "promptEvalMs": {
+          "description": "Reading the prompt, before a token came back. Real model work, and it scales with the conversation — a system prompt re-sent every turn is paid for every turn. It is here because the remainder is otherwise uninterpretable: `wallMs - evalMs` is prompt eval PLUS queue PLUS network, and those are not the same kind of thing. Prompt eval belongs to the model and should count against it; queue and network are facts about the box and the moment. As one number a difference between two models cannot be attributed to either. Volatile.",
           "type": "number"
         }
       },

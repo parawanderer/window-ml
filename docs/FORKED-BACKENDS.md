@@ -51,6 +51,10 @@ mechanism: `tool_ids` on the request plus the `function_calling` execution loop,
 the *other* shape possible (the extension running one tool itself, in its own loop, with the arguments
 it chose), and this file is where to look when that lands.
 
+Two additions it needs before the extension calls it — streaming its output as it works, and reporting
+how long it actually spent, without which a remote tool's span is the tool plus the network as one
+unattributable number. Both are specified in **[REMOTE_TOOL_EXECUTION.md](spec/REMOTE_TOOL_EXECUTION.md)**.
+
 ## Running them
 
 Both forks build and run exactly like their upstreams; nothing about the extension's config changes.

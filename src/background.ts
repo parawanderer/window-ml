@@ -734,6 +734,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             relayDebugEvent(tabId, event);   // always feed a connected panel (see emitStep — no double, no-op if none)
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
+        /** "A model call is underway" — the one stamp for it, since the pending step START fires only once a
+         *  TOOL is about to run (i.e. after the generation) and a turn that emits nothing but a tool call
+         *  produces no stream deltas at all. Re-fired on each phase change with the marks so far. */
+        const emitTurn = (rawStep: number, phases?: import("./contract").GenPhase[]): void => {
+            const step = stepBase + rawStep;
+            fanEvent({ kind: "agent-turn", id: runId, ts: Date.now(), save: false,
+                       session: { hash: runId, turn: step }, step, localStep: rawStep, ...(phases?.length ? { phases: phases.slice() } : {}) });
+        };
         // OFF mode: the corner card is fed ENTIRELY by this background stream, because the page's own
         // debug bus (bus.ts) stays dormant in off mode — no `present` handshake, so its emitDebug is a
         // no-op and off mode keeps its zero-cost footprint until a privileged run actually starts. So for
@@ -799,7 +807,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                                 ...(acc.reasoning ? { reasoning: acc.reasoning } : {}), ...(acc.content ? { content: acc.content } : {}) });
                         };
                         const r = await streamAgentTurn({ messages, tools: toolDefs, model: p.model, think: p.think },
-                            (acc) => { if (Date.now() - last >= STREAM_EMIT_MS) flush(acc); }, abortCtl.signal);
+                            (acc) => {
+                                // A phase CHANGE goes out immediately and unthrottled — there are a handful per
+                                // turn, and it is the edge the live bar draws its divider at. Text deltas stay
+                                // throttled; they are continuous.
+                                if (acc.phaseChanged) emitTurn(rawStep, acc.phases);
+                                if (Date.now() - last >= STREAM_EMIT_MS) flush(acc);
+                            }, abortCtl.signal);
                         flush({ reasoning: r.reasoning || "", content: r.content || "" });   // final: land the last delta even if throttled
                         return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
                     }
@@ -1119,6 +1133,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // delta in delegateTool) — so chat_metadata reports the real number on the background path too.
                 subcallTokens: () => snapSub(),
                 emit: (ev) => emitStep(ev as Record<string, unknown>),
+                // "The model started" — see DebugAgentTurn. Fires on every run, streamed or not; the
+                // streaming path re-fires it on each phase change with the marks so far.
+                emitTurn: (ev) => emitTurn(ev.step, ev.phases),
                 drainInbox: () => {   // a.say() steering (INJECT_MESSAGE); draining flips the "seen" indicator
                     const items = (runInboxes.get(runId)?.queue || []).splice(0);
                     for (const it of items) if (it.id) fanEvent({ kind: "agent-say-seen", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, sayId: it.id });

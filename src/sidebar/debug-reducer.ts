@@ -113,7 +113,7 @@ export function onDebug(ev: MlDebugEvent): void {
         // run already ended), which used to flip the finished run back to "running" forever — the "task's done
         // but the sidebar still says running" bug. A real resumed turn always follows with a DONE that unseals.
         if (!s.ended || (!ev.pending && (ev.step || 0) > (s.endedStep ?? -1))) { s.status = "pending"; s.ended = false; }
-        s.liveStream = undefined;   // a real step landed → the live-stream preview is superseded by it
+        s.liveStream = undefined; s.liveTurn = undefined;   // a real step landed → the live preview + in-flight turn are superseded by it
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
@@ -146,7 +146,7 @@ export function onDebug(ev: MlDebugEvent): void {
         // row under a completed run. (The after-result ordering is handled by the seal in agent-step.)
         if ((s.steps || []).some(st => st.pending)) s.steps = (s.steps || []).map(st => st.pending ? { ...st, pending: false, awaitingApproval: false } : st);
         // Seal the turn (see agent-step): a later straggler/replayed step ≤ endStep can't re-open "running".
-        s.ended = true; s.endedStep = endStep; s.liveStream = undefined;
+        s.ended = true; s.endedStep = endStep; s.liveStream = undefined; s.liveTurn = undefined;
         rev.value++; return;
     }
     // A handle raised the step cap mid-run (a.maxSteps = N) → the "STEP x/N" display re-renders live.
@@ -188,6 +188,19 @@ export function onDebug(ev: MlDebugEvent): void {
         if (!s) return;
         s.liveStream = { step: ev.step, localStep: ev.localStep, reasoning: ev.reasoning, content: ev.content };
         s.status = "pending"; s.ended = false; s.lastTs = ev.ts; rev.value++;
+        return;
+    }
+    // A model call is UNDERWAY (and, on a streamed run, which channel it is emitting). This is what lets the
+    // resource panel draw a generation WHILE it happens; without it the first thing any surface hears about a
+    // 40-second turn is the finished block, back-dated over memory it already drew.
+    if (ev.kind === "agent-turn") {
+        const s = sessionMap.get(ev.session.hash);
+        // Ignore it for a session that has already ENDED. Events can arrive in any order (a cross-page replay
+        // interleaves with the live fan), and a turn-start landing after the run's result would otherwise
+        // strand a live bar that never clears.
+        if (!s || s.ended) return;
+        s.liveTurn = { step: ev.step, localStep: ev.localStep, startedTs: ev.ts, phases: ev.phases };
+        s.status = "pending"; s.lastTs = Math.max(s.lastTs, ev.ts); rev.value++;
         return;
     }
     if (ev.kind === "chat") {

@@ -46,7 +46,7 @@ function canonical(doc, sessionHash) {
     return scrub(out);
 }
 
-const usage = (p, c, ms) => ({ promptTokens: p, completionTokens: c, totalTokens: p + c, genMs: ms, evalMs: ms / 2, loadMs: 3 });
+const usage = (p, c, ms) => ({ promptTokens: p, completionTokens: c, totalTokens: p + c, genMs: ms, evalMs: ms / 2, loadMs: 3, promptEvalMs: ms / 4 });
 
 /**
  * The same agent run, twice. Everything that legitimately moves between two runs of one task moves here:
@@ -113,6 +113,9 @@ test("every published path actually occurs in one of the export shapes", () => {
     const docs = [
         sessionToJson(run(A), { version: "1.0", build: { commit: "a".repeat(40), buildTime: "2026-09-03T11:46:52.846Z" } }),
         sessionToJson(chat(A)),
+        // A LIVE snapshot: the only shape that carries open events, and therefore the only one in which
+        // `elapsedMs` occurs at all.
+        sessionToJson({ ...run(A), liveTurn: { step: 9, startedTs: A.t0 + 4000 } }, { includeInFlight: true }),
     ];
     const presentIn = (doc, path) => {
         const parts = path.split(".");

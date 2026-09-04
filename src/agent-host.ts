@@ -88,6 +88,8 @@ export interface RunAgentHostDeps {
     fetchSameOrigin?(url: string): boolean;
     // Debug fan-out (agent-step events: the pending START then the DONE).
     emit?: AgentLoopDeps["emit"];
+    // Debug fan-out for a model call being UNDERWAY (agent-turn).
+    emitTurn?: AgentLoopDeps["emitTurn"];
     // Durable resume: called with the run's live message array after each COMPLETED step, so the background
     // can snapshot it to storage — a re-spawned SW (MV3 evicts ~30s idle) can then rehydrate an in-flight run.
     checkpoint?(messages: NeutralMessage[]): void;
@@ -196,6 +198,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
             deps.emit?.(ev);
             if (deps.checkpoint && !ev.pending && ev.step != null) deps.checkpoint(built);
         }) : undefined,
+        emitTurn: deps.emitTurn,
         chatMeta: deps.chatMeta,   // resolve model/caps/window SW-side (background provides the caches)
         subcallTokens: deps.subcallTokens,   // this turn's delegated vision sub-call tally (background-accumulated)
     };

@@ -463,7 +463,12 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
  *  are visibly the same three things, rather than a list you have to map onto a picture yourself. */
 const phaseFill = (kind: string, model?: string): string => {
     const base = model ? colorFor(model) : "var(--accent)";
-    return kind === "model" ? base
+    // The model's channels share its colour and differ in WEIGHT, because they are the same model doing the
+    // same work — answering is the payload, so it keeps the full colour; thinking and emitting a tool call
+    // are lighter. The dividers between them are what makes the split legible; the fills only rank it.
+    return kind === "model" || kind === "answer" ? base
+        : kind === "think" ? `color-mix(in srgb, ${base} 62%, transparent)`
+        : kind === "call" ? `color-mix(in srgb, ${base} 30%, transparent)`
         : kind === "wait" ? "color-mix(in srgb, var(--fg-faint) 45%, transparent)"
         : `color-mix(in srgb, ${base} 38%, transparent)`;
 };
@@ -474,13 +479,17 @@ const loadStripes = (model?: string): string => {
 };
 
 function phaseGradient(phases: { kind: string; until: number }[], from: number, total: number, model?: string): string {
-    const base = model ? colorFor(model) : "var(--accent)";
     const fill = (kind: string) => phaseFill(kind, model);
     const stops: string[] = [];
-    let at = 0;
-    for (const ph of phases) {
-        const end = Math.min(100, Math.max(at, ((ph.until - from) / total) * 100));
-        stops.push(`${fill(ph.kind)} ${at}% ${end}%`);
+    // A HAIRLINE between phases, in the panel's own colour so it reads as a cut rather than a fourth colour.
+    // Fills alone don't do it: think and call are the same hue at different weights, and two adjacent weights
+    // of one colour read as a gradient, not a boundary. Placed in px via calc so it stays one pixel whether
+    // the block is 4% or 40% of the lane.
+    let at = "0%";
+    for (const [i, ph] of phases.entries()) {
+        const end = `${Math.min(100, Math.max(0, ((ph.until - from) / total) * 100))}%`;
+        if (i > 0) { stops.push(`var(--panel) ${at} calc(${at} + 1px)`); at = `calc(${at} + 1px)`; }
+        stops.push(`${fill(ph.kind)} ${at} ${end}`);
         at = end;
     }
     return `linear-gradient(to right, ${stops.join(", ")})`;
@@ -646,12 +655,21 @@ function EventTip({ scope }: { scope: string }) {
     const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`);
     // Each phase's own duration, from where the previous one ended.
     const { ref, style } = useTipPlacement(at);
-    // What getting TO the model cost, when we know both its own generation time and our wall clock.
-    const overheadMs = e.cost?.evalMs != null && e.cost.wallMs != null && e.cost.wallMs > e.cost.evalMs
-        ? e.cost.wallMs - e.cost.evalMs : null;
+    // What getting TO the model cost. Wall MINUS generation is not that on its own: it also contains reading
+    // the prompt, which is the model's own work and scales with the conversation. Reported as "network" it
+    // over-charged the box for something the model did — so prompt eval comes out first, and what is left is
+    // queue and network, which really are facts about the box and the moment.
+    const promptMs = e.cost?.promptEvalMs ?? null;
+    const overheadMs = e.cost?.evalMs != null && e.cost.wallMs != null
+        ? Math.max(0, e.cost.wallMs - e.cost.evalMs - (promptMs ?? 0)) || null : null;
     const phases = (e.phases || []).map((ph, i) => ({ ...ph, from: i ? e.phases![i - 1].until : e.t }));
     const first = phases[0];
-    const nameFor = (kind: string) => (kind === "model" ? e.model || "model" : kind === "wait" ? "waiting for approval" : e.tool || "tool");
+    const nameFor = (kind: string) => (kind === "model" ? e.model || "model"
+        : kind === "think" ? "thinking"
+        : kind === "answer" ? "answering"
+        : kind === "call" ? "emitting the tool call"
+        : kind === "wait" ? "waiting for approval"
+        : e.tool || "tool");
     // A run span has no phases and no cost of its own — it is the CONTAINER. Saying "click to open this step"
     // under it was wrong twice over: it is not a step, and its ref carries no seq to scroll to.
     const isRun = e.kind === "run";
@@ -693,6 +711,7 @@ function EventTip({ scope }: { scope: string }) {
                     {e.cost.genBasis ? <span class="rc-chip rc-chip-dim">{e.cost.genBasis === "eval" ? "generation only" : e.cost.genBasis === "wall" ? "incl. network" : "mixed timing"}</span> : null}
                     {/* When BOTH timings are known, their difference is the network and the queue — a
                         different diagnosis from a slow model, and not recoverable from the rate alone. */}
+                    {promptMs != null ? <span class="rc-chip rc-chip-dim">{Math.round(promptMs)}ms reading the prompt</span> : null}
                     {overheadMs != null ? <span class="rc-chip rc-chip-dim">+{Math.round(overheadMs)}ms network</span> : null}
                 </div>
             ) : null}
@@ -709,6 +728,9 @@ function EventTip({ scope }: { scope: string }) {
                         <span class="rc-tip-size">{ms(ph.until - ph.from)}</span></div>
                 </>
             ))}
+            {/* An OPEN span has no end yet, so every duration in this tooltip is "so far". Said once, plainly,
+                because the alternative is a reader taking a number that is still growing as a measurement. */}
+            {e.open ? <div class="rc-tip-note">still running — these durations are so far, not final</div> : null}
             {/* WHEN, exactly. The durations say how long each part took; this is what lets a block be lined up
                 against another one, or against a timestamped log. Milliseconds because an event's own timings
                 are exact — unlike the crosshair, which interpolates between samples. */}
@@ -771,7 +793,7 @@ function EventLane({ samples, events: all }: { samples: ResourceSample[]; events
                                 // something next to the step that spawned it and the run that contains it.
                                 const away = lit.size > 0 && !(e.id && lit.has(e.id));
                                 return (
-                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}`} key={k}
+                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}${e.open ? " open" : ""}`} key={k}
                                         style={{ left: `${p.from * 100}%`, width: `${w}%`,
                                                  ...(e.model && !bg ? { background: colorFor(e.model) } : {}),
                                                  // A model's events carry ITS colour — the same one its row and

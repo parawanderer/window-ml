@@ -573,6 +573,35 @@ export interface TokenUsage {
      *  the difference between "the model was slow" and "the model wasn't there yet", and the only place that
      *  answer exists. Absent for cloud / OpenWebUI-OpenAI, which don't report it. */
     loadMs?: number;
+    /** Ollama-native `prompt_eval_duration` (ns → ms): reading the prompt, before a token comes back. Real
+     *  model work, and it scales with the conversation — a system prompt re-sent every turn is paid for every
+     *  turn. It is the difference between a model that is slow to answer and a BOX that is slow to reach:
+     *  without it, `genMs - evalMs` lumps prompt eval together with queue and network, and a gap between two
+     *  models cannot be attributed to either. Absent for cloud / OpenWebUI-OpenAI. */
+    promptEvalMs?: number;
+    /** WHAT the model was doing across this call, when we could observe it — see {@link GenPhase}. STREAMED
+     *  CALLS ONLY: a non-streaming response is one object with one `eval_duration`, which says how long the
+     *  generation took but not when it stopped thinking and started answering. Splitting that by text length
+     *  would be inventing a timestamp, so it stays absent and the surfaces draw one undifferentiated block. */
+    genPhases?: GenPhase[];
+}
+
+/** One stretch of a generation, by what the model was emitting: its thinking channel, its reply, or the
+ *  fragments of a tool call.
+ *
+ *  A MARK, not a span: `atMs` is where the phase STARTED, as an offset from the call's own start, and it runs
+ *  until the next mark (or the end of the call). Offsets rather than absolute stamps so the marks stay
+ *  meaningful without carrying a clock alongside them, and so they line up with `genMs` — which is measured
+ *  from the same origin — instead of drifting against it.
+ *
+ *  A SEQUENCE, deliberately, not three buckets. Models interleave: reasoning resumes after a tool call's
+ *  fragments, and a run that thinks-calls-thinks is a real shape. Bucketing would collapse the re-entry and
+ *  draw one long block that never happened. */
+export interface GenPhase {
+    /** `think` the reasoning channel · `answer` the reply content · `call` tool-call fragments. */
+    kind: "think" | "answer" | "call";
+    /** Offset in ms from the START of the model call. */
+    atMs: number;
 }
 
 /** How much captured tool output the UI keeps. Deliberately FAR larger than the model-facing cap: the model's
@@ -1678,6 +1707,16 @@ export interface DebugAgentConfig {
  *  Carries the ACCUMULATED-so-far reasoning/content (the UI REPLACES, not appends, so a dropped/duplicated
  *  event still converges). Lets a long "thinking" phase show its text live instead of a frozen token count. */
 export interface DebugAgentStream extends DebugBase { kind: "agent-stream"; step: number; localStep?: number; reasoning?: string; content?: string; }
+/** A model call is UNDERWAY. Emitted the instant the turn's request goes out, and again whenever the
+ *  generation changes phase, so a surface can draw the call while it is happening instead of back-dating a
+ *  finished block over memory it already drew.
+ *
+ *  Its own event rather than a flag on `agent-stream`, for two reasons. It must fire on a NON-streaming run
+ *  too (there is otherwise no stamp anywhere for "the model started"), and a turn that emits only a tool call
+ *  produces no content or reasoning deltas at all — so `agent-stream` never fires and the longest span on a
+ *  local box would stay invisible. `ts` is when the call started; a later event for the same `step`
+ *  supersedes the earlier one. Cleared when the step lands. */
+export interface DebugAgentTurn extends DebugBase { kind: "agent-turn"; step: number; localStep?: number; phases?: GenPhase[]; }
 /** `pageUrl`/`pageTitle` are where the run STARTED. Recorded because "which page" is close to a primary
  *  key when comparing runs, and was otherwise recoverable only by regexing it back out of the system
  *  prompt — prose, and only present when `env` was on. A run that navigates ends somewhere else. */
@@ -1778,7 +1817,7 @@ export interface DebugAgentSaySeen extends DebugBase { kind: "agent-say-seen"; s
 
 /** The event stream injected.js emits over window.postMessage for the sidebar. */
 export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError
-    | DebugAgentStart | DebugAgentStep | DebugAgentResult | DebugAgentCap | DebugAgentSay | DebugAgentSaySeen | DebugAgentStream;
+    | DebugAgentStart | DebugAgentStep | DebugAgentResult | DebugAgentCap | DebugAgentSay | DebugAgentSaySeen | DebugAgentStream | DebugAgentTurn;
 
 /** Window-bus envelopes between the core (main world) and the sidebar. */
 export interface MlDebugMessage { __mlDebug: MlDebugEvent; }

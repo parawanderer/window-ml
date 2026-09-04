@@ -129,7 +129,10 @@ export function renderRun(events) {
     // take the other with it — a partial transcript is the whole point of dumping incrementally.
     // includeDirtyDiff: a harness artifact is LOCAL and its whole job is reproducing a run, so the diff
     // that made the build unique belongs in it — the opposite trade-off from a download the user shares.
-    try { json = serializeSessionJson(session, { version: MANIFEST_VERSION, build: BUILD_INFO, includeDirtyDiff: true }); }
+    // includeInFlight: this file is rewritten on EVERY event, so most of the copies that exist describe a run
+    // that is still going. Without it those documents simply omit whatever was underway — which is the longest
+    // span there is, and the one someone watching a slow run wants to see.
+    try { json = serializeSessionJson(session, { version: MANIFEST_VERSION, build: BUILD_INFO, includeDirtyDiff: true, includeInFlight: true }); }
     catch { json = null; }
     return { session, md, images, json };
 }
