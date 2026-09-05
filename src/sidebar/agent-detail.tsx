@@ -13,6 +13,7 @@ import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
 import { IconChevron, IconWarn, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
+import { usageSamples } from "./usage";
 import {
     Code, CopyBtn, SheetChip, Hash, Stamp, ClickableImg, Dot, Disclosure,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
@@ -691,17 +692,16 @@ export function NavDivider({ url }: { url: string }) {
     );
 }
 
-// Every per-call usage sample a session recorded — agent runs stamp usage per STEP; chat sessions per TURN.
-function sessionUsages(s: Session): (import("../contract").TokenUsage | null | undefined)[] {
-    return [...(s.steps || []).map(st => st.usage), ...(s.turns || []).map(t => t.usage)];
-}
+// Every per-call usage sample a session recorded — see `usageSamples`, which is shared with the context
+// gauge sitting next to this bar. It was a near-copy here that read both collections while the gauge read
+// one, which is how a session could show its spend and no gauge at all.
 
 // The DevTools bottom-bar run-stats readout: cumulative in/out token SPEND and the generation rate, with a
 // hover tooltip recording HOW the rate was measured (Ollama generation time vs wall-clock incl. network). Each
 // figure is independently toggled in Settings → Appearance (chrome.storage.local prefs); with both off, or no
 // usage reported yet, it renders nothing. Panel chrome — the HUD card has no such bar.
 export function RunStatsBar({ s }: { s: Session }) {
-    const rs = runStats(sessionUsages(s));
+    const rs = runStats(usageSamples(s));
     const tps = fmtTokPerSec(rs);
     const showTok = showStatsTokens.value && rs.calls > 0;
     const showTps = showStatsTps.value && tps != null;

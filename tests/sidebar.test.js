@@ -8439,3 +8439,41 @@ test("embed: on the HUD card the cited block keeps explain and drops the bench",
     assert.ok(labels.some((l) => /explain/.test(l)), "explain stays on the card");
     assert.ok(!labels.some((l) => /bench/.test(l)), "the bench does NOT — the card cannot navigate there");
 });
+
+// THE GAUGE AND THE FIGURES BESIDE IT MUST AGREE ABOUT WHAT USAGE THE SESSION HAS. They read it from two
+// near-copies: the in/out figures took both `steps` and `turns`, the gauge took ONE of them chosen by
+// `s.kind`. So a session whose usage landed on the other collection showed its spend with no gauge at all —
+// which reads as the gauge having broken, a foot away from a number that is plainly updating.
+test("usage: the gauge reads the same samples as the in/out figures, whichever collection they landed on", async () => {
+    const w = await loadSidebarWorld({ vram: [{ model: "gemma4:31b", vramGB: 21, contextLength: 1000, expiresAt: null }] });
+    await w.dispatch(agentStart("mix", "compute", "gemma4:31b"));
+    // Usage on a TURN of a session whose kind is "agent" — the mismatch the gauge used to fall through.
+    await w.dispatch({ kind: "agent-say", id: "mix", ts: Date.now(), save: false,
+        session: { hash: "mix", turn: 0 }, text: "go" });
+    await w.dispatch(agentStep("mix", 1, { seq: 1, thought: "thinking",
+        usage: { promptTokens: 300, completionTokens: 20, totalTokens: 320, genMs: 100 } }));
+    await w.dispatch(agentResult("mix", "done", 1));
+    await w.raw({ __mlSidebarOpen: true });   // shell open → the ps poll can supply the denominator
+    await openRun(w);
+    await w.tick(); await w.flush();
+    assert.ok(w.shadow.querySelector(".run-stats"), "the in/out figures render");
+    assert.ok(w.shadow.querySelector(".usage-gauge"), "…and so does the gauge, from the same samples");
+});
+
+test("usage: occupancy is the LATEST sample by time, not whichever collection is concatenated last", async () => {
+    // Ordering matters because occupancy means "how full is the window NOW". Concatenating steps-then-turns
+    // would make a turn the last sample even when a step is newer, and report a stale occupancy.
+    const w = await loadSidebarWorld({ vram: [{ model: "gemma4:31b", vramGB: 21, contextLength: 1000, expiresAt: null }] });
+    const t0 = Date.now();
+    await w.dispatch(agentStart("ord", "compute", "gemma4:31b"));
+    await w.dispatch(agentStep("ord", 1, { seq: 1, ts: t0 + 1000, thought: "later",
+        usage: { promptTokens: 700, completionTokens: 0, totalTokens: 700, genMs: 10 } }));
+    await w.dispatch(agentStep("ord", 2, { seq: 2, ts: t0 + 2000, thought: "latest",
+        usage: { promptTokens: 200, completionTokens: 0, totalTokens: 200, genMs: 10 } }));
+    await w.dispatch(agentResult("ord", "done", 2));
+    await w.raw({ __mlSidebarOpen: true });
+    await openRun(w);
+    await w.tick(); await w.flush();
+    assert.match(w.shadow.querySelector(".usage-pct").textContent, /20%/,
+        "the newest sample (200/1000), not the largest and not the first");
+});
