@@ -9,11 +9,13 @@ import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, TableSource } from "../contract";
 import { elementReference } from "../dom";
 import { pyFormat, lineChanged } from "../py-format";
-import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode } from "./store";
+import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, config, lsSet, BENCH_CODE_KEY } from "./store";
 import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmtDur, hourNow, armHourTick, dayBreaks } from "./timestamps";
 import { markdown, truncate, pretty } from "./format";
+import { codeNotes, notesState, notesHidden, fetchLineNotes, toggleLineNotes } from "./summaries";
+import { notesByLine } from "./annotate";
 import {
-    openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText,
+    openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText, stepKey, displaySource,
     highlightToken, highlightEl, clearHighlight, tokenHover, pickedHover,
 } from "./ui-kit";
 
@@ -123,9 +125,19 @@ const PY_DF_ROWS = 200;
  *
  *  Exported and pure so it is testable: this shipped for as long as it did because nothing asserted on the
  *  text of a non-scalar cell. */
+/** The producer's marker for a cell it could not represent — set in python-runtime.ts, where the real type
+ *  is still known. Without it an arbitrary object arrives from pandas as `{}`, which is a PLAUSIBLE value
+ *  and so reads as the truth. */
+const UNRENDERABLE = "__ml_unrenderable__";
+const markedType = (v: unknown): string | null => {
+    const rec = v as Record<string, unknown> | null;
+    return rec && typeof rec === "object" && typeof rec[UNRENDERABLE] === "string" ? (rec[UNRENDERABLE] as string) : null;
+};
+
 export const dfCell = (v: unknown): string | null => {
     if (v == null) return "NaN";
     if (typeof v === "object") {
+        if (markedType(v)) return null;                              // named by the producer, not guessed
         // `null` means "no text for this" — NOT the string "null", which would be a value that isn't there.
         // The caller renders a marker; the CSV writes an empty field, since a CSV has no way to say this.
         let j: string | undefined;
@@ -151,6 +163,8 @@ export const dfCell = (v: unknown): string | null => {
  *  question is "why is my column empty". Kept next to `dfCell` so the two cannot disagree about which values
  *  are unrenderable. */
 export const dfCellType = (v: unknown): string => {
+    const marked = markedType(v);
+    if (marked) return marked;      // the Python type name, carried across from the sandbox
     if (Array.isArray(v)) return "list";
     if (v instanceof Date) return "datetime";
     const ctor = (v as { constructor?: { name?: string } })?.constructor?.name;
@@ -223,8 +237,15 @@ export function PyDfTable({ columns, rows }: { columns: string[]; rows: (string 
                                     // an unresolvable pointer uses, because it is the same situation — we
                                     // know something is there and cannot show it — and it says what it was.
                                     return <td key={j} class={typeof c === "number" ? "r-td-num" : (c == null ? "r-td-nan" : undefined)}>
+                                        {/* Two different situations, and the tooltip says which: a value the
+                                            SANDBOX marked (it has no JSON form at all, and pandas would have
+                                            flattened it to an empty object) versus one that arrived here and
+                                            could not be serialised (circular, a Map, a Set). Naming the wrong
+                                            cause sends the reader looking in the wrong half of the system. */}
                                         {text ?? <span class="tok-unresolved r-td-unrend"
-                                            title={`This cell holds a ${dfCellType(c)} that could not be serialised for display (circular, or not JSON-representable). The model received the value itself; only this preview cannot show it.`}>unrenderable {dfCellType(c)}</span>}
+                                            title={markedType(c)
+                                                ? `This cell holds a ${dfCellType(c)}, which has no JSON form — without this marker it would show as an empty object, which is a value it is not. The run itself is unaffected; only this preview cannot show it.`
+                                                : `This cell holds a ${dfCellType(c)} that could not be serialised for display (circular, or not JSON-representable). The model received the value itself; only this preview cannot show it.`}>unrenderable {dfCellType(c)}</span>}
                                     </td>;
                                 })}
                             </tr>
@@ -258,7 +279,71 @@ function PyInTable({ fold, label, children }: { fold: boolean; label: ComponentC
     );
 }
 
-function PythonInRender({ d, live, failLine }: { d: Extract<RenderDescriptor, { type: "python-in" }>; live?: boolean; failLine?: number | null }) {
+/** Which step a code block belongs to, and what it produced — everything the block needs to ask the
+ *  utility model about ITSELF. Threaded down from the step because a RenderDescriptor is serializable
+ *  data and knows nothing about the run it came from. Absent (the export, a preview) → no tools. */
+export interface CodeCtx { hash: string; seq: number; result?: string; }
+
+/** The affordances on a rendered code block: annotate it, show/hide those annotations, and get the source
+ *  somewhere you can run it. Deliberately quiet — half-opacity until the block is hovered, because a
+ *  toolbar competing with the code for attention is the opposite of what a code block is for. */
+function CodeTools({ ctx, lang, src }: { ctx: CodeCtx; lang: string; src: string }) {
+    const rv = rev.value;   // subscribe: notes land on a rev bump (the step is signal-memoized → won't)
+    const [flash, setFlash] = useState("");
+    const key = stepKey(ctx.hash, ctx.seq);
+    const notes = codeNotes.get(key);
+    const state = notesState.get(key);
+    const hasUtility = !!config.value.utilityModel.trim();
+    const say = (msg: string) => { setFlash(msg); setTimeout(() => setFlash(""), 1600); };
+    const python = lang === "python";
+    return (
+        <div class="code-tools" data-rev={rv}>
+            {flash ? <span class="code-tools-flash">{flash}</span> : null}
+            {/* One button, two roles. Before there are notes it ASKS; once they exist there is nothing
+                left to ask, so it becomes the show/hide the notes need. */}
+            {notes
+                ? <button class={`code-tool${notesHidden.has(key) ? "" : " on"}`} onClick={() => toggleLineNotes(key)}>
+                    <span class="tt-anchor">💡 notes</span>
+                    <span class="tt-pop wrap left" role="tooltip">{notesHidden.has(key) ? "Show" : "Hide"} the line notes. They are model-generated, so treat them as a gloss rather than an authority.</span>
+                </button>
+                : <button class="code-tool" disabled={!hasUtility || state === "loading"}
+                    onClick={() => fetchLineNotes(key, lang, src, ctx.result)}>
+                    <span class="tt-anchor">💡 {state === "loading" ? "reading…" : state === "error" ? "retry" : "explain"}</span>
+                    <span class="tt-pop wrap left" role="tooltip">{!hasUtility
+                        ? "Set a utility model in Settings to annotate code."
+                        : state === "error"
+                            ? "The utility model returned nothing usable. Ask again?"
+                            : "Annotate the interesting lines with the utility model, given this code and what it printed. Model-generated and approximate — a good-enough gloss, not a precise explanation."}</span>
+                </button>}
+            {python
+                /* The REFLOWED source, deliberately: it is the code that ran (py-format never changes a
+                   token) and it is what you are looking at, so what lands in the bench is what you
+                   pressed the button next to. The bench reads the key on MOUNT, so writing it and then
+                   navigating is what hands the script over. */
+                ? <button class="code-tool" onClick={() => { lsSet(BENCH_CODE_KEY, src); view.value = { name: "bench" }; }}>
+                    <span class="tt-anchor">▶ bench</span>
+                    <span class="tt-pop wrap left" role="tooltip">Open this script in the Python bench, where you can edit it and run it against the same sandbox. Replaces whatever is in the bench now.</span>
+                </button>
+                : <button class="code-tool" onClick={() => { void copyText(src); say("copied"); }}>
+                    <span class="tt-anchor">copy</span>
+                    <span class="tt-pop wrap left" role="tooltip">Copy the source as shown, to paste into the devtools console.</span>
+                </button>}
+        </div>
+    );
+}
+
+/** The notes to draw on a block, or undefined when there are none / they are hidden. Reads `rev` so a
+ *  landed annotation repaints. */
+function notesForBlock(ctx: CodeCtx | undefined, rv: number): Map<number, string> | undefined {
+    void rv;
+    if (!ctx) return undefined;
+    const key = stepKey(ctx.hash, ctx.seq);
+    const notes = codeNotes.get(key);
+    return notes && !notesHidden.has(key) ? notesByLine(notes) : undefined;
+}
+
+function PythonInRender({ d, live, failLine, ctx }: { d: Extract<RenderDescriptor, { type: "python-in" }>; live?: boolean; failLine?: number | null; ctx?: CodeCtx }) {
+    const rv = rev.value;   // subscribe: a landed annotation repaints the block (retained via data-rev below)
     const fmt = useMemo(() => pyFormat(d.code), [d.code]);
     // WHERE IT BROKE, marked on the code rather than only in the traceback — the traceback tells you a
     // number, and the number is only useful once you have found the line it names. Mapped through the
@@ -299,8 +384,9 @@ function PythonInRender({ d, live, failLine }: { d: Extract<RenderDescriptor, { 
                 line MAP is published on the element rather than passed between descriptors: the In and the
                 Out are two independent RenderDescriptors rendered in two separate blocks, and threading one
                 through the other would couple them for the sake of one number. */}
-            <div data-cite="in" data-py-map={fmt.changed ? JSON.stringify(fmt.map) : undefined}>
-                <Code text={fmt.text} lang="python" lineIds="pyline" markLine={failAt} markTitle={failNote} />
+            <div class="code-block" data-cite="in" data-rev={rv} data-py-map={fmt.changed ? JSON.stringify(fmt.map) : undefined}>
+                {ctx ? <CodeTools ctx={ctx} lang="python" src={fmt.text} /> : null}
+                <Code text={fmt.text} lang="python" lineIds="pyline" markLine={failAt} markTitle={failNote} notes={notesForBlock(ctx, rv)} />
             </div>
         </div>
     );
@@ -568,6 +654,35 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
  *  line of what the model received is exactly what the raw-view rule forbids.
  *
  *  The text itself is never rewritten. This is a rendering of it. */
+/** Show the line a failure NAMES, in the code block above it — the same gesture (and the same pulse) a
+ *  citation makes, because it is the same intent: show me the thing this is about. Lifted out of the python
+ *  traceback so a JS failure, which reports exactly one line and has no traceback to render, lands
+ *  identically instead of growing a second near-copy of this. */
+const jumpToLine = (line: number, isFail: boolean, from: Element) => {
+    // The map lives on the In block, published by the renderer that reflowed the code — so a line number
+    // written against the ORIGINAL source lands on the line that is actually on screen.
+    // Scoped from the CLICKED BUTTON, not from a ref on the block: the ref is null at click time here
+    // and a null scope silently falls back to the document, which is the bug being fixed wearing a
+    // disguise. The event's own target cannot be null — it is what was clicked.
+    const scope: Element | Document = from.closest(".astep") ?? from.closest(".bench-out") ?? document;
+    const holder = scope.querySelector("[data-py-map], [data-cite='in']");
+    const raw = holder?.getAttribute("data-py-map");
+    let shown = line;
+    if (raw) { try { const m = JSON.parse(raw) as number[]; if (m[line]) shown = m[line]; } catch { /* unmapped */ } }
+    const el = holder?.querySelector(`.cline[data-line="${shown}"]`);
+    if (!el) return;
+    // MARK FIRST, then scroll. The mark is the answer; the scroll is a convenience — and doing it the
+    // other way round means any environment where `scrollIntoView` is missing (jsdom, and anything
+    // embedding this in a stripped DOM) loses the answer to a failed nicety.
+    // RED for the line that failed, green for the rest of the call path. Green means "here is the thing
+    // you asked for"; on the failing line it would be the one colour the line is not, flashing over the
+    // red mark already there and saying the opposite of it.
+    const cls = isFail ? "cline-pulse-fail" : "cline-pulse";
+    el.classList.add(cls);
+    setTimeout(() => el.classList.remove(cls), 1400);
+    try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch { /* not every DOM has it */ }
+};
+
 function Traceback({ text }: { text: string }) {
     // SCOPED TO ITS OWN STEP, found by walking up from this element. A document-wide lookup finds the FIRST
     // In block on the page, so with two failing steps open both tracebacks jumped into the first one's code —
@@ -577,30 +692,7 @@ function Traceback({ text }: { text: string }) {
     // Which rows name a user line, so the last of them can be called out as the failure.
     const userRows = rows.map((r, i) => (/File "<python_exec>", line (\d+)/.test(r) ? i : -1)).filter((i) => i >= 0);
     const deepest = userRows.length ? userRows[userRows.length - 1] : -1;
-    const jump = (line: number, isFail: boolean, from: Element) => {
-        // The map lives on the In block, published by the renderer that reflowed the code — so a line number
-        // written against the ORIGINAL source lands on the line that is actually on screen.
-        // Scoped from the CLICKED BUTTON, not from a ref on the block: the ref is null at click time here
-        // and a null scope silently falls back to the document, which is the bug being fixed wearing a
-        // disguise. The event's own target cannot be null — it is what was clicked.
-        const scope: Element | Document = from.closest(".astep") ?? from.closest(".bench-out") ?? document;
-        const holder = scope.querySelector("[data-py-map], [data-cite='in']");
-        const raw = holder?.getAttribute("data-py-map");
-        let shown = line;
-        if (raw) { try { const m = JSON.parse(raw) as number[]; if (m[line]) shown = m[line]; } catch { /* unmapped */ } }
-        const el = holder?.querySelector(`.cline[data-line="${shown}"]`);
-        if (!el) return;
-        // MARK FIRST, then scroll. The mark is the answer; the scroll is a convenience — and doing it the
-        // other way round means any environment where `scrollIntoView` is missing (jsdom, and anything
-        // embedding this in a stripped DOM) loses the answer to a failed nicety.
-        // RED for the line that failed, green for the rest of the call path. Green means "here is the thing
-        // you asked for"; on the failing line it would be the one colour the line is not, flashing over the
-        // red mark already there and saying the opposite of it.
-        const cls = isFail ? "cline-pulse-fail" : "cline-pulse";
-        el.classList.add(cls);
-        setTimeout(() => el.classList.remove(cls), 1400);
-        try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch { /* not every DOM has it */ }
-    };
+    const jump = jumpToLine;
     return (
         <pre class="code tb"><code class="hljs">{rows.map((r, i) => {
             // `_user` is the name of the wrapper the sandbox indents the code into — an implementation
@@ -720,18 +812,50 @@ function PythonOutRender({ d, marks, live, ranMs, ranSince }: { d: Extract<Rende
 /** A `code` In block — `exec`'s beautified JS, and anything else that renders as source. It publishes the
  *  same `data-cite` anchor and `data-py-map` the Python one does, so a stack trace beside it maps and jumps
  *  identically: the mapping is a property of SHOWING REFORMATTED CODE, not of the language. */
-function CodeRender({ d, failLine }: { d: Extract<RenderDescriptor, { type: "code" }>; failLine?: number | null }) {
+function CodeRender({ d, failLine, ctx }: { d: Extract<RenderDescriptor, { type: "code" }>; failLine?: number | null; ctx?: CodeCtx }) {
+    const rv = rev.value;   // subscribe: a landed annotation repaints the block (retained via data-rev below)
     const [map, setMap] = useState<number[] | null>(null);
     const shownFail = failLine != null ? (map?.[failLine] ?? failLine) : null;
+    // The annotator has to number the lines the READER sees, and `Code` beautifies JS internally — so the
+    // source it will draw is derived here rather than assumed to be `d.text`.
+    const shown = displaySource(d.text, d.lang, d.format, d.marks);
     return (
-        <div data-cite="in" data-py-map={map ? JSON.stringify(map) : undefined}>
+        <div class="code-block" data-cite="in" data-rev={rv} data-py-map={map ? JSON.stringify(map) : undefined}>
+            {ctx ? <CodeTools ctx={ctx} lang={d.lang === "python" ? "python" : "javascript"} src={shown} /> : null}
             {/* Said out loud, because the rendered text is not always what the caller typed: `exec` expands
                 pointer macros before running, so a reader comparing this against the raw args would
                 otherwise conclude the log is lying to them. */}
             {d.note ? <div class="rp-note">{d.note}</div> : null}
+            {/* The same caveat the python side carries, and for the same reason: a beautifier breaks one
+                statement across several rows, so the marked row is where the statement STARTS and the token
+                that actually threw can be a few lines down. Said only when the line really moved — an
+                unconditional caveat is noise that undermines the times it is true. */}
             <Code text={d.text} lang={d.lang} format={d.format} marks={d.marks} onMap={setMap}
-                lineIds="line" markLine={shownFail} markTitle="This line failed." />
+                lineIds="line" markLine={shownFail}
+                markTitle={shownFail != null && shownFail !== failLine
+                    ? "This line failed. It is shown reflowed for reading — in the code as written this was one line, so the failure is somewhere in the statement starting here."
+                    : "This line failed."}
+                notes={notesForBlock(ctx, rv)} />
         </div>
+    );
+}
+
+/** A JS failure, with the LINE it happened on made clickable — the counterpart to a python traceback frame.
+ *  JS gives us one line and no call path (an evaluated script's stack is mostly the wrapper), so there is
+ *  nothing to render as a traceback; the number is marked in place, in the message text the model also
+ *  received. No line → the message verbatim, which is what it always was. */
+function ExecError({ text, line }: { text: string; line?: number }) {
+    const m = line != null ? /^([\s\S]*)\(line (\d+)\)([\s\S]*)$/.exec(text) : null;
+    if (!m) return <Code text={text} lang="text" />;
+    return (
+        <pre class="code tb"><code class="hljs"><span class="tbline tb-fail">
+            {m[1]}(line{" "}
+            <span class="tt tb-line-wrap">
+                <button class="tb-line" onClick={(e: MouseEvent) => jumpToLine(line!, true, e.currentTarget as Element)}>{m[2]}</button>
+                <span class="tt-pop wrap" role="tooltip">Line {m[2]} — where it failed. Click to show it in the code above.</span>
+            </span>
+            ){m[3]}
+        </span></code></pre>
     );
 }
 
@@ -747,7 +871,7 @@ function ExecOutRender({ d, marks, live, ranMs, ranSince }: { d: Extract<RenderD
                 <RanFor live={live} ms={ranMs} since={ranSince} />
             </PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
-            {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell><Code text={d.error} lang="text" /></OutputCell></PyOutSection> : null}
+            {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell><ExecError text={d.error} line={d.errorLine} /></OutputCell></PyOutSection> : null}
             {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
             {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} /> : null}
         </div>
@@ -776,7 +900,7 @@ function LookRender({ d }: { d: Extract<RenderDescriptor, { type: "look" }> }) {
     );
 }
 
-export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null; ranMs?: number; ranSince?: number }) {
+export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null; ranMs?: number; ranSince?: number; ctx?: CodeCtx }) {
     switch (d.type) {
         case "image": {
             // If the label references an @pt/@box (e.g. look's `element "@pt:…"`), hovering the shot
@@ -785,7 +909,7 @@ export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince }: { d: 
             return <div class={`r-image${th.onPointerEnter ? " r-hoverable" : ""}`} {...th}>
                 <ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
         }
-        case "code": return <CodeRender d={d} failLine={failLine} />;
+        case "code": return <CodeRender d={d} failLine={failLine} ctx={ctx} />;
         case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
@@ -853,7 +977,7 @@ function FetchLadder({ attempts, resolvedBy }: { attempts: import("../contract")
             }
             return <Code text={pretty(d)} lang="json" />;
         case "locate": return <LocateRender d={d} />;
-        case "python-in": return <PythonInRender d={d} live={live} failLine={failLine} />;
+        case "python-in": return <PythonInRender d={d} live={live} failLine={failLine} ctx={ctx} />;
         case "python-out": return <PythonOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} />;
         case "exec-out": return <ExecOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} />;
         case "look": return <LookRender d={d} />;

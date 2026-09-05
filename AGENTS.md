@@ -1068,6 +1068,23 @@ prelude's own call site: dimmed, never dropped, because the raw view has to stay
 line turns the gutter on for that block regardless of the preference — you cannot mark a line in a block with
 no lines.
 
+**JS reports its line too (`src/exec-trace.ts`).** `exec` returned `e.message` and dropped the stack, so a JS
+failure said WHAT and never WHERE — half the answer, for the reader and for the model about to retry it.
+There is no traceback worth rendering (an evaluated script's stack is almost entirely the wrapper), so it
+reports ONE line, which then travels the identical route a python frame does: through the derived map, into
+the beautified code, marked red and clickable (`jumpToLine` is shared by both, rather than a second near-copy
+of the same gesture). The awkward part is that the stack's line is NOT the model's line, and the two paths
+`exec` can take shift it differently — an indirect `eval` inside a `Function` (offset 0) or an
+`AsyncFunction` BODY when the source uses top-level await/return (offset 2, in V8 today). Both offsets are
+**MEASURED at runtime** by throwing from a known line inside the real construct, with the same PARAMETER LIST
+the real call uses, because a written-down constant is a guess about a wrapper we do not own and would drift
+silently rather than fail. The line rides the `exec-out` descriptor as `errorLine` and is appended to the
+model-facing message as ` (line N)` — it is retrying this code, and a line number is the difference between a
+targeted fix and a rewrite. **Anything it cannot be sure of is null**: no stack, no evaluated frame, or a
+frame that maps outside the source (a failure inside something the code called) is refused rather than
+clamped, because a confident wrong line sends the reader to innocent code and they conclude the tooling is
+broken instead of the number.
+
 **A cell we cannot render says so.** `PyDfTable` coerced every cell with `String()`, so a pandas column
 holding a dict — `dict(per_q)` in a cell is an ordinary thing to write — rendered as `[object Object]`: a
 wrong fact printed exactly where the reader is looking for the right one, and it shipped because nothing
@@ -1076,6 +1093,46 @@ IS by the time it arrives — the sandbox returns through `json.dumps`) and retu
 cannot be serialised at all. Null is not the string "null": the cell then draws the same dashed red marker an
 unresolvable pointer uses, naming the type, with a tooltip saying the failure is in the PREVIEW and not in
 the run. The CSV copy goes through the same function, so what you paste cannot disagree with what you saw.
+**The same bug in another costume was still live one layer up**: pandas serialises an arbitrary object — a
+class instance, a function, a nested frame — to an **empty object**, and `{}` is a *plausible* value, so it
+read as the truth and `dfCell` had no way to tell it from a genuinely empty dict. Named at the PRODUCER
+(`python-runtime.ts`, before `to_json`), because the sandbox is the last place the real type is still known:
+a lost cell becomes `{"__ml_unrenderable__": "<type name>"}` and the panel draws the same marker with the
+**Python** type on it. Only what would be LOST is touched — a dict stays a dict, a set still becomes the list
+pandas makes of it, numpy scalars and timestamps still convert — since a rule that swallowed working values
+would be worse than the bug it fixes. Real-CPython tests both ways in `tests/python.test.mjs`, end to end in
+`tests/e2e/line-map.spec.mjs`.
+
+**Affordances on a rendered code block (`CodeTools`, render-panel.tsx).** A block of someone else's code is
+something you read, copy, and want explained, and it offered none of those. Quiet by design — half opacity
+until the block is hovered, since a toolbar competing with the code for attention is the opposite of what a
+code block is for. Python gets **explain** + **▶ bench**; JS gets **explain** + **copy**.
+- **explain** annotates the interesting LINES with the utility model (`annotate.ts` is the pure half —
+  prompt, schema, and the coercion of the reply; `summaries.tsx` holds the store, beside the approval-card
+  gloss it is a sibling of). Opt-in per block, NEVER automatic: it spends tokens and, unlike the approval
+  gloss, nobody is waiting on it to decide anything. Constrained by a **JSON schema**, because a line number
+  recovered by regex from prose is exactly the confidently-wrong number this whole subsystem exists to stop
+  producing.
+- **The notes go in the MARGIN and never into the source.** Inserting a comment would shift every line below
+  it, which invalidates `py-format`'s line map and stops a traceback resolving — so a note is a SIBLING of
+  its line (`.lnote`, drawn under it rather than to its right: the panel is often 400px wide and a true
+  right margin sits off the end of a horizontally scrolled block). Notes turn the gutter on for the same
+  reason a `markLine` does — you cannot key a note to a line the reader would have to count to.
+- **The model is numbered against what the READER sees.** The block draws reflowed source, so numbering the
+  original would have the annotator pointing at lines that moved and the note landing on the wrong row,
+  silently. `displaySource` is exported from ui-kit for exactly this: `Code` beautifies JS internally, so a
+  caller cannot get the drawn text from what it passed in.
+- **Nothing from the model is trusted.** A line outside the block is DROPPED rather than clamped (clamping
+  invents a claim about a line it never looked at, and lands it on the first or last line, where a reader
+  would believe it); repeats and blanks go; the set is capped in count and length. An unusable reply is an
+  ERROR STATE offering a retry, not an empty success — a button that visibly does nothing reads as broken.
+  The gloss is rendered through the markdown renderer (`mdInline`, one `<p>` peeled off) and its tooltip
+  says it is model-generated and approximate.
+- **▶ bench** hands the script to the Python bench (`lsSet(BENCH_CODE_KEY, …)` then navigate). The bench
+  reads that key on MOUNT and is only rendered while it is the open view, so writing-then-navigating IS the
+  handover. It sends the REFLOWED source deliberately: `py-format` never changes a token, so that is the
+  code that ran and it is the code you pressed the button next to. `lsGet`/`lsSet` live in `store.ts`, not
+  `vram.tsx`, because render-panel cannot import vram (vram imports RenderPanel — a cycle).
 
 **One disclosure, everywhere something opens (`Disclosure`, ui-kit.tsx).** The panel had three of these
 written three different ways — the model list's fold, the agent's system prompt and tool definitions, the

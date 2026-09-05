@@ -1174,6 +1174,9 @@
                 "error": {
                   "type": "string"
                 },
+                "errorLine": {
+                  "type": "number"
+                },
                 "token": {
                   "type": "string"
                 },
@@ -1679,6 +1682,9 @@
                 },
                 "error": {
                   "type": "string"
+                },
+                "errorLine": {
+                  "type": "number"
                 },
                 "token": {
                   "type": "string"

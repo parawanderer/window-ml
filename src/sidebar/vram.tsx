@@ -15,7 +15,10 @@ import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
 import { Disclosure } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { hhmmss } from "./timestamps";
-import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels, lsGet, lsSet, BENCH_CODE_KEY } from "./store";
+// lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
+// cannot import this module (it would be a cycle — this one imports RenderPanel).
+export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
 import { parseInfo, holdCapacity, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
@@ -1341,10 +1344,9 @@ export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: str
 // UI, so it just runs — no approval prompt (you are the approver).
 // Guarded localStorage — the bench persists its script/mode there, but an opaque origin (jsdom, or a
 // locked-down context) throws SecurityError on access, so degrade to no-persist instead of crashing.
-export const lsGet = (k: string): string | null => { try { return localStorage.getItem(k); } catch { return null; } };
-export const lsSet = (k: string, v: string): void => { try { localStorage.setItem(k, v); } catch { /* opaque origin — skip */ } };
+
 export function PythonBench() {
-    const [code, setCode] = useState(() => lsGet("ml_bench_code") ?? "import numpy as np\nreturn int(np.arange(10).sum())");
+    const [code, setCode] = useState(() => lsGet(BENCH_CODE_KEY) ?? "import numpy as np\nreturn int(np.arange(10).sum())");
     const [mode, setMode] = useState<"readonly" | "full">(() => (lsGet("ml_bench_mode") === "full" ? "full" : "readonly"));
     const [running, setRunning] = useState(false);
     const [result, setResult] = useState<{ ok: boolean; value?: unknown; stdout: string; error?: string } | null>(null);
@@ -1352,7 +1354,7 @@ export function PythonBench() {
     const run = () => {
         if (running || !code.trim()) return;
         setRunning(true); setResult(null);
-        lsSet("ml_bench_code", code); lsSet("ml_bench_mode", mode);
+        lsSet(BENCH_CODE_KEY, code); lsSet("ml_bench_mode", mode);
         try {
             chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code, hardened: mode === "readonly", image: null, tables: null } },
                 (resp: any) => {

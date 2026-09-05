@@ -177,3 +177,12 @@ export const atBottom = { v: true };
 // "card" (a transparent, curated HUD). The shell sets it via __mlSidebarSurface; components read it to drop
 // debug chrome in the card. Cross-cutting (read by the agent-detail views + the HUD), so it lives here.
 export const surface = signal<"panel" | "card">("panel");
+
+/** localStorage, tolerantly: an opaque origin (a sandboxed frame) throws on access rather than returning
+ *  null, and a display preference is never worth failing a render over. */
+export const lsGet = (k: string): string | null => { try { return localStorage.getItem(k); } catch { return null; } };
+export const lsSet = (k: string, v: string): void => { try { localStorage.setItem(k, v); } catch { /* opaque origin — skip */ } };
+/** The Python bench's script. The bench reads it when it MOUNTS, which is what lets a code block hand it
+ *  a script and then navigate: the bench is only rendered while it is the open view, so arriving there
+ *  always picks the new source up. */
+export const BENCH_CODE_KEY = "ml_bench_code";

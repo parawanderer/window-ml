@@ -448,3 +448,28 @@ test("live stdout tee: NO callback set → pure capture, the tee is a silent no-
     assert.equal(r.stdout, "quiet\n", "stdout captured normally");
     assert.equal(r.value, 1);
 });
+
+test("a df cell with no JSON form is NAMED by the sandbox, not flattened to an empty object", { skip }, async () => {
+    // pandas serialises an arbitrary object to `{}` — a plausible value, so the panel would print an empty
+    // dict exactly where the reader is looking for the real one (the `[object Object]` bug in another
+    // costume). The type is only still known HERE, so it is recorded here.
+    const r = await pyRun([
+        "import pandas as pd",
+        "class Widget:",
+        "    def __repr__(self): return '<Widget id=7>'",
+        "return pd.DataFrame({'name': ['a', 'b', 'c', 'd'], 'meta': [{'q1': 1}, {1, 2, 3}, Widget(), None]})",
+    ].join("\n"));
+    assert.ok(r.table, "a df return yields a structural table");
+    const meta = r.table.rows.map((row) => row[1]);
+    // Everything json/pandas represents natively is LEFT ALONE — the marker is only for what would be lost.
+    assert.deepEqual(meta[0], { q1: 1 }, "a dict cell is still a dict");
+    assert.deepEqual(meta[1], [1, 2, 3], "a set still converts to a list");
+    assert.deepEqual(meta[2], { __ml_unrenderable__: "Widget" }, "the class instance is named");
+    assert.equal(meta[3], null, "None is still None, not 'NoneType'");
+});
+
+test("a frame of ordinary values gains no markers at all", { skip }, async () => {
+    // The walk must not perturb the common case: an object-dtype column of strings is the norm.
+    const r = await pyRun("import pandas as pd\nreturn pd.DataFrame({'s': ['x', 'y'], 'n': [1, 2]})");
+    assert.deepEqual(r.table.rows, [["x", 1], ["y", 2]]);
+});

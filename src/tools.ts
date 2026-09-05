@@ -16,6 +16,7 @@ export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "h
 export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
 import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom";
 import { expandPointers } from "./pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
+import { execErrorLine } from "./exec-trace";       // a stack frame → the model's own line number
 import { runPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
 import { DEREF_TOOL, type DerefRead } from "./token-pipe";
 import { DerefText } from "./ml-agent";
@@ -671,6 +672,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
 
                 let result: unknown;
                 let failed: unknown;
+                // WHICH WRAPPER RAN, so a stack line can be turned back into the model's own line number.
+                // The two paths wrap the source differently and the offset is measured against the wrapper
+                // actually used (see exec-trace.ts) — recorded here because only this code knows which it
+                // took, and the `src` parameter is the eval wrapper's own, not part of the shape.
+                let wrapKind: "eval" | "async" = "eval";
+                const wrapParams = mlSync ? ["state", "ml"] : ["state"];
                 try {
                     try {
                         // Fast path — preserves the last expression's value. Runs the source with the agent's
@@ -691,6 +698,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         // must `return` its value here (no last-expression auto-return).
                         // A genuine syntax error re-throws from this attempt and is reported.
                         if (e instanceof SyntaxError) {
+                            wrapKind = "async";
                             const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as { new (...args: string[]): (...a: unknown[]) => Promise<unknown> };
                             // eval threw away the completion value when it rejected top-level
                             // await/return. Re-run as an async body — but first preserve the REPL
@@ -721,7 +729,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // The UI's RENDERED Out — parity with python_exec's cell (console / value / error sections +
                 // a rendered⇄raw toggle) instead of one raw blob. Carries exactly the same data the raw
                 // `content` string does, so the model-facing result is byte-identical (the raw-view rule).
-                const execRender = (value?: string, error?: string): import("./contract").RenderDescriptor => {
+                const execRender = (value?: string, error?: string, errorLine?: number | null): import("./contract").RenderDescriptor => {
                     const joined = logs.join("\n");
                     return {
                         type: "exec-out",
@@ -729,6 +737,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         // ENDED (`seen`) so the surplus renders marked instead of silently passing as "what it read".
                         ...(logs.length ? { stdout: clipOut(joined, UI_OUT_CAP), seen: Math.min(joined.length, cap) } : {}),
                         ...(error != null ? { error } : {}),
+                        ...(errorLine != null ? { errorLine } : {}),
                         ...(value != null ? { value } : {}),
                     };
                 };
@@ -737,6 +746,14 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     // errText, NOT `.message`: a rejected `ml.*` call (makeBackgroundTaskPromise) rejects with a
                     // STRING (the actionable message), which has no `.message` → the "Error: undefined" bug.
                     const msg = errText(failed);
+                    // WHERE it threw. Python has said this for a while; without it a JS failure gave the
+                    // reader (and the model) half an answer. Null whenever it cannot be known — a frame from
+                    // inside a library the code called, a stack the engine did not provide — because a
+                    // confident wrong line is worse than none: it sends you to read innocent code.
+                    const at = await execErrorLine((failed as Error)?.stack, wrapKind, wrapParams, js.split("\n").length);
+                    // Told to the MODEL too, not only drawn: it is retrying this code, and "line 12" is the
+                    // difference between a targeted fix and a rewrite.
+                    const where = at != null ? ` (line ${at})` : "";
                     // STRICT-PAGE eval BLOCK (CSP omits 'unsafe-eval' / Trusted Types): the eval was refused at
                     // COMPILE time — nothing ran. Signal the executor to re-run the SAME (approved) source via
                     // CDP `Runtime.evaluate` (debugger, CSP-exempt). The background decides — run it (cdp on +
@@ -751,7 +768,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     const hint = arrayish
                         ? " — querySelectorAll / .children / getElementsBy* return a NodeList/HTMLCollection, not an Array. Wrap it first: [...document.querySelectorAll('…')].map(…) or Array.from(…)."
                         : "";
-                    return { content: withLogs(`Error: ${msg}${hint}`), render: execRender(undefined, `${msg}${hint}`) };
+                    return { content: withLogs(`Error: ${msg}${where}${hint}`), render: execRender(undefined, `${msg}${where}${hint}`, at) };
                 }
 
                 // DOM node results come back hoverable (see the loop's envelope).

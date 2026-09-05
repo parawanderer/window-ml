@@ -278,7 +278,28 @@ try:
     _cls = result.__class__.__name__
     if _cls in ('DataFrame', 'Series') and hasattr(result, 'to_json'):
         _dfr = result.to_frame() if _cls == 'Series' else result
-        _split = _json.loads(_dfr.head(200).to_json(orient='split', date_format='iso'))
+        _dfr = _dfr.head(200)
+        # A CELL PANDAS CANNOT REPRESENT SERIALISES AS AN EMPTY OBJECT. An arbitrary object — a class instance, a
+        # function, a nested frame — comes out of to_json as an empty object, and an empty object is a
+        # PLAUSIBLE value, so the reader is shown a wrong fact exactly where they are looking for the
+        # right one (this is the [object Object] bug wearing different clothes). Named here, at the
+        # producer, because this is the only place the real type is still known: the panel gets a marked
+        # cell it can render as "unrenderable <type>" instead of guessing from an empty object.
+        # Anything json/pandas handles natively is left ALONE — a set becomes a list, a dict stays a
+        # dict, a numpy scalar and a timestamp both convert — so this only touches what would be lost.
+        try:
+            _ml_ok = (str, bool, int, float, dict, list, tuple, set, frozenset, bytes)
+            def _ml_cell(_v):
+                if _v is None or isinstance(_v, _ml_ok) or _v != _v:   # _v != _v → NaN
+                    return _v
+                if hasattr(_v, 'item') or hasattr(_v, 'isoformat'):     # numpy scalar, datetime
+                    return _v
+                return {'__ml_unrenderable__': type(_v).__name__}
+            for _c in _dfr.columns[_dfr.dtypes.eq('object')]:
+                _dfr = _dfr.assign(**{_c: _dfr[_c].map(_ml_cell)})
+        except Exception:
+            pass   # a frame this cannot walk still serialises the way it always did
+        _split = _json.loads(_dfr.to_json(orient='split', date_format='iso'))
         _json_table = _json.dumps({'columns': [str(_c) for _c in _split.get('columns', [])], 'rows': _split.get('data', [])})
 except Exception:
     _json_table = None

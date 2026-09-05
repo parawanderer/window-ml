@@ -9,7 +9,7 @@ import { signal } from "@preact/signals";
 import type { AnswerMedia } from "../contract";
 import type { Status, AgentStep } from "./store";
 import { codeLineNumbers } from "./store";
-import { beautifyJs, highlight, htmlLines, shortStamp, fullStamp, pretty, truncate } from "./format";
+import { beautifyJs, highlight, htmlLines, shortStamp, fullStamp, pretty, truncate, mdInline } from "./format";
 import { lineMapBetween } from "../line-map";
 import { useTipPlacement } from "./use-tip";
 import { IconCopy, IconCheck, IconSheet, IconChevron } from "./icons";
@@ -68,8 +68,14 @@ function markedHtml(text: string, lang: string | undefined, marks: CodeMark[]): 
 
 const escapeAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-export const Code = ({ text, lang, format, marks, lineIds, markLine, markTitle, onMap }: { text: string; lang?: string; format?: boolean; marks?: CodeMark[]; lineIds?: string; markLine?: number | null; markTitle?: string; onMap?: (map: number[] | null) => void }) => {
-    const src = format && !marks?.length && (lang === "javascript" || lang === "js") ? beautifyJs(text) : text;
+/** The text a `Code` block will actually DRAW. Exported because the annotator has to number the same
+ *  lines the reader sees: JS is beautified inside the component, so a caller reasoning about line numbers
+ *  cannot get them from the text it passed in. */
+export const displaySource = (text: string, lang?: string, format?: boolean, marks?: CodeMark[]): string =>
+    format && !marks?.length && (lang === "javascript" || lang === "js") ? beautifyJs(text) : text;
+
+export const Code = ({ text, lang, format, marks, lineIds, markLine, markTitle, notes, onMap }: { text: string; lang?: string; format?: boolean; marks?: CodeMark[]; lineIds?: string; markLine?: number | null; markTitle?: string; notes?: Map<number, string>; onMap?: (map: number[] | null) => void }) => {
+    const src = displaySource(text, lang, format, marks);
     // BEAUTIFYING MOVES LINE NUMBERS, and js-beautify hands back no map — so one is derived from the two
     // texts (see line-map.ts). Without it a JS stack trace read against this block names a line that has
     // since moved, which is the same silent disagreement the Python side had.
@@ -82,11 +88,13 @@ export const Code = ({ text, lang, format, marks, lineIds, markLine, markTitle, 
     // has no lines, and a traceback saying "line 3" with nothing numbered leaves the reader counting. So a
     // `markLine` turns the gutter on for that block regardless of the preference — the preference is about
     // wanting numbers in general, not about wanting them withheld when something is referring to one.
-    if (!codeLineNumbers.value && markLine == null)
+    // Notes turn the gutter on for the same reason a `markLine` does: a margin note is keyed to a line,
+    // and a line the reader cannot number is one they have to count to.
+    if (!codeLineNumbers.value && markLine == null && !notes?.size)
         return <pre class="code"><code class="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>;
     return (
         <pre class="code numbered"><code class="hljs">
-            {htmlLines(html).map((ln, i) => (
+            {htmlLines(html).map((ln, i) => [
                 // `lineIds` makes each row addressable, so a traceback elsewhere on the page can point AT a
                 // line rather than at the block containing it.
                 // The marked line carries the panel's own tooltip rather than a native `title`: the native
@@ -102,8 +110,13 @@ export const Code = ({ text, lang, format, marks, lineIds, markLine, markTitle, 
                         wide as the block, so an anchored tip can sit half a panel from the pointer that
                         summoned it. Kept in the DOM as well so it is readable without a pointer at all. */}
                     {markLine === i + 1 && markTitle ? <span class="tt-pop cline-why" role="tooltip">{markTitle}</span> : null}
-                </span>
-            ))}
+                </span>,
+                /* A model-written gloss, drawn UNDER its line rather than to the right of it: the panel is
+                   often 400px wide and a true right margin would sit off the end of a horizontally
+                   scrolled block. It is a sibling of the line, never part of it — the source keeps its
+                   own numbering and the line map is untouched. */
+                notes?.get(i + 1) ? <span class="lnote" key={`n${i}`}><span class="lnote-mark" aria-hidden="true" /><span class="lnote-txt" dangerouslySetInnerHTML={{ __html: mdInline(notes.get(i + 1)!) }} /></span> : null,
+            ])}
         </code></pre>
     );
 };

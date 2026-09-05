@@ -285,3 +285,12 @@ export function lastUser(messages: NeutralMessage[]): string {
 }
 export const rollupStatus = (s: Session): Status =>
     s.turns.some(t => t.status === "pending") ? "pending" : s.turns.some(t => t.status === "err") ? "err" : "ok";
+
+/** The same renderer, unwrapped for a run of text that sits INSIDE a line rather than being its own
+ *  paragraph (a margin note beside a line of code). One `<p>` is peeled off; anything with real block
+ *  structure keeps it, since stripping only the opening tag would leave unbalanced markup. */
+export function mdInline(src: string): string {
+    const html = markdown(src);
+    const m = html.match(/^<p>((?:(?!<\/p>)[\s\S])*)<\/p>\s*$/);
+    return m ? m[1] : html;
+}

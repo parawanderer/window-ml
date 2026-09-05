@@ -2722,6 +2722,35 @@ test("python bench: a Map, a Set or an Error is marked rather than printed as {}
     assert.match(w.shadow.querySelector(".bench-out .r-py-val").textContent, /\{\}/);
 });
 
+// The SANDBOX-marked case, which the two above cannot produce: pandas flattens an arbitrary object to `{}`
+// on its way out, so by the time it reaches the browser there is nothing left to detect. The type is
+// recorded at the producer (python-runtime.ts) and read back here — the two halves of one mechanism, and
+// this is the half that draws it.
+test("python bench: a cell the SANDBOX marked names its Python type, and blames the preview", async () => {
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: "", stdout: "",
+        table: { columns: ["name", "meta"], rows: [
+            ["a", { q1: 1 }],
+            ["b", { __ml_unrenderable__: "Widget" }],
+        ] } }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const ta = w.shadow.querySelector(".bench-code");
+    ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
+    await w.tick();
+    w.shadow.querySelector(".bench-run").click();
+    await w.tick();
+
+    const marks = [...w.shadow.querySelectorAll(".bench-out .r-td-unrend")];
+    assert.equal(marks.length, 1, "only the marked cell; the dict beside it has a JSON form and keeps it");
+    assert.equal(marks[0].textContent, "unrenderable Widget", "the PYTHON type, carried across");
+    // The cause differs from the browser-side one and so does the explanation: naming the wrong cause sends
+    // the reader looking in the wrong half of the system.
+    assert.match(marks[0].getAttribute("title"), /would show as an empty object/i);
+    assert.doesNotMatch(marks[0].getAttribute("title"), /circular/i);
+    assert.match(w.shadow.querySelector(".bench-out .r-df-table").textContent, /"q1"/,
+        "the dict cell is untouched — the marker is only for what would otherwise be LOST");
+});
+
 test("python bench: full mode sends hardened:false", async () => {
     const w = await loadSidebarWorld();
     w.shadow.querySelector('[aria-label="Python bench"]').click();

@@ -16,8 +16,14 @@
 //   3. A TRACEBACK STILL POINTS SOMEWHERE TRUE. Reflowing moves line numbers, so the formatter publishes a
 //      map and the traceback maps through it — click a line number and the line it means lights up green.
 //      The deepest user frame is marked as the failure; the prelude's own frame is dimmed, never dropped.
-//   4. A DATAFRAME CELL SAYS WHAT IT IS. A dict cell renders as JSON rather than "[object Object]", and one
-//      that cannot be serialised at all says so, with its type.
+//   4. A DATAFRAME CELL SAYS WHAT IT IS. A dict cell renders as JSON rather than "[object Object]"; a set
+//      renders as the list pandas turns it into; and an object with no JSON form at all — a class instance,
+//      which pandas would serialise to an empty object, a plausible value that is not the truth — renders as
+//      a red "unrenderable Probe" marker NAMING its Python type. The type is recorded in the sandbox,
+//      because that is the last place it is still known.
+//   5. JS REPORTS ITS LINE TOO. It has no traceback worth rendering (an evaluated script's stack is mostly
+//      the wrapper), so `exec` measures the offset its wrapper adds and reports one line — clickable, into
+//      the beautified code, through the derived map. Before this a JS failure said WHAT and never WHERE.
 //
 // Screenshots land in tests/e2e/artifacts/line-map-demo/. Env: HOLD=0 to exit instead of waiting.
 import path from "node:path";
@@ -35,13 +41,16 @@ const HOLD = process.env.HOLD !== "0";
 // from a literal rather than a loaded table so the step SUCCEEDS — the point of this one is the reflow, and
 // a step that also errored would make the second one (which is about the traceback) say nothing new.
 const DENSE = [
+    // a cell with NO JSON form — see the narration for step 1
+    "class Probe:",
+    "    def __repr__(self): return '<Probe live>'",
     "rows = [{'Rep':'Gia','Q1':210,'Q2':220},{'Rep':'Kim','Q1':190,'Q2':205},{'Rep':'Ada','Q1':150,'Q2':160}]",
     "df = pd.DataFrame(rows)",
     "qs = ['Q1','Q2']",
     "grand = df[qs].values.sum()",
     "per_q = df[qs].sum()",
     "rep = df.groupby('Rep', sort=False)[qs].sum().sum(axis=1).sort_values(ascending=False)",
-    "out = pd.DataFrame({'metric':['Grand total','Per quarter']+['Top rep: '+rep.index[0]],'value':[grand, dict(per_q), int(rep.iloc[0])]})",
+    "out = pd.DataFrame({'metric':['Grand total','Per quarter']+['Top rep: '+rep.index[0]],'value':[grand, dict(per_q), int(rep.iloc[0])],'source':[Probe(), Probe(), Probe()]})",
     "return out",
 ].join("\n");
 
@@ -145,6 +154,21 @@ const main = async () => {
         await dense.locator(".rr-toggle button", { hasText: "rendered" }).first().click().catch(() => {});
         await sleep(400);
 
+        // 2b — the returned frame's cells. Three kinds side by side: a dict that has a JSON form, and a
+        // class instance that has none. pandas serialises the second to an empty object, which is a
+        // PLAUSIBLE value and therefore the worst possible answer — so the sandbox names its type on the
+        // way out and the cell renders as a marker instead of as a fact that is not true.
+        const cells = dense.locator(".r-df-table tbody td");
+        const bad = dense.locator(".r-td-unrend");
+        log(`\n--- step 1's returned frame: ${await cells.count()} cells, ${await bad.count()} with no JSON form ---`);
+        if (await bad.count()) {
+            log("    " + (await bad.first().textContent()).trim() + "   ← hover it for the type and why");
+            await bad.first().scrollIntoViewIfNeeded().catch(() => {});
+            await bad.first().hover().catch(() => {});
+            await sleep(600);
+            await frame.page().screenshot({ path: path.join(ART, "1b-unrenderable-cell.png") });
+        }
+
         // 3 — the traceback, in the step that failed. Click the deepest user frame's line number and watch
         // that line light up in the In block above it.
         const failing = steps.nth(1);
@@ -184,6 +208,22 @@ const main = async () => {
             const mapped = await js.locator("[data-py-map]").getAttribute("data-py-map").catch(() => null);
             log("\n--- step 4: the derived line map (original → shown) ---\n" + (mapped || "(none — nothing moved)"));
             await frame.page().screenshot({ path: path.join(ART, "4-js-beautified.png") });
+
+            // 6 — the part JS did not have until now. There is no traceback to render (an evaluated
+            // script's stack is almost entirely the wrapper), so `exec` measures what its wrapper adds and
+            // reports ONE line — which then travels the identical route a python frame does: through the
+            // derived map, into the beautified code, marked red.
+            const jsErr = js.locator(".r-py-err .tb-line");
+            if (await jsErr.count()) {
+                log(`\n--- step 4: the failure names line ${(await jsErr.first().textContent()).trim()} of the model's own source ---`);
+                await jsErr.first().click();
+                await sleep(900);
+                const lit = await js.locator(".cline-fail, .cline-pulse-fail").first().textContent().catch(() => "");
+                log("    clicked it — the line it means lit up:\n    " + (lit || "(not found)").trim());
+                await frame.page().screenshot({ path: path.join(ART, "5-js-error-line.png") });
+            } else {
+                log("\n--- step 4: NO line number on the JS failure (this is the regression this demo watches for) ---");
+            }
         }
 
         log(`\nscreenshots → ${ART}`);

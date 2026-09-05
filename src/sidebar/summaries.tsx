@@ -6,6 +6,7 @@ import { config, rev } from "./store";
 import type { AgentStep } from "./store";
 import { stepKey } from "./ui-kit";
 import { truncate } from "./format";
+import { NOTES_SCHEMA, notesMessages, parseNotes, type LineNote } from "./annotate";
 
 // Utility-model auto-summaries (card title, code/action approval summaries) are gated on BOTH a
 // configured utility model AND the "summarise with the utility model" toggle (config.autoTitles).
@@ -49,6 +50,48 @@ export function CodeExplain({ hash, seq, lang, code, result }: { hash: string; s
     if (!code.trim()) return null;
     return <button class="step-explain-btn" data-rev={rv} onClick={() => fetchCodeSummary(hash, seq, lang, code, result)}>💡 Explain this {lang === "python" ? "Python" : "JavaScript"}</button>;
 }
+// ---------------------------------------------------------------- line notes
+// The "Explain" affordance on a rendered code block: a utility model annotates the interesting LINES and
+// the panel draws each note in the margin beside its line (never inserted — see annotate.ts). Opt-in per
+// block, never automatic: it spends tokens, and unlike the approval gloss nobody is waiting on it to
+// decide anything.
+export const codeNotes = new Map<string, LineNote[]>();
+/** "loading" while the call is out, "error" when it came back with nothing usable. A block with neither
+ *  and no notes has simply never been asked. */
+export const notesState = new Map<string, "loading" | "error">();
+/** Blocks whose notes are currently hidden (the show/hide toggle). Hidden, not discarded — turning them
+ *  back on must not cost a second call. */
+export const notesHidden = new Set<string>();
+
+/** Ask for the notes on one block. `src` MUST be the text as drawn (reflowed), because the model keys its
+ *  answer to the line numbers it is given and the panel draws them against what is on screen. */
+export function fetchLineNotes(key: string, lang: string, src: string, output?: string): void {
+    if (!config.value.utilityModel.trim() || !src.trim()) return;
+    if (notesState.get(key) === "loading" || codeNotes.has(key)) return;
+    notesState.set(key, "loading");
+    notesHidden.delete(key);
+    rev.value++;
+    const lineCount = src.split("\n").length;
+    chrome.runtime.sendMessage(
+        { type: "FETCH_LLM", payload: { messages: notesMessages(lang, src, output), extend: "utility", schema: NOTES_SCHEMA, maxTokens: 700, think: false } },
+        (resp: any) => {
+            const notes = chrome.runtime.lastError || !resp || resp.error ? [] : parseNotes(String(resp.data ?? ""), lineCount);
+            notesState.delete(key);
+            // No usable notes is an ERROR STATE, not an empty success: a button that visibly does nothing
+            // reads as broken, and the reader has no way to tell a model that declined from a call that
+            // never went out.
+            if (notes.length) codeNotes.set(key, notes); else notesState.set(key, "error");
+            rev.value++;
+        },
+    );
+}
+
+/** Show/hide without re-asking. */
+export function toggleLineNotes(key: string): void {
+    if (notesHidden.has(key)) notesHidden.delete(key); else notesHidden.add(key);
+    rev.value++;
+}
+
 // A tool with NO deterministic intent (a custom approval-gated tool, no `action` render) still gets a
 // human description — the utility model paraphrases the call. Same cache/plumbing as the code summary.
 export function ensureActionSummary(hash: string, seq: number, tool: string, args: Record<string, unknown>): void {

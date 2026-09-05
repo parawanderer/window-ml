@@ -2298,3 +2298,35 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* An embed session in the list. Same shape as the agent badge — it answers the same question, "what IS this"
    — in the neutral colour, since an embed is a side errand rather than a run to go and read. */
 .agent-badge.embed-badge { background: var(--panel-2); color: var(--fg-dim); border: 1px solid var(--border); }
+
+/* --- code-block affordances: annotate / bench / copy ---------------------------------------------
+   Quiet until you go looking. A toolbar that competes with the code for attention is the opposite of
+   what a code block is for, so it sits at half opacity and comes up on hover or keyboard focus. */
+.code-block { position: relative; }
+.code-tools {
+    position: absolute; top: 3px; right: 6px; z-index: 3;
+    display: flex; align-items: center; gap: 4px;
+    opacity: 0.35; transition: opacity 0.15s ease;
+}
+.code-block:hover .code-tools, .code-tools:focus-within { opacity: 1; }
+.code-tool {
+    font: inherit; font-size: 0.82em; line-height: 1;
+    padding: 2px 6px; border-radius: 5px; cursor: pointer;
+    color: var(--fg-dim); background: var(--panel); border: 1px solid var(--border);
+}
+.code-tool:hover:not(:disabled) { color: var(--fg); border-color: var(--fg-dim); }
+.code-tool:disabled { opacity: 0.5; cursor: default; }
+.code-tool.on { color: var(--kind); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+.code-tools-flash { font-size: 0.78em; color: var(--ok); }
+
+/* A margin note: its own row under the line it is about, so it survives a narrow panel and a
+   horizontally scrolled block. `sticky` keeps it readable when the code is scrolled sideways. */
+.lnote {
+    display: flex; align-items: baseline; gap: 6px;
+    position: sticky; left: 0; width: fit-content; max-width: 62ch;
+    padding: 1px 0 3px calc(2.2em + 22px);   /* aligns under the code, clear of the 2.2em gutter + its rule */
+    font-size: 0.86em; font-style: italic; color: var(--fg-dim);
+    white-space: normal;
+}
+.lnote-mark { flex: 0 0 auto; align-self: stretch; width: 2px; border-radius: 1px; background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.lnote-txt code { font-style: normal; }

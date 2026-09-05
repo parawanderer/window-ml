@@ -19,7 +19,7 @@ import {
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { deepestUserLine } from "../py-format";
-import { RenderPanel, OutputCell, SeenSplit, RanFor } from "./render-panel";
+import { RenderPanel, OutputCell, SeenSplit, RanFor, type CodeCtx } from "./render-panel";
 import { ReplyBubble } from "./reply";
 import { CodeExplain, codeOf } from "./summaries";
 import { groupTurns } from "./debug-reducer";
@@ -33,7 +33,7 @@ import type { AgentTurnGroup } from "./debug-reducer";
 const slotOf = (label: string): "in" | "out" | undefined =>
     label === "In" ? "in" : label === "Out" ? "out" : undefined;
 
-export function IoBlock({ label, tip, preview, render, raw, marks, reserve, failLine, live, ranMs, ranSince }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; marks?: [number, number][]; reserve?: boolean; failLine?: number | null; live?: boolean; ranMs?: number; ranSince?: number }) {
+export function IoBlock({ label, tip, preview, render, raw, marks, reserve, failLine, live, ranMs, ranSince, ctx }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; marks?: [number, number][]; reserve?: boolean; failLine?: number | null; live?: boolean; ranMs?: number; ranSince?: number; ctx?: CodeCtx }) {
     const [showRaw, setShowRaw] = useState(false);   // rendered by default when a descriptor targets this block
     // The capped/scrollable/findable cell is for tool OUTPUT — a fetch_url page, a big sampleText dump. The In
     // block is the CALL (args / the code being run): short, and it already renders in its own code block, so
@@ -52,7 +52,7 @@ export function IoBlock({ label, tip, preview, render, raw, marks, reserve, fail
                             <span class="tt"><button class={showRaw ? "" : "on"} disabled={!render} onClick={() => setShowRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">{render ? "A debug visualisation for you — not shown to the model." : "Available once this step finishes."}</span></span>
                             <span class="tt"><button class={showRaw ? "on" : ""} disabled={!render} onClick={() => setShowRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">{render ? "Exactly what the model sent/received. All it knows." : "Available once this step finishes."}</span></span>
                         </div>
-                        {render && !showRaw ? <RenderPanel d={render} marks={marks} failLine={failLine} live={live} ranMs={ranMs} ranSince={ranSince} />
+                        {render && !showRaw ? <RenderPanel d={render} marks={marks} failLine={failLine} live={live} ranMs={ranMs} ranSince={ranSince} ctx={ctx} />
                             /* RAW is shared by every tool and has no renderer-specific structure, so it
                                carries the DEFAULT anchor for the slot. A rendered view may declare a finer
                                one (python-in's code, python-out's value) and wins by being the visible
@@ -276,10 +276,13 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const inRender = st.renderIn;
     const outRender = st.renderOut;
     const issues = st.argIssues?.length ? st.argIssues : null;
-    // The DEEPEST user frame of a python traceback, if this step failed — the line the failure was ON, as
-    // opposed to the call path above it. Read here because the step holds both descriptors.
+    // The DEEPEST user frame of a python traceback, or — for JS, which has no traceback to read — the line
+    // `exec` measured off the stack (exec-trace.ts). Both are a line of the model's own source, so both
+    // travel the same route into the In block's rendered code. Read here because the step holds both
+    // descriptors and neither renderer can see the other.
     const failLine = outRender && outRender.type === "python-out" && outRender.error
-        ? deepestUserLine(outRender.error) : null;
+        ? deepestUserLine(outRender.error)
+        : outRender && outRender.type === "exec-out" ? outRender.errorLine ?? null : null;
     // Design A: a background-hosted call blocked on the human gate. Render approve/deny here — the
     // decision is made in this (extension-origin) iframe, unforgeable by the page. Needs the run hash +
     // the step seq to correlate; without them (a page-loop run) fall back to the plain pending view.
@@ -349,6 +352,9 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                                the only place that holds both halves — the two RenderDescriptors are rendered
                                in separate blocks and neither can see the other. */
                             failLine={failLine}
+                            /* Which step this code came from, and what it produced — so the block can ask
+                               the utility model to annotate ITSELF. Only the step holds both halves. */
+                            ctx={hash && st.seq != null ? { hash, seq: st.seq, result: st.result } : undefined}
                             raw={<RawArgs args={args || {}} schema={paramSchema} />} />
                         : null}
                     <IoBlock label="Out" tip="What the tool returned to the model." marks={st.streamMarks} reserve={!!st.pending && st.streamOutput != null}

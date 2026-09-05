@@ -850,7 +850,10 @@ export type RenderDescriptor = (
     | { type: "python-out"; stdout?: string; seen?: number; image?: string; token?: string; value?: string; error?: string; latex?: boolean; df?: { columns: string[]; rows: (string | number | null)[][] } }
     // `exec`'s Out, the JS twin of python-out: the SAME data its raw result string carries, split into
     // sections (console / value / error) so a JS run reads like a notebook cell too instead of one blob.
-    | { type: "exec-out"; stdout?: string; seen?: number; value?: string; error?: string; token?: string; stdoutLabel?: string }
+    // `errorLine` is the line of the MODEL'S source that threw (exec-trace.ts) — absent when it cannot be
+    // known, never guessed. The python twin reads its line out of the traceback text; JS has no traceback
+    // worth rendering (an evaluated script's stack is mostly the wrapper), so it carries the number.
+    | { type: "exec-out"; stdout?: string; seen?: number; value?: string; error?: string; errorLine?: number; token?: string; stdoutLabel?: string }
     // A DELEGATED `look`'s Out slot: the exact image the vision reader saw, WHICH model read it, and
     // its text output — so a sub-call look reads like `locate`'s substeps (the native look just shows
     // the screenshot, since the agent itself is the viewer).
