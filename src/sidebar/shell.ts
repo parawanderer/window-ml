@@ -127,7 +127,14 @@ const CARD_CSS = `
   to   { -webkit-backdrop-filter: blur(30px) saturate(102%); backdrop-filter: blur(30px) saturate(102%); background: rgba(250, 250, 252, .72); }
 }
 @media (prefers-reduced-motion: reduce) { #${SB_CARD}-wrap.ml-materialize { animation: none; } }
-#${SB_CARD}-wrap.no-anim { transition: none; }
+/* NEVER animate while the POINTER is driving. A drag must track the hand 1:1; the spring is for a
+   programmatic move — snapping to a corner, a state change, the reset button — where the animation IS the
+   feedback that something happened. This was already applied on every drag and did nothing, because
+   the .no-anim rule and the [data-state="expanded"] rule are both specificity (1,1,0): a TIE, resolved by
+   source order, and the state rule is declared later. Hence !important rather than moving this below it —
+   an override that depends on staying under every state rule is one a future state rule defeats again,
+   silently. (No backticks in here: this whole stylesheet is a template literal.) */
+#${SB_CARD}-wrap.no-anim { transition: none !important; }
 /* The acrylic tracks the APP's resolved theme (set on the wrap by the shell from config.theme), NOT
    the OS — otherwise a user who forces Light while the OS is dark gets dark text on a dark acrylic. */
 #${SB_CARD}-wrap[data-theme="dark"] { background: rgb(24 24 27 / 71%); border-color: rgba(255, 255, 255, .12);
@@ -356,7 +363,10 @@ const cardW = (state: string): number => {
     // orbprose FITS its caption: the app measures the text's natural width and posts it; we clamp to
     // [PROSE_MIN_W, orbprose max] so a short line hugs the text and a long one caps + ellipsizes. The width
     // change animates via the wrap's CSS transition, so the pill smoothly grows/shrinks as new prose lands.
-    if (state === "orbprose" && cardProseW != null) {
+    // BOTH pill states fit their text. orblabel used to be a fixed 230px, which cut a perfectly ordinary
+    // phase label ("Waiting for the page…") on a screen with room for twice that. The cap is shared, so a
+    // long label still ellipsizes rather than growing a capsule across the viewport.
+    if ((state === "orbprose" || state === "orblabel") && cardProseW != null) {
         return Math.min(Math.max(cardProseW, PROSE_MIN_W), CARD_W.orbprose, window.innerWidth - 2 * CARD_MARGIN);
     }
     // MAXIMISED: a corner window ~90% of the viewport width (leaves a margin so the page shows through).

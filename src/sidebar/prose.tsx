@@ -18,6 +18,7 @@ import { resolveTokenStep } from "../answer-tokens";
 import { mdInline } from "./format";
 import { scrollToStepSeq } from "./answer-render";
 import { cursorTipOn } from "./ui-kit";
+import { codeRanges, inCode } from "../answer-tokens";
 
 /** `[label](@tool:<id>)` — the LINK form of a citation. The id charset matches the pointer forms elsewhere
  *  (a hex id, a bare tool name); an unresolvable one is left as text by the renderer below rather than
@@ -31,8 +32,13 @@ const POINTER_LINK = /(?<!!)\[([^\]\n]+)\]\(@tool:([A-Za-z0-9_]+)(?::(in|out))?\
 /** Split prose into text runs and pointer links, in order. Pure, so the parsing is testable without a DOM. */
 export function splitProse(md: string): ({ text: string } | { label: string; id: string; slot?: "in" | "out" })[] {
     const out: ({ text: string } | { label: string; id: string; slot?: "in" | "out" })[] = [];
+    const code = codeRanges(md);
     let at = 0;
     for (const m of md.matchAll(POINTER_LINK)) {
+        // A pointer inside `backticks` or a fence is being EXPLAINED — the model writes the syntax to show
+        // what it looks like. Rendering it eats the explanation. Shared with splitAnswer so the two surfaces
+        // cannot disagree about what counts as a citation.
+        if (inCode(code, m.index!)) continue;
         if (m.index! > at) out.push({ text: md.slice(at, m.index) });
         out.push({ label: m[1], id: m[2], ...(m[3] ? { slot: m[3] as "in" | "out" } : {}) });
         at = m.index! + m[0].length;

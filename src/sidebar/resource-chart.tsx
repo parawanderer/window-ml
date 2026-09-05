@@ -13,14 +13,14 @@ import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/ho
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
     placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
-    scopeToSpan, scopeAround, scrubZone, scrubResize, scrubNudge, wheelScrubFraction,
+    scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs } from "./vram";
-import { models, ollamaIds, loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, showLane, showModels, SECTIONS_KEY, laneLitSeqs } from "./store";
+import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, showLane, showModels, SECTIONS_KEY, laneLitSeqs } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
@@ -765,19 +765,30 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
         // the fixed edge stays fixed instead of drifting as each move rewrites the range it is measured from.
         const start = { ...win };
         const zone = scrubZone(ex, at(e.clientX), box.width);
+        // The window the drag LANDED on. While dragging, the box simply follows the pointer; what the
+        // gesture MEANT is decided once, on release — a mid-drag decision would rejoin live the moment you
+        // passed the tail and yank the box out from under you.
+        let landed: { from: number; to: number } | null = null;
         const move = (ev: PointerEvent) => {
             if (ev.buttons === 0 && ev.type === "pointermove") return up();
-            zoomRange.value = zone === "from" || zone === "to"
+            landed = zone === "from" || zone === "to"
                 ? scrubResize(ex, start, zone, at(ev.clientX))
                 : scrubTo(ex, win, at(ev.clientX));
+            zoomRange.value = landed;
         };
         const up = () => {
             window.removeEventListener("pointermove", move);
             window.removeEventListener("pointerup", up);
-            // Dropped against the right edge → back to live, rather than a pinned window that happens to end
-            // at the tail and then falls behind it as new samples arrive.
-            const z = zoomRange.value;
-            if (z && z.to >= ex.to - TAIL_SLACK_MS) zoomRange.value = null;
+            // What the gesture meant is decided HERE, by pure logic in resource-model.
+            const intent = landed && scrubIntent(ex, landed, TAIL_SLACK_MS);
+            if (!intent) return;
+            if (!intent.live) { zoomRange.value = intent.window; return; }
+            // A width dragged while following is a PREFERENCE, like the one in Settings — the same quantity,
+            // reached the other way — so it is remembered rather than lost on the next mount.
+            resWindowS.value = intent.windowS;
+            chrome.storage.local.set({ [RESWIN_KEY]: intent.windowS });
+            zoomRange.value = null;
+
         };
         move(e);
         window.addEventListener("pointermove", move);

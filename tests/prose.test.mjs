@@ -62,3 +62,18 @@ test("a malformed link is text, not a half-parsed control", () => {
         assert.ok(parts.every((p) => "text" in p), `no pointer parsed from ${JSON.stringify(src)}`);
     }
 });
+
+// The prose renderer and the answer renderer must agree about what a citation IS — one linking what the
+// other refuses to expand would be worse than either behaviour alone. Both go through `codeRanges`.
+test("a pointer link inside backticks stays text in prose too", () => {
+    const parts = splitProse("write `[label](@tool:abc1234)` to link");
+    assert.equal(parts.length, 1);
+    assert.match(parts[0].text, /`\[label\]\(@tool:abc1234\)`/);
+});
+
+test("a mentioned link and a real one in the same sentence", () => {
+    const parts = splitProse("spelled `[a](@tool:abc1234)`, like [b](@tool:def5678)");
+    const links = parts.filter((p) => "id" in p);
+    assert.equal(links.length, 1);
+    assert.equal(links[0].id, "def5678");
+});

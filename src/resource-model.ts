@@ -727,6 +727,32 @@ export function scrubResize(
         : { from: window.from, to: Math.min(extent.to, Math.max(at, window.from + min)) };
 }
 
+/** WHAT A FINISHED SCRUB DRAG MEANT. Two outcomes, and telling them apart is the whole point: a window
+ *  PINNED to a range, or FOLLOWING with a width.
+ *
+ *  The rule that used to be here — "ends at the tail → rejoin live" — is right for a PAN (you dragged the
+ *  box to the end, you want to follow) and wrong for a RESIZE of the left edge, which never moves `to` at
+ *  all. So every widen-while-following was read as "rejoin live", which threw the new width away and
+ *  snapped the strip back: the window could be narrowed but never stretched.
+ *
+ *  Following with a width is not a special case of a pinned range — it IS `resWindowS`, the same quantity
+ *  Settings names — so a left-edge drag against the tail returns seconds, and the caller stores it. */
+export function scrubIntent(
+    extent: { from: number; to: number },
+    next: { from: number; to: number },
+    tailSlackMs: number,
+): { live: true; windowS: number } | { live: false; window: { from: number; to: number } } {
+    // AT THE TAIL → follow, AT THE WIDTH ON SCREEN. One rule for every gesture, which is what makes it
+    // predictable: whatever the window looks like when you let go against the right edge is what live then
+    // means. Two separate bugs came from not having it. Rejoining live RESTORED whatever `resWindowS` was
+    // last set to, so narrowing a pinned window and dragging it back to the edge made it snap large again —
+    // and a left-edge stretch while already following was read as "you dropped at the tail, rejoin live",
+    // which threw the new width away, so the window could be narrowed but never widened.
+    if (next.to >= extent.to - tailSlackMs)
+        return { live: true, windowS: Math.max(1, Math.round((next.to - next.from) / 1000)) };
+    return { live: false, window: next };
+}
+
 /** Slide the window along the strip by a fraction of ITS OWN width, for a wheel gesture over the plot.
  *  Relative to the window rather than to the session, so one notch moves the same visible distance whether
  *  you are looking at ten seconds of a ten-minute session or all of it. */

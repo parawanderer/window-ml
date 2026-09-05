@@ -166,3 +166,63 @@ test("corner card: the width SURVIVES a reload, and double-click restores the de
         await ext.close(); await site.stop(); await fake.stop();
     }
 });
+
+// A DRAG MUST TRACK THE HAND; a programmatic move must animate. The card carries a 0.4s width/height spring
+// so a state change reads as something happening, and the drag handlers already added `.no-anim` to suppress
+// it — except the rule never won: `#wrap.no-anim` and `#wrap[data-state="expanded"]` are both specificity
+// (1,1,0), a TIE resolved by source order, and the state rule is declared later. So every drag was fought by
+// a 0.4s ease and felt like dragging through treacle, while the class sat there looking correct.
+//
+// Only a real browser can answer this: it is a COMPUTED transition on the shell's own wrap (a content-script
+// shadow host, not the iframe app), and jsdom neither computes the cascade this way nor runs the drag.
+test("corner card: dragging is instant, and a programmatic resize still animates", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off",
+        });
+        const page = await ext.context.newPage();
+        await page.goto(site.url + "/");
+        await waitForMl(page);
+        const read = await cardOnScreen(page, fake);
+        await read();
+
+        const durations = () => page.evaluate(() => {
+            const w = document.getElementById("ml-sb-card").shadowRoot.getElementById("ml-sb-card-wrap");
+            const cs = getComputedStyle(w);
+            // The longest transition-duration that is actually in effect. `transition: none` collapses the
+            // whole list, so this reads 0 exactly when nothing will animate.
+            const secs = cs.transitionDuration.split(",").map((s) => parseFloat(s) || 0);
+            return { max: Math.max(0, ...secs), anim: w.classList.contains("no-anim") };
+        });
+
+        // At rest, the spring is armed — that is what makes a state change legible.
+        const atRest = await durations();
+        expect(atRest.max, "the card animates when it is not being dragged").toBeGreaterThan(0.1);
+        expect(atRest.anim).toBe(false);
+
+        // MID-DRAG: hold the button down and read the computed style with the pointer still down.
+        const h = await page.evaluate(() => {
+            const el = document.getElementById("ml-sb-card").shadowRoot.getElementById("ml-sb-card-resize-x");
+            const r = el.getBoundingClientRect();
+            return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+        });
+        await page.mouse.move(h.x, h.y);
+        await page.mouse.down();
+        await page.mouse.move(h.x - 60, h.y, { steps: 4 });
+        const mid = await durations();
+        expect(mid.anim, "the drag flags itself").toBe(true);
+        expect(mid.max, "…and NOTHING animates while the pointer is down").toBe(0);
+        await page.mouse.up();
+
+        // …and the spring comes straight back, so the reset below is animated.
+        await page.waitForTimeout(120);
+        expect((await durations()).max, "the spring returns on release").toBeGreaterThan(0.1);
+    } finally {
+        await ext.context.close();
+        await site.stop();
+        await fake.stop();
+    }
+});

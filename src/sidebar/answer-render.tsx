@@ -202,6 +202,20 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
     // The SLOT rides along, so an  citation lands on the value it cited rather than on the top of a
     // step whose console output may be taller than the viewport.
     const jump = () => scrollToStepSeq(step.seq, run.hash, seg.slot === "in" || seg.slot === "out" ? seg.slot : undefined);
+    // An EMBED wraps a whole rendered output, and those have controls of their own — copy CSV, hide table,
+    // a sortable column header. Clicking one used to bubble to the jump and yank the reader up to the source
+    // step, which is the opposite of what they asked for: they were operating the table in front of them.
+    // So the jump is what you get from the INERT parts of the embed; anything interactive keeps its click.
+    // Not `closest("button")` — the DataFrame's sort header is a <th> with a handler, so the test is
+    // "does this carry its own behaviour", which is what these roles and the tabindex say.
+    const onEmbedClick = (e: MouseEvent) => {
+        const t = e.target as HTMLElement | null;
+        const hit = t?.closest?.('button, a, input, select, textarea, summary, label, [role="button"], [tabindex], th, .r-df-resize');
+        // …stopping AT the embed itself, which is a role=button with a tabindex of its own — without this the
+        // walk finds the wrapper for every click, including the inert ones, and the jump never fires at all.
+        if (hit && hit !== e.currentTarget) return;
+        jump();
+    };
     const provenance = `Click to see the exact operation that produced this — step ${step.localStep ?? step.step} · ${step.tool || "tool"}`;
     // LINK form `[label](@tool:…)` — a clickable JUMP to the output (the source step), NOT an inline expansion
     // (that's the `![…]` embed form below). `label` is the link text.
@@ -248,7 +262,7 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
                 : tokenRender(d, rawText);
     const tip = (label && !block ? `${label} · ` : "") + provenance;   // inline → prepend the label to the tooltip
     return <span class={`tok-ref ${block ? "tok-block" : "tok-inline"}`} role="button" tabIndex={0}
-        onClick={jump} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>
+        onClick={onEmbedClick} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>
         {node}
         {/* The caption is model-authored prose — render it as markdown+math (a lone wrapping <p> stripped) so a
             model that writes inline `$…$`/`\(…\)` in the label typesets it. markdown() escapes HTML, so this is

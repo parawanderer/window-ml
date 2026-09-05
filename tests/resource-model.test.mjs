@@ -2,7 +2,7 @@
 // The resource panel's pure data model: /api/info + /api/ps → the bands, series and history the chart draws.
 // Fixtures are REAL captures where possible (the CUDA ones are live gpubox bodies, trimmed) — see
 // docs/spec/RESOURCE_PANEL.md, which also lists the Metal samples still to be pinned down.
-import { test } from "node:test";
+import { test, describe } from "node:test";
 import assert from "node:assert";
 const M = await import("../src/resource-model.ts");
 
@@ -1183,4 +1183,56 @@ test("wheelScrubFraction: proportional to the gesture, and reads whichever axis 
     // Degenerate inputs do nothing rather than dividing by zero.
     assert.equal(M.wheelScrubFraction(0, 200, 0, 0), 0);
     assert.equal(M.wheelScrubFraction(0, 0, 0, W), 0);
+});
+
+// WHAT A SCRUB DRAG MEANT. The old rule — "the window ends at the tail → rejoin live" — could not tell a
+// PAN from a left-edge RESIZE, and a left-edge resize never moves `to`. So every attempt to stretch the
+// window while following was read as "rejoin live", the new width was discarded, and the strip snapped back:
+// you could narrow the window and never widen it again.
+describe("scrubIntent", () => {
+    const { scrubIntent } = M;
+    const ex = { from: 0, to: 300_000 };          // a five-minute session
+    const SLACK = 2000;
+
+    // ONE RULE: dropped at the tail → follow, at the width on screen. Two bugs came from not having it.
+    // (1) Rejoining live RESTORED the last `resWindowS`, so narrowing a pinned window and dragging it back
+    // to the edge made it snap large again — the width you were looking at was discarded on arrival.
+    // (2) A left-edge stretch while already following was read as "dropped at the tail, rejoin live", which
+    // threw the new width away, so the window could be narrowed but never widened.
+    test("stretching the LEFT edge while at the tail keeps following, at the new width", () => {
+        assert.deepEqual(scrubIntent(ex, { from: 60_000, to: 300_000 }, SLACK), { live: true, windowS: 240 });
+    });
+
+    test("a NARROW window dragged back to the tail follows at THAT width, not the width it left", () => {
+        // The reported bug, exactly: stretch it wide, pin it, narrow it, drag it back to live — and it grew.
+        assert.deepEqual(scrubIntent(ex, { from: 285_000, to: 300_000 }, SLACK), { live: true, windowS: 15 });
+    });
+
+    test("the width is what was dragged, not the preset it started from", () => {
+        assert.equal(scrubIntent(ex, { from: 200_000, to: 300_000 }, SLACK).windowS, 100);
+        assert.equal(scrubIntent(ex, { from: 10_000, to: 300_000 }, SLACK).windowS, 290);
+    });
+
+    test("away from the tail it pins a range instead — it is no longer following", () => {
+        assert.deepEqual(scrubIntent(ex, { from: 60_000, to: 200_000 }, SLACK),
+            { live: false, window: { from: 60_000, to: 200_000 } });
+    });
+
+    test("panning back and forth without resizing leaves the width alone", () => {
+        // A pan never changes the window's width, so returning to live returns the same number — the rule
+        // covers a pan without having to special-case it.
+        const w = { from: 240_000, to: 300_000 };
+        assert.equal(scrubIntent(ex, w, SLACK).windowS, 60);
+    });
+
+    test("the tail SLACK is honoured — a hair short of the end still counts as following", () => {
+        assert.equal(scrubIntent(ex, { from: 60_000, to: 299_000 }, SLACK).live, true);
+        assert.equal(scrubIntent(ex, { from: 60_000, to: 297_000 }, SLACK).live, false,
+            "past the slack it is a deliberate pin, not a sloppy drop at the end");
+    });
+
+    test("a width never rounds to zero — a sub-second stretch is one second, not 'everything kept'", () => {
+        // 0 is the sentinel for "no window at all", so rounding into it would silently mean the opposite.
+        assert.equal(scrubIntent(ex, { from: 299_800, to: 300_000 }, SLACK).windowS, 1);
+    });
 });

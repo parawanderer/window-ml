@@ -348,7 +348,10 @@ export function CardApp() {
             // the label ellipsizes). Measure the label's real glyph extent with a Range — the label has
             // overflow:hidden + a flex width, so its offsetWidth/scrollWidth is clamped to the CURRENT pill and
             // wouldn't shrink for a short line; a Range over the text reports the true layout width regardless.
-            const orb = app.querySelector(".card-orb.prose") as HTMLElement | null;
+            // ANY wide pill, not just the prose one. The hover capsule (orblabel) spells out the current
+            // phase and was pinned to a fixed width, so "Waiting for the page…" was cut to "Waiting for t…"
+            // with screen to spare — the same problem the prose pill already measures its way out of.
+            const orb = app.querySelector(".card-orb.wide") as HTMLElement | null;
             const lbl = orb?.querySelector(".card-orb-label") as HTMLElement | null;
             // Guarded: Range.getBoundingClientRect is a layout call (unavailable under jsdom, and a hostile
             // environment could throw) — a measurement failure must never abort the effect and strand the
@@ -359,7 +362,13 @@ export function CardApp() {
                 const textW = range.getBoundingClientRect().width;
                 const cs = getComputedStyle(orb);
                 const ic = orb.querySelector(".card-orb-ic") as HTMLElement | null;
-                const chrome = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + (parseFloat(cs.columnGap || cs.gap) || 9) + (ic?.offsetWidth || 20);
+                // The live readout NEVER shrinks (it is the only part still saying anything), so its width
+                // is part of the chrome the label has to fit around — leaving it out under-measured the pill
+                // by exactly the readout, which is then what pushed the label into ellipsis.
+                const live = orb.querySelector(".card-orb-live") as HTMLElement | null;
+                const gap = parseFloat(cs.columnGap || cs.gap) || 9;
+                const chrome = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
+                    + gap + (ic?.offsetWidth || 20) + (live ? gap + live.offsetWidth : 0);
                 if (textW > 0) window.parent.postMessage({ __mlSidebarCardW: Math.ceil(chrome + textW) + 4 }, "*");
             } catch { /* no layout available (jsdom) → shell uses the fixed orbprose width */ }
         };

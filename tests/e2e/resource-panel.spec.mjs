@@ -1721,3 +1721,70 @@ test("resource panel: an ml.embed() session is never presented as a chat", async
         await fake.stop();
     }
 });
+
+// THE FULL ROUND TRIP, which is where this actually broke: stretch the window wider than the preset, pin it,
+// narrow it, then drag it back to the right edge to rejoin live — and it grew again. Rejoining live restored
+// whatever `resWindowS` was last set to rather than the width on screen, so the width you had just chosen was
+// discarded the moment you arrived. The unit tests pin `scrubIntent`; only a real browser exercises the drag,
+// the signal, and the storage write as one gesture.
+test("resource panel: the width you drag is the width live keeps", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 4 }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await expect.poll(() => frame.locator(".rc-scrub").count(), { timeout: 30000 }).toBe(1);
+        await sleep(14000);   // enough history that the far end is well outside the tail slack
+
+        const track = await frame.locator(".rc-scrub-track").boundingBox();
+        const y = track.y + track.height / 2;
+        const winW = () => frame.locator(".rc-scrub-win").evaluate((e) => parseFloat(e.style.width));
+        const windowS = () => ext.sw.evaluate(() => new Promise((r) =>
+            chrome.storage.local.get({ ml_res_window: 0 }, (d) => r(d.ml_res_window))));
+        const dragFrom = async (fromX, toX) => {
+            await page.mouse.move(fromX, y);
+            await page.mouse.down();
+            await page.mouse.move(toX, y, { steps: 10 });
+            await page.mouse.up();
+            await sleep(600);
+        };
+
+        // 1. STRETCH the left edge well past the 4s preset, while still following.
+        const box0 = await frame.locator(".rc-scrub-win").boundingBox();
+        // Not all the way to the left edge: a window that covers nearly the whole strip cannot then be
+        // PANNED off the tail (it clamps), and step 2 needs it genuinely pinned.
+        await dragFrom(box0.x + 2, track.x + track.width * 0.45);
+        const wide = await winW();
+        expect(wide, "the window stretched").toBeGreaterThan(40);
+        await expect(frame.locator(".rc-scrub-live")).toHaveText(/▶\s*live/, { timeout: 4000 });
+        expect(await windowS(), "and following now means THIS much history").toBeGreaterThan(4);
+
+        // 2. PIN it away from the tail, then NARROW it right down.
+        const box1 = await frame.locator(".rc-scrub-win").boundingBox();
+        await dragFrom(box1.x + box1.width / 2, track.x + 2);
+        await expect(frame.locator(".rc-scrub-live")).toHaveText(/⏸/);
+        const box2 = await frame.locator(".rc-scrub-win").boundingBox();
+        await dragFrom(box2.x + 2, box2.x + box2.width * 0.75);
+        const narrow = await winW();
+        expect(narrow, "narrower than the stretch").toBeLessThan(wide);
+
+        // 3. DRAG IT BACK to the right edge. It rejoins live — at the width it is, not the width it was.
+        const box3 = await frame.locator(".rc-scrub-win").boundingBox();
+        await dragFrom(box3.x + box3.width / 2, track.x + track.width - 2);
+        await expect(frame.locator(".rc-scrub-live")).toHaveText(/▶\s*live/);
+        expect(await frame.locator(".vram-zoom").count()).toBe(0);
+        const after = await winW();
+        expect(after, "it did NOT snap back to the wide window it left").toBeLessThan(wide * 0.9);
+        expect(Math.abs(after - narrow), "it kept the width on screen").toBeLessThan(15);
+    } finally {
+        await ext.context.close();
+        await fake.stop();
+    }
+});
