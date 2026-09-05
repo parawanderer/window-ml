@@ -17,6 +17,9 @@ before(async () => {
     globalThis.document = dom.window.document;
     globalThis.Node = dom.window.Node;
     globalThis.NodeFilter = dom.window.NodeFilter;
+    // `scrollsX` asks the computed overflow, so the global has to exist or its fallback treats every
+    // overflowing element as a scroller — which is the exact bug the test below is about, silently passing.
+    globalThis.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
     doc = dom.window.document;
     // Load preact through require, NOT `import("preact")`: tsx compiles the .tsx component to CJS, so an
     // ESM import here would be a SECOND preact instance and its hooks would have no current component.
@@ -384,10 +387,14 @@ test("clockAt: milliseconds only when a pixel is worth a few of them", async () 
 // wrapping off the overflow lives on `code.hljs` INSIDE it, so the cell's own scrollLeft moves nothing.
 // jsdom has no layout, so these drive the decision directly with stated geometry; the real thing is
 // tests/e2e/output-scroll.spec.mjs.
+// `overflowX` is part of the fixture, not a detail: "content is wider than the box" and "this element
+// scrolls" are different facts, and the whole bug below was conflating them. An element that overflows with
+// `overflow: visible` is NOT a scroller, so a fixture that omits it is describing a non-scroller.
 const fakeEl = (over = {}) => {
     const el = doc.createElement("div");
     Object.defineProperty(el, "scrollWidth", { value: over.scrollWidth ?? 0, configurable: true });
     Object.defineProperty(el, "clientWidth", { value: over.clientWidth ?? 0, configurable: true });
+    el.style.overflowX = over.overflowX ?? "auto";
     return el;
 };
 
@@ -443,4 +450,24 @@ test("scrollerX: an element node is accepted as well as a text node", () => {
     cell.appendChild(code);
     assert.equal(scrollerX(code, cell), code);
     assert.equal(scrollerX(null, cell), null, "…and a missing container is not a crash");
+});
+
+test("scrollerX: an element whose content merely OVERFLOWS is not a scroller", () => {
+    // The bug this exists for. `scrollWidth > clientWidth` means "content is wider than the box", which is
+    // true of any block whose child overflows VISIBLY — so the walk stopped at a JSON-tree row and set
+    // scrollLeft on something that does not scroll, while the cell that does stayed put. Nothing moved, in
+    // exactly the case the horizontal reveal had just been added for. The e2e missed it because there the
+    // first overflowing ancestor happened to BE the scrolling cell.
+    const cell = fakeEl({ scrollWidth: 4200, clientWidth: 629, overflowX: "auto" });
+    const row = fakeEl({ scrollWidth: 4200, clientWidth: 629, overflowX: "visible" });   // wide, but not a scroller
+    const text = doc.createTextNode("far to the right");
+    cell.appendChild(row); row.appendChild(text);
+    assert.equal(scrollerX(text, cell), cell, "skips the merely-overflowing row and finds the real scroller");
+});
+
+test("scrollerX: `hidden` still counts — it clips visually but accepts a programmatic scrollLeft", () => {
+    const cell = fakeEl({ scrollWidth: 4200, clientWidth: 629, overflowX: "hidden" });
+    const text = doc.createTextNode("x");
+    cell.appendChild(text);
+    assert.equal(scrollerX(text, cell), cell);
 });

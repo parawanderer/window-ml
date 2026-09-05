@@ -120,3 +120,47 @@ export async function openRunInSidebar(page, { width, task, timeout = 20000 } = 
     })).catch(() => null);
     throw new Error(`clicked the session row but the detail view never rendered — saw: ${JSON.stringify(seen)}`);
 }
+
+/** SAY WHAT THE DEMO IS DOING, on screen. A narrated demo is watched, and a watcher who cannot tell which
+ *  beat is running is left inferring it from what moved — which is exactly backwards when the point of the
+ *  beat is that something DIDN'T move. (Debugging the sideways-find beat, the terminal said 0px and the
+ *  screen said nothing at all; the banner is the difference between "which step is this" and reading the
+ *  script alongside the window.)
+ *
+ *  Drawn in the PAGE, top-left, in its own element with a very high z-index — deliberately not in the
+ *  extension's shadow hosts, so it can never be mistaken for part of the product being demonstrated, and so
+ *  a demo about the sidebar cannot have its narration hidden by the sidebar. Re-created if a navigation
+ *  wiped it, since half these demos navigate.
+ *
+ *  `narrate(page, null)` clears it — for the screenshot that should show the product alone.
+ */
+export async function narrate(/** @type {any} */ page, /** @type {string|null} */ text,
+                              /** @type {{ sub?: string }} */ { sub = "" } = {}) {
+    await page.evaluate((/** @type {[string|null, string]} */ [t, s]) => {
+        const ID = "ml-demo-narration";
+        let el = document.getElementById(ID);
+        if (t == null) { el?.remove(); return; }
+        if (!el) {
+            el = document.createElement("div");
+            el.id = ID;
+            // `all: initial` first: this lands on arbitrary pages, and a site's own `div { … }` rule would
+            // otherwise restyle the narration into something unreadable.
+            el.style.cssText = "all: initial; position: fixed; top: 14px; left: 14px; z-index: 2147483647;"
+                + " max-width: 46ch; padding: 10px 14px; border-radius: 10px; pointer-events: none;"
+                + " font: 600 14px/1.45 ui-sans-serif, system-ui, -apple-system, sans-serif;"
+                + " color: #fff; background: rgba(17,17,20,.92); box-shadow: 0 6px 24px rgba(0,0,0,.4);"
+                + " border: 1px solid rgba(255,255,255,.14); white-space: pre-wrap;";
+            (document.documentElement || document.body).append(el);
+        }
+        el.textContent = "";
+        const main = document.createElement("div");
+        main.textContent = t;
+        el.append(main);
+        if (s) {
+            const note = document.createElement("div");
+            note.style.cssText = "margin-top: 5px; font-weight: 400; font-size: 12.5px; opacity: .72;";
+            note.textContent = s;
+            el.append(note);
+        }
+    }, [text ?? null, sub]);
+}

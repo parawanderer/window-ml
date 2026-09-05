@@ -5,14 +5,15 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { RenderDescriptor } from "../contract";
 import { fmtCtx, isBackendUnreachable } from "../contract";
 import { signal } from "@preact/signals";
+import type { ComponentChildren } from "preact";
 import {
     config, models, ollamaIds, modelKinds, loadedModels, psError, vramOpen, backendError, rev, sessionMap,
     sidebarOpen, view,
 } from "./store";
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
-import { IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevron, IconExpand, IconClose } from "./icons";
-import { Disclosure, cursorTipOn } from "./ui-kit";
+import { IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevron, IconExpand, IconClose, IconPlay } from "./icons";
+import { Disclosure, cursorTipOn, TipText } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { hhmmss } from "./timestamps";
 import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, benchEnv, noteBenchEnv } from "./store";
@@ -1411,26 +1412,22 @@ export function BenchDrawer() {
         };
         grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up);
     };
+    // The drawer owns the DRAG and the SHAPE, and hands both to the bench's own header row — one row doing
+    // every job, rather than a title strip here and a control bar at the far end of the panel.
+    const shape = <>
+        <button class="tt hbtn" aria-label="Expand the Python bench" onClick={() => {
+            benchDock.value = "full"; chrome.storage.local.set({ [BENCH_DOCK_KEY]: "full" });
+            // Remember EXACTLY where we were, so "back" is a return and not a trip to the list.
+            if (view.value.name === "list" || view.value.name === "detail") viewReturn.value = view.value;
+            view.value = { name: "bench" };
+        }}><IconExpand /><span class="tt-pop left" role="tooltip">Open it full-page — better for a long script, worse for looking at a step while you work.</span></button>
+        <button class="tt hbtn" aria-label="Close the Python bench" onClick={() => {
+            benchOpen.value = false; chrome.storage.local.set({ [BENCH_OPEN_KEY]: false });
+        }}><IconClose /><span class="tt-pop left" role="tooltip">Close it. Your script is kept.</span></button>
+    </>;
     return (
         <div class="bench-drawer" style={{ height: `${benchH.value}px` }}>
-            {/* ONE ROW, doing both jobs. A title row and a drag strip stacked would spend two rows on a
-                drawer whose whole point is the space below them — and the grip's own row was mostly empty
-                either side of the pill, which is exactly where a name and its controls belong. */}
-            <div class="bench-top bench-grip" role="separator" aria-label="Drag to resize the Python bench" onPointerDown={onGrab}>
-                <span class="bench-title">Python bench</span>
-                <BenchVer />
-                <span class="sp" />
-                <button class="tt hbtn" aria-label="Expand the Python bench" onClick={() => {
-                    benchDock.value = "full"; chrome.storage.local.set({ [BENCH_DOCK_KEY]: "full" });
-                    // Remember EXACTLY where we were, so "back" is a return and not a trip to the list.
-                    if (view.value.name === "list" || view.value.name === "detail") viewReturn.value = view.value;
-                    view.value = { name: "bench" };
-                }}><IconExpand /><span class="tt-pop left" role="tooltip">Open it full-page — better for a long script, worse for looking at a step while you work.</span></button>
-                <button class="tt hbtn" aria-label="Close the Python bench" onClick={() => {
-                    benchOpen.value = false; chrome.storage.local.set({ [BENCH_OPEN_KEY]: false });
-                }}><IconClose /><span class="tt-pop left" role="tooltip">Close it. Your script is kept.</span></button>
-            </div>
-            <PythonBench />
+            <PythonBench drag={onGrab} shape={shape} />
         </div>
     );
 }
@@ -1467,20 +1464,39 @@ function loadBenchEnv(onErr?: (m: string) => void) {
  *
  *  Fetched on OPEN, once: it starts the sandbox, which is exactly what a first `python_exec` pays for, so
  *  doing it on mount would make every glance at the bench cost a cold start. */
+// Open state and the last error live OUTSIDE the components, because the disclosure is now split in two:
+// the BUTTON sits in the bench's header row beside the mode picker, and the BODY is a row of its own under
+// it. A flex header cannot contain a panel that pushes the editor down, and an absolutely-positioned
+// dropdown would be the wrong shape for something you filter and read while typing.
+const benchEnvOpen = signal(false);
+const benchEnvErr = signal("");
+
+/** The `environment` disclosure's BUTTON — what the sandbox is, on demand. In the header row. */
+function BenchEnvButton() {
+    const open = benchEnvOpen.value;
+    const env = benchEnv.value;
+    return (
+        <button class={`bench-env-btn${open ? " on" : ""}`} aria-expanded={open}
+            onClick={() => { benchEnvOpen.value = !open; if (!benchEnvErr.value) loadBenchEnv((m) => (benchEnvErr.value = m)); }}>
+            <span class="tri" aria-hidden="true"><IconChevron /></span>
+            environment{env ? <span class="bench-env-ver"> · {env.python}</span> : null}
+        </button>
+    );
+}
+
+/** …and its BODY: the versions and every package that actually installed, filterable. Its own row under the
+ *  header, so opening it pushes the editor down rather than covering the code you were reading. */
 function BenchEnv() {
-    const [open, setOpen] = useState(false);
-    const [err, setErr] = useState("");
     const [q, setQ] = useState("");
+    const open = benchEnvOpen.value, err = benchEnvErr.value;
     const env = benchEnv.value;
     const hits = (env?.packages || []).filter((p) => p.name.toLowerCase().includes(q.trim().toLowerCase()));
+    // Nothing at all when closed, rather than an empty wrapper: the button lives in the header now, so this
+    // component IS the panel and a zero-height div is just something for a selector to trip over.
+    if (!open) return null;
     return (
-        <div class={`bench-env${open ? " open" : ""}`}>
-            <button class="bench-env-btn" aria-expanded={open}
-                onClick={() => { setOpen((v) => !v); if (!err) loadBenchEnv(setErr); }}>
-                <span class="tri" aria-hidden="true"><IconChevron /></span>
-                environment{env ? <span class="bench-env-ver"> · Python {env.python}</span> : null}
-            </button>
-            {open ? <div class="bench-env-body">
+        <div class="bench-env open">
+            {<div class="bench-env-body">
                 {err ? <div class="bench-env-err">{err}</div>
                     : !env ? <div class="dim">reading the sandbox…</div>
                         : <>
@@ -1503,7 +1519,7 @@ function BenchEnv() {
                                 are not built yet — these are the ones the sandbox ships with.
                             </div>
                         </>}
-            </div> : null}
+            </div>}
         </div>
     );
 }
@@ -1511,7 +1527,7 @@ function BenchEnv() {
 /** THE PYTHON BENCH — an editor over the SAME offscreen Pyodide sandbox `python_exec` uses, so a
  *  snippet you try here behaves as it will in a run. Code-only (no page image or tables). Rendered
  *  inside `BenchDrawer` at the bottom, or full-page as its own view. */
-export function PythonBench() {
+export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void; shape?: ComponentChildren } = {}) {
     const [code, setCode] = useState(() => lsGet(BENCH_CODE_KEY) ?? "import numpy as np\nreturn int(np.arange(10).sum())");
     const [mode, setMode] = useState<"readonly" | "full">(() => (lsGet("ml_bench_mode") === "full" ? "full" : "readonly"));
     const [running, setRunning] = useState(false);
@@ -1534,7 +1550,7 @@ export function PythonBench() {
                 });
         } catch (e) { setResult({ ok: false, stdout: "", error: String(e) }); setRunning(false); }
     };
-    // Tab inserts spaces (don't escape the field); Cmd/Ctrl+Enter runs.
+    // Tab inserts spaces rather than escaping the field. Textarea-only, since it is about the caret.
     const onKey = (e: KeyboardEvent) => {
         const ta = taRef.current;
         if (e.key === "Tab" && ta) {
@@ -1542,16 +1558,33 @@ export function PythonBench() {
             const s = ta.selectionStart, en = ta.selectionEnd;
             setCode(code.slice(0, s) + "    " + code.slice(en));
             requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + 4; });
-        } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); }
+        }
+    };
+    // ⌘/Ctrl+Enter runs, from ANYWHERE in the bench — not just the textarea. It used to be bound to the
+    // field alone, so clicking the mode picker or the environment list silently disarmed the only shortcut
+    // for the thing this panel is for; with the Run button moved into the header there is even less to
+    // click your way back to.
+    const onBenchKey = (e: KeyboardEvent) => {
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); }
     };
     const outD = result ? pyBenchDescriptor(result) : null;
     const empty = result?.ok && !result.stdout && result.value == null;
     return (
-        <div class="bench">
-            <textarea ref={taRef} class="bench-code code" spellcheck={false} value={code} onInput={e => setCode((e.target as HTMLTextAreaElement).value)} onKeyDown={onKey} placeholder="return 6 * 7" />
-            <div class="bench-bar">
-                <BenchEnv />
-                <span class="tt bench-info" aria-label="about the bench">ⓘ<span class="tt-pop wrap left" role="tooltip">Runs against the SAME sandbox python_exec uses (offscreen → worker → Pyodide). Code-only — no page image/tables. `return` a value (or end with a bare expression, Jupyter-style); print() is captured. 15s cap.</span></span>
+        <div class="bench" onKeyDown={onBenchKey}>
+            {/* ONE HEADER, both shapes. It used to be two: the drawer drew a title strip and PythonBench drew
+                a control bar at the BOTTOM — so the controls sat as far from the name of the thing as the
+                layout allowed, and moving them up naively would have deleted them from full-page mode, where
+                there is no drawer to draw a strip. So the row lives here and the drawer INJECTS its grip and
+                shape controls into it. */}
+            <div class={`bench-top${drag ? " bench-grip" : ""}`}
+                {...(drag ? { role: "separator", "aria-label": "Drag to resize the Python bench", onPointerDown: drag } : {})}>
+                {/* Only in the drawer: full-page already has the name and version in the app header, and a
+                    second copy an inch below it reads as two different things. */}
+                {drag ? <><span class="bench-title">Python bench</span><BenchVer /></> : null}
+                <BenchEnvButton />
+                <span class="tt bench-info" aria-label="about the bench">ⓘ<span class="tt-pop wrap left" role="tooltip">
+                    <TipText md="Runs against the SAME sandbox `python_exec` uses (offscreen → worker → Pyodide). Code-only — no page image or tables. `return` a value (or end with a bare expression, Jupyter-style); `print()` is captured. 15s cap." />
+                </span></span>
                 <label class="bench-mode">mode
                     <select value={mode} onChange={e => setMode((e.target as HTMLSelectElement).value === "full" ? "full" : "readonly")}>
                         <option value="readonly">readonly (sandboxed)</option>
@@ -1559,9 +1592,18 @@ export function PythonBench() {
                     </select>
                 </label>
                 <span class="sp" />
-                <span class="bench-kbd dim">⌘/Ctrl+↵</span>
-                <button class="bench-run" disabled={running || !code.trim()} onClick={run}>{running ? "running…" : "Run"}</button>
+                {/* The one ACTION in the row, so it is filled and coloured where everything else is a quiet
+                    outline. Its tooltip carries the shortcut, which is where the bottom bar's hint went. */}
+                <button class="tt bench-play" disabled={running || !code.trim()} onClick={run} aria-label="Run">
+                    {running ? <span class="bench-play-spin" aria-hidden="true" /> : <IconPlay />}
+                    <span class="tt-pop wrap left" role="tooltip">{running
+                        ? "Running in the sandbox…"
+                        : "Run this script in the Pyodide sandbox. ⌘/Ctrl+↵ does the same, from anywhere in the bench."}</span>
+                </button>
+                {shape}
             </div>
+            <BenchEnv />
+            <textarea ref={taRef} class="bench-code code" spellcheck={false} value={code} onInput={e => setCode((e.target as HTMLTextAreaElement).value)} onKeyDown={onKey} placeholder="return 6 * 7" />
             {outD
                 ? <div class="bench-out"><div class="io-label">Out:</div>{empty ? <span class="dim">(ran — no output, no return)</span> : <RenderPanel d={outD} />}</div>
                 : running ? <div class="bench-out dim">running…</div> : null}

@@ -45,7 +45,11 @@ export function IoBlock({ label, tip, preview, render, raw, marks, reserve, fail
     // In block gets big: a call carrying a base64 image or a wide table stretches the step to any height,
     // exactly the case the cap exists for. The RENDERED views are not wrapped here — an Out's renderer puts
     // its own sections in cells, and a rendered In is already a code block with its own chrome.
-    const cell = (body: ComponentChildren) => <OutputCell>{body}</OutputCell>;
+    // `text`: the RAW view is plain model-facing lines, so it honours the wrap preference like any other
+    // output. One setting called "line breaking" that reached only `.code` blocks meant turning it off left
+    // the raw JSON, the console and every traceback wrapping anyway — the setting quietly meaning less than
+    // it said. (A RENDERED view is not wrapped here at all: its renderer puts its own sections in cells.)
+    const cell = (body: ComponentChildren) => <OutputCell text>{body}</OutputCell>;
     return (
         <details class="io" open>
             <summary class="io-label" {...(tip ? cursorTipOn(tip) : {})}>{label}: <span class="io-preview">{preview}</span></summary>

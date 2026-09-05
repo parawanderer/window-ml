@@ -635,11 +635,27 @@ export function scrollerX(from: Node | null, bound: HTMLElement): HTMLElement | 
     let el: HTMLElement | null = (from && (from as Element).nodeType === 1
         ? (from as HTMLElement) : (from?.parentElement ?? null));
     while (el) {
-        if (el.scrollWidth > el.clientWidth + 1) return el;
+        if (scrollsX(el)) return el;
         if (el === bound) return null;
         el = el.parentElement;
     }
     return null;
+}
+
+/** Does this element actually SCROLL sideways — as opposed to merely containing something wider than
+ *  itself? Those are different questions and conflating them is a real bug: `scrollWidth > clientWidth` is
+ *  true of any block whose child overflows VISIBLY, so the walk stopped at a JSON-tree row and set
+ *  `scrollLeft` on something that does not scroll, while the cell that does stayed put. Nothing moved and
+ *  the find looked broken in precisely the case it had just been fixed for.
+ *
+ *  `hidden` counts: it clips visually but still accepts a programmatic `scrollLeft`, and the output cell was
+ *  exactly that until the wrap preference started reaching it. */
+function scrollsX(el: HTMLElement): boolean {
+    if (el.scrollWidth <= el.clientWidth + 1) return false;
+    // No computed style available (jsdom) → fall back to the overflow test alone, which is what the pure
+    // unit tests exercise. A missing style must not make this return "nothing scrolls" in a real browser.
+    const ov = typeof getComputedStyle === "function" ? getComputedStyle(el).overflowX : "auto";
+    return ov === "auto" || ov === "scroll" || ov === "hidden";
 }
 
 function paintFind(all: Range[], current: Range | null): void {
@@ -664,7 +680,7 @@ function clearFindPaint(): void {
  *     it holds still so you can read, and resumes following the moment you return to the bottom.
  *  Deliberately children-based (not a section schema): each tool's sections legitimately differ (python has a
  *  DataFrame/LaTeX/image; exec has a console), while the CONTAINER behaviour is what's worth sharing. */
-export function OutputCell({ children }: { children: ComponentChildren }) {
+export function OutputCell({ children, text }: { children: ComponentChildren; text?: boolean }) {
     const box = useRef<HTMLDivElement>(null);
     const follow = useRef(true);                       // tail-follow armed? (parked at the bottom)
     const [dragH, setDragH] = useState<number | null>(null);   // a drag pins THIS cell; null → the configured cap
@@ -779,7 +795,11 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
                     <button class="r-find-x" aria-label="Close find" {...cursorTipOn("Close (Esc)")} onClick={closeFind}>✕</button>
                 </div>
             ) : null}
-            <div class="r-outscroll" ref={box} tabIndex={0} onKeyDown={onKey} onScroll={onScroll}
+            {/* `text` marks a cell whose content is PLAIN OUTPUT — a console stream, a traceback — as opposed
+                to a rendered structure (a table, a JSON tree). Only those honour the wrap preference, because
+                only those have lines to leave unbroken; forcing `white-space: pre` on a table would be about
+                a different thing entirely. */}
+            <div class={`r-outscroll${text ? " r-outtext" : ""}`} ref={box} tabIndex={0} onKeyDown={onKey} onScroll={onScroll}
                 style={cap > 0 ? { maxHeight: `${cap}px` } : undefined}>{children}</div>
             {overflows || dragH != null ? <div class="r-outgrip" role="separator" aria-label="Drag to resize this output" {...cursorTipOn("Drag to resize this output")} onPointerDown={onGrab} /> : null}
         </div>
@@ -990,7 +1010,7 @@ function PythonOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }:
                 Never both, and never an empty section conjured up to hold it: a container that exists only
                 to carry a footer is chrome pretending to be output. */}
             {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout" foldInFocus={!live}>
-                <OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
+                <OutputCell text><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
                 <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} />
             </PyOutSection> : null}
             {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
@@ -1085,11 +1105,11 @@ function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: {
             {/* Inside the console when there IS one, after the last section when there is not — see the note
                 in PythonOutRender. */}
             {d.stdout ? <PyOutSection label={d.stdoutLabel ?? "console"} cls="r-py-stdout" foldInFocus={!live}>
-                <OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
+                <OutputCell text><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
                 <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} />
             </PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
-            {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell><ExecError text={d.error} line={d.errorLine} map={lineMap} /></OutputCell></PyOutSection> : null}
+            {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell text><ExecError text={d.error} line={d.errorLine} map={lineMap} /></OutputCell></PyOutSection> : null}
             {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
             {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} /> : null}
         </div>

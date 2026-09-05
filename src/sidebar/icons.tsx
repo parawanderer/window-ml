@@ -151,3 +151,12 @@ export const IconOut = () => (
         <path d="M8 13V4M4.5 7.5 8 4l3.5 3.5" />
     </svg>
 );
+
+/** A filled play triangle — RUN, in the bench's corner. Filled rather than outlined: it is the one action
+ *  button in that row and every other icon there is a stroke outline, so the fill is what makes it read as
+ *  "do the thing" instead of "another control". */
+export const IconPlay = () => (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" stroke="none" aria-hidden="true">
+        <path d="M8 5.2a.9.9 0 0 1 1.37-.77l9.1 6.03a.9.9 0 0 1 0 1.5l-9.1 6.04A.9.9 0 0 1 8 17.3V5.2Z" />
+    </svg>
+);

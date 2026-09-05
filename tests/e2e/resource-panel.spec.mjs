@@ -1748,13 +1748,16 @@ test("resource panel: the width you drag is the width live keeps", async () => {
         const winW = () => frame.locator(".rc-scrub-win").evaluate((e) => parseFloat(e.style.width));
         const windowS = () => ext.sw.evaluate(() => new Promise((r) =>
             chrome.storage.local.get({ ml_res_window: 0 }, (d) => r(d.ml_res_window))));
+        // Fixed sleeps are not enough on a slow runner: this passed locally and failed in CI, where the
+        // panel re-renders behind the drag. Each step settles by POLLING for the thing it changed.
         const dragFrom = async (fromX, toX) => {
             await page.mouse.move(fromX, y);
             await page.mouse.down();
             await page.mouse.move(toX, y, { steps: 10 });
             await page.mouse.up();
-            await sleep(600);
+            await sleep(900);
         };
+        const liveText = () => frame.locator(".rc-scrub-live").textContent();
 
         // 1. STRETCH the left edge well past the 4s preset, while still following.
         const box0 = await frame.locator(".rc-scrub-win").boundingBox();
@@ -1763,13 +1766,13 @@ test("resource panel: the width you drag is the width live keeps", async () => {
         await dragFrom(box0.x + 2, track.x + track.width * 0.45);
         const wide = await winW();
         expect(wide, "the window stretched").toBeGreaterThan(40);
-        await expect(frame.locator(".rc-scrub-live")).toHaveText(/▶\s*live/, { timeout: 4000 });
-        expect(await windowS(), "and following now means THIS much history").toBeGreaterThan(4);
+        await expect.poll(liveText, { timeout: 10000 }).toMatch(/▶\s*live/);
+        await expect.poll(windowS, { timeout: 10000 }).toBeGreaterThan(4);   // following means THIS much history now
 
         // 2. PIN it away from the tail, then NARROW it right down.
         const box1 = await frame.locator(".rc-scrub-win").boundingBox();
         await dragFrom(box1.x + box1.width / 2, track.x + 2);
-        await expect(frame.locator(".rc-scrub-live")).toHaveText(/⏸/);
+        await expect.poll(liveText, { timeout: 10000 }).toMatch(/⏸/);
         const box2 = await frame.locator(".rc-scrub-win").boundingBox();
         await dragFrom(box2.x + 2, box2.x + box2.width * 0.75);
         const narrow = await winW();
@@ -1777,8 +1780,10 @@ test("resource panel: the width you drag is the width live keeps", async () => {
 
         // 3. DRAG IT BACK to the right edge. It rejoins live — at the width it is, not the width it was.
         const box3 = await frame.locator(".rc-scrub-win").boundingBox();
-        await dragFrom(box3.x + box3.width / 2, track.x + track.width - 2);
-        await expect(frame.locator(".rc-scrub-live")).toHaveText(/▶\s*live/);
+        // PAST the right edge, not onto it: the window clamps at the end anyway, and aiming exactly at the
+        // last pixel leaves nothing for a slow runner's rounding to give away.
+        await dragFrom(box3.x + box3.width / 2, track.x + track.width + 20);
+        await expect.poll(liveText, { timeout: 10000 }).toMatch(/▶\s*live/);
         expect(await frame.locator(".vram-zoom").count()).toBe(0);
         const after = await winW();
         expect(after, "it did NOT snap back to the wide window it left").toBeLessThan(wide * 0.9);

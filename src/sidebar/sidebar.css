@@ -1297,6 +1297,12 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 /* Vertical only: the cell exists to CAP HEIGHT. Horizontal is the inner code block's job (it honours the
    wrap/scroll pref), so letting the cell scroll sideways too just produced a stray bar under short content. */
 .r-outscroll { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+/* WRAP ⇄ SCROLL applies to tool OUTPUT too, not only to code blocks. Settings offers one preference and it
+   read as global, but it only ever reached `.code` — so turning line-breaking off left every streamed
+   console and traceback wrapping anyway, with no way to see a long line whole. Scoped to `.r-outtext` (a
+   cell whose content is plain lines) rather than to every cell: `white-space: pre` on one holding a table
+   or a JSON tree would be about something else entirely. */
+:root[data-codewrap="off"] .r-outtext { overflow-x: auto; white-space: pre; }
 /* A short CENTRED handle, not a full-width bar: a bar spanning the cell reads as an inert horizontal
    scrollbar track ("why is there a scrollbar with nothing to scroll?"). The hit area stays full-width and
    9px tall so it is still easy to grab; only the pill is painted. */
@@ -2467,6 +2473,25 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .bench-top:hover::after { width: 52px; opacity: 1; background: var(--panel-2-hover); }
 .bench-title { font-size: 0.78em; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
     color: var(--fg-faint); white-space: nowrap; padding-left: 3px; }
+/* RUN. The one action in a row of quiet outlines, so it is filled and coloured — a green outline beside
+   four grey ones reads as another toggle. It replaces a Run button at the far BOTTOM of the panel, which
+   put the action as far from the script's name as the layout allowed and cost a whole row to do it. */
+.bench-play {
+    display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+    padding: 4px 7px; margin-left: 2px; border-radius: 6px; cursor: pointer;
+    color: #fff; background: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 70%, #000);
+}
+.bench-play:hover:not(:disabled) { filter: brightness(1.1); }
+.bench-play:disabled { opacity: .45; cursor: default; }
+/* Running: the same box, with a spinner where the triangle was. Swapping the GLYPH rather than the button
+   keeps the row from reflowing at the exact moment you are watching it. */
+.bench-play-spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid rgba(255,255,255,.45);
+    border-top-color: #fff; animation: bench-spin .7s linear infinite; }
+@keyframes bench-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .bench-play-spin { animation: none; } }
+/* The environment button, in the header beside the mode picker. `.on` while its body is open, so the row
+   says which disclosure the panel below it belongs to. */
+.bench-env-btn.on { color: var(--fg); border-color: var(--fg-dim); }
 /* The sandbox's python version. A CHIP, not prose: it is a fact about the machine you are typing at, read
    at a glance and never scanned as a sentence. */
 .bench-ver { font: 0.72em/1 ui-monospace, SFMono-Regular, Menlo, monospace;

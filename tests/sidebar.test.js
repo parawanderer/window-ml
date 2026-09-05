@@ -2622,7 +2622,7 @@ test("python bench: opens from the header, runs a script, and renders the sandbo
     ta.value = "print('hi')\nreturn 1";
     ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
-    w.shadow.querySelector(".bench-run").click();
+    w.shadow.querySelector(".bench-play").click();
     await w.tick();
     // The PYTHON_EXEC payload carried the code; default mode readonly → hardened.
     const runs = w.pyCalls.filter((c) => !c.env);
@@ -2650,7 +2650,7 @@ test("python bench: a returned DataFrame renders as a real table (PyDfTable), no
     const ta = w.shadow.querySelector(".bench-code");
     ta.value = "return df"; ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
-    w.shadow.querySelector(".bench-run").click();
+    w.shadow.querySelector(".bench-play").click();
     await w.tick();
     const df = w.shadow.querySelector(".bench-out .r-df-scroll, .bench-out table.dftable, .bench-out .r-py-val table");
     assert.ok(df || w.shadow.querySelector(".bench-out .r-py-val"), "the value section renders");
@@ -2676,7 +2676,7 @@ test("python bench: a DataFrame cell holding a dict renders as JSON, not [object
     const ta = w.shadow.querySelector(".bench-code");
     ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
-    w.shadow.querySelector(".bench-run").click();
+    w.shadow.querySelector(".bench-play").click();
     await w.tick();
     const text = w.shadow.querySelector(".bench-out .r-py-val").textContent;
     assert.doesNotMatch(text, /\[object Object\]/, "a dict cell is not JS default coercion");
@@ -2698,7 +2698,7 @@ test("python bench: a cell that cannot be serialised says so, and says what it w
     const ta = w.shadow.querySelector(".bench-code");
     ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
-    w.shadow.querySelector(".bench-run").click();
+    w.shadow.querySelector(".bench-play").click();
     await w.tick();
     const cell = w.shadow.querySelector(".bench-out .r-td-unrend");
     assert.ok(cell, "the unrenderable cell is marked, not left blank or coerced");
@@ -2725,7 +2725,7 @@ test("python bench: a Map, a Set or an Error is marked rather than printed as {}
     const ta = w.shadow.querySelector(".bench-code");
     ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
-    w.shadow.querySelector(".bench-run").click();
+    w.shadow.querySelector(".bench-play").click();
     await w.tick();
 
     const marks = [...w.shadow.querySelectorAll(".bench-out .r-td-unrend")];
@@ -2751,7 +2751,7 @@ test("python bench: a cell the SANDBOX marked names its Python type, and blames 
     const ta = w.shadow.querySelector(".bench-code");
     ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
-    w.shadow.querySelector(".bench-run").click();
+    w.shadow.querySelector(".bench-play").click();
     await w.tick();
 
     const marks = [...w.shadow.querySelectorAll(".bench-out .r-td-unrend")];
@@ -2777,7 +2777,7 @@ test("python bench: full mode sends hardened:false", async () => {
     ta.value = "return 1";
     ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
-    w.shadow.querySelector(".bench-run").click();
+    w.shadow.querySelector(".bench-play").click();
     await w.tick();
     assert.equal(w.pyCalls[0].hardened, false, "full mode → not hardened");
 });
@@ -8033,7 +8033,7 @@ test("python: a traceback's user lines are links, and the deepest one is marked"
     const ta = w.shadow.querySelector(".bench-code");
     ta.value = "x = 1"; ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
-    w.shadow.querySelector(".bench-run").click();
+    w.shadow.querySelector(".bench-play").click();
     await w.tick();
 
     const links = [...w.shadow.querySelectorAll(".bench-out .tb-line")];

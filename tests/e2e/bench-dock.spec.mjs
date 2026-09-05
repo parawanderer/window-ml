@@ -94,7 +94,7 @@ test("✕ closes the drawer and KEEPS the script — closing is not discarding",
         await drawer.locator(".bench-code").fill("return 6 * 7   # my work in progress");
         // The draft is persisted when it RUNS, and the bench also reads it back on mount; either way what
         // must not happen is that closing throws it away.
-        await drawer.locator(".bench-run").click();
+        await drawer.locator(".bench-play").click();
         await sleep(600);
 
         await drawer.locator('[aria-label="Close the Python bench"]').click();
@@ -227,13 +227,13 @@ test("the bench reports the sandbox's real Python and package versions, and filt
     const { fake, ext, frame } = await setup();
     try {
         await frame.locator('[aria-label="Python bench"]').click();
-        const env = frame.locator(".bench-env");
+        const env = frame.locator(".bench-env-btn");
         await expect(env).toBeVisible();
         // CLOSED by default and fetched on OPEN: reading it starts the sandbox, which is what a first
         // python_exec pays for — doing that on mount would make every glance at the bench cost a cold start.
         await expect(frame.locator(".bench-env-body")).toHaveCount(0);
 
-        await env.locator(".bench-env-btn").click();
+        await env.click();
         await expect(frame.locator(".bench-env-body")).toBeVisible();
         // Real versions, from the interpreter. Asserted as SHAPE, not as a literal — pinning "3.14" would
         // make this fail on the next Pyodide bump for no reason.
@@ -268,7 +268,9 @@ test("the environment panel is there in FULL-page mode too", async () => {
         await frame.locator('[aria-label="Python bench"]').click();
         await frame.locator('[aria-label="Expand the Python bench"]').click();
         await expect(frame.locator(".bench-drawer")).toHaveCount(0);
-        await expect(frame.locator(".bench-env")).toBeVisible();
+        // The BUTTON is the affordance (it lives in the bench's header row in both shapes); `.bench-env` is
+        // now only the panel it opens, and does not exist until it does.
+        await expect(frame.locator(".bench-env-btn")).toBeVisible();
         await frame.locator(".bench-env-btn").click();
         await expect(frame.locator(".bench-env-head")).toContainText(/Python\s+3\./, { timeout: 60000 });
     } finally { await ext.context.close(); await fake.stop(); }

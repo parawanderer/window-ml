@@ -1783,6 +1783,13 @@ rate includes the network; that whole matrix (openai/ollama x streamed/not) is p
   Click a traceback line number and the line it names lights up in the code — red for the failure, green for
   the call path. `HOLD=0` exits instead of holding the browser open. The assertions are
   `tests/e2e/line-map.spec.mjs`.
+- **RULE — a demo says what it is doing, on screen: `narrate(page, "…", { sub: "…" })`** (harness.mjs). A
+  demo is WATCHED, and a watcher who cannot tell which beat is running infers it from what moved — which is
+  exactly backwards when the point of a beat is that something did NOT move. It draws a banner in the PAGE
+  (top-left, its own element, very high z-index), deliberately not inside the extension's shadow hosts, so it
+  can never be mistaken for part of the product and a demo about the sidebar cannot have its narration hidden
+  by the sidebar. `narrate(page, null)` clears it for a screenshot that should show the product alone. Call it
+  at every beat, not once at the start.
 - **RULE — a demo about what happens INSIDE a run must call `openRunInSidebar(page)`** (harness.mjs). The
   panel opens on the SESSIONS LIST, not on the run, so a demo that only slides the sidebar open queries an
   empty transcript, reads zero of everything, and reports that the feature does not work — which every demo
