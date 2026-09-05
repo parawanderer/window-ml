@@ -149,6 +149,14 @@ export const laneEnabled = signal(true);
 // height the panel was dragged to; the scrub strip above it is NAVIGATION and stays, so the panel does not
 // jump in height the first time anything runs. Its chip row is always drawn and is the control.
 export const showLane = signal(false);
+export const LANEH_KEY = "ml_res_laneh";   // storage.local: the event lane's own height, in px
+/** How tall the event LANE is, independent of the panel. Its default is a cap rather than "as tall as it
+ *  needs to be", which is the whole point: the lane re-packs as the window moves — a step entering the view
+ *  can add a row — and inside a fixed-height panel every row it gained came straight off the CHARTS above it,
+ *  which shrank while you were dragging. Bounded, it scrolls instead, and nothing above it moves. */
+export const LANE_H_DEFAULT = 96;
+/** The event lane's height in px — dragged from its own bottom edge, remembered, double-click to reset. */
+export const laneH = signal(LANE_H_DEFAULT);
 export const showModels = signal(true);   // draw the resource panel's model list (it competes with the chart for height)
 // The resource chart's CROSSHAIR — where the pointer is, shared so every track mirrors the same instant.
 export const crosshair = signal<{ frac: number; t: number | null; msPerPx?: number } | null>(null);

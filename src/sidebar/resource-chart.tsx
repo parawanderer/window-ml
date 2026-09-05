@@ -20,7 +20,7 @@ import {
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs } from "./vram";
-import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs } from "./store";
+import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
@@ -254,7 +254,10 @@ function SampleStamp({ at }: { at: ResourceSample | null }) {
     const ago = Math.max(0, Date.now() - at.t);
     return (
         <div class="rc-tip-line rc-tip-when">
-            <span>{hhmmss(at.t)}</span>
+            {/* TO THE MILLISECOND. Samples land ~250ms apart during a load and the interesting ones are
+                consecutive — two readings a quarter-second apart both stamped "19:21:40" cannot be told
+                apart, which is exactly the stretch you hover when something looks wrong. */}
+            <span>{hhmmssms(at.t)}</span>
             {/* "how long ago" is what makes a clock time mean something at a glance on a plot with no axis
                 labels; the clock time is what makes it comparable with the transcript and the event lane. */}
             <span class="rc-tip-ago">{ago < 1500 ? "now" : `${fmtAge(ago)} ago`}</span>
@@ -329,7 +332,15 @@ function PlotTip({ at, bands, ceiling, label, hidden, scope }: { at: ResourceSam
                 ? <div class="rc-tip-line rc-tip-dim rc-tip-holders">{models.map((b) => (
                     <span class="rc-tip-consumer" key={b.key}>
                         <i class="rc-tip-dot" style={{ background: colorFor(b.model!) }} />{b.model}</span>))}</div>
-                : <div class="rc-tip-line rc-tip-dim">nothing resident</div>}
+                // NOT "nothing resident" WHEN THE POOL IS FULL. Read off `ps`, which has no runner object
+                // during a load, that put "88.28 GiB of 95.59 GiB (92%)" and "nothing resident" in the SAME
+                // tooltip. The sample knows what was loading; when it does not, "not attributed" is still the
+                // honest phrasing, because the memory is plainly there.
+                : used > 0
+                    ? <div class="rc-tip-line rc-tip-dim">{at.loading?.length
+                        ? `loading ${at.loading.join(", ")} — not attributed yet`
+                        : "in use, not attributed to a model"}</div>
+                    : <div class="rc-tip-line rc-tip-dim">nothing resident</div>}
         </div>
     );
 }
@@ -634,10 +645,27 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
  *  which is exactly the confusion the stripes exist to prevent.) */
 /** A phase's swatch, matching its stripe in the bar exactly — so the tooltip's sections and the block's parts
  *  are visibly the same three things, rather than a list you have to map onto a picture yourself. */
+// THREE STRIPE PATTERNS THAT DIFFER IN DIRECTION, NOT IN WEIGHT. A load, its weights half and its context
+// half were all 45° stripes in the model's colour, separated only by opacity — which is legible in a 200px
+// bar and not at all in a 10px tooltip swatch, so the tooltip listed three rows with what read as the same
+// glyph three times. Direction survives being tiny:
+//
+//   load (the whole thing)  ▨  crosshatch — it IS both halves, so it is both leans
+//   moving the weights in   ╱  leaning one way
+//   allocating the context  ╲  leaning the other
+//
+// Which also fixes the bar: a load's two halves were told apart by a divider and a shade, and the shade did
+// almost none of the work.
 const loadStripes = (model?: string): string => {
     const c = model ? colorFor(model) : "var(--warn, #f59e0b)";
-    return `repeating-linear-gradient(45deg, ${c} 0 3px, var(--panel) 3px 8px)`;
+    // Two layers: the first leans one way over a transparent gap, the second the other way over the panel's
+    // ground, so what shows through the first is the second rather than whatever is behind the element.
+    return `repeating-linear-gradient(45deg, ${c} 0 2px, transparent 2px 7px), `
+        + `repeating-linear-gradient(-45deg, ${c} 0 2px, var(--panel) 2px 7px)`;
 };
+/** One half of a load: same colour, opposite leans, so the two are told apart by DIRECTION at any size. */
+const halfStripes = (c: string, lean: 45 | -45): string =>
+    `repeating-linear-gradient(${lean}deg, ${c} 0 3px, var(--panel) 3px 8px)`;
 
 const phaseFill = (kind: string, model?: string): string => {
     const base = model ? colorFor(model) : "var(--accent)";
@@ -664,9 +692,10 @@ const phaseFill = (kind: string, model?: string): string => {
         // A LOAD's two halves. Both are the model arriving, so both are its colour — but the first is the
         // weights moving (dense, and where the memory trace actually steps) and the second is the context
         // being allocated before it will serve. Striped either way, because a load is a wait rather than
-        // work; the difference between them is weight, so the divider is what reads.
-        : kind === "weights" ? loadStripes(model)
-        : kind === "context" ? `repeating-linear-gradient(45deg, color-mix(in srgb, ${base} 45%, transparent) 0 3px, var(--panel) 3px 8px)`
+        // work; they LEAN OPPOSITE WAYS, because a difference in shade alone is invisible in a swatch and
+        // nearly invisible in a thin bar (see loadStripes).
+        : kind === "weights" ? halfStripes(base, 45)
+        : kind === "context" ? halfStripes(`color-mix(in srgb, ${base} 55%, transparent)`, -45)
         : `color-mix(in srgb, ${base} 38%, transparent)`;
 };
 
@@ -1020,8 +1049,14 @@ function EventTip({ scope }: { scope: string }) {
     // over-charged the box for something the model did — so prompt eval comes out first, and what is left is
     // queue and network, which really are facts about the box and the moment.
     const promptMs = e.cost?.promptEvalMs ?? null;
+    // …and LOADING comes out too, for exactly the same reason prompt eval does. Our wall clock starts when
+    // the request goes out, so on a call that triggered a load it contains the whole load — measured at 70.8s
+    // on a real box, reported as "+70884ms network", which is a claim about the box's networking that is off
+    // by seventy seconds and points the reader at the wrong thing entirely. The load is drawn as its own
+    // span; what is left after the model's own three durations is queue and network.
+    const loadMs = e.cost?.loadMs ?? null;
     const overheadMs = e.cost?.evalMs != null && e.cost.wallMs != null
-        ? Math.max(0, e.cost.wallMs - e.cost.evalMs - (promptMs ?? 0)) || null : null;
+        ? Math.max(0, e.cost.wallMs - e.cost.evalMs - (promptMs ?? 0) - (loadMs ?? 0)) || null : null;
     const phases = (e.phases || []).map((ph, i) => ({ ...ph, from: i ? e.phases![i - 1].until : e.t }));
     // The two halves of a load, in bytes: the weights as the server measured them, and the context as the
     // difference between the whole load and the weights. Null unless the server reported both.
@@ -1262,6 +1297,32 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
         zoomRange.value = scopeAround(session, e.t, e.until, Date.now());
         if (e.id) { setPulsed(e.id); setTimeout(() => setPulsed((v) => (v === e.id ? null : v)), 1400); }
     };
+    /** DRAG THE LANE'S OWN EDGE. Pixels, not a ratio: the lane's content is rows of a fixed 9px, so "six rows
+     *  of events" is the thing being chosen and it must not change meaning when the panel is resized. Floored
+     *  at one row — a lane dragged to nothing is not a smaller lane, it is a lost one, and the grip would go
+     *  with it. Capped so it cannot swallow the charts it exists to be read against. */
+    const onLaneGrab = (e: PointerEvent) => {
+        e.preventDefault();
+        const el = e.currentTarget as HTMLElement;
+        const box = el.previousElementSibling as HTMLElement | null;
+        if (!box) return;
+        const startY = e.clientY, startH = box.getBoundingClientRect().height;
+        try { el.setPointerCapture(e.pointerId); } catch { /* older engines */ }
+        const move = (ev: PointerEvent) => {
+            laneH.value = Math.max(12, Math.min(400, Math.round(startH + (ev.clientY - startY))));
+        };
+        const up = () => {
+            el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up);
+            try { chrome.storage.local.set({ [LANEH_KEY]: laneH.value }); } catch { /* opaque origin */ }
+        };
+        el.addEventListener("pointermove", move); el.addEventListener("pointerup", up);
+    };
+    // Double-click restores the default, the way every other learned size here does — a drag you cannot undo
+    // is a setting with no reset.
+    const resetLane = () => {
+        laneH.value = LANE_H_DEFAULT;
+        try { chrome.storage.local.set({ [LANEH_KEY]: LANE_H_DEFAULT }); } catch { /* opaque origin */ }
+    };
     return (
         <div class="rc-lane" onPointerLeave={() => { eventHover.value = null; hoverAt.value = null; hoverModel.value = null; }}>
             {/* Rows carry the SAME drag-select the plot has. The lane shares the plot's axis, so a range
@@ -1273,7 +1334,17 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                 the scrub strip above it is NAVIGATION (where you are), which is why only this half folds and
                 the strip stays. Folding the pair together also made the panel jump in height the first time
                 anything ran, which is the thing that kept moving surfaces out from under the pointer. */}
-            {showLane.value ? rows.map((row, ri) => (
+            {/* THE ROWS SCROLL INSIDE THEIR OWN BOX. The lane RE-PACKS as the window moves — a step entering
+                the view can add a row, and a row is a claim that two bars overlap — so its natural height
+                changes constantly. Unbounded inside a fixed-height panel, every row it gained came off the
+                CHARTS above it: they visibly shrank while you were dragging the panel's edge, which is the
+                one moment you are looking at them. Bounded, the lane scrolls and nothing above it moves.
+                Its own edge is draggable, so how much of each you want is still yours to say.
+
+                A FIXED height, not a max: a cap still lets the box grow and shrink with its content, which is
+                the jumping, just with a ceiling on it. Fixed, the lane occupies exactly what it was given
+                whatever happens inside it, and everything above it is nailed down. */}
+            {showLane.value ? <div class="rc-lane-rows" style={{ height: `${laneH.value}px` }}>{rows.map((row, ri) => (
                 <div class="rc-lane-row" key={ri}
                     onPointerDown={startBrush(runs)}
                     onPointerMove={trackCursor("lane")}>
@@ -1352,7 +1423,11 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                         </div>
                     ))}
                 </div>
-            )) : null}
+            ))}</div> : null}
+            {/* Its own grip, under the rows and above the header — a lane too short to show what happened is
+                as bad as one that eats the charts, and which you want depends entirely on the run. */}
+            {showLane.value ? <div class="rc-lane-grip" role="separator" aria-orientation="horizontal"
+                aria-label="Drag to resize the event lane" onPointerDown={onLaneGrab} onDblClick={resetLane}><i class="rc-lane-pill" /></div> : null}
             <EventTip scope="lane" />
             <LaneFilterBar counts={counts} shown={events.length} total={all.length} />
         </div>
@@ -1526,6 +1601,16 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
         e.preventDefault();
         e.stopPropagation();
     };
+    // OVER THE LANE, only a HORIZONTAL wheel scrubs. The plot can take the gesture in either direction
+    // because it has nothing of its own to scroll; the lane's rows do, so a vertical wheel there belongs to
+    // them — and `wheelScrubFraction` reads whichever delta is larger, which would have swallowed it. Sideways
+    // is the direction that means "move along the timeline" anyway, and it is what the lane was missing: the
+    // bars are a window onto the session, and there was no way to push that window along from the half of the
+    // panel you are actually looking at.
+    const wheelLane = (e: WheelEvent) => {
+        if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;   // theirs: the rows scroll
+        wheelScrub(e);
+    };
     return (
         <>
             <div class="rc" onWheel={wheelScrub}>
@@ -1542,7 +1627,14 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
                 the whole section with it, header included. `showLane` is only the fold: it collapses the ROWS
                 and leaves the chip row as the control that brings them back. One signal used to do both, so
                 unchecking the setting merely collapsed the section and left its header sitting there. */}
-            {laneEnabled.value ? <EventLane samples={filled} events={shown} session={samples} /> : null}
+            {/* The LANE takes the same wheel gesture as the plot — it is the same axis, so scrolling it means
+                the same thing, and the lane is the half you are usually looking at when you want to move
+                along. Its rows scroll VERTICALLY inside their own box; horizontally there is nothing to
+                scroll, because the lane is a window onto the session rather than a wide strip, and moving
+                that window is exactly what this does. */}
+            {laneEnabled.value
+                ? <div onWheel={wheelLane}><EventLane samples={filled} events={shown} session={samples} /></div>
+                : null}
         </>
     );
 }

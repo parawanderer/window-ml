@@ -20,7 +20,7 @@ import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_H
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
-import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
+import { usageByModel, eventsFrom, dropInferredLoads, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
 import { parseInfo, holdCapacity, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks, ScopeSwitch } from "./resource-chart";
@@ -234,6 +234,19 @@ export const machineEvents = signal<ResourceEvent[]>([]);
 export const othersOpen = signal(false);
 /** Loads that have started and not yet completed, so `load.complete` can close the span it opened. */
 const openLoads = new Map<string, { t: number; weightsAt?: number; weightsBytes?: number }>();
+/** WHICH MODELS ARE LOADING RIGHT NOW — the open half of `openLoads`, as a signal so a reading can carry it.
+ *
+ *  This is the answer to a question `/api/ps` cannot be asked: for most of a load Ollama has no runner object
+ *  at all, so ps is not vague about the model, it omits it entirely — measured at 22 consecutive samples
+ *  across one load, with the card sitting at 76.78 then 87.82 GiB the whole time. Without this the panel drew
+ *  that as "unattributed 87.82 GiB" beside a model row reading "off-box", which are two confident claims made
+ *  out of an absence of evidence. */
+export const loadingModels = signal<string[]>([]);
+/** Models the last `/api/ps` reading reported as arriving — a `loading` row with no runner behind it yet.
+ *  The stream's `load.start` says the same thing and says it sooner, but a stock server has no stream, and
+ *  this is the only place that server ever admits a load is happening. */
+export const psLoading = signal<string[]>([]);
+const noteLoading = (): void => { loadingModels.value = [...openLoads.keys()]; };
 /** Models currently SERVING, by the instant they started. A signal because a span that is still open has to
  *  be drawn while it is happening — that is the whole point of knowing when responding began — and the lane
  *  synthesizes it against `now` on every render.
@@ -257,7 +270,7 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
     const model = frame.model ? normModel(frame.model) : undefined;
     switch (frame.kind) {
         case "load.start":
-            if (model) openLoads.set(model, { t: at });
+            if (model) { openLoads.set(model, { t: at }); noteLoading(); }
             return null;                                    // the SPAN is emitted when it closes
         case "load.weights":
             // The boundary between the weights arriving and the context (KV cache + compute buffers) being
@@ -276,7 +289,7 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
         case "load.complete": {
             const open = model ? openLoads.get(model) : undefined;
             if (!model || !open) return null;
-            openLoads.delete(model);
+            openLoads.delete(model); noteLoading();
             // The server reports the split DIRECTLY when it can (`weights_ms`/`context_ms` on the closing
             // edge), and that is the form to prefer: differencing two frames only works for a client that was
             // already connected when the load began, so a panel opened mid-load lost the divider entirely.
@@ -312,7 +325,7 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
             return model && from ? { t: from, until: at, kind: "serve", label: `${model} serving`, model } : null;
         }
         case "load.failed":
-            if (model) openLoads.delete(model);
+            if (model) { openLoads.delete(model); noteLoading(); }
             return model ? { t: at, kind: "error", label: `${model} failed to load${frame.reason ? `: ${frame.reason}` : ""}`, model } : null;
         // EVICT and UNLOAD are different answers and the server draws the distinction: one made room for
         // something, the other simply expired. Inferring them by diffing polls could never tell them apart.
@@ -368,14 +381,72 @@ export function connectResourceStream(): () => void {
  *  stream. Both transports hand over the same `LoadedModel[]` (the frame embeds the `/api/ps` body verbatim
  *  and it goes through the same parser), so this is the single place a reading becomes panel state. Two
  *  transports feeding one function is what stops the polled panel and the streamed one drifting apart. */
-export function applyLoaded(loaded: LoadedModel[], at: number = Date.now()): void {
+export function applyLoaded(raw: LoadedModel[], at: number = Date.now()): void {
     psError.value = null;
+    // NORMALISED HERE, at the one place a reading becomes state — the same rule `machineEventFrom` follows for
+    // the stream, and for the same reason: match the two spellings late and every new comparison is a fresh
+    // chance to forget.
+    //
+    // It was applied to the stream and NOT to `/api/ps`, because ps was documented as always using the short
+    // name. It did not: caught on a real box (capture 2026-09-05, 19:21:40), where a second model loading
+    // made ps answer with the FULLY-QUALIFIED name for two frames — and one frame carried BOTH spellings, one
+    // per model. For those frames the resident model was a different id, so its band fell to zero and its
+    // memory dropped into the residual: a notch straight down through a flat 88.28 GiB, a row reading
+    // "off-box" for a model plainly on the card, and a tooltip saying "92%" and "nothing resident" at once.
+    // The spelling was a side effect of the state above — a placeholder was built from the request's model
+    // reference, which is still fully qualified — and is fixed in the same server commit.
+    //
+    // `/api/events` still names models fully qualified and deliberately so, which is the reason this exists
+    // at all; extending it to `ps` is defence against older builds and costs a comparison.
+    const named = raw.map((m) => (m.model === normModel(m.model) ? m : { ...m, model: normModel(m.model) }));
+    // A `state: "loading"` ROW IS A PLACEHOLDER, NOT A MODEL HOLDING ZERO BYTES. It carries its name and
+    // zeros for everything else — no `size_vram`, no `gpus` — so read as a residency it says the model is
+    // here and using nothing, which is the notch: a band straight down to the axis and back up.
+    //
+    // And it was not only said of a model that is genuinely loading. Measured on a real box (capture
+    // 2026-09-05, t=76085..77473): a model RESIDENT and serving with 94,171,928,982 bytes on CUDA0 was
+    // re-reported as `loading` with zeros while a DIFFERENT model loaded, then back to its full figure 2ms
+    // later — with the server's own top-level `vram_used` unchanged at 94,171,928,982 through every frame.
+    //
+    // FIXED SERVER-SIDE since (parawanderer/ollama `slop`, deployed as ollama-slop:latest). The cause was
+    // narrower and worse than it looked: `state: "loading"` meant "I could not take this runner's lock just
+    // now", and ordinary traffic holds that lock — a request finishing, an expiry being reset, another model
+    // being admitted. `vram_used` disagreed because device discovery never consulted it. A `loading` row now
+    // appears only for a model that genuinely has no runner.
+    //
+    // KEPT ANYWAY, because it costs one comparison and it is the difference between a wrong reading and a
+    // right one on every build older than that fix — including whatever a user happens to be running. The
+    // one case it is imprecise in is a model evicted and reloaded inside a single poll, where it carries a
+    // stale figure for one reading; that is self-correcting and far cheaper than the notch.
+    // So a placeholder is NO NEWS, not news of zero — and for a model we last measured as resident, no news
+    // means it is still there. Carrying the previous reading forward is what keeps the band flat across the
+    // flicker; dropping the row instead would leave the model with no row at all for that frame, which draws
+    // the same notch by a different route. A model that genuinely goes away stops appearing in `ps` entirely,
+    // or arrives as an `unload` edge — neither of which this touches.
+    const wasResident = new Map((loadedModels.value ?? []).map((m) => [m.model, m]));
+    const placeholders: string[] = [];
+    const loaded: LoadedModel[] = [];
+    for (const m of named) {
+        if (m.state !== "loading") { loaded.push(m); continue; }
+        const known = wasResident.get(m.model);
+        if (known && (known.vramBytes ?? 0) > 0) loaded.push(known);   // still here; the row just said nothing
+        else placeholders.push(m.model);                               // genuinely loading — a name, no figures
+    }
     // Remember each resident model's window (overwrite → tracks a mid-run reload).
     for (const m of loaded) if (typeof m.contextLength === "number") seenContext.set(normModel(m.model), m.contextLength);
     loadedModels.value = loaded;
     // One sample per reading, carrying the capacity in force at the time — a sample read back from history
     // must know the ceiling it was drawn against, not today's.
-    const sample: ResourceSample = { t: at, models: loaded.map((m) => residencyOf(m)), capacity: capacity.value };
+    // `loading` rides the reading because it is a fact ABOUT that instant, and the bands are derived from the
+    // sample alone — a later render must not consult a signal that has since moved on, or scrolling back
+    // through history would relabel old samples with today's loads.
+    psLoading.value = placeholders;
+    const inFlight = [...new Set([...loadingModels.value, ...placeholders])]
+        .filter((n) => !loaded.some((m) => m.model === n));
+    const sample: ResourceSample = {
+        t: at, models: loaded.map((m) => residencyOf(m)), capacity: capacity.value,
+        ...(inFlight.length ? { loading: inFlight } : {}),
+    };
     // CHRONOLOGICAL, not append-order. Everything downstream — segmenting on gaps, placing an event inside
     // the run that contains it, the scrub window — assumes the samples are in time order, and a bare push
     // holds that for a poll and breaks it for the stream: a connection BACKFILLS up to ten minutes of history
@@ -614,7 +685,9 @@ export function timeline(): ResourceEvent[] {
         ? [...machineEvents.value, ...Object.entries(servingSince.value).map(([model, t]): ResourceEvent => (
             { t, until: Date.now(), open: true, kind: "serve", label: `${model} serving`, model }))]
         : residencyEvents(resourceHistory.value, fromSessions);
-    return [...fromSessions, ...machine].sort((a, b) => a.t - b.t);
+    // Both sources describe a LOAD, and with the stream carrying they describe the SAME loads — so the one we
+    // inferred from `load_duration` is dropped where the server reported it (see dropInferredLoads).
+    return [...dropInferredLoads(fromSessions, machine), ...machine].sort((a, b) => a.t - b.t);
 }
 
 /** The session the lane scopes to when scoping is on: whichever one is open. Null in the list view, where
@@ -654,17 +727,23 @@ export function sessionModels(hash: string): readonly string[] | undefined {
  *
  *  ONE component for what were three near-identical copies (in-scope evicted, in-scope off-box, and the same
  *  two again inside the out-of-scope disclosure) — the third copy is what made it worth extracting. */
-function GhostRow({ name, kind }: { name: string; kind: "off" | "ghost" }) {
+function GhostRow({ name, kind }: { name: string; kind: "off" | "ghost" | "unseen" | "loading" }) {
+    const label = kind === "off" ? "off-box" : kind === "unseen" ? "not seen" : kind === "loading" ? "loading" : "evicted";
+    const why = kind === "off"
+        ? "Never resident here — a cloud model, or one already gone before the panel opened. It is drawn in the lane because it RAN; this row is what says whose colour that is."
+        : kind === "unseen"
+            ? "Where this is running is UNKNOWN: the backend is not answering, so nothing has told us what is resident. It is drawn in the lane because it ran. Not the same as off-box, which is a claim we have no reading to make."
+            : kind === "loading"
+                ? "Loading onto this box right now. It holds memory already — that is the jump in the track above — but Ollama has no runner object for it until the load finishes, so /api/ps cannot yet name it."
+                : "No longer resident. It is still drawn in the history above, for as long as that history covers the time it was loaded — this row is what says whose colour that is.";
     return (
         <div class={`vram-row ghost${hoverModel.value === name ? " hot" : ""}`}
             onPointerEnter={() => (hoverModel.value = name)}
             onPointerLeave={() => (hoverModel.value = null)}>
             <i class="vram-dot ghost-dot" style={{ background: colorFor(name) }} />
             <span class="vram-name">{name}</span>
-            <span class="tt vram-embed">{kind === "off" ? "off-box" : "evicted"}
-                <span class="tt-pop left above" role="tooltip">{kind === "off"
-                    ? "Never resident here — a cloud model, or one already gone before the panel opened. It is drawn in the lane because it RAN; this row is what says whose colour that is."
-                    : "No longer resident. It is still drawn in the history above, for as long as that history covers the time it was loaded — this row is what says whose colour that is."}</span>
+            <span class="tt vram-embed">{label}
+                <span class="tt-pop left above" role="tooltip">{why}</span>
             </span>
             <span class="sp" />
         </div>
@@ -1201,6 +1280,9 @@ export function VramPanel() {
     // Total is the CURRENT visible resident set — read it straight from `loaded`,
     // not the sparkline history (which lags a render and resets to 0 on reopen).
     const total = loaded ? loaded.reduce((s, m) => s + (hidden.has(m.model) ? 0 : (m.vramBytes ?? 0)), 0) : 0;
+    // What the DEVICES say is in use, independent of whether anything claims it. Only consulted when
+    // attribution comes back empty — see the header.
+    const boxUsed = (capacity.value?.devices ?? []).reduce((s, d) => s + Math.max(0, d.totalBytes - d.freeBytes), 0);
     // Stable order so rows don't reshuffle as models load/evict.
     const rows = loaded ? [...loaded].sort((a, b) => a.model.localeCompare(b.model)) : [];
     // The rows ARE the chart's legend, so they have to cover the WINDOW, not just this instant: a model that
@@ -1222,11 +1304,30 @@ export function VramPanel() {
     // no local memory, ever — and a delegated reader may also have finished before the panel opened. The rows
     // are the chart's legend, so a block in a colour with no row explains nothing. Called off-box rather than
     // a ghost, because "evicted" would claim it had been here and left.
+    //
+    // AND IT NEEDS EVIDENCE: a reading in which the model was ABSENT. With the backend unreachable there is
+    // no reading at all — `pollPs` records the failure, and the resident set it leaves behind says nothing
+    // about the box — so a model the lane names is not off-box, it is unplaced. Saying "off-box" there turns
+    // an outage into a claim about the user's SETUP, and it was the ordinary case rather than an edge one: a
+    // run whose model is still loading, against a box that has just gone away, names a model no successful
+    // poll has ever seen. It corrects itself as soon as the box answers, which is exactly what makes it
+    // worth fixing — a label that is wrong and then quietly right teaches you to distrust the panel.
+    const residencyKnown = !psError.value;
     const offBox = (() => {
         const known = new Set([...(loaded || []).map((m) => m.model), ...ghosts]);
+        const loadingNow = new Set([...loadingModels.value, ...psLoading.value]);
         const out = new Set<string>();
         for (const e of timeline()) if (e.model && !known.has(e.model)) out.add(e.model);
-        return [...out].sort();
+        // A model ARRIVING gets a row too, even when the lane names nothing yet. It holds no memory we can
+        // attribute and has no deadline to count down, so it cannot be a resident row — but dropping it
+        // entirely makes the panel silent about the one thing it is most obviously doing.
+        for (const n of loadingNow) if (!known.has(n)) out.add(n);
+        return [...out].sort().map((name) => ({
+            name,
+            // A model with a load IN FLIGHT is the commonest way this went wrong, and the least excusable:
+            // the server told us it was loading, onto this box, and the row said it was somewhere else.
+            kind: (loadingNow.has(name) ? "loading" : residencyKnown ? "off" : "unseen") as "off" | "unseen" | "loading",
+        }));
     })();
     // SCOPED, the same way the lane is. The rows are the lane's legend, so a lane showing one session's
     // models beside a list showing the whole box reads as the panel contradicting itself — and on a shared
@@ -1235,18 +1336,18 @@ export function VramPanel() {
     // knows and won't say.
     const mine = laneScoped.value && scopedHash() ? sessionModels(scopedHash()!) : undefined;
     const isMine = (name: string) => !mine || mine.includes(name);
-    const otherCount = mine ? [...rows.map((m) => m.model), ...ghosts, ...offBox].filter((n) => !isMine(n)).length : 0;
+    const otherCount = mine ? [...rows.map((m) => m.model), ...ghosts, ...offBox.map((o) => o.name)].filter((n) => !isMine(n)).length : 0;
     // The folded rows are rendered ALWAYS and collapsed by the grid below, because a height nobody knows in
     // advance cannot be animated any other way — `height: auto` does not transition, and filtering them out
     // of the tree means there is nothing to slide.
     const others = mine
         ? [...rows.filter((m) => !isMine(m.model)).map((m) => ({ kind: "row" as const, m })),
-           ...offBox.filter((n) => !isMine(n)).map((n) => ({ kind: "off" as const, name: n })),
+           ...offBox.filter((o) => !isMine(o.name)),
            ...ghosts.filter((n) => !isMine(n)).map((n) => ({ kind: "ghost" as const, name: n }))]
         : [];
     // The in-scope split: what is loaded NOW, and what is only named because the chart still draws it.
     const liveRows = rows.filter((m) => isMine(m.model));
-    const goneRows = [...offBox.filter(isMine).map((n) => ({ kind: "off" as const, name: n })),
+    const goneRows = [...offBox.filter((o) => isMine(o.name)),
                       ...ghosts.filter(isMine).map((n) => ({ kind: "ghost" as const, name: n }))];
 
     // Recompute every point's visible-total each render, so toggling redraws the
@@ -1263,7 +1364,16 @@ export function VramPanel() {
         <div class="vram" ref={panelRef}
             style={vramH.value ? { height: `${Math.max(vramH.value, minH)}px`, minHeight: `${minH}px` } : undefined}>
             <div class="vram-head">
-                <span class="vram-total">{formatBytes(total)} in use</span>
+                {/* WHAT IS IN USE, not what /api/ps happened to attribute. The two are the same number almost
+                    always and wildly different for the seconds of a load: ps has no runner object yet, so
+                    attribution is zero while the card is already 92% full — and the header read "0 B in use"
+                    directly beside a track saying 88.28 GiB. Measured occupancy is the honest figure there,
+                    and it says whose it is not yet known to be. */}
+                {total > 0 || !boxUsed ? <span class="vram-total">{formatBytes(total)} in use</span> : (
+                    <span class="tt vram-total">{formatBytes(boxUsed)} in use
+                        <span class="tt-pop wrap" role="tooltip">The box reports this much memory in use, and nothing is attributed to a model yet — which is what a load looks like from outside: Ollama has no runner object until it finishes, so /api/ps cannot name what is holding it.</span>
+                    </span>
+                )}
                 <span class="sp" />
                 {/* What the drag selected, and the way out of it. Esc does the same — a zoom you can't leave is
                     a trap, and the panel otherwise keeps showing a stretch that scrolled into the past.

@@ -399,3 +399,128 @@ test("the track editor's checkbox takes the whole event section, header and all"
         await expect.poll(() => frame.locator(".rc-lane-row").count(), { timeout: 10000 }).toBeGreaterThan(0);
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+// `/api/ps` CONTRADICTING ITSELF, replayed frame for frame off a real box (capture 2026-09-05,
+// t=76085..77473). A model resident and serving with 94,171,928,982 bytes on CUDA0 was re-reported as
+// `state: "loading"` with `size_vram: 0`, no `gpus`, and its name suddenly FULLY-QUALIFIED — twice, 2ms
+// either side of a correct row — while the server's own top-level `vram_used` never moved. Read literally
+// that is the model vanishing and coming back: a band straight down to the axis, its memory falling into the
+// residual as "unattributed", and the row tagged "off-box" for a model plainly on the card.
+//
+// The two defences are independent and this drives both at once: the NAME goes through `normModel` at the
+// boundary, and a `loading` row is a name with no occupancy rather than a residency of zero.
+test("a self-contradicting ps frame does not make a resident model vanish", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+
+        const TOTAL = 101972967424, VRAM = 94171928982;
+        const MODEL = "qwen3.8-flash-next:vision";
+        const FQ = `registry.ollama.ai/library/${MODEL}`;
+        const card = (id, free) => ({
+            gpu_id: String(id), name: `CUDA${id}`, runner: "CUDA", compute: "12.0", driver: "13.2",
+            total_memory: TOTAL, physical_memory: 102641958912, free_memory: free,
+        });
+        // `vram_used` is the server's OWN total and it is identical in every frame below — including the two
+        // whose per-model rows sum to zero. That contradiction is the fixture.
+        const info = () => ({
+            version: "0.0.0", models: { running: 1, vram_used: VRAM },
+            compute: {
+                system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 100 * 1024 ** 3 },
+                supported_gpus: [card(0, TOTAL - VRAM), card(1, TOTAL - 589824)],
+            },
+        });
+        const RUNNING = { models: [{
+            model: MODEL, name: MODEL, size: VRAM, size_vram: VRAM, context_length: 262144,
+            expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+            gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: VRAM }],
+        }] };
+        // The bad frame, verbatim in shape: fully-qualified, `loading`, zeros, Go zero-time, no `gpus`.
+        const LOADING = { models: [{
+            model: FQ, name: FQ, state: "loading", size: 0, size_vram: 0,
+            expires_at: "0001-01-01T00:00:00Z",
+        }] };
+
+        fake.setEvents([{ v: 1, kind: "hello", t: 0, box: "test", retainedMs: 60000 },
+            { v: 1, kind: "sample", t: -1000, ps: RUNNING, info: info() }]);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".vram-row").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        const before = await frame.locator(".vram-total").textContent();
+        expect(before, "the model is resident to begin with").not.toMatch(/^0 B/);
+
+        // …now the contradictions, in the order the box sent them.
+        for (const [t, ps] of [[100, LOADING], [200, RUNNING], [300, LOADING], [400, RUNNING]]) {
+            fake.pushFrame({ v: 1, kind: "sample", t, ps, info: info() });
+            await sleep(150);
+            // NOTHING FLICKERS. Asserted on every frame, not only at the end: the bug is transient by nature,
+            // so a check that only looks once it has settled passes with the fix reverted.
+            expect(await frame.locator(".vram-total").textContent(), `t=${t}: the header dropped to zero`).not.toMatch(/^0 B/);
+            expect(await frame.locator(".vram-row").count(), `t=${t}: the model row vanished`).toBeGreaterThan(0);
+            expect((await frame.locator(".vram-embed").allTextContents()).join(" "),
+                `t=${t}: a resident model was called off-box`).not.toContain("off-box");
+            // THE MODEL'S OWN ROW still says what it holds. The header alone is not enough: it falls back to
+            // the box's measured occupancy when nothing is attributed, so it stays right even while the
+            // attribution underneath it is wrong — which is the whole failure, one layer down.
+            const row = await frame.locator(".vram-row").filter({ hasText: MODEL }).first().textContent();
+            expect(row, `t=${t}: the row lost the model's memory`).toMatch(/GiB/);
+            expect(row, `t=${t}: the row went to zero`).not.toMatch(/\b0 B\b/);
+        }
+        // And it is ONE model throughout — the two spellings must never have drawn two rows.
+        const names = await frame.locator(".vram-name").allTextContents();
+        expect(names.filter((n) => n.includes(MODEL)).length, "one model, one row").toBe(1);
+        expect(names.join(" "), "the short name is the one shown").not.toContain("registry.ollama.ai");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE LANE HAS ITS OWN HEIGHT, and that is what stops the panel jumping. The lane RE-PACKS as the window
+// moves — a row is a claim that two bars overlap, so a step entering the view can add one — and unbounded
+// inside a fixed-height panel every row it gained came straight off the CHARTS above it, which visibly shrank
+// while you were dragging the panel's edge. The charts must not move when the lane's content changes.
+test("the event lane is resizable, and its content never resizes the charts above it", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+        fake.setEvents(FRAMES);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-lane-row").count(), { timeout: 25000 }).toBeGreaterThan(0);
+
+        const plotH = () => frame.locator(".rc-plot").first().evaluate((e) => e.getBoundingClientRect().height);
+        const rowsH = () => frame.locator(".rc-lane-rows").evaluate((e) => e.getBoundingClientRect().height);
+
+        // THE CAP HOLDS whatever the lane's content wants to be — that is what makes the charts stable.
+        expect(await rowsH(), "the lane is bounded, not as tall as its rows").toBeLessThan(140);
+        const scrolls = await frame.locator(".rc-lane-rows").evaluate((e) => e.scrollHeight > e.clientHeight + 1);
+        const before = await plotH();
+
+        // GROW IT with its own grip, and the panel gives the lane the room rather than the charts losing it…
+        const grip = await frame.locator(".rc-lane-grip").boundingBox();
+        await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2 + 60, { steps: 6 });
+        await page.mouse.up();
+        await expect.poll(rowsH, { timeout: 5000 }).toBeGreaterThan(140);
+
+        // …and it is REMEMBERED, like every other size in this panel.
+        await expect.poll(async () => await ext.sw.evaluate(() =>
+            new Promise((r) => chrome.storage.local.get("ml_res_laneh", (d) => r(d.ml_res_laneh)))),
+        { timeout: 5000 }).toBeGreaterThan(140);
+
+        // A DOUBLE-CLICK puts it back — a drag you cannot undo is a setting with no reset.
+        await frame.locator(".rc-lane-grip").dblclick();
+        await expect.poll(rowsH, { timeout: 5000 }).toBeLessThan(140);
+        expect(Math.abs((await plotH()) - before), "the charts are where they were").toBeLessThan(2);
+        // Sanity on the premise: if the fixture's lane fits inside the cap with room to spare, this test is
+        // not exercising the overflow it exists for.
+        expect(scrolls || (await rowsH()) > 40, "the lane has content to bound").toBe(true);
+    } finally { await ext.context.close(); await fake.stop(); }
+});

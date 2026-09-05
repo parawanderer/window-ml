@@ -1113,11 +1113,32 @@ test("scrubZone: the edges resize, the middle pans, and outside is neither", () 
     // from exactly one side is not a 7px target.
     assert.equal(M.scrubZone(ex, 0.29, W), "from");
 
-    // A window narrower than two handles would otherwise be all handle, leaving no way to pan it. The handle
-    // is capped at a third of the window, so the middle third always pans.
-    const narrow = { windowFrom: 0.50, windowTo: 0.53 };
-    assert.equal(M.scrubZone(narrow, 0.515, W), "pan");
-    assert.equal(M.scrubZone(narrow, 0.501, W), "from");
+    // Still comfortably wide enough for a middle: 0.30 of a 400px track is 120px against 7px handles.
+    const roomy = { windowFrom: 0.50, windowTo: 0.80 };
+    assert.equal(M.scrubZone(roomy, 0.65, W), "pan");
+});
+
+// A WINDOW TOO NARROW TO HOLD BOTH IS ALL HANDLE. The two gestures are not equally recoverable: pan one you
+// did not mean to and you drag it back; fail to RESIZE one and it can only be widened by throwing the zoom
+// away. The handle used to be capped at a third of the window to preserve a middle, so a window a few pixels
+// across had handles of one or two and every grab landed on the pan zone — which is the exact position you
+// are in when widening is the only thing you want.
+test("scrubZone: a hairline window can always be widened, even at the cost of panning it", () => {
+    const W = 400;   // 7px of handle ≈ 0.0175 of the track
+    // 0.006 of the track = 2.4px. Under three handles, so there is no middle.
+    const hair = { windowFrom: 0.500, windowTo: 0.506 };
+    assert.notEqual(M.scrubZone(hair, 0.503, W), "pan", "the middle of a hairline resizes rather than pans");
+    assert.equal(M.scrubZone(hair, 0.5005, W), "from", "the near half takes the near edge");
+    assert.equal(M.scrubZone(hair, 0.5055, W), "to", "…and the far half the far one");
+    // The grab region still reaches a handle's width OUTSIDE it — a 2px target you must hit exactly is not a
+    // target, and this is the case where hitting it matters most.
+    assert.equal(M.scrubZone(hair, 0.49, W), "from");
+    assert.equal(M.scrubZone(hair, 0.515, W), "to");
+    assert.equal(M.scrubZone(hair, 0.40, W), "outside", "…but not the whole track");
+
+    // The threshold is about PIXELS, not about the fraction: the same window on a much wider track has room
+    // for a middle again, and gets one.
+    assert.equal(M.scrubZone(hair, 0.503, 4000), "pan");
 });
 
 test("scrubResize: one edge moves, the other stays exactly put", () => {
@@ -1349,4 +1370,67 @@ describe("clampWindow", () => {
         const got = clampWindow({ from: 0, to: 10 }, 1000);
         assert.equal(got.to - got.from, 1000);
     });
+});
+
+// A LOAD IS NOT AN ABSENCE OF EVIDENCE. Measured on a real box (tmp capture, 2026-09-05): between
+// `load.start` and `load.complete` there were 22 consecutive samples in which `/api/ps` was completely EMPTY
+// while the card reported 76.78 then 87.82 GiB in use — because Ollama has no runner object for a model
+// until its load finishes, so ps does not report it vaguely, it omits it. Read literally that is a card 92%
+// full with nothing accounting for it, and the panel duly drew "unattributed 87.82 GiB". The load edges are
+// what we have instead, and `ResourceSample.loading` carries them into the derivation.
+test("deviceBands: a residual a LOAD explains is named as the load, not as unattributed", () => {
+    const GB = 1024 ** 3;
+    // The capture's own numbers: card 0 with 87.82 GiB gone and ps empty.
+    const mid = { compute: { ...CUDA_INFO.compute, supported_gpus: [
+        { ...CUDA_INFO.compute.supported_gpus[0], free_memory: CUDA_INFO.compute.supported_gpus[0].total_memory - 87.82 * GB },
+        CUDA_INFO.compute.supported_gpus[1],
+    ] } };
+    const cap = M.parseInfo(mid);
+
+    const blind = M.deviceBands({ t: 1, models: [], capacity: cap }, "0");
+    assert.equal(blind.find((b) => b.key === "other").label, M.OTHER_BAND_LABEL,
+        "with nothing loading, a big residual really is unattributed");
+
+    const knowing = M.deviceBands({ t: 1, models: [], capacity: cap, loading: ["qwen3.8-flash-next:vision"] }, "0");
+    const other = knowing.find((b) => b.key === "other");
+    assert.equal(other.label, "loading qwen3.8-flash-next:vision");
+    assert.ok(other.bytes > 87 * GB, "…and it is the whole allocation, not a sliver");
+
+    // Several at once are counted rather than listed — a band label is one line in a legend.
+    assert.equal(
+        M.deviceBands({ t: 1, models: [], capacity: cap, loading: ["a", "b"] }, "0").find((b) => b.key === "other").label,
+        "loading 2 models");
+
+    // The FLOOR still wins. An idle card holds ~0.55 GiB of ollama's own discovery context, and a load
+    // starting elsewhere must not relabel that as this card loading something.
+    const idle = M.parseInfo(CUDA_INFO);
+    const quiet = M.deviceBands({ t: 1, models: [], capacity: idle, loading: ["something"] }, "0");
+    assert.equal(quiet.find((b) => b.key === "other").label, M.DRIVER_BAND_LABEL,
+        "a sub-GiB residual is the driver's context whatever is loading");
+});
+
+// THE NOTCH. A `/api/ps` row with `state: "loading"` carries its name and ZEROS — no `size_vram`, no `gpus`.
+// Read as a residency it claims the model is present and using nothing, which draws its band straight down to
+// the axis and back up a poll later. Pinned against the real frames (capture 2026-09-05, t=76085..77473): the
+// SAME model, resident and serving with 94,171,928,982 bytes on CUDA0, was re-reported as `loading` with
+// zeros while a DIFFERENT model loaded — twice, 2ms either side of a correct row — while the server's own
+// top-level `vram_used` stayed at 94,171,928,982 throughout. The row contradicts its own response's total.
+test("residencyFrom: a LOADING row carries no occupancy — it must not read as zero bytes resident", () => {
+    const running = M.residencyFrom({
+        model: "qwen3.8-flash-next:vision", name: "qwen3.8-flash-next:vision",
+        size: 94171928982, size_vram: 94171928982,
+        gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: 94171928982 }],
+    });
+    assert.equal(running.vramBytes, 94171928982);
+
+    // The very next frame, for the same model, with nothing having moved.
+    const placeholder = {
+        model: "registry.ollama.ai/library/qwen3.8-flash-next:vision", state: "loading",
+        size: 0, size_vram: 0, expires_at: "0001-01-01T00:00:00Z",
+    };
+    // Read literally it is a resident model holding nothing — which is the wrong claim, and the whole reason
+    // the caller filters these out before they become a sample. This pins WHY: the parse itself cannot tell.
+    assert.equal(M.residencyFrom(placeholder).vramBytes, 0,
+        "the row genuinely says zero — so it is the CALLER that must not treat it as a residency");
+    assert.equal(placeholder.state, "loading", "…and `state` is the only thing that distinguishes it");
 });

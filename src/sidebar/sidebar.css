@@ -328,6 +328,19 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Hovered — in THIS plot or any other, since one eviction is drawn in all of them. */
 .rc-rule:hover::before, .rc-rule.hot::before { width: 3px; left: 3px; opacity: 1; }
 .rc-lane { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 0; }
+/* THE ROWS, IN A BOX OF THEIR OWN. The lane re-packs as the window moves, so its natural height changes
+   constantly — and unbounded inside a fixed-height panel every row it gained came off the charts above it,
+   which shrank while you were dragging the panel. Capped and scrolling, nothing above it moves. Horizontal
+   scrolling is refused: the lane shares the plot's x-axis, and a lane that could scroll sideways would stop
+   lining up with the memory trace it exists to be read against. */
+.rc-lane-rows { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; overflow-x: hidden;
+                overscroll-behavior: contain; }
+/* A real grab target for it — the same 11px/pill pairing the bench divider uses, so a handle means one thing
+   panel-wide. No hairline of its own: the row above it is the edge. */
+.rc-lane-grip { flex: 0 0 auto; height: 11px; display: flex; align-items: flex-start; justify-content: center;
+                padding-top: 3px; cursor: ns-resize; touch-action: none; }
+.rc-lane-pill { width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2); transition: width .12s, background .12s; }
+.rc-lane-grip:hover .rc-lane-pill { width: 52px; background: var(--panel-2-hover); }
 .rc-lane-row { position: relative; display: flex; gap: 3px; height: 9px; }
 .rc-lane-seg { position: relative; min-width: 2px; height: 100%; }
 .rc-ev { position: absolute; top: 0; height: 100%; min-width: 3px; padding: 0; border: none; border-radius: 2px;

@@ -208,6 +208,10 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
             ...(u.evalMs != null ? { evalMs: u.evalMs } : {}),
             ...(u.genMs != null ? { wallMs: u.genMs } : {}),
             ...(u.promptEvalMs != null ? { promptEvalMs: u.promptEvalMs } : {}),
+            // Carried so the tooltip can take it OUT of the wall clock: a call that triggered a load has the
+            // whole load inside its wall time, and what is left after subtracting only generation and prompt
+            // eval was being reported as network — 70.8s of it, on a real box.
+            ...(u.loadMs != null ? { loadMs: u.loadMs } : {}),
         };
     };
     const call = (ts: number | undefined, u: TokenUsage | null | undefined, model: string | null | undefined,
@@ -417,4 +421,25 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
         }
     }
     return out.sort((a, b) => a.t - b.t);
+}
+
+
+/** DROP A LOAD WE ONLY INFERRED WHEN THE SERVER REPORTED THE SAME ONE.
+ *
+ *  There are two sources for "the model was being loaded" and they are not alternatives: `load_duration` on
+ *  the API response, which every server sends, and `load.start`/`load.complete` on the event stream, which
+ *  only a patched Ollama sends. With the stream carrying, BOTH described the same load and the lane drew it
+ *  twice — one bar under another, and the kind-filter counting "loads 5" for three real loads. The reported
+ *  one wins: it is measured at both edges rather than reconstructed backwards from a finish stamp, and it
+ *  carries the weights/context split, which the inferred one cannot have.
+ *
+ *  Matched on MODEL AND OVERLAP rather than on a start instant. The two are derived from different clocks —
+ *  ours, running backwards from when the response landed, against the server's own — so they agree on which
+ *  load they mean and never on exactly when it began. */
+export function dropInferredLoads(inferred: ResourceEvent[], reported: ResourceEvent[]): ResourceEvent[] {
+    const loads = reported.filter((e) => e.kind === "load");
+    if (!loads.length) return inferred;
+    const overlaps = (a: ResourceEvent, b: ResourceEvent) =>
+        a.t < (b.until ?? b.t) && (a.until ?? a.t) > b.t;
+    return inferred.filter((e) => !(e.kind === "load" && loads.some((r) => r.model === e.model && overlaps(e, r))));
 }

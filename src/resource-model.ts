@@ -172,6 +172,14 @@ export interface ResourceSample {
     t: number;
     models: ModelResidency[];
     capacity: Capacity | null;
+    /** Models the server said were LOADING at this instant — a `load.start` with no `load.complete` yet.
+     *
+     *  For most of a load there is no runner object in Ollama at all, so `/api/ps` does not report the model
+     *  coarsely, it does not report it AT ALL — while the device's own `free_memory` has already dropped by
+     *  the whole allocation. Read literally that is a card 92% full with nothing accounting for it, and the
+     *  panel said exactly that: "unattributed 87.82 GiB", beside a model row calling the model off-box. Both
+     *  claims came from treating an absence as a measurement. This is the evidence that it is neither. */
+    loading?: string[];
 }
 
 /** Raw `/api/ps` entry → residency. `gpus` is ABSENT for a CPU-resident model — that is the contract, and it
@@ -331,10 +339,21 @@ export function deviceBands(sample: ResourceSample, deviceId: string): Band[] {
     const used = Math.max(0, cap.totalBytes - cap.freeBytes, attributed + unknown);
     const residual = Math.max(0, used - attributed - unknown);
     // Name the residual by MAGNITUDE: under the floor it is the driver's own context (present even on an idle
-    // card), above it there is genuinely something else on the card worth telling the reader about.
-    bands.push({ key: "other", label: residual < DRIVER_OVERHEAD_FLOOR ? DRIVER_BAND_LABEL : OTHER_BAND_LABEL, bytes: residual, kind: "other" });
+    // card), above it there is genuinely something else on the card worth telling the reader about — UNLESS a
+    // load is in flight, in which case we know what it is and "unattributed" is simply wrong. A loading model
+    // holds its allocation before any runner exists to report it, so the residual IS the load.
+    bands.push({ key: "other", bytes: residual, kind: "other",
+        label: residual < DRIVER_OVERHEAD_FLOOR ? DRIVER_BAND_LABEL : loadingLabel(sample) ?? OTHER_BAND_LABEL });
     bands.push({ key: "free", label: "free", bytes: Math.max(0, cap.freeBytes), kind: "free" });
     return bands;
+}
+
+/** What a large residual is, when a load explains it: `loading gemma4:31b`, or a count when several are.
+ *  Null when nothing is loading, which is when the residual is genuinely unattributed. */
+function loadingLabel(sample: ResourceSample): string | null {
+    const l = sample.loading;
+    if (!l?.length) return null;
+    return l.length === 1 ? `loading ${l[0]}` : `loading ${l.length} models`;
 }
 
 /** The host's RAM split the same way — model spill first, then everything else in use, then free. */
@@ -698,9 +717,15 @@ export function scrubTo(
  *  "recentre on the cursor" when the cursor is on a handle.
  *
  *  `edgePx` is converted to a fraction against the track's width so the handles are a constant, clickable
- *  size on screen rather than a constant slice of a window that may be 2% wide. A window narrower than two
- *  handles is ALL handles, which would leave no way to pan it, so the nearer edge wins only if the pointer
- *  is genuinely in the outer third of it. */
+ *  size on screen rather than a constant slice of a window that may be 2% wide.
+ *
+ *  AND A VERY NARROW WINDOW IS ALL HANDLE. The handle used to be capped at a third of the window so that a
+ *  narrow one kept a middle to pan by — which gets the trade backwards, because the two gestures are not
+ *  equally recoverable. Pan a window you did not mean to and you drag it back. Fail to RESIZE one and there
+ *  is no way to widen it at all: a window a few pixels across had handles of one or two, so every grab
+ *  landed on the pan zone, and the only way out was resetting the zoom entirely. Below three handles' width
+ *  the middle is given up and the nearer edge wins — panning something you can barely see is the gesture
+ *  worth losing. */
 export function scrubZone(
     extent: { windowFrom: number; windowTo: number },
     frac: number,
@@ -708,7 +733,15 @@ export function scrubZone(
     edgePx = 7,
 ): "from" | "to" | "pan" | "outside" {
     const { windowFrom: a, windowTo: b } = extent;
-    const edge = trackPx > 0 ? Math.min(edgePx / trackPx, (b - a) / 3) : 0;
+    const px = trackPx > 0 ? edgePx / trackPx : 0;
+    // Too narrow to hold a pan zone AND two usable handles: spend the whole thing on resizing, so the window
+    // can always be got back. The grab region still extends a handle's width OUTSIDE it, or a hairline would
+    // be as hard to hit as it is to resize.
+    if (b - a < px * 3) {
+        if (frac < a - px || frac > b + px) return "outside";
+        return frac < (a + b) / 2 ? "from" : "to";
+    }
+    const edge = Math.min(px, (b - a) / 3);
     if (frac < a - edge || frac > b + edge) return "outside";
     if (frac <= a + edge) return "from";
     if (frac >= b - edge) return "to";
@@ -1353,6 +1386,9 @@ export interface ResourceEvent {
          *  into model work and box latency, which are not the same kind of thing and cannot be compared
          *  between two models while they are one number. */
         promptEvalMs?: number;
+        /** How long the model took to LOAD before this call could start (`load_duration`). Inside `wallMs`,
+         *  so anything deriving "network" from the wall clock has to subtract it — see the tooltip. */
+        loadMs?: number;
     };
 }
 

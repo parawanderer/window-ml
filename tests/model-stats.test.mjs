@@ -625,3 +625,36 @@ test("eventsFrom: steps after the last answer are a run STILL GOING, and a singl
     assert.equal(chat.filter((e) => e.kind === "session").length, 1);
     assert.equal(chat.filter((e) => e.kind === "run").length, 0, "a chat is not a run");
 });
+
+// TWO SOURCES FOR ONE LOAD. `load_duration` on the API response says a load happened; so do the server's own
+// `load.start`/`load.complete` edges. They are not alternatives — with the event stream carrying, BOTH
+// describe the same load, and the lane drew it twice: one bar under another, with the kind-filter counting
+// "loads 5" for three real loads.
+test("dropInferredLoads: a load the server reported is not also drawn from load_duration", async () => {
+    const { dropInferredLoads } = await import("../src/sidebar/model-stats.ts");
+    const inferred = [
+        { t: 1000, until: 3000, kind: "load", label: "loading qwen", model: "qwen" },
+        { t: 3000, until: 9000, kind: "gen", label: "qwen", model: "qwen" },
+        { t: 50000, until: 52000, kind: "load", label: "loading gemma", model: "gemma" },
+    ];
+    // The server's edges: the same load, on its own clock — which is why the match is on OVERLAP rather than
+    // on a start instant. Ours runs backwards from when the response landed; the server's does not.
+    const reported = [{ t: 900, until: 3200, kind: "load", label: "loading qwen", model: "qwen" }];
+
+    const out = dropInferredLoads(inferred, reported);
+    assert.equal(out.filter((e) => e.kind === "load").length, 1, "the duplicate went");
+    assert.equal(out.find((e) => e.kind === "load").model, "gemma", "…and it was the DUPLICATE, not the other one");
+    assert.equal(out.filter((e) => e.kind === "gen").length, 1, "nothing else was touched");
+
+    // A different model's load at the same instant is a different load — the box runs more than one.
+    assert.equal(
+        dropInferredLoads(inferred, [{ t: 900, until: 3200, kind: "load", model: "something-else" }])
+            .filter((e) => e.kind === "load").length, 2, "matching on time alone would eat an unrelated load");
+
+    // With NO reported loads (a stock server, no event stream) the inferred ones are all there is.
+    assert.equal(dropInferredLoads(inferred, []).filter((e) => e.kind === "load").length, 2);
+    // And a reported load that does not overlap ours describes a different one.
+    assert.equal(
+        dropInferredLoads(inferred, [{ t: 20000, until: 21000, kind: "load", model: "qwen" }])
+            .filter((e) => e.kind === "load").length, 2);
+});
