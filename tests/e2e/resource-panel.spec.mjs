@@ -1788,9 +1788,18 @@ test("resource panel: the width you drag is the width live keeps", async () => {
         await dragFrom(box1.x + box1.width / 2, track.x + 2);
         await expect.poll(liveText, { timeout: 10000 }).toMatch(/⏸/);
         const box2 = await frame.locator(".rc-scrub-win").boundingBox();
-        await dragFrom(box2.x + 2, box2.x + box2.width * 0.75);
+        await dragFrom(box2.x + 2, box2.x + box2.width * 0.55);
         const narrow = await winW();
         expect(narrow, "narrower than the stretch").toBeLessThan(wide);
+        // …but still a REAL TARGET. This test is about the width surviving a rejoin, and step 3 has to grab
+        // the window's MIDDLE to pan it — so a window only a few pixels wide makes the grab land within
+        // rounding distance of its left handle, which RESIZES (leaving `to` exactly where it was) and never
+        // reaches the tail. That is what it did on CI while passing locally, deterministically, for three
+        // runs: same viewport, same panel width, different rounding. Hit-testing a hairline is its own
+        // question and has its own unit test (scrubZone); this one must not accidentally be about it.
+        const mid = await frame.locator(".rc-scrub-win").boundingBox();
+        expect(mid.width, "the window is wide enough that its middle is unambiguously its middle")
+            .toBeGreaterThan(24);
 
         // 3. DRAG IT BACK to the right edge. It rejoins live — at the width it is, not the width it was.
         const box3 = await frame.locator(".rc-scrub-win").boundingBox();
