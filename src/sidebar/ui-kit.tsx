@@ -226,11 +226,15 @@ export async function decideGate(st: AgentStep, hash: string, seq: number, ok: b
  *  `onOpen` is for a section whose content has to be FETCHED (the server-tool list) — it fires on the
  *  opening edge only, so re-opening does not re-request, and the caller decides whether a refresh is offered
  *  separately. `note` is a short status that rides on the header, where a count or a "loading…" belongs. */
-export function Disclosure({ label, note, open: controlled, onOpen, defaultOpen = false, children }: {
+export function Disclosure({ label, note, open: controlled, onOpen, onToggle, defaultOpen = false, children }: {
     label: ComponentChildren;
     note?: ComponentChildren;
+    /** Controlled open state. With `onToggle` the caller owns it entirely (the lane's is persisted). */
     open?: boolean;
+    /** Fires on the OPENING edge only — for a section whose content has to be fetched. */
     onOpen?: () => void;
+    /** Fires on every change, with the new state. Present ⇒ the caller owns `open` in both directions. */
+    onToggle?: (open: boolean) => void;
     defaultOpen?: boolean;
     children?: ComponentChildren;
 }) {
@@ -239,6 +243,7 @@ export function Disclosure({ label, note, open: controlled, onOpen, defaultOpen 
     const toggle = () => {
         const next = !open;
         if (controlled == null) setUncontrolled(next);
+        onToggle?.(next);
         if (next) onOpen?.();
     };
     return (

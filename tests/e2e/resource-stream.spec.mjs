@@ -229,9 +229,10 @@ test("a scoped panel shows the session's models, and folds the rest away", async
 
 
 // The lane is CONTENT — what happened — and it competes with the chart for whatever height the panel was
-// dragged to. It is collapsed on a fresh profile, and its chip row is the way in: the row already says what
-// you would get ("steps 2 · calls 5"), which promises more than a bare chevron does.
-test("the event lane is collapsed on a fresh panel, and its chip row opens it", async () => {
+// dragged to. It is collapsed on a fresh profile, and it is the SAME disclosure the sections below it use:
+// a bespoke chevron in a box beside a row of chips read as unrelated chrome, and gave no hint that the two
+// were one control. The header carries what is in there, which is what makes it worth opening.
+test("the event lane is collapsed on a fresh panel, and its header opens it", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();
     try {
@@ -266,24 +267,33 @@ test("the event lane is collapsed on a fresh panel, and its chip row opens it", 
             await sleep(400);
         }
 
-        // The chip row is drawn — it is the control, and hiding it would hide the way back.
-        const fold = frame.locator(".rc-lane-fold");
+        // The header is drawn — it is the control, and hiding it would hide the way back.
+        const fold = frame.locator(".disc-head").filter({ hasText: "events" });
         await expect(fold).toBeVisible({ timeout: 20000 });
         expect(await fold.getAttribute("aria-expanded")).toBe("false");
-        // …and the rows are not. The blocks are what takes the height.
-        expect(await frame.locator(".rc-lane-row").count(), "the lane's rows are collapsed").toBe(0);
+        // It says WHAT is in there, which is what makes it worth opening — and counts only, since a filter
+        // is about what is drawn and nothing is drawn while it is closed.
+        await expect(fold.locator(".disc-note")).toHaveText(/\d+ (runs|steps|calls|loads|serving)/);
+        // The body stays MOUNTED while closed — that is what there is to slide — so the question is its
+        // height, not whether the rows exist. It takes no space at all, which is the point: the panel does
+        // not jump when a run starts.
+        const bodyH = () => frame.locator(".disc").filter({ has: frame.locator(".rc-lane-filter") })
+            .locator(".disc-body").evaluate((el) => el.getBoundingClientRect().height);
+        expect(await bodyH(), "the lane takes no height while closed").toBeLessThan(2);
 
-        // COLLAPSED, the whole row opens it — none of the chips' own meanings apply to a lane that is not
-        // drawn, so each click has exactly one meaning in each state.
-        await frame.locator(".rc-lane-filter").click();
+        await fold.click();
         await expect.poll(() => frame.locator(".rc-lane-row").count(), { timeout: 10000 }).toBeGreaterThan(0);
         expect(await fold.getAttribute("aria-expanded")).toBe("true");
+        await expect.poll(bodyH, { timeout: 5000 }).toBeGreaterThan(8);
+        // The filters are in the BODY, beside the lane they filter — not in the header, where they would be
+        // controls over something that is not drawn.
+        expect(await frame.locator(".rc-lane-chip").count(), "the filters apply to something now").toBeGreaterThan(0);
         // Remembered, like the other panel sections.
         expect(await ext.sw.evaluate(() => new Promise((r) => chrome.storage.local.get("ml_res_sections", (d) => r(d.ml_res_sections)))))
             .toMatchObject({ lane: true });
 
-        // OPEN, the chevron closes it and the chips go back to being filters.
+        // And it closes again.
         await fold.click();
-        await expect.poll(() => frame.locator(".rc-lane-row").count(), { timeout: 10000 }).toBe(0);
+        await expect.poll(bodyH, { timeout: 5000 }).toBeLessThan(2);
     } finally { await ext.context.close(); await fake.stop(); }
 });

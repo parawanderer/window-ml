@@ -21,7 +21,7 @@ import {
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs } from "./vram";
 import { models, ollamaIds, loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, showLane, showModels, SECTIONS_KEY, laneLitSeqs } from "./store";
-import { IconChevron } from "./icons";
+import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
@@ -1043,10 +1043,13 @@ function EventTip({ scope }: { scope: string }) {
                 {/* Each section carries the swatch of the stripe it describes, so the tooltip and the block
                     read as the same three things. */}
                 {first || e.model ? <i class="rc-tip-dot" style={{ background: phaseFill(first?.kind ?? "model", e.model) }} /> : null}
-                {/* The container's own LABEL, not a hardcoded "run": a `ml.chat()` session gets a container
-                    too, and calling it a run asserts something that never happened. */}
-                <span class="rc-tip-name">{first ? nameFor(first.kind) : isRun ? e.label : e.model || e.label}</span>
-                <span class="rc-tip-size">{first ? ms(first.until - first.from) : ms(dur)}</span></div>
+                {/* WHAT THIS BLOCK IS, always — its own label ("qwen:32b serving", "loading gemma4:e2b"), not
+                    a hardcoded "run" and not just the model name. The first PHASE used to take this line,
+                    which meant a machine event with no phases said nothing but the model: a serving span and
+                    a load looked identical, and neither said which it was. Phases are rows below now, all of
+                    them, so the header is the identity and the rows are how the time split. */}
+                <span class="rc-tip-name">{e.label || e.model}</span>
+                <span class="rc-tip-size">{ms(dur)}</span></div>
             {/* WHICH SESSION this belongs to — only while the lane is showing every session. Scoped, every
                 block on screen is from the one you are reading, and the pill would repeat the same eight
                 characters on every tooltip to say nothing. */}
@@ -1077,10 +1080,13 @@ function EventTip({ scope }: { scope: string }) {
                     {overheadMs != null ? <span class="rc-chip rc-chip-dim">+{Math.round(overheadMs)}ms network</span> : null}
                 </div>
             ) : null}
-            {phases.slice(1).map((ph, i) => (
+            {/* A SEPARATOR IS A BORDER ON THE SECTION IT OPENS, never an element of its own. A standalone rule
+                can end up with nothing on one side of it — first, last, or next to another rule — and then
+                it is a line dividing nothing, which this tooltip produced in three different ways before it
+                was made structurally impossible. A border cannot exist without the content it belongs to. */}
+            {phases.map((ph, i) => (
                 <>
-                    <div class="rc-tip-rule" key={`r${i}`} />
-                    <div class="rc-tip-line" key={i}>
+                    <div class="rc-tip-line sep" key={i}>
                         <i class="rc-tip-dot" style={{ background: phaseFill(ph.kind, e.model) }} />
                         {/* A bare "exec" reads as a label of unknown kind. Saying what it IS — a tool call,
                             with the name as code — is the difference between a word and an identifier. */}
@@ -1093,18 +1099,27 @@ function EventTip({ scope }: { scope: string }) {
             {/* An OPEN span has no end yet, so every duration in this tooltip is "so far". Said once, plainly,
                 because the alternative is a reader taking a number that is still growing as a measurement. */}
             {e.open ? <div class="rc-tip-note">still running — these durations are so far, not final</div> : null}
+            {/* ONE rule opens the footer, and the PROSE comes first inside it. The notes explain the block —
+                "the model wasn't resident", "continues past what was measured" — and they were sitting under
+                the timestamp, which read as a caption on the clock rather than on the thing. The timestamp is
+                the reference line: quiet, last, and the part you go looking for rather than read.
+
+                One rule, not two: ruling the timestamp on both sides put a divider above and below a single
+                line, which reads as an empty boxed cell rather than as two sections. */}
+            {/* The footer opens with a border on whichever of these actually renders — `sepFirst` hands it to
+                the first one, so the section is separated exactly when it has something in it. */}
+            {(() => {
+                const notes = [
+                    e.kind === "load" ? "the model wasn't resident — this is the wait before a token" : null,
+                    h.p.clipped ? "continues past what was measured" : null,
+                    e.ref ? `click to open this ${e.ref.seq != null ? "step" : "run"}` : null,
+                ].filter(Boolean) as string[];
+                return notes.map((n, i) => <div class={`rc-tip-note${i === 0 ? " sep" : ""}`} key={n}>{n}</div>);
+            })()}
             {/* WHEN, exactly. The durations say how long each part took; this is what lets a block be lined up
                 against another one, or against a timestamped log. Milliseconds because an event's own timings
                 are exact — unlike the crosshair, which interpolates between samples. */}
-            {/* ONE rule opens the footer — the timestamp AND the notes below it are both about the block
-                rather than about any phase, so they are one section. Ruling them separately put a divider
-                above and below a single line, which reads as an empty boxed cell rather than as two
-                sections, and on a block with no phases at all produced two rules in a row. */}
-            <div class="rc-tip-rule" />
-            <div class="rc-tip-when">{hhmmssms(e.t)} → {hhmmssms(e.until ?? e.t)}</div>
-            {e.kind === "load" ? <div class="rc-tip-note">the model wasn't resident — this is the wait before a token</div> : null}
-            {h.p.clipped ? <div class="rc-tip-note">continues past what was measured</div> : null}
-            {e.ref ? <div class="rc-tip-note">click to open this {e.ref.seq != null ? "step" : "run"}</div> : null}
+            <div class={`rc-tip-when${(e.kind === "load" || h.p.clipped || e.ref) ? "" : " sep"}`}>{hhmmssms(e.t)} → {hhmmssms(e.until ?? e.t)}</div>
         </div>
     );
 }
@@ -1298,34 +1313,31 @@ function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number
         try { chrome.storage.local.set({ [LANE_HIDDEN_KEY]: next }); } catch { /* opaque origin */ }
     };
     const open = showLane.value;
+    // What is in there, on the header — the thing that makes the row worth opening. Counts only, no filter
+    // state: a filter is about what is DRAWN, and nothing is drawn while it is closed.
+    const summary = KINDS.filter((k) => counts[k.kind]).map((k) => `${counts[k.kind]} ${k.label}`).join(" · ");
     const setOpen = (v: boolean) => {
         showLane.value = v;
         try { chrome.storage.local.set({ [SECTIONS_KEY]: { lane: v, models: showModels.value } }); } catch { /* opaque origin */ }
     };
     return (
-        // COLLAPSED, the whole row opens the lane — the chips already say what you would get ("steps 2 ·
-        // calls 5"), which is a better promise than a bare chevron, and none of their own meanings apply to a
-        // lane that is not drawn. OPEN, they go back to being filters and only the chevron closes it. So each
-        // click has exactly one meaning in each state, rather than the row having two jobs at once.
-        <div class={`rc-lane-filter${open ? "" : " closed"}`}
-            onClick={open ? undefined : () => setOpen(true)}
-            role={open ? undefined : "button"}
-            title={open ? undefined : "Show the event lane"}>
-            <button class="rc-lane-fold" aria-label={open ? "Hide the event lane" : "Show the event lane"}
-                aria-expanded={open} onClick={(e: MouseEvent) => { e.stopPropagation(); setOpen(!open); }}>
-                <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-            </button>
-            {KINDS.filter((k) => counts[k.kind]).map((k) => (
-                <button class={`rc-lane-chip${hidden.has(k.kind) ? " off" : ""}`} key={k.kind} disabled={!open}
-                    title={!open ? undefined : hidden.has(k.kind) ? `Show ${k.label}` : `Hide ${k.label}`}
-                    onClick={() => toggle(k.kind)}>{k.label} {counts[k.kind]}</button>
-            ))}
-            {/* The scope switch used to live here, as one more chip in a row of chips — which said it was a
-                filter over KINDS like the others, when it decides the window, the model list and the lane
-                together. It is in the panel HEADER now (`ScopeSwitch`), beside the view picker it belongs
-                with. */}
-            {shown < total ? <span class="rc-lane-count">{shown}/{total}</span> : null}
-        </div>
+        // The SAME disclosure the two sections directly below it use (`agent options`, `other models on the
+        // box`), rather than a bespoke chevron in a box beside a row of chips — which read as unrelated
+        // chrome and gave no hint that the chips and the fold were the same control. Header: what it is, and
+        // how much of it there is. Body: the filters, beside the lane they filter.
+        <Disclosure label="events" note={summary} open={open} onToggle={setOpen}>
+            <div class="rc-lane-filter">
+                {KINDS.filter((k) => counts[k.kind]).map((k) => (
+                    <button class={`rc-lane-chip${hidden.has(k.kind) ? " off" : ""}`} key={k.kind}
+                        title={hidden.has(k.kind) ? `Show ${k.label}` : `Hide ${k.label}`}
+                        onClick={() => toggle(k.kind)}>{k.label} {counts[k.kind]}</button>
+                ))}
+                {/* The scope switch used to live here, as one more chip in a row of chips — which said it was
+                    a filter over KINDS like the others, when it decides the window, the model list and the
+                    lane together. It is in the panel HEADER now (`ScopeSwitch`). */}
+                {shown < total ? <span class="rc-lane-count">{shown}/{total}</span> : null}
+            </div>
+        </Disclosure>
     );
 }
 

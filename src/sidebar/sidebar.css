@@ -244,6 +244,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
                 background: var(--panel-2); border: 1px solid var(--border); border-radius: 3px;
                 font-variant-numeric: tabular-nums; }
 .rc-lane-chip:hover { background: var(--panel-2-hover); }
+/* A closed lane's chips are a SUMMARY, not controls — no hover, no pointer, nothing to press. */
+.rc-lane-chip.static { cursor: inherit; }
+.rc-lane-chip.static:hover { background: var(--panel-2); }
 .rc-lane-chip.off { opacity: .45; text-decoration: line-through; }
 /* The SCOPE chip is a mode switch, not a fifth kind filter — the kind chips subtract from what is drawn,
    this one changes whose events are drawn at all. Pushed to its own end of the row with a rule before it, so
@@ -328,7 +331,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 @keyframes rc-ev-live { 0%, 100% { opacity: .95; } 50% { opacity: .55; } }
 @media (prefers-reduced-motion: reduce) { .rc-ev.open { animation: none; } }
 .rc-ev { transition: opacity .12s ease; }
-.rc-ev:hover { opacity: 1; outline: 1px solid var(--fg-dim); }
+/* The hovered block draws ABOVE its neighbours. An outline is painted on the element's own layer, so a bar
+   packed hard against the next one had that edge covered by it — and the one thing the outline is for is
+   telling you where this block ENDS when several abut. */
+.rc-ev:hover { opacity: 1; outline: 1px solid var(--fg-dim); z-index: 5; }
 /* A composite step: hard stops at each phase boundary, built inline from the phases themselves (the model's
    own colour for its work, a neutral for the human's wait, a wash of the same colour for the tool). The
    fallback here only matters if an event arrives with no phases. */
@@ -395,7 +401,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* The container already spaces its children (`gap`), so the rule's own margin only ADDS to it — 2px of gap
    plus 2px of margin either side left the line floating in the middle of a gap rather than reading as the
    top of the section under it. A hair more below than above does that. */
+/* A separator is a BORDER on the section it opens, never an element of its own — see the note in EventTip.
+   The standalone rule is kept only for the tooltips that still use it, and is inert at an edge. */
 .rc-tip-rule { height: 1px; margin: 1px 0 2px; background: var(--border); }
+.rc-tip-rule + .rc-tip-rule, .rc-tip > .rc-tip-rule:first-child, .rc-tip > .rc-tip-rule:last-child { display: none; }
+.rc-tip > .sep { border-top: 1px solid var(--border); margin-top: 3px; padding-top: 3px; }
+/* …and never on the FIRST thing in the tip, where it would be a line under the tip's own edge. */
+.rc-tip > .sep:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
 .rc-tip-consumer { display: inline-flex; align-items: center; gap: 5px; }
 .rc-tip-pct { opacity: .7; font-variant-numeric: tabular-nums; }
 .rc-tip-gone { padding: 0 4px; font-size: 0.9em; color: var(--fg-faint); border: 1px solid var(--border); border-radius: 3px; }
@@ -2199,7 +2211,8 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* The block you double-clicked, after the window has moved to it — the window is necessarily wider than a
    short block, so this is what turns "somewhere in here" into "this one". */
 @keyframes rcEvPulse { 0% { outline-color: var(--accent); } 100% { outline-color: transparent; } }
-.rc-ev.pulse { outline: 2px solid var(--accent); outline-offset: 1px; animation: rcEvPulse 1.4s ease-out forwards; }
+/* Same reason as the hover outline, and it must beat it: a pulse says 'this is the one you clicked'. */
+.rc-ev.pulse { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 6; animation: rcEvPulse 1.4s ease-out forwards; }
 @media (prefers-reduced-motion: reduce) { .rc-ev.pulse { animation: none; } }
 
 /* Server-tool curation: a bundle, then its functions. Indented under their bundle so "which server is this
