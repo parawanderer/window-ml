@@ -1608,17 +1608,20 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                 <span class="tt bench-info" aria-label="about the bench">ⓘ<span class="tt-pop wrap left" role="tooltip">
                     <TipText md="Runs against the SAME sandbox `python_exec` uses (offscreen → worker → Pyodide). Code-only — no page image or tables. `return` a value (or end with a bare expression, Jupyter-style); `print()` is captured. 15s cap." />
                 </span></span>
+                {/* THE GRAB PILL is centred on the ROW, which is the only place a drawer handle reads as one —
+                    centred in the leftover space instead, it sat visibly off to one side, because the name and
+                    its controls are wider than the two icons opposite. What made that necessary was the pill
+                    landing on the mode picker; the picker moves to the RIGHT group instead, which leaves the
+                    row's middle genuinely empty. It is `pointer-events: none` besides, so even where the two
+                    do meet in a narrow panel the pill can never swallow a click meant for a control. */}
+                <span class="sp" />
+                <i class="bench-grip-pill" aria-hidden="true" />
                 <label class="bench-mode">mode
                     <select value={mode} onChange={e => setMode((e.target as HTMLSelectElement).value === "full" ? "full" : "readonly")}>
                         <option value="readonly">readonly (sandboxed)</option>
                         <option value="full">full (network)</option>
                     </select>
                 </label>
-                {/* THE GRAB PILL, drawn in the row's free space rather than at its geometric centre. As a
-                    pseudo-element centred on the row it ended up ON TOP of the mode picker once the header
-                    filled up — the visible handle and the draggable area disagreeing, so pressing the handle
-                    opened a dropdown. Inside the spacer it is centred in whatever room is actually left. */}
-                <span class="sp bench-gripbar" aria-hidden="true"><i class="bench-grip-pill" /></span>
                 {/* The one ACTION in the row, so it is filled and coloured where everything else is a quiet
                     outline. Its tooltip carries the shortcut, which is where the bottom bar's hint went. */}
                 <button class="tt bench-play" disabled={running || !code.trim()} onClick={run} aria-label="Run">

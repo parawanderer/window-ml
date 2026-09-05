@@ -325,3 +325,33 @@ test("a step's ▶ bench hands over the script and opens the DRAWER, keeping the
         await expect(frame.locator(".bench-drawer .bench-code")).toHaveValue(drawn);
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+// THE HANDLE IS CENTRED ON THE ROW. It was briefly centred in the row's LEFTOVER space instead — a flex child
+// in the spacer — which put it visibly off to one side, because the name and its controls are far wider than
+// the two icons opposite. What forced that arrangement was the pill landing on top of the mode picker, so the
+// picker moved to the right group; this pins both halves of that, since fixing either one alone reintroduces
+// the other.
+test("the drawer's grab handle is centred, and nothing interactive sits under it", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await expect(frame.locator(".bench-drawer")).toBeVisible();
+        const geo = await frame.evaluate(() => {
+            const row = document.querySelector(".bench-drawer .bench-top");
+            const pill = document.querySelector(".bench-drawer .bench-grip-pill");
+            if (!row || !pill) return null;
+            const r = row.getBoundingClientRect(), p = pill.getBoundingClientRect();
+            const mid = r.left + r.width / 2;
+            // What the pointer would actually hit at the pill's centre — the pill itself is pointer-events:
+            // none, so this is whatever lies beneath it.
+            const under = document.elementFromPoint(p.left + p.width / 2, p.top + p.height / 2);
+            return { off: Math.abs((p.left + p.width / 2) - mid), rowW: r.width,
+                     underTag: under?.tagName ?? "", underCls: (under?.className ?? "").toString() };
+        });
+        expect(geo, "the drawer draws a handle").not.toBeNull();
+        expect(geo.off, `the handle is ${Math.round(geo.off)}px off the row's centre`).toBeLessThanOrEqual(2);
+        // …and the row's middle is free, so pressing the handle drags instead of opening a dropdown.
+        expect(["SELECT", "OPTION", "INPUT", "BUTTON"], `a control sits under the handle (${geo.underTag}.${geo.underCls})`)
+            .not.toContain(geo.underTag);
+    } finally { await ext.context.close(); await fake.stop(); }
+});

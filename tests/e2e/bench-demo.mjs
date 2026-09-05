@@ -30,7 +30,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
-import { launchExtension, configureExtension, waitForMl, openRunInSidebar } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, openRunInSidebar, narrate } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), "artifacts", "bench-demo");
@@ -77,6 +77,7 @@ const main = async () => {
         const step = frame.locator(".astep").first();
         if (!(await step.locator(".r-py-in").count())) await step.locator(".astep-head").click();
         await sleep(500);
+        await narrate(page, "A finished run, with a python step", { sub: "Its code is reflowed for reading — py-format never changes a token." });
         log("\n--- the step's code, as drawn (reflowed — this is what the bench will get) ---");
         log((await step.locator(".r-py-in .code").first().textContent()).trim());
         await step.locator(".code-tool", { hasText: "bench" }).click();
@@ -84,6 +85,7 @@ const main = async () => {
 
         // 1 — and the run is STILL THERE, under it.
         const drawer = frame.locator(".bench-drawer");
+        await narrate(page, "\u25b6 bench opens it as a DRAWER", { sub: "The run stays on screen — that is the trip the drawer exists for." });
         log(`\n--- the bench opened as a DRAWER: ${await drawer.count()} · the run behind it: ${await frame.locator(".astep.tool").count()} step(s), still on screen ---`);
         log("--- what landed in it ---\n" + (await drawer.locator(".bench-code").inputValue()));
         await frame.page().screenshot({ path: path.join(ART, "1-drawer-with-run.png") });
@@ -91,21 +93,23 @@ const main = async () => {
         // 3 — it RUNS, for real, in the same sandbox python_exec uses.
         await drawer.locator(".bench-code").fill(
             (await drawer.locator(".bench-code").inputValue()) + "\n# edited here, then run:\n");
-        await drawer.locator(".bench-run").click();
+        await drawer.locator(".bench-play").click();
         for (let i = 0; i < 30 && !(await drawer.locator(".bench-out").count()); i++) await sleep(300);
         await sleep(800);
+        await narrate(page, "Run it, in the sandbox python_exec uses", { sub: "The green \u25b6 in the header, or \u2318/Ctrl+Enter from anywhere in the bench." });
         log("\n--- ran it (the same offscreen Pyodide sandbox python_exec uses) ---");
         log((await drawer.locator(".bench-out").textContent().catch(() => "(no output)")).trim().slice(0, 300));
         await frame.page().screenshot({ path: path.join(ART, "2-ran-in-drawer.png") });
 
         // 4 — drag it taller. How much of the bench you want depends on the script.
         const before = (await drawer.boundingBox()).height;
-        const g = await frame.locator(".bench-grip").boundingBox();
+        const g = await frame.locator(".bench-grip-pill").boundingBox();   // the pill, not the row: its midpoint is now a <select>
         await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
         await page.mouse.down();
         await page.mouse.move(g.x + g.width / 2, g.y - 140, { steps: 12 });
         await page.mouse.up();
         await sleep(500);
+        await narrate(page, "Drag the top edge to resize", { sub: "The grab pill sits in the row's free space, so it never lands on a control." });
         log(`\n--- dragged the top edge: ${Math.round(before)}px → ${Math.round((await drawer.boundingBox()).height)}px (remembered across a reload) ---`);
         await frame.page().screenshot({ path: path.join(ART, "3-dragged.png") });
 
@@ -113,6 +117,7 @@ const main = async () => {
         // python_exec pays for), so a glance at the bench costs nothing until you ask.
         await drawer.locator(".bench-env-btn").click();
         for (let i = 0; i < 40 && !(await frame.locator(".bench-env-head").count()); i++) await sleep(400);
+        await narrate(page, "What the sandbox actually IS", { sub: "Read from the running interpreter, not from our package manifest. Click off it or press Escape to dismiss." });
         log("\n--- the environment, from the running interpreter ---");
         log("    " + (await frame.locator(".bench-env-head").textContent().catch(() => "(none)")).replace(/\s+/g, " ").trim());
         for (const row of await frame.locator(".bench-env-list li").allTextContents()) log("    " + row.replace(/\s+/g, " ").trim());
@@ -128,6 +133,7 @@ const main = async () => {
         // 5 — full page, and BACK.
         await frame.locator('[aria-label="Expand the Python bench"]').click();
         await sleep(700);
+        await narrate(page, "\u2921 full page, for a long script", { sub: "Same header, same controls — the drawer only adds the grip and the shape buttons." });
         log(`\n--- ⤢ full page: drawer gone (${await frame.locator(".bench-drawer").count()}), transcript gone (${await frame.locator(".astep.tool").count()}) — the right shape for a long script ---`);
         await frame.page().screenshot({ path: path.join(ART, "4-full-page.png") });
 
@@ -135,6 +141,7 @@ const main = async () => {
         // the whole distinction, and it is why there is no `‹` beside them to muddle it.
         await frame.locator('[aria-label="Dock the Python bench"]').click();
         await sleep(700);
+        await narrate(page, "\u2922 docked \u2014 and back to the session you left", { sub: "Not the sessions list. The script is intact." });
         log(`--- ⤡ docked and RETURNED to the session: ${await frame.locator(".astep.tool").count()} step(s), not the sessions list ---`);
         await sleep(300);
         log(`--- and the bench is a drawer again, script intact:\n${(await frame.locator(".bench-drawer .bench-code").inputValue()).split("\n").slice(-2).join("\n")}`);

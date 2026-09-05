@@ -2484,12 +2484,14 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    resize cursor and read as somewhere to grab. */
 .bench-top > .hbtn, .bench-top > .bench-play, .bench-top .bench-env-btn,
 .bench-top .bench-mode, .bench-top .bench-mode select { cursor: pointer; }
-/* THE GRAB PILL, in the row's FREE SPACE. It was a pseudo-element centred on the row, which was right when
-   the row held only a name and two buttons and wrong the moment it gained a mode picker: the pill landed on
-   top of the select, so the visible handle opened a dropdown instead of dragging. Living inside the flex
-   spacer, it is centred in whatever room is actually left, and cannot overlap a control by construction. */
-.bench-gripbar { display: flex; align-items: center; justify-content: center; align-self: stretch; min-width: 20px; }
-.bench-grip-pill { width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2); opacity: .55;
+/* THE GRAB PILL, centred on the ROW — the only place a drawer handle reads as one. Centring it in the
+   leftover space instead (a flex child in the spacer) put it visibly off to one side, because the name and
+   its controls are far wider than the two icons opposite. What forced that was the pill landing on the mode
+   picker; the picker sits in the RIGHT group now, so the row's middle is genuinely empty. `pointer-events:
+   none` besides: in a panel narrow enough for the two groups to meet, the pill still cannot swallow a click
+   meant for the control under it. */
+.bench-grip-pill { position: absolute; top: 3px; left: 50%; transform: translateX(-50%);
+    width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2); opacity: .55;
     transition: width .12s ease, opacity .12s ease; pointer-events: none; }
 .bench-top:hover .bench-grip-pill { width: 52px; opacity: 1; background: var(--panel-2-hover); }
 .bench-title { font-size: 0.78em; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
