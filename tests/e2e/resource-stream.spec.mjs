@@ -18,6 +18,10 @@ const FRAMES = JSON.parse(readFileSync(fileURLToPath(new URL("./fixtures/events-
 
 /** Boot the extension against a fake box whose event stream replays the recording, panel open. */
 async function openPanel(fake, ext) {
+    // The event LANE is collapsed by default (its chip row is the control). These specs are about what the
+    // lane draws, so they state that as a precondition rather than relying on a default that can change —
+    // the default itself is pinned by its own test.
+    await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_sections: { lane: true, models: true } }));
     const page = await ext.context.newPage();
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`${fake.url}/api/version`);
@@ -194,19 +198,92 @@ test("a scoped panel shows the session's models, and folds the rest away", async
         // lane together, so it does not sit among the per-kind filter chips.
         await expect(frame.locator(".rc-scope-seg.on")).toHaveText(/session/);
 
-        const names = () => frame.locator(".vram-row .vram-name").allTextContents();
+        // The session's OWN rows — the ones outside the fold. The folded rows are rendered but collapsed
+        // (that is what lets them slide), so this asks what is on screen rather than what is in the DOM.
+        const names = () => frame.locator(".vram-row:not(.disc-body .vram-row) .vram-name").allTextContents();
         await expect.poll(names, { timeout: 10000 }).toContain("qwen3.5:35b");
         expect(await names(), "another tenant's model is not this session's legend").not.toContain("gemma4:31b");
         // FOLDED, not hidden: what else is on the box is exactly the context for why your model gets evicted.
-        const fold = frame.locator(".vram-others");
-        await expect(fold).toHaveText(/show 1 other model on the box/);
+        // The same disclosure every other opening section uses, so a chevron means one thing panel-wide.
+        const fold = frame.locator(".disc-head").filter({ hasText: "other model" });
+        await expect(fold).toHaveText(/other model on the box/);
+        await expect(fold.locator(".disc-note")).toHaveText("1");
+        expect(await fold.getAttribute("aria-expanded")).toBe("false");
+        // A collapsed body still HAS its rows — that is what lets them slide — so the question is its
+        // height, not whether the row exists. (Playwright counts a clipped element as visible: an element
+        // inside an `overflow: hidden` box still reports its own bounding box.)
+        const foldHeight = () => frame.locator(".disc-body").last().evaluate((el) => el.getBoundingClientRect().height);
+        expect(await foldHeight(), "collapsed").toBeLessThan(2);
         await fold.click();
-        await expect.poll(names).toContain("gemma4:31b");
-        await expect(fold).toHaveText(/hide 1 other model/);
+        expect(await fold.getAttribute("aria-expanded")).toBe("true");
+        await expect.poll(foldHeight, { timeout: 5000 }).toBeGreaterThan(8);
+        expect(await frame.locator(".disc-body .vram-name").filter({ hasText: "gemma4:31b" }).count()).toBe(1);
 
         // And the lane agrees with the list, which is the point — one model's blocks, not the box's.
         await fold.click();
+        await expect.poll(foldHeight, { timeout: 5000 }).toBeLessThan(2);
         const laneModels = await frame.locator(".rc-ev").evaluateAll((els) => els.map((e) => e.getAttribute("data-model")).filter(Boolean));
         expect(laneModels).not.toContain("gemma4:31b");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+
+// The lane is CONTENT — what happened — and it competes with the chart for whatever height the panel was
+// dragged to. It is collapsed on a fresh profile, and its chip row is the way in: the row already says what
+// you would get ("steps 2 · calls 5"), which promises more than a bare chevron does.
+test("the event lane is collapsed on a fresh panel, and its chip row opens it", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+        fake.setEvents(FRAMES);
+        // NOT openPanel(): that seeds the lane open, which is the thing under test here.
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await page.goto(`${fake.url}/api/version`);
+        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
+        await page.evaluate(() => {
+            const root = document.getElementById("ml-sb-root").shadowRoot;
+            const panel = root.getElementById("ml-sb-host");
+            panel.style.width = "560px";
+            panel.classList.add("open");
+            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+        });
+        const frame = await (async () => {
+            for (let i = 0; i < 80; i++) {
+                const f = page.frames().find((fr) => /sidebar\.html/.test(fr.url()));
+                if (f) return f;
+                await sleep(100);
+            }
+            throw new Error("sidebar iframe never appeared");
+        })();
+        for (let i = 0; i < 5 && !(await frame.locator(".vram").count()); i++) {
+            await frame.locator('[aria-label="VRAM monitor"]').click();
+            await sleep(400);
+        }
+
+        // The chip row is drawn — it is the control, and hiding it would hide the way back.
+        const fold = frame.locator(".rc-lane-fold");
+        await expect(fold).toBeVisible({ timeout: 20000 });
+        expect(await fold.getAttribute("aria-expanded")).toBe("false");
+        // …and the rows are not. The blocks are what takes the height.
+        expect(await frame.locator(".rc-lane-row").count(), "the lane's rows are collapsed").toBe(0);
+
+        // COLLAPSED, the whole row opens it — none of the chips' own meanings apply to a lane that is not
+        // drawn, so each click has exactly one meaning in each state.
+        await frame.locator(".rc-lane-filter").click();
+        await expect.poll(() => frame.locator(".rc-lane-row").count(), { timeout: 10000 }).toBeGreaterThan(0);
+        expect(await fold.getAttribute("aria-expanded")).toBe("true");
+        // Remembered, like the other panel sections.
+        expect(await ext.sw.evaluate(() => new Promise((r) => chrome.storage.local.get("ml_res_sections", (d) => r(d.ml_res_sections)))))
+            .toMatchObject({ lane: true });
+
+        // OPEN, the chevron closes it and the chips go back to being filters.
+        await fold.click();
+        await expect.poll(() => frame.locator(".rc-lane-row").count(), { timeout: 10000 }).toBe(0);
     } finally { await ext.context.close(); await fake.stop(); }
 });

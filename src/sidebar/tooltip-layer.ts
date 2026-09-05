@@ -62,6 +62,13 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         // (`wrap`/`wide` carry a width intent worth keeping; direction classes do not — see fill.)
         fill(trigger);
         layer.hidden = false;
+        // WRAP IF IT DOES NOT FIT, whatever the call site said. `.tt-layer` is nowrap with a max-width, so a
+        // sentence longer than that is simply CLIPPED — the end of the very thing being explained is the part
+        // you cannot read. `wrap` existed to prevent that and had to be remembered per call site, which is
+        // not a judgement anyone can make reliably: it depends on the rendered width, the font scale, and
+        // whatever the text says today. The layer is already measured here, so it can just look. An explicit
+        // `wrap` still wins (it is a width INTENT, not only an overflow fix) — this only ever adds it.
+        if (!layer.classList.contains("wrap") && layer.scrollWidth > layer.clientWidth + 1) layer.classList.add("wrap");
         // Re-copy on any change under the trigger. Observing the TRIGGER, not the popup, because a re-render
         // may replace the .tt-pop node itself rather than editing its text.
         watcher?.disconnect();

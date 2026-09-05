@@ -134,7 +134,10 @@ export const laneScoped = signal(true);
  *  which part of the log it is about. Seqs rather than event ids, because the log is keyed by step. */
 export const laneLitSeqs = signal<Set<number> | null>(null);
 export const SECTIONS_KEY = "ml_res_sections";
-export const showLane = signal(true);
+// COLLAPSED by default. The lane is CONTENT — what happened — and it competes with the chart for whatever
+// height the panel was dragged to; the scrub strip above it is NAVIGATION and stays, so the panel does not
+// jump in height the first time anything runs. Its chip row is always drawn and is the control.
+export const showLane = signal(false);
 export const showModels = signal(true);
 export const crosshair = signal<{ frac: number; t: number | null; msPerPx?: number } | null>(null);
 export const resWindowS = signal(RESWIN_DEFAULT);  // seconds of history the resource chart shows (Settings → Appearance)

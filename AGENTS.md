@@ -598,6 +598,25 @@ disclosure) AND both exports. E.g. when a tool result carries an appended `@tool
 that model-facing result — token line included — must be recoverable in the log, not silently
 dropped for the clean render.
 
+**WHICH ARTIFACT TO REACH FOR.** A run can be got out four ways and they are not interchangeable. Picking
+the wrong one costs a whole read-through, so:
+
+| You want to | Reach for | Because |
+| --- | --- | --- |
+| READ a run — what the model did, in order, with the images | **`run.md`** (+ `images/`) | It is the canonical human narrative. Screenshots are real PNG sidecars, so a coding assistant can open them; base64 in a text file is unreadable to everyone. |
+| Read it in a browser, folded | **`run.md.html`** | The same markdown rendered, every `h2` collapsible, and a failed run's status links AT the step that broke. Relative asset paths, so it works off the disk and under a server. |
+| DIFF two runs | **`run.json`** | A markdown diff is mostly layout. Strip `VOLATILE_FIELDS` and run `canonicalizeText()` first, or every pointer id and timestamp shows as a change. |
+| Parse a run from Python/Go, or build a tool on it | **`run.json`** + `docs/spec/export.schema.json` | The schema is normative and checked in; generate models from it. Fields tagged `@unstable` will grow. |
+| Hand a run to a person who is not you | **the PDF** | Self-contained, light-themed, images inlined, prints with sane page breaks. Nothing to unzip and no sidecars to lose. |
+| Debug the resource panel / the event lane | **`ml.__events()`** | Not an export at all: the raw INPUTS the timeline is derived from (the debug stream, the server's frames, ps/info). Use it when the drawn events look wrong, because the drawing is what is in question. |
+
+The one that surprises people: **`run.json` carries `session.events`**, the whole timeline the resource panel
+draws — spans, phases, model loads, sub-call lineage. That is the "event spam", and it is the point: it is
+derived by the same `eventsFrom` the panel uses, so a consumer never redoes arithmetic that is wrong in the
+same three places every time (spans run BACKWARDS from a finish stamp; a tool step is ONE event with
+`phases`, not three; a model load is its own event). If you are asking "where did the time go", that is the
+file. If you are asking "what did it say", it is `run.md`.
+
 **Export log.** The detail-view header has an "Export log" button opening a small
 menu with two formats (chat and agent both). It serialises the in-memory session
 (options, turns/steps, exec JS beautified, results, model provenance, timestamps)
@@ -938,6 +957,27 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
 - **The lane and the model list each hide** (Settings live in the panel's own track editor, beside which
   tracks it draws — the same question). Both compete with the chart for whatever height the panel was
   dragged to, and which of the three you want depends on what you are doing.
+- **A reconnect must not draw the lane twice.** `sinceFor(null, …)` asks for the FULL retained ring whenever
+  the worker is fresh — which an MV3 respawn guarantees — so every span in that window arrives a second time.
+  Caught on a real box, where four serving periods read as `serving 8` and two loads as three (one load's
+  opening edge fell outside the replayed window, so only its duplicate closed). `addMachineEvent` dedupes on
+  kind + model + when, with a TOLERANCE: each connection anchors on its own hello, so the same edge lands
+  within the jitter between two hellos rather than on the same millisecond. Pinned against the real capture
+  in `tests/fixtures/real-edges.mjs`.
+- **`ml.__events({ download: true })` dumps what the panel derives its timeline FROM** — this tab's
+  `__mlDebug` stream, the server's event frames with the wall clock each resolved to, the current `ps`/`info`
+  and the stream's status. For a lane doing something that makes no sense: the drawn events are derived by
+  pure functions, so the inputs let the exact picture be rebuilt and turned into a test, where a screenshot
+  can only be described. Two capture rules: the resource panel must be OPEN (nothing subscribes to the stream
+  when nobody is looking, so `frames` would be empty), and the `debug` ring holds everything only in
+  `debugMode: "devtools"`. Underscored because it is a debugging aid, not API.
+- **The event LANE is collapsed by default**, and its chip row is the control. The lane is CONTENT (what
+  happened); the scrub strip above it is NAVIGATION (where you are), so only this half folds — which also
+  stops the panel jumping in height the first time anything runs. Collapsed, the whole chip row opens it (the
+  chips already say what you would get, which promises more than a bare chevron, and none of their own
+  meanings apply to a lane that is not drawn); open, the chevron closes it and the chips filter again. Tests
+  that are about what the lane DRAWS seed `ml_res_sections: { lane: true }` rather than relying on the
+  default — which is pinned by its own test.
 - **The panel HEADER holds its height.** It gains and loses controls as you use the panel — the zoom chip
   arrives when you scrub, the view picker only once capacity is known — and a row that reflows when one
   appears shifts every surface below it, the scrub strip included. Adding one control to that row made the
@@ -979,6 +1019,42 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   size: they flip when they do not FIT (not at an arbitrary fraction of the width), never sit under the
   pointer, and only the surface the pointer is on renders one. Pinned by `tests/e2e/tooltips.spec.mjs`, which
   sweeps positions in a narrow and a wide panel rather than probing one point.
+
+**A python traceback names the line the USER wrote.** The sandbox indents the code into `def _user():` after
+a three-line prefix, so every traceback pointed three lines past the statement that actually failed — on a
+four-line script, at line 7, and the frame above it (`<exec>`, the prelude's own call site) reported line 166,
+which is about nothing the user can see. Corrected in the AST (`increment_lineno` on the user's statements)
+rather than by rewriting the traceback text, so CPython emits true numbers natively — which means **the MODEL
+gets them too**: handing it a traceback that names the wrong line costs it a turn, and a UI that quietly
+disagreed with the text the model was given would break the raw-view rule. A **SyntaxError needed its own
+fix**: it is raised BY the parse, so the correction never runs for it, and the one error whose entire content
+is "which line" was naming the wrong one — its `lineno`/`end_lineno` are shifted and it is re-raised, with a
+real `filename` so the frame is identifiable as the user's. The user's frame is the one in `<python_exec>`;
+anything in `<exec>` is the prelude. Five tests in `tests/python.test.mjs` against real CPython, because an
+off-by-N that is right for one shape of script is not right for the next.
+
+**A cell we cannot render says so.** `PyDfTable` coerced every cell with `String()`, so a pandas column
+holding a dict — `dict(per_q)` in a cell is an ordinary thing to write — rendered as `[object Object]`: a
+wrong fact printed exactly where the reader is looking for the right one, and it shipped because nothing
+asserted on a non-scalar cell's TEXT. `dfCell` serialises an object as JSON (which is what the value already
+IS by the time it arrives — the sandbox returns through `json.dumps`) and returns **null** for one that
+cannot be serialised at all. Null is not the string "null": the cell then draws the same dashed red marker an
+unresolvable pointer uses, naming the type, with a tooltip saying the failure is in the PREVIEW and not in
+the run. The CSV copy goes through the same function, so what you paste cannot disagree with what you saw.
+
+**One disclosure, everywhere something opens (`Disclosure`, ui-kit.tsx).** The panel had three of these
+written three different ways — the model list's fold, the agent's system prompt and tool definitions, the
+server-tool list — and all three were a pill button that injected a box into the layout on click. That reads
+as content appearing rather than a section opening, gives no hint the thing can be closed, and shoves
+whatever is below it. One component so the next one is free and a chevron means the same thing panel-wide.
+The slide is `grid-template-rows: 0fr → 1fr`, which is the only way to animate a height nobody knows in
+advance (`height: auto` does not transition); the inner child needs `min-height: 0` or a grid item refuses to
+shrink below its content. Its body stays MOUNTED while closed — there has to be something to slide, and
+content that only exists once open can only appear — so a landed fetch stays landed and reopening is instant.
+`onOpen` fires on the opening edge only, for a section whose content has to be FETCHED (the server-tool list
+still fetches on expand, never on mount). A consequence for tests: a collapsed body's rows are IN THE DOM, and
+Playwright counts a clipped element as visible, so assert on the body's measured height rather than on
+`toBeHidden`.
 
 **Two surfaces (in-page overlay + DevTools panel).** The same `sidebar-app` bundle runs
 in two places: the in-page **overlay** (a content-script shadow-root shell, `shell.ts`,

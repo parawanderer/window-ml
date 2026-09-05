@@ -8,7 +8,7 @@ import { useState, useRef, useEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, TableSource } from "../contract";
 import { elementReference } from "../dom";
-import { rev, view, sessionMap, outMaxH, showOutTimes } from "./store";
+import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode } from "./store";
 import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, hourNow, armHourTick, dayBreaks } from "./timestamps";
 import { markdown, truncate, pretty } from "./format";
 import {
@@ -115,8 +115,35 @@ const PY_MODE = {
 // copy-CSV. Zero-dep (no grid library — it's a capped debug preview). Human-only, so it shows
 // up to PY_DF_ROWS rows, not the model's cap.
 const PY_DF_ROWS = 200;
-const csvField = (v: string | number | null): string => {
-    const s = v == null ? "" : String(v);
+/** One DataFrame cell as text. A pandas column can legitimately hold a dict or a list — `dict(per_q)` in a
+ *  cell is an ordinary thing to write — and `String()` renders those as `[object Object]`, which is a wrong
+ *  answer printed in the place the reader is looking for the right one. Serialised as JSON instead, which is
+ *  what the value IS by the time it reaches here (the sandbox returns through `json.dumps`).
+ *
+ *  Exported and pure so it is testable: this shipped for as long as it did because nothing asserted on the
+ *  text of a non-scalar cell. */
+export const dfCell = (v: unknown): string | null => {
+    if (v == null) return "NaN";
+    if (typeof v === "object") {
+        // `null` means "no text for this" — NOT the string "null", which would be a value that isn't there.
+        // The caller renders a marker; the CSV writes an empty field, since a CSV has no way to say this.
+        try { const j = JSON.stringify(v); return j === undefined ? null : j; } catch { return null; }
+    }
+    return String(v);
+};
+
+/** What went wrong with a cell we could not render, and what it WAS — a type is most of the answer when the
+ *  question is "why is my column empty". Kept next to `dfCell` so the two cannot disagree about which values
+ *  are unrenderable. */
+export const dfCellType = (v: unknown): string => {
+    if (Array.isArray(v)) return "list";
+    if (v instanceof Date) return "datetime";
+    const ctor = (v as { constructor?: { name?: string } })?.constructor?.name;
+    return ctor && ctor !== "Object" ? ctor : typeof v;
+};
+const csvField = (v: unknown): string => {
+    // The same coercion as the table, or the copied CSV disagrees with what is on screen.
+    const s = v == null ? "" : (dfCell(v) ?? "");
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
 export function PyDfTable({ columns, rows }: { columns: string[]; rows: (string | number | null)[][] }) {
@@ -172,7 +199,19 @@ export function PyDfTable({ columns, rows }: { columns: string[]; rows: (string 
                         <tbody>{shown.map(([origIdx, row], i) => (
                             <tr key={i}>
                                 <td class="r-df-idx">{origIdx}</td>
-                                {cols.map((_, j) => { const c = row[j]; return <td key={j} class={typeof c === "number" ? "r-td-num" : (c == null ? "r-td-nan" : undefined)}>{c == null ? "NaN" : String(c)}</td>; })}
+                                {cols.map((_, j) => {
+                                    const c = row[j];
+                                    const text = dfCell(c);
+                                    // A value with NO text is not an empty cell and must not look like one:
+                                    // `[object Object]` was the old answer and it is a wrong fact printed
+                                    // exactly where the reader is looking for the right one. The same marker
+                                    // an unresolvable pointer uses, because it is the same situation — we
+                                    // know something is there and cannot show it — and it says what it was.
+                                    return <td key={j} class={typeof c === "number" ? "r-td-num" : (c == null ? "r-td-nan" : undefined)}>
+                                        {text ?? <span class="tok-unresolved r-td-unrend"
+                                            title={`This cell holds a ${dfCellType(c)} that could not be serialised for display (circular, or not JSON-representable). The model received the value itself; only this preview cannot show it.`}>unrenderable {dfCellType(c)}</span>}
+                                    </td>;
+                                })}
                             </tr>
                         ))}</tbody>
                     </table>
@@ -191,7 +230,20 @@ function tableSourceDesc(s: TableSource): { short: string; tip: string } {
         default: return { short: s.label, tip: `This data was extracted from a table on the current page (${s.label}).` };
     }
 }
-function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in" }> }) {
+/** One input dataframe, as a section that focus mode can fold once the step has settled. Its own component
+ *  because the fold has to seed a `details`' state (see `useFocusFold`) and hooks cannot live inside a map. */
+function PyInTable({ fold, label, children }: { fold: boolean; label: ComponentChildren; children: ComponentChildren }) {
+    const [open, setOpen] = useFocusFold(fold);
+    return (
+        <details class={`r-py-table r-py-sec${fold ? " focus-fold" : ""}`} open={open}
+            onToggle={(e: any) => setOpen(!!e.currentTarget.open)}>
+            <summary class="r-py-lbl">{label}</summary>
+            {children}
+        </details>
+    );
+}
+
+function PythonInRender({ d, live }: { d: Extract<RenderDescriptor, { type: "python-in" }>; live?: boolean }) {
     return (
         <div class="r-python r-py-in">
             <div class="r-py-mode">Mode: <span class="tt"><span class="r-py-modeval">{PY_MODE[d.mode].label}</span><span class="tt-pop left" role="tooltip">{PY_MODE[d.mode].tip}</span></span></div>
@@ -201,19 +253,26 @@ function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in
             {(d.tables || []).map((t, i) => {
                 const src = tableSourceDesc(t.source);
                 const cols = t.columns?.length || t.rows?.[0]?.length || 0;
-                return <div key={i} class="r-py-table">
-                    <div class="r-py-lbl">
+                // A SECTION, like the Out block's, so focus mode can fold the input data once the step has
+                // settled — what a reader wants from a python step is the code and the answer, and the
+                // dataframe that went in is the debugger's half. Open everywhere else, so nothing is hidden
+                // from the view whose job is debugging.
+                return <PyInTable key={i} fold={!live} label={<>
                         input table → <b class="r-py-var">{t.name}</b>{t.rows ? ` (${t.rows.length} × ${cols})` : ""}
                         {" · "}
                         {t.source.kind === "sheet-external"
                             ? <SheetChip id={t.source.label} label={t.source.name || undefined} />   /* id → a friendly chip; name = the real sheet title */
                             : <span class="tt r-py-src"><span class="r-py-srcval">{src.short}</span><span class="tt-pop left" role="tooltip">{src.tip}</span></span>}
-                    </div>
+                </>}>
                     {t.rows ? <PyDfTable columns={t.columns || []} rows={t.rows} />
                         : <div class="dim r-py-more">loaded via pd.read_html (no clean row preview)</div>}
-                </div>;
+                </PyInTable>;
             })}
-            <Code text={d.code} lang="python" />
+            {/* The CITED cell for `:in`. A python step renders its inputs (image, dataframes) above the
+                source, and a citation that scrolled to the top of the step landed the reader on a table when
+                what they clicked was the code. The renderer declares it because only the renderer knows
+                which of its sections is the answer. */}
+            <div data-cite="in"><Code text={d.code} lang="python" /></div>
         </div>
     );
 }
@@ -470,27 +529,53 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
 // A collapsible section of the python-out block (stdout / value / error / token). Same disclosure
 // pattern as the In:/Out: blocks — open by default, its label is the summary. A big stdout can be
 // folded away to get to the value.
-function PyOutSection({ label, cls, children }: { label: string; cls: string; children: ComponentChildren }) {
-    return <details class={`r-py-sec ${cls}`} open><summary class="r-py-lbl">{label}</summary>{children}</details>;
+/** Should this section start folded? Focus mode reads the run as a conversation, so a SETTLED python step's
+ *  inputs and its captured output fold — but the reader must still be able to open one, which rules out the
+ *  CSS hide the rest of focus mode uses. So it seeds the `details`' own state.
+ *
+ *  Re-seeded when the MODE changes and not on every render: binding `open` straight to the signal would slam
+ *  a section you had just opened shut on the panel's next poll, and never re-seeding would leave the fold not
+ *  applying until the step was re-mounted. */
+function useFocusFold(fold: boolean | undefined): [boolean, (v: boolean) => void] {
+    const focus = focusMode.value;
+    const [open, setOpen] = useState(!(fold && focus));
+    const seeded = useRef(focus);
+    if (seeded.current !== focus) { seeded.current = focus; if (fold) setOpen(!focus); }
+    return [open, setOpen];
+}
+
+function PyOutSection({ label, cls, children, cite, open = true, foldInFocus }: { label: string; cls: string; children: ComponentChildren; cite?: "in" | "out"; open?: boolean; foldInFocus?: boolean }) {
+    // `foldInFocus` is a CLASS, not a different `open`: focus mode is a CSS-only hide everywhere else (see
+    // the FOCUS MODE block), so the section keeps one real open/closed state and turning the mode off
+    // restores exactly what you left. A `details` whose openness depended on the mode would forget it.
+    const [shown, setShown] = useFocusFold(foldInFocus);
+    const isOpen = foldInFocus ? shown : open;
+    return <details class={`r-py-sec ${cls}${foldInFocus ? " focus-fold" : ""}`} open={isOpen}
+        onToggle={(e: any) => foldInFocus && setShown(!!e.currentTarget.open)}
+        {...(cite ? { "data-cite": cite } : {})}><summary class="r-py-lbl">{label}</summary>{children}</details>;
 }
 // `python_exec`'s Out slot: captured stdout, then one of a returned image / a minted
 // @pt·@box token / the raw value / a Python traceback.
-function PythonOutRender({ d, marks }: { d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][] }) {
+function PythonOutRender({ d, marks, live }: { d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][]; live?: boolean }) {
     return (
         <div class="r-python r-py-out">
             {/* Only the captured OUTPUT scrolls (and hosts the find bar) — the returned value/table/image sit
                 below it, always visible, like a notebook cell's result. */}
-            {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout"><OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell></PyOutSection> : null}
+            {/* FOCUS MODE folds stdout — but only once the step has SETTLED. While it is still streaming the
+                output is the thing proving the run is alive, which is exactly what a reading mode should not
+                hide; `live` is what tells the two apart. Outside focus mode nothing folds: there you are
+                reading the console on purpose. */}
+            {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout" foldInFocus={!live}><OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell></PyOutSection> : null}
             {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
-            {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell><Code text={d.error} lang="text" /></OutputCell></PyOutSection> : null}
-            {d.df && !d.error ? <PyOutSection label="value (DataFrame)" cls="r-py-val"><PyDfTable columns={d.df.columns} rows={d.df.rows} /></PyOutSection> : null}
+            {d.error ? <PyOutSection label="error" cls="r-py-err" cite="out"><OutputCell><Code text={d.error} lang="text" /></OutputCell></PyOutSection> : null}
+            {d.df && !d.error ? <PyOutSection label="value (DataFrame)" cls="r-py-val" cite="out"><PyDfTable columns={d.df.columns} rows={d.df.rows} /></PyOutSection> : null}
             {/* A sympy return auto-flagged `latex` → typeset the value (display mode), not a raw code block. */}
-            {d.latex && d.value != null && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value (LaTeX)" cls="r-py-val"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} /></PyOutSection> : null}
+            {d.latex && d.value != null && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value (LaTeX)" cls="r-py-val" cite="out"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} /></PyOutSection> : null}
             {/* In the same cell as the output above it: a returned value can be as long as anything printed
                 on the way there, and it is the half you most often want to search. Capped, scrollable and
                 Ctrl+F-able for free by being wrapped, rather than each section inventing its own. */}
-            {d.value != null && !d.latex && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value" cls="r-py-val"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
+            {d.value != null && !d.latex && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value" cls="r-py-val" cite="out"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
         </div>
     );
 }
@@ -533,7 +618,7 @@ function LookRender({ d }: { d: Extract<RenderDescriptor, { type: "look" }> }) {
     );
 }
 
-export function RenderPanel({ d, marks }: { d: RenderDescriptor; marks?: [number, number][] }) {
+export function RenderPanel({ d, marks, live }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean }) {
     switch (d.type) {
         case "image": {
             // If the label references an @pt/@box (e.g. look's `element "@pt:…"`), hovering the shot
@@ -616,8 +701,8 @@ function FetchLadder({ attempts, resolvedBy }: { attempts: import("../contract")
             }
             return <Code text={pretty(d)} lang="json" />;
         case "locate": return <LocateRender d={d} />;
-        case "python-in": return <PythonInRender d={d} />;
-        case "python-out": return <PythonOutRender d={d} marks={marks} />;
+        case "python-in": return <PythonInRender d={d} live={live} />;
+        case "python-out": return <PythonOutRender d={d} marks={marks} live={live} />;
         case "exec-out": return <ExecOutRender d={d} marks={marks} />;
         case "look": return <LookRender d={d} />;
         default: return <Code text={pretty(d)} lang="json" />;   // unknown type → dump it

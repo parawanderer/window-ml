@@ -52,6 +52,65 @@ async function pyRun(code, { tables = null, image = null, hardened = false } = {
 }
 const rows = (name, columns, r) => ({ name, data: { kind: "rows", columns, rows: r } });
 
+// ── Traceback line numbers ────────────────────────────────────────────────────────────────────────────
+//
+// A traceback's LINE NUMBERS are what a person uses to find the failure, and the sandbox indents the user's
+// code into `def _user():` after a three-line prefix — so an uncorrected traceback pointed three lines past
+// the statement that actually failed (on a four-line script, at line 7). Corrected in the AST rather than by
+// rewriting the traceback text, so CPython emits true numbers natively and the MODEL gets them too: handing
+// it a traceback that names the wrong line costs it a turn.
+//
+// The user's frame is the one in `<python_exec>`; the `<exec>` frame above it is the prelude's own call site
+// and is not about the user's code at all.
+const userLine = (err) => {
+    const m = /File "<python_exec>", line (\d+)/.exec(err);
+    return m ? Number(m[1]) : null;
+};
+
+test("traceback: the line number is the line the USER wrote", { skip }, async () => {
+    const r = await pyRun(["a = 1", "b = 2", "c = 3", "raise ValueError('boom')"].join("\n"));
+    assert.equal(r.ok, false);
+    assert.equal(userLine(r.error), 4, "the raise is the user's line 4");
+});
+
+test("traceback: line 1 is line 1 — the off-by-three is not a constant that happens to work", { skip }, async () => {
+    const r = await pyRun("raise ValueError('immediate')");
+    assert.equal(r.ok, false);
+    assert.equal(userLine(r.error), 1);
+});
+
+test("traceback: a failure INSIDE a user-defined function names that function's line", { skip }, async () => {
+    // The deepest frame is the one that matters, and it is inside code the user indented themselves — the
+    // shift must apply to nested statements, not only to the top level of the body.
+    const r = await pyRun([
+        "def outer():",
+        "    return inner()",
+        "def inner():",
+        "    return 1 / 0",
+        "outer()",
+    ].join("\n"));
+    assert.equal(r.ok, false);
+    const lines = [...r.error.matchAll(/File "<python_exec>", line (\d+)/g)].map((m) => Number(m[1]));
+    assert.deepEqual(lines, [5, 2, 4], "call site, then outer, then the division — all user-relative");
+});
+
+test("traceback: a blank first line and comments do not shift it", { skip }, async () => {
+    const r = await pyRun(["", "# a comment", "", "raise RuntimeError('x')"].join("\n"));
+    assert.equal(r.ok, false);
+    assert.equal(userLine(r.error), 4);
+});
+
+test("traceback: a SYNTAX error also reports the user's line", { skip }, async () => {
+    // A syntax error is raised by `ast.parse` before any of the above runs, so it takes a different path
+    // entirely — and that path had the same three-line prefix in it.
+    const r = await pyRun(["ok = 1", "def (:", "more = 2"].join("\n"));
+    assert.equal(r.ok, false);
+    assert.match(r.error, /SyntaxError/);
+    // A SyntaxError carries the line in its OWN fields (it is raised by the parse, before anything runs), so
+    // it takes a different path from a runtime traceback and needed its own correction.
+    assert.equal(userLine(r.error), 2, "the bad def is the user's line 2");
+});
+
 test("tables map: each df binds under its name AND in tables[name]; numeric columns auto-typed", { skip }, async () => {
     const r = await pyRun(
         "return [int(sales['Q1'].sum()), int(tables['sales']['Q1'].sum()), str(sales['Q1'].dtype)]",

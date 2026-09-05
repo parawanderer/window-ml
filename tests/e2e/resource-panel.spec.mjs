@@ -39,6 +39,10 @@ async function seedStacked(ext) {
 
 /** Boot the extension against the fake box and return the sidebar frame with the VRAM panel open. */
 async function openPanel(fake, ext) {
+    // The event LANE is collapsed by default (its chip row is the control). These specs are about what the
+    // lane draws, so they state that as a precondition rather than relying on a default that can change —
+    // the default itself is pinned by its own test.
+    await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_sections: { lane: true, models: true } }));
     const page = await ext.context.newPage();
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`${fake.url}/api/version`);
@@ -1259,7 +1263,10 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
         const list = frame.locator('.rc-esections label', { hasText: "model list" }).locator("input");
         expect(await frame.locator(".rc-zoomlink").count(), "the connector is drawn while the lane is").toBe(1);
         await lane.uncheck();
-        await expect.poll(() => frame.locator(".rc-lane").count()).toBe(0);
+        // The lane's CONTAINER stays — it holds the chip row, which is the other way to bring the lane back
+        // and would otherwise be reachable only from this settings checkbox. What hides is the rows.
+        await expect.poll(() => frame.locator(".rc-lane-row").count()).toBe(0);
+        expect(await frame.locator(".rc-lane-fold").count(), "…and the way back stays with it").toBe(1);
         expect(await frame.locator(".rc-track").count(), "the chart stays").toBeGreaterThan(0);
         // The connector joins the scrub window to the LANE, so with the lane hidden it points into empty
         // space — lines to nothing are worse than no lines.
@@ -1267,7 +1274,7 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
         await list.uncheck();
         await expect.poll(() => frame.locator(".vram-row").count()).toBe(0);
         await lane.check();
-        await expect.poll(() => frame.locator(".rc-lane").count()).toBeGreaterThan(0);
+        await expect.poll(() => frame.locator(".rc-lane-row").count()).toBeGreaterThan(0);
         await expect.poll(() => frame.locator(".rc-zoomlink").count(), { timeout: 5000 }).toBe(1);
         await list.check();
         await expect.poll(() => frame.locator(".vram-row").count()).toBeGreaterThan(0);

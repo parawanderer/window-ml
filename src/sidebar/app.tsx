@@ -27,7 +27,7 @@ import {
 import { shownModel, sessionProfile } from "./model";
 import { exportSession, exportSessionJson, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, applyFocus, initThemeStyle } from "./prefs";
-import { IconWarn, IconGear, IconExport, IconVram, IconBench, IconTools, IconEye, IconEyeOff } from "./icons";
+import { IconWarn, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain } from "./icons";
 import { Settings, openSettingsAt } from "./settings";
 
 
@@ -304,7 +304,7 @@ function App() {
                 {v.name === "detail"
                     ? <button class={`tt hbtn${focusMode.value ? " on" : ""}`} aria-label="Focus mode" aria-pressed={focusMode.value}
                         onClick={() => { focusMode.value = !focusMode.value; applyFocus(); chrome.storage.local.set({ [FOCUS_KEY]: focusMode.value }); }}>
-                        {focusMode.value ? <IconEyeOff /> : <IconEye />}
+                        <IconBrain />
                         <span class="tt-pop" role="tooltip">{focusMode.value ? "Focus mode on — show the step counters, badges and controls again" : "Focus mode — read it as a conversation, quieting step counters, badges and controls"}</span>
                     </button>
                     : null}

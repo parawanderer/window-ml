@@ -2533,7 +2533,7 @@ test("agent options: the tool definitions viewer renders a JSON tree of each too
     // Open the "agent options" block, then reveal the tool definitions.
     w.shadow.querySelector(".block .block-head").click();
     await w.tick();
-    const toolsBtn = [...w.shadow.querySelectorAll(".raw-btn")].find(b => /tool definitions/.test(b.textContent));
+    const toolsBtn = [...w.shadow.querySelectorAll(".disc-head")].find(b => /tool definitions/.test(b.textContent));
     assert.ok(toolsBtn, "a 'tool definitions' toggle appears when the config carries full defs");
     toolsBtn.click();
     await w.tick();
@@ -2644,6 +2644,57 @@ test("python bench: a returned DataFrame renders as a real table (PyDfTable), no
     // The DataFrame table (PyDfTable) shows the column headers.
     assert.match(w.shadow.querySelector(".bench-out .r-py-val").textContent, /foo/);
     assert.match(w.shadow.querySelector(".bench-out .r-py-val").textContent, /bar/);
+});
+
+// A pandas column can legitimately hold a dict or a list — `dict(per_q)` in a cell is an ordinary thing to
+// write — and `String()` renders those as "[object Object]": a wrong answer printed exactly where the reader
+// is looking for the right one. It shipped for as long as it did because nothing asserted on a non-scalar
+// cell's TEXT.
+test("python bench: a DataFrame cell holding a dict renders as JSON, not [object Object]", async () => {
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: "", stdout: "",
+        table: { columns: ["metric", "value"], rows: [
+            ["Grand total", 6260],
+            ["Per quarter", { Q1: 1500, Q2: 1600 }],
+            ["Tags", ["a", "b"]],
+            ["Missing", null],
+        ] } }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const ta = w.shadow.querySelector(".bench-code");
+    ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
+    await w.tick();
+    w.shadow.querySelector(".bench-run").click();
+    await w.tick();
+    const text = w.shadow.querySelector(".bench-out .r-py-val").textContent;
+    assert.doesNotMatch(text, /\[object Object\]/, "a dict cell is not JS default coercion");
+    assert.match(text, /"Q1":\s*1500/, "…it is the value, as JSON");
+    assert.match(text, /\["a","b"\]|\[\s*"a"/, "and so is a list cell");
+    assert.match(text, /NaN/, "a null cell still reads as NaN, the pandas spelling");
+    assert.match(text, /6260/, "scalars are untouched");
+});
+
+// A value we genuinely cannot serialise is NOT an empty cell, and must not look like one. `[object Object]`
+// was the old answer: a wrong fact printed exactly where the reader is looking for the right one.
+test("python bench: a cell that cannot be serialised says so, and says what it was", async () => {
+    const circular = { name: "loop" };
+    circular.self = circular;
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: "", stdout: "",
+        table: { columns: ["metric", "value"], rows: [["fine", 1], ["broken", circular]] } }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const ta = w.shadow.querySelector(".bench-code");
+    ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
+    await w.tick();
+    w.shadow.querySelector(".bench-run").click();
+    await w.tick();
+    const cell = w.shadow.querySelector(".bench-out .r-td-unrend");
+    assert.ok(cell, "the unrenderable cell is marked, not left blank or coerced");
+    assert.match(cell.textContent, /unrenderable/);
+    // The TYPE is most of the answer to "why is my column empty".
+    assert.match(cell.getAttribute("title"), /could not be serialised/i);
+    assert.match(cell.getAttribute("title"), /the model received the value itself/i,
+        "…and it says the failure is in the PREVIEW, not in the run");
+    assert.doesNotMatch(w.shadow.querySelector(".bench-out .r-py-val").textContent, /\[object Object\]/);
 });
 
 test("python bench: full mode sends hardened:false", async () => {
@@ -3167,7 +3218,7 @@ test("agent options block renders the config + reveals the system prompt", async
     assert.match(w.shadow.querySelector(".opts").textContent, /maxSteps: 8/);
     assert.match(w.shadow.querySelector(".opts").textContent, /tools \(2\): look, click ⚠/);
 
-    w.shadow.querySelector(".sys-block .raw-btn").click();   // reveal the system prompt
+    w.shadow.querySelector(".sys-block .disc-head").click();   // open the system prompt section
     await w.tick();
     assert.match(w.shadow.querySelector(".sys-block .code").textContent, /automation agent/);
 });
@@ -7499,8 +7550,8 @@ test("server tools: listed on demand, one entry per FUNCTION", async () => {
 
     // Fetched on EXPAND, not on mount: a settings panel opening should not call the backend for a section
     // nobody looked at.
-    const btn = [...w.shadow.querySelectorAll(".raw-btn")].find(b => /list server tools/i.test(b.textContent));
-    assert.ok(btn, `the section offers to list them — buttons: ${[...w.shadow.querySelectorAll(".raw-btn")].map(b => b.textContent.trim()).join(" | ")} — has heading: ${/server-side tools/i.test(w.shadow.textContent)}`);
+    const btn = [...w.shadow.querySelectorAll(".disc-head")].find(b => /server tools/i.test(b.textContent));
+    assert.ok(btn, `the section offers to open them — sections: ${[...w.shadow.querySelectorAll(".disc-head")].map(b => b.textContent.trim()).join(" | ")} — has heading: ${/server-side tools/i.test(w.shadow.textContent)}`);
     btn.click();
     await w.flush();
 
@@ -7517,8 +7568,8 @@ test("server tools: an EMPTY list explains itself instead of reading as an error
     // failure, and a blank panel would look like one.
     const w = await loadSidebarWorld({ serverTools: [] });
     await openSettings(w, "Advanced");
-    const b2 = [...w.shadow.querySelectorAll(".raw-btn")].find(b => /list server tools/i.test(b.textContent));
-    assert.ok(b2, `no list button — buttons: ${[...w.shadow.querySelectorAll(".raw-btn")].map(b => b.textContent.trim()).join(" | ")}`);
+    const b2 = [...w.shadow.querySelectorAll(".disc-head")].find(b => /server tools/i.test(b.textContent));
+    assert.ok(b2, `no section — sections: ${[...w.shadow.querySelectorAll(".disc-head")].map(b => b.textContent.trim()).join(" | ")}`);
     b2.click();
     await w.flush();
     assert.match(w.shadow.body.innerHTML, /no server-side tools configured/i);
@@ -7527,7 +7578,7 @@ test("server tools: an EMPTY list explains itself instead of reading as an error
 test("server tools: an unreachable backend says so, and does not look empty", async () => {
     const w = await loadSidebarWorld({ serverTools: () => { throw new Error("Failed to fetch"); } });
     await openSettings(w, "Advanced");
-    const b3 = [...w.shadow.querySelectorAll(".raw-btn")].find(b => /list server tools/i.test(b.textContent));
+    const b3 = [...w.shadow.querySelectorAll(".disc-head")].find(b => /server tools/i.test(b.textContent));
     assert.ok(b3, "no list button");
     b3.click();
     await w.flush();
@@ -7564,4 +7615,71 @@ test("a session with no config opens instead of blanking the view", async () => 
     assert.match(w.shadow.querySelector(".embed-call").textContent, /embed 24 inputs/, "what went in");
     assert.match(w.shadow.querySelector(".embed-call").textContent, /24 vectors/, "…and what came back");
     assert.match(w.shadow.querySelector(".embed-call").textContent, /400ms/, "…and how long it took");
+});
+
+// ---- Disclosure: the one sliding section, used everywhere something opens ----
+// The panel had three of these written three different ways, all a pill button that injected a box into the
+// layout on click — which reads as content appearing rather than a section opening, gives no hint it can be
+// closed, and jumps whatever is below it. One component, so the next one is free and they cannot disagree
+// about what a chevron means.
+
+test("disclosure: opens, closes, and keeps its content mounted so reopening is instant", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("disc1", "a task", "m", 20, {
+        system: "SYSTEM PROMPT TEXT", tools: [{ name: "exec", description: "run js", parameters: { type: "object", properties: {} } }],
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    // The agent-options block is itself collapsed; open it to reach the sections inside.
+    w.shadow.querySelector(".agent-opts .block-head").click();
+    await w.tick();
+
+    const heads = [...w.shadow.querySelectorAll(".disc-head")];
+    assert.ok(heads.length >= 2, "the agent options block uses it for the system prompt and the tool defs");
+    const sys = heads.find(h => /system prompt/.test(h.textContent));
+    assert.ok(sys, "the system prompt is a disclosure, not a bare button");
+    const disc = sys.closest(".disc");
+
+    // CLOSED is the resting state, and it SAYS so — a reader using the keyboard gets the same answer.
+    assert.equal(sys.getAttribute("aria-expanded"), "false");
+    assert.ok(!disc.classList.contains("open"));
+    // The body is in the DOM while closed: there has to be something for the grid to slide, and content that
+    // only exists once open can only appear.
+    assert.ok(disc.querySelector(".disc-body"), "the body is mounted, collapsed by the grid");
+    assert.match(disc.querySelector(".disc-body").textContent, /SYSTEM PROMPT TEXT/,
+        "…including its content, so reopening is instant and a landed fetch stays landed");
+    assert.equal(disc.querySelector(".disc-body").getAttribute("aria-hidden"), "true",
+        "and it is hidden from assistive tech while collapsed, since it is visually not there");
+
+    sys.click();
+    await w.tick();
+    assert.equal(sys.getAttribute("aria-expanded"), "true");
+    assert.ok(disc.classList.contains("open"), "opening is a CLASS, so the slide is CSS and nothing measures");
+    assert.equal(disc.querySelector(".disc-body").getAttribute("aria-hidden"), "false");
+
+    // And it closes again — the thing a button that injects a box could never do.
+    sys.click();
+    await w.tick();
+    assert.equal(sys.getAttribute("aria-expanded"), "false");
+    assert.ok(!disc.classList.contains("open"));
+});
+
+test("disclosure: a count rides the header, and the chevron is the only decoration", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("disc2", "a task", "m", 20, {
+        system: "sys", tools: [
+            { name: "exec", description: "", parameters: { type: "object", properties: {} } },
+            { name: "look", description: "", parameters: { type: "object", properties: {} } },
+        ],
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".agent-opts .block-head").click();
+    await w.tick();
+    const tools = [...w.shadow.querySelectorAll(".disc-head")].find(h => /tool definitions/.test(h.textContent));
+    assert.ok(tools);
+    // The count is a NOTE on the header rather than part of the label: "(24)" welded into the sentence made
+    // the label change every time the number did, which is not what a section is called.
+    assert.equal(tools.querySelector(".disc-note").textContent, "2");
+    assert.ok(tools.querySelector(".tri"), "a chevron, which the CSS turns");
 });

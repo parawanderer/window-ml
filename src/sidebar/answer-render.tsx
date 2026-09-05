@@ -42,7 +42,35 @@ export function scrollToAnswer(hash?: string, which?: number): void {
     attempt();
 }
 
-export function scrollToStepSeq(seq?: number, hash?: string): void {
+/** The anchor for a slot, chosen by what is actually ON SCREEN. Both the rendered and the raw view of a step
+ *  are in the DOM at once (the rendered⇄raw toggle switches which is shown), and a collapsed disclosure keeps
+ *  its content mounted — so the first `[data-cite]` match can easily be one nobody can see, and scrolling to
+ *  it lands the reader on blank space. Zero-sized is the test that catches all of those at once: a hidden
+ *  branch, a collapsed grid row, a `display: none` sibling.
+ *
+ *  A renderer declares its own anchor when one of its sections IS the answer (python-in's code, not the input
+ *  table; python-out's value, not the console). Everything else falls back to the slot's section, and then to
+ *  the step — neither of which is a failure, just a coarser answer. */
+export function visibleAnchor(root: Element, slot: "in" | "out"): Element | null {
+    const seen = [...root.querySelectorAll(`[data-cite="${slot}"]`)];
+    const shown = seen.find((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    });
+    // Nothing visible does NOT mean fall through to something hidden: it means this step has no on-screen
+    // cell for that slot right now, and the step itself is the honest place to land.
+    return shown ?? null;
+}
+
+/** Scroll to a cited step — and, when the citation named a SLOT, to the cell inside it that the slot is
+ *  actually about. A `python-in` step renders a source block AND the input dataframes; a `python-out` renders
+ *  stdout AND the returned value. Landing on the step container means the reader still has to find the part
+ *  they clicked, which on a tall step can be off screen entirely.
+ *
+ *  The anchor is declared by the RENDERER (`data-cite` on its primary cell), because only the renderer knows
+ *  which of its sections is the answer — the code, not the input table; the value, not the console. A
+ *  descriptor that declares none falls back to the step, which is where this always landed. */
+export function scrollToStepSeq(seq?: number, hash?: string, slot?: "in" | "out"): void {
     if (seq == null) return;
     if (hash) cardShowWorkHash.value = hash;   // open the HUD "Show work" so the step exists to scroll to
     revealSeq.value = seq;                      // force-open the per-task block that holds this step (if collapsed)
@@ -71,9 +99,15 @@ export function scrollToStepSeq(seq?: number, hash?: string): void {
         // pressed.
         const collapsed = !found.classList.contains("open");
         if (collapsed) (found.querySelector(".astep-head") as HTMLElement | null)?.click();
-        const el = document.querySelector(`[data-astep-seq="${seq}"]`) ?? found;
+        const row = document.querySelector(`[data-astep-seq="${seq}"]`) ?? found;
+        // The slot's own cell if the renderer declared one, else the step — the fallback is not a failure,
+        // it is what a descriptor with a single cell (an image, an action) correctly wants.
+        const cell = slot ? visibleAnchor(row, slot) : null;
+        const el = cell ?? row;
         el.scrollIntoView({ block: "center", behavior: "smooth" });
-        pulse(el);
+        // The PULSE stays on the step, whatever we scrolled to: it is the thing being identified, and a
+        // flashing sub-cell inside an unmarked row reads as a glitch rather than as "this one".
+        pulse(row);
         // The toggle's re-render lands in a microtask and rewrites the row's class list from its own vdom,
         // wiping the pulse we just added. So re-apply it on a MACROTASK, which runs after that — and
         // re-query, because the node that comes back need not be the one we pressed.
@@ -156,7 +190,9 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
     // prior turn's hex citation show "unresolved" in the per-turn-scoped surfaces (the DevTools reply).
     const step = resolveTokenStep(seg.id, run.steps ?? [], scope) as AgentStep | null;
     if (!step) return <span class="tok-ref tok-unresolved" title={`No step in this run produced @tool:${seg.id} — the model may have invented it.`}>⟨unresolved @tool:{seg.id}⟩</span>;
-    const jump = () => scrollToStepSeq(step.seq, run.hash);
+    // The SLOT rides along, so an  citation lands on the value it cited rather than on the top of a
+    // step whose console output may be taller than the viewport.
+    const jump = () => scrollToStepSeq(step.seq, run.hash, seg.slot === "in" || seg.slot === "out" ? seg.slot : undefined);
     const provenance = `Click to see the exact operation that produced this — step ${step.localStep ?? step.step} · ${step.tool || "tool"}`;
     // LINK form `[label](@tool:…)` — a clickable JUMP to the output (the source step), NOT an inline expansion
     // (that's the `![…]` embed form below). `label` is the link text.

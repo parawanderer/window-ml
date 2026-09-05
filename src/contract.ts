@@ -1296,7 +1296,7 @@ export interface MlHistory {
 export type PageRequestType =
     | "LLM_REQUEST" | "LLM_STREAM_REQUEST" | "B64_REQUEST" | "LIST_MODELS_REQUEST"
     | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST" | "EMBED_REQUEST"
-    | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST"
+    | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST" | "DUMP_EVENTS_REQUEST"
     | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST" | "FETCH_URL_REQUEST"
     | "CDP_SHADOW_RESOLVE_REQUEST"   // read-only: resolve a `>>>` selector into a SEALED closed shadow root via CDP (discovery)
     | "LIST_SERVER_TOOLS_REQUEST"   // discover the OpenWebUI server-side tools this key may use (valid `toolIds`)
@@ -1313,6 +1313,7 @@ export type PageRequestType =
 export type BackgroundMessageType =
     | "FETCH_LLM" | "FETCH_IMAGE_B64" | "LIST_MODELS" | "GET_MODEL" | "GET_CONFIG"
     | "SET_MODEL" | "MODEL_CAPS" | "EMBED" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
+    | "DUMP_EVENTS"   // ml.__events(): the raw inputs the resource panel derives its timeline from
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE" | "FETCH_URL"
     | "CDP_SHADOW_RESOLVE"   // read-only CDP resolve of a `>>>` selector across sealed shadow roots (discovery half of sealed reach)
     | "LIST_SERVER_TOOLS"   // GET OpenWebUI /api/v1/tools/ — the server-side tools, with their function specs
@@ -2124,6 +2125,10 @@ export interface MlApi {
     config(): Promise<MlPublicConfig>;
     setModel(model: string): Promise<string>;
     ps(): Promise<LoadedModel[]>;
+    /** DEBUG DUMP of everything the resource panel derives its timeline from — the `__mlDebug` stream, the
+     *  server's event frames, the current ps/info. Underscored: a debugging aid, not API, and its shape may
+     *  change freely. `{ download: true }` saves it as a file rather than only returning it. */
+    __events(opts?: { download?: boolean }): Promise<Record<string, unknown>>;
     unload(model?: string | null): Promise<string[]>;
     /** List the OpenWebUI server-side tools available to the configured API key —
      *  the valid ids for `ml.chat`'s `toolIds`, with each one's function specs.

@@ -204,8 +204,27 @@ with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
         # Parse the code AS _user's body (a top-level \`return\` is only legal inside a function), then
         # Jupyter-style: a bare trailing EXPRESSION becomes the return value. A leading \`pass\` keeps the
         # body non-empty (empty code) without ever being the trailing statement of real code.
-        _ml_tree = _ast.parse("def _user():\\n    global result\\n    pass\\n" + _tw.indent(_ml_src, "    "))
+        try:
+            _ml_tree = _ast.parse("def _user():\\n    global result\\n    pass\\n" + _tw.indent(_ml_src, "    "), filename="<python_exec>")
+        except SyntaxError as _ml_se:
+            # A SyntaxError is raised BY THE PARSE, so the correction below never runs for it — and it
+            # carries the prefixed line number in its own fields, which is what gets printed. Shift it here
+            # and re-raise, or the one error whose whole content is "which line" names the wrong one.
+            if _ml_se.lineno is not None:
+                _ml_se.lineno = max(1, _ml_se.lineno - 3)
+            if getattr(_ml_se, "end_lineno", None) is not None:
+                _ml_se.end_lineno = max(1, _ml_se.end_lineno - 3)
+            raise
         _ml_body = _ml_tree.body[0].body
+        # LINE NUMBERS THE USER CAN USE. The code is indented into \`def _user():\` after a three-line prefix,
+        # so without this every traceback points three lines past the statement that actually failed — on a
+        # ten-line script, at somebody else's line. Corrected HERE rather than in the UI so the MODEL gets
+        # true line numbers too: handing it a traceback that names the wrong line costs it a turn, and a
+        # renderer that silently disagreed with the text the model was given would break the raw-view rule.
+        # Only the user's own statements move; the injected \`global\`/\`pass\` keep their positions, since a
+        # negative lineno will not compile.
+        for _ml_n in _ml_body[2:]:
+            _ast.increment_lineno(_ml_n, -3)
         if isinstance(_ml_body[-1], _ast.Expr):
             _ml_body[-1] = _ast.copy_location(_ast.Return(_ml_body[-1].value), _ml_body[-1])
             _ast.fix_missing_locations(_ml_tree)

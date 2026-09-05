@@ -139,3 +139,75 @@ test("a bare unload — no model — is dropped rather than drawn anonymously", 
     // instant with no colour and no explanation.
     assert.equal(machineEventFrom({ kind: "unload" }, 5000), null);
 });
+
+// ── A reconnect must not draw everything twice ────────────────────────────────────────────────────────
+//
+// Captured off the real box with `ml.__events()` after the lane reported "serving 8" for four serving
+// periods and "loads 3" for two loads. `sinceFor(null, …)` asks for the FULL ten-minute ring whenever the
+// worker is fresh — which an MV3 respawn guarantees — so every span in that window arrived a second time,
+// and `pushMachine` appended it.
+import { REAL_EDGES } from "./fixtures/real-edges.mjs";
+import { addMachineEvent, sameMachineEvent } from "../src/resource-model.ts";
+
+/** Feed a sequence of server edges through the real converter into a real (deduping) list. */
+const drain = (edges, into = []) => {
+    let list = into;
+    for (const e of edges) {
+        const ev = machineEventFrom(e, e.at);
+        if (ev) list = addMachineEvent(list, ev, 400);
+    }
+    return list;
+};
+
+test("the real capture: what one turn on the box actually produced", () => {
+    reset();
+    const list = drain(REAL_EDGES);
+    const by = (k) => list.filter((e) => e.kind === k);
+    // Two models loaded; the second one's load carries the server's own weights/context split.
+    assert.deepEqual(by("load").map((e) => e.model), ["gemma4:e2b", "qwen3.8-flash-next:vision"]);
+    assert.ok(by("load").every((e) => e.phases?.length === 2), "both loads know where the weights ended");
+    // Four serving PERIODS, three of them back to back on one model — the box working, not four requests.
+    assert.equal(by("serve").length, 4);
+    assert.deepEqual(by("serve").map((e) => e.model),
+        ["gemma4:e2b", "qwen3.8-flash-next:vision", "qwen3.8-flash-next:vision", "qwen3.8-flash-next:vision"]);
+    // The model-less unloads produced nothing at all: unattributable is not the same as unnamed.
+    assert.equal(by("evict").length, 0);
+});
+
+test("a reconnect replays the ring, and the lane does NOT double", () => {
+    reset();
+    const first = drain(REAL_EDGES);
+    // A fresh worker asks for the whole retained window, so the SAME edges arrive again. They are re-derived
+    // with a slightly different anchor, because each connection anchors on its own hello.
+    reset();
+    const jittered = REAL_EDGES.map((e) => ({ ...e, at: e.at + 40 }));
+    const after = drain(jittered, first);
+    assert.equal(after.length, first.length,
+        `a replay added ${after.length - first.length} phantom events — this is "serving 8" for four periods`);
+
+    // Three back-to-back serving periods on ONE model must still be three: they differ by when they START,
+    // which is what stops the tolerance collapsing real work into one bar.
+    assert.equal(after.filter((e) => e.kind === "serve" && e.model === "qwen3.8-flash-next:vision").length, 3);
+});
+
+test("identity is kind + model + when, and a genuinely different span survives it", () => {
+    const span = (kind, model, t, until) => ({ t, until, kind, label: "x", model });
+    // The same edge seen twice, milliseconds apart because two connections anchored differently.
+    assert.ok(sameMachineEvent(span("serve", "m", 1000, 5000), span("serve", "m", 1040, 5030)));
+    // Different model, different kind, different period: all distinct.
+    assert.ok(!sameMachineEvent(span("serve", "m", 1000, 5000), span("serve", "n", 1000, 5000)));
+    assert.ok(!sameMachineEvent(span("load", "m", 1000, 5000), span("serve", "m", 1000, 5000)));
+    assert.ok(!sameMachineEvent(span("serve", "m", 1000, 5000), span("serve", "m", 9000, 12000)));
+    // Same start, different end — two periods of work, not one seen twice.
+    assert.ok(!sameMachineEvent(span("serve", "m", 1000, 5000), span("serve", "m", 1000, 9000)));
+    // A span and an INSTANT at the same moment are not the same thing.
+    assert.ok(!sameMachineEvent(span("evict", "m", 1000, undefined), span("evict", "m", 1000, 4000)));
+});
+
+test("the dedupe is bounded and keeps the newest", () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ t: i * 10_000, until: i * 10_000 + 500, kind: "serve", label: "s", model: `m${i}` }));
+    let list = [];
+    for (const e of many) list = addMachineEvent(list, e, 5);
+    assert.equal(list.length, 5);
+    assert.deepEqual(list.map((e) => e.model), ["m7", "m8", "m9", "m10", "m11"]);
+});

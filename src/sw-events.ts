@@ -47,6 +47,14 @@ const status: ResourceStreamStatus = {
 };
 export const resourceStreamStatus = (): ResourceStreamStatus => ({ ...status, kinds: { ...status.kinds } });
 
+// The frames themselves, bounded — for `ml.__events()`. The status counters say a stream is arriving; they
+// cannot say WHAT arrived, which is the only thing that helps when the lane draws something that makes no
+// sense. Stamped with `at` (the wall clock we resolved each frame to) because a frame's own `t` is relative
+// to its connection's hello and means nothing once it is out of that stream.
+const FRAME_RING = 400;
+const frameRing: { frame: ResourceFrame; at: number }[] = [];
+export const recentFrames = (): { frame: ResourceFrame; at: number }[] => frameRing.slice();
+
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
 /** The server's retained ring. A first connection asks for all of it: on a fresh open that is history the
  *  panel would otherwise spend ten minutes re-measuring. */
@@ -110,6 +118,8 @@ async function connect(): Promise<void> {
             // window to cover history we already hold and leave the actual gap unasked for.
             if (frame.t >= 0) lastFrameAt = Math.max(lastFrameAt ?? 0, at);
             status.frames++; status.lastAt = at;
+            frameRing.push({ frame, at });
+            if (frameRing.length > FRAME_RING) frameRing.splice(0, frameRing.length - FRAME_RING);
             status.kinds[frame.kind] = (status.kinds[frame.kind] || 0) + 1;
             if (frame.kind === "sample") status.samples++;
             fan({

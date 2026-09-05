@@ -901,6 +901,37 @@ export function sessionWindow(
     return { from, to };
 }
 
+/** Is this the SAME machine edge we already hold? A subscriber that reconnects is backfilled with the ring
+ *  again — the whole ten minutes when the worker is fresh, which an MV3 respawn guarantees — so every span
+ *  in that window arrives a second time and the lane doubles. Measured on a real box: four serving periods
+ *  drawn as "serving 8", two loads as three (one load's opening edge fell outside the replayed window, so
+ *  only its duplicate closed).
+ *
+ *  Identity is kind + model + when, with a TOLERANCE. The instant is derived as `helloAt + frame.t`, and
+ *  since each connection anchors on its own hello the same edge lands within the jitter between two hellos
+ *  rather than on the exact same millisecond. A second is far tighter than the spacing of anything the
+ *  server actually emits, and collapsing two genuinely distinct edges that close together is a far smaller
+ *  error than drawing everything twice. */
+export function sameMachineEvent(a: ResourceEvent, b: ResourceEvent, tolMs = 1500): boolean {
+    if (a.kind !== b.kind || a.model !== b.model) return false;
+    if (Math.abs(a.t - b.t) > tolMs) return false;
+    // A span and an instant of the same kind at the same moment are not the same thing, and two spans that
+    // start together but end apart are two different periods of work.
+    if ((a.until == null) !== (b.until == null)) return false;
+    return a.until == null || Math.abs((a.until as number) - (b.until as number)) <= tolMs;
+}
+
+/** Append unless we already hold it. Bounded by `cap`, dropping oldest. */
+export function addMachineEvent(list: readonly ResourceEvent[], e: ResourceEvent, cap: number, tolMs = 1500): ResourceEvent[] {
+    // Backwards: a duplicate arrives in a REPLAY of recent history, so the match is near the end.
+    for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].t < e.t - tolMs - 1) break;          // the list is time-ordered; nothing older can match
+        if (sameMachineEvent(list[i], e, tolMs)) return list as ResourceEvent[];
+    }
+    const next = [...list, e];
+    return next.length > cap ? next.slice(next.length - cap) : next;
+}
+
 /** How many of each kind are in a set — for a filter control that says what it is hiding rather than making
  *  you toggle blindly. */
 export function countByKind(events: readonly ResourceEvent[]): Record<string, number> {

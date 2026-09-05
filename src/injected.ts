@@ -2647,6 +2647,37 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             return makeBackgroundTaskPromise("PS_REQUEST", "PS_RESPONSE", {});
         },
         /**
+         * DEBUG DUMP — everything the resource panel derives its timeline from, in one object. For reporting a
+         * lane that draws something that makes no sense: the drawn events are DERIVED (`eventsFrom` +
+         * `machineEventFrom`, both pure), so handing over the INPUTS lets the exact picture be rebuilt and
+         * turned into a test, where a screenshot can only be described.
+         *
+         * `{ debug }` is this tab's own `__mlDebug` stream (runs, steps, usage), `{ frames }` the server's
+         * event-stream frames with the wall clock each was resolved to, plus the current `ps`/`info` and the
+         * stream's status. Underscored because it is a debugging aid, not API: shape may change freely.
+         *
+         * TWO THINGS TO KNOW when capturing. `frames` is only collected while a resource panel is OPEN —
+         * nothing subscribes to the stream when nobody is looking — so open the panel before the run you
+         * want. And `debug` is the BACKGROUND's ring: it holds everything in `debugMode: "devtools"`, and
+         * only the background-hosted half of a run in `"overlay"`.
+         *
+         * @param opts.download Save it as `ml-events-<time>.json` instead of only returning it.
+         * @returns {Promise<object>} The raw inputs, JSON-serializable.
+         */
+        __events: async function(opts?: { download?: boolean }): Promise<Record<string, unknown>> {
+            const dump = await makeBackgroundTaskPromise("DUMP_EVENTS_REQUEST", "DUMP_EVENTS_RESPONSE", {}) as Record<string, unknown>;
+            if (opts?.download) {
+                // Straight to a file: this is usually several megabytes of screenshots and step results, which
+                // no console can be asked to hold, let alone copy out of.
+                const url = URL.createObjectURL(new Blob([JSON.stringify(dump, null, 1)], { type: "application/json" }));
+                const a = document.createElement("a");
+                a.href = url; a.download = `ml-events-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(url), 10_000);
+            }
+            return dump;
+        },
+        /**
          * Evict a model from VRAM (keep_alive: 0).
          * No argument = evict all. Returns the list of models that were told to unload.
          *

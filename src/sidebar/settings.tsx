@@ -17,6 +17,7 @@ import { truncate } from "./format";
 import { ToolDefsView } from "./agent-detail";   // the SAME viewer an agent run uses for its local toolset
 import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
 import { IconCheck } from "./icons";
+import { Disclosure } from "./ui-kit";
 
 // Update one config field: mirror it into the signal (live UI), optionally
 // persist to chrome.storage.sync (which the popup also reads → they sync).
@@ -114,14 +115,20 @@ function ServerToolsSection() {
                     you can call from the console as <code>ml.dynamicTools.&lt;bundle&gt;.&lt;fn&gt;()</code>. They
                     run on the server, so their arguments leave this machine and every call needs approval.
                 </div>
-                <div class="set-row">
-                    <button class="raw-btn" onClick={load} disabled={state.status === "loading"}>
-                        {state.status === "loading" ? "loading…" : state.status === "done" ? "refresh" : "list server tools"}
-                    </button>
-                    {state.status === "done"
-                        ? <span class="hint">{state.tools.length} bundle{state.tools.length === 1 ? "" : "s"}, {defs.length} function{defs.length === 1 ? "" : "s"}</span>
-                        : null}
-                </div>
+                {/* An ACCORDION that fetches on the opening edge, not a button that injects a list: opening
+                    a section is the gesture, and "list server tools" described the mechanism instead. The
+                    fetch still happens on EXPAND rather than on mount — a settings panel opening should not
+                    call the backend for a section nobody looked at — and the refresh stays a separate
+                    control, since re-opening a section is not a request to re-request. */}
+                <Disclosure label="server tools" onOpen={() => { if (state.status === "idle") load(); }}
+                    note={state.status === "loading" ? "loading…"
+                        : state.status === "done" ? `${state.tools.length} bundle${state.tools.length === 1 ? "" : "s"}, ${defs.length} function${defs.length === 1 ? "" : "s"}`
+                        : undefined}>
+                    <div class="set-row">
+                        <button class="raw-btn" onClick={load} disabled={state.status === "loading"}>
+                            {state.status === "loading" ? "loading…" : "refresh"}
+                        </button>
+                    </div>
                 {/* An empty list is not an error and must not read as one: a bare-Ollama backend has no such
                     concept, and a stock OpenWebUI has none configured. Say which. */}
                 {state.status === "error"
@@ -180,6 +187,7 @@ function ServerToolsSection() {
                     </div>
                 ) : null}
                 {defs.length ? <ToolDefsView tools={defs} /> : null}
+                </Disclosure>
             </div>
         </Section>
     );

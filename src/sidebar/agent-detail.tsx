@@ -14,7 +14,7 @@ import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
 import { IconChevron, IconWarn, IconCopy, IconCheck } from "./icons";
 import {
-    Code, CopyBtn, SheetChip, Hash, Stamp, ClickableImg, Dot,
+    Code, CopyBtn, SheetChip, Hash, Stamp, ClickableImg, Dot, Disclosure,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText,
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
@@ -28,6 +28,10 @@ import type { AgentTurnGroup } from "./debug-reducer";
 // own (a grey inline preview shows when collapsed). If a descriptor targets THIS
 // block it renders by default with a per-block rendered⇄raw toggle (e.g. exec's
 // In renders pretty JS while its Out stays raw). `raw` is the plain fallback.
+/** Which citation slot this block IS, for the anchors below. Only In and Out are cited. */
+const slotOf = (label: string): "in" | "out" | undefined =>
+    label === "In" ? "in" : label === "Out" ? "out" : undefined;
+
 export function IoBlock({ label, tip, preview, render, raw, marks, reserve }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; marks?: [number, number][]; reserve?: boolean }) {
     const [showRaw, setShowRaw] = useState(false);   // rendered by default when a descriptor targets this block
     // The capped/scrollable/findable cell is for tool OUTPUT — a fetch_url page, a big sampleText dump. The In
@@ -47,9 +51,14 @@ export function IoBlock({ label, tip, preview, render, raw, marks, reserve }: { 
                             <span class="tt"><button class={showRaw ? "" : "on"} disabled={!render} onClick={() => setShowRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">{render ? "A debug visualisation for you — not shown to the model." : "Available once this step finishes."}</span></span>
                             <span class="tt"><button class={showRaw ? "on" : ""} disabled={!render} onClick={() => setShowRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">{render ? "Exactly what the model sent/received. All it knows." : "Available once this step finishes."}</span></span>
                         </div>
-                        {render && !showRaw ? <RenderPanel d={render} marks={marks} /> : cell(raw)}
+                        {render && !showRaw ? <RenderPanel d={render} marks={marks} />
+                            /* RAW is shared by every tool and has no renderer-specific structure, so it
+                               carries the DEFAULT anchor for the slot. A rendered view may declare a finer
+                               one (python-in's code, python-out's value) and wins by being the visible
+                               match; when it declares none, this is still the right half of the step. */
+                            : <div data-cite={slotOf(label)}>{cell(raw)}</div>}
                     </>
-                    : cell(raw)}
+                    : <div data-cite={slotOf(label)}>{cell(raw)}</div>}
             </div>
         </details>
     );
@@ -77,7 +86,11 @@ export function ThoughtBlock({ thought, live }: { thought: string; live?: boolea
                     where the ticking count (with a trailing "…") IS the "it's working" cue. No live DOT: it
                     would take a slot that vanishes on settle, jerking "thinking" left. The row's structure is
                     IDENTICAL live vs settled, so nothing shifts. */}
-                {!open && (surface.value !== "card" || live) ? <span class="astep-preview">~{tokEst} tokens{live ? "…" : ""}</span> : null}
+                {/* Its OWN class beside the shared one. `.astep-preview` is also the collapsed TOOL row's output
+                    preview, which focus mode hides as spam — and hiding this with it took away the only sign
+                    that a long think is progressing rather than stuck, which is the opposite of what a reading
+                    mode wants. Two classes rather than a new one: the styling is shared, the visibility is not. */}
+                {!open && (surface.value !== "card" || live) ? <span class="astep-preview astep-tokest">~{tokEst} tokens{live ? "…" : ""}</span> : null}
             </button>
             {/* Live: plain text (partial markdown mid-stream renders ugly); finished: markdown. */}
             {open
@@ -501,8 +514,6 @@ export function ToolDefsView({ tools }: { tools: DebugAgentConfig["tools"] }) {
 export function AgentOptionsBlock({ s }: { s: Session }) {
     const c = s.agentConfig;
     const [open, setOpen] = useState(false);
-    const [showSys, setShowSys] = useState(false);
-    const [showTools, setShowTools] = useState(false);
     if (!c) return null;
     // The full defs (description + parameter schema) are only in newer events; older ones carry names
     // only, so the "show tool defs" viewer would just repeat the summary line — hide it then.
@@ -540,14 +551,18 @@ export function AgentOptionsBlock({ s }: { s: Session }) {
                 ? <div class="tbody">
                     {noVision ? <div class="tt tt-row arg-issues"><IconWarn /><span>visual tools unavailable — no vision model (set an OCR/vision model in Settings → Models)</span><span class="tt-pop wrap left" role="tooltip">ml.agent couldn't resolve a vision reader, so look/locate weren't wired.</span></div> : null}
                     <pre class="opts">{lines.join("\n")}</pre>
+                    {/* Sections that OPEN, not buttons that inject a box: same disclosure the rest of the
+                        panel uses, so a chevron means the same thing everywhere. */}
                     <div class="sys-block">
-                        <button class="raw-btn" onClick={() => setShowSys(v => !v)}>{showSys ? "hide" : "show"} system prompt{c.customSystem ? " (custom)" : ""}</button>
-                        {showSys ? <Code text={c.system} lang="markdown" /> : null}
+                        <Disclosure label={<>system prompt{c.customSystem ? " (custom)" : ""}</>}>
+                            <Code text={c.system} lang="markdown" />
+                        </Disclosure>
                     </div>
                     {hasToolDefs
                         ? <div class="sys-block">
-                            <button class="raw-btn" onClick={() => setShowTools(v => !v)}>{showTools ? "hide" : "show"} tool definitions ({c.tools.length})</button>
-                            {showTools ? <ToolDefsView tools={c.tools} /> : null}
+                            <Disclosure label="tool definitions" note={`${c.tools.length}`}>
+                                <ToolDefsView tools={c.tools} />
+                            </Disclosure>
                         </div>
                         : null}
                 </div>

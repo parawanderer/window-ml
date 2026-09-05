@@ -20,7 +20,7 @@ import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpEval, cdpScreensh
 import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
-import { subscribeResourceEvents } from "./sw-events";
+import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -1628,6 +1628,27 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             .then(config => modelCapabilities(config, (message.payload && message.payload.model) || config.model))
             .then(caps => sendResponse({ data: caps }))
             .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "DUMP_EVENTS") {
+        // `ml.__events()` — everything the panel derives its timeline FROM, in one object, so a lane that
+        // draws something impossible can be reproduced instead of described. Deliberately the raw INPUTS
+        // rather than the drawn events: the derivation (`eventsFrom` + `machineEventFrom`) is pure and
+        // shared, so a fixture built from these exercises the real thing rather than a snapshot of its
+        // output. Exposes nothing the page cannot already see — the debug stream is what the page itself
+        // emitted, and the frames are machine capacity, no URL and no key.
+        (async () => {
+            const tabId = sender.tab?.id;
+            sendResponse({ data: {
+                capturedAt: Date.now(),
+                tabId: tabId ?? null,
+                debug: tabId != null ? (debugBuffer.get(tabId) || []) : [],
+                frames: recentFrames(),
+                stream: resourceStreamStatus(),
+                ps: await listLoadedModels().catch(() => null),
+                info: await fetchOllamaInfo().catch(() => null),
+            } });
+        })();
         return true;
 
     } else if (message.type === "OLLAMA_PS") {

@@ -87,6 +87,18 @@ export const IconEyeOff = () => (
         <path d="M3.98 8.223A10.477 10.477 0 0 0 2.036 11.68a1.012 1.012 0 0 0 0 .639C3.423 16.49 7.36 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.243 4.243L9.88 9.88" />
     </svg>
 );
+// A brain — FOCUS MODE. The eye it replaces was borrowed from the composer's vision toggle and said the
+// wrong thing here: this mode is not about seeing more or less, it is about reading. Same family as the rest
+// (24-box stroke outline, 1.6 weight). A SIDE PROFILE with two folds and a stem: the symmetric
+// two-lobe view read as a pair of brackets at 16px, where a profile still resolves as a brain.
+export const IconBrain = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 11.6c0-4.4-3.6-8-8-8-3.7 0-6.9 2.6-7.7 6.1C3.1 10.4 2 11.9 2 13.7c0 1.8 1.2 3.4 2.9 3.9.4 2 2.2 3.5 4.3 3.5h1.6v2.4" />
+        <path d="M20 11.6c1.2.6 2 1.9 2 3.3 0 2.1-1.7 3.8-3.8 3.8h-1.4" />
+        <path d="M11.2 7.3c2.1.7 3 2.5 2.6 5.2" />
+        <path d="M5.9 13.9c2.4-.8 4.2.1 5.2 2.6" />
+    </svg>
+);
 // A spreadsheet grid — the smart-chip icon for a Google Sheet reference.
 export const IconSheet = () => (
     <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4">

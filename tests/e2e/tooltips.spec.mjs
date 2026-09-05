@@ -356,3 +356,133 @@ for (const width of [360, 900]) {
         }
     });
 }
+
+
+// The three tooltips that had gone wrong in three different ways, all of them geometric and none of them
+// visible to jsdom: a divider ruling a single line so it read as an empty cell, a long model name breaking
+// mid-token into a column beside its own badges, and a header tooltip longer than the layer's max-width
+// being CLIPPED because nobody remembered to mark it wrappable.
+test("tooltips: dividers separate sections, names stay whole, and nothing is clipped", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(BOX);
+        fake.setResident([resident("qwen3.8-flash-next:vision", 18 * GiB, 0)]);
+        // The lane is collapsed by default now, and this test is about what its blocks say.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false, ml_res_sections: { lane: true, models: true } }));
+
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await page.goto(`${fake.url}/api/version`);
+        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
+        await page.evaluate(() => {
+            const root = document.getElementById("ml-sb-root").shadowRoot;
+            const panel = root.getElementById("ml-sb-host");
+            panel.style.width = "560px";
+            panel.classList.add("open");
+            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+        });
+        const frame = await (async () => {
+            for (let i = 0; i < 80; i++) {
+                const f = page.frames().find((fr) => /sidebar\.html/.test(fr.url()));
+                if (f) return f;
+                await sleep(100);
+            }
+            throw new Error("sidebar iframe never appeared");
+        })();
+        for (let i = 0; i < 5 && !(await frame.locator(".vram").count()); i++) {
+            await frame.locator('[aria-label="VRAM monitor"]').click();
+            await sleep(400);
+        }
+        await sleep(6000);   // enough samples that the lane has a segment to place events in
+
+        // ---- the HEADER tooltips: long prose must WRAP rather than be cut off ----
+        // The layer is nowrap with a max-width, so a sentence longer than that is simply clipped — the end of
+        // the very thing being explained is the part you cannot read. It decides for itself now, because
+        // "will this fit" depends on the rendered width and the font scale and is not a judgement a call site
+        // can make.
+        // A DETAIL view, because the longest header tooltip by far — focus mode's, a full sentence — only
+        // exists there, and it is the one that was being cut off. A test that only hovered the short ones
+        // passed with the bug still in.
+        await page.evaluate(() => {
+            const now = Date.now();
+            window.postMessage({ __mlDebug: { kind: "agent", id: "tp1", ts: now - 5000, save: false,
+                session: { hash: "tp1", turn: 0 }, task: "a task", model: "fake-model", maxSteps: 4, config: null } }, "*");
+        });
+        await expect.poll(() => frame.locator(".row").count(), { timeout: 10000 }).toBeGreaterThan(0);
+        await frame.locator(".row").first().click();
+        await expect.poll(() => frame.locator('[aria-label="Focus mode"]').count(), { timeout: 10000 }).toBe(1);
+
+        for (const label of ["Focus mode", "VRAM monitor", "Python bench", "Server tools", "Settings"]) {
+            const btn = frame.locator(`[aria-label="${label}"]`);
+            if (!(await btn.count())) continue;
+            // The real mouse, not `locator.hover()`: the layer opens on `pointerover`, and moving the mouse
+            // is what the sibling test above does and what a person does.
+            const box = await btn.first().boundingBox();
+            if (!box) continue;
+            // APPROACH the button rather than teleporting onto it: a jump from wherever the pointer was can
+            // land without the browser synthesising the `pointerover` the layer opens on.
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 40);
+            await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 4 });
+            const layer = frame.locator(".tt-layer");
+            await expect(layer, `"${label}" produced no tooltip`).toBeVisible({ timeout: 4000 });
+            const fit = await layer.evaluate((el) => ({ sw: el.scrollWidth, cw: el.clientWidth, sh: el.scrollHeight, ch: el.clientHeight }));
+            expect(fit.sw, `"${label}" tooltip is cut off horizontally`).toBeLessThanOrEqual(fit.cw + 1);
+            expect(fit.sh, `"${label}" tooltip is cut off vertically`).toBeLessThanOrEqual(fit.ch + 1);
+        }
+
+        // ---- the MODEL ROW tooltip: the name and its badges read as one line, not three columns ----
+        await frame.locator(".vram-row").first().hover();
+        await sleep(400);
+        const rowtip = frame.locator(".vram-rowtip");
+        await expect(rowtip).toBeVisible();
+        const name = await rowtip.locator(".vram-rowtip-name").evaluate((el) => {
+            const line = parseFloat(getComputedStyle(el).lineHeight) || 13;
+            return { rows: Math.round(el.getBoundingClientRect().height / line), width: el.getBoundingClientRect().width };
+        });
+        // A long id used to break mid-token while "on CUDA0 87.70 GiB" and "chat model" sat beside it as
+        // further columns. Two rows is fine (the badges may wrap); the broken layout was three-plus.
+        expect(name.rows, "the name line is not fragmented into a column").toBeLessThanOrEqual(2);
+
+        // ---- the EVENT tooltip: a divider always separates two SECTIONS ----
+        await page.evaluate(() => {
+            const now = Date.now();
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            post({ kind: "agent", id: "tt1", ts: now - 9000, save: false, session: { hash: "tt1", turn: 0 },
+                   task: "t", model: "qwen3.8-flash-next:vision", maxSteps: 4, config: null });
+            post({ kind: "agent-step", id: "tt1", ts: now - 3000, save: false, session: { hash: "tt1", turn: 1 },
+                   step: 1, seq: 1, tool: "agent_api_docs", toolMs: 8, approveMs: 0, dispatchMs: 4,
+                   arguments: {}, result: "ok",
+                   usage: { promptTokens: 16941, completionTokens: 138, totalTokens: 17079, genMs: 15000,
+                            evalMs: 1588, promptEvalMs: 6103, model: "qwen3.8-flash-next:vision" } });
+        });
+        await expect.poll(() => frame.locator(".rc-ev-tool").count(), { timeout: 15000 }).toBeGreaterThan(0);
+        await frame.locator(".rc-ev-tool").first().hover();
+        await sleep(400);
+        const tip = frame.locator(".rc-tip-event");
+        await expect(tip).toBeVisible();
+        const shape = await tip.evaluate((el) => {
+            const kids = [...el.children].map((c) => (c.className.match(/rc-tip-\w+/) || ["?"])[0]);
+            const box = el.getBoundingClientRect();
+            const rules = [...el.querySelectorAll(".rc-tip-rule")].map((r) => Math.round(r.getBoundingClientRect().width));
+            return { kids, rules, width: Math.round(box.width) };
+        });
+        // No two rules in a row, and none first or last: a divider with nothing on one side of it is not
+        // separating anything. Ruling the timestamp on BOTH sides is what made it read as an empty cell.
+        expect(shape.kids[0], "a tooltip does not open with a divider").not.toBe("rc-tip-rule");
+        expect(shape.kids.at(-1), "…nor end with one").not.toBe("rc-tip-rule");
+        for (let i = 1; i < shape.kids.length; i++) {
+            expect(`${shape.kids[i - 1]}+${shape.kids[i]}`, "two dividers with nothing between them")
+                .not.toBe("rc-tip-rule+rc-tip-rule");
+        }
+        // And each spans the tooltip's content width, so it reads as a rule rather than a stray dash.
+        for (const w of shape.rules) expect(w).toBeGreaterThan(shape.width * 0.8);
+    } finally {
+        await ext.context.close();
+        await fake.stop();
+    }
+});

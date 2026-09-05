@@ -474,7 +474,10 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     const win = dom.window;
     _sidebarWins.push(win);   // closed in an after() hook — the VRAM panel's setInterval keeps the event loop alive otherwise
     const syncStore = { debugMode: "overlay", theme: "auto", ...sync };
-    const localStore = { ml_debug_fontscale: 1, ...local };
+    // The event LANE is collapsed by default in the product. Most sidebar tests that touch it are about what
+    // it draws rather than about the default, so they get it OPEN unless they ask otherwise — the default is
+    // pinned by its own test, in the browser, where the collapse is a CSS grid transition jsdom cannot see.
+    const localStore = { ml_debug_fontscale: 1, ml_res_sections: { lane: true, models: true }, ...local };
     const changeListeners = [];
     // Fire storage.onChanged like Chrome does, so cross-context (popup↔sidebar)
     // config sync is exercised. `set` merges then notifies.

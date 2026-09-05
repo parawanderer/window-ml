@@ -20,7 +20,8 @@ import {
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs } from "./vram";
-import { models, ollamaIds, loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, showLane, laneLitSeqs } from "./store";
+import { models, ollamaIds, loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, showLane, showModels, SECTIONS_KEY, laneLitSeqs } from "./store";
+import { IconChevron } from "./icons";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
@@ -187,6 +188,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                     <div class="rc-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                         <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} scope={scope} />
                         <InstantRules instants={instants} run={i} scope={scope} />
+                        <HoverSpan run={i} scope="lane" />
                     </div>
                 ))}
                 <BrushOverlay />
@@ -534,6 +536,7 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                         <InstantRules instants={instants} run={ri} scope="overlay" />
+                        <HoverSpan run={ri} scope="lane" />
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {pools.map((p, pi) => {
                                 const pts = run.map((s, i) => `${((i / (run.length - 1)) * W).toFixed(1)},${(H - frac(s, p) * H).toFixed(1)}`).join(" ");
@@ -891,6 +894,26 @@ const trackCrosshair = (runs: ResourceSample[][]) => (e: PointerEvent) => {
     crosshair.value = { frac, t: timeAtFraction(runs, frac), msPerPx };
 };
 
+/** The hovered EVENT's stretch, shaded on the plot above it. The lane and the chart share an axis and that
+ *  is the whole point of the panel — "did that forty-second turn spend its time loading a model, or was the
+ *  model already there" — but reading a block against the trace meant eyeballing two x positions a couple of
+ *  rows apart. This says it: hover a block, and the memory that was measured WHILE it ran is picked out.
+ *
+ *  Drawn inside its own SEGMENT, exactly like the block is, because the axis is segmented by gaps and is not
+ *  linear in time — a fraction of the whole plot would land somewhere else entirely. Carries the model's
+ *  colour so the shade and the block are visibly the same thing, and disappears with the hover. */
+function HoverSpan({ run, scope }: { run: number; scope: string }) {
+    const h = eventHover.value;
+    if (!h || h.scope !== scope || h.p.run !== run) return null;
+    const { from, to } = h.p;
+    // An INSTANT has no width; the dashed rule already marks it, and a zero-width shade would be a hairline
+    // competing with it.
+    if (!(to > from)) return null;
+    const e = h.p.event;
+    return <div class="rc-hoverspan" style={{ left: `${from * 100}%`, width: `${(to - from) * 100}%`,
+        ...(e.model ? { "--model": colorFor(e.model) } : {}) }} />;
+}
+
 /** The selection, mirrored. Every track draws the same fractions, so a drag on ONE plot is visibly a drag on
  *  the whole chart — the ranges only mean anything compared across pools. */
 function BrushOverlay() {
@@ -1073,11 +1096,12 @@ function EventTip({ scope }: { scope: string }) {
             {/* WHEN, exactly. The durations say how long each part took; this is what lets a block be lined up
                 against another one, or against a timestamped log. Milliseconds because an event's own timings
                 are exact — unlike the crosshair, which interpolates between samples. */}
+            {/* ONE rule opens the footer — the timestamp AND the notes below it are both about the block
+                rather than about any phase, so they are one section. Ruling them separately put a divider
+                above and below a single line, which reads as an empty boxed cell rather than as two
+                sections, and on a block with no phases at all produced two rules in a row. */}
             <div class="rc-tip-rule" />
             <div class="rc-tip-when">{hhmmssms(e.t)} → {hhmmssms(e.until ?? e.t)}</div>
-            {/* A rule before the notes: they are about the BLOCK, and without it "click to open this step"
-                read as part of whatever phase happened to be last. */}
-            {(e.kind === "load" || h.p.clipped || e.ref) ? <div class="rc-tip-rule" /> : null}
             {e.kind === "load" ? <div class="rc-tip-note">the model wasn't resident — this is the wait before a token</div> : null}
             {h.p.clipped ? <div class="rc-tip-note">continues past what was measured</div> : null}
             {e.ref ? <div class="rc-tip-note">click to open this {e.ref.seq != null ? "step" : "run"}</div> : null}
@@ -1172,7 +1196,11 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                 chart to select the stretch you are looking at down here reads as the lane being a picture
                 rather than a control. A short press is not a drag (see startBrush), so a bar's own click and
                 double-click still work. */}
-            {rows.map((row, ri) => (
+            {/* COLLAPSED by default — the chip row below is the control. The lane is CONTENT (what happened);
+                the scrub strip above it is NAVIGATION (where you are), which is why only this half folds and
+                the strip stays. Folding the pair together also made the panel jump in height the first time
+                anything ran, which is the thing that kept moving surfaces out from under the pointer. */}
+            {showLane.value ? rows.map((row, ri) => (
                 <div class="rc-lane-row" key={ri}
                     onPointerDown={startBrush(runs)}
                     onPointerMove={trackCursor("lane")}>
@@ -1245,7 +1273,7 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                         </div>
                     ))}
                 </div>
-            ))}
+            )) : null}
             <EventTip scope="lane" />
             <LaneFilterBar counts={counts} shown={events.length} total={all.length} />
         </div>
@@ -1269,11 +1297,27 @@ function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number
         laneHidden.value = next;
         try { chrome.storage.local.set({ [LANE_HIDDEN_KEY]: next }); } catch { /* opaque origin */ }
     };
+    const open = showLane.value;
+    const setOpen = (v: boolean) => {
+        showLane.value = v;
+        try { chrome.storage.local.set({ [SECTIONS_KEY]: { lane: v, models: showModels.value } }); } catch { /* opaque origin */ }
+    };
     return (
-        <div class="rc-lane-filter">
+        // COLLAPSED, the whole row opens the lane — the chips already say what you would get ("steps 2 ·
+        // calls 5"), which is a better promise than a bare chevron, and none of their own meanings apply to a
+        // lane that is not drawn. OPEN, they go back to being filters and only the chevron closes it. So each
+        // click has exactly one meaning in each state, rather than the row having two jobs at once.
+        <div class={`rc-lane-filter${open ? "" : " closed"}`}
+            onClick={open ? undefined : () => setOpen(true)}
+            role={open ? undefined : "button"}
+            title={open ? undefined : "Show the event lane"}>
+            <button class="rc-lane-fold" aria-label={open ? "Hide the event lane" : "Show the event lane"}
+                aria-expanded={open} onClick={(e: MouseEvent) => { e.stopPropagation(); setOpen(!open); }}>
+                <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+            </button>
             {KINDS.filter((k) => counts[k.kind]).map((k) => (
-                <button class={`rc-lane-chip${hidden.has(k.kind) ? " off" : ""}`} key={k.kind}
-                    title={hidden.has(k.kind) ? `Show ${k.label}` : `Hide ${k.label}`}
+                <button class={`rc-lane-chip${hidden.has(k.kind) ? " off" : ""}`} key={k.kind} disabled={!open}
+                    title={!open ? undefined : hidden.has(k.kind) ? `Show ${k.label}` : `Hide ${k.label}`}
                     onClick={() => toggle(k.kind)}>{k.label} {counts[k.kind]}</button>
             ))}
             {/* The scope switch used to live here, as one more chip in a row of chips — which said it was a
@@ -1407,7 +1451,9 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
             <ScrubStrip samples={samples} window={window_} events={stripEvents} />
             {/* And below that, sharing the tracks' x-axis: what happened, against what memory was doing. The
                 connector says the second is the first opened out — see ZoomLink. */}
-            {showLane.value ? <EventLane samples={filled} events={shown} session={samples} /> : null}
+            {/* ALWAYS rendered: `showLane` collapses its ROWS, and its chip row is the control that brings
+                them back. Gating the component itself is what made the only way in a settings checkbox. */}
+            <EventLane samples={filled} events={shown} session={samples} />
         </>
     );
 }

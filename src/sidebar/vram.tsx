@@ -12,12 +12,13 @@ import {
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
+import { Disclosure } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { hhmmss } from "./timestamps";
 import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels } from "./store";
 import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
+import { parseInfo, holdCapacity, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks, ScopeSwitch } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -224,7 +225,8 @@ const openLoads = new Map<string, { t: number; weightsAt?: number }>();
  *  so this counts working PERIODS. Per-request accounting is a different signal and does not exist. */
 export const servingSince = signal<Record<string, number>>({});
 const pushMachine = (e: ResourceEvent): void => {
-    machineEvents.value = [...machineEvents.value, e].slice(-MACHINE_EVENTS_CAP);
+    // DEDUPED, because a reconnect replays history we already hold — see `addMachineEvent`.
+    machineEvents.value = addMachineEvent(machineEvents.value, e, MACHINE_EVENTS_CAP);
 };
 
 /** One edge frame → what the lane draws. Returns nothing for the frames that are not events in their own
@@ -584,6 +586,27 @@ export function sessionModels(hash: string): readonly string[] | undefined {
     const s = sessionMap.get(hash);
     if (!s) return undefined;
     return Object.keys(usageByModel([s] as UsageSource[])).map(normModel);
+}
+
+/** One resident model's row. Extracted because the SCOPED list draws it in two places now — the session's
+ *  own models, and the folded "other models on the box" — and a second copy of a row with four interactive
+ *  parts is exactly where two lists start behaving differently. */
+function ModelRow({ m, hidden, latestSample, evict }: { m: LoadedModel; hidden: Set<string>; latestSample: ResourceSample | null; evict: (model?: string) => void }) {
+    const off = hidden.has(m.model);
+    return (
+        <div class={`vram-row${off ? " off" : ""}${hoverModel.value === m.model ? " hot" : ""}${poolHover.value && latestSample && !poolFacts(poolHover.value.bandsOf(latestSample)).consumers.some((c) => c.label === m.model) ? " away" : ""}`}
+            onPointerEnter={() => (hoverModel.value = m.model)}
+            onPointerMove={(e: PointerEvent) => (rowTipAt.value = { x: e.clientX, y: e.clientY })}
+            onPointerLeave={() => { hoverModel.value = null; rowTipAt.value = null; rowTipSuppressed.value = false; }}>
+            <button class="vram-dot" style={{ background: off ? "var(--fg-faint)" : colorFor(m.model) }}
+                title={off ? "Show in totals" : "Hide from totals"} onClick={() => toggleHidden(m.model)} />
+            <span class="vram-name">{m.model}</span>
+            <ModelFacts m={m} />
+            <span class="sp" />
+            <span class="vram-gb">{m.vramBytes ? formatBytes(m.vramBytes) : m.sizeBytes ? `${formatBytes(m.sizeBytes)} (CPU)` : "?"}</span>
+            <button class="tt vram-x" aria-label="Evict from VRAM" onClick={() => evict(m.model)}>✕<span class="tt-pop" role="tooltip">Evict from VRAM</span></button>
+        </div>
+    );
 }
 
 /** The cost line under a model's name: what it spent, and how fast — with the rate's BASIS said out loud,
@@ -1118,7 +1141,14 @@ export function VramPanel() {
     const mine = laneScoped.value && scopedHash() ? sessionModels(scopedHash()!) : undefined;
     const isMine = (name: string) => !mine || mine.includes(name);
     const otherCount = mine ? [...rows.map((m) => m.model), ...ghosts, ...offBox].filter((n) => !isMine(n)).length : 0;
-    const show = (name: string) => isMine(name) || othersOpen.value;
+    // The folded rows are rendered ALWAYS and collapsed by the grid below, because a height nobody knows in
+    // advance cannot be animated any other way — `height: auto` does not transition, and filtering them out
+    // of the tree means there is nothing to slide.
+    const others = mine
+        ? [...rows.filter((m) => !isMine(m.model)).map((m) => ({ kind: "row" as const, m })),
+           ...offBox.filter((n) => !isMine(n)).map((n) => ({ kind: "off" as const, name: n })),
+           ...ghosts.filter((n) => !isMine(n)).map((n) => ({ kind: "ghost" as const, name: n }))]
+        : [];
 
     // Recompute every point's visible-total each render, so toggling redraws the
     // full line retroactively (not just going forward).
@@ -1224,27 +1254,13 @@ export function VramPanel() {
                     </span>
                 </>}
             {showModels.value && rows.length
-                ? rows.filter((m) => show(m.model)).map(m => {
-                    const off = hidden.has(m.model);
-                    return (
-                        <div class={`vram-row${off ? " off" : ""}${hoverModel.value === m.model ? " hot" : ""}${poolHover.value && latestSample && !poolFacts(poolHover.value.bandsOf(latestSample)).consumers.some((c) => c.label === m.model) ? " away" : ""}`} key={m.model}
-                            onPointerEnter={() => (hoverModel.value = m.model)}
-                            onPointerMove={(e: PointerEvent) => (rowTipAt.value = { x: e.clientX, y: e.clientY })}
-                            onPointerLeave={() => { hoverModel.value = null; rowTipAt.value = null; rowTipSuppressed.value = false; }}>
-                            <button class="vram-dot" style={{ background: off ? "var(--fg-faint)" : colorFor(m.model) }}
-                                title={off ? "Show in totals" : "Hide from totals"} onClick={() => toggleHidden(m.model)} />
-                            <span class="vram-name">{m.model}</span>
-                            <ModelFacts m={m} />
-                            <span class="sp" />
-                            <span class="vram-gb">{m.vramBytes ? formatBytes(m.vramBytes) : m.sizeBytes ? `${formatBytes(m.sizeBytes)} (CPU)` : "?"}</span>
-                            <button class="tt vram-x" aria-label="Evict from VRAM" onClick={() => evict(m.model)}>✕<span class="tt-pop" role="tooltip">Evict from VRAM</span></button>
-                        </div>
-                    );
-                })
+                ? rows.filter((m) => isMine(m.model)).map(m => (
+                    <ModelRow key={m.model} m={m} hidden={hidden} latestSample={latestSample} evict={evict} />
+                ))
                 : ghosts.length || !showModels.value ? null : <div class="vram-empty">Nothing loaded.</div>}
             {/* Models the LANE draws that were never resident — see `offBox`. Listed before the ghosts because
                 a cloud model is a standing fact about the setup, where a ghost is a thing that just happened. */}
-            {(showModels.value ? offBox : []).filter(show).map((name) => (
+            {(showModels.value ? offBox : []).filter(isMine).map((name) => (
                 <div class={`vram-row ghost${hoverModel.value === name ? " hot" : ""}`} key={`off:${name}`}
                     onPointerEnter={() => (hoverModel.value = name)}
                     onPointerLeave={() => (hoverModel.value = null)}>
@@ -1255,7 +1271,7 @@ export function VramPanel() {
                     </span>
                 </div>
             ))}
-            {(showModels.value ? ghosts : []).filter(show).map((name) => (
+            {(showModels.value ? ghosts : []).filter(isMine).map((name) => (
                 <div class={`vram-row ghost${hoverModel.value === name ? " hot" : ""}`} key={`ghost:${name}`}
                     onPointerEnter={() => (hoverModel.value = name)}
                     onPointerLeave={() => (hoverModel.value = null)}>
@@ -1269,11 +1285,24 @@ export function VramPanel() {
             ))}
             {/* What the scope is NOT showing, and the way to see it. A count rather than a silent
                 omission: a list that just gets shorter reads as models having been evicted. */}
+            {/* The same disclosure every other opening section uses — as a bare line of text this was the one
+                interactive thing on the panel that did not look interactive. */}
             {showModels.value && otherCount ? (
-                <button class="vram-row vram-others" onClick={() => (othersOpen.value = !othersOpen.value)}>
-                    <i class="vram-dot ghost-dot" />
-                    <span class="vram-name">{othersOpen.value ? "hide" : "show"} {otherCount} other model{otherCount === 1 ? "" : "s"} on the box</span>
-                </button>
+                <Disclosure label={`other model${otherCount === 1 ? "" : "s"} on the box`} note={`${otherCount}`}>
+                    {others.map((o) => (o.kind === "row"
+                        ? <ModelRow key={o.m.model} m={o.m} hidden={hidden} latestSample={latestSample} evict={evict} />
+                        : <div class={`vram-row ghost${hoverModel.value === o.name ? " hot" : ""}`} key={`${o.kind}:${o.name}`}
+                            onPointerEnter={() => (hoverModel.value = o.name)}
+                            onPointerLeave={() => (hoverModel.value = null)}>
+                            <i class="vram-dot ghost-dot" style={{ background: colorFor(o.name) }} />
+                            <span class="vram-name">{o.name}</span>
+                            <span class="tt vram-embed">{o.kind === "off" ? "off-box" : "evicted"}
+                                <span class="tt-pop left above" role="tooltip">{o.kind === "off"
+                                    ? "Never resident here — a cloud model, or one already gone before the panel opened."
+                                    : "Was resident during this window and has since been evicted; still drawn in the chart's history."}</span>
+                            </span>
+                        </div>))}
+                </Disclosure>
             ) : null}
         <div class="vram-grip" role="separator" aria-label="Drag to resize the resource panel"
                 title="Drag to resize" onPointerDown={onGrab} />

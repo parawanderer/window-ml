@@ -3,13 +3,14 @@
 // These carry no run/session logic: syntax-highlighted code, copy-to-clipboard,
 // the custom context menu, the page-highlight bridge, approval posting, and the
 // small click-to-copy chips (Hash / CopyBtn / Stamp / TagBadge / SheetChip / …).
+import type { ComponentChildren } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { AnswerMedia } from "../contract";
 import type { Status, AgentStep } from "./store";
 import { codeLineNumbers } from "./store";
 import { beautifyJs, highlight, htmlLines, shortStamp, fullStamp, pretty, truncate } from "./format";
-import { IconCopy, IconCheck, IconSheet } from "./icons";
+import { IconCopy, IconCheck, IconSheet, IconChevron } from "./icons";
 
 export const DOT_TIP: Record<Status, string> = {
     pending: "In flight — waiting for the model to respond.",
@@ -214,6 +215,47 @@ export async function decideGate(st: AgentStep, hash: string, seq: number, ok: b
 // decision on click lets PendingNote drop the step from "blocked" immediately. (ToolStep keeps its
 // own local `decided` for its buttons; this is the run-level mirror.) Keys are unique per run
 // (random hash) + monotonic seq, so it never collides; growth is one entry per approval.
+/** A DISCLOSURE that slides. The panel had three of these written three different ways, all of them a pill
+ *  button that injected a box into the layout on click — which reads as something appearing rather than as a
+ *  section opening, gives no hint that the thing can be closed again, and jumps whatever is below it.
+ *
+ *  One component so the next one is free, and so all of them agree about what a chevron means. The slide is
+ *  `grid-template-rows: 0fr → 1fr`: a height nobody knows in advance cannot be animated any other way, since
+ *  `height: auto` does not transition at all.
+ *
+ *  `onOpen` is for a section whose content has to be FETCHED (the server-tool list) — it fires on the
+ *  opening edge only, so re-opening does not re-request, and the caller decides whether a refresh is offered
+ *  separately. `note` is a short status that rides on the header, where a count or a "loading…" belongs. */
+export function Disclosure({ label, note, open: controlled, onOpen, defaultOpen = false, children }: {
+    label: ComponentChildren;
+    note?: ComponentChildren;
+    open?: boolean;
+    onOpen?: () => void;
+    defaultOpen?: boolean;
+    children?: ComponentChildren;
+}) {
+    const [uncontrolled, setUncontrolled] = useState(defaultOpen);
+    const open = controlled ?? uncontrolled;
+    const toggle = () => {
+        const next = !open;
+        if (controlled == null) setUncontrolled(next);
+        if (next) onOpen?.();
+    };
+    return (
+        <div class={`disc${open ? " open" : ""}`}>
+            <button class="disc-head" aria-expanded={open} onClick={toggle}>
+                <span class="tri" aria-hidden="true"><IconChevron /></span>
+                <span class="disc-label">{label}</span>
+                {note ? <span class="disc-note">{note}</span> : null}
+            </button>
+            {/* The wrapper is ALWAYS rendered — there has to be something to slide, and a body that only
+                exists once open can only appear. Its content is still mounted while closed, so a fetch that
+                landed stays landed and reopening is instant. */}
+            <div class="disc-body" aria-hidden={!open}><div>{children}</div></div>
+        </div>
+    );
+}
+
 export const decidedSteps = new Set<string>();
 export const stepKey = (hash: string, seq: number) => `${hash}:${seq}`;
 // No tooltip here on purpose: `cursor: zoom-in` is the standard affordance for

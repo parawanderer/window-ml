@@ -284,6 +284,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-brush { position: absolute; top: 0; bottom: 0; z-index: 4; pointer-events: none;
             background: color-mix(in srgb, var(--accent) 18%, transparent);
             border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); }
+/* The hovered event's stretch, shaded on the trace above it. Softer than the brush and with no hard edges:
+   the brush is a SELECTION you made and holds until you leave it, this is a passing answer to "which part of
+   the line is this block about". In the model's own colour, so the shade and the block read as one thing. */
+.rc-hoverspan { position: absolute; top: 0; bottom: 0; z-index: 3; pointer-events: none;
+    background: color-mix(in srgb, var(--model, var(--accent)) 14%, transparent);
+    border-left: 1px solid color-mix(in srgb, var(--model, var(--accent)) 55%, transparent);
+    border-right: 1px solid color-mix(in srgb, var(--model, var(--accent)) 55%, transparent); }
 .rc-plot { cursor: crosshair; }
 /* The way out of a zoom, beside the view picker. */
 /* The label is a DURATION that changes as you scrub — "7s" one moment, "1m 28s" the next — so without a
@@ -385,7 +392,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
                      padding: 0 3px; background: var(--panel-2); border-radius: 3px; }
 /* Phases are separated by their rule; the name/duration pair is the line itself. */
 .rc-tip-event .rc-tip-name { font-weight: 600; }
-.rc-tip-rule { height: 1px; margin: 2px 0; background: var(--border); }
+/* The container already spaces its children (`gap`), so the rule's own margin only ADDS to it — 2px of gap
+   plus 2px of margin either side left the line floating in the middle of a gap rather than reading as the
+   top of the section under it. A hair more below than above does that. */
+.rc-tip-rule { height: 1px; margin: 1px 0 2px; background: var(--border); }
 .rc-tip-consumer { display: inline-flex; align-items: center; gap: 5px; }
 .rc-tip-pct { opacity: .7; font-variant-numeric: tabular-nums; }
 .rc-tip-gone { padding: 0 4px; font-size: 0.9em; color: var(--fg-faint); border: 1px solid var(--border); border-radius: 3px; }
@@ -442,17 +452,48 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip-size { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 /* Hovering either the band or its row lights the other — they describe the same model. */
 .vram-row.hot { background: var(--panel-2); border-radius: 3px; }
-/* The fold under a SCOPED model list. Quiet — it is the way to a fact, not a fact — and a full-width row so
-   it reads as belonging to the list rather than floating beside it. */
-.vram-others { width: 100%; background: none; border: 0; cursor: pointer; color: var(--fg-faint); text-align: left; font: inherit; }
-.vram-others:hover { color: var(--fg-dim); }
-.vram-others .vram-dot { opacity: 0.5; }
+/* The fold under a SCOPED model list — a real BUTTON with a turning chevron. It was a bare line of text,
+   which made it the one interactive thing on the panel that did not look interactive: quiet is right for
+   something that is the way to a fact rather than a fact, invisible is not. */
+.vram-others { display: flex; align-items: center; gap: 4px; width: 100%; padding: 2px 3px; margin-top: 1px;
+    background: none; border: 0; border-radius: 4px; cursor: pointer; color: var(--fg-faint);
+    text-align: left; font: inherit; font-size: 0.83em; }
+.vram-others:hover { color: var(--fg-dim); background: var(--panel-2); }
+.vram-others .tri { display: inline-flex; transition: transform .18s cubic-bezier(.2, .7, .2, 1); }
+.vram-others.open .tri { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .vram-others .tri { transition: none; } }
+/* ---------------------------------- DISCLOSURE ----------------------------------
+   ONE sliding section, used everywhere something opens: the model list's fold, the agent's system prompt and
+   tool definitions, the server-tool list. All three were a pill button that injected a box into the layout,
+   which reads as content appearing rather than a section opening, and says nothing about being closable.
+
+   The slide is `grid-template-rows: 0fr → 1fr` because the content's height is not known in advance and
+   `height: auto` cannot be transitioned at all. The child needs `min-height: 0` or a grid item refuses to
+   shrink below its content and nothing moves. */
+.disc { display: flex; flex-direction: column; }
+.disc-head { display: flex; align-items: center; gap: 4px; width: 100%; padding: 2px 3px;
+    background: none; border: 0; border-radius: 4px; cursor: pointer; color: var(--fg-dim);
+    text-align: left; font: inherit; font-size: 0.86em; }
+.disc-head:hover { color: var(--fg); background: var(--panel-2); }
+.disc-head .tri { display: inline-flex; transition: transform .18s cubic-bezier(.2, .7, .2, 1); }
+.disc.open .disc-head .tri { transform: rotate(90deg); }
+.disc-note { color: var(--fg-faint); }
+.disc-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .2s cubic-bezier(.2, .7, .2, 1); }
+.disc.open > .disc-body { grid-template-rows: 1fr; }
+.disc-body > div { overflow: hidden; min-height: 0; }
+@media (prefers-reduced-motion: reduce) {
+    .disc-head .tri, .disc-body { transition: none; }
+}
 /* The model row's follow-along tip. `position: fixed` because the row is outside the plot and the panel's
    own scrolling would otherwise clip it. */
 /* The row tip carries .rc-tip for the shared look; it only differs in being FIXED (the row is outside the
    plot) and in stacking its lines. */
 .vram-rowtip { position: fixed; z-index: 40; flex-direction: column; align-items: stretch; gap: 1px; }
-.vram-rowtip-name { display: flex; align-items: center; gap: 5px; font-weight: 600; }
+/* The name and its badges WRAP AS A LINE, and the name itself does not break mid-token. As a plain flex row
+   a long id ("qwen3.8-flash-next:vision") was broken across two lines while "on CUDA0 87.70 GiB" and "chat
+   model" sat beside it as further columns — three ragged columns instead of a sentence. */
+.vram-rowtip-name { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 5px; font-weight: 600;
+                    max-width: 100%; overflow-wrap: anywhere; }
 .vram-rowtip-dim { color: var(--fg-faint); }
 /* A SPLIT model is the interesting case — it is slower than its total size suggests. */
 .vram-rowtip-split { color: var(--warn, #f59e0b); }
@@ -1190,6 +1231,29 @@ html[data-focus] .msg .mrow .raw-btn { display: none; }
    would leave its empty shell holding a gap in the header row. */
 html[data-focus] .msg .mrow .tt:has(> .model-name),
 html[data-focus] .msg .mrow .tt:has(> .icon-btn) { display: none; }
+/* …but NOT the thinking block's token estimate, which shares `.astep-preview` with the collapsed tool row's
+   output preview. That preview is spam here; this is a PROGRESS indicator — on a long think it is the only
+   sign the run is moving rather than stuck, and a reading mode wants that more than a debugging one does. */
+html[data-focus] .astep-tokest { display: inline; }
+/* With "you" gone, the user bubble's header row held nothing but a right-aligned timestamp — a full empty
+   band above every prompt, which is the opposite of what a reading mode is for. The row is FLOATED instead
+   of hidden: the timestamp is still worth having (it is the only clock in the transcript), it just has no
+   business occupying a line of its own to show one short number. */
+html[data-focus] .msg.user { position: relative; }
+html[data-focus] .msg.user .mrow { position: absolute; top: 4px; right: 8px; margin: 0; pointer-events: none; }
+html[data-focus] .msg.user .mrow .sp { display: none; }
+/* A SETTLED python step's input dataframes and its captured stdout fold away in focus mode: what a reader
+   wants from a python step is the code and the answer, and the data that went in plus everything printed on
+   the way is the debugger's half. Only ever applied to a section marked `focus-fold`, which the renderer sets
+   only once the step is no longer streaming — folding output mid-run would hide the thing proving the run is
+   alive. Outside focus mode nothing folds: there you are reading the console on purpose.
+
+
+   Unlike the rest of this block it is NOT a CSS hide: a section you cannot open is worse than one that is
+   simply gone, and the point of folding is that the thing is still one click away. So the fold seeds the
+   `details`' own state (see `useFocusFold`) and this only marks it. */
+html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
+    content: " — folded in focus mode"; color: var(--fg-faint); font-style: italic; }
 
 /* Shared tool OUTPUT CELL (python_exec / exec / any future tool): capped height → scrolls, with a drag grip.
    Jupyter's output area — tall output can't bury the transcript, and tail-follow keeps the newest line in view. */
@@ -2079,7 +2143,7 @@ code .expanded:hover { background: color-mix(in srgb, var(--ok, #22c55e) 12%, tr
 
 /* Where a model is, beside its name rather than under it: it is part of identifying the thing, not a third
    fact of equal weight to the residency and cost lines below. Normal weight, so the name still leads. */
-.vram-rowtip-where { margin-left: 6px; font-weight: 400; color: var(--fg-dim); }
+.vram-rowtip-where { font-weight: 400; color: var(--fg-dim); }
 
 /* While a lane block is hovered, everything in the transcript that is not part of its lineage recedes. The
    steps carry `.away` themselves (they know their own seq); the messages around them — the task, the answer,
@@ -2161,7 +2225,7 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .srv-find input { flex: 1 1 auto; min-width: 0; }
 
 /* What a model IS, on its row tooltip — the same fact the badge carries, repeated where the name is named. */
-.vram-rowtip-kind { margin-left: 6px; color: var(--fg-faint); font-weight: 400; }
+.vram-rowtip-kind { color: var(--fg-faint); font-weight: 400; }
 
 /* An `ml.embed()` session: a list of CALLS, not a conversation. One row per call — what went in, what came
    back, how long it took — so a request for vectors never reads as something somebody said. */
