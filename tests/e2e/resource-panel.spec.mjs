@@ -1793,3 +1793,65 @@ test("resource panel: the width you drag is the width live keeps", async () => {
         await fake.stop();
     }
 });
+
+// DRAGGING ON THE EVENT LANE draws the same selection box the tracks do. The lane already shared the drag —
+// it is the same `startBrush` — but drew nothing while you made it, so the gesture worked and looked like it
+// had not: you released and the window jumped with no sign of what you had chosen. Every surface on this
+// axis draws the same fractions, which is the point of the axis being shared.
+test("resource panel: dragging the event lane shows the selection box, and a tiny drag still yields a usable window", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        // The lane scopes to the session being READ by default, and the events below belong to a run this
+        // panel is not looking at — scoped, they are correctly filtered out and the lane draws no rows at
+        // all, which would make this pass by having nothing to drag on.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
+
+        // SAMPLES FIRST, then events. An event is placed inside the RUN OF SAMPLES that contains it — one
+        // landing where nothing was measured is correctly dropped, so seeding events before there is history
+        // to hold them draws an empty lane and this would pass by having nothing to drag on.
+        await sleep(9000);
+        await page.evaluate(() => {
+            const now = Date.now(), span = 7000;
+            const at = (f) => now - Math.round(span * f);
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            post({ kind: "agent", id: "bl1", ts: at(1), save: false, session: { hash: "bl1", turn: 0 },
+                   task: "t", model: "gemma4:31b", maxSteps: 4, config: null });
+            for (let i = 1; i <= 3; i++) {
+                post({ kind: "agent-step", id: "bl1", ts: at(0.8 - i * 0.2), save: false, session: { hash: "bl1", turn: i },
+                       step: i, seq: i, tool: "exec", toolMs: 400, arguments: { js: `step ${i}` }, result: `r${i}`,
+                       usage: { promptTokens: 90, completionTokens: 10, totalTokens: 100, genMs: 300 } });
+            }
+        });
+        await expect.poll(() => frame.locator(".rc-ev-tool").count(), { timeout: 20000 }).toBeGreaterThanOrEqual(3);
+
+        const row = await frame.locator(".rc-lane-row").first().boundingBox();
+        const y = row.y + row.height / 2;
+        // Hold the drag OPEN and look: the box has to be visible WHILE selecting, which is the whole point.
+        await page.mouse.move(row.x + row.width * 0.25, y);
+        await page.mouse.down();
+        await page.mouse.move(row.x + row.width * 0.65, y, { steps: 8 });
+        await expect(frame.locator(".rc-lane-row .rc-brush").first()).toBeVisible({ timeout: 4000 });
+        const w = await frame.locator(".rc-lane-row .rc-brush").first().evaluate((el) => el.getBoundingClientRect().width);
+        expect(w, "the box spans what is being selected, not a sliver").toBeGreaterThan(20);
+        await page.mouse.up();
+        await sleep(600);
+
+        // …and it applied: the panel is holding a chosen range now.
+        await expect(frame.locator(".vram-zoom")).toBeVisible({ timeout: 5000 });
+        // The chart still DRAWS. A window narrower than the poll interval used to leave fewer than two
+        // samples and an empty box, which is what "the panel breaks" looked like.
+        expect(await frame.locator(".rc-plot").count(), "the plot survives the zoom").toBeGreaterThan(0);
+    } finally {
+        await ext.context.close();
+        await fake.stop();
+    }
+});

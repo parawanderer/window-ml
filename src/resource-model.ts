@@ -727,6 +727,55 @@ export function scrubResize(
         : { from: window.from, to: Math.min(extent.to, Math.max(at, window.from + min)) };
 }
 
+/** A SELECTED WINDOW, never narrower than the panel can draw. Widened symmetrically about its own centre, so
+ *  the stretch you picked stays in the middle of what you get rather than sliding to one end.
+ *
+ *  A drag can resolve to almost no time at all even when the hand moved a long way, because the axis is
+ *  SEGMENTED: a densely-sampled run occupies a lot of width for a little time. The result is a window of a
+ *  few milliseconds, which contains no samples, draws as an empty plot, and reads as the panel breaking
+ *  rather than as a selection that was too small to mean anything. `scopeToSpan` already widens a too-short
+ *  block for the same reason; this is the same rule for a hand-made selection.
+ *
+ *  Returns null for a window with no extent at all (from >= to), which is not a selection to widen but a
+ *  click to ignore. */
+export function clampWindow(win: { from: number; to: number }, minMs = MIN_SCOPE_MS): { from: number; to: number } | null {
+    const span = win.to - win.from;
+    if (span <= 0) return null;
+    if (span >= minMs) return win;
+    const mid = win.from + span / 2, half = minMs / 2;
+    return { from: mid - half, to: mid + half };
+}
+
+/** THE SAMPLES A WINDOW SHOULD DRAW — the ones inside it, PLUS the nearest on each side.
+ *
+ *  A plain filter is wrong once the window gets narrower than the poll interval, which is exactly what
+ *  zooming into a single long event does: the window falls between two polls, the filter returns fewer than
+ *  two samples, and the chart draws an empty box. The panel then looks broken rather than zoomed — no line,
+ *  no ceiling, no tracks — while the thing you zoomed in ON, an event spanning the whole window, is still
+ *  perfectly well defined.
+ *
+ *  The BRACKETING samples are what a line needs to cross the window at all: the value did not stop existing
+ *  between two measurements. They sit outside the window by construction, so a renderer must clip to the
+ *  window rather than to the data's extent — which is what a time axis does anyway.
+ *
+ *  Not interpolation: these are real measurements, drawn where they were actually taken. Inventing a sample
+ *  at the window's edge would be a reading nobody took, which is the thing this panel refuses to do
+ *  everywhere else (see the gaps, which stay gaps). */
+export function windowSamples<T extends { t: number }>(all: readonly T[], window: { from: number; to: number } | null): T[] {
+    if (!window) return [...all];
+    const inside: T[] = [];
+    let before: T | null = null, after: T | null = null;
+    for (const s of all) {
+        if (s.t < window.from) { before = s; continue; }         // `all` is ordered, so the last one wins
+        if (s.t > window.to) { if (!after) after = s; continue; }   // …and the first one past the end
+        inside.push(s);
+    }
+    // Only reach outside when the window cannot draw itself. A window with plenty of samples must not have
+    // its scale stretched by a neighbour that is minutes away.
+    if (inside.length >= 2) return inside;
+    return [...(before ? [before] : []), ...inside, ...(after ? [after] : [])];
+}
+
 /** WHAT A FINISHED SCRUB DRAG MEANT. Two outcomes, and telling them apart is the whole point: a window
  *  PINNED to a range, or FOLLOWING with a width.
  *

@@ -13,7 +13,7 @@ import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/ho
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
     placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
-    scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, scrubNudge, wheelScrubFraction,
+    scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
@@ -962,7 +962,13 @@ const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
         // A CLICK is not a selection: without this every click on the chart would zoom to an instant.
         if (!moved || Math.abs(end - start) < 0.01) return;
         const a = timeAtFraction(runs, Math.min(start, end)), b = timeAtFraction(runs, Math.max(start, end));
-        if (a != null && b != null && b > a) zoomRange.value = { from: a, to: b };
+        if (a == null || b == null) return;
+        // …and neither is a selection that rounds to nothing. The fraction guard above is about the GESTURE
+        // (did the hand move); this is about the RESULT, and they are not the same test: the axis is
+        // segmented, so a perfectly deliberate drag across a densely-sampled stretch can still resolve to a
+        // window of a few milliseconds — which draws as an empty plot and reads as the panel breaking.
+        const win = clampWindow({ from: a, to: b });
+        if (win) zoomRange.value = win;
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -1256,6 +1262,12 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                 <div class="rc-lane-row" key={ri}
                     onPointerDown={startBrush(runs)}
                     onPointerMove={trackCursor("lane")}>
+                    {/* The SAME selection box the tracks draw. The lane already took the drag — it shares
+                        `startBrush` — but showed nothing while you made it, so the gesture worked and looked
+                        like it had not: you released and the window jumped with no sign of what you had
+                        chosen. Every surface on this axis draws the same fractions, which is the point of
+                        the axis being shared. */}
+                    <BrushOverlay />
                     {runs.map((run, i) => (
                         <div class="rc-lane-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                             {row.filter((p) => p.run === i).map((p, k) => {
@@ -1441,9 +1453,10 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
         const now = Date.now();
         return { from: now - secs * 1000, to: now };
     }, [resWindowS.value, zoomRange.value, samples.length, scopedWindow]);
-    const windowed = useMemo(
-        () => (window_ ? samples.filter((s) => s.t >= window_.from && s.t <= window_.to) : samples),
-        [samples, window_]);
+    // The samples in the window, plus the nearest either side when the window is too narrow to draw itself —
+    // see `windowSamples`. Zooming inside one long event used to leave fewer than two samples and an empty
+    // chart, which reads as the panel having broken rather than as a window between two polls.
+    const windowed = useMemo(() => windowSamples(samples, window_), [samples, window_]);
     // KNOWN BUG, diagnosed and deliberately still here: this backfills the CURRENT capacity into a sample
     // that has none, and a capacity carries FREE BYTES — which is what usage is computed from. So a sample
     // taken before `/api/info` first answered is drawn with TODAY's usage and MOVES as the present moves: the

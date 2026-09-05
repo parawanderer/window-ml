@@ -1236,3 +1236,109 @@ describe("scrubIntent", () => {
         assert.equal(scrubIntent(ex, { from: 299_800, to: 300_000 }, SLACK).windowS, 1);
     });
 });
+
+// ZOOMING INSIDE A SINGLE LONG EVENT. Dragging the scrub window to sit entirely WITHIN one event —
+//   [            event            ]
+//              [ window ]
+// left the panel drawing nothing: a window narrower than the poll interval falls between two samples, a
+// plain filter returns fewer than two, and the chart needs two to draw a line. No line, no ceiling, no
+// tracks — which reads as the panel having broken rather than as a window between polls, while the thing
+// you zoomed in on is still perfectly well defined.
+describe("windowSamples", () => {
+    const { windowSamples } = M;
+    const at = (...ts) => ts.map((t) => ({ t }));
+
+    test("a window with plenty of samples uses exactly those", () => {
+        const got = windowSamples(at(0, 1000, 2000, 3000, 4000), { from: 900, to: 3100 });
+        assert.deepEqual(got.map((s) => s.t), [1000, 2000, 3000], "no neighbours dragged in to stretch the scale");
+    });
+
+    test("a window between two polls borrows BOTH neighbours, so a line can cross it", () => {
+        const got = windowSamples(at(0, 5000, 10000), { from: 6000, to: 7000 });
+        assert.deepEqual(got.map((s) => s.t), [5000, 10000], "the measurements either side of the gap");
+    });
+
+    test("a window holding ONE sample still borrows, since one point draws no line", () => {
+        const got = windowSamples(at(0, 5000, 10000), { from: 4000, to: 6000 });
+        assert.deepEqual(got.map((s) => s.t), [0, 5000, 10000]);
+    });
+
+    test("a window before the first sample borrows only what exists", () => {
+        assert.deepEqual(windowSamples(at(5000, 10000), { from: 0, to: 1000 }).map((s) => s.t), [5000]);
+    });
+
+    test("a window after the last borrows the last", () => {
+        assert.deepEqual(windowSamples(at(5000, 10000), { from: 20000, to: 30000 }).map((s) => s.t), [10000]);
+    });
+
+    test("no samples at all is still no samples — nothing is invented", () => {
+        assert.deepEqual(windowSamples([], { from: 0, to: 1000 }), []);
+    });
+
+    test("no window means every sample", () => {
+        assert.deepEqual(windowSamples(at(1, 2, 3), null).map((s) => s.t), [1, 2, 3]);
+    });
+
+    test("the borrowed samples are REAL, at their own timestamps — nothing is interpolated to the edge", () => {
+        // The panel refuses to invent a reading anywhere else (a gap stays a gap), and this is the same rule:
+        // a sample at the window's boundary would be a measurement nobody took.
+        const got = windowSamples(at(0, 5000, 10000), { from: 6000, to: 7000 });
+        assert.ok(got.every((s) => [0, 5000, 10000].includes(s.t)), "every returned sample is one that exists");
+    });
+});
+
+// …and the event that window sits inside must still be DRAWN, cropped to what is on screen.
+describe("placeEvents: an event wider than the window", () => {
+    const { placeEvents } = M;
+    test("an event spanning the whole run is placed across it, not dropped", () => {
+        const run = [{ t: 1000 }, { t: 2000 }, { t: 3000 }];
+        const [p] = placeEvents([run], [{ kind: "run", t: 0, until: 9000, model: "m" }]);
+        assert.ok(p, "the event is placed even though it starts before and ends after the samples");
+        assert.equal(p.from, 0, "cropped to the left edge");
+        assert.equal(p.to, 1, "…and the right");
+        assert.equal(p.clipped, true, "and it SAYS it continues past what is drawn");
+    });
+});
+
+// A SELECTION TOO SMALL TO MEAN ANYTHING. The axis is SEGMENTED, so a densely-sampled run occupies a lot of
+// width for a little time — a deliberate drag across it can resolve to a few milliseconds. That window holds
+// no samples, draws as an empty plot, and reads as the panel breaking rather than as a selection that was
+// too narrow. `scopeToSpan` already widens a too-short block for the same reason.
+describe("clampWindow", () => {
+    const { clampWindow, MIN_SCOPE_MS } = M;
+
+    test("a window wider than the minimum is returned untouched", () => {
+        const w = { from: 1000, to: 1000 + MIN_SCOPE_MS * 3 };
+        assert.deepEqual(clampWindow(w), w);
+    });
+
+    test("a window exactly at the minimum is left alone — the bound is inclusive", () => {
+        const w = { from: 0, to: MIN_SCOPE_MS };
+        assert.deepEqual(clampWindow(w), w);
+    });
+
+    test("a narrower one is widened to the minimum, ABOUT ITS OWN CENTRE", () => {
+        // Symmetrically: the stretch you picked has to stay in the middle of what you get, or a selection
+        // near the end of a run slides off the part you were pointing at.
+        const got = clampWindow({ from: 10000, to: 10010 });
+        assert.equal(got.to - got.from, MIN_SCOPE_MS, "widened to exactly the minimum");
+        assert.equal((got.from + got.to) / 2, 10005, "…keeping the centre it had");
+    });
+
+    test("a ZERO-width selection is not a window at all", () => {
+        // Not "widen a click into 2.5 seconds": a click is not a selection, and turning one into a zoom is
+        // the behaviour the gesture guard upstream exists to prevent.
+        assert.equal(clampWindow({ from: 5000, to: 5000 }), null);
+    });
+
+    test("an inverted window is refused rather than silently flipped", () => {
+        // A negative-duration range is a caller bug; widening it would hand back something plausible and
+        // wrong, which every consumer would then have to defend against.
+        assert.equal(clampWindow({ from: 5000, to: 4000 }), null);
+    });
+
+    test("the minimum is a parameter, so a caller with its own floor is not stuck with this one", () => {
+        const got = clampWindow({ from: 0, to: 10 }, 1000);
+        assert.equal(got.to - got.from, 1000);
+    });
+});
