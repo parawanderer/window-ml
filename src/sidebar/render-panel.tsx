@@ -624,6 +624,24 @@ function rangesFor(root: HTMLElement, query: string, caseSensitive: boolean): Ra
 
 // Paint the matches (all + the current one) via the global highlight registry. A no-op where the API is
 // missing (jsdom / older engines) — find still counts and scrolls, it just doesn't tint.
+/** The nearest thing between a match and its cell that ACTUALLY scrolls sideways — or null when nothing
+ *  does. The cell is the wrong element to scroll: with wrapping off, the overflow lives on `code.hljs`
+ *  inside it, so adjusting the cell's own scrollLeft moves nothing at all.
+ *
+ *  Bounded by the cell so a match can never scroll the panel or the page out from under the reader, and
+ *  `> clientWidth + 1` because sub-pixel layout makes a non-scrolling element report a scrollWidth a hair
+ *  larger than its client width, which would otherwise pick a scroller that cannot scroll. */
+export function scrollerX(from: Node | null, bound: HTMLElement): HTMLElement | null {
+    let el: HTMLElement | null = (from && (from as Element).nodeType === 1
+        ? (from as HTMLElement) : (from?.parentElement ?? null));
+    while (el) {
+        if (el.scrollWidth > el.clientWidth + 1) return el;
+        if (el === bound) return null;
+        el = el.parentElement;
+    }
+    return null;
+}
+
 function paintFind(all: Range[], current: Range | null): void {
     const reg = (globalThis as any).CSS?.highlights;
     if (!reg) return;
@@ -701,6 +719,21 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
         try {
             const box0 = el.getBoundingClientRect(), hit = r.getBoundingClientRect();
             el.scrollTop += (hit.top - box0.top) - el.clientHeight / 3;
+            // SIDEWAYS TOO, and not on the same element. With wrapping off a long line scrolls horizontally,
+            // but the scroller is `code.hljs` inside the cell (the highlight theme puts overflow-x there) —
+            // so a match to the right of the fold was painted and counted while the view never moved, which
+            // reads as the find being broken on exactly the lines you needed it for.
+            const sx = scrollerX(r.startContainer, el);
+            if (sx) {
+                const b = sx.getBoundingClientRect();
+                // Only if it is actually out of view, and only just far enough. Parking it at a fraction of
+                // the width the way the vertical does would yank an already-visible match sideways on every
+                // ↑/↓, which no editor does and which loses your place in the line.
+                const pad = Math.min(40, sx.clientWidth / 4);
+                const left = hit.left - b.left, right = hit.right - b.left;
+                if (left < pad) sx.scrollLeft += left - pad;
+                else if (right > sx.clientWidth - pad) sx.scrollLeft += right - (sx.clientWidth - pad);
+            }
         } catch { /* detached range → nothing to scroll to */ }
     };
     const jump = (delta: number): void => {

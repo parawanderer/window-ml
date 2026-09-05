@@ -8,7 +8,7 @@ import { JSDOM } from "jsdom";
 import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
 
-let h, render, OutputCell, findMatches, atBottomOf, doc;
+let h, render, OutputCell, findMatches, atBottomOf, scrollerX, doc;
 
 before(async () => {
     const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
@@ -21,7 +21,7 @@ before(async () => {
     // Load preact through require, NOT `import("preact")`: tsx compiles the .tsx component to CJS, so an
     // ESM import here would be a SECOND preact instance and its hooks would have no current component.
     ({ h, render } = require_("preact"));
-    ({ OutputCell, findMatches, atBottomOf } = await import("../src/sidebar/render-panel.tsx"));
+    ({ OutputCell, findMatches, atBottomOf, scrollerX } = await import("../src/sidebar/render-panel.tsx"));
 });
 
 // Preact defers effects to a rAF tick, and the find bar computes its match count IN an effect — so a
@@ -376,4 +376,71 @@ test("clockAt: milliseconds only when a pixel is worth a few of them", async () 
     // No idea → the coarse label. Implying precision is the failure mode here, not lacking it.
     assert.equal(clockAt(t, Infinity), "14:15:16");
     assert.equal(clockAt(t, 0), "14:15:16");
+});
+
+// WHICH ELEMENT SCROLLS SIDEWAYS. The find bar revealed a match by adjusting the CELL's scrollTop only, so
+// a match past the right-hand fold was painted and counted while the view never moved — the find looking
+// broken on exactly the long lines you opened it for. The cell is also the wrong element to scroll: with
+// wrapping off the overflow lives on `code.hljs` INSIDE it, so the cell's own scrollLeft moves nothing.
+// jsdom has no layout, so these drive the decision directly with stated geometry; the real thing is
+// tests/e2e/output-scroll.spec.mjs.
+const fakeEl = (over = {}) => {
+    const el = doc.createElement("div");
+    Object.defineProperty(el, "scrollWidth", { value: over.scrollWidth ?? 0, configurable: true });
+    Object.defineProperty(el, "clientWidth", { value: over.clientWidth ?? 0, configurable: true });
+    return el;
+};
+
+test("scrollerX: picks the scrolling descendant, not the cell that contains it", () => {
+    const cell = fakeEl({ scrollWidth: 300, clientWidth: 300 });   // the cell itself does NOT scroll sideways
+    const code = fakeEl({ scrollWidth: 900, clientWidth: 300 });   // the highlighted block does
+    const text = doc.createTextNode("a long line");
+    cell.appendChild(code); code.appendChild(text);
+    assert.equal(scrollerX(text, cell), code, "the element with the overflow, found from the match's text node");
+});
+
+test("scrollerX: null when nothing between the match and the cell scrolls", () => {
+    // Wrapping ON — there is no horizontal overflow anywhere, and scrolling something regardless would
+    // shift the line for no reason.
+    const cell = fakeEl({ scrollWidth: 300, clientWidth: 300 });
+    const code = fakeEl({ scrollWidth: 300, clientWidth: 300 });
+    const text = doc.createTextNode("wrapped");
+    cell.appendChild(code); code.appendChild(text);
+    assert.equal(scrollerX(text, cell), null);
+});
+
+test("scrollerX: a one-pixel overflow is not a scroller", () => {
+    // Sub-pixel layout makes a non-scrolling element report a scrollWidth a hair over its clientWidth;
+    // picking it would hand back something that cannot actually scroll.
+    const cell = fakeEl({ scrollWidth: 300, clientWidth: 300 });
+    const code = fakeEl({ scrollWidth: 301, clientWidth: 300 });
+    const text = doc.createTextNode("x");
+    cell.appendChild(code); code.appendChild(text);
+    assert.equal(scrollerX(text, cell), null);
+});
+
+test("scrollerX: stops AT the cell — a match never scrolls the panel or the page", () => {
+    // The bound is the point: an unbounded walk would find the transcript's own scroller and yank the whole
+    // view sideways to reveal a match inside one step.
+    const outer = fakeEl({ scrollWidth: 5000, clientWidth: 300 });   // the panel — must never be chosen
+    const cell = fakeEl({ scrollWidth: 300, clientWidth: 300 });
+    const text = doc.createTextNode("x");
+    outer.appendChild(cell); cell.appendChild(text);
+    assert.equal(scrollerX(text, cell), null, "the walk ends at the cell, not at the panel above it");
+});
+
+test("scrollerX: the cell itself is used when IT is the scroller", () => {
+    const cell = fakeEl({ scrollWidth: 900, clientWidth: 300 });
+    const text = doc.createTextNode("x");
+    cell.appendChild(text);
+    assert.equal(scrollerX(text, cell), cell);
+});
+
+test("scrollerX: an element node is accepted as well as a text node", () => {
+    // A Range's startContainer is a text node in practice, but not by contract.
+    const cell = fakeEl({ scrollWidth: 300, clientWidth: 300 });
+    const code = fakeEl({ scrollWidth: 900, clientWidth: 300 });
+    cell.appendChild(code);
+    assert.equal(scrollerX(code, cell), code);
+    assert.equal(scrollerX(null, cell), null, "…and a missing container is not a crash");
 });
