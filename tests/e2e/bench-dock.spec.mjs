@@ -356,6 +356,26 @@ test("the drawer's grab handle is centred, and nothing interactive sits under it
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+// NO STRIP OF THE DRAWER'S OWN GROUND BETWEEN THE HEADER AND THE EDITOR. The bench is a flex column with a
+// `gap`, and the gap applied after the header too — so the drawer's background showed through between two
+// panel-coloured surfaces. In the dark theme that is invisible; in the light one it is a white bar across the
+// drawer, which is how it shipped. Geometry is the pin: touching means nothing can show through, whatever the
+// two surfaces are painted.
+test("the bench header sits flush on the editor, with no band of the drawer showing between", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await expect(frame.locator(".bench-code")).toBeVisible();
+        const gap = await frame.evaluate(() => {
+            const top = document.querySelector(".bench-top").getBoundingClientRect();
+            const code = document.querySelector(".bench-code").getBoundingClientRect();
+            return code.top - top.bottom;
+        });
+        expect(gap, "the editor starts where the header ends").toBeLessThanOrEqual(1);
+        expect(gap, "…and does not overlap it either").toBeGreaterThanOrEqual(-1);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
 // THE ENVIRONMENT PANEL OPENS DOWNWARD, UNDER ITS BUTTON. There were two `.bench-env` rules for a while —
 // one from when the button lived in a bar at the BOTTOM, anchoring the panel with `bottom: calc(100% + 5px)`
 // so it opened upward out of that bar — and the later one won. With the button now in the header at the TOP,

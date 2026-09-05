@@ -776,7 +776,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Python bench — a debug workbench that runs scripts against the model's sandbox. */
 /* `position: relative` so the environment panel can float against this box rather than sit in the flow —
    opening it used to PUSH the editor down, which moves the code you opened it to compare against. */
-.bench { position: relative; display: flex; flex-direction: column; gap: 8px; }
+.bench { position: relative; display: flex; flex-direction: column; gap: var(--bench-gap); --bench-gap: 8px; }
+/* THE HEADER IS FLUSH WITH THE EDITOR. The column's `gap` applies after the header too, which showed the
+   drawer's own ground between two panel-coloured surfaces — a white bar across the drawer in the light
+   theme, and invisible in the dark one, which is how it shipped. The gap belongs between the BODY's rows
+   (editor, output); a chrome strip sits ON the thing it names. Cancelled against the variable rather than a
+   written-down 8, so changing the gap cannot leave a sliver behind. */
+.bench-top { margin-bottom: calc(-1 * var(--bench-gap)); }
 /* The environment panel: a popover under the header, not a row. It is read while you type, so it must not
    reflow what is underneath it; and it is bounded so a long package list scrolls instead of covering the
    whole bench. */

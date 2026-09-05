@@ -633,9 +633,14 @@ export function residencyEvents(samples: ResourceSample[], knownLoads: ResourceE
  *  time — it is an overview, and a 10-minute hole in the middle of a session is a fact about the session that
  *  an overview should show at its true width, not collapse the way the chart's segments do.
  *
- *  Returns null when there is nothing to scrub: no samples, or a session so short that the window covers all
- *  of it — a strip whose box is the whole strip is a control that cannot do anything, and drawing one implies
- *  otherwise. */
+ *  Returns null only when there is no WINDOW at all (the "everything" setting, which is not a viewport onto
+ *  anything) or no session to draw. It deliberately does NOT return null for a window that happens to cover
+ *  the whole session: that is a state a live view passes through constantly — the rolling window is wider
+ *  than a session that has just started, and a width dragged while following is REMEMBERED, so stretching
+ *  the box to the full width once made the control delete itself and reappear minutes later when the session
+ *  outgrew it. A control that vanishes is worse than one that is momentarily at its limit, and it took the
+ *  only way back with it: the chart's wheel-scrub reads this too. Full-width and draggable says the same
+ *  thing honestly. */
 export interface ScrubExtent {
     /** First and last sample in the session. */
     from: number;
@@ -655,18 +660,19 @@ export function scrubExtent(
     samples: readonly { t: number }[],
     window: { from: number; to: number } | null,
 ): ScrubExtent | null {
+    if (!window) return null;   // no viewport: the plot already IS the whole session
     if (samples.length < 2) return null;
     const from = samples[0].t, to = samples[samples.length - 1].t;
     const span = to - from;
     if (span <= 0) return null;
-    const w = window ?? { from, to };
     // Clamped, because a window can legitimately extend past the samples (the rolling window reaches back
     // before the first sample on a fresh open, and forward to now).
     const clamp = (t: number) => Math.min(1, Math.max(0, (t - from) / span));
-    const windowFrom = clamp(w.from), windowTo = clamp(w.to);
-    // Nothing to scrub if the window already covers everything there is.
-    if (windowFrom <= 0 && windowTo >= 1) return null;
-    return { from, to, windowFrom, windowTo, atTail: w.to >= to - TAIL_SLACK_MS };
+    return {
+        from, to,
+        windowFrom: clamp(window.from), windowTo: clamp(window.to),
+        atTail: window.to >= to - TAIL_SLACK_MS,
+    };
 }
 
 /** Move a window to a new position on the strip, keeping its DURATION. Dragging the box scrolls time; it does

@@ -7730,14 +7730,18 @@ test("a card that vanishes mid-session: re-shape, keep the trace, say what happe
     assert.match(chip.querySelector(".tt-pop").textContent, /stopped reporting/);
 });
 
-// The scrub strip: the whole session in one bar, with a box for the slice the chart is drawing. It only
-// appears when there IS something to scrub — a box covering the whole strip is a control that cannot do
-// anything, and drawing one implies otherwise.
+// The scrub strip: the whole session in one bar, with a box for the slice the chart is drawing. It is drawn
+// for as long as there is a WINDOW, even while that window is wider than the session and the box therefore
+// fills the strip — which is the state every live view is in for its first minutes. It used to be withheld
+// there, on the reasoning that a full-width box is a control that cannot do anything; the cost was that the
+// control DELETED ITSELF, both on a fresh open and whenever a stretch-while-following was remembered as the
+// new width, and reappeared minutes later when the session outgrew it. It takes the chart's wheel-scrub with
+// it when it goes, so there is then no way back at all.
 //
 // The UNPIN/re-pin round trip is an e2e: in a session a few seconds long, every position is within one poll
 // of the tail (TAIL_SLACK_MS), so "dragged back" and "following live" are genuinely the same state here —
 // correct behaviour, and untestable at this timescale. The rule itself is covered by scrubExtent's own test.
-test("scrub strip: appears once the session outgrows the window, and the box follows the drag", async () => {
+test("scrub strip: is there from the first samples, and narrows as the session outgrows the window", async () => {
     const GB = 1024 ** 3;
     const w = await loadSidebarWorld({
         vram: [{ model: "big:27b", vramGB: 19, vramBytes: 19 * GB, sizeBytes: 19 * GB,
@@ -7749,13 +7753,13 @@ test("scrub strip: appears once the session outgrows the window, and the box fol
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
-    assert.equal(w.shadow.querySelectorAll(".rc-scrub").length, 0, "no strip while the window covers everything");
-
     for (let i = 0; i < 60 && !w.shadow.querySelector(".rc-scrub"); i++) {
         await w.flush(); await new Promise((r) => setTimeout(r, 200));
     }
     let strip = w.shadow.querySelector(".rc-scrub");
-    assert.ok(strip, "the strip appears once there is history the window doesn't cover");
+    assert.ok(strip, "the strip is drawn as soon as there is a session to draw");
+    assert.ok(Number(/width:\s*([\d.]+)%/.exec(strip.querySelector(".rc-scrub-win").getAttribute("style"))[1]) > 90,
+        "…full width to begin with, because the window is wider than the session so far");
     assert.ok(strip.querySelectorAll(".rc-scrub-run").length >= 1, "the session's runs are drawn as blocks");
     // Wait until the box is a genuine BOX and not the whole strip. The strip appears the instant history
     // exceeds the window, at which point the window still covers ~100% of it — and a grab at x=0 then lands

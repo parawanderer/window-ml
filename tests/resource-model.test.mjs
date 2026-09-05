@@ -874,9 +874,17 @@ test("scrubExtent: where the window sits, and when there is nothing to scrub", (
     assert.equal(M.scrubExtent(samples, { from: 7000, to: 8500 }).atTail, true, "within the slack");
     assert.equal(M.scrubExtent(samples, { from: 5000, to: 6500 }).atTail, false, "…but not this far back");
 
-    // Nothing to scrub: a strip whose box is the whole strip is a control that cannot do anything, and
-    // drawing one implies otherwise.
-    assert.equal(M.scrubExtent(samples, { from: 0, to: 99_999 }), null, "the window covers everything");
+    // A WINDOW WIDER THAN THE SESSION still has a strip, at full width. This is the state a live view is in
+    // for the first minutes of every session — the rolling window reaches back before the first sample — and
+    // it is also where a stretch-while-following lands, since that width is remembered. Returning null here
+    // made the control delete itself and reappear minutes later when the session outgrew the window, taking
+    // the wheel-scrub with it, so there was no way back at all.
+    const wide = M.scrubExtent(samples, { from: 0, to: 99_999 });
+    assert.equal(wide.windowFrom, 0, "clamped to the session's own start");
+    assert.equal(wide.windowTo, 1);
+    assert.equal(wide.atTail, true, "…and following, so the live button reads as on");
+
+    // Nothing to scrub: no viewport at all, or no session to be a viewport onto.
     assert.equal(M.scrubExtent(samples, null), null, "no window means the whole session is shown");
     assert.equal(M.scrubExtent([{ t: 1 }], { from: 0, to: 2 }), null, "one sample is not a session");
     assert.equal(M.scrubExtent([], null), null);
