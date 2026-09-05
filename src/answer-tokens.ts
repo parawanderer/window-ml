@@ -39,7 +39,14 @@ const isHex6 = (s: string): boolean => isTokenShape(s);
  *
  *  Fences are matched FIRST and their interior is skipped wholesale, because a fenced block may contain an
  *  odd number of backticks and pairing them across it would mark half the document as code. Inline spans
- *  honour the CommonMark run rule: a span opened with N backticks closes on the next run of exactly N. */
+ *  honour the CommonMark run rule: a span opened with N backticks closes on the next run of exactly N.
+ *
+ *  A 4-SPACE INDENTED BLOCK IS DELIBERATELY NOT CODE HERE, because it is not code in the renderer either —
+ *  `markdown()` emits an ordinary paragraph for it. This function exists to keep the citation parser and the
+ *  text renderer agreeing about what code is, so calling an indented block code would leave an unexpanded
+ *  `![x](@tool:…)` sitting in plain prose, which reads as a BROKEN citation rather than as an explanation.
+ *  If the renderer ever grows indented-code support, this has to grow with it — `tests/answer-tokens` pins
+ *  both halves of that coupling so the decision surfaces instead of drifting. */
 export function codeRanges(md: string): [number, number][] {
     const out: [number, number][] = [];
     const fence = /^[ \t]*(`{3,}|~{3,})[^\n]*$/gm;

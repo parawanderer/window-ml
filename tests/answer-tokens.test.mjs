@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { splitAnswer, hasTokens, resolveTokenStep, tokenIdsIn } from "../src/answer-tokens.ts";
 import { toolToken } from "../src/util.ts";
+import { markdown } from "../src/sidebar/format.ts";
 
 test("splitAnswer: a token link splits into prose + token + prose; default slot is out; embed vs link", () => {
     // LINK form `[…]` → embed:false (renders as a clickable jump).
@@ -157,4 +158,36 @@ test("double-backtick spans close on a run of exactly two, so an inner single ti
 test("tokenIdsIn skips a mentioned citation, so it cannot dedup an output that was never shown", () => {
     assert.deepEqual([...tokenIdsIn("as in `![x](@tool:abc1234)`")], []);
     assert.deepEqual([...tokenIdsIn("as in ![x](@tool:abc1234)")], ["abc1234"]);
+});
+
+// EVERY SHAPE OF CODE BLOCK a model might reach for, since the point is that it can explain the syntax in
+// whichever one it picks.
+test("a tilde fence hides a pointer too, and closes only on its own marker", () => {
+    assert.deepEqual(splitAnswer("~~~\n![x](@tool:abc1234)\n~~~").map((s) => s.kind), ["prose"]);
+});
+
+test("a fence with a language tag still hides it", () => {
+    assert.deepEqual(splitAnswer("```markdown\n![x](@tool:abc1234)\n```").map((s) => s.kind), ["prose"]);
+});
+
+test("a fence INDENTED inside a list item still hides it", () => {
+    const md = "- like so:\n  ```\n  ![x](@tool:abc1234)\n  ```";
+    assert.deepEqual(splitAnswer(md).map((s) => s.kind), ["prose"]);
+});
+
+test("a fence does not hide the citations AFTER it", () => {
+    const segs = splitAnswer("```\n![a](@tool:abc1234)\n```\n\nand ![b](@tool:def5678)");
+    const toks = segs.filter((s) => s.kind === "token");
+    assert.deepEqual(toks.map((t) => t.id), ["def5678"], "the fence closes; the one after it is a real cite");
+});
+
+// A 4-SPACE INDENT IS NOT CODE HERE, and that is a decision coupled to the renderer rather than an oversight:
+// `markdown()` emits a plain <p> for an indented block, so treating it as code would leave an unexpanded
+// `![x](@tool:…)` in ordinary prose — a citation that looks broken instead of one that looks explained. Both
+// halves are asserted, so a renderer that later grows indented-code support fails HERE and forces the choice.
+test("a 4-space indented block is not code — and the renderer agrees", () => {
+    const md = "text:\n\n    ![x](@tool:abc1234)\n\nafter";
+    assert.ok(splitAnswer(md).some((s) => s.kind === "token"), "the citation still resolves");
+    const html = markdown("text:\n\n    an indented line\n\nafter");
+    assert.ok(!/<pre|<code/.test(html), "…because markdown() does not make a code block of it either");
 });
