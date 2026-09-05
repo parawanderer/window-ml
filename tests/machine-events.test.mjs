@@ -211,3 +211,39 @@ test("the dedupe is bounded and keeps the newest", () => {
     assert.equal(list.length, 5);
     assert.deepEqual(list.map((e) => e.model), ["m7", "m8", "m9", "m10", "m11"]);
 });
+
+
+// ── What the two halves each MOVED ────────────────────────────────────────────────────────────────────
+//
+// The server measures it now (`size_vram` on the boundary and closing edges), and the durations alone cannot
+// tell a six-second weights step that moved 17 GiB from one that moved 300 MiB. Confirmed live on the box:
+// `load.weights size_vram=17.11 GiB` against a device step of `+17.11` at the same instant.
+
+test("a load carries what each half moved, when the server reports it", () => {
+    reset();
+    machineEventFrom({ kind: "load.start", model: "m" }, 1000);
+    machineEventFrom({ kind: "load.weights", model: "m", size_vram: 18_375_161_937 }, 7000);
+    const span = machineEventFrom({ kind: "load.complete", model: "m", size_vram: 21_575_069_857, weights_ms: 5943, context_ms: 1612 }, 8700);
+    assert.equal(span.weightsBytes, 18_375_161_937, "the weights, as measured");
+    assert.equal(span.loadBytes, 21_575_069_857, "and the whole load — the context is the difference");
+    assert.deepEqual(span.phases, [{ kind: "weights", until: 7088 }, { kind: "context", until: 8700 }]);
+});
+
+test("a server that reports no sizes still draws the span, without inventing them", () => {
+    reset();
+    machineEventFrom({ kind: "load.start", model: "m" }, 1000);
+    machineEventFrom({ kind: "load.weights", model: "m" }, 3000);
+    const span = machineEventFrom({ kind: "load.complete", model: "m" }, 8000);
+    assert.equal(span.weightsBytes, undefined);
+    assert.equal(span.loadBytes, undefined);
+    assert.ok(span.phases, "the timing split still stands on its own");
+});
+
+// The server used to emit these with no model at all, so they were dropped. It names them now.
+test("an unload that NAMES its model is drawn", () => {
+    reset();
+    const ev = machineEventFrom({ kind: "unload", model: "registry.ollama.ai/library/qwen3-vl:30b" }, 5000);
+    assert.equal(ev.kind, "evict");
+    assert.equal(ev.model, "qwen3-vl:30b", "canonicalised, like every other edge");
+    assert.match(ev.label, /idle/, "…and it says WHY: an idle expiry, not making room for something");
+});

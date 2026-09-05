@@ -987,6 +987,12 @@ function EventTip({ scope }: { scope: string }) {
     const overheadMs = e.cost?.evalMs != null && e.cost.wallMs != null
         ? Math.max(0, e.cost.wallMs - e.cost.evalMs - (promptMs ?? 0)) || null : null;
     const phases = (e.phases || []).map((ph, i) => ({ ...ph, from: i ? e.phases![i - 1].until : e.t }));
+    // The two halves of a load, in bytes: the weights as the server measured them, and the context as the
+    // difference between the whole load and the weights. Null unless the server reported both.
+    const phaseBytes = (kind: string): number | null =>
+        kind === "weights" ? (e.weightsBytes ?? null)
+        : kind === "context" ? (e.loadBytes != null && e.weightsBytes != null ? e.loadBytes - e.weightsBytes : null)
+        : null;
     const first = phases[0];
     // A TOTAL record over the phase kinds, not a chain ending in a default. The chain shipped `weights` and
     // `context` — the two halves of a model load — as the word "tool", because an unknown kind fell through
@@ -1093,6 +1099,11 @@ function EventTip({ scope }: { scope: string }) {
                         <span class="rc-tip-name">{ph.kind === "tool"
                             ? <>tool call: <code>{e.tool}</code></>
                             : nameFor(ph.kind)}</span>
+                        {/* WHAT IT MOVED, beside how long it took. A six-second weights step that moved 17
+                            GiB reads very differently from one that moved 300 MiB, and the duration alone
+                            cannot tell them apart. Only when the server measured it. */}
+                        {phaseBytes(ph.kind) != null
+                            ? <span class="rc-chip rc-chip-dim">{formatBytes(phaseBytes(ph.kind)!)}</span> : null}
                         <span class="rc-tip-size">{ms(ph.until - ph.from)}</span></div>
                 </>
             ))}

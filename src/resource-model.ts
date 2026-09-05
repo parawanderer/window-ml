@@ -1235,6 +1235,15 @@ export interface ResourceEvent {
      *  before the model will serve. So the span says "resident at 4s, usable at 10s", which is a readiness
      *  fact and the explanation a reader otherwise lacks for a memory trace that went flat while they waited. */
     phases?: { kind: PhaseKind; until: number }[];
+    /** What a model LOAD moved into memory, as the server measured it: `loadBytes` is the whole load,
+     *  `weightsBytes` the first half — so the context is the difference. Only a patched Ollama reports them
+     *  (`size_vram` on the `load.weights` and `load.complete` edges).
+     *
+     *  They differ from the DEVICE's own step by the CUDA context floor (~0.69 GiB per card), which is
+     *  agreement rather than drift: the device figure includes the driver context, the model's does not.
+     *  Do not reconcile the two to zero. */
+    loadBytes?: number;
+    weightsBytes?: number;
     /** This span has NOT FINISHED: `until` is where it had reached when the snapshot was taken, not where it
      *  ended. Only ever set by an `eventsFrom` given a `now` — a surface drawing live. It exists so the UI can
      *  say "still going" rather than drawing a bar whose right edge looks like a measured end. */

@@ -42,6 +42,32 @@ as an error. Then:
   that is right there, working. A local in-flight flag is not a substitute: the runs that matter most
   are the ones this browser never started.
 
+**A load's memory is visible WHILE it happens (as of 2026-09-05).** This was reported as a client-side
+puzzle — a six-second load with zero samples inside it, so the memory line could only ever step once — and
+turned out to be four faults stacked on the server, each hiding the next: `EventFrame` had no `size_vram`
+field at all (so every VRAM figure a client saw came from the embedded `ps` body, never from the edge);
+`load.weights` carried no memory; the sampler chose its cadence *when a tick fired*, so a 6 s load inside a
+15 s idle interval was never observed; and free memory came from two sources that differ by ~1.1 GiB. Now
+events WAKE the sampler (~40 ms to the first reading after an edge) and it runs at **250 ms while a load is
+in flight**, free memory is read from NVML on every reported figure, and `size_vram` rides on `load.weights`
+and `load.complete`.
+
+Three things follow for a client, all of them counter-intuitive enough to have caught us:
+
+- **`vram_used` does NOT move during a load.** It is ollama's own accounting over registered runners, and
+  the runner does not exist until the load returns — so it stays flat and jumps at the end. The two steps
+  are visible in the DEVICE figures (`supported_gpus[].free_memory`), which is what the panel draws from.
+  Measured on a 7.6 s load: `+0.55 GiB` (the driver context), then `+17.11` as the weights land — matching
+  `load.weights size_vram` to the byte — then `+2.33` and `+0.36` as the context is allocated.
+- **An event's `size_vram` and the device's own step differ by the CUDA context floor** (~0.69 GiB per
+  card): the device figure includes the driver context, the model's does not. That is agreement, not drift.
+  **Do not reconcile them to zero.**
+- **A `sample` mid-load can arrive with `info: null`** — that reading learned nothing about capacity, and is
+  not a claim that the box has none. `holdCapacity` is what keeps the ceiling across it.
+
+**`unload` now names its model.** It previously did not — `unload()` cleared `runner.model` and the name was
+read after it — so those frames were dropped rather than drawing an unnamed model leaving memory.
+
 **The event stream is the one thing polling cannot approximate.** For most of a load there is no runner
 object in Ollama at all — it is constructed only after the load returns — so `/api/ps` is not merely coarse
 during a load, it is empty: measured on the box, `load.start` at t=4102, `load.complete` at t=48053, and

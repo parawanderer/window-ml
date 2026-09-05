@@ -1617,6 +1617,11 @@ broken:
   negative for backfill; `?since=` is a DURATION, not an offset; and **the stream names models
   fully-qualified while `/api/ps` names them short**, which `normModel` reconciles at the
   `machineEventFrom` boundary — miss it and every model is drawn twice, once as a phantom "off-box" row.
+  A load is SAMPLED while it happens now (250 ms, and events wake the sampler), and its two halves each
+  carry a `size_vram` — but **`vram_used` stays flat through a load** (it counts registered runners, and the
+  runner does not exist yet), so the two steps show in the per-device free memory and nowhere else. See
+  `docs/FORKED-BACKENDS.md` for the rest, including why an event's `size_vram` is ~0.69 GiB per card below
+  the device's own step and must not be reconciled to it.
   Recorded fixtures come from `tests/e2e/capture-frames.mjs`; the fake backend replays them via
   `setEvents`/`pushFrame` and `tests/e2e/resource-stream.spec.mjs` is the coverage.
 - **`POST /api/v1/tools/id/{id}/execute`** comes from `parawanderer/open-webui`, branch
