@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { jsonResponse, htmlResponse, streamResponse, loadBackground } = require("./helpers");
+const { jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground } = require("./helpers");
 
 const IMG = "data:image/png;base64,AAA";
 
@@ -3362,4 +3362,165 @@ test("START_RUN: a REMOTE tool's output is citable on the background path, so a 
     assert.doesNotMatch(derefResult, /MemoryFault|has been captured/i,
         `the remote output was citable, so the read resolved — got: ${derefResult}`);
     assert.match(derefResult, /\$12\/month/, "…and it read back the remote tool's own output");
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// PROTOBUF CHAT STREAMING. The same tokens as ~22x fewer bytes, because OpenAI's SSE re-sends the id/model/
+// created/choices envelope for EVERY token. Opt-in by config, but SELF-NEGOTIATING on the wire: we send one
+// `Accept` header and decide from what comes back, so a backend that does not serve it answers with the SSE
+// it always did and the miss IS the fallback.
+
+/** Frame a protobuf message the way the server does: its byte length as a varint, then its bytes. */
+const pbFrame = (body) => {
+    const out = [];
+    let n = body.length;
+    do { out.push(n > 127 ? (n & 0x7f) | 0x80 : n); n >>>= 7; } while (n);
+    return [...out, ...body];
+};
+/** A length-delimited protobuf string field. */
+const pbStr = (field, text) => {
+    const b = [...new TextEncoder().encode(text)];
+    return [(field << 3) | 2, b.length, ...b];
+};
+/** A varint field. */
+const pbVar = (field, n) => [(field << 3) | 0, n];
+/** Frame.delta{content} — Frame field 2, Delta field 1. */
+const pbDelta = (text) => { const d = pbStr(1, text); return pbFrame([0x12, d.length, ...d]); };
+/** Frame.end{finish_reason, prompt_tokens, completion_tokens} — Frame field 3. */
+const pbEnd = (reason, pt, ct) => {
+    const e = [...pbStr(1, reason), ...pbVar(2, pt), ...pbVar(3, ct)];
+    return pbFrame([0x1a, e.length, ...e]);
+};
+/** Frame.start{id, model} — Frame field 1. */
+const pbStart = (id, model) => {
+    const st = [...pbStr(1, id), ...pbStr(2, model)];
+    return pbFrame([0x0a, st.length, ...st]);
+};
+
+test("protobuf stream: asks for it, decodes the deltas, and reports the usage from End", async () => {
+    let accept = null;
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: true },
+        onFetch: (call) => {
+            accept = call.opts?.headers?.Accept ?? null;
+            return binaryStreamResponse([
+                [...pbStart("chatcmpl-1", "gemma4:e2b"), ...pbDelta("Hel")],
+                [...pbDelta("lo"), ...pbEnd("stop", 11, 2)],
+            ]);
+        }
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+
+    assert.equal(accept, "application/protobuf", "the one header that opts in");
+    const deltas = client.messages.filter(m => m.type === "chunk").map(m => m.delta);
+    const done = client.messages.find(m => m.type === "done");
+    assert.deepEqual(deltas, ["Hel", "lo"], "each Delta reaches the caller as it lands");
+    assert.equal(done.content, "Hello");
+    // `End` replaces the finish chunk, the usage chunk AND `data: [DONE]` — one frame for all three.
+    assert.equal(done.usage?.promptTokens, 11);
+    assert.equal(done.usage?.completionTokens, 2);
+});
+
+test("protobuf stream: a message split across two network reads still arrives whole", async () => {
+    // The failure this exists for only ever shows up on a real link: chunk boundaries have NOTHING to do with
+    // message boundaries, so a frame arrives in halves and a reader that assumes otherwise loses it.
+    const wire = [...pbDelta("Hello"), ...pbEnd("stop", 1, 1)];
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: true },
+        onFetch: () => binaryStreamResponse([wire.slice(0, 3), wire.slice(3, 4), wire.slice(4)]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    assert.equal(client.messages.find(m => m.type === "done")?.content, "Hello");
+});
+
+test("protobuf stream: a stream CUT mid-frame is an error, not a short answer", async () => {
+    // Partial output returned as a finished answer is a wrong answer dressed as a complete one, and the
+    // caller cannot tell the difference — so held bytes at the end are a transport failure.
+    const wire = [...pbDelta("Hel"), ...pbDelta("lo")];
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: true },
+        onFetch: () => binaryStreamResponse([wire.slice(0, wire.length - 2)]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    assert.ok(client.messages.find(m => m.type === "error"), "it reports rather than truncating");
+    assert.equal(client.messages.find(m => m.type === "done"), undefined);
+});
+
+test("protobuf stream: a backend that answers SSE anyway is parsed as SSE", async () => {
+    // THE MISS IS THE FALLBACK. We ask hopefully; an older build, a proxy that drops the header, or a stock
+    // server all answer with what they always did, and asking cost one header rather than a probe request.
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: true },
+        onFetch: () => streamResponse([
+            'data: {"choices":[{"delta":{"content":"plain"}}]}\n',
+            "data: [DONE]\n"
+        ]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    assert.equal(client.messages.find(m => m.type === "done")?.content, "plain");
+});
+
+test("protobuf stream: a TOOL CALL decodes out of a Delta, and the hand-back is still visible", async () => {
+    // The schema carried tool_calls before the encoder filled them, so this needed no change when it did —
+    // which is the argument for generating the decoder rather than writing it to the fields visible on the
+    // day. Verified against the live box too (tests/e2e/proto-stream-live.mjs).
+    // Delta.tool_calls (field 3) { ToolCall.function (field 4) { Function.name (field 1) = "get_weather" } }
+    const fn = pbStr(1, "get_weather");
+    const tc = [0x22, fn.length, ...fn];
+    const d = [0x1a, tc.length, ...tc];
+    const frame = pbFrame([0x12, d.length, ...d]);
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: true },
+        onFetch: () => binaryStreamResponse([[...frame, ...pbEnd("tool_calls", 5, 1)]]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    // No content and a tool_calls finish is the HAND-BACK shape the server-tool retry keys on, so it has to
+    // survive the format change or that loop would read a hand-back as a plain empty completion.
+    const done = client.messages.find(m => m.type === "done");
+    assert.equal(done?.content, "");
+    assert.equal(done?.usage?.promptTokens, 5);
+});
+
+test("protobuf stream: a toolIds call keeps SSE — the schema has nowhere to put SOURCES", async () => {
+    // The one real gap, and the reason this gate did not simply go away when the encoder gained tool calls.
+    // OpenWebUI attaches provenance for a server-side tool or a RAG hit as its own SSE line ({sources:[…]}),
+    // and Start/Delta/End have no field for it. Such a call would answer correctly and lose every citation
+    // without saying so.
+    let accept = "unset";
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: true },
+        onFetch: (call) => {
+            accept = call.opts?.headers?.Accept ?? null;
+            return streamResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n', "data: [DONE]\n"]);
+        }
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }], toolIds: ["srv1"] } });
+    await settle();
+    assert.equal(accept, undefined, "no Accept: application/protobuf on a tool call");
+});
+
+test("protobuf stream: OFF by default — the header is not sent unless asked for", async () => {
+    let accept = "unset";
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            accept = call.opts?.headers?.Accept ?? null;
+            return streamResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n', "data: [DONE]\n"]);
+        }
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    assert.equal(accept, undefined);
 });

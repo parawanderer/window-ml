@@ -1396,6 +1396,34 @@ export sinks) — not decoration: a stub twin is a valid 200 Markdown document t
 `.markdown`, else `.text`). Advertised in `exec`'s description only — it needs exec, which a run may not
 have — and otherwise discovered through `agent_api_docs`.
 
+**Protobuf chat streaming (`protoStream`, opt-in).** OpenAI's SSE re-sends `id`/`object`/`created`/`model`/
+`system_fingerprint` and the `choices[0].delta` wrapper for EVERY token — ~224 bytes of envelope around ~5 of
+text. A patched Ollama serves the same stream as varint-delimited protobuf instead: the invariant half arrives
+once in `Start`, a token costs a tag + a length + its bytes, and `End` replaces the finish chunk, the usage
+chunk AND `data: [DONE]`. Measured through the proxy on `gemma4:31b`: **7343 → 292 bytes, 25.1x**.
+**One `Accept: application/protobuf` header, sent hopefully and never sniffed** — the path is chosen from the
+RESPONSE's Content-Type, so a stock server, an older build or a proxy that drops the header answers with the
+SSE it always did and the miss IS the fallback (the same shape as the Markdown ladder's first rung). The
+decoder is **GENERATED** from the schema (`scripts/gen-proto.mjs` → `src/proto/chat.gen.ts`, checked in
+because CI has no protoc; `tests/proto.test.mjs` regenerates and diffs, skipping where protoc is absent). That
+is not tidiness: `tool_calls` and `logprobs` were in the schema before the encoder filled them, so when it did,
+this read them **with no change here** — a hand-written decoder is a second copy of the field numbers and
+would not have. The schema is not ours, so it is **pinned by git blob id**
+(`src/proto/chat.proto.pin.json` → `parawanderer/ollama:middleware/chat.proto`, beside the Go encoder, which
+is what makes it the definition rather than a copy of one). `npm run gen-proto -- --check` verifies the
+vendored copy OFFLINE (a blob id is content-addressed, so it holds in CI and a fresh checkout), confirms the
+commit still carries that blob when GitHub is reachable, and reports when upstream has moved on — which a
+content hash alone cannot, since "we match commit X" stays true forever.
+**`toolIds` KEEPS SSE**, and that is the one real gap: OpenWebUI attaches provenance as its own SSE line
+(`{sources:[…]}`) and `Start`/`Delta`/`End` have nowhere to put it, so a server-tool call would answer
+correctly and lose every citation silently. Reported upstream. **No `TextDecoder` anywhere in this path** — it
+is binary, and decoding it as UTF-8 corrupts it silently rather than throwing. The framing half
+(`src/protostream.ts`) is ours because it is not in the schema: `fetch()` chunk boundaries have nothing to do
+with message boundaries, so the reader buffers and yields only whole frames, refuses a length prefix claiming
+the world, and treats **bytes still held at the end as a transport failure** rather than a short answer.
+`tests/e2e/proto-stream-live.mjs` is the debug probe against the real box — the only thing that puts the
+server's own bytes through it rather than frames this repo also wrote.
+
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,
 captured in `streamChunk`/`consume`). `fetchLLM`/`streamLLM` return

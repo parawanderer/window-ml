@@ -73,6 +73,26 @@ function htmlResponse(status = 200) {
 
 // A streaming response stub: `lines` are raw wire lines (SSE "data: {...}\n" or
 // Ollama NDJSON) fed through body.getReader() one read() at a time.
+/** A BINARY streamed response, with the content-type that selects the protobuf path. Chunk boundaries are
+ *  whatever the caller passes, deliberately: the framing has to survive a message split across two reads. */
+function binaryStreamResponse(chunks, { status = 200, type = "application/protobuf; delimited=varint" } = {}) {
+    let i = 0;
+    return {
+        ok: status >= 200 && status < 300,
+        status,
+        headers: { get: (k) => (String(k).toLowerCase() === "content-type" ? type : null) },
+        body: {
+            getReader: () => ({
+                read: async () => (i < chunks.length
+                    ? { done: false, value: new Uint8Array(chunks[i++]) }
+                    : { done: true, value: undefined })
+            })
+        },
+        text: async () => { throw new Error("binary response has no text()"); },
+        json: async () => { throw new Error("streaming response has no json()"); }
+    };
+}
+
 function streamResponse(lines, { status = 200 } = {}) {
     const enc = new TextEncoder();
     let i = 0;
@@ -559,4 +579,4 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, pyCalls, printCalls, setVram };
 }
 
-module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };
+module.exports = { jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };

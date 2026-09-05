@@ -7,6 +7,8 @@
 import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, GenPhase } from "./contract";
 import { DEFAULT_CONFIG, modelFilterAllows, generatesText, producesEmbeddings } from "./contract";   // single source of truth (see contract.ts)
 import { loadedFrom } from "./resource-events";
+import { createFrameReader } from "./protostream";
+import { Frame } from "./proto/chat.gen";
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {
@@ -436,6 +438,27 @@ function rateLimitWaitMs(retryAfter: string | null, body: string): number {
 export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSignal) {
     const config = await getConfig();
     const headers = authHeaders(config);
+    /**
+     * MAY THIS CALL ASK FOR PROTOBUF? Only when the format carries nothing the wire would drop.
+     *
+     * TOOL CALLS ARE FINE. They were in the schema from the start and the encoder fills them now — verified
+     * against the live box, not taken on report (`tests/e2e/proto-stream-live.mjs`): a `tools` request came
+     * back with `finish=tool_calls` and `get_weather({"city":"Paris"})` decoded out of a Delta. Reasoning
+     * rides it too.
+     *
+     * `toolIds` DOES NOT, and this is the one real gap. OpenWebUI attaches provenance for a server-side tool
+     * or a RAG hit as its own SSE line (`{ sources: [...] }`), and the schema has NOWHERE to put it —
+     * no field on Start, Delta or End. So a server-tool call over protobuf would answer correctly and lose
+     * every citation, silently, which is the failure this whole gate exists to prevent. Reported upstream;
+     * until there is a field, such a call keeps the format that carries one.
+     *
+     * A `schema` call never streams at all (structured output skips the streaming path), so it is excluded
+     * for tidiness rather than because anything would be lost.
+     *
+     * Ollama-native is excluded because it is NDJSON with its own shape; this replaces the OpenAI SSE.
+     */
+    const protoEligible = !!config.protoStream && (config.apiFormat || "openai") !== "ollama"
+        && !payload.toolIds?.length && !payload.schema;
 
     // Model resolution, in priority order: an explicit model always wins; then
     // the extend:"utility" profile's utilityModel; then the OCR model (ml.read
@@ -575,7 +598,10 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
             try {
                 res = await fetch(config.chatUrl, {
                     method: "POST",
-                    headers,
+                    // ONE HEADER, and only where nothing can be lost by it — see `protoEligible`. A server
+                    // that does not speak it answers with the SSE it always did, so this is safe to send
+                    // hopefully rather than after sniffing a version.
+                    headers: stream && protoEligible ? { ...headers, Accept: "application/protobuf" } : headers,
                     body: JSON.stringify({ ...requestBody, stream }),
                     signal,   // ABORT_TASK → this fetch rejects with an AbortError (kills a slow generation)
                 });
@@ -689,6 +715,13 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
     const _t0 = Date.now();   // wall-clock of this streamed call → usage.genMs
 
     const consume = async (res: Response) => {
+        // NEGOTIATED BY WHAT CAME BACK, not by what we asked for. We send `Accept: application/protobuf` when
+        // it is safe to (see `wantsProto`), and a server, proxy or build that does not do it answers with the
+        // SSE it always did — so the miss IS the fallback and the opt-in costs nothing when it is not there.
+        // The same shape as the Markdown ladder's first rung, and for the same reason: one request, and its
+        // failure is the old path rather than a wasted round trip.
+        if ((res.headers?.get?.("content-type") || "").includes("application/protobuf"))
+            return consumeProto(res);
         const reader = res.body!.getReader();
         const decoder = new TextDecoder();
         let buffer = "", content = "", reasoning = "", sawToolCall = false;
@@ -717,6 +750,55 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
         }
         if (buffer.trim()) handleLine(buffer.trim());
         return { content, sawToolCall, sources, reasoning: reasoning || null, usage };
+    };
+
+    /**
+     * The same stream as varint-delimited protobuf: about 22x fewer bytes for the same tokens.
+     *
+     * The saving is structural rather than a compression trick. OpenAI's SSE re-sends `id`, `object`,
+     * `created`, `model`, `system_fingerprint` and a nested `choices[0].delta` wrapper for EVERY token —
+     * measured at ~224 bytes of envelope around ~5 bytes of text. Here the invariant half arrives once, in
+     * `Start`, and a token costs a tag, a length and its own bytes.
+     *
+     * NO TextDecoder ANYWHERE in this path: it is binary, and decoding it as UTF-8 corrupts it silently
+     * rather than throwing, which is the worst way for this to go wrong.
+     */
+    const consumeProto = async (res: Response) => {
+        const reader = res.body!.getReader();
+        const frames = createFrameReader();
+        let content = "", reasoning = "", sawToolCall = false;
+        let usage: TokenUsage | null = null;
+        const handle = (bytes: Uint8Array) => {
+            const f = Frame.decode(bytes);
+            if (f.delta) {
+                if (f.delta.content) { content += f.delta.content; onDelta(f.delta.content); }
+                if (f.delta.reasoning) reasoning += f.delta.reasoning;
+                // TOOL CALLS ARRIVE HERE NOW. They were in the schema before the encoder filled them, which
+                // is the whole argument for generating the decoder from that schema rather than writing it
+                // to the fields visible on the day: the server started sending these and this read them with
+                // no change on our side.
+                if (f.delta.toolCalls?.length) sawToolCall = true;
+            }
+            if (f.end) {
+                if (f.end.finishReason === "tool_calls") sawToolCall = true;
+                usage = normalizeUsage({
+                    prompt_tokens: f.end.promptTokens, completion_tokens: f.end.completionTokens,
+                    total_tokens: (f.end.promptTokens || 0) + (f.end.completionTokens || 0),
+                });
+            }
+            // `Start` carries the id/model/created that JSON repeated per token. Nothing downstream reads
+            // them — the resolved model is already known here — so they are decoded and dropped.
+        };
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            for (const frame of frames.push(value)) handle(frame);
+        }
+        // BYTES STILL HELD mean the stream stopped in the middle of a frame. Partial output returned as a
+        // finished answer is a wrong answer dressed as a complete one, and the caller cannot tell — so this
+        // is a transport failure, the same rule `createToolStream` follows for a stream with no result frame.
+        if (frames.pending) throw new Error("protobuf stream ended mid-frame");
+        return { content, sawToolCall, sources: [] as unknown[], reasoning: reasoning || null, usage };
     };
 
     if (payload.toolIds?.length) {
