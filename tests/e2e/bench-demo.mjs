@@ -42,6 +42,9 @@ import { mkdirSync } from "node:fs";
 import { launchExtension, configureExtension, waitForMl, openRunInSidebar, narrate, narrateDone } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
+/** The bench field is CodeMirror, so read its DOCUMENT — one `.cm-line` per line — not a textarea value. */
+const editorText = (field) => field.locator(".cm-line").allTextContents().then((lines) => lines.join("\n"));
+
 const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), "artifacts", "bench-demo");
 mkdirSync(ART, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -96,12 +99,12 @@ const main = async () => {
         const drawer = frame.locator(".bench-drawer");
         await narrate(page, "\u25b6 bench opens it as a DRAWER", { sub: "The run stays on screen — that is the trip the drawer exists for." });
         log(`\n--- the bench opened as a DRAWER: ${await drawer.count()} · the run behind it: ${await frame.locator(".astep.tool").count()} step(s), still on screen ---`);
-        log("--- what landed in it ---\n" + (await drawer.locator(".bench-code").inputValue()));
+        log("--- what landed in it ---\n" + (await editorText(drawer.locator(".bench-code"))));
         await frame.page().screenshot({ path: path.join(ART, "1-drawer-with-run.png") });
 
         // 3 — it RUNS, for real, in the same sandbox python_exec uses.
-        await drawer.locator(".bench-code").fill(
-            (await drawer.locator(".bench-code").inputValue()) + "\n# edited here, then run:\n");
+        await drawer.locator(".bench-code .cm-content").fill(
+            (await editorText(drawer.locator(".bench-code"))) + "\n# edited here, then run:\n");
         await drawer.locator(".bench-play").click();
         for (let i = 0; i < 30 && !(await drawer.locator(".bench-outbody .r-python, .bench-outbody .dftable, .bench-outbody .code").count()); i++) await sleep(300);
         await sleep(800);
@@ -124,15 +127,15 @@ const main = async () => {
 
         // 6b — A FAILURE MARKS ITS TAB AND TAKES THE SELECTION. This is the one thing tabs are worse at than
         // disclosures — a disclosure at least advertises that something exists — so it is handled explicitly.
-        const good = await drawer.locator(".bench-code").inputValue();
-        await drawer.locator(".bench-code").fill(good + "\nraise ValueError('and this is what a failure looks like')\n");
+        const good = await editorText(drawer.locator(".bench-code"));
+        await drawer.locator(".bench-code .cm-content").fill(good + "\nraise ValueError('and this is what a failure looks like')\n");
         await drawer.locator(".bench-play").click();
         for (let i = 0; i < 40 && !(await drawer.locator(".bench-tab.err").count()); i++) await sleep(300);
         await sleep(600);
         await narrate(page, "A failure MARKS its tab and takes the selection", { sub: "You were on stdout; the error is what you now need. What it printed first is still one click away." });
         log(`\n--- after a raise: tabs ${(await tabs.allTextContents()).join(" | ")} · showing: ${(await drawer.locator(".bench-tab.on").textContent())} ---`);
         await frame.page().screenshot({ path: path.join(ART, "2d-error-tab.png") });
-        await drawer.locator(".bench-code").fill(good);
+        await drawer.locator(".bench-code .cm-content").fill(good);
         await drawer.locator(".bench-play").click();
         await sleep(1500);
 
@@ -140,7 +143,7 @@ const main = async () => {
         // widget. The last hop is the interesting part: the SW relays a PAGE's chunks through its content
         // script, and the bench is an extension iframe inside a tab — so it has a `sender.tab` and its own
         // output would have gone to the page. The sending FRAME's url is what tells them apart.
-        await drawer.locator(".bench-code").fill(
+        await drawer.locator(".bench-code .cm-content").fill(
             "import time\nfor i in range(6):\n    print('line', i, '\u2014 printed as it happens')\n    time.sleep(0.7)\nreturn 'done'");
         await drawer.locator(".bench-play").click();
         await narrate(page, "stdout STREAMS in, Jupyter-style", { sub: "The same worker tee the agent's python_exec uses \u2014 and the elapsed clock says it is still going." });
@@ -154,7 +157,7 @@ const main = async () => {
         await narrate(page, "\u2026and the result supersedes it", { sub: "You land on the VALUE: an auto-pick never sticks, only a tab you clicked does." });
         log(`--- settled: tabs ${(await tabs.allTextContents()).join(" | ")} \u00b7 showing ${(await drawer.locator(".bench-tab.on").textContent())} ---`);
         await frame.page().screenshot({ path: path.join(ART, "2g-streaming-settled.png") });
-        await drawer.locator(".bench-code").fill(good);
+        await drawer.locator(".bench-code .cm-content").fill(good);
         await drawer.locator(".bench-play").click();
         await sleep(1800);
 
@@ -214,7 +217,7 @@ const main = async () => {
         await narrate(page, "\u2922 docked \u2014 and back to the session you left", { sub: "Not the sessions list. The script is intact." });
         log(`--- ⤡ docked and RETURNED to the session: ${await frame.locator(".astep.tool").count()} step(s), not the sessions list ---`);
         await sleep(300);
-        log(`--- and the bench is a drawer again, script intact:\n${(await frame.locator(".bench-drawer .bench-code").inputValue()).split("\n").slice(-2).join("\n")}`);
+        log(`--- and the bench is a drawer again, script intact:\n${(await editorText(frame.locator(".bench-drawer .bench-code"))).split("\n").slice(-2).join("\n")}`);
         await frame.page().screenshot({ path: path.join(ART, "5-back-and-docked.png") });
 
         log(`\nscreenshots → ${ART}`);
