@@ -1803,9 +1803,27 @@ test("resource panel: the width you drag is the width live keeps", async () => {
 
         // 3. DRAG IT BACK to the right edge. It rejoins live — at the width it is, not the width it was.
         const box3 = await frame.locator(".rc-scrub-win").boundingBox();
+        // ASSERT THE GESTURE BEFORE MAKING IT. The strip publishes which zone the pointer is over — the same
+        // `scrubZone` the drag itself consults — as a class on the track, so hovering the point we are about
+        // to grab says whether this will PAN or RESIZE. Without it a misclassified grab shows up three steps
+        // later as an unexplained paused button, which is exactly how this failed on CI while passing
+        // locally: the symptom is at the end and the cause is at the start.
+        await page.mouse.move(box3.x + box3.width / 2, y);
+        await expect.poll(() => frame.locator(".rc-scrub-track").getAttribute("class"), { timeout: 5000 })
+            .toContain("z-pan");
         // PAST the right edge, not onto it: the window clamps at the end anyway, and aiming exactly at the
         // last pixel leaves nothing for a slow runner's rounding to give away.
         await dragFrom(box3.x + box3.width / 2, track.x + track.width + 20);
+        if (!/▶/.test((await liveText()) ?? "")) {
+            // One line naming the state, because this step has failed on CI while passing locally and the
+            // symptom alone ("still paused") does not say which of the three things went wrong: the gesture
+            // was read as a resize, the window never reached the tail, or it reached it and the button did
+            // not follow. Printed only on the failing path, so a passing run stays quiet.
+            const win = await frame.locator(".rc-scrub-win").evaluate((e) => e.style.cssText);
+            const stored = await windowS();
+            console.log(`[rejoin] track=${Math.round(track.width)} box3=${Math.round(box3.width)} `
+                + `win="${win}" ml_res_window=${stored} live="${await liveText()}"`);
+        }
         await expect.poll(liveText, { timeout: 10000 }).toMatch(/▶\s*live/);
         expect(await frame.locator(".vram-zoom").count()).toBe(0);
         const after = await winW();
