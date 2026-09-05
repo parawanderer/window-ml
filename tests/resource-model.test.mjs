@@ -960,6 +960,70 @@ test("sessionWindow: frames the session, follows a live one, and floors a short 
     assert.equal(M.sessionWindow(evs, null, T), null);
 });
 
+// DEPTH IN THE LANE MEANS CONTAINMENT, so the order of the rows is a claim and not a tidiness preference: a
+// run CONTAINS its steps, so it belongs above them, and the machine's own spans are the ground the run
+// happened on, so they belong below. Packing by start time alone made it incidental — reproduced from a real
+// capture (ml.__events on the box), where the run container sat on row 1 UNDER its own two tool steps while a
+// model load took row 0 from the run it was loading for.
+test("laneRows: the container is above its children, and the machine is below both", () => {
+    // The shape the capture had: a run whose first step begins at the same instant, and a load that starts a
+    // hair before the run it is loading for.
+    const at = (from, to, kind, extra = {}) => ({
+        run: 0, from, to, clipped: false,
+        event: { t: from * 1000, until: to * 1000, kind, label: kind, ...extra },
+    });
+    // THE STEPS COME FIRST IN THE ARRAY, which is what `eventsFrom` actually emits — and with equal starts a
+    // stable sort keeps that order, so whichever is first takes the top row. That is precisely how the
+    // container ended up under its own children, and an arrangement that puts the run first passes by luck
+    // rather than by the rule.
+    const placed = [
+        at(0.51, 0.53, "load", { model: "qwen:32b" }),
+        at(0.52, 0.60, "tool", { ref: { hash: "a", seq: 1 } }),
+        at(0.62, 0.70, "tool", { ref: { hash: "a", seq: 2 } }),
+        at(0.54, 0.58, "gen", { ref: { hash: "a", seq: 1 } }),
+        at(0.52, 0.90, "run", { ref: { hash: "a" } }),
+        at(0.55, 0.75, "serve", { model: "qwen:32b" }),
+    ];
+    const rows = M.laneRows(placed);
+    const rowOf = (kind, n = 0) => rows.findIndex((r) => r.filter((p) => p.event.kind === kind).length > n);
+
+    assert.equal(rowOf("run"), 0, "the container is the top row — it holds everything else");
+    assert.ok(rowOf("tool") > rowOf("run"), "its steps are below it");
+    assert.ok(rowOf("gen") > rowOf("run"), "…and so are its generations");
+    // The machine did not belong to the run and did not contain it: it is the ground underneath.
+    assert.ok(rowOf("load") > rowOf("tool"), "a load sits below the run's own work, not above it");
+    assert.ok(rowOf("serve") > rowOf("tool"), "and so does a serving span");
+});
+
+test("laneTier: the three depths, and everything unknown is machine", () => {
+    // A tier is only a preference between things drawn at the same time — within one, packing is unchanged.
+    assert.equal(M.laneTier("run"), M.laneTier("session"));
+    assert.ok(M.laneTier("run") < M.laneTier("tool"));
+    assert.equal(M.laneTier("gen"), M.laneTier("tool"));
+    assert.equal(M.laneTier("embed"), M.laneTier("tool"));
+    assert.ok(M.laneTier("tool") < M.laneTier("load"));
+    assert.equal(M.laneTier("serve"), M.laneTier("evict"));
+    // A kind added later lands with the machine rather than above a run it has nothing to do with.
+    assert.equal(M.laneTier("something-new"), M.laneTier("evict"));
+});
+
+test("laneRows: a tier is a preference between OVERLAPPING bars, and costs no rows otherwise", () => {
+    // Rows are the lane's scarcest resource and its only claim about time — two bars on separate rows say
+    // they overlap — so a tier must never buy depth it does not need. (Bands are a separate axis: a run's
+    // tree and the machine's events are banded apart so neither is interleaved with the other, which is why
+    // this stays inside one band.)
+    const at = (from, to, kind) => ({
+        run: 0, from, to, clipped: false,
+        event: { t: from * 1000, until: to * 1000, kind, label: kind, model: "m" },
+    });
+    // Machine kinds only, so it is one band: three bars, none overlapping, one row — even though `load` and
+    // `serve` are processed in tier order rather than in time order.
+    assert.equal(M.laneRows([at(0.5, 0.6, "serve"), at(0.0, 0.1, "load"), at(0.2, 0.3, "serve")]).length, 1);
+    // And the row reads left to right in the order the things happened, whatever order they were packed in.
+    const row = M.laneRows([at(0.5, 0.6, "serve"), at(0.0, 0.1, "load"), at(0.2, 0.3, "serve")])[0];
+    assert.deepEqual(row.map((p) => p.from), [0.0, 0.2, 0.5]);
+});
+
 // On a SHARED box most of the machine half of the lane is someone else's traffic. "This session" was drawing
 // all of it, because an event with no ref was read as "belongs to everyone" — so a qwen session showed gemma
 // loading, serving and evicting, in gemma's colour, with no way to tell it was another tenant.

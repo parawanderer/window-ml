@@ -13,7 +13,7 @@ import {
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
     vramOpen, sidebarOpen, backendError, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
-import { ContextMenu, Hash, highlightPos } from "./ui-kit";
+import { ContextMenu, CursorTipLayer, Hash, highlightPos } from "./ui-kit";
 import type { InvocationInfo } from "../contract";
 import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge, EmbedRunView } from "./reply";
@@ -285,6 +285,7 @@ function App() {
     return (
         <div class="app" onWheel={wheelThroughPanel}>
             <ContextMenu />
+            <CursorTipLayer />{/* the cursor-following tip (a marked failing line, and anything else too wide to anchor) */}
             <div class="head">
                 {v.name !== "list" ? <button class="tt nav" aria-label="Back to sessions" onClick={() => (view.value = { name: "list" })}>‹<span class="tt-pop left" role="tooltip">Back to sessions</span></button> : null}
                 {detailSession

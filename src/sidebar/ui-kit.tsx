@@ -4,12 +4,14 @@
 // the custom context menu, the page-highlight bridge, approval posting, and the
 // small click-to-copy chips (Hash / CopyBtn / Stamp / TagBadge / SheetChip / …).
 import type { ComponentChildren } from "preact";
-import { useState, useEffect } from "preact/hooks";
+import { useState, useEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { AnswerMedia } from "../contract";
 import type { Status, AgentStep } from "./store";
 import { codeLineNumbers } from "./store";
 import { beautifyJs, highlight, htmlLines, shortStamp, fullStamp, pretty, truncate } from "./format";
+import { lineMapBetween } from "../line-map";
+import { useTipPlacement } from "./use-tip";
 import { IconCopy, IconCheck, IconSheet, IconChevron } from "./icons";
 
 export const DOT_TIP: Record<Status, string> = {
@@ -66,19 +68,40 @@ function markedHtml(text: string, lang: string | undefined, marks: CodeMark[]): 
 
 const escapeAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-export const Code = ({ text, lang, format, marks }: { text: string; lang?: string; format?: boolean; marks?: CodeMark[] }) => {
+export const Code = ({ text, lang, format, marks, lineIds, markLine, markTitle, onMap }: { text: string; lang?: string; format?: boolean; marks?: CodeMark[]; lineIds?: string; markLine?: number | null; markTitle?: string; onMap?: (map: number[] | null) => void }) => {
     const src = format && !marks?.length && (lang === "javascript" || lang === "js") ? beautifyJs(text) : text;
+    // BEAUTIFYING MOVES LINE NUMBERS, and js-beautify hands back no map — so one is derived from the two
+    // texts (see line-map.ts). Without it a JS stack trace read against this block names a line that has
+    // since moved, which is the same silent disagreement the Python side had.
+    const lineMap = useMemo(() => (src === text ? null : lineMapBetween(text, src)), [text, src]);
+    useEffect(() => { onMap?.(lineMap); }, [lineMap, onMap]);
     // An expansion is a single call and never contains a newline, so a marked span cannot straddle one —
     // which is what lets the line-number path below split this HTML as it always has.
     const html = marks?.length ? markedHtml(src, lang, marks) : highlight(src, lang);
-    if (!codeLineNumbers.value)
+    // The per-line form is also used when a line is being POINTED AT: you cannot mark a line in a block that
+    // has no lines, and a traceback saying "line 3" with nothing numbered leaves the reader counting. So a
+    // `markLine` turns the gutter on for that block regardless of the preference — the preference is about
+    // wanting numbers in general, not about wanting them withheld when something is referring to one.
+    if (!codeLineNumbers.value && markLine == null)
         return <pre class="code"><code class="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>;
     return (
         <pre class="code numbered"><code class="hljs">
             {htmlLines(html).map((ln, i) => (
-                <span class="cline" key={i}>
+                // `lineIds` makes each row addressable, so a traceback elsewhere on the page can point AT a
+                // line rather than at the block containing it.
+                // The marked line carries the panel's own tooltip rather than a native `title`: the native
+                // one waits about a second, which on a mark you are hovering to find out what it MEANS is
+                // long enough to have given up. `.tt` makes the row the trigger; the pop is read into the
+                // shared floating layer.
+                <span class={`cline${markLine === i + 1 ? " cline-fail" : ""}`} key={i}
+                    {...(markLine === i + 1 && markTitle ? cursorTipOn(markTitle) : {})}
+                    {...(lineIds ? { "data-line": String(i + 1) } : {})}>
                     <span class="lno">{i + 1}</span>
                     <span class="lcode" dangerouslySetInnerHTML={{ __html: ln || " " }} />
+                    {/* The marked line's explanation FOLLOWS THE CURSOR (see cursorTip): a code line is as
+                        wide as the block, so an anchored tip can sit half a panel from the pointer that
+                        summoned it. Kept in the DOM as well so it is readable without a pointer at all. */}
+                    {markLine === i + 1 && markTitle ? <span class="tt-pop cline-why" role="tooltip">{markTitle}</span> : null}
                 </span>
             ))}
         </code></pre>
@@ -259,6 +282,29 @@ export function Disclosure({ label, note, open: controlled, onOpen, onToggle, de
             <div class="disc-body" aria-hidden={!open}><div>{children}</div></div>
         </div>
     );
+}
+
+/** A tooltip that FOLLOWS THE CURSOR, for a trigger that is wide. The static `.tt`/`.tt-pop` layer anchors to
+ *  its trigger, which is right for an icon button and wrong for a line of code: the anchor can be half a
+ *  panel away from the pointer that summoned it. One signal and one layer, because two tips on screen at once
+ *  is the failure mode every cursor tip in this panel already guards against.
+ *
+ *  Not the native `title` for the same reason nothing else here is: it waits about a second, which on
+ *  something you are hovering to decide what it MEANS is long enough to have given up. */
+export const cursorTip = signal<{ x: number; y: number; text: string } | null>(null);
+
+/** Handlers for a trigger. Spread onto the element that should show `text` while the pointer is over it. */
+export const cursorTipOn = (text: string) => ({
+    onPointerMove: (e: PointerEvent) => { cursorTip.value = { x: e.clientX, y: e.clientY, text }; },
+    onPointerLeave: () => { cursorTip.value = null; },
+});
+
+/** The single layer. Mounted once per surface, beside the context menu. */
+export function CursorTipLayer() {
+    const t = cursorTip.value;
+    const { ref, style } = useTipPlacement(t ? { x: t.x, y: t.y, w: typeof window !== "undefined" ? window.innerWidth : 1e4 } : null);
+    if (!t) return null;
+    return <div class="rc-tip cursor-tip" role="tooltip" ref={ref} style={style}>{t.text}</div>;
 }
 
 export const decidedSteps = new Set<string>();

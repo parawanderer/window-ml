@@ -8,6 +8,7 @@ import { useState, useRef, useEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, TableSource } from "../contract";
 import { elementReference } from "../dom";
+import { pyFormat, lineChanged } from "../py-format";
 import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode } from "./store";
 import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, hourNow, armHourTick, dayBreaks } from "./timestamps";
 import { markdown, truncate, pretty } from "./format";
@@ -127,7 +128,21 @@ export const dfCell = (v: unknown): string | null => {
     if (typeof v === "object") {
         // `null` means "no text for this" — NOT the string "null", which would be a value that isn't there.
         // The caller renders a marker; the CSV writes an empty field, since a CSV has no way to say this.
-        try { const j = JSON.stringify(v); return j === undefined ? null : j; } catch { return null; }
+        let j: string | undefined;
+        try { j = JSON.stringify(v); } catch { return null; }        // circular
+        if (j === undefined) return null;                             // a function, a symbol
+        // AN EMPTY OBJECT FOR SOMETHING THAT IS NOT ONE. `Map`, `Set` and `Error` all stringify to `{}` —
+        // and unlike a function they survive a structured clone, so they genuinely arrive here. Printing
+        // `{}` for a Map of five entries is the same wrong-fact-in-the-right-place as `[object Object]`,
+        // just quieter. A plain `{}` or `[]` is left alone: there it is the truth.
+        const empty = j === "{}" || j === "[]";
+        // REALM-SAFE. `v.constructor === Object` is false for a plain object that came from another realm —
+        // an iframe, a jsdom window — which is precisely where this runs, so it would mark every ordinary
+        // `{}` as unrenderable. The brand check has no such problem.
+        const brand = Object.prototype.toString.call(v);
+        const plain = brand === "[object Object]" || brand === "[object Array]";
+        if (empty && !plain) return null;
+        return j;
     }
     return String(v);
 };
@@ -243,7 +258,15 @@ function PyInTable({ fold, label, children }: { fold: boolean; label: ComponentC
     );
 }
 
-function PythonInRender({ d, live }: { d: Extract<RenderDescriptor, { type: "python-in" }>; live?: boolean }) {
+function PythonInRender({ d, live, failLine }: { d: Extract<RenderDescriptor, { type: "python-in" }>; live?: boolean; failLine?: number | null }) {
+    const fmt = useMemo(() => pyFormat(d.code), [d.code]);
+    // WHERE IT BROKE, marked on the code rather than only in the traceback — the traceback tells you a
+    // number, and the number is only useful once you have found the line it names. Mapped through the
+    // formatter, so it survives the reflow.
+    const failAt = failLine != null ? (fmt.map[failLine] ?? failLine) : null;
+    const failNote = failLine != null && lineChanged(d.code, fmt, failLine)
+        ? `This line failed. It is shown reflowed for reading — in the code as written it was one longer line.`
+        : "This line failed.";
     return (
         <div class="r-python r-py-in">
             <div class="r-py-mode">Mode: <span class="tt"><span class="r-py-modeval">{PY_MODE[d.mode].label}</span><span class="tt-pop left" role="tooltip">{PY_MODE[d.mode].tip}</span></span></div>
@@ -272,7 +295,13 @@ function PythonInRender({ d, live }: { d: Extract<RenderDescriptor, { type: "pyt
                 source, and a citation that scrolled to the top of the step landed the reader on a table when
                 what they clicked was the code. The renderer declares it because only the renderer knows
                 which of its sections is the answer. */}
-            <div data-cite="in"><Code text={d.code} lang="python" /></div>
+            {/* REFLOWED for reading (see py-format.ts) — tokens untouched, so this is the code that ran. The
+                line MAP is published on the element rather than passed between descriptors: the In and the
+                Out are two independent RenderDescriptors rendered in two separate blocks, and threading one
+                through the other would couple them for the sake of one number. */}
+            <div data-cite="in" data-py-map={fmt.changed ? JSON.stringify(fmt.map) : undefined}>
+                <Code text={fmt.text} lang="python" lineIds="pyline" markLine={failAt} markTitle={failNote} />
+            </div>
         </div>
     );
 }
@@ -526,6 +555,76 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
     );
 }
 
+/** A python traceback, with its user frames turned into links.
+ *
+ *  A traceback's whole content is a line number, so it is the one thing that must survive the rendered view
+ *  reflowing the code. Each `File "<python_exec>", line N` is mapped through the formatter's line map and
+ *  becomes a click target: it scrolls to the In block and pulses that line, the same green flash a cited
+ *  step gets, because it is the same gesture — "show me the thing this is about".
+ *
+ *  The DEEPEST user frame is where the failure actually happened, so it is marked; the frames above it are
+ *  the call path. Frames in `<exec>` are the prelude's own call site and are about nothing the user wrote —
+ *  they are dimmed rather than dropped, because the RAW view must stay recoverable and quietly deleting a
+ *  line of what the model received is exactly what the raw-view rule forbids.
+ *
+ *  The text itself is never rewritten. This is a rendering of it. */
+function Traceback({ text }: { text: string }) {
+    // SCOPED TO ITS OWN STEP, found by walking up from this element. A document-wide lookup finds the FIRST
+    // In block on the page, so with two failing steps open both tracebacks jumped into the first one's code —
+    // confidently, and at a line number that meant nothing there. Walking up needs no prop threaded through
+    // two renderers that otherwise know nothing about each other.
+    const rows = text.split("\n");
+    // Which rows name a user line, so the last of them can be called out as the failure.
+    const userRows = rows.map((r, i) => (/File "<python_exec>", line (\d+)/.test(r) ? i : -1)).filter((i) => i >= 0);
+    const deepest = userRows.length ? userRows[userRows.length - 1] : -1;
+    const jump = (line: number, isFail: boolean, from: Element) => {
+        // The map lives on the In block, published by the renderer that reflowed the code — so a line number
+        // written against the ORIGINAL source lands on the line that is actually on screen.
+        // Scoped from the CLICKED BUTTON, not from a ref on the block: the ref is null at click time here
+        // and a null scope silently falls back to the document, which is the bug being fixed wearing a
+        // disguise. The event's own target cannot be null — it is what was clicked.
+        const scope: Element | Document = from.closest(".astep") ?? from.closest(".bench-out") ?? document;
+        const holder = scope.querySelector("[data-py-map], [data-cite='in']");
+        const raw = holder?.getAttribute("data-py-map");
+        let shown = line;
+        if (raw) { try { const m = JSON.parse(raw) as number[]; if (m[line]) shown = m[line]; } catch { /* unmapped */ } }
+        const el = holder?.querySelector(`.cline[data-line="${shown}"]`);
+        if (!el) return;
+        // MARK FIRST, then scroll. The mark is the answer; the scroll is a convenience — and doing it the
+        // other way round means any environment where `scrollIntoView` is missing (jsdom, and anything
+        // embedding this in a stripped DOM) loses the answer to a failed nicety.
+        // RED for the line that failed, green for the rest of the call path. Green means "here is the thing
+        // you asked for"; on the failing line it would be the one colour the line is not, flashing over the
+        // red mark already there and saying the opposite of it.
+        const cls = isFail ? "cline-pulse-fail" : "cline-pulse";
+        el.classList.add(cls);
+        setTimeout(() => el.classList.remove(cls), 1400);
+        try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch { /* not every DOM has it */ }
+    };
+    return (
+        <pre class="code tb"><code class="hljs">{rows.map((r, i) => {
+            const m = /^(.*File ")(<python_exec>)(", line )(\d+)(.*)$/.exec(r);
+            if (!m) return <span class={`tbline${/File "<exec>"/.test(r) ? " dim" : ""}`} key={i}>{r}{"\n"}</span>;
+            const line = Number(m[4]);
+            return (
+                <span class={`tbline${i === deepest ? " tb-fail" : ""}`} key={i}>
+                    {m[1]}{m[2]}{m[3]}
+                    {/* The panel's own tooltip, not the native one: `title` waits about a second before it
+                        appears, which on something you are hovering to decide whether to click is long
+                        enough to have moved on. */}
+                    <span class="tt tb-line-wrap">
+                        <button class="tb-line" onClick={(e: MouseEvent) => jump(line, i === deepest, e.currentTarget as Element)}>{line}</button>
+                        <span class="tt-pop wrap" role="tooltip">{i === deepest
+                            ? `Line ${line} — where it failed. Click to show it in the code above.`
+                            : `Line ${line}. Click to show it in the code above.`}</span>
+                    </span>
+                    {m[5]}{"\n"}
+                </span>
+            );
+        })}</code></pre>
+    );
+}
+
 // A collapsible section of the python-out block (stdout / value / error / token). Same disclosure
 // pattern as the In:/Out: blocks — open by default, its label is the summary. A big stdout can be
 // folded away to get to the value.
@@ -568,7 +667,7 @@ function PythonOutRender({ d, marks, live }: { d: Extract<RenderDescriptor, { ty
             {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout" foldInFocus={!live}><OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell></PyOutSection> : null}
             {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
-            {d.error ? <PyOutSection label="error" cls="r-py-err" cite="out"><OutputCell><Code text={d.error} lang="text" /></OutputCell></PyOutSection> : null}
+            {d.error ? <PyOutSection label="error" cls="r-py-err" cite="out"><OutputCell><Traceback text={d.error} /></OutputCell></PyOutSection> : null}
             {d.df && !d.error ? <PyOutSection label="value (DataFrame)" cls="r-py-val" cite="out"><PyDfTable columns={d.df.columns} rows={d.df.rows} /></PyOutSection> : null}
             {/* A sympy return auto-flagged `latex` → typeset the value (display mode), not a raw code block. */}
             {d.latex && d.value != null && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value (LaTeX)" cls="r-py-val" cite="out"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} /></PyOutSection> : null}
@@ -583,6 +682,24 @@ function PythonOutRender({ d, marks, live }: { d: Extract<RenderDescriptor, { ty
 // `exec`'s Out slot — the JS twin of PythonOutRender, so a JS run reads like the same notebook cell:
 // captured console output, then the returned value (or the thrown error). Reuses PyOutSection so both
 // tools share one look; "console" (not "stdout") because that's what the JS side actually captured.
+/** A `code` In block — `exec`'s beautified JS, and anything else that renders as source. It publishes the
+ *  same `data-cite` anchor and `data-py-map` the Python one does, so a stack trace beside it maps and jumps
+ *  identically: the mapping is a property of SHOWING REFORMATTED CODE, not of the language. */
+function CodeRender({ d, failLine }: { d: Extract<RenderDescriptor, { type: "code" }>; failLine?: number | null }) {
+    const [map, setMap] = useState<number[] | null>(null);
+    const shownFail = failLine != null ? (map?.[failLine] ?? failLine) : null;
+    return (
+        <div data-cite="in" data-py-map={map ? JSON.stringify(map) : undefined}>
+            {/* Said out loud, because the rendered text is not always what the caller typed: `exec` expands
+                pointer macros before running, so a reader comparing this against the raw args would
+                otherwise conclude the log is lying to them. */}
+            {d.note ? <div class="rp-note">{d.note}</div> : null}
+            <Code text={d.text} lang={d.lang} format={d.format} marks={d.marks} onMap={setMap}
+                lineIds="line" markLine={shownFail} markTitle="This line failed." />
+        </div>
+    );
+}
+
 function ExecOutRender({ d, marks }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][] }) {
     return (
         <div class="r-python r-py-out">
@@ -618,7 +735,7 @@ function LookRender({ d }: { d: Extract<RenderDescriptor, { type: "look" }> }) {
     );
 }
 
-export function RenderPanel({ d, marks, live }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean }) {
+export function RenderPanel({ d, marks, live, failLine }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null }) {
     switch (d.type) {
         case "image": {
             // If the label references an @pt/@box (e.g. look's `element "@pt:…"`), hovering the shot
@@ -627,13 +744,7 @@ export function RenderPanel({ d, marks, live }: { d: RenderDescriptor; marks?: [
             return <div class={`r-image${th.onPointerEnter ? " r-hoverable" : ""}`} {...th}>
                 <ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
         }
-        case "code": return (<>
-            {/* Said out loud, because the rendered text is not always what the caller typed: `exec` expands
-                pointer macros before running, so a reader comparing this against the raw args would
-                otherwise conclude the log is lying to them. */}
-            {d.note ? <div class="rp-note">{d.note}</div> : null}
-            <Code text={d.text} lang={d.lang} format={d.format} marks={d.marks} />
-        </>);
+        case "code": return <CodeRender d={d} failLine={failLine} />;
         case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
@@ -701,7 +812,7 @@ function FetchLadder({ attempts, resolvedBy }: { attempts: import("../contract")
             }
             return <Code text={pretty(d)} lang="json" />;
         case "locate": return <LocateRender d={d} />;
-        case "python-in": return <PythonInRender d={d} live={live} />;
+        case "python-in": return <PythonInRender d={d} live={live} failLine={failLine} />;
         case "python-out": return <PythonOutRender d={d} marks={marks} live={live} />;
         case "exec-out": return <ExecOutRender d={d} marks={marks} />;
         case "look": return <LookRender d={d} />;

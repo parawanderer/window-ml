@@ -62,3 +62,55 @@ export async function waitForMl(/** @type {any} */ page) {
     // about another realm either way.
     await page.waitForFunction(() => { const w = /** @type {any} */ (window); return !!(w.ml && w.ml.ready); }, null, { timeout: 15000 });
 }
+
+/**
+ * OPEN THE SIDEBAR AND THE RUN INSIDE IT, and return the sidebar frame.
+ *
+ * The panel opens on the SESSIONS LIST, not on the run — so a demo or probe that slides the sidebar open and
+ * then queries the transcript finds nothing, reads zero of everything, and reports that the feature does not
+ * work. That is a mistake every demo here has made at least once, which is why it lives in the harness rather
+ * than being written out again each time.
+ *
+ * @param {any} page      the page the run was started on
+ * @param {object} [opts]
+ * @param {number} [opts.width]  sidebar width in px (default: 55% of the viewport)
+ * @param {string|RegExp} [opts.task]  pick the session by its task text (default: the first one)
+ * @param {number} [opts.timeout]
+ * @returns {Promise<any>} the sidebar iframe, showing the run's detail view
+ */
+export async function openRunInSidebar(page, { width, task, timeout = 20000 } = {}) {
+    const sleep = (/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms));
+    await page.waitForFunction(
+        () => !!document.getElementById("ml-sb-root")?.shadowRoot?.getElementById("ml-sb-host"),
+        null, { timeout });
+    await page.evaluate((/** @type {number|undefined} */ w) => {
+        const root = /** @type {any} */ (document.getElementById("ml-sb-root")).shadowRoot;
+        const panel = root.getElementById("ml-sb-host");
+        panel.style.width = `${w || Math.round(window.innerWidth * 0.55)}px`;
+        panel.classList.add("open");
+        root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+    }, width);
+    const frame = await (async () => {
+        for (let i = 0; i < Math.ceil(timeout / 100); i++) {
+            const f = page.frames().find((/** @type {any} */ fr) => /sidebar\.html/.test(fr.url()));
+            if (f) return f;
+            await sleep(100);
+        }
+        throw new Error("the sidebar iframe never appeared");
+    })();
+    // THE CLICK that everyone forgets. A row appears as soon as the run starts, so this does not wait for the
+    // run to finish — which is the point, since the interesting demos are about what happens while it runs.
+    const rows = task ? frame.locator(".row", { hasText: task }) : frame.locator(".row");
+    for (let i = 0; i < Math.ceil(timeout / 200); i++) {
+        if (await rows.count()) break;
+        await sleep(200);
+    }
+    if (!(await rows.count())) throw new Error(`no session row to open${task ? ` matching ${task}` : ""}`);
+    await rows.first().click();
+    // The detail view exists once it is showing the run's own content rather than the list.
+    for (let i = 0; i < Math.ceil(timeout / 200); i++) {
+        if (await frame.locator(".astep, .msg, .aturn-prose").count()) return frame;
+        await sleep(200);
+    }
+    throw new Error("clicked the session row but the detail view never rendered");
+}

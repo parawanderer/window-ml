@@ -1104,31 +1104,53 @@ export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV
 }
 
 /** One run's own rows — the greedy first-fit the whole lane used to get, applied within a band. */
+/** Which row-tier an event belongs to. The lane is a CONTAINMENT picture, so depth has to mean something:
+ *  a run CONTAINS its steps, so it goes above them; the machine's own spans are the ground the run happened
+ *  on, so they go below. Packing by start time alone made the order incidental — a container whose first
+ *  step began at the same instant landed UNDER its own children, and a model load could take the top row
+ *  from the run it was loading for.
+ *
+ *  A tier is only a preference between things drawn at the same time: within one tier, packing is unchanged
+ *  and two bars still share a row whenever they cannot overlap. */
+export function laneTier(kind: string): number {
+    if (kind === "run" || kind === "session") return 0;      // the container
+    if (kind === "gen" || kind === "tool" || kind === "embed") return 1;   // its own work
+    return 2;                                               // the machine: loads, serving, evictions
+}
+
 function packBand(placed: EventPlacement[], maxRows: number, minSpan: number): EventPlacement[][] {
     const rows: EventPlacement[][] = [];
-    const padded: number[] = [];   // per row: the drawn end PLUS the separation reserved after it
-    const tight: number[] = [];    // per row: the same end without it
     // The END is the DRAWN end, not the true one: see MIN_EV_SPAN.
     const start = (p: EventPlacement) => p.run + p.from;
     const end = (p: EventPlacement, pad: boolean) =>
         p.run + Math.max(p.to, p.from + minSpan) + (pad ? EV_ROW_GAP : 0);
-    for (const p of [...placed].sort((a, b) => start(a) - start(b))) {
-        let r = padded.findIndex((e) => e <= start(p));
+    // A true INTERVAL test against the row's members, not a running end. The running end assumed events
+    // arrived in increasing start order, which stopped being true the moment they were sorted by tier — a
+    // load that abuts a step it precedes was then refused the row it belongs on, because a later-starting
+    // member had already pushed the end past it.
+    const fits = (row: EventPlacement[], p: EventPlacement, pad: boolean) =>
+        row.every((q) => end(q, pad) <= start(p) || end(p, pad) <= start(q));
+    // TIER first, then time. Sorting by time alone let whatever happened to begin earliest take the top row,
+    // which on a lane whose depth means containment is a wrong picture rather than an untidy one.
+    for (const p of [...placed].sort((a, b) =>
+        laneTier(a.event.kind) - laneTier(b.event.kind) || start(a) - start(b))) {
+        let r = rows.findIndex((row) => fits(row, p, true));
         // Nothing fits WITH the separation reserved. Before opening a row, try again without it. Rows are the
         // lane's scarcest resource and its only claim about time: two bars on separate rows say they OVERLAP.
         // Spending a row to buy a bar 0.4% of clearance therefore asserts an overlap that isn't there, which
         // is the same misreading the separation exists to prevent, arrived at from the other side. This is the
         // ordinary case rather than an edge one — a model LOAD ends exactly where the block it precedes
         // begins, so every load abutted its own step and was pushed below it.
-        if (r < 0) r = tight.findIndex((e) => e <= start(p));
+        if (r < 0) r = rows.findIndex((row) => fits(row, p, false));
         if (r < 0) {
             if (rows.length >= maxRows) r = rows.length - 1;   // out of rows: crowd the last one rather than drop the event
-            else { rows.push([]); padded.push(0); tight.push(0); r = rows.length - 1; }
+            else { rows.push([]); r = rows.length - 1; }
         }
         rows[r].push(p);
-        padded[r] = Math.max(padded[r], end(p, true));
-        tight[r] = Math.max(tight[r], end(p, false));
     }
+    // Each row back in time order: it is packed by tier, and a row read left to right should be in the order
+    // the things on it happened.
+    for (const row of rows) row.sort((a, b) => start(a) - start(b));
     return rows;
 }
 

@@ -1266,7 +1266,8 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
         // The lane's CONTAINER stays — it holds the chip row, which is the other way to bring the lane back
         // and would otherwise be reachable only from this settings checkbox. What hides is the rows.
         await expect.poll(() => frame.locator(".rc-lane-row").count()).toBe(0);
-        expect(await frame.locator(".rc-lane-fold").count(), "…and the way back stays with it").toBe(1);
+        expect(await frame.locator(".disc-head").filter({ hasText: "events" }).count(),
+            "…and the way back stays with it").toBe(1);
         expect(await frame.locator(".rc-track").count(), "the chart stays").toBeGreaterThan(0);
         // The connector joins the scrub window to the LANE, so with the lane hidden it points into empty
         // space — lines to nothing are worse than no lines.

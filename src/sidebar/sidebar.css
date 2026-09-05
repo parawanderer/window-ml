@@ -2094,6 +2094,41 @@ html[data-surface="card"] .appr-btn.no:hover {
 /* A hallucinated / unresolvable token — visible, never silent. */
 .tok-unresolved { display: inline-block; padding: 0 5px; border: 1px dashed var(--err);
     color: var(--err); border-radius: 3px; font-size: 0.85em; font-family: ui-monospace, monospace; cursor: help; }
+/* A traceback, rendered. The deepest USER frame is where it failed; the ones above are the call path, and
+   an `<exec>` frame is the prelude's own call site — dimmed rather than dropped, because the raw view has to
+   stay recoverable and quietly deleting a line of what the model received is what the raw-view rule forbids. */
+.code.tb .tbline.dim { opacity: .45; }
+.code.tb .tbline.tb-fail { background: color-mix(in srgb, var(--err) 12%, transparent); }
+/* The line numbers are LINKS, but they inherit the traceback's own colour rather than introducing a third
+   one: a blue number inside red error text reads as a value that is somehow different from the numbers around
+   it, when it is the same number with something you can do to it. The dotted underline is the whole
+   affordance, and the hover is what confirms it. */
+/* `.tt` is inline-flex, which would break the line's flow inside a `<pre>`; the wrapper is inline so the
+   number still sits in the sentence it belongs to. */
+.code.tb .tb-line-wrap { display: inline; }
+.code.tb .tb-line { font: inherit; color: inherit; background: none; border: 0; padding: 0;
+    border-bottom: 1px dotted currentColor; cursor: pointer; }
+.code.tb .tb-line:hover { background: color-mix(in srgb, currentColor 16%, transparent); border-radius: 2px; }
+/* WHERE IT BROKE, on the code itself. The traceback gives you a number; this is the line it names — which is
+   the thing you were going to go looking for. */
+.cline.cline-fail { background: color-mix(in srgb, var(--err) 13%, transparent); cursor: help; }
+/* The cursor-following tip. `.rc-tip` for the shared look; it only differs in following the pointer. */
+.cursor-tip { max-width: min(320px, 92vw); white-space: normal; }
+.cline.cline-fail .lno { color: var(--err); font-weight: 600; }
+/* The SAME green flash a cited step gets — it is the same gesture, "show me the thing this is about". */
+@keyframes clinePulse { 0% { background: color-mix(in srgb, var(--ok) 40%, transparent); } 100% { background: transparent; } }
+.cline-pulse { animation: clinePulse 1.4s ease-out forwards; }
+/* RED for the line that FAILED. Green says "here is the thing you asked for", which on the failing line is
+   the one colour it is not — flashing over the red mark already there and saying the opposite of it. It
+   settles back to the mark rather than to nothing, because the mark outlives the click. */
+@keyframes clinePulseFail { 0% { background: color-mix(in srgb, var(--err) 45%, transparent); }
+                          100% { background: color-mix(in srgb, var(--err) 13%, transparent); } }
+.cline-pulse-fail { animation: clinePulseFail 1.4s ease-out forwards; }
+@media (prefers-reduced-motion: reduce) {
+    .cline-pulse { animation: none; background: color-mix(in srgb, var(--ok) 20%, transparent); }
+    .cline-pulse-fail { animation: none; background: color-mix(in srgb, var(--err) 30%, transparent); }
+}
+
 /* Click-to-step: pulse the cited step green when you jump to it. */
 @keyframes astepPulse { 0% { background: color-mix(in srgb, var(--ok) 45%, transparent); }
     100% { background: transparent; } }

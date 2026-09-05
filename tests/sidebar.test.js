@@ -2697,6 +2697,31 @@ test("python bench: a cell that cannot be serialised says so, and says what it w
     assert.doesNotMatch(w.shadow.querySelector(".bench-out .r-py-val").textContent, /\[object Object\]/);
 });
 
+// `{}` for something that is NOT an empty object is the same wrong fact in the same place, just quieter — and
+// unlike a function, a Map/Set/Error survives a structured clone, so these genuinely arrive.
+test("python bench: a Map, a Set or an Error is marked rather than printed as {}", async () => {
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: "", stdout: "",
+        table: { columns: ["what", "value"], rows: [
+            ["a real empty object", {}],
+            ["a Map", new Map([["a", 1], ["b", 2]])],
+            ["an Error", new Error("nope")],
+        ] } }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const ta = w.shadow.querySelector(".bench-code");
+    ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
+    await w.tick();
+    w.shadow.querySelector(".bench-run").click();
+    await w.tick();
+
+    const marks = [...w.shadow.querySelectorAll(".bench-out .r-td-unrend")];
+    assert.equal(marks.length, 2, "the Map and the Error are marked; a genuinely empty object is not");
+    assert.deepEqual(marks.map((m) => m.textContent), ["unrenderable Map", "unrenderable Error"],
+        "…and each says what it WAS, which is most of the answer to 'why is my column empty'");
+    // A plain `{}` is left alone: there, `{}` is the truth.
+    assert.match(w.shadow.querySelector(".bench-out .r-py-val").textContent, /\{\}/);
+});
+
 test("python bench: full mode sends hardened:false", async () => {
     const w = await loadSidebarWorld();
     w.shadow.querySelector('[aria-label="Python bench"]').click();
@@ -7002,7 +7027,10 @@ test("event lane: spans render, a tool step is one phased block, and clicking op
     // The figures are BADGES — one chip per fact, so it is visible which numbers belong together.
     const chips = [...tip.querySelectorAll(".rc-chip")].map((c) => c.textContent);
     assert.ok(chips.includes("500 in") && chips.includes("60 out"), `what the model call cost (${chips.join(", ")})`);
-    assert.ok(tip.querySelector(".rc-tip-rule"), "the two halves are separated, not run together");
+    // A separator is a BORDER on the section it opens, never an element of its own — a standalone rule can
+    // end up with nothing on one side of it, which this tooltip produced three different ways.
+    assert.ok(tip.querySelector(".sep"), "the two halves are separated, not run together");
+    assert.equal(tip.querySelector(".rc-tip-rule"), null, "…and not by a floating line");
 
     // Clicking goes to the step that produced it.
     tool.click();
@@ -7178,9 +7206,13 @@ test("event lane: the tooltip's model line carries the model's colour", async ()
     assert.equal(dot.getAttribute("style"), rowDot.getAttribute("style"));
     // Every phase carries the swatch of the stripe it describes, so the tooltip's sections and the block's
     // parts read as the same things rather than a list you map onto a picture yourself.
+    // The HEADER says what the block is, then one row per phase. The first phase used to take the header
+    // line, which left a machine event with no phases showing nothing but a model name — a serving span and
+    // a load looked identical and neither said which it was.
     const dots = [...tip.querySelectorAll(".rc-tip-dot")];
-    assert.equal(dots.length, 2, "one per phase: the model, then the tool");
-    assert.notEqual(dots[0].getAttribute("style"), dots[1].getAttribute("style"), "…and they differ, as the stripes do");
+    assert.equal(dots.length, 3, "the block, then one per phase: the model, then the tool");
+    const phaseDots = dots.slice(1);
+    assert.notEqual(phaseDots[0].getAttribute("style"), phaseDots[1].getAttribute("style"), "…and they differ, as the stripes do");
     // The tool phase says WHAT it is: a bare "exec" reads as a label of unknown kind.
     assert.match(tip.textContent, /tool call:/);
     assert.ok(tip.querySelector("code"), "…with the tool name as an identifier");
@@ -7682,4 +7714,142 @@ test("disclosure: a count rides the header, and the chevron is the only decorati
     // the label change every time the number did, which is not what a section is called.
     assert.equal(tools.querySelector(".disc-note").textContent, "2");
     assert.ok(tools.querySelector(".tri"), "a chevron, which the CSS turns");
+});
+
+// The rendered traceback: line numbers that are LINKS into the reflowed code.
+//
+// A traceback's whole content is a line number, and the rendered view reflows the code — so this is the one
+// thing that must not silently disagree. The formatter publishes its map on the In block; the traceback maps
+// through it. The text is never rewritten: this is a rendering of it.
+test("python: a traceback's user lines are links, and the deepest one is marked", async () => {
+    const err = [
+        "Traceback (most recent call last):",
+        '  File "<exec>", line 175, in <module>',
+        '  File "<python_exec>", line 5, in _user',
+        '  File "<python_exec>", line 2, in inner',
+        "ValueError: boom",
+    ].join("\n");
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: false, error: err, stdout: "" }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const ta = w.shadow.querySelector(".bench-code");
+    ta.value = "x = 1"; ta.dispatchEvent(new w.window.Event("input"));
+    await w.tick();
+    w.shadow.querySelector(".bench-run").click();
+    await w.tick();
+
+    const links = [...w.shadow.querySelectorAll(".bench-out .tb-line")];
+    assert.equal(links.length, 2, "both <python_exec> frames are addressable");
+    assert.deepEqual(links.map((b) => b.textContent), ["5", "2"]);
+    // The DEEPEST user frame is where it actually failed; the ones above are the call path.
+    const rows = [...w.shadow.querySelectorAll(".bench-out .tbline")];
+    const failed = rows.filter((r) => r.classList.contains("tb-fail"));
+    assert.equal(failed.length, 1, "exactly one line is called out as the failure");
+    // The tooltip is a hidden child of the row (read into the shared floating layer on hover), so it is in
+    // `textContent` too — compare the row without it.
+    const rowText = (el) => { const c = el.cloneNode(true); c.querySelectorAll(".tt-pop").forEach((n) => n.remove()); return c.textContent; };
+    assert.match(rowText(failed[0]).replace(/\s+/g, " "), /line 2, in inner/);
+    // The prelude's own frame is about nothing the user wrote — dimmed, never dropped: the raw view has to
+    // stay recoverable, and deleting a line of what the model received is what the raw-view rule forbids.
+    const dim = rows.filter((r) => r.classList.contains("dim"));
+    assert.equal(dim.length, 1);
+    assert.match(dim[0].textContent, /<exec>/);
+    assert.match(w.shadow.querySelector(".bench-out .code.tb").textContent, /ValueError: boom/,
+        "and every line of the original is still there");
+});
+
+// WHERE IT BROKE, marked on the CODE. A traceback tells you a number; the number is only useful once you
+// have found the line it names, which on a reflowed block is not the line the number literally says.
+test("python: the failing line is marked in the code, mapped through the reflow", async () => {
+    // Line 3 is the failing one, and line 4 is long enough that the reflow moves everything after it.
+    const code = [
+        "import pandas as pd",
+        "def total(frame):",
+        "    return frame['nope'].sum()",
+        "rows = pd.DataFrame([{'aaaaaaaaaaaaaaa': 1, 'bbbbbbbbbbbbbbb': 2, 'ccccccccccccccc': 3, 'ddddddddddddddd': 4}])",
+        "total(rows)",
+    ].join("\n");
+    const err = [
+        "Traceback (most recent call last):",
+        '  File "<exec>", line 170, in <module>',
+        '  File "<python_exec>", line 5, in _user',
+        '  File "<python_exec>", line 3, in total',
+        "KeyError: 'nope'",
+    ].join("\n");
+    const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
+    await w.dispatch(agentStart("pyfail", "crunch"));
+    await w.dispatch(agentStep("pyfail", 1, {
+        seq: 1, tool: "python_exec", arguments: { code }, result: "Python error",
+        renderIn: { type: "python-in", mode: "script", code },
+        renderOut: { type: "python-out", error: err },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep-head").click();   // a step is collapsed until you open it
+    await w.tick();
+
+    const marked = w.shadow.querySelector(".cline.cline-fail");
+    assert.ok(marked, "the failing line is called out in the code, not only in the traceback");
+    assert.match(marked.textContent, /frame\['nope'\]/, "…and it is the line that actually failed");
+    // It is the DEEPEST user frame — line 3 — not the call path (line 5) and not the prelude's `<exec>`.
+    assert.doesNotMatch(marked.textContent, /total\(rows\)/);
+    // The caveat appears only when the formatter MOVED that line. This one it did not, so saying it might
+    // have looked different would be noise that undermines the times it is true. The panel's own tooltip,
+    // not a native `title`: the native one waits about a second, which on a mark you are hovering to find
+    // out what it means is long enough to have given up.
+    assert.equal(marked.getAttribute("title"), null, "not the slow native tooltip");
+    assert.equal(marked.querySelector(".tt-pop").textContent, "This line failed.");
+
+    // The traceback's own line numbers are links, and they inherit its colour rather than introducing a
+    // third one — a blue number inside red error text reads as a different KIND of number.
+    const links = [...w.shadow.querySelectorAll(".tb-line")];
+    assert.deepEqual(links.map((b) => b.textContent), ["5", "3"]);
+});
+
+// TWO FAILING STEPS OPEN AT ONCE. A document-wide lookup finds the FIRST In block on the page, so both
+// tracebacks jumped into the first step's code — confidently, and at a line number that meant nothing there.
+test("python: each traceback jumps into ITS OWN step's code, not the first one on the page", async () => {
+    const codeA = ["a1 = 1", "a2 = 2", "raise ValueError('A')"].join("\n");
+    const codeB = ["b1 = 1", "b2 = 2", "b3 = 3", "b4 = 4", "raise ValueError('B')"].join("\n");
+    const tb = (line) => [
+        "Traceback (most recent call last):",
+        '  File "<exec>", line 170, in <module>',
+        `  File "<python_exec>", line ${line}, in _user`,
+        "ValueError: x",
+    ].join("\n");
+
+    const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
+    await w.dispatch(agentStart("two", "two failures"));
+    for (const [i, code, line] of [[1, codeA, 3], [2, codeB, 5]]) {
+        await w.dispatch(agentStep("two", i, {
+            seq: i, tool: "python_exec", arguments: { code }, result: "Python error",
+            renderIn: { type: "python-in", mode: "script", code },
+            renderOut: { type: "python-out", error: tb(line) },
+        }));
+    }
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (const head of w.shadow.querySelectorAll(".astep-head")) { head.click(); await w.tick(); }
+
+    const steps = [...w.shadow.querySelectorAll(".astep")];
+    assert.equal(steps.length, 2, "both steps are open");
+    // Each step marks its OWN failing line: step 1 at line 3, step 2 at line 5.
+    const marked = steps.map((st) => st.querySelector(".cline.cline-fail")?.textContent || "");
+    assert.match(marked[0], /raise ValueError\('A'\)/, "step 1 marks its own line 3");
+    assert.match(marked[1], /raise ValueError\('B'\)/, "step 2 marks its own line 5 — not step 1's");
+
+    // And clicking the SECOND traceback's link lands in the SECOND step's code. The bug was that it found
+    // the first `[data-cite='in']` in the whole document and pulsed a line there.
+    const link = steps[1].querySelector(".tb-line");
+    assert.ok(link, "the second step's traceback has a link");
+    link.click();
+    // NO tick: the pulse is a class added imperatively, and a Preact re-render rewrites an element's class
+    // list from its own vdom — the same hazard `scrollToStepSeq` documents. Asserting after a flush would be
+    // testing whether the class survived a render, not whether the jump landed in the right place.
+    assert.equal(steps[0].querySelector(".cline-pulse, .cline-pulse-fail"), null,
+        "the FIRST step's code was not touched");
+    assert.ok(steps[1].querySelector(".cline-pulse, .cline-pulse-fail"),
+        "…the second step's was");
+    // The deepest frame is the failure, so it flashes RED — green would be the one colour that line is not.
+    assert.ok(steps[1].querySelector(".cline-pulse-fail"), "the failing line flashes red, not green");
 });

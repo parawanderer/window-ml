@@ -263,3 +263,23 @@ export function pyFormat(src: string, { width = 88 }: { width?: number } = {}): 
     const text = outLines.join("\n") + (src.endsWith("\n") ? "\n" : "");
     return { text, map, changed: text !== src };
 }
+
+/** The line the failure actually happened ON: the DEEPEST frame in the user's own file. The frames above it
+ *  are the call path and the ones in `<exec>` are the prelude's own call site — neither is where it broke.
+ *
+ *  Pure, and here rather than in the renderer, because it is the same question the line map answers and the
+ *  two have to agree about which frames count as the user's. */
+export function deepestUserLine(traceback: string): number | null {
+    let last: number | null = null;
+    for (const m of traceback.matchAll(/File "<python_exec>", line (\d+)/g)) last = Number(m[1]);
+    return last;
+}
+
+/** Did the formatter actually MOVE this line's content? A caveat on an unchanged line ("this may have looked
+ *  different") is noise that undermines the times it is true, so surfaces ask per line rather than per file. */
+export function lineChanged(src: string, out: PyFormatted, line: number): boolean {
+    if (!out.changed) return false;
+    const before = src.split("\n")[line - 1];
+    const after = out.text.split("\n")[(out.map[line] ?? line) - 1];
+    return before?.trim() !== after?.trim();
+}

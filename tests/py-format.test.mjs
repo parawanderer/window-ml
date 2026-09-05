@@ -9,7 +9,7 @@
 // MAP says where each original line went (so a traceback still points somewhere true).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pyFormat, tokenizePy } from "../src/py-format.ts";
+import { pyFormat, tokenizePy, deepestUserLine, lineChanged } from "../src/py-format.ts";
 
 /** Every token, in order, with all whitespace gone. Two sources with the same signature are the same code. */
 const sig = (src) => (tokenizePy(src) || []).filter((t) => t.kind !== "space" && t.kind !== "nl").map((t) => t.text).join(" ");
@@ -129,4 +129,29 @@ test("code it cannot account for comes back untouched, with an identity map", ()
 test("an unbalanced bracket inside an otherwise fine file does not mangle the file", () => {
     const r = pyFormat("a = 1\nb = f(1, 2\nc = 3");
     assert.equal(r.text, "a = 1\nb = f(1, 2\nc = 3");
+});
+
+// Which line the failure was ON, and whether saying so needs a caveat.
+
+test("deepestUserLine: the deepest USER frame, not the call path and not the prelude", () => {
+    const tb = [
+        "Traceback (most recent call last):",
+        '  File "<exec>", line 170, in <module>',          // the prelude's own call site
+        '  File "<python_exec>", line 5, in _user',        // the call path
+        '  File "<python_exec>", line 3, in total',        // where it broke
+        '  File "/lib/python3.14/site-packages/pandas/core/frame.py", line 4378, in __getitem__',
+        "KeyError: 'nope'",
+    ].join("\n");
+    assert.equal(deepestUserLine(tb), 3);
+    assert.equal(deepestUserLine("no frames here"), null, "and nothing to point at is null, not a guess");
+});
+
+test("lineChanged: only the lines the formatter actually moved", () => {
+    const src = "a = 1\nout = f(aaaaaaaaaaaaaaaaaaaaaa, bbbbbbbbbbbbbbbbbbbbbb, cccccccccccccccccccccc, dddddddddddddddddddd)";
+    const out = pyFormat(src);
+    assert.equal(lineChanged(src, out, 1), false, "an untouched line needs no caveat");
+    assert.equal(lineChanged(src, out, 2), true, "the reflowed one does");
+    // Nothing moved at all ⇒ never a caveat, whatever line is asked about.
+    const same = pyFormat("a = 1\nb = 2");
+    assert.equal(lineChanged("a = 1\nb = 2", same, 2), false);
 });

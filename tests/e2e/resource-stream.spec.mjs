@@ -297,3 +297,65 @@ test("the event lane is collapsed on a fresh panel, and its header opens it", as
         await expect.poll(bodyH, { timeout: 5000 }).toBeLessThan(2);
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+
+// DEPTH IN THE LANE MEANS CONTAINMENT, and that is a claim the DOM has to make, not just the packer: a run
+// contains its steps so it is drawn above them, and the machine's own spans are the ground the run happened
+// on so they are drawn below. Reproduced from a real capture (`ml.__events()` on the box), where the run
+// container was drawn on the second row UNDER its own two tool steps while a model load held the top row.
+test("the lane draws a run above its steps, and the machine below both", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+        const info = FRAMES.find((f) => f.kind === "sample")?.info;
+        const row = (name, bytes) => ({ model: name, name, size: bytes, size_vram: bytes, context_length: 262144, expires_at: null, gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: bytes }] });
+        const ps = { models: [row("qwen3.5:35b", 20e9)] };
+        fake.setResident(ps.models);
+        // A load that begins a HAIR BEFORE the run it is loading for — which is what let it take the top row.
+        fake.setEvents([
+            ...[-120000, -90000, -60000, -40000, -20000, -5000].map((t) => ({ v: 1, kind: "sample", t, ps, info })),
+            { v: 1, kind: "load.start", t: -61000, model: "registry.ollama.ai/library/qwen3.5:35b" },
+            { v: 1, kind: "load.complete", t: -58000, model: "registry.ollama.ai/library/qwen3.5:35b", weights_ms: 1000, context_ms: 2000 },
+            { v: 1, kind: "busy.start", t: -58000, model: "registry.ollama.ai/library/qwen3.5:35b" },
+            { v: 1, kind: "busy.end", t: -30000, model: "registry.ollama.ai/library/qwen3.5:35b" },
+        ].sort((a, b) => a.t - b.t));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-lane-row").count(), { timeout: 20000 }).toBeGreaterThan(0);
+
+        // A run with two tool steps, starting just after the load did.
+        await page.evaluate(() => {
+            const now = Date.now();
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            post({ kind: "agent", id: "ord", ts: now - 60000, save: false, session: { hash: "ord", turn: 0 },
+                   task: "ordering", model: "qwen3.5:35b", maxSteps: 4, config: null });
+            for (const [i, at] of [[1, 50000], [2, 40000]]) {
+                post({ kind: "agent-step", id: "ord", ts: now - at, save: false, session: { hash: "ord", turn: i },
+                       step: i, seq: i, tool: "exec", toolMs: 4000, approveMs: 0, dispatchMs: 10,
+                       arguments: { js: `s${i}` }, result: "ok",
+                       usage: { promptTokens: 90, completionTokens: 10, totalTokens: 100, genMs: 3000, model: "qwen3.5:35b" } });
+            }
+        });
+        await expect.poll(() => frame.locator(".rc-ev-run").count(), { timeout: 15000 }).toBe(1);
+        await expect.poll(() => frame.locator(".rc-ev-tool").count(), { timeout: 15000 }).toBeGreaterThan(0);
+
+        // Read the DRAWN vertical order — the thing a person actually sees.
+        const yOf = async (sel) => {
+            const boxes = await frame.locator(sel).evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top));
+            return boxes.length ? Math.min(...boxes) : null;
+        };
+        const run = await yOf(".rc-ev-run");
+        const tool = await yOf(".rc-ev-tool");
+        const load = await yOf(".rc-ev-load");
+        const serve = await yOf(".rc-ev-serve");
+        expect(run, "the run is drawn").not.toBeNull();
+        expect(tool, "its steps are drawn").not.toBeNull();
+        expect(run, "the container is ABOVE the children it holds").toBeLessThan(tool);
+        if (load != null) expect(load, "a load is below the run's own work, not above it").toBeGreaterThan(tool);
+        if (serve != null) expect(serve, "and so is a serving span").toBeGreaterThan(tool);
+    } finally { await ext.context.close(); await fake.stop(); }
+});

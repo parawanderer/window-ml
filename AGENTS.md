@@ -1033,6 +1033,41 @@ real `filename` so the frame is identifiable as the user's. The user's frame is 
 anything in `<exec>` is the prelude. Five tests in `tests/python.test.mjs` against real CPython, because an
 off-by-N that is right for one shape of script is not right for the next.
 
+**Python is PRETTY-PRINTED for the human and never for the model (`src/py-format.ts`).** A model writes
+dense one-liners on purpose — the right trade for the thing paying per token, the wrong one for the person
+reading the step — so the RENDERED view reflows and the raw view, the export and the model's context all keep
+the original. Two invariants make that safe rather than a second source of truth: **tokens are never
+changed** (only whitespace and newlines between tokens that were already there, so the displayed code always
+runs the same as the code that ran — the test compares the whole token stream), and **it reports what it
+did** via a line MAP, because reflowing moves line numbers and a traceback's entire content is a line number.
+When it cannot account for the source it returns it untouched: a formatter that is WRONG is worse than one
+that declines, since the reader would be looking at code that is not what ran with no way to tell. It
+declines on an unterminated string, an unbalanced bracket (which otherwise JOINED the following line onto
+it) and a triple-quoted string (whose statement it truncated) — all three found by writing the tests.
+
+**Line numbers survive any reformat (`src/line-map.ts`).** Every pretty-printer we show code through moves
+them, and a stack trace's whole content is a line number — so the rendered view and the error silently stop
+agreeing. `py-format` builds its own map as it goes; **js-beautify hands back none**, so for `exec`'s JS the
+map is DERIVED from the two texts: strip the whitespace from both and they are the same string, so a position
+in that stripped stream identifies the same code in each. That works for any formatter that only moves
+whitespace, which is why there is one mechanism rather than one per language. It REFUSES when the two do not
+agree once whitespace is removed — a map derived from a mismatch points confidently at the wrong line, which
+is worse than an un-mapped number the reader could at least distrust. **The one thing it cannot see** is
+whitespace inside a string literal (`'a  b'` and `'a b'` strip identically); telling those apart needs a
+tokenizer per language, which is the thing it exists to avoid, and both formatters using it copy strings
+byte-for-byte. `tests/e2e/line-map.spec.mjs` is the only thing that runs the whole chain — real CPython
+raising, the real worker returning, the real renderer mapping — because the demo asserts nothing and so
+cannot fail.
+
+**A traceback is rendered, not rewritten.** Each `File "<python_exec>", line N` becomes a link that maps
+through that line map and scrolls to the line, pulsing it the same green a cited step gets; the DEEPEST user
+frame is marked in the CODE (a traceback gives you a number, and the number is only useful once you have
+found the line it names), with the "shown reflowed" caveat added ONLY when the formatter actually moved that
+line — an unconditional caveat is noise that undermines the times it is true. A `<exec>` frame is the
+prelude's own call site: dimmed, never dropped, because the raw view has to stay recoverable. Pointing at a
+line turns the gutter on for that block regardless of the preference — you cannot mark a line in a block with
+no lines.
+
 **A cell we cannot render says so.** `PyDfTable` coerced every cell with `String()`, so a pandas column
 holding a dict — `dict(per_q)` in a cell is an ordinary thing to write — rendered as `[object Object]`: a
 wrong fact printed exactly where the reader is looking for the right one, and it shipped because nothing
@@ -1477,6 +1512,19 @@ rate includes the network; that whole matrix (openai/ollama x streamed/not) is p
   is the only thing that exercises the real background worker, its host permissions and the real consent
   path. Each site is visited first and fetched from its OWN origin, so the fetch is same-origin and needs no
   approval. Not in CI — the sites are live.
+- **`line-map-demo.mjs`** — a **narrated demo, not a test** of the line-mapping system: `npm run build &&
+  node --import tsx tests/e2e/line-map-demo.mjs` runs four steps — a dense python one-liner reflowed (toggle
+  rendered⇄raw to see the same tokens unbroken), a clean failure, one that PRINTS its way to a failure (so
+  stdout and the traceback share the Out), and the JS twin beautified by js-beautify with its map derived.
+  Click a traceback line number and the line it names lights up in the code — red for the failure, green for
+  the call path. `HOLD=0` exits instead of holding the browser open. The assertions are
+  `tests/e2e/line-map.spec.mjs`.
+- **RULE — a demo about what happens INSIDE a run must call `openRunInSidebar(page)`** (harness.mjs). The
+  panel opens on the SESSIONS LIST, not on the run, so a demo that only slides the sidebar open queries an
+  empty transcript, reads zero of everything, and reports that the feature does not work — which every demo
+  here has done at least once. The helper slides the panel open, waits for the iframe, CLICKS the session row
+  (optionally matched by task text) and waits for the detail view. It does not wait for the run to finish, so
+  it is right for the live demos too.
 - **`capture-frames.mjs`** — a **capture probe, not a test**: `node --import tsx tests/e2e/capture-frames.mjs
   > tests/e2e/fixtures/events-<name>.json` connects straight to the `.env` box's `/api/events` and dumps the
   retained ring, so a stream fixture is a RECORDING rather than a guess (`SECS`, `SINCE`; it exits saying so
