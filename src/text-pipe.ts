@@ -52,6 +52,12 @@ export function pipeHint(message: string): string {
 /** The model-facing DESCRIPTION of the dialect: the single source for every `pipe` tool PARAMETER (fetch_url,
  *  navigate's text verify, interactives). Each tool prepends its own lead-in and appends its own escape hatch;
  *  the dialect itself is described here once. */
+/** What a tool's `pipe` PARAMETER says instead of restating the whole dialect. The full text is in the
+ *  system prompt (PIPE_CLAUSE), appended whenever any wired tool takes a `pipe` — so the tool and the
+ *  description of its dialect always arrive together and this reference cannot dangle. Four parameters
+ *  carried the ~270-token dialect verbatim, which single-sourcing had made consistent but not smaller. */
+export const PIPE_REF = "The dialect is described once under THE PIPE DIALECT in your instructions.";
+
 export const PIPE_SYNTAX =
     "It's an interpreted line-based environment (NOT a real shell); supported commands, chained with `|`: " +
     `${PIPE_CMDS.map(c => PIPE_USAGE[c]).join(", ")}, or a \`.path\` into JSON (\`.rows[0].name\`). ` +

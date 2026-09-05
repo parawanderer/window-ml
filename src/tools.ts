@@ -17,7 +17,8 @@ export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | n
 import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom";
 import { expandPointers } from "./pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
 import { execErrorLine } from "./exec-trace";       // a stack frame → the model's own line number
-import { runPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
+import { runPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
+import { outputCapParams, retryParams } from "./tool-params";
 import { DEREF_TOOL, type DerefRead } from "./token-pipe";
 import { DerefText } from "./ml-agent";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
@@ -455,7 +456,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 properties: {
                     selector: { type: "string", description: "CSS selector for possible matches." },
                     n: { type: "integer", description: "How many matches to sample (default 5; raise it when you'll `pipe`)." },
-                    pipe: { type: "string", description: "Optional. Scan/filter the sampled lines before they reach you. " + PIPE_SYNTAX }
+                    pipe: { type: "string", description: "Optional. Scan/filter the sampled lines before they reach you. " + PIPE_REF }
                 },
                 required: ["selector"]
             },
@@ -572,10 +573,8 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 type: "object",
                 properties: {
                     js: { type: "string", description: "JavaScript to run. console.log to print observations and/or end with an expression to return its value. Output is truncated to ~500 chars — return a filtered summary, not a full dump." },
-                    maxChars: { type: "number", description: "Raise the per-slot output truncation for THIS call (default 500, max 8000). A raise needs human approval + `maxCharsReason`. Prefer a filtered summary instead." },
-                    maxCharsReason: { type: "string", description: "Why this call needs more than the default 500 chars — required when `maxChars` exceeds it; shown to the human on the approval card." },
-                    revises: { type: "string", description: "If this is a RETRY of an earlier call, its pointer (`@tool:abc1234`, `@tool:exec`, or `@tool:\"a label\"`). The panel then shows the human a diff of what changed. Changes nothing about how this runs." },
-                    changed: { type: "string", description: "One line on what you changed, shown beside that diff. Only with `revises`." },
+                    ...outputCapParams(500, 8000, "Prefer a filtered summary instead."),
+                    ...retryParams("exec"),
                 },
                 required: ["js"]
             },
@@ -1061,7 +1060,7 @@ export function buildDereferenceTool(defineTool: (tool?: Partial<MlTool>) => MlT
         description: "Read an output this run already produced, by its @tool:<id> pointer — instead of re-running a tool or retyping a value. Free, changes nothing, and can read MORE than the truncated copy you were shown. " +
             "BINDING: reading a builtin by NAME ('python_exec') resolves to its LATEST call and replies with that call's STABLE @tool:<id> — so if you didn't ask for a token when you ran it but now want to keep or show the output, read it here and you get a pinned id you can cite. The name is a moving target (it follows the newest call); the id is not. " +
             "BY YOUR OWN LABEL: if you named an output when you ran it (`token: \"the sales table\"`), read it back with @tool:\"the sales table\" — quoted. That is the handle worth using, because you chose it and will remember it; a hex id you have to copy exactly. Quoting is what makes it unambiguous, so a label may safely read like a tool name. " +
-            "A `pipe`d read is itself given a pointer, so you can cite the REDUCTION you just made rather than the whole output. Optional `pipe` reduces the value first. " + PIPE_SYNTAX +
+            "A `pipe`d read is itself given a pointer, so you can cite the REDUCTION you just made rather than the whole output. Optional `pipe` reduces the value first. " + PIPE_REF +
             " The reply says what the value is and when it was captured (a pointer is a snapshot — the page may have changed since).",
         parameters: {
             type: "object",

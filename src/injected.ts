@@ -37,13 +37,14 @@ import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } fro
 import { evalReadonly } from "./readonly-exec";
 import { expandPointers } from "./pointer-macro";   // `@tool:` → a real dereference call, before the dialect sees it
 import { htmlToMarkdown } from "./html-to-md";
-import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
+import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
+import { citeParam } from "./tool-params";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine } from "./dom";
 import { makeAnswerFacade, finalizeAnswer, resolveOutputs } from "./answer-set";
 import { isSelfSourceUrl } from "./self-source";
 import { BUILD_INFO } from "./build-info.gen";
 import { accessibleName, roleOf, ariaState } from "./a11y";
-import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
+import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, PIPE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
 import type { DerefValue, ShotBox, ServerTool, OllamaInfo, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
@@ -740,7 +741,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 toolset = [...toolset, buildDereferenceTool(window.ml.defineTool)];
                 toolset = toolset.map(t => CITABLE_TOOLS.has(t.name)
                     ? { ...t, parameters: { ...t.parameters, properties: { ...(t.parameters as { properties?: Record<string, unknown> }).properties,
-                        token: { type: ["boolean", "string"], description: "Keep a handle to this call's output. `true`, or better a SHORT LABEL for yourself (\"the pricing table\") — the label is how you'll recognise it a dozen steps later, and you can find it by that name. The result then ends with an @tool:<id>: embed it in your answer with `![caption](@tool:<id>:out)`, and/or read it back with `dereference`. Opt in whenever the output is worth keeping — to show OR to reuse; off for exploratory steps." } } } }
+                        token: citeParam("the pricing table") } } }
                     : t);
             }
             const byName = Object.fromEntries(toolset.map(t => [t.name, t]));
@@ -765,6 +766,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     if (toolset.some(t => t.name === "exec")) systemPrompt += SHADOW_EXEC_NOTE;
                 }
                 if (toolset.some(t => t.name === "agent_api_docs")) systemPrompt += SELF_CLAUSE;
+                // The pipe dialect, ONCE, when anything in this toolset actually takes a `pipe`. Detected
+                // from the SCHEMA rather than a list of tool names, so a new tool that grows a `pipe`
+                // parameter is covered without anyone remembering this line — and a toolset with none of
+                // them pays nothing. The tool and its dialect always arrive together, which is what lets
+                // the parameters themselves be one sentence pointing here.
+                if (toolset.some(t => !!(t.parameters?.properties as Record<string, unknown> | undefined)?.pipe))
+                    systemPrompt += PIPE_CLAUSE;
                 // Deterministic-compute clause. python_exec is the better calculator; when it's
                 // absent, exec (read-only JS: Array/Math/.reduce) is the fallback — either way the
                 // model must compute, never guess. Mutually exclusive so the prompt isn't doubled.
@@ -1628,7 +1636,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     properties: {
                         url: { type: "string", description: "The URL to go to (absolute or site-relative, e.g. \"/dashboard\")." },
                         verify: { type: "string", enum: ["viewport", "text", "text-all"], description: "Fold a view of the DESTINATION page into the result (saves a `wait`+`look`/`fetch` turn to see where you landed). \"viewport\" = a SCREENSHOT (an inline look); \"text\" = the page distilled to clean Markdown (nav/chrome stripped — cheaper, no vision needed); \"text-all\" = the same Markdown but keeping nav/header/footer. Omit to skip." },
-                        pipe: { type: "string", description: "Optional, only with verify:\"text\"/\"text-all\". Scan/filter the destination page's Markdown before it reaches you — e.g. \"grep -i '^## ' | head\" to see just the headings of where you landed. " + PIPE_SYNTAX },
+                        pipe: { type: "string", description: "Optional, only with verify:\"text\"/\"text-all\". Scan/filter the destination page's Markdown before it reaches you — e.g. \"grep -i '^## ' | head\" to see just the headings of where you landed. " + PIPE_REF },
                     },
                     required: ["url"],
                 },
@@ -1724,7 +1732,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. Renders in INCOGNITO (no session/cookies): same-origin is FREE, cross-origin asks once then remembered (needs 'Allow in Incognito'). Add credentials:true to render in the user's SESSION (a normal tab with cookies) — always re-asks. Slower/heavier; never cached." },
                         ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
                         format: { type: "string", enum: ["markdown", "html"], description: "What DOCUMENT to fetch. \"markdown\" (default) negotiates for the site's own Markdown version of the page and falls back to converting its HTML. \"html\" returns the ORIGINAL markup in one plain request, no negotiation — for when you need the markup itself (a selector, an attribute, an embedded script). Data bodies (JSON/CSV/code) are unaffected either way." },
-                        pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). " + PIPE_SYNTAX + " For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
+                        pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). " + PIPE_REF + " For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
                     },
                     required: ["url"],
                 },

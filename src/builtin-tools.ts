@@ -10,6 +10,7 @@ import { PY_PACKAGE_LABELS } from "./python-env";
 import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed, clickSelector } from "./dom";
 import { accessibleName } from "./a11y";
 import { regionLegend, formatLegend, type Box as LegendBox } from "./legend";
+import { outputCapParams, retryParams, citeParam } from "./tool-params";
 
 // python_exec output (stdout / value / error) fed to the model is capped per slot — default bigger than
 // exec's 500 (data output legitimately runs longer), the model can raise it per-call (gated). See run().
@@ -1445,10 +1446,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                     description: tablesDesc,
                 },
                 tableRaw: { type: "boolean", description: "Load table cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
-                maxChars: { type: "number", description: "Raise the per-slot output truncation for THIS call (default 2000, max 20000). A raise needs human approval + `maxCharsReason`. Prefer returning a compact result." },
-                maxCharsReason: { type: "string", description: "Why this call needs more than the default 2000 chars — required when `maxChars` exceeds it; shown to the human on the approval card." },
-                revises: { type: "string", description: "If this is a RETRY of an earlier call, its pointer (`@tool:abc1234`, `@tool:python_exec`, or `@tool:\"a label\"`). The panel then shows the human a diff of what changed. Changes nothing about how this runs." },
-                changed: { type: "string", description: "One line on what you changed, shown beside that diff. Only with `revises`." },
+                ...outputCapParams(2000, 20000, "Prefer returning a compact result."),
+                ...retryParams("python_exec"),
             },
             required: ["code"],
         },
@@ -1622,7 +1621,7 @@ function withToken(schema: JsonSchema | null, bundle: string): JsonSchema {
         ...base,
         properties: {
             ...base.properties,
-            token: { type: "string", description: `Optional: a SHORT label for this output, e.g. "the ${bundle} results". The output is kept either way, but a label is what you will actually remember — cite it later as @tool:"your label" instead of re-running this.` },
+            token: citeParam(`the ${bundle} results`, false),
         },
     } as JsonSchema;
 }
