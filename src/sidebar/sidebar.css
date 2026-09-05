@@ -215,6 +215,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    which is what left a slab of empty space to the right of the short ones. */
 .rc-tip-model { flex-direction: column; align-items: flex-start; gap: 3px; width: max-content; max-width: min(300px, 92vw); }
 .rc-tip-model .rc-tip-line { display: flex; align-items: center; gap: 5px; }
+/* THIS TIP IS A COLUMN, and two of its children were written for the ROW tip. `flex-basis: 100%` means
+   "take the whole line" in a row and "be as tall as the container" in a column — which is what threw the
+   spacing around. And a child sized to its own content makes the divider below span the timestamp rather
+   than the tip, so the rule stops short and reads as a stray mark. */
+.rc-tip-model > .rc-tip-facts, .rc-tip-model > .vram-cost { flex-basis: auto; align-self: stretch; }
+.rc-tip-model > .rc-tip-when { align-self: stretch; }
 .rc-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
 /* The residual's placeholder: same footprint so the names align, an empty ring so it cannot be read as a
    model's colour. */
@@ -407,7 +413,6 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-chip-dim { color: var(--fg-faint); }
 /* A note is prose ABOUT the block, not a fact in it — no border, and set apart. */
 .rc-tip-note { color: var(--fg-faint); font-size: 0.92em; }
-.rc-tip-when { color: var(--fg-dim); font-size: 0.92em; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rc-tip-event code { font-family: var(--mono, ui-monospace, monospace); font-size: 0.95em;
                      padding: 0 3px; background: var(--panel-2); border-radius: 3px; }
 /* Phases are separated by their rule; the name/duration pair is the line itself. */
@@ -428,7 +433,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip-dim { color: var(--fg-faint); }
 /* WHEN the figures above were measured. Ruled off, because it is a different kind of fact from the rest of
    the tip: those describe a quantity, this one says which instant the quantity is from. */
-.rc-tip-when { margin-top: 2px; padding-top: 3px; border-top: 1px solid var(--border); color: var(--fg-faint);
+.rc-tip-when { padding-top: 3px; border-top: 1px solid var(--border); color: var(--fg-faint);
   font-size: 0.92em; font-variant-numeric: tabular-nums; display: flex; gap: 6px; }
 .rc-tip-ago { opacity: .75; }
 .rc-tip-holders { display: flex; flex-wrap: wrap; gap: 2px 8px; }

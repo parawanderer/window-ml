@@ -374,6 +374,14 @@ test("tooltips: dividers separate sections, names stay whole, and nothing is cli
         fake.setResident([resident("qwen3.8-flash-next:vision", 18 * GiB, 0)]);
         // The lane is collapsed by default now, and this test is about what its blocks say.
         await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false, ml_res_sections: { lane: true, models: true } }));
+        // The default view is Overview — ONE overlaid track, which draws no per-model bands at all. The band
+        // tooltip below is about a band, so the view that has them is stated rather than assumed: the first
+        // version of that assertion guarded on `.rc-band` existing and passed by skipping itself entirely.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_layout: { presetId: "memory", tracks: [
+            { id: "dev-0", series: ["vram.0"], mode: "stack", heightPx: 96 },
+            { id: "dev-1", series: ["vram.1"], mode: "stack", heightPx: 96 },
+            { id: "ram", series: ["ram"], mode: "stack", heightPx: 96 },
+        ] } }));
 
         const page = await ext.context.newPage();
         await page.setViewportSize({ width: 1280, height: 900 });
@@ -447,6 +455,44 @@ test("tooltips: dividers separate sections, names stay whole, and nothing is cli
         // A long id used to break mid-token while "on CUDA0 87.70 GiB" and "chat model" sat beside it as
         // further columns. Two rows is fine (the badges may wrap); the broken layout was three-plus.
         expect(name.rows, "the name line is not fragmented into a column").toBeLessThanOrEqual(2);
+
+        // ---- the MODEL BAND tooltip: its rule spans the tip, and the column does not inherit row rules ----
+        // This one had no coverage and three faults at once. `.rc-tip-when` was declared TWICE (the second
+        // adding the border), and in this COLUMN tip a child sizes to its own content — so the divider spanned
+        // the timestamp instead of the tooltip and read as a stray mark. Worse, `.rc-tip-facts` and
+        // `.vram-cost` carry `flex-basis: 100%`, which means "take the whole line" in the ROW tip they were
+        // written for and "be as tall as the container" here, which is what threw the padding around.
+        {
+            const band = frame.locator(".rc-band").first();
+            // NOT an `if` that shrugs: a guard that skips silently is how a test passes on the day the
+            // feature breaks. If there is no band to hover, the setup above is wrong and should say so.
+            expect(await band.count(), "a resident model draws a band to hover").toBeGreaterThan(0);
+            {
+                await band.hover();
+                await sleep(400);
+                const mt = frame.locator(".rc-tip-model");
+                await expect(mt, "hovering a band opens the model tooltip").toBeVisible({ timeout: 4000 });
+                {
+                    const geo = await mt.evaluate((el) => {
+                        const cs = getComputedStyle(el);
+                        const inner = el.getBoundingClientRect().width
+                            - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+                        const when = el.querySelector(".rc-tip-when");
+                        const rows = [...el.children].map((c) => Math.round(c.getBoundingClientRect().width));
+                        return { inner: Math.round(inner), when: when ? Math.round(when.getBoundingClientRect().width) : null,
+                                 widest: Math.max(...rows) };
+                    });
+                    if (geo.when != null) {
+                        // The divider is the top border of the timestamp row, so the row has to be as wide as
+                        // the tip or the rule stops short of the content it is separating.
+                        expect(Math.abs(geo.when - geo.inner), "the rule spans the tooltip, not just its own text")
+                            .toBeLessThanOrEqual(2);
+                    }
+                    // …and nothing overflows the box the tip sized itself to.
+                    expect(geo.widest, "no row is wider than the tooltip").toBeLessThanOrEqual(geo.inner + 2);
+                }
+            }
+        }
 
         // ---- the EVENT tooltip: a divider always separates two SECTIONS ----
         await page.evaluate(() => {
