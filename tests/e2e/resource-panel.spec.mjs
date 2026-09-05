@@ -1896,3 +1896,74 @@ test("resource panel: dragging the event lane shows the selection box, and a tin
         await fake.stop();
     }
 });
+
+// PINCH TO ZOOM, the other way to reach the same window. A trackpad pinch arrives as a `wheel` carrying
+// `ctrlKey` — the platform's own convention, which is also why it has to be swallowed: left alone, the
+// browser zooms the whole panel instead. Playwright's `mouse.wheel` cannot set the flag, so the event is
+// dispatched as the trackpad would send it; everything downstream is the real handler.
+test("resource panel: pinching zooms the window, on the plot and on the lane alike", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await ext.sw.evaluate(() => chrome.storage.local.set({
+            ml_res_window: 300, ml_lane_scope: false, ml_res_sections: { lane: true, models: true },
+        }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        // The lane draws NOTHING when there are no events at all, and half this test is about the lane taking
+        // the gesture — so there has to be something in it, or that half would pass by never running.
+        await page.evaluate(() => window.postMessage({ __mlDebug: {
+            kind: "agent", id: "pz1", ts: Date.now() - 4000, save: false,
+            session: { hash: "pz1", turn: 0 }, task: "a task", model: "fake-model", maxSteps: 4, config: null,
+        } }, "*"));
+        await sleep(8000);   // enough history that there is a window worth narrowing
+
+        /** One pinch event, as a trackpad sends it: a wheel with ctrlKey, at a point inside the target. */
+        const pinch = (sel, deltaY) => frame.locator(sel).first().evaluate((el, dy) => {
+            const r = el.getBoundingClientRect();
+            const ev = new WheelEvent("wheel", {
+                deltaY: dy, ctrlKey: true, bubbles: true, cancelable: true,
+                clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+            });
+            el.dispatchEvent(ev);
+            return ev.defaultPrevented;   // unprevented, the BROWSER zooms the page instead
+        }, deltaY);
+
+        const windowS = () => ext.sw.evaluate(() => new Promise((r) =>
+            chrome.storage.local.get({ ml_res_window: 0 }, (d) => r(d.ml_res_window))));
+        const winW = () => frame.locator(".rc-scrub-win").evaluate((e) => parseFloat(e.style.width));
+
+        const before = await winW();
+        // PINCH OUT (a negative delta) means closer, so the window narrows.
+        expect(await pinch(".rc-plot", -60), "the pinch is consumed, or the page zooms instead").toBe(true);
+        await expect.poll(winW, { timeout: 5000 }).toBeLessThan(before);
+        // …and it is still FOLLOWING. Zooming while live changes how much history is drawn; it must not pin
+        // the window at wherever it happened to be, which would make the gesture a way to stop following.
+        await expect.poll(() => frame.locator(".rc-scrub-live").textContent(), { timeout: 5000 })
+            .toMatch(/▶\s*live/);
+        // The width is the same quantity Settings names, so it is remembered — written once the gesture
+        // settles rather than on every frame of it.
+        await expect.poll(windowS, { timeout: 5000 }).toBeLessThan(300);
+
+        // PINCH IN widens it again.
+        const narrow = await winW();
+        for (let i = 0; i < 4; i++) { await pinch(".rc-plot", 60); await sleep(120); }
+        await expect.poll(winW, { timeout: 5000 }).toBeGreaterThan(narrow);
+
+        // AND THE LANE takes it too — it shares the plot's axis, so a gesture that works an inch above it and
+        // silently does nothing on it reads as the lane being dead.
+        const wide = await winW();
+        await expect(frame.locator(".rc-lane")).toBeVisible();
+        expect(await pinch(".rc-lane", -60), "the lane consumes it as well").toBe(true);
+        await expect.poll(winW, { timeout: 5000 }).toBeLessThan(wide);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});

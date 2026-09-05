@@ -1449,3 +1449,49 @@ test("sample retention: an age horizon, with the count as the memory ceiling", a
     // history around it. 250ms for a minute is 240 samples.
     assert.ok(V.RESOURCE_HISTORY > 240 * 4, "several loads in a session must not exhaust the ring");
 });
+
+// PINCH TO ZOOM. A trackpad pinch reaches the page as a wheel carrying ctrlKey, so it costs no new surface —
+// the handler that slides the window along reads one more flag. What it must get right is the anchor: a zoom
+// that does not keep the thing under your fingers under them reads as the chart jumping.
+test("scrubPinch: narrows and widens around the pointer, symmetrically", () => {
+    const ex = { from: 0, to: 100_000 };
+    const win = { from: 40_000, to: 60_000 };
+
+    // Pinching OUT is a negative delta and means closer, so the window narrows.
+    const inward = M.scrubPinch(ex, win, -20, 0.5);
+    assert.ok(inward.to - inward.from < win.to - win.from, "pinching out zooms IN");
+    const outward = M.scrubPinch(ex, win, 20, 0.5);
+    assert.ok(outward.to - outward.from > win.to - win.from, "and pinching in zooms OUT");
+
+    // SYMMETRIC: the same amount each way returns to where it started. A linear step accumulates drift, which
+    // is what makes a zoom feel like it is sliding away from you.
+    const there = M.scrubPinch(ex, win, -20, 0.5);
+    const back = M.scrubPinch(ex, there, 20, 0.5);
+    assert.ok(Math.abs((back.to - back.from) - (win.to - win.from)) < 1, "out then in is where you began");
+
+    // ANCHORED: the instant under the pointer stays at the same fraction of the window.
+    const atStart = M.scrubPinch(ex, win, -20, 0);
+    assert.equal(atStart.from, win.from, "pinching on the left edge holds the left edge");
+    const atEnd = M.scrubPinch(ex, win, -20, 1);
+    assert.ok(Math.abs(atEnd.to - win.to) < 1, "…and on the right edge, the right one");
+    // The middle keeps the middle.
+    const mid = M.scrubPinch(ex, win, -20, 0.5);
+    assert.ok(Math.abs((mid.from + mid.to) / 2 - (win.from + win.to) / 2) < 1, "the centre is where it was");
+
+    // BOUNDED both ways: never past the session, never below the minimum a window may be — a zoom that can
+    // reach zero width is a zoom you cannot come back from.
+    const huge = M.scrubPinch(ex, win, 10_000, 0.5);
+    assert.ok(huge.to - huge.from <= ex.to - ex.from, "cannot be widened past the session");
+    assert.ok(huge.from >= ex.from && huge.to <= ex.to, "and stays inside it");
+    let tiny = win;
+    for (let i = 0; i < 200; i++) tiny = M.scrubPinch(ex, tiny, -50, 0.5);
+    assert.ok(tiny.to - tiny.from >= Math.min(M.MIN_SCOPE_MS, ex.to - ex.from), "never collapses to nothing");
+
+    // A single flick cannot cross the whole range: a trackpad can deliver a very large delta in one frame.
+    const flick = M.scrubPinch(ex, win, -100_000, 0.5);
+    assert.ok(flick.to - flick.from > (win.to - win.from) * 0.5, "one event is capped");
+
+    // Degenerate inputs are returned untouched rather than producing a NaN window.
+    assert.deepEqual(M.scrubPinch({ from: 5, to: 5 }, win, -20, 0.5), win);
+    assert.deepEqual(M.scrubPinch(ex, { from: 10, to: 10 }, -20, 0.5), { from: 10, to: 10 });
+});

@@ -851,6 +851,48 @@ export function scrubNudge(
 }
 
 /**
+ * A PINCH → a narrower or wider window, ANCHORED so the instant under your fingers stays under them.
+ *
+ * A trackpad pinch reaches the page as a `wheel` carrying `ctrlKey`, which is the platform convention rather
+ * than anything we invented — it is how the browser tells its own page-zoom apart from a scroll. So zooming
+ * the timeline costs no new surface: the same handler that scrolls the window along reads one more flag and
+ * changes what the gesture means. Sideways slides, pinch zooms, which is what both gestures already mean
+ * everywhere else on a trackpad.
+ *
+ * The factor is EXPONENTIAL in the delta, so the gesture is smooth and symmetric: pinching out by an amount
+ * and back in by the same amount returns to where you started, where a linear step accumulates drift and a
+ * `sign(delta) * step` moves in visible jumps.
+ *
+ * The anchor is read LINEARLY across the window, which the plot's own axis is not — it is segmented and
+ * flex-weighted by sample counts. That is deliberate and matches `scrubNudge`, which slides by a fraction of
+ * the window's own width for the same reason: consistency between the two gestures on one axis matters more
+ * than an exactness neither of them has, and the anchor is about the zoom FEELING fixed rather than about
+ * naming an instant.
+ */
+export function scrubPinch(
+    extent: { from: number; to: number },
+    window: { from: number; to: number },
+    deltaY: number,
+    anchorFrac: number,
+    minMs = MIN_SCOPE_MS,
+): { from: number; to: number } {
+    const span = extent.to - extent.from;
+    const width = window.to - window.from;
+    if (!(span > 0) || !(width > 0)) return window;
+    // Pinching OUT gives a negative delta (the same sign a scroll-up carries) and means "closer", so the
+    // window gets narrower. Capped per event, because a trackpad can deliver a very large delta in one frame
+    // and a single flick should not cross the whole zoom range.
+    const factor = Math.exp(Math.max(-0.5, Math.min(0.5, deltaY * 0.01)));
+    const next = Math.max(Math.min(minMs, span), Math.min(span, width * factor));
+    const anchor = window.from + Math.min(1, Math.max(0, anchorFrac)) * width;
+    // Keep the anchored instant at the same FRACTION of the window, which is what makes it stay under the
+    // pointer as the width changes.
+    let from = anchor - (anchor - window.from) * (next / width);
+    from = Math.max(extent.from, Math.min(from, extent.to - next));
+    return { from, to: from + next };
+}
+
+/**
  * How far a wheel gesture should slide the window, as a fraction of the window's own width.
  *
  * Two things this gets right that a `Math.sign(delta) * step` does not, and both were visible as the same

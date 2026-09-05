@@ -12,7 +12,7 @@
 import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
+    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, TAIL_SLACK_MS,
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
@@ -777,6 +777,31 @@ function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; ru
  */
 function applyScrub(next: { from: number; to: number }, ex: { to: number }): void {
     zoomRange.value = next.to >= ex.to - TAIL_SLACK_MS ? null : next;
+}
+
+/** Persisting `resWindowS` on every frame of a continuous gesture would write to storage dozens of times for
+ *  one pinch, so the value is applied live and only the WRITE is deferred to the end of the gesture. */
+let windowWrite: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Settle a gesture that changed the window's WIDTH — the same rule the strip's drag applies on release, so a
+ * pinch and a drag cannot disagree about what "at the tail" means.
+ *
+ * Following with a width is not a special case of a pinned range: it IS `resWindowS`, the quantity Settings
+ * names. So zooming while live changes how much history is drawn and STAYS live, rather than pinning the
+ * window at wherever it happened to be when you pinched — which would have made the gesture a way to
+ * accidentally stop following.
+ */
+function settleScrub(next: { from: number; to: number }, ex: { from: number; to: number }): void {
+    const intent = scrubIntent(ex, next, TAIL_SLACK_MS);
+    if (!intent.live) { zoomRange.value = intent.window; return; }
+    resWindowS.value = intent.windowS;
+    zoomRange.value = null;
+    if (windowWrite) clearTimeout(windowWrite);
+    windowWrite = setTimeout(() => {
+        windowWrite = null;
+        try { chrome.storage.local.set({ [RESWIN_KEY]: resWindowS.value }); } catch { /* opaque origin */ }
+    }, 400);
 }
 
 function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSample[]; window: { from: number; to: number } | null; events?: ResourceEvent[] }) {
@@ -1594,8 +1619,19 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
         if (!w) return;
         const ex = scrubExtent(samples, w);
         if (!ex) return;
-        const width = (e.currentTarget as HTMLElement).getBoundingClientRect().width;
-        const by = wheelScrubFraction(e.deltaX, e.deltaY, e.deltaMode, width);
+        const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        // A TRACKPAD PINCH arrives as a wheel carrying ctrlKey — the platform's own way of telling a zoom from
+        // a scroll, which is also why it must be swallowed: unhandled, the browser zooms the whole panel.
+        // Sideways slides the window, pinch changes its width, which is what both gestures already mean.
+        if (e.ctrlKey) {
+            if (!e.deltaY) return;
+            const at = box.width > 0 ? (e.clientX - box.left) / box.width : 0.5;
+            settleScrub(scrubPinch({ from: ex.from, to: ex.to }, w, e.deltaY, at), ex);
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+        const by = wheelScrubFraction(e.deltaX, e.deltaY, e.deltaMode, box.width);
         if (!by) return;
         applyScrub(scrubNudge({ from: ex.from, to: ex.to }, w, by), ex);
         e.preventDefault();
@@ -1608,7 +1644,9 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     // bars are a window onto the session, and there was no way to push that window along from the half of the
     // panel you are actually looking at.
     const wheelLane = (e: WheelEvent) => {
-        if (Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;   // theirs: the rows scroll
+        // A PINCH is vertical by nature, so it has to be let through before the axis test — otherwise zooming
+        // works on the plot and silently does nothing an inch below it, on the surface sharing its axis.
+        if (!e.ctrlKey && Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;   // theirs: the rows scroll
         wheelScrub(e);
     };
     return (
