@@ -13,6 +13,7 @@ import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
 import { useTipPlacement } from "./use-tip";
+import { CodeEditor } from "./code-editor";
 import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY } from "./store";
 import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
@@ -912,7 +913,6 @@ export function PythonBench() {
     const [mode, setMode] = useState<"readonly" | "full">(() => (lsGet("ml_bench_mode") === "full" ? "full" : "readonly"));
     const [running, setRunning] = useState(false);
     const [result, setResult] = useState<{ ok: boolean; value?: unknown; stdout: string; error?: string } | null>(null);
-    const taRef = useRef<HTMLTextAreaElement>(null);
     const run = () => {
         if (running || !code.trim()) return;
         setRunning(true); setResult(null);
@@ -927,21 +927,11 @@ export function PythonBench() {
                 });
         } catch (e) { setResult({ ok: false, stdout: "", error: String(e) }); setRunning(false); }
     };
-    // Tab inserts spaces (don't escape the field); Cmd/Ctrl+Enter runs.
-    const onKey = (e: KeyboardEvent) => {
-        const ta = taRef.current;
-        if (e.key === "Tab" && ta) {
-            e.preventDefault();
-            const s = ta.selectionStart, en = ta.selectionEnd;
-            setCode(code.slice(0, s) + "    " + code.slice(en));
-            requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + 4; });
-        } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); }
-    };
     const outD = result ? pyBenchDescriptor(result) : null;
     const empty = result?.ok && !result.stdout && result.value == null;
     return (
         <div class="bench">
-            <textarea ref={taRef} class="bench-code code" spellcheck={false} value={code} onInput={e => setCode((e.target as HTMLTextAreaElement).value)} onKeyDown={onKey} placeholder="return 6 * 7" />
+            <CodeEditor class="bench-code" value={code} onChange={setCode} onRun={run} placeholder="return 6 * 7" />
             <div class="bench-bar">
                 <span class="tt bench-info" aria-label="about the bench">ⓘ<span class="tt-pop wrap left" role="tooltip">Runs against the SAME sandbox python_exec uses (offscreen → worker → Pyodide). Code-only — no page image/tables. `return` a value (or end with a bare expression, Jupyter-style); print() is captured. 15s cap.</span></span>
                 <label class="bench-mode">mode

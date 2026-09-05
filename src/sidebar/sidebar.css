@@ -559,10 +559,20 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .bench { display: flex; flex-direction: column; gap: 8px; }
 .bench-info { color: var(--fg-faint); cursor: help; font-size: 1.05em; margin-right: 2px; }
 .bench-info:hover { color: var(--fg-dim); }
-.bench-code { width: 100%; min-height: 180px; resize: vertical; box-sizing: border-box;
-    background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 9px;
+/* The code field. `.ced` is the frame (border, height, drag-to-resize) and owns nothing about the
+   text; inside it sits either CodeMirror or, until that bundle lands, a plain textarea. Both fill the
+   frame completely, so the swap is invisible apart from the colours arriving. */
+.bench-code { min-height: 180px; }
+.ced { position: relative; width: 100%; box-sizing: border-box; resize: vertical; overflow: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px; }
+.ced:focus-within { border-color: var(--accent); }
+.ced-cm, .ced-cm .cm-editor { height: 100%; }
+/* CodeMirror draws its own focus ring; the frame above already shows focus. */
+.ced-cm .cm-editor.cm-focused { outline: none; }
+.ced-ta { display: block; width: 100%; height: 100%; box-sizing: border-box; resize: none;
+    background: none; color: var(--fg); border: 0; padding: 8px 9px;
     font: 0.88em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; white-space: pre; overflow: auto; }
-.bench-code:focus { outline: none; border-color: var(--accent); }
+.ced-ta:focus { outline: none; }
 .bench-bar { display: flex; align-items: center; gap: 8px; }
 .bench-mode { display: flex; align-items: center; gap: 5px; color: var(--fg-dim); font-size: 0.85em; }
 .bench-mode select { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px; font: inherit; font-size: 0.92em; cursor: pointer; }

@@ -1336,6 +1336,16 @@ rate includes the network; that whole matrix (openai/ollama x streamed/not) is p
   Screenshots land in `tests/e2e/artifacts/stream-demo/`; `HOLD=0` exits instead of holding the browser
   open. Deterministic (fake-LLM, approvals resolved via the SW `__mlApprovals` channel). The automated
   assertions are `python-stream.spec.mjs` (the reverse channel) and `output-scroll.spec.mjs` (tail-follow).
+- **`bench-editor-demo.mjs`** — a **narrated demo, not a test** of the Python bench's editor:
+  `npm run build && node --import tsx tests/e2e/bench-editor-demo.mjs` opens a headful browser, switches
+  to the bench, and types numpy into it so you can watch the plain textarea upgrade to CodeMirror, the
+  highlighting land, the completion popup filter, and Cmd/Ctrl+Enter run against the real Pyodide
+  sandbox. `PACE` sets the keystroke delay, `HOLD=0` exits instead of holding the window open, and
+  `HEADLESS=1` captures the screenshots (`tests/e2e/artifacts/bench-editor-demo/`) without a window.
+  Deterministic — nothing here calls a model. The automated assertions are `bench-editor.spec.mjs`,
+  which pins the two regressions this found: `Mod-Enter` is Cmd-ONLY on macOS (so `Ctrl-Enter` is bound
+  too, matching the textarea it replaced), and a stale `value` prop replayed a few keystrokes behind
+  used to be pushed back into the document under a moved cursor, landing "pri" as "rip".
 - **Real model:** point the extension at a real backend with `E2E_BACKEND=<chatUrl>
   E2E_MODEL=<id> E2E_KEY=<bearer>` (the observer also accepts `USE_ENV=1` to read
   `OPENWEBUI_URL/KEY/MODEL` + `OPENWEBUI_UTILITY_MODEL`/`OPENWEBUI_VISION_MODEL` from `.env`).
