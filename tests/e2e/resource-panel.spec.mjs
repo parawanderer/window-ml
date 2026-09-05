@@ -1901,7 +1901,7 @@ test("resource panel: dragging the event lane shows the selection box, and a tin
 // `ctrlKey` — the platform's own convention, which is also why it has to be swallowed: left alone, the
 // browser zooms the whole panel instead. Playwright's `mouse.wheel` cannot set the flag, so the event is
 // dispatched as the trackpad would send it; everything downstream is the real handler.
-test("resource panel: pinching zooms the window, on the plot and on the lane alike", async () => {
+test("resource panel: pinching zooms the window — on the plot, the lane and the scrub strip", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();
     try {
@@ -1962,6 +1962,26 @@ test("resource panel: pinching zooms the window, on the plot and on the lane ali
         await expect(frame.locator(".rc-lane")).toBeVisible();
         expect(await pinch(".rc-lane", -60), "the lane consumes it as well").toBe(true);
         await expect.poll(winW, { timeout: 5000 }).toBeLessThan(wide);
+
+        // AND THE SCRUB STRIP — the surface actually DRAWING the range, so it is the one a person reaches for
+        // to change it. A wheel there pans and deliberately never resizes (it cannot say which edge it meant);
+        // a pinch names a centre rather than an edge, so the objection does not apply to it.
+        const beforeStrip = await winW();
+        for (let i = 0; i < 3; i++) { await pinch(".rc-scrub-track", 60); await sleep(120); }
+        await expect.poll(winW, { timeout: 5000 }).toBeGreaterThan(beforeStrip);
+        const widened = await winW();
+        expect(await pinch(".rc-scrub-track", -60), "the strip consumes it").toBe(true);
+        await expect.poll(winW, { timeout: 5000 }).toBeLessThan(widened);
+        // A PLAIN wheel there still PANS rather than zooming — the two gestures must not collapse into one.
+        const held = await winW();
+        await frame.locator(".rc-scrub-track").evaluate((el) => {
+            const r = el.getBoundingClientRect();
+            el.dispatchEvent(new WheelEvent("wheel", { deltaX: 40, bubbles: true, cancelable: true,
+                clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+        });
+        await sleep(300);
+        expect(Math.abs((await winW()) - held), "a plain wheel moves the window, it does not resize it")
+            .toBeLessThan(2);
     } finally {
         await ext.close();
         await fake.stop();

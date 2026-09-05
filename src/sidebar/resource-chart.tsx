@@ -872,6 +872,23 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
                 // edge it meant.
                 onWheel={(ev: WheelEvent) => {
                     const b = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+                    // A PINCH names a CENTRE, not an edge, which is why it belongs here where a wheel-resize
+                    // does not: the objection above is that a wheel cannot say which edge it meant, and a
+                    // pinch does not have to. It is also the surface a person reaches for to change the range,
+                    // since it is the one drawing the range.
+                    if (ev.ctrlKey) {
+                        if (!ev.deltaY) return;
+                        // The strip's x is a fraction of the WHOLE SESSION and linear in time; `scrubPinch`
+                        // anchors on a fraction of the WINDOW. So resolve the instant under the pointer and
+                        // ask where that sits inside the window — which also gives the right degenerate:
+                        // pinching outside the window clamps to its nearer edge rather than teleporting it.
+                        const at = ex.from + ((ev.clientX - b.left) / Math.max(1, b.width)) * (ex.to - ex.from);
+                        const within = (at - win.from) / Math.max(1, win.to - win.from);
+                        settleScrub(scrubPinch({ from: ex.from, to: ex.to }, win, ev.deltaY, within), ex);
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        return;
+                    }
                     const by = wheelScrubFraction(ev.deltaX, ev.deltaY, ev.deltaMode, b.width);
                     if (!by) return;
                     applyScrub(scrubNudge({ from: ex.from, to: ex.to }, win, by), ex);
