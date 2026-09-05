@@ -87,3 +87,81 @@ test("a real traceback names the user's line, and the render points at it", asyn
         expect(await step.locator(".cline-pulse").count(), "the failure does not flash green").toBe(0);
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+
+// HOW LONG IT RAN, live. The jsdom tests pin where the footer goes and what it says; only a real browser can
+// show the number actually MOVING, which is the half that distinguishes "slow" from "stuck" — and a ticker
+// that never fires looks identical to one that does in a static assertion.
+test("a running script counts up, and settles on what it measured", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    // Declared out here so the `finally` can stop the background approver whatever happens.
+    let approving = false;
+    let approver = Promise.resolve();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model",
+            debugMode: "overlay", autoApprovePython: true,
+        });
+        // Slow on purpose, and it PRINTS — so the footer has a console to sit inside.
+        fake.setScript([
+            { tool: "python_exec", args: { code: "import time\nprint('working')\ntime.sleep(4)\n'done'", mode: "readonly" } },
+            { content: "done" },
+        ]);
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1300, height: 900 });
+        await page.goto(`${fake.url}/api/version`);
+        await waitForMl(page);
+        await page.evaluate(() => {
+            window.ml.agent("run something slow", { stream: true, approvalRouting: "both", extraTools: [window.ml.pythonTool()] });
+        });
+        // The run parks at the gate before any step exists, so the transcript is empty and
+        // `openRunInSidebar` (rightly) refuses to call that "open". Resolve gates in the BACKGROUND while
+        // opening, rather than up front: the step we want to watch is the one the approval releases, so
+        // draining first and opening second races the 4s window we are trying to observe.
+        approving = true;
+        approver = (async () => {
+            while (approving) {
+                const pending = await ext.sw.evaluate(() => (globalThis.__mlApprovals?.list?.() || []).map((d) => d.key)).catch(() => []);
+                for (const k of pending) await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), k).catch(() => {});
+                await sleep(150);
+            }
+        })();
+        const frame = await openRunInSidebar(page, { task: "run something slow", timeout: 30000 });
+
+        // EXPAND the running step. A step is collapsed until you open it, so its Out block — and the footer
+        // hanging off it — do not exist yet; collapsed, the row already says "running…" in its preview.
+        for (let i = 0; i < 40; i++) {
+            if (await frame.locator(".r-ranfor.live").count()) break;
+            const head = frame.locator(".astep-head").first();
+            if (await head.count()) await head.click().catch(() => {});
+            await sleep(200);
+        }
+
+        // WHILE IT RUNS: it says so, and the number moves. Two readings a second apart, because a ticker that
+        // never fires is indistinguishable from one that does if you only look once.
+        const live = frame.locator(".r-ranfor.live").first();
+        await expect(live).toBeVisible({ timeout: 20000 });
+        await expect(live).toContainText("running…");
+        // Parse the UNITS: the footer humanises ("782ms" → "1.9s" → "1m 5s"), so stripping non-digits
+        // compares 782 against 1.9 and concludes time went backwards.
+        const ms = (t) => {
+            // Each unit matched on its own. One regex of all-optional groups matches the empty string at
+            // position 0 and reports zero for everything, which reads as a timer that never moved.
+            const num = (re) => { const m = re.exec(t); return m ? Number(m[1]) : 0; };
+            return num(/(\d+(?:\.\d+)?)ms\b/) + num(/(\d+(?:\.\d+)?)s\b/) * 1000 + num(/(\d+(?:\.\d+)?)m\b(?!s)/) * 60_000;
+        };
+        const read = async () => ms(await live.textContent());
+        const first = await read();
+        await sleep(1100);
+        expect(await read(), "the elapsed figure is moving").toBeGreaterThan(first);
+
+        // AND THEN IT SETTLES on the measured figure — not a number still quietly growing.
+        await expect.poll(() => frame.locator(".r-ranfor:not(.live)").count(), { timeout: 30000 }).toBeGreaterThan(0);
+        const done = frame.locator(".r-ranfor:not(.live)").first();
+        await expect(done).toContainText(/ran in \d/);
+        expect(await frame.locator(".r-ranfor.live").count(), "nothing is still counting").toBe(0);
+        // It printed, so the footer belongs INSIDE the console rather than after the last section.
+        expect(await done.evaluate((el) => !!el.closest(".r-py-stdout"))).toBe(true);
+    } finally { approving = false; await approver.catch(() => {}); await ext.context.close(); await fake.stop(); }
+});

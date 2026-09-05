@@ -10,7 +10,7 @@ import type { RenderDescriptor, LocateSubstep, TableSource } from "../contract";
 import { elementReference } from "../dom";
 import { pyFormat, lineChanged } from "../py-format";
 import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode } from "./store";
-import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, hourNow, armHourTick, dayBreaks } from "./timestamps";
+import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmtDur, hourNow, armHourTick, dayBreaks } from "./timestamps";
 import { markdown, truncate, pretty } from "./format";
 import {
     openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText,
@@ -603,8 +603,13 @@ function Traceback({ text }: { text: string }) {
     };
     return (
         <pre class="code tb"><code class="hljs">{rows.map((r, i) => {
-            const m = /^(.*File ")(<python_exec>)(", line )(\d+)(.*)$/.exec(r);
-            if (!m) return <span class={`tbline${/File "<exec>"/.test(r) ? " dim" : ""}`} key={i}>{r}{"\n"}</span>;
+            // `_user` is the name of the wrapper the sandbox indents the code into — an implementation
+            // detail, and one that makes a perfectly correct frame read as nonsense ("line 5, in _user"
+            // looks like it is pointing at something internal, so the reader distrusts the number too).
+            // Renamed HERE and not in the traceback text: the raw view and the model's copy stay verbatim.
+            const r0 = r.replace(/, in _user$/, ", at the top level of your code");
+            const m = /^(.*File ")(<python_exec>)(", line )(\d+)(.*)$/.exec(r0);
+            if (!m) return <span class={`tbline${/File "<exec>"/.test(r) ? " dim" : ""}`} key={i}>{r0}{"\n"}</span>;
             const line = Number(m[4]);
             return (
                 <span class={`tbline${i === deepest ? " tb-fail" : ""}`} key={i}>
@@ -623,6 +628,27 @@ function Traceback({ text }: { text: string }) {
             );
         })}</code></pre>
     );
+}
+
+/** HOW LONG IT RAN, under the output. A script's elapsed time is the one thing about it you cannot read off
+ *  the transcript — the timestamps either side include the model's own turn — and while it is still going it
+ *  is the difference between "slow" and "stuck".
+ *
+ *  Live, it ticks; finished, it is what the loop measured (`toolMs`, the tool's own wall clock, which is not
+ *  the step's: a human at an approval gate is the step's time and none of the machine's work). */
+export function RanFor({ live, ms, since }: { live?: boolean; ms?: number; since?: number }) {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        if (!live || since == null) return;
+        // A tenth of a second: fast enough that the number is visibly moving (which is the point — it says
+        // the thing is alive), slow enough to cost nothing. Cleared on unmount, or the interval keeps a
+        // jsdom window alive and the test runner never exits.
+        const id = setInterval(() => setNow(Date.now()), 100);
+        return () => clearInterval(id);
+    }, [live, since]);
+    if (live && since != null) return <div class="r-ranfor live">running… {fmtDur(Math.max(0, now - since))}</div>;
+    if (ms == null) return null;
+    return <div class="r-ranfor">ran in {fmtDur(ms)}</div>;
 }
 
 // A collapsible section of the python-out block (stdout / value / error / token). Same disclosure
@@ -655,7 +681,7 @@ function PyOutSection({ label, cls, children, cite, open = true, foldInFocus }: 
 }
 // `python_exec`'s Out slot: captured stdout, then one of a returned image / a minted
 // @pt·@box token / the raw value / a Python traceback.
-function PythonOutRender({ d, marks, live }: { d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][]; live?: boolean }) {
+function PythonOutRender({ d, marks, live, ranMs, ranSince }: { d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number }) {
     return (
         <div class="r-python r-py-out">
             {/* Only the captured OUTPUT scrolls (and hosts the find bar) — the returned value/table/image sit
@@ -664,7 +690,14 @@ function PythonOutRender({ d, marks, live }: { d: Extract<RenderDescriptor, { ty
                 output is the thing proving the run is alive, which is exactly what a reading mode should not
                 hide; `live` is what tells the two apart. Outside focus mode nothing folds: there you are
                 reading the console on purpose. */}
-            {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout" foldInFocus={!live}><OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell></PyOutSection> : null}
+            {/* The stdout section is NOT always there — it renders only when something was printed — so the
+                elapsed footer goes INSIDE it when it exists and after the last section when it does not.
+                Never both, and never an empty section conjured up to hold it: a container that exists only
+                to carry a footer is chrome pretending to be output. */}
+            {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout" foldInFocus={!live}>
+                <OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
+                <RanFor live={live} ms={ranMs} since={ranSince} />
+            </PyOutSection> : null}
             {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err" cite="out"><OutputCell><Traceback text={d.error} /></OutputCell></PyOutSection> : null}
@@ -675,6 +708,8 @@ function PythonOutRender({ d, marks, live }: { d: Extract<RenderDescriptor, { ty
                 on the way there, and it is the half you most often want to search. Capped, scrollable and
                 Ctrl+F-able for free by being wrapped, rather than each section inventing its own. */}
             {d.value != null && !d.latex && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value" cls="r-py-val" cite="out"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
+            {/* No console to hang it off — so it goes after the last section instead. */}
+            {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} /> : null}
         </div>
     );
 }
@@ -700,15 +735,21 @@ function CodeRender({ d, failLine }: { d: Extract<RenderDescriptor, { type: "cod
     );
 }
 
-function ExecOutRender({ d, marks }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][] }) {
+function ExecOutRender({ d, marks, live, ranMs, ranSince }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number }) {
     return (
         <div class="r-python r-py-out">
             {/* "console" for exec, but a REMOTE tool's streamed frames are not a console — the section is the
                 same shape (progress produced as it worked) and only the word differs. */}
-            {d.stdout ? <PyOutSection label={d.stdoutLabel ?? "console"} cls="r-py-stdout"><OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell></PyOutSection> : null}
+            {/* Inside the console when there IS one, after the last section when there is not — see the note
+                in PythonOutRender. */}
+            {d.stdout ? <PyOutSection label={d.stdoutLabel ?? "console"} cls="r-py-stdout" foldInFocus={!live}>
+                <OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
+                <RanFor live={live} ms={ranMs} since={ranSince} />
+            </PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell><Code text={d.error} lang="text" /></OutputCell></PyOutSection> : null}
             {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
+            {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} /> : null}
         </div>
     );
 }
@@ -735,7 +776,7 @@ function LookRender({ d }: { d: Extract<RenderDescriptor, { type: "look" }> }) {
     );
 }
 
-export function RenderPanel({ d, marks, live, failLine }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null }) {
+export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null; ranMs?: number; ranSince?: number }) {
     switch (d.type) {
         case "image": {
             // If the label references an @pt/@box (e.g. look's `element "@pt:…"`), hovering the shot
@@ -813,8 +854,8 @@ function FetchLadder({ attempts, resolvedBy }: { attempts: import("../contract")
             return <Code text={pretty(d)} lang="json" />;
         case "locate": return <LocateRender d={d} />;
         case "python-in": return <PythonInRender d={d} live={live} failLine={failLine} />;
-        case "python-out": return <PythonOutRender d={d} marks={marks} live={live} />;
-        case "exec-out": return <ExecOutRender d={d} marks={marks} />;
+        case "python-out": return <PythonOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} />;
+        case "exec-out": return <ExecOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} />;
         case "look": return <LookRender d={d} />;
         default: return <Code text={pretty(d)} lang="json" />;   // unknown type → dump it
     }

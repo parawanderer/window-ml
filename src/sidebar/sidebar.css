@@ -2129,6 +2129,15 @@ html[data-surface="card"] .appr-btn.no:hover {
     .cline-pulse-fail { animation: none; background: color-mix(in srgb, var(--err) 30%, transparent); }
 }
 
+/* HOW LONG IT RAN, under the output. Small, grey, italic: it is an annotation on the thing above it, not a
+   result of its own — and a script's elapsed time is the one fact about it the transcript cannot give you,
+   since the timestamps either side include the model's own turn. */
+.r-ranfor { font-size: 0.82em; font-style: italic; color: var(--fg-faint); padding: 2px 2px 0;
+    font-variant-numeric: tabular-nums; }
+/* While it is still going the number is MOVING, which is the half that says the thing is alive rather than
+   stuck — so it is a touch brighter than the settled one. */
+.r-ranfor.live { color: var(--fg-dim); }
+
 /* Click-to-step: pulse the cited step green when you jump to it. */
 @keyframes astepPulse { 0% { background: color-mix(in srgb, var(--ok) 45%, transparent); }
     100% { background: transparent; } }

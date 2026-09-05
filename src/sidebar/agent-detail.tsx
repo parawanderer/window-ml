@@ -19,7 +19,7 @@ import {
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { deepestUserLine } from "../py-format";
-import { RenderPanel, OutputCell, SeenSplit } from "./render-panel";
+import { RenderPanel, OutputCell, SeenSplit, RanFor } from "./render-panel";
 import { ReplyBubble } from "./reply";
 import { CodeExplain, codeOf } from "./summaries";
 import { groupTurns } from "./debug-reducer";
@@ -33,7 +33,7 @@ import type { AgentTurnGroup } from "./debug-reducer";
 const slotOf = (label: string): "in" | "out" | undefined =>
     label === "In" ? "in" : label === "Out" ? "out" : undefined;
 
-export function IoBlock({ label, tip, preview, render, raw, marks, reserve, failLine }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; marks?: [number, number][]; reserve?: boolean; failLine?: number | null }) {
+export function IoBlock({ label, tip, preview, render, raw, marks, reserve, failLine, live, ranMs, ranSince }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; marks?: [number, number][]; reserve?: boolean; failLine?: number | null; live?: boolean; ranMs?: number; ranSince?: number }) {
     const [showRaw, setShowRaw] = useState(false);   // rendered by default when a descriptor targets this block
     // The capped/scrollable/findable cell is for tool OUTPUT — a fetch_url page, a big sampleText dump. The In
     // block is the CALL (args / the code being run): short, and it already renders in its own code block, so
@@ -52,7 +52,7 @@ export function IoBlock({ label, tip, preview, render, raw, marks, reserve, fail
                             <span class="tt"><button class={showRaw ? "" : "on"} disabled={!render} onClick={() => setShowRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">{render ? "A debug visualisation for you — not shown to the model." : "Available once this step finishes."}</span></span>
                             <span class="tt"><button class={showRaw ? "on" : ""} disabled={!render} onClick={() => setShowRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">{render ? "Exactly what the model sent/received. All it knows." : "Available once this step finishes."}</span></span>
                         </div>
-                        {render && !showRaw ? <RenderPanel d={render} marks={marks} failLine={failLine} />
+                        {render && !showRaw ? <RenderPanel d={render} marks={marks} failLine={failLine} live={live} ranMs={ranMs} ranSince={ranSince} />
                             /* RAW is shared by every tool and has no renderer-specific structure, so it
                                carries the DEFAULT anchor for the slot. A rendered view may declare a finer
                                one (python-in's code, python-out's value) and wins by being the visible
@@ -60,6 +60,13 @@ export function IoBlock({ label, tip, preview, render, raw, marks, reserve, fail
                             : <div data-cite={slotOf(label)}>{cell(raw)}</div>}
                     </>
                     : <div data-cite={slotOf(label)}>{cell(raw)}</div>}
+                {/* WHILE IT RUNS the footer lives HERE, outside the branches, because there is no render
+                    descriptor yet — one only lands when the step settles, and a pending step with nothing
+                    streamed yet takes the other branch entirely. Settled, the descriptor owns it (inside the
+                    console when there is one, after the last section when there is not), so exactly one is
+                    ever drawn. This is the case it matters most for: the number moving is what says the
+                    thing is alive rather than stuck. */}
+                {live && !render ? <RanFor live since={ranSince} /> : null}
             </div>
         </details>
     );
@@ -345,6 +352,10 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                             raw={<RawArgs args={args || {}} schema={paramSchema} />} />
                         : null}
                     <IoBlock label="Out" tip="What the tool returned to the model." marks={st.streamMarks} reserve={!!st.pending && st.streamOutput != null}
+                        /* HOW LONG IT RAN. `toolMs` is the tool's own wall clock, not the step's — a human at
+                           an approval gate is the step's time and none of the machine's work. Live, it ticks
+                           from when the step started, which is the difference between "slow" and "stuck". */
+                        live={!!st.pending} ranMs={st.toolMs} ranSince={st.ts}
                         preview={st.pending ? (st.streamOutput ? inlineText(st.streamOutput) : "running…") : inlineText(st.result || "")} render={outRender}
                         raw={st.pending
                             ? (st.streamOutput != null

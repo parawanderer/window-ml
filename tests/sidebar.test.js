@@ -7853,3 +7853,71 @@ test("python: each traceback jumps into ITS OWN step's code, not the first one o
     // The deepest frame is the failure, so it flashes RED — green would be the one colour that line is not.
     assert.ok(steps[1].querySelector(".cline-pulse-fail"), "the failing line flashes red, not green");
 });
+
+// HOW LONG IT RAN, under the output. A script's elapsed time is the one fact about it the transcript cannot
+// give you: the timestamps either side include the model's own turn. And while it is still going, the
+// difference between "slow" and "stuck".
+//
+// It hangs off the CONSOLE when there is one and off the last section when there is not — the console is not
+// always there, and conjuring an empty one to hold a footer would be chrome pretending to be output.
+
+test("out footer: the elapsed time sits inside the console when there IS one", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ran1", "compute"));
+    await w.dispatch(agentStep("ran1", 1, {
+        seq: 1, tool: "python_exec", toolMs: 1234, arguments: { code: "print(1)" }, result: "ok",
+        renderOut: { type: "python-out", stdout: "1\n", value: "42" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep-head").click();
+    await w.tick();
+
+    const foot = w.shadow.querySelector(".r-ranfor");
+    assert.ok(foot, "the footer rendered");
+    assert.match(foot.textContent, /ran in 1\.2s/, "the tool's own wall clock, humanised");
+    assert.ok(foot.closest(".r-py-stdout"), "…inside the console section, which exists here");
+});
+
+test("out footer: with no console it goes after the last section instead", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ran2", "compute"));
+    await w.dispatch(agentStep("ran2", 1, {
+        seq: 1, tool: "python_exec", toolMs: 400, arguments: { code: "1+1" }, result: "ok",
+        renderOut: { type: "python-out", value: "2" },   // nothing printed
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep-head").click();
+    await w.tick();
+
+    const foots = [...w.shadow.querySelectorAll(".r-ranfor")];
+    assert.equal(foots.length, 1, "exactly one footer — never both placements");
+    assert.equal(foots[0].closest(".r-py-stdout"), null, "there is no console to sit in");
+    assert.match(foots[0].textContent, /ran in 400ms/);
+    // And no empty console section was conjured up to hold it.
+    assert.equal(w.shadow.querySelector(".r-py-stdout"), null);
+});
+
+test("out footer: while the step is RUNNING it counts up instead", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ran3", "compute"));
+    await w.dispatch(agentStep("ran3", 1, {
+        seq: 1, tool: "python_exec", pending: true, ts: Date.now() - 2500,
+        arguments: { code: "time.sleep(9)" }, streamOutput: "working\n",
+        renderOut: { type: "python-out", stdout: "working\n" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const open = w.shadow.querySelector(".astep-head");
+    if (open) { open.click(); await w.tick(); }
+
+    const foot = w.shadow.querySelector(".r-ranfor");
+    assert.ok(foot, "a running step has one too — that is the case it matters most for");
+    assert.match(foot.textContent, /running…/, "it says it has not finished");
+    assert.ok(foot.classList.contains("live"));
+    // ~2.5s in, and NOT a final "ran in": a settled figure on a step still going would be a measurement
+    // that is quietly still growing.
+    assert.match(foot.textContent, /[23](\.\d)?s/);
+    assert.doesNotMatch(foot.textContent, /ran in/);
+});

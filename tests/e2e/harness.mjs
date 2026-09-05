@@ -106,11 +106,17 @@ export async function openRunInSidebar(page, { width, task, timeout = 20000 } = 
         await sleep(200);
     }
     if (!(await rows.count())) throw new Error(`no session row to open${task ? ` matching ${task}` : ""}`);
-    await rows.first().click();
-    // The detail view exists once it is showing the run's own content rather than the list.
-    for (let i = 0; i < Math.ceil(timeout / 200); i++) {
+    // CLICK UNTIL IT NAVIGATES. The list re-renders as the run emits, so a single click can land on a row
+    // that is replaced before the handler runs — leaving the panel on the list and every later assertion
+    // reading an empty transcript, which is the failure this helper exists to prevent.
+    for (let i = 0; i < Math.ceil(timeout / 400); i++) {
         if (await frame.locator(".astep, .msg, .aturn-prose").count()) return frame;
-        await sleep(200);
+        await rows.first().click().catch(() => {});
+        await sleep(400);
     }
-    throw new Error("clicked the session row but the detail view never rendered");
+    const seen = await frame.evaluate(() => ({
+        classes: [...new Set([...document.querySelectorAll("body *")].map((e) => e.className).filter((c) => typeof c === "string" && c))].slice(0, 40),
+        text: document.body.innerText.slice(0, 300),
+    })).catch(() => null);
+    throw new Error(`clicked the session row but the detail view never rendered — saw: ${JSON.stringify(seen)}`);
 }
