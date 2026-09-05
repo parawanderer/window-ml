@@ -503,6 +503,74 @@ test("an executor claiming MORE time than we measured is ignored, not drawn back
     for (let i = 1; i < ev.phases.length; i++) assert.ok(ev.phases[i].until >= ev.phases[i - 1].until);
 });
 
+// A MODEL CALL YOU TRIGGERED WHILE READING — the code annotator, an on-demand summary. It belongs on the
+// timeline (it spent tokens on this box and took visible time) and it must not be part of the run (charging
+// it would make two runs incomparable on the strength of how much someone poked at one).
+test("an aside is drawn on the lane, with no cost and no lineage", () => {
+    const s = {
+        kind: "agent", hash: "h", model: "m", createdTs: 0, lastTs: 30_000,
+        steps: [turn(1, 5000, usage(100, 20, { genMs: 900 }))],
+        asides: [{ t: 20_000, ms: 1400, label: "annotating the code", model: "util-4b", seq: 2 }],
+    };
+    const evs = M.eventsFrom([s]);
+    const aside = evs.filter((e) => e.kind === "aside");
+    assert.equal(aside.length, 1);
+    assert.equal(aside[0].t, 20_000);
+    assert.equal(aside[0].until, 21_400, "a span, not an instant — you can see how long it took");
+    assert.equal(aside[0].label, "annotating the code");
+    assert.equal(aside[0].model, "util-4b", "the model that ran it, not the run's");
+    // NOT the run's work: no cost to fold into its totals, and no parent, so hovering a step cannot light it
+    // and it cannot light a step. That is enforced by construction rather than remembered.
+    assert.equal(aside[0].cost, undefined);
+    assert.equal(aside[0].parent, undefined);
+    // …but it is still addressable: clicking goes to the step you asked about.
+    assert.deepEqual(aside[0].ref, { hash: "h", seq: 2 });
+});
+
+test("a run's own token totals do not move when you annotate it", () => {
+    const base = { kind: "agent", hash: "h", model: "m", createdTs: 0, lastTs: 30_000,
+                   steps: [turn(1, 5000, usage(100, 20, { genMs: 900 }))] };
+    const before = M.usageByModel([base]);
+    const after = M.usageByModel([{ ...base, asides: [{ t: 9000, ms: 800, label: "summarising", model: "util-4b" }] }]);
+    assert.deepEqual(after, before, "reading a run is not part of it");
+});
+
+test("an aside with no measured duration is dropped rather than drawn as a moment", () => {
+    // A call that failed before it started has nothing to say about where time went, and a zero-width bar in
+    // a lane of spans reads as an instant — which is a different claim.
+    const s = { kind: "agent", hash: "h", model: "m", createdTs: 0, lastTs: 30_000,
+                steps: [turn(1, 5000, usage(100, 20, { genMs: 900 }))],
+                asides: [{ t: 20_000, ms: 0, label: "annotating" }, { t: 0, ms: 500, label: "annotating" }] };
+    assert.equal(M.eventsFrom([s]).filter((e) => e.kind === "aside").length, 0);
+});
+
+// A SANDBOX'S COLD START. The first python_exec of a session spends seconds fetching Pyodide and its wheels
+// before a line of the script runs; charged to the tool it looks like a slow script, which is the confusion
+// a model's `load_duration` exists to settle. A PHASE rather than its own event, because unlike a model load
+// it happens INSIDE the dispatch `toolMs` already measures — a span in front would draw the time twice.
+test("a cold start is drawn FIRST and apart from the script it preceded", () => {
+    // 4000ms measured by us; 2500 booting the sandbox, then 1200 running the code — 300 left over.
+    const [ev] = M.eventsFrom([remoteStep({ remoteMs: { durationMs: 1200, bootMs: 2500 } })]).filter(e => e.kind === "tool");
+    assert.deepEqual(kinds(ev.phases), ["model", "boot", "net", "tool"]);
+    assert.deepEqual(durs(ev.t, ev.phases), [900, 2500, 300, 1200]);
+});
+
+test("a WARM call reports no boot, so nothing is drawn for one", () => {
+    // Every call after the first. The absence is the signal — an always-present zero-width phase would be a
+    // permanent invitation to wonder what it means.
+    const [ev] = M.eventsFrom([remoteStep({ remoteMs: { durationMs: 3800 } })]).filter(e => e.kind === "tool");
+    assert.ok(!kinds(ev.phases).includes("boot"));
+});
+
+test("a boot longer than the whole step is clamped, and never steals from the script", () => {
+    // Clock skew, or a boot that overlapped something we did not measure. The script's own figure is the one
+    // the executor is surest of, so it is never the thing that gives way.
+    const [ev] = M.eventsFrom([remoteStep({ remoteMs: { durationMs: 1000, bootMs: 9999, queuedMs: 400 } })]).filter(e => e.kind === "tool");
+    assert.deepEqual(kinds(ev.phases), ["model", "boot", "tool"]);
+    assert.deepEqual(durs(ev.t, ev.phases), [900, 3000, 1000], "boot takes the slack, the queue gets none left");
+    for (let i = 1; i < ev.phases.length; i++) assert.ok(ev.phases[i].until >= ev.phases[i - 1].until);
+});
+
 test("a queue longer than what is left after evaluating is clamped, never negative", () => {
     const [ev] = M.eventsFrom([remoteStep({ remoteMs: { durationMs: 3900, queuedMs: 5000 } })]).filter(e => e.kind === "tool");
     assert.deepEqual(kinds(ev.phases), ["model", "queue", "tool"]);

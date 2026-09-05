@@ -4,15 +4,18 @@
 // Extracted from app.tsx; leans on the shared primitives in ./ui-kit.
 import type { ComponentChildren } from "preact";
 import { GLYPH, RESOLVED_LABEL, rungLabel, rungMeta } from "./fetch-ladder";
+import { IconChevron } from "./icons";
+import { scrollToStepSeq } from "./answer-render";
 import { useState, useRef, useEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { RenderDescriptor, LocateSubstep, TableSource } from "../contract";
+import type { RenderDescriptor, LocateSubstep, TableSource, CodeRevision } from "../contract";
+import { codeDiff, diffStat } from "../diff";
 import { elementReference } from "../dom";
 import { pyFormat, lineChanged } from "../py-format";
 import { lineMapBetween } from "../line-map";
-import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, config, lsSet, BENCH_CODE_KEY } from "./store";
+import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, config, lsSet, BENCH_CODE_KEY, surface, codeLineNumbers } from "./store";
 import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmtDur, hourNow, armHourTick, dayBreaks } from "./timestamps";
-import { markdown, truncate, pretty } from "./format";
+import { markdown, truncate, pretty, highlight } from "./format";
 import { codeNotes, notesState, notesHidden, fetchLineNotes, toggleLineNotes } from "./summaries";
 import { notesByLine } from "./annotate";
 import {
@@ -296,20 +299,24 @@ function CodeTools({ ctx, lang, src }: { ctx: CodeCtx; lang: string; src: string
     const state = notesState.get(key);
     const hasUtility = !!config.value.utilityModel.trim();
     const say = (msg: string) => { setFlash(msg); setTimeout(() => setFlash(""), 1600); };
-    const python = lang === "python";
+    // The HUD card is a READING surface — an answer and the steps behind it, over the page. The bench is a
+    // debug tool on the panel's own navigation, which the card does not have: sending someone there from a
+    // corner card would either do nothing or replace what they were reading. Explain stays, because
+    // understanding the code IS what that card is for.
+    const python = lang === "python" && surface.value !== "card";
     return (
         <div class="code-tools" data-rev={rv}>
             {flash ? <span class="code-tools-flash">{flash}</span> : null}
             {/* One button, two roles. Before there are notes it ASKS; once they exist there is nothing
                 left to ask, so it becomes the show/hide the notes need. */}
             {notes
-                ? <button class={`code-tool${notesHidden.has(key) ? "" : " on"}`} onClick={() => toggleLineNotes(key)}>
-                    <span class="tt-anchor">💡 notes</span>
+                ? <button class={`tt code-tool${notesHidden.has(key) ? "" : " on"}`} onClick={() => toggleLineNotes(key)}>
+                    <span>💡 notes</span>
                     <span class="tt-pop wrap left" role="tooltip">{notesHidden.has(key) ? "Show" : "Hide"} the line notes. They are model-generated, so treat them as a gloss rather than an authority.</span>
                 </button>
-                : <button class="code-tool" disabled={!hasUtility || state === "loading"}
+                : <button class="tt code-tool" disabled={!hasUtility || state === "loading"}
                     onClick={() => fetchLineNotes(key, lang, src, ctx.result)}>
-                    <span class="tt-anchor">💡 {state === "loading" ? "reading…" : state === "error" ? "retry" : "explain"}</span>
+                    <span>💡 {state === "loading" ? "reading…" : state === "error" ? "retry" : "explain"}</span>
                     <span class="tt-pop wrap left" role="tooltip">{!hasUtility
                         ? "Set a utility model in Settings to annotate code."
                         : state === "error"
@@ -321,13 +328,13 @@ function CodeTools({ ctx, lang, src }: { ctx: CodeCtx; lang: string; src: string
                    token) and it is what you are looking at, so what lands in the bench is what you
                    pressed the button next to. The bench reads the key on MOUNT, so writing it and then
                    navigating is what hands the script over. */
-                ? <button class="code-tool" onClick={() => { lsSet(BENCH_CODE_KEY, src); view.value = { name: "bench" }; }}>
-                    <span class="tt-anchor">▶ bench</span>
+                ? <button class="tt code-tool" onClick={() => { lsSet(BENCH_CODE_KEY, src); view.value = { name: "bench" }; }}>
+                    <span>▶ bench</span>
                     <span class="tt-pop wrap left" role="tooltip">Open this script in the Python bench, where you can edit it and run it against the same sandbox. Replaces whatever is in the bench now.</span>
                 </button>
-                : <button class="code-tool" onClick={() => { void copyText(src); say("copied"); }}>
-                    <span class="tt-anchor">copy</span>
-                    <span class="tt-pop wrap left" role="tooltip">Copy the source as shown, to paste into the devtools console.</span>
+                : <button class="tt code-tool" onClick={() => { void copyText(src); say("copied"); }}>
+                    <span>copy</span>
+                    <span class="tt-pop wrap left" role="tooltip">Copy the source exactly as shown here — reflowed for reading, with the same tokens that ran.</span>
                 </button>}
         </div>
     );
@@ -343,7 +350,86 @@ function notesForBlock(ctx: CodeCtx | undefined, rv: number): Map<number, string
     return notes && !notesHidden.has(key) ? notesByLine(notes) : undefined;
 }
 
-function PythonInRender({ d, live, failLine, ctx }: { d: Extract<RenderDescriptor, { type: "python-in" }>; live?: boolean; failLine?: number | null; ctx?: CodeCtx }) {
+/** WHAT CHANGED SINCE THE CALL THIS REVISES. The commonest loop in a run is: a code tool fails, the model
+ *  retries with a tweak, and the reader diffs two twenty-line blocks by eye to find the one line that moved.
+ *
+ *  Both sides are REFLOWED before comparing (the same `displaySource`/`pyFormat` the block itself draws
+ *  through), or pure spacing differences drown the real change — a model writes dense on purpose, and two
+ *  calls it wrote a minute apart are not spaced the same way.
+ *
+ *  The header says WHAT it is diffing against and takes you there, because a diff whose other side you
+ *  cannot see is half an answer. The model's own account of the change sits BESIDE the diff, marked as its
+ *  claim: it answers from what it MEANT to change, and the two disagree exactly when this is worth reading. */
+function CodeDiff({ revision, after, lang, hash, failed }: { revision: CodeRevision; after: string; lang: string; hash?: string; failed?: boolean }) {
+    // OPEN ONLY WHEN THE STEP FAILED. That is when "what did I change" is the question you are actually
+    // asking — a retry that WORKED is a step whose output you want, and pinning a diff open above it pushes
+    // that output out of the viewport to answer a question nobody asked. Collapsed it is one line, and the
+    // line still says what it revises and by how much, so nothing is hidden.
+    //
+    // Focus mode folds it either way: it reads the run as a conversation, and this is a debugger's question
+    // even on a failure. Seeded like every other focus fold (see useFocusFold) rather than bound to the
+    // signal, so a diff you opened stays open through the next poll.
+    // THE NUMBERS ONLY WHEN THEY LINE UP WITH SOMETHING. They earn their width because the new-side column
+    // is the same numbering the code block below draws — so a diff row, a margin note and the failure mark
+    // all name the same line and you can read straight down between them. With the block's own gutter off
+    // they line up with nothing, and are just width taken in a narrow panel. A failure turns that gutter on
+    // by itself (see `Code`), so the two can never disagree.
+    const nums = codeLineNumbers.value || !!failed;
+    const focus = focusMode.value;
+    const [open, setOpen] = useState(!!failed && !focus);
+    const seeded = useRef(focus);
+    if (seeded.current !== focus) { seeded.current = focus; setOpen(!!failed && !focus); }
+    const before = lang === "python" ? pyFormat(revision.before).text : displaySource(revision.before, lang, true);
+    const rows = useMemo(() => codeDiff(before, after), [before, after]);
+    // Nothing to show is not the same as nothing to say: a retry whose source is IDENTICAL is a fact worth
+    // stating, since the model believes it changed something.
+    const stat = rows ? diffStat(rows) : { added: 0, removed: 0 };
+    return (
+        <div class={`r-diff${open ? "" : " closed"}`}>
+            <div class="r-diff-head">
+                <button class={`r-diff-tri${open ? " open" : ""}`} onClick={() => setOpen(!open)} aria-expanded={open}>
+                    <IconChevron />
+                </button>
+                <span class="r-diff-lbl">revises</span>
+                {/* The pill IS the pointer, and it navigates — the same gesture a citation makes. */}
+                <button class="tok-ref r-diff-ref" onClick={() => scrollToStepSeq(revision.seq, hash, "in")}
+                    {...cursorTipOn(`Go to the ${revision.tool} call this revises${revision.label ? ` — the model called it "${revision.label}"` : ""}.`)}>
+                    {revision.label ? `${revision.tool}: ${revision.label}` : revision.ref}
+                </button>
+                {rows
+                    ? <span class="r-diff-stat"><b class="r-diff-add">+{stat.added}</b> <b class="r-diff-del">−{stat.removed}</b></span>
+                    : <span class="r-diff-same">no change — the source is identical</span>}
+            </div>
+            {/* The model's CLAIM, always marked as one. It is never a substitute for the rows below it, and it
+                lives INSIDE the fold — collapsed, this has to be one line. */}
+            {open && revision.claim
+                ? <div class="r-diff-claim"{...cursorTipOn("The model's own account of what it changed. The diff below is computed from the two sources; this is not.")}>
+                    <span class="r-diff-claim-tag">the model says</span> {revision.claim}</div>
+                : null}
+            {open && rows
+                /* BOTH line numbers, old then new — the standard two-column gutter, and the reason it earns
+                   its width here is that the NEW column is the same numbering the code block below this one
+                   draws. So a diff row, a margin note and a failure mark all name the same line, and you can
+                   read straight down between them instead of counting. A row that exists on only one side
+                   leaves the other column blank, which is exactly the claim being made. */
+                ? <pre class={`code r-diff-body${nums ? " numbered" : ""}`}><code class="hljs">{rows.map((r, i) => r.kind === "gap"
+                    ? <span class="dline dline-gap" key={i}>{nums ? <><span class="dno" /><span class="dno" /></> : null}<span class="dsign" />
+                        <span class="dtext">{`⋮ ${r.skipped} unchanged line${r.skipped === 1 ? "" : "s"}`}</span>{"\n"}</span>
+                    : <span class={`dline dline-${r.kind}`} key={i}>
+                        {nums ? <>
+                            <span class="dno">{r.kind === "add" ? "" : r.a}</span>
+                            <span class="dno">{r.kind === "del" ? "" : r.b}</span>
+                        </> : null}
+                        <span class="dsign">{r.kind === "add" ? "+" : r.kind === "del" ? "−" : " "}</span>
+                        <span class="dtext" dangerouslySetInnerHTML={{ __html: highlight(r.text, lang) || "&nbsp;" }} />
+                        {"\n"}
+                    </span>)}</code></pre>
+                : null}
+        </div>
+    );
+}
+
+function PythonInRender({ d, live, failLine, ctx, failed }: { d: Extract<RenderDescriptor, { type: "python-in" }>; live?: boolean; failLine?: number | null; ctx?: CodeCtx; failed?: boolean }) {
     const rv = rev.value;   // subscribe: a landed annotation repaints the block (retained via data-rev below)
     const fmt = useMemo(() => pyFormat(d.code), [d.code]);
     // WHERE IT BROKE, marked on the code rather than only in the traceback — the traceback tells you a
@@ -385,6 +471,7 @@ function PythonInRender({ d, live, failLine, ctx }: { d: Extract<RenderDescripto
                 line MAP is published on the element rather than passed between descriptors: the In and the
                 Out are two independent RenderDescriptors rendered in two separate blocks, and threading one
                 through the other would couple them for the sake of one number. */}
+            {d.revision ? <CodeDiff revision={d.revision} after={fmt.text} lang="python" hash={ctx?.hash} failed={failed} /> : null}
             <div class="code-block" data-cite="in" data-rev={rv} data-py-map={fmt.changed ? JSON.stringify(fmt.map) : undefined}>
                 {ctx ? <CodeTools ctx={ctx} lang="python" src={fmt.text} /> : null}
                 <Code text={fmt.text} lang="python" lineIds="pyline" markLine={failAt} markTitle={failNote} notes={notesForBlock(ctx, rv)} />
@@ -753,7 +840,24 @@ function Traceback({ text, map }: { text: string; map?: number[] | null }) {
  *
  *  Live, it ticks; finished, it is what the loop measured (`toolMs`, the tool's own wall clock, which is not
  *  the step's: a human at an approval gate is the step's time and none of the machine's work). */
-export function RanFor({ live, ms, since }: { live?: boolean; ms?: number; since?: number }) {
+/** A COLLAPSED step's live elapsed time. "running…" says a thing is alive; it does not say whether it has
+ *  been alive for two seconds or two minutes, which is the difference between waiting and going to look.
+ *  Silent under half a second, so an ordinary fast tool does not flash a number on its way past. */
+export function RunningFor({ since }: { since?: number }) {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        if (since == null) return;
+        // A tenth of a second, like the Out footer: visibly moving, and cleared on unmount or the interval
+        // keeps a jsdom window alive and the test runner never exits.
+        const id = setInterval(() => setNow(Date.now()), 100);
+        return () => clearInterval(id);
+    }, [since]);
+    const ms = since == null ? 0 : Math.max(0, now - since);
+    if (ms < 500) return null;
+    return <span class="astep-elapsed"> ({fmtDur(ms)})</span>;
+}
+
+export function RanFor({ live, ms, since, remote }: { live?: boolean; ms?: number; since?: number; remote?: { durationMs: number; bootMs?: number } | null }) {
     const [now, setNow] = useState(() => Date.now());
     useEffect(() => {
         if (!live || since == null) return;
@@ -765,6 +869,17 @@ export function RanFor({ live, ms, since }: { live?: boolean; ms?: number; since
     }, [live, since]);
     if (live && since != null) return <div class="r-ranfor live">running… {fmtDur(Math.max(0, now - since))}</div>;
     if (ms == null) return null;
+    // A COLD START is not the script. The first python_exec of a session spends seconds fetching Pyodide and
+    // its wheels before a line of the code runs, and a single figure charges the script for time it never
+    // spent — the same confusion a model's `load_duration` exists to settle. Shown only when this call is
+    // the one that paid for it: every later run is warm and has nothing to explain.
+    const boot = remote?.bootMs;
+    if (boot != null) return (
+        <div class="r-ranfor" {...cursorTipOn(`${fmtDur(boot)} starting the Python sandbox (downloading the runtime and its packages — once per session), then ${fmtDur(remote!.durationMs)} actually running your code. This call paid for the cold start; later ones will not.`)}>
+            ran in {fmtDur(ms)} — <b class="r-ranfor-part">{fmtDur(boot)}</b> cold start,{" "}
+            <b class="r-ranfor-part">{fmtDur(remote!.durationMs)}</b> script
+        </div>
+    );
     return <div class="r-ranfor">ran in {fmtDur(ms)}</div>;
 }
 
@@ -798,7 +913,7 @@ function PyOutSection({ label, cls, children, cite, open = true, foldInFocus }: 
 }
 // `python_exec`'s Out slot: captured stdout, then one of a returned image / a minted
 // @pt·@box token / the raw value / a Python traceback.
-function PythonOutRender({ d, marks, live, ranMs, ranSince, lineMap }: { d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number; lineMap?: number[] | null }) {
+function PythonOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: { d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null }) {
     return (
         <div class="r-python r-py-out">
             {/* Only the captured OUTPUT scrolls (and hosts the find bar) — the returned value/table/image sit
@@ -813,7 +928,7 @@ function PythonOutRender({ d, marks, live, ranMs, ranSince, lineMap }: { d: Extr
                 to carry a footer is chrome pretending to be output. */}
             {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout" foldInFocus={!live}>
                 <OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
-                <RanFor live={live} ms={ranMs} since={ranSince} />
+                <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} />
             </PyOutSection> : null}
             {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
@@ -826,7 +941,7 @@ function PythonOutRender({ d, marks, live, ranMs, ranSince, lineMap }: { d: Extr
                 Ctrl+F-able for free by being wrapped, rather than each section inventing its own. */}
             {d.value != null && !d.latex && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value" cls="r-py-val" cite="out"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
             {/* No console to hang it off — so it goes after the last section instead. */}
-            {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} /> : null}
+            {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} /> : null}
         </div>
     );
 }
@@ -837,7 +952,7 @@ function PythonOutRender({ d, marks, live, ranMs, ranSince, lineMap }: { d: Extr
 /** A `code` In block — `exec`'s beautified JS, and anything else that renders as source. It publishes the
  *  same `data-cite` anchor and `data-py-map` the Python one does, so a stack trace beside it maps and jumps
  *  identically: the mapping is a property of SHOWING REFORMATTED CODE, not of the language. */
-function CodeRender({ d, failLine, ctx }: { d: Extract<RenderDescriptor, { type: "code" }>; failLine?: number | null; ctx?: CodeCtx }) {
+function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDescriptor, { type: "code" }>; failLine?: number | null; ctx?: CodeCtx; failed?: boolean }) {
     const rv = rev.value;   // subscribe: a landed annotation repaints the block (retained via data-rev below)
     const [map, setMap] = useState<number[] | null>(null);
     const shownFail = failLine != null ? (map?.[failLine] ?? failLine) : null;
@@ -846,6 +961,7 @@ function CodeRender({ d, failLine, ctx }: { d: Extract<RenderDescriptor, { type:
     const shown = displaySource(d.text, d.lang, d.format, d.marks);
     return (
         <div class="code-block" data-cite="in" data-rev={rv} data-py-map={map ? JSON.stringify(map) : undefined}>
+            {d.revision ? <CodeDiff revision={d.revision} after={shown} lang={d.lang === "python" ? "python" : "javascript"} hash={ctx?.hash} failed={failed} /> : null}
             {ctx ? <CodeTools ctx={ctx} lang={d.lang === "python" ? "python" : "javascript"} src={shown} /> : null}
             {/* Said out loud, because the rendered text is not always what the caller typed: `exec` expands
                 pointer macros before running, so a reader comparing this against the raw args would
@@ -890,7 +1006,7 @@ function ExecError({ text, line, map }: { text: string; line?: number; map?: num
     );
 }
 
-function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number; lineMap?: number[] | null }) {
+function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null }) {
     return (
         <div class="r-python r-py-out">
             {/* "console" for exec, but a REMOTE tool's streamed frames are not a console — the section is the
@@ -899,12 +1015,12 @@ function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap }: { d: Extrac
                 in PythonOutRender. */}
             {d.stdout ? <PyOutSection label={d.stdoutLabel ?? "console"} cls="r-py-stdout" foldInFocus={!live}>
                 <OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
-                <RanFor live={live} ms={ranMs} since={ranSince} />
+                <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} />
             </PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell><ExecError text={d.error} line={d.errorLine} map={lineMap} /></OutputCell></PyOutSection> : null}
             {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
-            {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} /> : null}
+            {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} /> : null}
         </div>
     );
 }
@@ -934,7 +1050,7 @@ function LookRender({ d }: { d: Extract<RenderDescriptor, { type: "look" }> }) {
 /** `lineMap` is the IN block's reflow map, handed to the OUT block so a failure can name the row the
  *  reader is actually looking at. The two are separate descriptors that cannot see each other; only the
  *  step holds both, so it is the step that passes this across. */
-export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, lineMap }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null }) {
+export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, lineMap, remoteMs, failed }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null; failed?: boolean }) {
     switch (d.type) {
         case "image": {
             // If the label references an @pt/@box (e.g. look's `element "@pt:…"`), hovering the shot
@@ -943,7 +1059,7 @@ export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, li
             return <div class={`r-image${th.onPointerEnter ? " r-hoverable" : ""}`} {...th}>
                 <ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
         }
-        case "code": return <CodeRender d={d} failLine={failLine} ctx={ctx} />;
+        case "code": return <CodeRender d={d} failLine={failLine} ctx={ctx} failed={failed} />;
         case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
@@ -1011,9 +1127,9 @@ function FetchLadder({ attempts, resolvedBy }: { attempts: import("../contract")
             }
             return <Code text={pretty(d)} lang="json" />;
         case "locate": return <LocateRender d={d} />;
-        case "python-in": return <PythonInRender d={d} live={live} failLine={failLine} ctx={ctx} />;
-        case "python-out": return <PythonOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} lineMap={lineMap} />;
-        case "exec-out": return <ExecOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} lineMap={lineMap} />;
+        case "python-in": return <PythonInRender d={d} live={live} failLine={failLine} ctx={ctx} failed={failed} />;
+        case "python-out": return <PythonOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} lineMap={lineMap} remoteMs={remoteMs} />;
+        case "exec-out": return <ExecOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} lineMap={lineMap} remoteMs={remoteMs} />;
         case "look": return <LookRender d={d} />;
         default: return <Code text={pretty(d)} lang="json" />;   // unknown type → dump it
     }

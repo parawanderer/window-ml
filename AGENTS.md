@@ -1152,6 +1152,92 @@ composition question that raises is whether the JSON tree inside can hide text f
 away from a search. That is load-bearing rather than incidental — a find reporting "No results" over data
 that is visibly right there reads as the find being broken — so it has its own test.
 
+**A retry's DIFF against the call it revises (`src/diff.ts`, `CodeDiff`).** The commonest loop in a run is:
+a code tool fails, the model retries with a tweak, and the reader diffs two twenty-line blocks BY EYE to
+find the one line that moved. `exec` and `python_exec` take **`revises`** (an `@tool:` pointer to the
+earlier call, in any of its three forms) and **`changed`** (a one-line account of what it altered).
+- **WE compute the diff; the model never supplies it.** Asked what it changed, a model answers from what it
+  MEANT to change — and the two disagree exactly when the diff is worth reading. Its `changed` line rides
+  BESIDE the rows on its own ground, tagged as a claim (the same rule a `token:` label follows).
+- **Both sides are REFLOWED before comparing** (the block's own `pyFormat`/`displaySource`), or pure spacing
+  differences drown the real change: a model writes dense on purpose and two calls a minute apart are not
+  spaced alike.
+- **Resolved in the LOOP** (`revisionOf`, beside `derefLocally`) for the same reason: it is a pure read of
+  run state the loop owns, so it behaves identically on the page-hosted and background-hosted paths with no
+  round-trip and no approval. The loop carries the OLD SOURCE on the descriptor and the PANEL does the diff —
+  it already owns both formatters, and shipping one into the loop would be for nothing. An unresolvable
+  pointer yields no diff rather than a fabricated comparison.
+- **The header says what it is diffing against and takes you there** — the pill is the resolved pointer
+  (canonicalised to the minted id even when the model named an alias) and clicking it runs the same
+  `scrollToStepSeq` a citation does. `TokenValue` gained `seq` for exactly that: `step` is the loop's counter
+  and several records share it, while `seq` addresses one row.
+- **It opens only when the step FAILED.** "What did I change" is the question you ask about a failure; on a
+  retry that WORKED the output is the question, and a diff pinned open above it pushes that output out of
+  the viewport to answer something nobody asked. Collapsed it is ONE line that still names what it revises
+  and by how much — so the claim row lives inside the fold too, or "collapsed" would be two lines. Focus
+  mode folds it either way, since it is a debugger's question even on a failure.
+- **The gutter draws BOTH line numbers, and only when they line up with something.** The new-side column is
+  the same numbering the code block below draws, so a diff row, a margin note and the failure mark all name
+  the same line and you can read straight down between them — that is what makes the width worth spending.
+  With the block's own gutter off they line up with nothing, so they are drawn when the line-number pref is
+  on OR the step failed (which turns that gutter on by itself, so the two can never disagree). A row that
+  exists on one side has one number; the other column is blank, which is the claim being made.
+- Hunks ELIDE (`collapse`): two thirty-line scripts differing in one place must SHOW that place, not bury it
+  in twenty-nine rows already read. A gap standing for ONE line is un-elided, since saying "1 line skipped"
+  costs more than the line and makes the reader wonder what was hidden.
+
+**The Python bench is a bottom DRAWER (`BenchDrawer`).** It used to REPLACE the session view, so trying a
+snippet cost you your place in the run you opened it from — which is exactly the trip you would be making
+(copy this step's code, poke at it, look back at the step). The drawer is a SIBLING of the scroll container,
+not content inside it, so the transcript keeps its own scroll position while you work below it. Draggable
+from the top edge (how much you want depends on the script), `✕` closes WITHOUT discarding the draft, and
+`⤢`/`⤡` swap it with the full-page mode — two real modes, since a drawer is bad for a long script and
+full-page is bad for cross-referencing. **Back from full-page RETURNS** to the exact view you left
+(`benchReturn`); landing on the sessions list is what made the bench feel like a trip away from your work.
+Opening it puts the resource panel away: two draggable strips on the same bottom edge is not a layout. Open
+state, dock and height all persist (`chrome.storage.local`) — it is a workspace you leave set up, not a
+dialog you dismiss. Covered by `tests/e2e/bench-dock.spec.mjs`.
+
+**A code block's `explain` (`src/sidebar/annotate.ts`).** A utility model is shown the code AND what it
+produced, and answers under a JSON **schema** with a note per interesting line. Never automatic — it spends
+tokens, and unlike the approval gloss nobody is waiting on it to decide anything — and asked at CLICK time
+only, once: a second click while in flight is a no-op, and once notes land the button becomes show/hide
+rather than re-asking.
+- **The notes go in the MARGIN and never into the source.** Inserting a comment shifts every line below it,
+  which invalidates the line map and stops a traceback resolving. A note is a SIBLING of its line.
+- **The model is numbered against what the READER sees** — the reflowed text, via the exported
+  `displaySource`. Numbering the original would key notes to lines that moved, landing each one a statement
+  adrift, silently. (The demo made exactly that mistake first.)
+- **Nothing it returns is trusted**: a line outside the block is DROPPED rather than clamped (clamping
+  invents a claim about a line it never looked at, and puts it where a reader would believe it); repeats,
+  blanks and non-numbers go; the set is capped. An unusable reply becomes a RETRY state, not an empty
+  success — a button that visibly does nothing reads as broken.
+- Prose renders through `mdInline` with **math on**: a note about arithmetic says `$q_1 + q_2$` in one glyph
+  instead of a clause.
+- **Not on the HUD card.** The card is a reading surface with no navigation of its own; `explain` belongs
+  there (understanding the code is what the card is for) and `bench` does not.
+
+**An ASIDE on the lane — a model call YOU triggered while reading.** The code annotator and the on-demand
+summary spend tokens on this box and take visible time, so hiding them from the timeline would be dishonest;
+they are also not the agent's work, and charging them to the run would make two runs incomparable on the
+strength of how much someone poked at one. So: its own `aside` kind, drawn OUTLINED rather than filled,
+carrying **no `cost` and no `parent`** — which is how "not part of the run" is enforced rather than
+remembered (hovering a step cannot light it, and it cannot enter `usageByModel`). It keeps a `ref`, so
+clicking still goes to the step you asked about, and its tooltip says outright that you triggered it. Stored
+in `store.ts` `asides` (a Map by hash, session-scoped and in memory only — it describes this READING session,
+not the run's record) and merged in at the `eventsFrom` call site rather than written into the session the
+debug reducer builds.
+
+**A PYTHON COLD START is not the script.** The first `python_exec` of a session spends seconds fetching
+Pyodide and its wheels before a line runs, and one elapsed figure charges the script for time it never
+spent — the confusion a model's `load_duration` exists to settle. The **worker** measures it (it is the
+executor; anything downstream measures the message bus too), charges it to the call that PAID for it and
+reports nothing on every warm call after. It rides `ToolResult.remoteMs.bootMs` → the step → both surfaces:
+the footer reads `ran in 4.2s — 3.0s cold start, 1.2s script`, and the event lane draws a **`boot` phase**
+first, STRIPED like a model load because it is the step's wall time and none of the work you asked for. A
+phase rather than its own span, because unlike a model load it happens INSIDE the dispatch `toolMs` already
+measures — a span in front would draw the time twice.
+
 **RULE — use the PANEL'S tooltip, not the browser's `title`.** `cursorTipOn(text)` (ui-kit.tsx) is the
 default for anything explanatory; a native `title` needs an argument for itself. Three reasons, all of them
 things a reader hits rather than notices: the native one waits about a second, which on something you are

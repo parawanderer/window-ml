@@ -2,7 +2,7 @@
 // code or intent (ApprovalBody) and the on-demand "Explain this code" button in the Show-work trace
 // (ToolStep). Extracted from app.tsx so both the HUD-card and the agent-detail views can share it
 // without a cycle. Depends only on store / ui-kit / format.
-import { config, rev } from "./store";
+import { config, rev, noteAside } from "./store";
 import type { AgentStep } from "./store";
 import { stepKey } from "./ui-kit";
 import { truncate } from "./format";
@@ -72,6 +72,12 @@ export function fetchLineNotes(key: string, lang: string, src: string, output?: 
     notesHidden.delete(key);
     rev.value++;
     const lineCount = src.split("\n").length;
+    // ON THE TIMELINE, as an ASIDE. It spent tokens on this box and it takes visible time, so hiding it
+    // would be dishonest — but it is not the agent's work, and charging it to the run would make two runs
+    // incomparable on the strength of how much someone poked at one. Recorded on the SESSION, with no
+    // usage, so the run's own totals are untouched. See store.ts `Aside`.
+    const [hash, seqStr] = key.split(":");
+    const started = Date.now();
     chrome.runtime.sendMessage(
         { type: "FETCH_LLM", payload: { messages: notesMessages(lang, src, output), extend: "utility", schema: NOTES_SCHEMA, maxTokens: 700, think: false } },
         (resp: any) => {
@@ -81,6 +87,8 @@ export function fetchLineNotes(key: string, lang: string, src: string, output?: 
             // reads as broken, and the reader has no way to tell a model that declined from a call that
             // never went out.
             if (notes.length) codeNotes.set(key, notes); else notesState.set(key, "error");
+            noteAside(hash, { t: started, ms: Date.now() - started, label: "annotating the code",
+                              model: config.value.utilityModel || undefined, seq: Number(seqStr) });
             rev.value++;
         },
     );
@@ -107,12 +115,16 @@ export function ensureActionSummary(hash: string, seq: number, tool: string, arg
 }
 // Shared: run a short utility-model call and store the one-line reply as the step's summary.
 export function fetchUtilityLine(messages: { role: string; content: string }[], key: string): void {
+    const started = Date.now();
     chrome.runtime.sendMessage(
         { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 70, think: false } },
         (resp: any) => {
             if (chrome.runtime.lastError || !resp || resp.error) return;
             const line = String(resp.data || "").trim().split("\n").map(s => s.trim()).filter(Boolean)[0] || "";
             const s = truncate(line.replace(/^["'`*]+|["'`*]+$/g, "").trim(), 160);
+            const [h, sq] = key.split(":");
+            if (h) noteAside(h, { t: started, ms: Date.now() - started, label: "summarising",
+                                  model: config.value.utilityModel || undefined, seq: Number(sq) });
             if (s) { codeSummaries.set(key, s); rev.value++; }
         },
     );

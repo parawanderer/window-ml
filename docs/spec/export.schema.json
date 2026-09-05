@@ -865,6 +865,9 @@
                     ],
                     "additionalProperties": true
                   }
+                },
+                "revision": {
+                  "$ref": "#/$defs/CodeRevision"
                 }
               },
               "required": [
@@ -1076,6 +1079,9 @@
                   "items": {
                     "$ref": "#/$defs/TablePreview"
                   }
+                },
+                "revision": {
+                  "$ref": "#/$defs/CodeRevision"
                 }
               },
               "required": [
@@ -1374,6 +1380,9 @@
                     ],
                     "additionalProperties": true
                   }
+                },
+                "revision": {
+                  "$ref": "#/$defs/CodeRevision"
                 }
               },
               "required": [
@@ -1585,6 +1594,9 @@
                   "items": {
                     "$ref": "#/$defs/TablePreview"
                   }
+                },
+                "revision": {
+                  "$ref": "#/$defs/CodeRevision"
                 }
               },
               "required": [
@@ -1881,6 +1893,43 @@
       ],
       "additionalProperties": true
     },
+    "CodeRevision": {
+      "type": "object",
+      "description": "A retry's link back to the call it revises — the model names an earlier call with `revises`, and the panel draws a diff of the two sources. WE compute that diff, never the model: asked what it changed a model answers from what it MEANT to change, and the two disagree exactly when the diff is worth reading. Its `claim` therefore sits BESIDE the diff and never instead of it (the same rule a `token:` label follows). `before` is the earlier source verbatim; both sides are reflowed by the renderer before comparing, or pure spacing differences drown the real change. @unstable This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others.",
+      "x-unstable": true,
+      "properties": {
+        "ref": {
+          "description": "The resolved pointer, canonicalised to its minted id — so it is stable even when the model named a tool alias or a label.",
+          "type": "string"
+        },
+        "tool": {
+          "description": "Which tool made the earlier call.",
+          "type": "string"
+        },
+        "seq": {
+          "description": "The step seq to scroll to, when the earlier call still has one.",
+          "type": "number"
+        },
+        "label": {
+          "description": "The model's own name for that output, if it labelled it.",
+          "type": "string"
+        },
+        "before": {
+          "description": "The earlier source, verbatim.",
+          "type": "string"
+        },
+        "claim": {
+          "description": "The model's one-line account of what it changed. A CLAIM, shown beside the computed diff.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref",
+        "tool",
+        "before"
+      ],
+      "additionalProperties": true
+    },
     "LocateSubstep": {
       "type": "object",
       "description": "One stage of a `locate` run: a vision sub-call (grid cell-pick, Set-of-Marks pick, grounding box) or a non-model DOM snap. A sub-call carries its `prompt` (In), the model's raw `output` (Out), the exact `rawImage` sent, and a human `image` overlay (the raw⇄visualise toggle). A DOM snap carries just `image` + `label` (no prompt).",
@@ -2122,7 +2171,8 @@
                 "evict",
                 "error",
                 "note",
-                "serve"
+                "serve",
+                "aside"
               ]
             },
             {
@@ -2213,6 +2263,7 @@
                 "call",
                 "queue",
                 "net",
+                "boot",
                 "dispatch",
                 "weights",
                 "context"

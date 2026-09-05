@@ -694,6 +694,29 @@ export interface JsonSchema {
     [k: string]: unknown;
 }
 
+/** A retry's link back to the call it revises — the model names an earlier call with `revises`, and the
+ *  panel draws a diff of the two sources. WE compute that diff, never the model: asked what it changed a
+ *  model answers from what it MEANT to change, and the two disagree exactly when the diff is worth reading.
+ *  Its `claim` therefore sits BESIDE the diff and never instead of it (the same rule a `token:` label
+ *  follows). `before` is the earlier source verbatim; both sides are reflowed by the renderer before
+ *  comparing, or pure spacing differences drown the real change.
+ *  @unstable */
+export interface CodeRevision {
+    /** The resolved pointer, canonicalised to its minted id — so it is stable even when the model named a
+     *  tool alias or a label. */
+    ref: string;
+    /** Which tool made the earlier call. */
+    tool: string;
+    /** The step seq to scroll to, when the earlier call still has one. */
+    seq?: number;
+    /** The model's own name for that output, if it labelled it. */
+    label?: string;
+    /** The earlier source, verbatim. */
+    before: string;
+    /** The model's one-line account of what it changed. A CLAIM, shown beside the computed diff. */
+    claim?: string;
+}
+
 /** A tool's return: a string, or an envelope also carrying live DOM nodes
  *  (`elements`, debug-only) and/or a screenshot (`image`, inline vision). A tool
  *  that computes its own visualization (e.g. `locate`'s badged Set-of-Marks
@@ -826,7 +849,7 @@ export type RenderDescriptor = (
     // uses it to say that pointer macros were expanded, so a reader comparing this against the raw args does
     // not conclude the log is lying to them. `marks`: byte ranges in `text` a renderer may highlight, each
     // with the original it replaced (hover fodder).
-    | { type: "code"; text: string; lang?: string; format?: boolean; note?: string; marks?: { start: number; end: number; from: string }[] }
+    | { type: "code"; text: string; lang?: string; format?: boolean; note?: string; marks?: { start: number; end: number; from: string }[]; revision?: CodeRevision }
     | { type: "table"; columns: string[]; rows: (string | number)[][] }
     | { type: "keyval"; pairs: [string, string][] }
     | { type: "elements"; items: { path: string; text?: string; index?: number }[] }
@@ -844,7 +867,7 @@ export type RenderDescriptor = (
     // `python_exec`'s In slot: a notebook-cell header — the run mode (from `cast`), the
     // input screenshot the script saw, the Python source (highlighted, NOT beautified), and
     // the loaded DataFrame(s) — each with its variable name + provenance (which sheet/table).
-    | { type: "python-in"; mode: "script" | "pt" | "box"; code: string; image?: string; imageToken?: string; tables?: TablePreview[] }
+    | { type: "python-in"; mode: "script" | "pt" | "box"; code: string; image?: string; imageToken?: string; tables?: TablePreview[]; revision?: CodeRevision }
     // `python_exec`'s Out slot: captured stdout, a returned image, a minted @pt/@box token,
     // the raw/JSON value, or a Python traceback.
     | { type: "python-out"; stdout?: string; seen?: number; image?: string; token?: string; value?: string; error?: string; latex?: boolean; df?: { columns: string[]; rows: (string | number | null)[][] } }
@@ -1008,6 +1031,12 @@ export interface RemoteTiming {
     durationMs: number;
     /** Elapsed before evaluation began — resolution, scheduling, a downstream connect. */
     queuedMs?: number;
+    /** COLD START of the executor's runtime, charged to the call that paid for it and absent on every
+     *  later one. The distinction a model's `load_duration` exists to make, for a sandbox: a first
+     *  `python_exec` spends seconds fetching Pyodide and its wheels before a line of the script runs, and
+     *  a single elapsed figure blames the script for time it never spent. Reported BY the executor — the
+     *  worker, here — since anything measured downstream is measuring the message bus too. */
+    bootMs?: number;
 }
 
 /** Where a remote tool actually runs. `via` names the dispatch mechanism, because "an HTTP endpoint
@@ -2040,7 +2069,7 @@ export interface MlApi {
     fetchTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; render?: "latex" | "img"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; render?: "latex" | "img"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
     /** Read-only self-introspection tool for ml.agent (pass via `extraTools`): reports the run's model,

@@ -343,6 +343,14 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* The WAIT phase is drawn as a hollow neutral stop in that same gradient (see phaseGradient), so a step that
    sat at an approval gate can never read as work: the bar is wide because a person was deciding. */
 .rc-ev-gen { background: var(--accent); }
+/* AN ASIDE — a model call YOU triggered while reading, not part of the run. OUTLINED rather than filled,
+   because the filled bars beside it are the agent's work and this is not: it spent tokens on this box (so
+   it is drawn) but it belongs to your reading session (so it must not read as a step). */
+.rc-ev-aside {
+    background: transparent;
+    border: 1px dashed color-mix(in srgb, var(--model, var(--fg-faint)) 70%, transparent);
+    opacity: 0.9;
+}
 /* A background embedding call: a small model working BESIDE the driver rather than in its sequence, so it is
    quieter and reads as something happening underneath. */
 .rc-ev-embed { background: color-mix(in srgb, var(--ok, #22c55e) 60%, transparent); }
@@ -1239,10 +1247,13 @@ html[data-focus] .astep-preview,
    step-cap stop), which is not chrome and stays. */
 html[data-focus] .msg.user .who,
 html[data-focus] .msg .mrow .raw-btn { display: none; }
-/* The model pill and the copy button each sit inside a tooltip wrapper, so hiding the inner element alone
-   would leave its empty shell holding a gap in the header row. */
+/* The model pill sits inside a tooltip wrapper, so hiding the inner element alone would leave its empty
+   shell holding a gap in the header row.
+   The COPY button stays on a model reply: focus mode quiets CHROME — counters, badges, provenance — and
+   copying the answer is the reason you are reading it. It goes on the user's own bubble, where the row is
+   repositioned as an overlay and there is nothing to copy you did not just write. */
 html[data-focus] .msg .mrow .tt:has(> .model-name),
-html[data-focus] .msg .mrow .tt:has(> .icon-btn) { display: none; }
+html[data-focus] .msg.user .mrow .tt:has(> .icon-btn) { display: none; }
 /* …but NOT the thinking block's token estimate, which shares `.astep-preview` with the collapsed tool row's
    output preview. That preview is spam here; this is a PROGRESS indicator — on a long think it is the only
    sign the run is moving rather than stuck, and a reading mode wants that more than a debugging one does. */
@@ -2325,8 +2336,81 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
     display: flex; align-items: baseline; gap: 6px;
     position: sticky; left: 0; width: fit-content; max-width: 62ch;
     padding: 1px 0 3px calc(2.2em + 22px);   /* aligns under the code, clear of the 2.2em gutter + its rule */
-    font-size: 0.86em; font-style: italic; color: var(--fg-dim);
+    font-size: 0.86em; font-style: italic; color: var(--fg-faint);
     white-space: normal;
 }
-.lnote-mark { flex: 0 0 auto; align-self: stretch; width: 2px; border-radius: 1px; background: color-mix(in srgb, var(--accent) 55%, transparent); }
+/* An ARROW, not a rail: the note belongs to the line above it, and a bar says "a block starts here" while a
+   turnstile says "…and this is about that". Quiet, because a marker competing with the code it annotates is
+   the wrong way round. */
+.lnote-mark { flex: 0 0 auto; font-style: normal; opacity: 0.55; line-height: 1; }
 .lnote-txt code { font-style: normal; }
+
+/* --- a retry's diff against the call it revises ---------------------------------------------------
+   Above the code, not inside it: the diff is about the RELATIONSHIP between two calls, and folding it into
+   the block would make the reader parse one thing as two. */
+.r-diff { margin: 0 0 6px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.r-diff-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--panel); flex-wrap: wrap; }
+.r-diff-tri { background: none; border: 0; padding: 0; cursor: pointer; color: var(--fg-faint); display: flex; }
+.r-diff-tri svg { transition: transform 0.15s ease; }
+.r-diff-tri.open svg { transform: rotate(90deg); }
+.r-diff-lbl { font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-faint); }
+/* A rounded chip, like every other pill in the panel — a square-cornered box here reads as a different
+   KIND of thing from the tokens and badges it sits among. */
+.r-diff-ref {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em; cursor: pointer;
+    padding: 2px 8px; border-radius: 999px;
+}
+.r-diff-stat { margin-left: auto; font-size: 0.82em; font-variant-numeric: tabular-nums; }
+.r-diff-add { color: var(--ok); }
+.r-diff-del { color: var(--err); }
+.r-diff-same { margin-left: auto; font-size: 0.82em; color: var(--fg-faint); font-style: italic; }
+/* The model's CLAIM. It shares the HEADER's ground and its quiet grey, because it is part of the same
+   band — the header says what this diff is, the claim says what the model thinks it did, and giving the
+   second its own colour made it read as a warning about the step rather than as a caption. Its TAG carries
+   the "this is a claim, not the computed half" signal on its own. */
+.r-diff-claim { padding: 4px 8px; font-size: 0.9em; color: var(--fg-dim); background: var(--panel); }
+.r-diff-claim-tag { font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-faint); margin-right: 4px; }
+.r-diff-body { margin: 0; border-top: 1px solid var(--border); border-radius: 0; }
+.dline { display: flex; align-items: flex-start; }
+.dline-add { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.dline-del { background: color-mix(in srgb, var(--err) 13%, transparent); }
+.dline-gap { color: var(--fg-faint); font-style: italic; }
+/* The gutter: OLD line, NEW line, then the sign. `user-select: none` on all three, so copying a diff copies
+   the code and not a column of numbers — the same rule the timestamp gutter follows. */
+.dno {
+    flex: 0 0 auto; width: 2.1em; padding-right: 6px; text-align: right;
+    color: var(--fg-faint); opacity: 0.7; user-select: none; font-variant-numeric: tabular-nums;
+}
+/* One rule after the pair, not between them: they are one gutter with two columns, and ruling both made a
+   three-part fence out of something that should read as a margin. */
+.dno + .dno { border-right: 1px solid var(--border); margin-right: 8px; }
+/* The +/− column, with real air after it: butted against the code, the sign reads as part of the first
+   token rather than as a marker for the line. */
+.dsign { flex: 0 0 auto; width: 1.1em; margin-right: 0.7em; text-align: center; user-select: none; opacity: 0.8; }
+.dline-add .dsign { color: var(--ok); }
+.dline-del .dsign { color: var(--err); }
+.dtext { flex: 1 1 auto; min-width: 0; white-space: inherit; }
+
+/* A collapsed running step's elapsed time. Dimmer than the word beside it: "running" is the fact, the
+   number is the detail you look at only when it starts feeling long. */
+.astep-elapsed { font-variant-numeric: tabular-nums; opacity: 0.75; }
+
+/* --- the Python bench, docked as a bottom drawer -------------------------------------------------
+   A SIBLING of the scroll container, not content inside it, so the transcript keeps its own scroll
+   position while you work below it — which is the whole point of the drawer over the full-page view. */
+.bench-drawer {
+    flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0;
+    border-top: 1px solid var(--border); background: var(--bg);
+}
+/* The grab strip. Its own row above the header so the drag target is the edge — which is where a hand
+   goes for a drawer — rather than a handle hidden somewhere in the chrome. */
+.bench-grip {
+    flex: 0 0 auto; height: 7px; cursor: ns-resize; touch-action: none;
+    background: linear-gradient(var(--border), var(--border)) center/28px 2px no-repeat;
+}
+.bench-grip:hover { background: linear-gradient(var(--fg-faint), var(--fg-faint)) center/40px 2px no-repeat; }
+.bench-bar-top { display: flex; align-items: center; gap: 4px; padding: 2px 8px 4px; }
+.bench-title { font-size: 0.92em; color: var(--fg-dim); }
+.bench-drawer .bench { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.bench-drawer .bench-code { flex: 1 1 auto; min-height: 60px; }
+.bench-drawer .bench-out { flex: 0 1 auto; min-height: 0; overflow: auto; }

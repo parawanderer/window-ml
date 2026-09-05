@@ -13,7 +13,9 @@
 // next run is fine.
 const PY_TIMEOUT_MS = 15000;
 
-type PyResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" };
+// `bootMs`/`runMs` come from the WORKER, which is the executor — anything measured downstream of it is
+// measuring the message bus as well. See python-worker.ts.
+type PyResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
 
 // The worker is same-origin (extension page → chrome-extension:// worker), so it needs no
 // web_accessible_resources entry; it inherits this page's 'wasm-unsafe-eval' CSP.

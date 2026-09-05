@@ -6607,6 +6607,121 @@ test("focus mode: quiets the machinery, keeps what happened, and is fully revers
     assert.equal(w.shadow.documentElement.hasAttribute("data-focus"), false, "off again");
 });
 
+// WHAT FOCUS MODE HIDES is a CSS question (jsdom applies no stylesheet), so the rules are read directly.
+// The distinction it encodes: focus mode quiets CHROME — step counters, approval badges, provenance — and
+// never the thing you came to do. Copying the answer is the reason you are reading it.
+test("focus mode hides the raw toggle and the model pill, and KEEPS the copy button on a reply", () => {
+    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
+    const hidden = css.split("\n").filter((l) => l.startsWith("html[data-focus]") && !l.includes("{ display: inline"));
+    const named = (sel) => hidden.some((l) => l.includes(sel));
+    assert.ok(named(".raw-btn"), "the raw toggle is chrome — hidden");
+    assert.ok(named(".tt:has(> .model-name)"), "so is the model pill");
+    assert.ok(named(".step-pill") && named(".appr-badge"), "…and the step counter and approval badge");
+    // The copy button is hidden ONLY on the user's own bubble, where the row is repositioned as an overlay
+    // and there is nothing to copy you did not just write.
+    const copyRules = hidden.filter((l) => l.includes(".icon-btn"));
+    assert.equal(copyRules.length, 1, "exactly one rule touches the copy button");
+    assert.match(copyRules[0], /\.msg\.user\b/, "and it is scoped to the user's bubble, so a reply keeps its copy");
+});
+
+// A COLLAPSED running step. "running…" says the thing is alive; it does not say whether it has been alive
+// for two seconds or two minutes, which is the difference between waiting and going to look.
+test("a collapsed running step counts up, and stays quiet for the first half second", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("tick", "do a slow thing"));
+    // ts is when the step STARTED. A step that has just begun shows the word and no number: an ordinary
+    // fast tool must not flash a figure on its way past.
+    await w.dispatch(agentStep("tick", 1, { seq: 1, tool: "python_exec", pending: true, ts: Date.now() }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const preview = () => w.shadow.querySelector(".astep-preview").textContent;
+    assert.match(preview(), /running…/);
+    assert.equal(w.shadow.querySelector(".astep-elapsed"), null, "silent under half a second");
+
+    // …and one that has been going a while says how long, in the row you are looking at rather than only
+    // inside the step you would have to open.
+    await w.dispatch(agentStep("tick", 1, { seq: 1, tool: "python_exec", pending: true, ts: Date.now() - 4200 }));
+    await w.tick();
+    const el = w.shadow.querySelector(".astep-elapsed");
+    assert.ok(el, "past the threshold it reports the elapsed time");
+    assert.match(el.textContent, /\(4\.[0-9]s\)/, `expected ~4.2s, got ${el.textContent}`);
+    assert.match(preview(), /running….*4\./, "beside the word, not instead of it");
+});
+
+test("the elapsed timer stops when the step lands, and the settled figure takes over", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("tick2", "do a slow thing"));
+    await w.dispatch(agentStep("tick2", 1, { seq: 1, tool: "exec", pending: true, ts: Date.now() - 3000 }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".astep-elapsed"), "ticking while it runs");
+    // DONE. A finished step has a measured `toolMs`, so the estimate has nothing left to say.
+    await w.dispatch(agentStep("tick2", 1, { seq: 1, tool: "exec", result: "2", toolMs: 3100 }));
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".astep-elapsed"), null, "the live counter is gone once it landed");
+});
+
+// THE DIFF'S GUTTER, across every combination of the two things that decide it. The numbers earn their
+// width because the new-side column matches the gutter of the code block below — read straight down between
+// a diff row, a margin note and the failure mark. With that gutter off they line up with nothing, so they
+// are just width taken in a narrow panel. A failure turns the block's gutter on by itself, so the two can
+// never disagree; these tests are the proof of that rather than the hope.
+const diffStep = (hash, { failed, seq = 1 } = {}) => ({
+    seq, tool: "python_exec", arguments: { code: "x = 1\nreturn x" },
+    result: failed ? "Python error: boom" : "1",
+    renderIn: {
+        type: "python-in", mode: "script", code: "x = 1\nreturn x",
+        revision: { ref: "@tool:abc1234", tool: "python_exec", seq: 0, before: "x = 0\nreturn x", claim: "bumped it" },
+    },
+    ...(failed ? { renderOut: { type: "python-out", error: 'File "<python_exec>", line 1, in _user\nBoom' } } : {}),
+});
+
+for (const [lines, failed, wantNums, why] of [
+    [false, false, false, "no gutter below and nothing went wrong → nothing to line up with"],
+    [true, false, true, "you asked for line numbers, so the block has them and the diff matches"],
+    [false, true, true, "a failure turns the block's gutter on by itself, so the diff follows"],
+    [true, true, true, "both, and it is still one gutter"],
+]) {
+    test(`diff gutter: lines=${lines} failed=${failed} → numbers ${wantNums ? "shown" : "hidden"}`, async () => {
+        const w = await loadSidebarWorld({ local: { ml_debug_codelines: lines } });
+        await w.dispatch(agentStart("dg", "retry it"));
+        await w.dispatch(agentStep("dg", 1, diffStep("dg", { failed })));
+        w.shadow.querySelector(".row").click(); await w.tick();
+        w.shadow.querySelector(".astep-head").click(); await w.tick();
+
+        const diff = w.shadow.querySelector(".r-diff");
+        assert.ok(diff, "the diff renders either way");
+        // A failure opens it; a success shows one collapsed line, so open it to see the rows.
+        if (!failed) { diff.querySelector(".r-diff-tri").click(); await w.tick(); }
+        const rows = w.shadow.querySelectorAll(".r-diff-body .dline");
+        assert.ok(rows.length, "the rows are drawn");
+        assert.equal(w.shadow.querySelectorAll(".r-diff-body .dno").length > 0, wantNums, why);
+        // The two must not disagree: if the diff numbers, the block below it numbers too.
+        if (wantNums) assert.ok(w.shadow.querySelector(".r-py-in .lno"), "…and the block below has its gutter");
+    });
+}
+
+test("diff gutter: a row carries only the side it exists on, and the new side matches the block below", async () => {
+    const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
+    await w.dispatch(agentStart("dg2", "retry it"));
+    await w.dispatch(agentStep("dg2", 1, diffStep("dg2", {})));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+    w.shadow.querySelector(".r-diff-tri").click(); await w.tick();
+
+    const del = w.shadow.querySelector(".dline-del"), add = w.shadow.querySelector(".dline-add");
+    const nos = (el) => [...el.querySelectorAll(".dno")].map((n) => n.textContent);
+    assert.deepEqual(nos(del), ["1", ""], "a deletion has no line in the NEW text");
+    assert.deepEqual(nos(add), ["", "1"], "an addition has none in the OLD");
+    // The point of the new column: it is the same number the code block below draws for that line.
+    const blockLine = [...w.shadow.querySelectorAll(".r-py-in .cline")]
+        .find((el) => el.textContent.includes("x = 1"))?.getAttribute("data-line");
+    assert.equal(nos(add)[1], blockLine, "the diff's new-side number IS the block's line number");
+    // A gap keeps the columns so the sign stays in one place down the block.
+    const same = w.shadow.querySelector(".dline:not(.dline-add):not(.dline-del)");
+    if (same) assert.equal(same.querySelectorAll(".dno").length, 2);
+});
+
 test("tooltips: a chart tip reads the DATAPOINT under the cursor; the row tip reads the present", async () => {
     const w = await loadSidebarWorld({ vram: growModel(19), info: INFO_2CARD, ...STACKED_LAYOUT });
     await w.raw({ __mlSidebarOpen: true });

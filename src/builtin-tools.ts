@@ -1447,6 +1447,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 tableRaw: { type: "boolean", description: "Load table cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
                 maxChars: { type: "number", description: "Raise the per-slot output truncation for THIS call (default 2000, max 20000). A raise needs human approval + `maxCharsReason`. Prefer returning a compact result." },
                 maxCharsReason: { type: "string", description: "Why this call needs more than the default 2000 chars — required when `maxChars` exceeds it; shown to the human on the approval card." },
+                revises: { type: "string", description: "If this is a RETRY of an earlier call, its pointer (`@tool:abc1234`, `@tool:python_exec`, or `@tool:\"a label\"`). The panel then shows the human a diff of what changed. Changes nothing about how this runs." },
+                changed: { type: "string", description: "One line on what you changed, shown beside that diff. Only with `revises`." },
             },
             required: ["code"],
         },
@@ -1508,8 +1510,14 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const stdoutFull = r.stdout || "";
             const stdout = stdoutFull ? clipOut(stdoutFull, UI_OUT_CAP) : undefined;
             const seen = stdoutFull ? Math.min(stdoutFull.length, PY_OUT_MAX) : undefined;
+            // The SANDBOX'S OWN CLOCK, kept apart from our wall time around the dispatch: `durationMs` is the
+            // script, `bootMs` the cold start it had to pay for first (absent on every warm call). Without
+            // the split a first run reports four seconds and blames the script for time it never spent.
+            const remoteMs = r.runMs != null
+                ? { durationMs: r.runMs, ...(r.bootMs != null ? { bootMs: r.bootMs } : {}) }
+                : undefined;
             const done = (content: string, out: Omit<Extract<RenderDescriptor, { type: "python-out" }>, "type" | "stdout">): ToolResult =>
-                ({ content, renderIn, render: { type: "python-out", stdout, seen, ...out } });
+                ({ content, renderIn, render: { type: "python-out", stdout, seen, ...out }, ...(remoteMs ? { remoteMs } : {}) });
 
             if (!r.ok) {
                 const err = clipOut(r.error || "", PY_OUT_MAX);

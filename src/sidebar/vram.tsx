@@ -15,7 +15,7 @@ import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
 import { Disclosure } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { hhmmss } from "./timestamps";
-import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels, lsGet, lsSet, BENCH_CODE_KEY } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
@@ -561,7 +561,12 @@ export function timeline(): ResourceEvent[] {
     // human at a gate. The lane is the live surface, so it asks for them; anything durable (the export) calls
     // eventsFrom with no `now` and gets finished work only. It advances per render, which is per poll, so a
     // live bar grows at the same cadence as the memory trace beside it.
-    const fromSessions = eventsFrom([...sessionMap.values()] as UsageSource[], Date.now());
+    // A reader's own model calls (the code annotator, a summary) live beside the sessions rather than in
+    // them: they describe THIS reading session, not the run's record, so they are merged in here instead of
+    // being written into the session the reducer builds from the debug stream.
+    const fromSessions = eventsFrom(
+        [...sessionMap.values()].map((s) => (asides.has(s.hash) ? { ...s, asides: asides.get(s.hash) } : s)) as UsageSource[],
+        Date.now());
     // The server's own edges REPLACE the inferred ones when we have them. Diffing polls can see that a model
     // appeared, never that it was loading — and it cannot tell an eviction that made room from an idle
     // expiry, which the server reports as two different kinds. Falling back to inference when the stream is
@@ -1344,6 +1349,48 @@ export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: str
 // UI, so it just runs — no approval prompt (you are the approver).
 // Guarded localStorage — the bench persists its script/mode there, but an opaque origin (jsdom, or a
 // locked-down context) throws SecurityError on access, so degrade to no-persist instead of crashing.
+
+/** The bench as a bottom DRAWER — the default. It used to REPLACE the session view, so trying a snippet cost
+ *  you your place in the run you opened it from, which is exactly the trip you would be making: copy this
+ *  step's code, poke at it, look back at the step. Draggable, because how much of it you want depends on
+ *  the script; ✕ closes without discarding the draft (the code is persisted either way); ⇄ hands it to the
+ *  full-page mode, which is the right shape for a long script and the wrong one for cross-referencing. */
+export function BenchDrawer() {
+    const onGrab = (e: PointerEvent) => {
+        e.preventDefault();
+        const grip = e.currentTarget as HTMLElement;
+        try { grip.setPointerCapture(e.pointerId); } catch { /* older engines */ }
+        const startY = e.clientY, startH = benchH.value;
+        // Dragging UP grows it. Floored so the editor and its bar still fit, and capped so the drawer can
+        // never take the whole panel — at which point it is not a drawer and full mode is what you wanted.
+        const cap = Math.max(200, Math.round((typeof window !== "undefined" ? window.innerHeight : 800) * 0.75));
+        const move = (ev: PointerEvent) => { benchH.value = Math.max(150, Math.min(cap, startH + (startY - ev.clientY))); };
+        const up = () => {
+            grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up);
+            chrome.storage.local.set({ [BENCH_H_KEY]: benchH.value });
+        };
+        grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up);
+    };
+    return (
+        <div class="bench-drawer" style={{ height: `${benchH.value}px` }}>
+            <div class="bench-grip" role="separator" aria-label="Drag to resize the Python bench" onPointerDown={onGrab} />
+            <div class="bench-bar-top">
+                <b class="bench-title">Python bench</b>
+                <span class="sp" />
+                <button class="tt hbtn" aria-label="Expand the Python bench" onClick={() => {
+                    benchDock.value = "full"; chrome.storage.local.set({ [BENCH_DOCK_KEY]: "full" });
+                    // Remember EXACTLY where we were, so "back" is a return and not a trip to the list.
+                    if (view.value.name === "list" || view.value.name === "detail") benchReturn.value = view.value;
+                    view.value = { name: "bench" };
+                }}>⤢<span class="tt-pop left" role="tooltip">Open it full-page — better for a long script, worse for looking at a step while you work.</span></button>
+                <button class="tt hbtn" aria-label="Close the Python bench" onClick={() => {
+                    benchOpen.value = false; chrome.storage.local.set({ [BENCH_OPEN_KEY]: false });
+                }}>✕<span class="tt-pop left" role="tooltip">Close it. Your script is kept.</span></button>
+            </div>
+            <PythonBench />
+        </div>
+    );
+}
 
 export function PythonBench() {
     const [code, setCode] = useState(() => lsGet(BENCH_CODE_KEY) ?? "import numpy as np\nreturn int(np.arange(10).sum())");

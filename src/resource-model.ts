@@ -1185,7 +1185,9 @@ export function placeEvents(runs: { t: number }[][], events: ResourceEvent[], gr
 /** The parts a span divides into. Named rather than inline because the surfaces that render a phase have to
  *  be TOTAL over it: a tooltip that fell through to a default label shipped a model load's two halves as the
  *  word "tool", which reads as a wrong fact rather than as a missing one. */
-export type PhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "dispatch" | "weights" | "context";
+// `boot` is an executor's COLD START — a sandbox fetching its runtime before the code runs. Like a model
+// load it is the step's wall time and none of the work you asked for, so it is drawn apart from `tool`.
+export type PhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "boot" | "dispatch" | "weights" | "context";
 
 export interface ResourceEvent {
     t: number;
@@ -1197,7 +1199,12 @@ export interface ResourceEvent {
      *  the driver runs. It is NOT produced yet; the kind exists so that when it is, it renders and hovers like
      *  everything else instead of arriving as an unlabelled bar. Its whole point is that it OVERLAPS the
      *  driver's own events rather than following them, which the lane's row packing already handles. */
-    kind: "run" | "session" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note" | "serve";
+    /** `aside` is a model call YOU triggered while reading — the code annotator, a summary. It belongs on the
+     *  timeline because it spent tokens on this box and takes time you can see, and it is a separate kind
+     *  because it is NOT part of the run: charging it to the run would make two runs incomparable on the
+     *  strength of how much someone poked at one of them. Drawn outlined rather than filled, for the same
+     *  reason. */
+    kind: "run" | "session" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note" | "serve" | "aside";
     label: string;
     model?: string;
     /** This event's own id, and the event that SPAWNED it. A delegated sub-call — a vision reader, an

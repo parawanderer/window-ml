@@ -10,6 +10,7 @@ import type { MlDebugEvent, MlConfig, ElementContext } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, showLane, showModels, FOCUS_KEY, focusMode,
+    benchOpen, benchDock, benchH, benchReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
     vramOpen, sidebarOpen, backendError, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
@@ -19,7 +20,7 @@ import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge, EmbedRunView } from "./reply";
 import { AgentRunView } from "./agent-detail";
 import { Composer } from "./composer";
-import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, VramPanel, PythonBench, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
+import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, VramPanel, PythonBench, BenchDrawer, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
 import { CardApp, endActiveCardDrag } from "./hud-card";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
@@ -287,7 +288,13 @@ function App() {
             <ContextMenu />
             <CursorTipLayer />{/* the cursor-following tip (a marked failing line, and anything else too wide to anchor) */}
             <div class="head">
-                {v.name !== "list" ? <button class="tt nav" aria-label="Back to sessions" onClick={() => (view.value = { name: "list" })}>‹<span class="tt-pop left" role="tooltip">Back to sessions</span></button> : null}
+                {v.name !== "list" ? <button class="tt nav" aria-label={inBench && benchReturn.value ? "Back" : "Back to sessions"} onClick={() => {
+                    // From the FULL bench, back is a RETURN — to the exact session you were reading, at the
+                    // place you left it. Landing on the sessions list is the thing that made the bench feel
+                    // like a trip away from your work.
+                    if (inBench && benchReturn.value) { const to = benchReturn.value; benchReturn.value = null; view.value = to; return; }
+                    view.value = { name: "list" };
+                }}>‹<span class="tt-pop left" role="tooltip">{inBench && benchReturn.value ? (benchReturn.value.name === "detail" ? "Back to the session you were reading" : "Back to sessions") : "Back to sessions"}</span></button> : null}
                 {detailSession
                     ? <>
                         <ModelStatusDot model={shownModel(detailSession)} inFlight={detailSession.status === "pending"} />
@@ -309,8 +316,28 @@ function App() {
                         <span class="tt-pop" role="tooltip">{focusMode.value ? "Focus mode on — show the step counters, badges and controls again" : "Focus mode — read it as a conversation, quieting step counters, badges and controls"}</span>
                     </button>
                     : null}
+                {/* FULL mode's way back to the drawer — the same choice the drawer's ⤢ offers, from the other
+                    side. Two modes, one control, so neither is a trapdoor. */}
+                {inBench ? <button class="tt hbtn" aria-label="Dock the Python bench" onClick={() => {
+                    benchDock.value = "drawer"; chrome.storage.local.set({ [BENCH_DOCK_KEY]: "drawer" });
+                    benchOpen.value = true; chrome.storage.local.set({ [BENCH_OPEN_KEY]: true });
+                    vramOpen.value = false;
+                    const to = benchReturn.value; benchReturn.value = null;
+                    view.value = to ?? { name: "list" };
+                }}>⤡<span class="tt-pop" role="tooltip">Dock it to the bottom, so you can read a run while you work in it.</span></button> : null}
                 {!inSettings && !inBench ? <button class={`tt hbtn${vramOpen.value ? " on" : ""}`} aria-label="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /><span class="tt-pop" role="tooltip">VRAM monitor</span></button> : null}
-                {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Python bench" onClick={() => (view.value = { name: "bench" })}><IconBench /><span class="tt-pop" role="tooltip">Python bench — run scripts in the sandbox</span></button> : null}
+                {!inSettings && !inBench ? <button class={`tt hbtn${benchOpen.value ? " on" : ""}`} aria-label="Python bench" aria-pressed={benchOpen.value} onClick={() => {
+                    if (benchDock.value === "full") {
+                        if (view.value.name === "list" || view.value.name === "detail") benchReturn.value = view.value;
+                        benchOpen.value = true; view.value = { name: "bench" };
+                        return;
+                    }
+                    const open = !benchOpen.value;
+                    benchOpen.value = open; chrome.storage.local.set({ [BENCH_OPEN_KEY]: open });
+                    // Two draggable strips fighting for the same bottom edge is not a layout. Opening one
+                    // puts the other away rather than stacking them.
+                    if (open) vramOpen.value = false;
+                }}><IconBench /><span class="tt-pop" role="tooltip">Python bench — run scripts in the sandbox</span></button> : null}
                 {/* Straight to the server-tool list, which is a thing you go looking for rather than a
                     setting you happen to pass — it is where you choose what an agent may reach for. */}
                 {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Server tools" onClick={() => { fetchModels(); openSettingsAt("advanced", "servertools"); }}><IconTools /><span class="tt-pop" role="tooltip">Server-side tools — choose what agents can call</span></button> : null}
@@ -326,6 +353,10 @@ function App() {
                                 : <DetailView hash={v.hash} />}
                 </div>
             </div>
+            {/* THE BENCH, docked. A sibling of the scroll container rather than content inside it, so the
+                transcript keeps its own scroll position while you work below it — which is the whole point
+                of the drawer. Not on the settings or full-bench views, where it would be a second copy. */}
+            {benchOpen.value && benchDock.value === "drawer" && !inSettings && !inBench ? <BenchDrawer /> : null}
             {/* The run-stats readout lives in the composer's own footer, opposite the context gauge — the two
                 are the same kind of fact (what this session has spent, how full it is) and were split across
                 the composer, which made the spend line read as part of the transcript above it. */}
@@ -397,7 +428,7 @@ function mount(): void {
     // ONE floating tooltip layer for the whole surface (see tooltip-layer.ts): nothing clips it, it opens
     // whichever way there is room, and the source nodes stay display:none so their prose is never copied.
     try { installTooltipLayer(document); } catch { /* no DOM in a test harness */ }
-    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [VRAM_PALETTE_KEY]: "", [FOCUS_KEY]: false }, (d: any) => {
+    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [VRAM_PALETTE_KEY]: "", [FOCUS_KEY]: false, [BENCH_OPEN_KEY]: false, [BENCH_DOCK_KEY]: "drawer", [BENCH_H_KEY]: 280 }, (d: any) => {
         if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont();
         codeWrap.value = d[WRAP_KEY] !== false; codeLineNumbers.value = !!d[LINES_KEY]; applyCodePrefs();
         showStatsTokens.value = d[STATS_TOKENS_KEY] !== false; showStatsTps.value = !!d[STATS_TPS_KEY];
@@ -417,6 +448,11 @@ function mount(): void {
         if (typeof d[VRAMH_KEY] === "number") vramH.value = d[VRAMH_KEY];
         showOutTimes.value = d[OUTTS_KEY] !== false;
         focusMode.value = !!d[FOCUS_KEY]; applyFocus();
+        // The bench remembers whether it was open, how it was docked and how tall it was — it is a workspace
+        // you leave set up, not a dialog you dismiss.
+        benchOpen.value = !!d[BENCH_OPEN_KEY];
+        benchDock.value = d[BENCH_DOCK_KEY] === "full" ? "full" : "drawer";
+        if (typeof d[BENCH_H_KEY] === "number" && d[BENCH_H_KEY] > 0) benchH.value = d[BENCH_H_KEY];
     });
     applyTheme();
     applyCodePrefs();

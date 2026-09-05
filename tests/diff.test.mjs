@@ -91,3 +91,26 @@ test("whitespace-only differences are still differences", () => {
     // what stops spacing drowning the real change). This layer never silently equates two texts.
     assert.notEqual(codeDiff("a = 1", "a  =  1"), null);
 });
+
+// The gutter draws BOTH line numbers, and the rows carry them: a row that exists on only one side has only
+// one number, which is exactly the claim being made. The NEW column is the same numbering the code block
+// below the diff draws, so a diff row, a margin note and a failure mark all name the same line.
+test("every row carries the numbers it actually has, and no others", () => {
+    const rows = diffLines("a\nOLD\nc", "a\nNEW\nc");
+    const [same1, del, add, same2] = rows;
+    assert.deepEqual([same1.a, same1.b], [1, 1], "an unchanged line exists on both sides");
+    assert.equal(del.a, 2); assert.equal(del.b, undefined, "a deletion has no line in the new text");
+    assert.equal(add.b, 2); assert.equal(add.a, undefined, "an addition has none in the old");
+    // …and the numbering keeps counting each side independently past the change.
+    assert.deepEqual([same2.a, same2.b], [3, 3]);
+});
+
+test("the new-side numbers stay in step with the after-text, across an unbalanced hunk", () => {
+    // Two lines removed and one added: the sides diverge, and a gutter that shared one counter would put
+    // every later row on the wrong line of the block it sits above.
+    const rows = diffLines("h\nx1\nx2\nt", "h\ny\nt");
+    const last = rows[rows.length - 1];
+    assert.deepEqual([last.a, last.b], [4, 3], "the tail line is 4 in the old text and 3 in the new");
+    assert.deepEqual(rows.filter(r => r.kind === "del").map(r => r.a), [2, 3]);
+    assert.deepEqual(rows.filter(r => r.kind === "add").map(r => r.b), [2]);
+});

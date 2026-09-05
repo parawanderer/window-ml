@@ -186,3 +186,34 @@ export const lsSet = (k: string, v: string): void => { try { localStorage.setIte
  *  a script and then navigate: the bench is only rendered while it is the open view, so arriving there
  *  always picks the new source up. */
 export const BENCH_CODE_KEY = "ml_bench_code";
+
+/** A model call YOU triggered while READING a run — the code annotator, an on-demand summary. Recorded so
+ *  the event lane can draw it, and kept apart from the run's own steps for the reason that matters: it
+ *  spent tokens on this box (so hiding it would be dishonest) but it is not the agent's work (so charging
+ *  it to the run would make two runs incomparable on the strength of how much someone poked at one).
+ *  Session-scoped and in memory only: it describes this reading session, not the run's record. */
+export interface Aside { t: number; ms: number; label: string; model?: string; seq?: number; }
+export const asides = new Map<string, Aside[]>();
+/** Record one, and bump `rev` so the panel picks it up. Bounded per session — a long debugging session
+ *  should not grow a list nobody reads. */
+export const noteAside = (hash: string, a: Aside): void => {
+    const list = asides.get(hash) ?? [];
+    list.push(a);
+    if (list.length > 100) list.shift();
+    asides.set(hash, list);
+    rev.value++;
+};
+
+/* --- the Python bench's own presentation ------------------------------------------------------------
+   The bench used to REPLACE the session view, so "try this snippet" cost you your place in the run you
+   opened it from — which is exactly the trip you would be making. It is a bottom DRAWER by default, with a
+   full-page mode for a long script, and returning from full lands back on the view you left rather than on
+   the sessions list. */
+export const BENCH_OPEN_KEY = "ml_bench_open";
+export const BENCH_DOCK_KEY = "ml_bench_dock";     // "drawer" | "full"  (NOT ml_bench_mode — that is the sandbox's readonly/full)
+export const BENCH_H_KEY = "ml_bench_h";
+export const benchOpen = signal(false);
+export const benchDock = signal<"drawer" | "full">("drawer");
+export const benchH = signal(280);
+/** Where FULL mode came from, so "back" returns to the exact place instead of the sessions list. */
+export const benchReturn = signal<{ name: "list" } | { name: "detail"; hash: string } | null>(null);

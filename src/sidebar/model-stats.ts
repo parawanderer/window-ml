@@ -32,6 +32,12 @@ export interface UsageSource {
     /** A model call in flight RIGHT NOW. The ONLY stamp for it: a step's `ts` is when the step FINISHED, so
      *  without this a generation is invisible until it is over and then appears back-dated. */
     liveTurn?: { step: number; startedTs: number; phases?: GenPhase[] } | null;
+    /** Model calls YOU triggered while READING this session — the code annotator, an on-demand summary.
+     *  Drawn on the lane because they spent tokens on this box and took visible time, and kept out of the
+     *  run's cost because they are not the run's work: charging them would make two runs incomparable on
+     *  the strength of how much someone poked at one. Carrying no `usage` is how that is enforced rather
+     *  than remembered. */
+    asides?: { t: number; ms: number; label: string; model?: string; seq?: number }[];
     steps?: {
         seq?: number; step?: number; ts?: number;
         tool?: string;
@@ -46,7 +52,7 @@ export interface UsageSource {
         dispatchMs?: number;
         /** What a REMOTE executor said IT spent. `toolMs` is our wall clock around the whole dispatch, so it
          *  also contains the network; this is what lets the two be drawn apart. */
-        remoteMs?: { durationMs: number; queuedMs?: number } | null;
+        remoteMs?: { durationMs: number; queuedMs?: number; bootMs?: number } | null;
         /** How long the approval gate was open — the human's time, measured separately for exactly that
          *  reason: it is the step's wall clock but not the machine's work. */
         approveMs?: number;
@@ -179,6 +185,16 @@ export function runBlocksOf(s: UsageSource): { from: number; until: number; step
 
 export function eventsFrom(sessions: readonly UsageSource[], now?: number): ResourceEvent[] {
     const out: ResourceEvent[] = [];
+    // A reader's own model calls. Emitted with NO cost and NO parent: they are not part of any step's
+    // lineage, so hovering a step must not light them and they must not appear inside the run's totals.
+    const asidesOf = (s: UsageSource) => {
+        for (const a of s.asides || []) {
+            if (!a.t || !(a.ms > 0)) continue;
+            out.push({ t: a.t, until: a.t + a.ms, kind: "aside", label: a.label,
+                       ...(a.model ? { model: a.model } : {}),
+                       ref: { hash: s.hash, ...(a.seq != null ? { seq: a.seq } : {}) } });
+        }
+    };
     const costOf = (u: TokenUsage): ResourceEvent["cost"] => {
         const s = runStats([u]);
         return {
@@ -211,6 +227,7 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
         }
     };
     for (const s of sessions) {
+        asidesOf(s);
         // Which RUN a step belongs to. A session is a sequence of runs (turns ending in an answer), so a
         // child's container is the block its step falls in — parenting everything to one session-wide id is
         // what made the lane draw a conversation as a single piece of work.
@@ -270,10 +287,18 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
                 const rm = st.remoteMs;
                 const toolStart = from + genMs + dispatchMs + waitMs;
                 if (rm && rm.durationMs >= 0 && st.toolMs != null && rm.durationMs <= st.toolMs) {
-                    const q = Math.max(0, Math.min(rm.queuedMs ?? 0, st.toolMs - rm.durationMs));
-                    const net = Math.max(0, st.toolMs - rm.durationMs - q);
-                    if (net > 0) phases.push({ kind: "net", until: toolStart + net });
-                    if (q > 0) phases.push({ kind: "queue", until: toolStart + net + q });
+                    // A COLD START comes first and is drawn first, for the same reason a model's `load` is:
+                    // it is the step's wall time but not the work you asked for, and a first python_exec that
+                    // spends four seconds fetching a runtime looks identical to a slow script without it.
+                    // A PHASE rather than its own event, because unlike a model load this happens INSIDE the
+                    // dispatch `toolMs` already measures — a separate span in front would draw it twice.
+                    const spare = st.toolMs - rm.durationMs;
+                    const boot = Math.max(0, Math.min(rm.bootMs ?? 0, spare));
+                    const q = Math.max(0, Math.min(rm.queuedMs ?? 0, spare - boot));
+                    const net = Math.max(0, spare - boot - q);
+                    if (boot > 0) phases.push({ kind: "boot", until: toolStart + boot });
+                    if (net > 0) phases.push({ kind: "net", until: toolStart + boot + net });
+                    if (q > 0) phases.push({ kind: "queue", until: toolStart + boot + net + q });
                 }
                 phases.push({ kind: "tool", until: st.ts });
                 const stepId = `step:${s.hash}:${st.seq ?? st.step ?? 0}`;

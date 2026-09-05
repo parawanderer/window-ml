@@ -290,7 +290,10 @@ export const rollupStatus = (s: Session): Status =>
  *  paragraph (a margin note beside a line of code). One `<p>` is peeled off; anything with real block
  *  structure keeps it, since stripping only the opening tag would leave unbalanced markup. */
 export function mdInline(src: string): string {
-    const html = markdown(src);
+    // MATH ON, like the answer renderer: a note about code is exactly where a formula belongs ("sums
+    // $\\sum q_i$ per rep" says it once instead of in a sentence), and a `$…$` left unrendered in a
+    // margin is worse than not offering it at all.
+    const html = markdown(src, { math: true });
     const m = html.match(/^<p>((?:(?!<\/p>)[\s\S])*)<\/p>\s*$/);
     return m ? m[1] : html;
 }

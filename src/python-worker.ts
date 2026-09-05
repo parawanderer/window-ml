@@ -14,17 +14,29 @@ import { PY_PACKAGE_LOADS } from "./python-env";
 import { wrapUserCode, harden, unharden } from "./python-runtime";
 
 type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean };
-type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" };
+// `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
+// two never have to be inferred from one another.
+type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
 
 let pyodideReady: Promise<any> | null = null;
+// HOW LONG THE COLD START TOOK, charged to the run that PAID for it. A first python_exec spends several
+// seconds fetching the runtime and its wheels before a line of the script runs, and a plain "ran in 4.2s"
+// blames the script for time it never spent — the same confusion a model's `load_duration` exists to
+// settle ("it was slow" and "it was not there yet" are different answers, and only one is about the code).
+// Measured HERE because the worker is the executor: anything downstream is measuring the message bus too.
+// Read once and cleared, so only the first call reports it; every later run is a warm start with none.
+let pendingBootMs: number | null = null;
+export const takeBootMs = (): number | null => { const b = pendingBootMs; pendingBootMs = null; return b; };
 function getPyodide(): Promise<any> {
     if (!pyodideReady) pyodideReady = (async () => {
         // Resolve the bundled ESM + its asset dir relative to THIS worker's URL
         // (chrome-extension://<id>/python-worker.js) — no `chrome` needed in the worker.
         const base = self.location.href;
+        const t0 = Date.now();
         const { loadPyodide } = await import(new URL("pyodide/pyodide.mjs", base).href);
         const py = await loadPyodide({ indexURL: new URL("pyodide/", base).href });
         await py.loadPackage(PY_PACKAGE_LOADS);
+        pendingBootMs = Date.now() - t0;
         return py;
     })();
     return pyodideReady;
@@ -38,6 +50,11 @@ function sanitize(v: unknown): unknown {
 
 async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void): Promise<RunResult> {
     const py = await getPyodide();
+    const boot = takeBootMs();
+    // The script's own clock starts AFTER the runtime is up, so the two numbers add to the wall time
+    // rather than overlapping — which is what lets the panel show them as one bar split in two.
+    const t0 = Date.now();
+    const timed = (r: RunResult): RunResult => ({ ...r, runMs: Date.now() - t0, ...(boot != null ? { bootMs: boot } : {}) });
     py.globals.set("INJECTED_IMAGE_B64", image);
     py.globals.set("INJECTED_TABLES_JSON", Array.isArray(tables) && tables.length ? JSON.stringify(tables) : null);
     // LIVE stdout tee (opt-in streaming): the prelude's _MlTee calls this per print(). Set only when the
@@ -52,7 +69,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         await py.runPythonAsync(wrapUserCode(code, hardened));
         const stdout = String(py.globals.get("_stdout") ?? "");
         const err = py.globals.get("_err");
-        if (err) return { ok: false, stdout, error: String(err) };
+        if (err) return timed({ ok: false, stdout, error: String(err) });
         // A DataFrame/Series result also arrives structurally ({columns, rows}) so the UI can draw a real table.
         const tableJson = py.globals.get("_json_table");
         let table: RunResult["table"];
@@ -63,16 +80,16 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         const render = renderHint === "latex" || renderHint === "img" ? renderHint : undefined;
         if (typeof jsonResult === "string") {
             let value: unknown; try { value = JSON.parse(jsonResult); } catch { value = jsonResult; }
-            return { ok: true, value, stdout, ...(table ? { table } : {}), ...(render ? { render } : {}) };
+            return timed({ ok: true, value, stdout, ...(table ? { table } : {}), ...(render ? { render } : {}) });
         }
         // Fallback for a non-JSON-serializable return (rare — models return images via
         // to_base64): convert via toJs, then destroy the proxy so it can't leak.
         const r = py.globals.get("result");
         const value = r && r.toJs ? r.toJs({ dict_converter: Object.fromEntries }) : r;
         if (r && r.destroy) r.destroy();
-        return { ok: true, value: sanitize(value), stdout };
+        return timed({ ok: true, value: sanitize(value), stdout });
     } catch (e: any) {
-        return { ok: false, stdout: "", error: String((e && e.message) || e) };   // wrapper didn't run (syntax error)
+        return timed({ ok: false, stdout: "", error: String((e && e.message) || e) });   // wrapper didn't run (syntax error)
     } finally {
         py.globals.set("INJECTED_IMAGE_B64", null);
         py.globals.set("INJECTED_TABLES_JSON", null);

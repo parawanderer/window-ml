@@ -642,6 +642,10 @@ const phaseFill = (kind: string, model?: string): string => {
         : kind === "dispatch" ? "color-mix(in srgb, var(--fg-faint) 20%, transparent)"
         : kind === "net" ? "color-mix(in srgb, var(--fg-faint) 26%, transparent)"
         : kind === "queue" ? "color-mix(in srgb, var(--fg-faint) 38%, transparent)"
+        // A COLD START is a wait, like a model load — so it is STRIPED for the same reason: a wide flat block
+        // reads as a lot of work having happened, and none of this is work you asked for. Neutral rather than
+        // the model's colour, since it is the sandbox arriving and not the model.
+        : kind === "boot" ? "repeating-linear-gradient(45deg, color-mix(in srgb, var(--fg-faint) 34%, transparent) 0 3px, var(--panel) 3px 8px)"
         // A LOAD's two halves. Both are the model arriving, so both are its colour — but the first is the
         // weights moving (dense, and where the memory trace actually steps) and the second is the context
         // being allocated before it will serve. Striped either way, because a load is a wait rather than
@@ -1014,6 +1018,9 @@ function EventTip({ scope }: { scope: string }) {
         dispatch: "dispatching the call",
         net: "network, there and back",
         queue: "queued before it started",
+        // A sandbox fetching its runtime. Said as the thing it is, because a reader seeing four seconds in
+        // front of a one-line script needs to know it was not the script.
+        boot: "starting the sandbox (cold start)",
         tool: () => e.tool || "tool",
     };
     const nameFor = (kind: string) => {
@@ -1122,6 +1129,9 @@ function EventTip({ scope }: { scope: string }) {
             {(() => {
                 const notes = [
                     e.kind === "load" ? "the model wasn't resident — this is the wait before a token" : null,
+                    // Said plainly, because a bar in a run's lane that is not part of the run is exactly the
+                    // sort of thing a reader would otherwise spend a minute misattributing.
+                    e.kind === "aside" ? "you triggered this while reading — NOT part of the run, and not counted in its tokens" : null,
                     h.p.clipped ? "continues past what was measured" : null,
                     e.ref ? `click to open this ${e.ref.seq != null ? "step" : "run"}` : null,
                 ].filter(Boolean) as string[];
@@ -1130,7 +1140,7 @@ function EventTip({ scope }: { scope: string }) {
             {/* WHEN, exactly. The durations say how long each part took; this is what lets a block be lined up
                 against another one, or against a timestamped log. Milliseconds because an event's own timings
                 are exact — unlike the crosshair, which interpolates between samples. */}
-            <div class={`rc-tip-when${(e.kind === "load" || h.p.clipped || e.ref) ? "" : " sep"}`}>{hhmmssms(e.t)} → {hhmmssms(e.until ?? e.t)}</div>
+            <div class={`rc-tip-when${(e.kind === "load" || e.kind === "aside" || h.p.clipped || e.ref) ? "" : " sep"}`}>{hhmmssms(e.t)} → {hhmmssms(e.until ?? e.t)}</div>
         </div>
     );
 }

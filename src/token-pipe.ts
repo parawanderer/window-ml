@@ -54,6 +54,9 @@ export interface TokenValue {
     label?: string;
     t: number;
     step: number;
+    /** The step's SEQ, when it has one — what a UI needs to scroll back to the call this came from. `step`
+     *  is the loop's own counter and several records can share it; `seq` addresses one row. */
+    seq?: number;
 }
 
 /** How much MORE the pointer holds than the model was shown — the sentence that tells it this read was worth

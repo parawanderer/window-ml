@@ -574,6 +574,8 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     js: { type: "string", description: "JavaScript to run. console.log to print observations and/or end with an expression to return its value. Output is truncated to ~500 chars — return a filtered summary, not a full dump." },
                     maxChars: { type: "number", description: "Raise the per-slot output truncation for THIS call (default 500, max 8000). A raise needs human approval + `maxCharsReason`. Prefer a filtered summary instead." },
                     maxCharsReason: { type: "string", description: "Why this call needs more than the default 500 chars — required when `maxChars` exceeds it; shown to the human on the approval card." },
+                    revises: { type: "string", description: "If this is a RETRY of an earlier call, its pointer (`@tool:abc1234`, `@tool:exec`, or `@tool:\"a label\"`). The panel then shows the human a diff of what changed. Changes nothing about how this runs." },
+                    changed: { type: "string", description: "One line on what you changed, shown beside that diff. Only with `revises`." },
                 },
                 required: ["js"]
             },

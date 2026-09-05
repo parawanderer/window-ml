@@ -115,7 +115,7 @@ export const Code = ({ text, lang, format, marks, lineIds, markLine, markTitle, 
                    often 400px wide and a true right margin would sit off the end of a horizontally
                    scrolled block. It is a sibling of the line, never part of it — the source keeps its
                    own numbering and the line map is untouched. */
-                notes?.get(i + 1) ? <span class="lnote" key={`n${i}`}><span class="lnote-mark" aria-hidden="true" /><span class="lnote-txt" dangerouslySetInnerHTML={{ __html: mdInline(notes.get(i + 1)!) }} /></span> : null,
+                notes?.get(i + 1) ? <span class="lnote" key={`n${i}`}><span class="lnote-mark" aria-hidden="true">↳</span><span class="lnote-txt" dangerouslySetInnerHTML={{ __html: mdInline(notes.get(i + 1)!) }} /></span> : null,
             ])}
         </code></pre>
     );

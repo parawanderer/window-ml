@@ -109,6 +109,8 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
     /** @type {StepOrFn[]} */
     let script = [];
     let idx = 0;
+    /** @type {((body: any) => any) | null} */
+    let sideAnswer = null;
     /** @type {any[]} */
     const calls = [];
     /** @type {any[]} */
@@ -266,6 +268,19 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
         if (req.method === "POST" && (path === "/api/chat/completions" || path === "/v1/chat/completions")) {
             const body = await readBody(req);
             calls.push(body);
+            // A SIDE CALL is not part of the run: the agent loop always sends `tools`, and a utility-model
+            // call (a summary, the code annotator) never does. Answering it out of the script would shift
+            // every later turn by one — a run that changes shape depending on whether a human clicked
+            // something is not a scripted run at all.
+            if (sideAnswer && !body.tools) {
+                // Answer it even when the handler DECLINES. The script describes the RUN's turns, and a
+                // side call that falls through consumes one — which does not fail, it silently shortens the
+                // run: the loop's next turn gets the step after the one it should have had. That cost an
+                // hour to find, presenting as "the second tool call never happened".
+                const side = sideAnswer(body) || { content: "" };
+                return json(res, 200, { id: `chatcmpl-${callSeq}`, object: "chat.completion", model,
+                                        choices: [toChoice(side)], usage: usageFor(body, side) });
+            }
             let step = idx < script.length ? script[idx++] : { content: "" };
             if (typeof step === "function") step = step(body) || { content: "" };
             if (body.stream) return streamStep(res, step, body);
@@ -288,6 +303,13 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
                 url: `${origin}/api/chat/completions`,
                 origin,
                 setScript: (/** @type {StepOrFn[]} */ steps) => { script = steps.slice(); idx = 0; },
+                /**
+                 * Answer calls that are NOT part of the run — the utility model's summaries and code
+                 * annotations, which arrive whenever a human clicks (or whenever auto-summaries are on) and
+                 * must not consume a scripted turn. Once set, EVERY tool-less call is answered here:
+                 * `fn(body)` returning null means "nothing to say", not "hand it to the script".
+                 */
+                setSide: (/** @type {(body: any) => any} */ fn) => { sideAnswer = fn; },
                 /** What /api/ps reports as resident — raw ollama ps rows (size / size_vram / gpus / …). */
                 setResident: (/** @type {any[]} */ models) => { resident = models; },
                 /** What /api/info reports as capacity; null = a server that doesn't serve the route at all. */
