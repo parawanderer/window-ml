@@ -3469,9 +3469,10 @@ test("protobuf stream: a backend that answers SSE anyway is parsed as SSE", asyn
 });
 
 test("protobuf stream: a TOOL CALL decodes out of a Delta, and the hand-back is still visible", async () => {
-    // The schema carried tool_calls before the encoder filled them, so this needed no change when it did —
-    // which is the argument for generating the decoder rather than writing it to the fields visible on the
-    // day. Verified against the live box too (tests/e2e/proto-stream-live.mjs).
+    // The field and the encoder filling it landed upstream together, in one commit — so the value here is
+    // not that a generated decoder ran ahead of the wire, it is that regenerating from a PINNED schema
+    // absorbed the change with no edit on our side. Verified against the live box too
+    // (tests/e2e/proto-stream-live.mjs).
     // Delta.tool_calls (field 3) { ToolCall.function (field 4) { Function.name (field 1) = "get_weather" } }
     const fn = pbStr(1, "get_weather");
     const tc = [0x22, fn.length, ...fn];
@@ -3492,10 +3493,11 @@ test("protobuf stream: a TOOL CALL decodes out of a Delta, and the hand-back is 
 });
 
 test("protobuf stream: a toolIds call keeps SSE — the schema has nowhere to put SOURCES", async () => {
-    // The one real gap, and the reason this gate did not simply go away when the encoder gained tool calls.
-    // OpenWebUI attaches provenance for a server-side tool or a RAG hit as its own SSE line ({sources:[…]}),
-    // and Start/Delta/End have no field for it. Such a call would answer correctly and lose every citation
-    // without saying so.
+    // PERMANENT, not a gap waiting on a field — which is why this gate did not go away when the encoder
+    // gained tool calls. `sources` is emitted by OpenWebUI ahead of the model's first token, on the route
+    // that proxies ollama's NATIVE /api/chat and parses it line by line; the protobuf encoder lives on the
+    // raw-passthrough route that path never touches. A field for it could never be filled, and a permanently
+    // empty one is indistinguishable from "there were none".
     let accept = "unset";
     const bg = loadBackground({
         config: { ...baseConfig(), protoStream: true },

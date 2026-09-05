@@ -503,6 +503,11 @@ test("the event lane is resizable, and its content never resizes the charts abov
         const before = await plotH();
 
         // GROW IT with its own grip, and the panel gives the lane the room rather than the charts losing it…
+        // The grip IS the box's bottom rule — no pill, because a pill reads as a drawer's grab and this is
+        // the edge of a box.
+        expect(await frame.locator(".rc-lane-pill").count(), "no pill handle").toBe(0);
+        expect(await frame.locator(".rc-lane-rows").evaluate((e) => getComputedStyle(e).borderBottomStyle),
+            "the box has a visible bottom").toBe("solid");
         const grip = await frame.locator(".rc-lane-grip").boundingBox();
         await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
         await page.mouse.down();

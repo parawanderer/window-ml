@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 // Generate the protobuf chat-stream decoder from `src/proto/chat.proto`.
 //
-// The schema is the CONTRACT and it is not ours: it lives in slop-zone on the box, and the copy here is
-// pinned (see the header in chat.proto). Everything about the wire — field numbers, wire types, which fields
-// exist at all — is derived from it rather than written down a second time, because a hand-written decoder
-// is a second copy of the field numbers and the whole failure mode with a schema you do not own is drifting
-// away from it silently. The generated decoder also means a field the server does not emit YET (tool_calls,
-// logprobs, both already in the schema) is decoded the day it starts arriving, with no change here.
+// The schema is the CONTRACT and it is not ours: it lives beside the Go encoder in the ollama fork, and the
+// copy here is pinned by blob id (`chat.proto.pin.json`). Everything about the wire — field numbers, wire
+// types, which fields exist at all — is derived from it rather than written down a second time, because a
+// hand-written decoder is a second copy of the field numbers and the failure mode with a schema you do not
+// own is drifting away from it silently.
+//
+// That paid for itself immediately: `tool_calls` and `logprobs` arrived upstream — field and encoder in one
+// commit — and were decoded here with no edit, purely because regenerating from the pinned schema absorbs
+// such a change. A hand-written decoder would have ignored them without a word.
 //
 // The OUTPUT IS CHECKED IN, unlike the other generated files, for the same reason the export schema is: CI
 // has no protoc. `tests/proto.test.mjs` regenerates and diffs, so a stale copy cannot ship — and it skips

@@ -1451,8 +1451,13 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
             ))}</div> : null}
             {/* Its own grip, under the rows and above the header — a lane too short to show what happened is
                 as bad as one that eats the charts, and which you want depends entirely on the run. */}
+            {/* ITS EDGE IS THE HANDLE, and the edge is a real rule. A centred pill said "drag me" in a place
+                where a pill means a drawer, and the lane is not one — while the box it bounds had no visible
+                bottom at all, so the events floated in the panel with nothing saying where their space ended.
+                One line does both jobs: it closes the box, and it is what you grab. Same pairing the editor
+                and its divider already use — the border IS the line, the strip over it is the grab target. */}
             {showLane.value ? <div class="rc-lane-grip" role="separator" aria-orientation="horizontal"
-                aria-label="Drag to resize the event lane" onPointerDown={onLaneGrab} onDblClick={resetLane}><i class="rc-lane-pill" /></div> : null}
+                aria-label="Drag to resize the event lane" onPointerDown={onLaneGrab} onDblClick={resetLane} /> : null}
             <EventTip scope="lane" />
             <LaneFilterBar counts={counts} shown={events.length} total={all.length} />
         </div>

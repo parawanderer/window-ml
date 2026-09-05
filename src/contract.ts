@@ -140,9 +140,11 @@ export interface MlConfig {
     autoApproveSelfSource: boolean;
     /** Ask for the chat stream as varint-delimited PROTOBUF instead of OpenAI SSE, where the backend serves
      *  it (a patched Ollama). One `Accept` header; a backend that does not speak it answers with the SSE it
-     *  always did, so this is a preference rather than a commitment. About 22x fewer bytes for the same
-     *  tokens, because the envelope JSON repeats per token is sent once. Off by default: it is only worth
-     *  anything over a slow link, and the backends that serve it are the exception. */
+     *  always did, so this is a preference rather than a commitment. Measured at 25x fewer bytes for the same
+     *  tokens (7343 → 292), because the envelope JSON repeats per token is sent once. Tool calls and
+     *  reasoning ride it; a `toolIds` call does not, since OpenWebUI's citations are emitted on a route
+     *  protobuf is not served over. Off by default: it is only worth anything over a slow link, and the
+     *  backends that serve it are the exception. */
     protoStream: boolean;
     /** Hostnames the USER has trusted to supply their OWN ml.agent approval gate (a page's
      *  `approve` callback / the page-loop confirm). Empty by default: EVERY other origin's

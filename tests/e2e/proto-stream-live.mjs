@@ -109,8 +109,8 @@ if (sse && pb) {
     const ratio = pb.bytes ? (sse.bytes / pb.bytes).toFixed(1) : "n/a";
     console.log(`\n  ${sse.bytes} → ${pb.bytes} bytes  (${ratio}x smaller)\n`);
 }
-// THE QUESTION THAT DECIDES THE GATE. The schema has carried tool_calls all along; what matters is whether
-// the ENCODER fills them, because the failure mode if it does not is silent — the text arrives and the call
-// simply is not there, which reads as the model choosing not to call one.
+// THE QUESTION THAT DECIDES THE GATE, and the reason to ask the wire rather than take it on report: if the
+// encoder does not fill tool calls the failure is SILENT — the text arrives and the call simply is not
+// there, which reads as the model choosing not to call one.
 await run("tools / sse ", { proto: false, tools: true });
 await run("tools / proto", { proto: true, tools: true });

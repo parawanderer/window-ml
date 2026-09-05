@@ -446,11 +446,16 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
      * back with `finish=tool_calls` and `get_weather({"city":"Paris"})` decoded out of a Delta. Reasoning
      * rides it too.
      *
-     * `toolIds` DOES NOT, and this is the one real gap. OpenWebUI attaches provenance for a server-side tool
-     * or a RAG hit as its own SSE line (`{ sources: [...] }`), and the schema has NOWHERE to put it —
-     * no field on Start, Delta or End. So a server-tool call over protobuf would answer correctly and lose
-     * every citation, silently, which is the failure this whole gate exists to prevent. Reported upstream;
-     * until there is a field, such a call keeps the format that carries one.
+     * `toolIds` DOES NOT, and this is permanent rather than a gap waiting on a field. `sources` is not part
+     * of a completion at all: OpenWebUI emits it, ahead of the model's first token, narrating a retrieval it
+     * already did — and it does so on `/api/chat/completions`, which proxies ollama's NATIVE `/api/chat` and
+     * parses the stream line by line to run filter functions. The protobuf encoder lives on
+     * `/ollama/v1/chat/completions`, a raw passthrough that path never touches. So a `sources` field in the
+     * schema could never be populated: it would be permanently empty, which is not "no sources" and not
+     * "sources dropped" but indistinguishable from both — an absent field says "ask elsewhere", an
+     * always-empty one says "there were none". Confirmed by the people who own both routes; a protobuf
+     * server-tool stream would mean teaching OpenWebUI's transcoder to emit it, which is real work and not
+     * this. Until then such a call keeps the format that carries provenance.
      *
      * A `schema` call never streams at all (structured output skips the streaming path), so it is excluded
      * for tidiness rather than because anything would be lost.
@@ -753,7 +758,7 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
     };
 
     /**
-     * The same stream as varint-delimited protobuf: about 22x fewer bytes for the same tokens.
+     * The same stream as varint-delimited protobuf: measured at 25x fewer bytes for the same tokens.
      *
      * The saving is structural rather than a compression trick. OpenAI's SSE re-sends `id`, `object`,
      * `created`, `model`, `system_fingerprint` and a nested `choices[0].delta` wrapper for EVERY token —
@@ -773,10 +778,10 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
             if (f.delta) {
                 if (f.delta.content) { content += f.delta.content; onDelta(f.delta.content); }
                 if (f.delta.reasoning) reasoning += f.delta.reasoning;
-                // TOOL CALLS ARRIVE HERE NOW. They were in the schema before the encoder filled them, which
-                // is the whole argument for generating the decoder from that schema rather than writing it
-                // to the fields visible on the day: the server started sending these and this read them with
-                // no change on our side.
+                // TOOL CALLS ARRIVE HERE. The field and the encoder that fills it landed upstream in ONE
+                // commit, after the handover had told us they were missing — so the schema never ran ahead of
+                // the wire, and the reason this needed no change on our side is only that we regenerate from
+                // a PINNED schema rather than hand-writing to the fields visible on the day.
                 if (f.delta.toolCalls?.length) sawToolCall = true;
             }
             if (f.end) {

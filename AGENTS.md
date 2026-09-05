@@ -1406,17 +1406,22 @@ RESPONSE's Content-Type, so a stock server, an older build or a proxy that drops
 SSE it always did and the miss IS the fallback (the same shape as the Markdown ladder's first rung). The
 decoder is **GENERATED** from the schema (`scripts/gen-proto.mjs` → `src/proto/chat.gen.ts`, checked in
 because CI has no protoc; `tests/proto.test.mjs` regenerates and diffs, skipping where protoc is absent). That
-is not tidiness: `tool_calls` and `logprobs` were in the schema before the encoder filled them, so when it did,
-this read them **with no change here** — a hand-written decoder is a second copy of the field numbers and
-would not have. The schema is not ours, so it is **pinned by git blob id**
+is not tidiness: `tool_calls` and `logprobs` arrived upstream — field and encoder together, in one commit,
+after the handover had said they were missing — and this read them **with no change here**, because
+regenerating from a pinned schema absorbs that where a hand-written decoder (a second copy of the field
+numbers) would have silently ignored them. The schema is not ours, so it is **pinned by git blob id**
 (`src/proto/chat.proto.pin.json` → `parawanderer/ollama:middleware/chat.proto`, beside the Go encoder, which
 is what makes it the definition rather than a copy of one). `npm run gen-proto -- --check` verifies the
 vendored copy OFFLINE (a blob id is content-addressed, so it holds in CI and a fresh checkout), confirms the
 commit still carries that blob when GitHub is reachable, and reports when upstream has moved on — which a
 content hash alone cannot, since "we match commit X" stays true forever.
-**`toolIds` KEEPS SSE**, and that is the one real gap: OpenWebUI attaches provenance as its own SSE line
-(`{sources:[…]}`) and `Start`/`Delta`/`End` have nowhere to put it, so a server-tool call would answer
-correctly and lose every citation silently. Reported upstream. **No `TextDecoder` anywhere in this path** — it
+**`toolIds` KEEPS SSE**, and that is PERMANENT rather than a gap waiting on a field. `sources` is not part of
+a completion: OpenWebUI emits it ahead of the model's first token, narrating a retrieval it already did, on
+`/api/chat/completions` — which proxies ollama's NATIVE `/api/chat` and parses the stream line by line to run
+filter functions. The protobuf encoder lives on `/ollama/v1/chat/completions`, a raw passthrough that path
+never touches, so a `sources` field could never be filled: permanently empty is not "no sources" and not
+"sources dropped" but indistinguishable from both, where an absent field says "ask elsewhere". Serving
+protobuf for that class means teaching OpenWebUI's transcoder to emit it — real work, not a schema line. **No `TextDecoder` anywhere in this path** — it
 is binary, and decoding it as UTF-8 corrupts it silently rather than throwing. The framing half
 (`src/protostream.ts`) is ours because it is not in the schema: `fetch()` chunk boundaries have nothing to do
 with message boundaries, so the reader buffers and yields only whole frames, refuses a length prefix claiming
