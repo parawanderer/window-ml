@@ -359,7 +359,11 @@ const pendingPrints = new Map<string, { html: string; timer: ReturnType<typeof s
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
 // chunk the offscreen doc forwards can be relayed to the RIGHT page. Set when a streaming PYTHON_EXEC starts,
 // deleted when it resolves. Only populated for opt-in streaming runs (a bounded, short-lived map).
-const pyStreamTabs = new Map<string, number>();
+/** streamId → where its live stdout goes. A TAB id relays through that tab's content script (a page's
+ *  `ml.pythonExec`, i.e. the agent's tool); NULL means the caller was one of our OWN surfaces — the sidebar's
+ *  Python bench — which is not reachable that way and is broadcast to instead. Both callers ask for the same
+ *  worker tee; only the last hop differs. */
+const pyStreamTabs = new Map<string, number | null>();
 // The same, for a server tool's frames: streamId (the page's requestId) → tabId, so a frame reaches the
 // page that asked for it and no other.
 const serverToolTabs = new Map<string, number>();
@@ -1246,9 +1250,17 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     }
                 }
             }
-            // LIVE stdout streaming (opt-in): record streamId→tab so a PY_STDOUT chunk reaches this page.
+            // LIVE stdout streaming (opt-in): record where this run's chunks go. The discriminator is the
+            // sending FRAME's own url, not `sender.tab` — the overlay sidebar is an extension iframe INSIDE a
+            // tab, so it has one, and relaying its chunks through that tab's content script would post them
+            // to the page instead of to the bench that asked. `sender.url` is set by Chrome and a page cannot
+            // forge it.
             const streamId: string | undefined = message.payload?.stream ? message.requestId : undefined;
-            if (streamId && sender.tab?.id != null) pyStreamTabs.set(streamId, sender.tab.id);
+            if (streamId) {
+                const fromSurface = (sender.url || "").startsWith(chrome.runtime.getURL(""));
+                if (fromSurface) pyStreamTabs.set(streamId, null);
+                else if (sender.tab?.id != null) pyStreamTabs.set(streamId, sender.tab.id);
+            }
             const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(message.payload?.env ? { env: true } : {}) };
             const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
             attempt()
@@ -1292,8 +1304,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     if (message.type === "PY_STDOUT") {
         // A live stdout chunk from the offscreen Pyodide host → relay to the run's page (keyed by streamId), which
         // resolves it as a PYTHON_EXEC_RESPONSE progress event to the awaiting ml.pythonExec (→ the tool's ctx.stream).
+        if (!pyStreamTabs.has(message.streamId)) return false;
         const tabId = pyStreamTabs.get(message.streamId);
-        if (tabId != null) chrome.tabs.sendMessage(tabId, { type: "PYTHON_STREAM", requestId: message.streamId, chunk: message.chunk, ts: message.ts }).catch(() => { /* page gone → drop */ });
+        const chunk = { type: "PYTHON_STREAM", requestId: message.streamId, chunk: message.chunk, ts: message.ts };
+        // A SURFACE (the bench) is an extension context, so the chunk goes out on the runtime channel every
+        // such context hears; it is filtered by requestId at the other end, which is unique per run. A PAGE
+        // is reached the long way, through its content script.
+        if (tabId == null) chrome.runtime.sendMessage(chunk).catch(() => { /* nobody listening → drop */ });
+        else chrome.tabs.sendMessage(tabId, chunk).catch(() => { /* page gone → drop */ });
         return false;
     }
     if (message.type === "SERVER_TOOL_EXEC") {

@@ -429,7 +429,6 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip > .sep:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
 .rc-tip-consumer { display: inline-flex; align-items: center; gap: 5px; }
 .rc-tip-pct { opacity: .7; font-variant-numeric: tabular-nums; }
-.rc-tip-gone { padding: 0 4px; font-size: 0.9em; color: var(--fg-faint); border: 1px solid var(--border); border-radius: 3px; }
 .rc-tip-dim { color: var(--fg-faint); }
 /* WHEN the figures above were measured. Ruled off, because it is a different kind of fact from the rest of
    the tip: those describe a quantity, this one says which instant the quantity is from. */
@@ -771,6 +770,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    generated selector in a tool result) must never widen the panel — wide content
    wraps, or scrolls inside its own box (code blocks, tables), never the page. */
 .view { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px; min-width: 0; }
+/* THE BENCH IS THE ONE VIEW THAT DOES NOT SCROLL. It is a split with a draggable divider, so it has to be
+   GIVEN the height — a `flex: 1` inside a scroller resolves to the content's own height, and a divider then
+   has nothing to divide. Every other view is a document and keeps the scroller. */
+.view-bench { display: flex; overflow: hidden; }
+.view-bench > div { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .empty { color: var(--fg-faint); padding: 16px 8px; text-align: center; }
 
 /* Python bench — a debug workbench that runs scripts against the model's sandbox. */
@@ -797,7 +801,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 }
 .bench-info { color: var(--fg-faint); cursor: help; font-size: 1.05em; margin-right: 2px; }
 .bench-info:hover { color: var(--fg-dim); }
-.bench-code { width: 100%; min-height: 180px; resize: vertical; box-sizing: border-box;
+/* No `resize` of its own: the DIVIDER owns that gesture. Three resize grips in one drawer — its edge, the
+   field's corner, and nothing at all for the output — is two too many, and the corner one could not shrink
+   the output pane, which is the direction you usually want. */
+.bench-code { width: 100%; height: 100%; resize: none; box-sizing: border-box;
     background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 9px;
     font: 0.88em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; white-space: pre; overflow: auto; }
 .bench-code:focus { outline: none; border-color: var(--accent); }
@@ -810,8 +817,60 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
     color: var(--accent-fg); background: var(--accent); cursor: pointer; }
 .bench-run:hover:not(:disabled) { filter: brightness(1.08); }
 .bench-run:disabled { opacity: 0.5; cursor: default; }
-.bench-out { display: flex; flex-direction: column; gap: 4px; }
-.bench-out .io-label { color: var(--fg-dim); font-size: 0.85em; font-weight: 600; }
+/* --- the bench's two panes, and the divider between them ------------------------------------------
+   The script and its output are the same workspace seen twice, and how much of each you want depends
+   entirely on what you are doing — so they are sized against each other rather than one being fixed and
+   the other taking what is left. `min-height: 0` on both, or a flex item refuses to shrink below its
+   content and the output pane pushes the editor off the top the first time a script prints a lot. */
+.bench-split { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.bench-pane { flex-basis: 0; min-height: 0; display: flex; flex-direction: column; }
+/* A real grab target — 11px, because a 1px line is a rule, not a control — carrying ONLY a pill. It drew its
+   own hairline at first, which put a second full-width line a few pixels under the editor's own bottom
+   border and left the pill sitting between the two, belonging to neither. The editor's border IS the line;
+   this is the handle for it, the same pairing the drawer's top edge already uses.
+
+   The pill's 4px offset is SET, not left to fall out of centring: centred, it read as sitting ON the
+   editor's border, and the space above it read as padding the textarea had grown. Stated as a padding it is
+   one number, and a test can name it. */
+.bench-div { flex: 0 0 auto; height: 11px; position: relative; cursor: ns-resize; touch-action: none;
+    display: flex; align-items: flex-start; justify-content: center; padding-top: 4px; box-sizing: border-box; }
+.bench-div-pill { width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2);
+    opacity: .55; transition: width .12s ease, opacity .12s ease; pointer-events: none; }
+.bench-div:hover .bench-div-pill { width: 52px; opacity: 1; background: var(--panel-2-hover); }
+@media (prefers-reduced-motion: reduce) { .bench-div-pill { transition: none; } }
+
+/* THE OUTPUT PANE — a tab strip, the selected section, and how long the run took. */
+.bench-outpane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+/* At the TOP of the pane, under the divider: the divider and the label of the pane it resizes then stay
+   together, and the strip does not drift away from its content as the pane grows. */
+.bench-tabs { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 2px; overflow-x: auto;
+    border-bottom: 1px solid var(--border); }
+.bench-tabs::-webkit-scrollbar { height: 0; }
+.bench-tab { font: inherit; font-size: 0.8em; color: var(--fg-faint); background: transparent;
+    border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    padding: 3px 9px; cursor: pointer; white-space: nowrap; }
+.bench-tab:hover { color: var(--fg-dim); }
+.bench-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
+/* A failure is MARKED, not just selected — the strip has to say a run went wrong even once you have
+   clicked away to look at what it printed on the way there. */
+.bench-tab.err { color: var(--err); }
+.bench-tab.err.on { border-bottom-color: var(--err); }
+/* THE SELECTED SECTION FILLS THE PANE — a table, a traceback, plain text, all of them. A short box floating
+   in a tall empty pane reads as output that got cut off, and you already said how much room you wanted by
+   dragging the divider, so capping it again here would be the pane arguing with the gesture that sized it.
+   (Text and code get this from `.r-outcell.fill`; a DataFrame is not inside a cell, so it is handled here.) */
+.bench-outbody { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* Room to breathe around the grid: in the log a table is one block among many and its own border does the
+   separating, but here it IS the pane, and butting against the edges reads as clipped. */
+.bench-outbody > .r-df { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 5px;
+    padding: 2px 3px 5px; }
+/* A GRID IS NOT TEXT: it keeps its natural height and grows only as far as the pane, rather than stretching
+   to fill it. Stretched, a two-row frame drew its border around a screenful of nothing, which reads as a
+   table that failed to load — where the same empty space below an unbordered grid reads as what it is. The
+   cap becomes the pane instead of the log's fixed 320px, so a long frame still uses everything you gave it
+   and scrolls inside. */
+.bench-outbody > .r-df > .r-df-scroll { flex: 0 1 auto; min-height: 0; max-height: none; }
+.bench-outpane .r-ranfor { flex: 0 0 auto; }
 .sp { flex: 1; }
 .tag { font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 999px; text-transform: uppercase; }
 .tag.session { background: var(--panel-2); color: var(--fg-dim); }
@@ -1314,6 +1373,23 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 /* Shared tool OUTPUT CELL (python_exec / exec / any future tool): capped height → scrolls, with a drag grip.
    Jupyter's output area — tall output can't bury the transcript, and tail-follow keeps the newest line in view. */
 .r-outcell { position: relative; }
+/* A cell that takes its height from what CONTAINS it instead of from the cap — the bench's output pane,
+   where the divider you dragged already said how much room you wanted, and a capped box would leave dead
+   space under it that reads as output having been cut off. */
+.r-outcell.fill { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* And the SURFACE inside it reaches the bottom too, not just the scroll box. The block that carries the
+   background is the `pre` the text renders into, so a two-line result left a short grey card floating in a
+   tall pane — which reads as output that got clipped, the exact thing filling the pane was meant to stop.
+   The LAST child grows (`SeenSplit` emits up to three, and it is the final one that should reach the end). */
+.r-outcell.fill > .r-outscroll { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.r-outcell.fill > .r-outscroll > * { flex: 0 0 auto; }
+.r-outcell.fill > .r-outscroll > :last-child { flex: 1 0 auto; }
+/* …AND THE PAINTED SURFACE IS THE INNER `code`, not the `pre`. The highlighter's theme puts its background
+   on `code.hljs`, so stretching the `pre` filled the pane with a transparent block and left the grey card
+   sitting two lines tall inside it — which looks exactly like the bug it was meant to fix, from one element
+   further in. Measured rather than guessed at: the `pre` was already 186px and the `code` 54px. */
+.r-outcell.fill > .r-outscroll > .code { display: flex; flex-direction: column; }
+.r-outcell.fill > .r-outscroll > .code > code { flex: 1 0 auto; }
 /* Vertical only: the cell exists to CAP HEIGHT. Horizontal is the inner code block's job (it honours the
    wrap/scroll pref), so letting the cell scroll sideways too just produced a stray bar under short content. */
 .r-outscroll { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
@@ -1336,9 +1412,15 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 .rr-toggle.reserved button { opacity: .45; cursor: default; }
 
 /* In-cell find bar (Ctrl/Cmd+F while the output cell is focused) — VSCode-ish, top-right, substring only.
-   Matches paint via the CSS Custom Highlight API, so the syntax highlighting underneath is untouched. */
-.r-outcell { position: relative; }
-.r-outscroll:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+   Matches paint via the CSS Custom Highlight API, so the syntax highlighting underneath is untouched.
+   (`.r-outcell { position: relative }` is what anchors the bar, and it is declared once, up with the cell.) */
+/* FOCUS-VISIBLE, not focus, and muted. The cell is focusable so Ctrl+F can be scoped to it, which meant
+   every CLICK on an output — reading it, selecting a line — painted an accent-blue ring around the block.
+   That is the browser's "you tabbed here" affordance being spent on a pointer gesture that needs no
+   feedback: the find bar is its own confirmation. Keyboard focus still gets a ring, in a colour that says
+   "focused" without competing with the output it surrounds. */
+.r-outscroll:focus { outline: none; }
+.r-outscroll:focus-visible { outline: 1px solid var(--fg-faint); outline-offset: -1px; }
 .r-find { position: absolute; top: 2px; right: 8px; z-index: 3; display: flex; align-items: center; gap: 4px;
           padding: 3px 5px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 .r-find-q { width: 130px; padding: 2px 5px; font: inherit; font-size: 11px; color: var(--fg);
@@ -2517,6 +2599,13 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 }
 .bench-play:hover:not(:disabled) { background: color-mix(in srgb, var(--ok) 16%, transparent); }
 .bench-play:disabled { opacity: .4; cursor: default; }
+/* SEND TO THE MODEL — hand the script you just got working to the model as a turn. A placeholder, and
+   DISABLED so that reads as "not built yet" rather than as a button that ignores you: an affordance which
+   silently does nothing cannot be told from a bug, so you try it twice. Quiet beside Run, which is the one
+   action in the row that is actually live. */
+.bench-send { display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+    padding: 3px; border-radius: 5px; color: var(--fg-faint); background: transparent; border: none;
+    opacity: .45; cursor: default; }
 /* Running: the same box, with a spinner where the triangle was. Swapping the GLYPH rather than the button
    keeps the row from reflowing at the exact moment you are watching it. */
 .bench-play-spin { width: 13px; height: 13px; border-radius: 50%;
@@ -2532,9 +2621,9 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .bench-ver { font: 0.72em/1 ui-monospace, SFMono-Regular, Menlo, monospace;
     color: var(--fg-dim); background: var(--panel-2); border-radius: 999px; padding: 3px 6px; white-space: nowrap; cursor: help; }
 
-.bench-drawer .bench { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.bench-drawer .bench-code { flex: 1 1 auto; min-height: 60px; }
-.bench-drawer .bench-out { flex: 0 1 auto; min-height: 0; overflow: auto; }
+.bench-drawer .bench { flex: 1 1 auto; min-height: 0; }
+/* FULL-PAGE is the same split, given the view's height instead of the drawer's — see `.view-bench`. */
+.bench-full { flex: 1 1 auto; min-height: 0; }
 
 /* An aside's model, in its tooltip header. Quiet: the label is what it DID, this is what ran it. */
 .rc-tip-aside-model { font-size: 0.85em; color: var(--fg-faint); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

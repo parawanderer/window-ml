@@ -133,10 +133,16 @@ export async function openRunInSidebar(page, { width, task, timeout = 20000 } = 
  *  wiped it, since half these demos navigate.
  *
  *  `narrate(page, null)` clears it — for the screenshot that should show the product alone.
+ *
+ *  IT ALSO SAYS WHETHER THE DEMO IS STILL DRIVING. A headful demo takes the pointer and the keyboard, and a
+ *  watcher who cannot tell a finished demo from a paused one does not know whether the window is theirs to
+ *  touch — so they wait, or they interfere mid-beat. Every `narrate` marks it as running; `narrateDone`
+ *  flips it when the demo has stopped acting (call it before the hold, not after the last beat), which is
+ *  also the only moment the banner is worth a colour.
  */
 export async function narrate(/** @type {any} */ page, /** @type {string|null} */ text,
-                              /** @type {{ sub?: string }} */ { sub = "" } = {}) {
-    await page.evaluate((/** @type {[string|null, string]} */ [t, s]) => {
+                              /** @type {{ sub?: string, done?: boolean }} */ { sub = "", done = false } = {}) {
+    await page.evaluate((/** @type {[string|null, string, boolean]} */ [t, s, fin]) => {
         const ID = "ml-demo-narration";
         let el = document.getElementById(ID);
         if (t == null) { el?.remove(); return; }
@@ -152,6 +158,7 @@ export async function narrate(/** @type {any} */ page, /** @type {string|null} *
                 + " border: 1px solid rgba(255,255,255,.14); white-space: pre-wrap;";
             (document.documentElement || document.body).append(el);
         }
+        el.style.borderColor = fin ? "rgba(74,222,128,.55)" : "rgba(255,255,255,.14)";
         el.textContent = "";
         const main = document.createElement("div");
         main.textContent = t;
@@ -162,5 +169,23 @@ export async function narrate(/** @type {any} */ page, /** @type {string|null} *
             note.textContent = s;
             el.append(note);
         }
-    }, [text ?? null, sub]);
+        // WHOSE WINDOW IS IT. Last, and set on every beat, so it cannot be left saying "running" by a demo
+        // that forgot to update it — the only way it reads "finished" is `narrateDone`.
+        const status = document.createElement("div");
+        status.style.cssText = "margin-top: 8px; padding-top: 7px; font-weight: 600; font-size: 11.5px;"
+            + " letter-spacing: .02em; border-top: 1px solid rgba(255,255,255,.14);"
+            + " color: " + (fin ? "#4ade80" : "#fbbf24") + ";";
+        status.textContent = fin
+            ? "\u25cf  demo finished \u2014 the browser is yours"
+            : "\u25cf  demo running \u2014 it is driving the pointer and keyboard";
+        el.append(status);
+    }, [text ?? null, sub, done]);
+}
+
+/** THE DEMO HAS STOPPED ACTING — flip the banner so the watcher knows the window is theirs. Call it just
+ *  before holding the browser open (or before exiting), never after the last beat's `narrate`, which sets
+ *  the status back to running. */
+export async function narrateDone(/** @type {any} */ page, /** @type {string} */ text = "Demo finished",
+                                  /** @type {{ sub?: string }} */ { sub = "Nothing else will move. Click around \u2014 close the window or Ctrl+C to exit." } = {}) {
+    await narrate(page, text, { sub, done: true });
 }

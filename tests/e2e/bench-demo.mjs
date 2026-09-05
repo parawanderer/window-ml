@@ -18,7 +18,16 @@
 //   5. ⤢ GOES FULL-PAGE for a long script, and BACK RETURNS to the session you were reading rather than to
 //      the sessions list. ⤡ docks it again. Two real modes, one control from either side.
 //
-//   6. THE ENVIRONMENT PANEL says what the sandbox IS — the Python and Pyodide versions and every package
+//   6. THE OUTPUT IS A SECOND PANE, not a block stacked under the editor. It is not there at all until you
+//      run something — an empty pane with a placeholder in it is chrome promising what it does not have,
+//      and it takes half the room you came here to write in. stdout STREAMS into it as the script runs. a divider sizes the two against
+//      each other, and a TAB STRIP picks which part of the result you are looking at. The log stacks these
+//      as disclosures because a step is a row in a scrolling transcript; the bench is a LOOP, and there the
+//      output you ran the script to see was arriving collapsed behind two clicks on every run. Same
+//      renderers either way — only the composition differs. A failure MARKS its tab and takes the
+//      selection; anything else leaves you on the tab you were working in.
+//
+//   7. THE ENVIRONMENT PANEL says what the sandbox IS — the Python and Pyodide versions and every package
 //      you can import, with the version that actually installed, read from the running interpreter rather
 //      than from our own manifest. Filterable, because that is about to be how you find a package to
 //      install. In both modes: it is a property of the bench, not of one of its shapes.
@@ -30,7 +39,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
-import { launchExtension, configureExtension, waitForMl, openRunInSidebar, narrate } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, openRunInSidebar, narrate, narrateDone } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), "artifacts", "bench-demo");
@@ -39,7 +48,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const HOLD = process.env.HOLD !== "0";
 
 // Dense on purpose, like a model writes it — so what lands in the bench is the REFLOWED form.
-const CODE = "import pandas as pd\nrows=[{'rep':'Gia','q1':210,'q2':220},{'rep':'Kim','q1':190,'q2':205}]\ndf=pd.DataFrame(rows)\ndf['total']=df['q1']+df['q2']\nreturn df.sort_values('total',ascending=False)";
+const CODE = "import pandas as pd\nrows=[{'rep':'Gia','q1':210,'q2':220},{'rep':'Kim','q1':190,'q2':205}]\ndf=pd.DataFrame(rows)\ndf['total']=df['q1']+df['q2']\nprint('loaded',len(df),'reps')\nprint('columns:',list(df.columns))\nreturn df.sort_values('total',ascending=False)";
 
 const main = async () => {
     const log = (m) => console.log(m);
@@ -94,12 +103,73 @@ const main = async () => {
         await drawer.locator(".bench-code").fill(
             (await drawer.locator(".bench-code").inputValue()) + "\n# edited here, then run:\n");
         await drawer.locator(".bench-play").click();
-        for (let i = 0; i < 30 && !(await drawer.locator(".bench-out").count()); i++) await sleep(300);
+        for (let i = 0; i < 30 && !(await drawer.locator(".bench-outbody .r-python, .bench-outbody .dftable, .bench-outbody .code").count()); i++) await sleep(300);
         await sleep(800);
-        await narrate(page, "Run it, in the sandbox python_exec uses", { sub: "The green \u25b6 in the header, or \u2318/Ctrl+Enter from anywhere in the bench." });
+        await narrate(page, "Run it, in the sandbox python_exec uses", { sub: "The green \u25b6 in the header, or \u2318/Ctrl+Enter from anywhere in the bench. The \u21b3 beside it is a placeholder \u2014 disabled, so it reads as unbuilt rather than broken." });
         log("\n--- ran it (the same offscreen Pyodide sandbox python_exec uses) ---");
-        log((await drawer.locator(".bench-out").textContent().catch(() => "(no output)")).trim().slice(0, 300));
+        log((await drawer.locator(".bench-outbody").textContent().catch(() => "(no output)")).trim().slice(0, 300));
         await frame.page().screenshot({ path: path.join(ART, "2-ran-in-drawer.png") });
+
+        // 6a — THE TAB STRIP. The script printed on its way to returning a DataFrame, so the result has two
+        // sections; stacked as disclosures they were both collapsed, on every run.
+        const tabs = drawer.locator(".bench-tab");
+        await narrate(page, "The result is TABS, not stacked disclosures", { sub: "You land on the value. stdout is one click, and neither is folded away." });
+        log(`\n--- tabs: ${(await tabs.allTextContents()).join(" | ")} · showing: ${(await drawer.locator(".bench-tab.on").textContent())} ---`);
+        await frame.page().screenshot({ path: path.join(ART, "2b-tabs-value.png") });
+        await tabs.filter({ hasText: "stdout" }).click();
+        await sleep(500);
+        await narrate(page, "\u2026and what it printed on the way", { sub: "Same renderers the log uses \u2014 only the composition differs." });
+        log("--- stdout tab ---\n" + (await drawer.locator(".bench-outbody").textContent()).trim());
+        await frame.page().screenshot({ path: path.join(ART, "2c-tabs-stdout.png") });
+
+        // 6b — A FAILURE MARKS ITS TAB AND TAKES THE SELECTION. This is the one thing tabs are worse at than
+        // disclosures — a disclosure at least advertises that something exists — so it is handled explicitly.
+        const good = await drawer.locator(".bench-code").inputValue();
+        await drawer.locator(".bench-code").fill(good + "\nraise ValueError('and this is what a failure looks like')\n");
+        await drawer.locator(".bench-play").click();
+        for (let i = 0; i < 40 && !(await drawer.locator(".bench-tab.err").count()); i++) await sleep(300);
+        await sleep(600);
+        await narrate(page, "A failure MARKS its tab and takes the selection", { sub: "You were on stdout; the error is what you now need. What it printed first is still one click away." });
+        log(`\n--- after a raise: tabs ${(await tabs.allTextContents()).join(" | ")} · showing: ${(await drawer.locator(".bench-tab.on").textContent())} ---`);
+        await frame.page().screenshot({ path: path.join(ART, "2d-error-tab.png") });
+        await drawer.locator(".bench-code").fill(good);
+        await drawer.locator(".bench-play").click();
+        await sleep(1500);
+
+        // 6d — LIVE STDOUT. The same worker tee the model-invoked python_exec gets, painting a different
+        // widget. The last hop is the interesting part: the SW relays a PAGE's chunks through its content
+        // script, and the bench is an extension iframe inside a tab — so it has a `sender.tab` and its own
+        // output would have gone to the page. The sending FRAME's url is what tells them apart.
+        await drawer.locator(".bench-code").fill(
+            "import time\nfor i in range(6):\n    print('line', i, '\u2014 printed as it happens')\n    time.sleep(0.7)\nreturn 'done'");
+        await drawer.locator(".bench-play").click();
+        await narrate(page, "stdout STREAMS in, Jupyter-style", { sub: "The same worker tee the agent's python_exec uses \u2014 and the elapsed clock says it is still going." });
+        await sleep(2200);
+        log("\n--- mid-run, with the script still sleeping ---");
+        log((await drawer.locator(".bench-outbody").textContent()).trim());
+        log(`--- and the pane says it is alive: ${(await drawer.locator(".bench-outpane .r-ranfor").textContent()).trim()} ---`);
+        await frame.page().screenshot({ path: path.join(ART, "2f-streaming.png") });
+        for (let i = 0; i < 40 && (await drawer.locator(".bench-outpane .r-ranfor.live").count()); i++) await sleep(400);
+        await sleep(500);
+        await narrate(page, "\u2026and the result supersedes it", { sub: "You land on the VALUE: an auto-pick never sticks, only a tab you clicked does." });
+        log(`--- settled: tabs ${(await tabs.allTextContents()).join(" | ")} \u00b7 showing ${(await drawer.locator(".bench-tab.on").textContent())} ---`);
+        await frame.page().screenshot({ path: path.join(ART, "2g-streaming-settled.png") });
+        await drawer.locator(".bench-code").fill(good);
+        await drawer.locator(".bench-play").click();
+        await sleep(1800);
+
+        // 6c — THE DIVIDER. A ratio, not a pixel height: the bench is itself resizable, so pinning the
+        // editor to pixels would let a shorter drawer eat the whole output pane.
+        const codeBefore = (await drawer.locator(".bench-code").boundingBox()).height;
+        const div = await drawer.locator(".bench-div").boundingBox();
+        await page.mouse.move(div.x + div.width / 2, div.y + div.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(div.x + div.width / 2, div.y - 90, { steps: 12 });
+        await page.mouse.up();
+        await sleep(500);
+        await narrate(page, "The divider sizes the two against each other", { sub: "A ratio, not pixels \u2014 the drawer itself resizes, and the output must not get squeezed out." });
+        log(`\n--- dragged the divider: editor ${Math.round(codeBefore)}px \u2192 ${Math.round((await drawer.locator(".bench-code").boundingBox()).height)}px (remembered) ---`);
+        await frame.page().screenshot({ path: path.join(ART, "2e-divider.png") });
 
         // 4 — drag it taller. How much of the bench you want depends on the script.
         const before = (await drawer.boundingBox()).height;
@@ -148,6 +218,10 @@ const main = async () => {
         await frame.page().screenshot({ path: path.join(ART, "5-back-and-docked.png") });
 
         log(`\nscreenshots → ${ART}`);
+        // The banner says whose window it is now. A headful demo takes the pointer and the keyboard, and a
+        // watcher cannot tell a finished demo from a paused one — so they either wait, or they click into
+        // the middle of a beat.
+        await narrateDone(page);
         if (HOLD) { log("\nholding the browser open — close the window or Ctrl+C to exit"); await new Promise(() => {}); }
     } finally {
         if (!HOLD) { await ext.context.close(); await fake.stop(); }

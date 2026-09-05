@@ -152,6 +152,18 @@ export const IconOut = () => (
     </svg>
 );
 
+/** SEND TO THE MODEL — an arrow leaving into a speech bubble: the script goes OUT of the bench and becomes a
+ *  turn. Deliberately not a paper plane, which every compose box in the world already uses for "send this
+ *  message" — this is handing work to the model, not posting what you typed. Same stroke family and box as
+ *  the rest of the bench header. */
+export const IconSendToModel = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12.5 20h5a2.5 2.5 0 0 0 2.5-2.5v-6A2.5 2.5 0 0 0 17.5 9H11" />
+        <path d="M14 6 17 9l-3 3" />
+        <path d="M4 20V6.5A2.5 2.5 0 0 1 6.5 4H9" />
+    </svg>
+);
+
 /** RUN — an OUTLINE triangle, the shape every IDE uses for it (PyCharm's is the reference). A solid green
  *  block was the first attempt and read as a call-to-action button dropped into a row of quiet icons; the
  *  colour belongs on the GLYPH, which says "run" without shouting over the four controls beside it. Same

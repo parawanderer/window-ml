@@ -1,7 +1,7 @@
 // Model / VRAM diagnostics — the server model-list fetch, the Ollama /api/ps VRAM monitor panel + its
 // polling, per-model load-state, backend-health probing, and the Python sandbox bench. A separate,
 // self-contained surface from the run views. Extracted from app.tsx.
-import { useState, useEffect, useRef } from "preact/hooks";
+import { useState, useEffect, useRef, useMemo } from "preact/hooks";
 import type { RenderDescriptor } from "../contract";
 import { fmtCtx, isBackendUnreachable } from "../contract";
 import { signal } from "@preact/signals";
@@ -12,11 +12,11 @@ import {
 } from "./store";
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
-import { IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevron, IconExpand, IconClose, IconPlay } from "./icons";
+import { IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevron, IconExpand, IconClose, IconPlay, IconSendToModel } from "./icons";
 import { Disclosure, cursorTipOn, TipText } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { hhmmss } from "./timestamps";
-import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, benchEnv, noteBenchEnv } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
@@ -47,7 +47,7 @@ export function residencyOf(m: LoadedModel): ModelResidency {
         contextLength: m.contextLength, expiresAt: m.expiresAt ? Date.parse(m.expiresAt) || null : null,
     };
 }
-import { RenderPanel } from "./render-panel";
+import { RenderPanel, PyBenchOut } from "./render-panel";
 
 // Fetch the server's model list via the background worker (privileged fetch);
 // degrade silently if unreachable. Populates the datalists.
@@ -449,9 +449,17 @@ export function expiresIn(expiresAt: string | null, busy?: boolean): string | nu
     if (!expiresAt) return null;
     const ms = new Date(expiresAt).getTime() - Date.now();
     if (isNaN(ms) || ms <= 0) return null;
+    if (ms > NO_EXPIRY_MS) return "pinned — no expiry";
     const s = Math.round(ms / 1000);
     return s < 90 ? `expires in ${s}s` : `expires in ${Math.round(s / 60)}m`;
 }
+
+/** BEYOND THIS, THE DEADLINE IS NOT A DEADLINE. `keep_alive: -1` pins a model in memory, and Ollama expresses
+ *  that as an `expires_at` about a century out — so a countdown rendered from it reads "36159d 12h", which is
+ *  a true number and a useless one: nobody is waiting for it, and a day count that large reads as a bug in
+ *  the panel rather than as a decision someone made on purpose. A year is far past any keep-alive a person
+ *  would actually set and far short of the pinned stamp, so nothing real falls between them. */
+export const NO_EXPIRY_MS = 365 * 24 * 3600 * 1000;
 
 // Live keep-alive countdown from an /api/ps expires_at stamp, as a compact
 // two-unit d/h/m/s string ("2d 3h", "5m 12s", "44s") for the VRAM row. Ollama
@@ -468,6 +476,7 @@ export function fmtTTL(expiresAt: string | null, busy?: boolean): string | null 
     if (!expiresAt) return null;
     const ms = new Date(expiresAt).getTime() - Date.now();
     if (isNaN(ms) || ms <= 0) return null;
+    if (ms > NO_EXPIRY_MS) return "pinned";
     let s = Math.floor(ms / 1000);
     const d = Math.floor(s / 86400); s -= d * 86400;
     const h = Math.floor(s / 3600); s -= h * 3600;
@@ -639,6 +648,29 @@ export function sessionModels(hash: string): readonly string[] | undefined {
 /** One resident model's row. Extracted because the SCOPED list draws it in two places now — the session's
  *  own models, and the folded "other models on the box" — and a second copy of a row with four interactive
  *  parts is exactly where two lists start behaving differently. */
+/** A model NAMED BUT NOT LOADED — evicted inside the window the chart still covers, or one that only ever
+ *  ran off-box. The rows are the chart's legend, so a colour still being drawn needs a row to say whose it
+ *  is; what it does not need is a live model's controls, because there is nothing to unload or hide.
+ *
+ *  ONE component for what were three near-identical copies (in-scope evicted, in-scope off-box, and the same
+ *  two again inside the out-of-scope disclosure) — the third copy is what made it worth extracting. */
+function GhostRow({ name, kind }: { name: string; kind: "off" | "ghost" }) {
+    return (
+        <div class={`vram-row ghost${hoverModel.value === name ? " hot" : ""}`}
+            onPointerEnter={() => (hoverModel.value = name)}
+            onPointerLeave={() => (hoverModel.value = null)}>
+            <i class="vram-dot ghost-dot" style={{ background: colorFor(name) }} />
+            <span class="vram-name">{name}</span>
+            <span class="tt vram-embed">{kind === "off" ? "off-box" : "evicted"}
+                <span class="tt-pop left above" role="tooltip">{kind === "off"
+                    ? "Never resident here — a cloud model, or one already gone before the panel opened. It is drawn in the lane because it RAN; this row is what says whose colour that is."
+                    : "No longer resident. It is still drawn in the history above, for as long as that history covers the time it was loaded — this row is what says whose colour that is."}</span>
+            </span>
+            <span class="sp" />
+        </div>
+    );
+}
+
 function ModelRow({ m, hidden, latestSample, evict }: { m: LoadedModel; hidden: Set<string>; latestSample: ResourceSample | null; evict: (model?: string) => void }) {
     const off = hidden.has(m.model);
     return (
@@ -722,7 +754,9 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
                 <span class={`${tips ? "tt " : ""}vram-ttl${m.busy ? " busy" : ""}`} {...yieldTip}>{ttl}
                     {tips ? <span class="tt-pop left above" role="tooltip">{m.busy
                         ? <>Serving a request right now, so the keep-alive countdown is HELD. Ollama rewrites the deadline when the request finishes, which is why counting down during a generation would run past zero on a long one. The clock restarts, from full, once it is idle.</>
-                        : <>Keep-alive TTL — Ollama evicts this model from {m.vramBytes ? "VRAM" : "memory"} when the countdown reaches zero (expires {new Date(m.expiresAt!).toLocaleTimeString()}). Each use resets it. Set <code>keep_alive</code> to change how long it lingers.</>}</span> : null}
+                        : ttl === "pinned"
+                            ? <>Loaded to STAY — <code>keep_alive: -1</code>, so Ollama will not evict it on a timer and it holds this memory until something unloads it or needs the room. (The server does report a deadline, about a century out; counting down to it would be true and useless.)</>
+                            : <>Keep-alive TTL — Ollama evicts this model from {m.vramBytes ? "VRAM" : "memory"} when the countdown reaches zero (expires {new Date(m.expiresAt!).toLocaleTimeString()}). Each use resets it. Set <code>keep_alive</code> to change how long it lingers.</>}</span> : null}
                 </span>
             ) : null}
         </>
@@ -1208,6 +1242,10 @@ export function VramPanel() {
            ...offBox.filter((n) => !isMine(n)).map((n) => ({ kind: "off" as const, name: n })),
            ...ghosts.filter((n) => !isMine(n)).map((n) => ({ kind: "ghost" as const, name: n }))]
         : [];
+    // The in-scope split: what is loaded NOW, and what is only named because the chart still draws it.
+    const liveRows = rows.filter((m) => isMine(m.model));
+    const goneRows = [...offBox.filter(isMine).map((n) => ({ kind: "off" as const, name: n })),
+                      ...ghosts.filter(isMine).map((n) => ({ kind: "ghost" as const, name: n }))];
 
     // Recompute every point's visible-total each render, so toggling redraws the
     // full line retroactively (not just going forward).
@@ -1312,36 +1350,23 @@ export function VramPanel() {
                         <span class="tt-pop wrap" role="tooltip">This server doesn't answer /api/info, so how much memory the machine HAS is unknown. The line is auto-scaled to whatever has been resident, not drawn against a real capacity — no bands, no free space, no per-device split.</span>
                     </span>
                 </>}
-            {showModels.value && rows.length
-                ? rows.filter((m) => isMine(m.model)).map(m => (
+            {showModels.value && liveRows.length
+                ? liveRows.map(m => (
                     <ModelRow key={m.model} m={m} hidden={hidden} latestSample={latestSample} evict={evict} />
                 ))
-                : ghosts.length || !showModels.value ? null : <div class="vram-empty">Nothing loaded.</div>}
-            {/* Models the LANE draws that were never resident — see `offBox`. Listed before the ghosts because
-                a cloud model is a standing fact about the setup, where a ghost is a thing that just happened. */}
-            {(showModels.value ? offBox : []).filter(isMine).map((name) => (
-                <div class={`vram-row ghost${hoverModel.value === name ? " hot" : ""}`} key={`off:${name}`}
-                    onPointerEnter={() => (hoverModel.value = name)}
-                    onPointerLeave={() => (hoverModel.value = null)}>
-                    <i class="vram-dot ghost-dot" style={{ background: colorFor(name) }} />
-                    <span class="vram-name">{name}</span>
-                    <span class="tt vram-embed">off-box
-                        <span class="tt-pop left above" role="tooltip">Never resident here — a cloud model, or one already gone before the panel opened. It is drawn in the lane because it RAN; this row is what says whose colour that is.</span>
-                    </span>
-                </div>
-            ))}
-            {(showModels.value ? ghosts : []).filter(isMine).map((name) => (
-                <div class={`vram-row ghost${hoverModel.value === name ? " hot" : ""}`} key={`ghost:${name}`}
-                    onPointerEnter={() => (hoverModel.value = name)}
-                    onPointerLeave={() => (hoverModel.value = null)}>
-                    <i class="vram-dot ghost-dot" style={{ background: colorFor(name) }} />
-                    <span class="vram-name">{name}</span>
-                    <span class="tt vram-embed">evicted
-                        <span class="tt-pop left above" role="tooltip">No longer resident. It is still drawn in the history above, for as long as that history covers the time it was loaded — this row is what says whose colour that is.</span>
-                    </span>
-                    <span class="sp" />
-                </div>
-            ))}
+                : !showModels.value ? null : <div class="vram-empty">Nothing loaded.</div>}
+            {/* NOT RESIDENT, AND FOLDED. These rows exist to name a colour the chart is still drawing — an
+                evicted model in the window it covers, or one that only ever ran off-box — which is a
+                REFERENCE you consult, not a list you read. Inline they pushed the models that ARE loaded
+                down the panel and made a box with two models look like a box with six. The same disclosure
+                the out-of-scope models use, so "there is more here" means one thing in this list.
+                Off-box first: a cloud model is a standing fact about the setup, where an eviction is a thing
+                that just happened. */}
+            {showModels.value && goneRows.length ? (
+                <Disclosure label="not resident" note={`${goneRows.length}`}>
+                    {goneRows.map((o) => <GhostRow key={`${o.kind}:${o.name}`} name={o.name} kind={o.kind} />)}
+                </Disclosure>
+            ) : null}
             {/* What the scope is NOT showing, and the way to see it. A count rather than a silent
                 omission: a list that just gets shorter reads as models having been evicted. */}
             {/* The same disclosure every other opening section uses — as a bare line of text this was the one
@@ -1350,17 +1375,7 @@ export function VramPanel() {
                 <Disclosure label={`other model${otherCount === 1 ? "" : "s"} on the box`} note={`${otherCount}`}>
                     {others.map((o) => (o.kind === "row"
                         ? <ModelRow key={o.m.model} m={o.m} hidden={hidden} latestSample={latestSample} evict={evict} />
-                        : <div class={`vram-row ghost${hoverModel.value === o.name ? " hot" : ""}`} key={`${o.kind}:${o.name}`}
-                            onPointerEnter={() => (hoverModel.value = o.name)}
-                            onPointerLeave={() => (hoverModel.value = null)}>
-                            <i class="vram-dot ghost-dot" style={{ background: colorFor(o.name) }} />
-                            <span class="vram-name">{o.name}</span>
-                            <span class="tt vram-embed">{o.kind === "off" ? "off-box" : "evicted"}
-                                <span class="tt-pop left above" role="tooltip">{o.kind === "off"
-                                    ? "Never resident here — a cloud model, or one already gone before the panel opened."
-                                    : "Was resident during this window and has since been evicted; still drawn in the chart's history."}</span>
-                            </span>
-                        </div>))}
+                        : <GhostRow key={`${o.kind}:${o.name}`} name={o.name} kind={o.kind} />))}
                 </Disclosure>
             ) : null}
         <div class="vram-grip" role="separator" aria-label="Drag to resize the resource panel"
@@ -1370,7 +1385,7 @@ export function VramPanel() {
 }
 
 // Shape a raw PYTHON_EXEC response into a `python-out` descriptor for RenderPanel.
-export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] } }): RenderDescriptor {
+export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] } }): Extract<RenderDescriptor, { type: "python-out" }> {
     const stdout = r.stdout || undefined;
     if (!r.ok) return { type: "python-out", stdout, error: r.error || "error" };
     if (r.table) return { type: "python-out", stdout, df: r.table };   // a returned DataFrame → real table
@@ -1554,15 +1569,46 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
     const [code, setCode] = useState(() => lsGet(BENCH_CODE_KEY) ?? "import numpy as np\nreturn int(np.arange(10).sum())");
     const [mode, setMode] = useState<"readonly" | "full">(() => (lsGet("ml_bench_mode") === "full" ? "full" : "readonly"));
     const [running, setRunning] = useState(false);
-    const [result, setResult] = useState<{ ok: boolean; value?: unknown; stdout: string; error?: string } | null>(null);
+    const [result, setResult] = useState<{ ok: boolean; value?: unknown; stdout: string; error?: string; bootMs?: number; runMs?: number } | null>(null);
+    const [startedAt, setStartedAt] = useState<number | undefined>(undefined);
+    // LIVE stdout, and the produced-at marks that go with it — the same tee the model-invoked tool gets, just
+    // painting a different widget. Accumulated here rather than in the pane, so a re-render cannot lose it.
+    //
+    // KEPT AFTER THE RUN SETTLES, which is the point rather than an accident: the marks are what draw the
+    // produced-at gutter, so dropping them at the end swapped that gutter for line numbers at the exact
+    // moment you stopped watching — the same output, redrawn as something else. They are cleared only when
+    // the NEXT run starts. If the settled text ever disagrees with what streamed, `alignedMarks` drops the
+    // whole set rather than mis-indexing it.
+    const [live, setLive] = useState<{ text: string; marks: [number, number][] } | null>(null);
     const taRef = useRef<HTMLTextAreaElement>(null);
     const run = () => {
         if (running || !code.trim()) return;
-        setRunning(true); setResult(null);
+        const started = Date.now();
+        // The id the SW keys this run's stdout by, and the id the listener below filters on.
+        const requestId = `bench-${started.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        setRunning(true); setResult(null); setLive(null); setStartedAt(started);
+        // Each chunk carries the instant the WORKER produced it — Pyodide stamps it there, because anything
+        // downstream would be measuring the message bus. `marks` is [offset in the accumulated text, epoch].
+        const onChunk = (msg: { type?: string; requestId?: string; chunk?: string; ts?: number }) => {
+            if (msg?.type !== "PYTHON_STREAM" || msg.requestId !== requestId) return;
+            const text = String(msg.chunk ?? "");
+            if (!text) return;
+            setLive((prev) => {
+                const at = prev?.text.length ?? 0;
+                return { text: (prev?.text ?? "") + text, marks: [...(prev?.marks ?? []), [at, msg.ts ?? Date.now()]] };
+            });
+        };
+        // GUARDED both ways. A surface without a live runtime channel (a test world, a torn-down context)
+        // must lose the STREAMING, not the run: attaching threw here, which left the bench wedged on
+        // "running…" with no result and no error — the script had not even been sent yet.
+        let streaming = false;
+        try { chrome.runtime.onMessage.addListener(onChunk); streaming = true; } catch { /* no live channel */ }
+        const stop = () => { if (streaming) try { chrome.runtime.onMessage.removeListener(onChunk); } catch { /* torn down */ } };
         lsSet(BENCH_CODE_KEY, code); lsSet("ml_bench_mode", mode);
         try {
-            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code, hardened: mode === "readonly", image: null, tables: null } },
+            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", requestId, payload: { code, hardened: mode === "readonly", image: null, tables: null, stream: streaming } },
                 (resp: any) => {
+                    stop();
                     // The background wraps the offscreen result: { data: PyResult } | { error }.
                     const r = resp?.data ?? (resp?.error ? { ok: false, stdout: "", error: resp.error } : null);
                     setResult(r || { ok: false, stdout: "", error: "No response from the sandbox." });
@@ -1571,7 +1617,7 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                     // make every glance at the bench pay the cold start the env panel exists to defer.
                     loadBenchEnv();
                 });
-        } catch (e) { setResult({ ok: false, stdout: "", error: String(e) }); setRunning(false); }
+        } catch (e) { stop(); setResult({ ok: false, stdout: "", error: String(e) }); setRunning(false); }
     };
     // Tab inserts spaces rather than escaping the field. Textarea-only, since it is about the caret.
     const onKey = (e: KeyboardEvent) => {
@@ -1590,10 +1636,43 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
     const onBenchKey = (e: KeyboardEvent) => {
         if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); }
     };
-    const outD = result ? pyBenchDescriptor(result) : null;
-    const empty = result?.ok && !result.stdout && result.value == null;
+    const splitRef = useRef<HTMLDivElement>(null);
+    /** DRAG THE DIVIDER — a RATIO, not a pixel height. The bench is itself resizable (the drawer's edge, and
+     *  the panel it lives in), so pinning the editor to pixels would let a shorter drawer eat the whole
+     *  output pane. Clamped so neither pane can be dragged out of existence: a pane you cannot get back is
+     *  not a smaller pane, it is a lost one. */
+    const onSplit = (e: PointerEvent) => {
+        e.preventDefault();
+        const host = (e.currentTarget as HTMLElement).parentElement;
+        if (!host) return;
+        const el = e.currentTarget as HTMLElement;
+        try { el.setPointerCapture(e.pointerId); } catch { /* older engines */ }
+        const move = (ev: PointerEvent) => {
+            const b = host.getBoundingClientRect();
+            if (b.height <= 0) return;
+            benchSplit.value = Math.max(0.15, Math.min(0.85, (ev.clientY - b.top) / b.height));
+        };
+        const up = () => {
+            el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up);
+            chrome.storage.local.set({ [BENCH_SPLIT_KEY]: benchSplit.value });
+        };
+        el.addEventListener("pointermove", move); el.addEventListener("pointerup", up);
+    };
+    // MEMOED on the result, not rebuilt each render: the output pane keeps your chosen tab across runs, and
+    // it decides that from this object's identity — a fresh one every render would re-pick on every keypress.
+    // WHILE IT RUNS, the streamed stdout IS the result — the same descriptor shape, so the pane draws it with
+    // the same renderer and the settled result simply supersedes it. Nothing about the pane knows the
+    // difference, which is what keeps one output renderer rather than a live one and a finished one.
+    const outD = useMemo(() => (
+        result ? pyBenchDescriptor(result)
+            : running && live?.text ? { type: "python-out" as const, stdout: live.text }
+                : null
+    ), [result, running, live]);
+    // Has this bench produced anything yet? Sticky — `result` is cleared at the start of every run, and a
+    // pane that vanished and came back between runs would throw the editor's height around each time.
+    const hasOut = running || result != null;
     return (
-        <div class="bench" onKeyDown={onBenchKey}>
+        <div class={`bench${drag ? "" : " bench-full"}`} onKeyDown={onBenchKey}>
             {/* ONE HEADER, both shapes. It used to be two: the drawer drew a title strip and PythonBench drew
                 a control bar at the BOTTOM — so the controls sat as far from the name of the thing as the
                 layout allowed, and moving them up naively would have deleted them from full-page mode, where
@@ -1630,13 +1709,42 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                         ? "Running in the sandbox…"
                         : "Run this script in the Pyodide sandbox. `⌘/Ctrl+↵` does the same, from anywhere in the bench."} /></span>
                 </button>
+                {/* PLACEHOLDER, and DISABLED so it says so. The bench is where you work a script out; handing
+                    the finished thing to the model as a turn is the obvious next move and it is not built.
+                    Drawn rather than omitted because the shape of the row is worth settling now — and
+                    disabled rather than live-but-inert, because an affordance that silently does nothing
+                    cannot be told from a bug, so you try it twice (the same rule the environment panel's
+                    "not built yet" note follows). */}
+                <button class="tt bench-send" disabled aria-label="Send to the model" aria-disabled="true">
+                    <IconSendToModel />
+                    <span class="tt-pop wrap left" role="tooltip"><TipText
+                        md="Send this script, and what it printed, to the model as a new turn — so you can hand it a snippet you just got working. **Not built yet.**" /></span>
+                </button>
                 {shape}
             </div>
             <BenchEnv />
-            <textarea ref={taRef} class="bench-code code" spellcheck={false} value={code} onInput={e => setCode((e.target as HTMLTextAreaElement).value)} onKeyDown={onKey} placeholder="return 6 * 7" />
-            {outD
-                ? <div class="bench-out"><div class="io-label">Out:</div>{empty ? <span class="dim">(ran — no output, no return)</span> : <RenderPanel d={outD} />}</div>
-                : running ? <div class="bench-out dim">running…</div> : null}
+            {/* THE SPLIT. Two panes and a divider, rather than the editor at a fixed height with the output
+                pushing down from under it: how much of each you want depends entirely on what you are doing,
+                and in a drawer they are competing for the same handful of pixels. The textarea's own corner
+                grip is gone with it — three resize gestures in one drawer (the drawer's edge, the field's
+                corner, and nothing at all for the output) is two too many. */}
+            <div class="bench-split">
+                <div class="bench-pane" style={{ flexGrow: hasOut ? benchSplit.value : 1 }}>
+                    <textarea ref={taRef} class="bench-code code" spellcheck={false} value={code} onInput={e => setCode((e.target as HTMLTextAreaElement).value)} onKeyDown={onKey} placeholder="return 6 * 7" />
+                </div>
+                {/* THE OUTPUT PANE ARRIVES WITH THE FIRST RUN and never leaves. Before that the editor has the
+                    whole bench: an empty pane with a line of placeholder in it is chrome promising something
+                    it does not have, and it takes half the room you came here to write in. It appears the
+                    instant you press ▶ — carrying "running…", which is the feedback that moment needs — so
+                    the layout shifts once, on a deliberate action, rather than on each result landing. */}
+                {hasOut ? <>
+                    <div class="bench-div" role="separator" aria-label="Drag to resize the script against its output"
+                        aria-orientation="horizontal" onPointerDown={onSplit}><i class="bench-div-pill" aria-hidden="true" /></div>
+                    <div class="bench-pane" style={{ flexGrow: 1 - benchSplit.value }}>
+                        <PyBenchOut d={outD} running={running} since={startedAt} marks={live?.marks} />
+                    </div>
+                </> : null}
+            </div>
         </div>
     );
 }

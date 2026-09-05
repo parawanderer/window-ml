@@ -192,8 +192,12 @@ const csvField = (v: unknown): string => {
 /** A pandas DataFrame, drawn as JUPYTER draws one: numbered index gutter, sticky header, zebra rows,
  *  right-aligned monospace numbers, NaN styling — plus click-to-sort, drag-to-resize, collapse and
  *  copy-CSV. Zero-dep, no grid library. A cell with no JSON form renders as a marker naming its type
- *  rather than as `[object Object]`. */
-export function PyDfTable({ columns, rows }: { columns: string[]; rows: (string | number | null)[][] }) {
+ *  rather than as `[object Object]`.
+ *
+ *  `noCollapse` drops the hide/show control. Collapsing is for a LOG, where a wide table sits in a scrolling
+ *  transcript you are reading past; in the bench the tab strip already decides what is on screen, so a
+ *  second control for "don't show me this" is one that undoes the choice you just made with the first. */
+export function PyDfTable({ columns, rows, noCollapse }: { columns: string[]; rows: (string | number | null)[][]; noCollapse?: boolean }) {
     const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
     const [collapsed, setCollapsed] = useState(false);
     const [sort, setSort] = useState<{ c: number; dir: 1 | -1 } | null>(null);
@@ -226,12 +230,22 @@ export function PyDfTable({ columns, rows }: { columns: string[]; rows: (string 
     };
 
     return (
-        <div class="r-df">
-            <div class="r-df-bar">
-                <button class="r-df-btn" onClick={() => setCollapsed(v => !v)}>{collapsed ? "▸ show table" : "▾ hide table"}</button>
-                {!collapsed ? <button class="r-df-btn" onClick={copyCsv}>{copied ? "copied ✓" : "copy CSV"}</button> : null}
-            </div>
-            {collapsed ? null : <>
+        <div class={`r-df${noCollapse ? " r-df-bare" : ""}`}
+            {...(noCollapse ? { onContextMenu: (e: MouseEvent) => openCtxMenu(e, [{ label: copied ? "Copied ✓" : "Copy as CSV", run: copyCsv }]) } : {})}>
+            {/* NO BAR IN THE BENCH. `hide table` is meaningless where the tab strip already decides what is
+                on screen, and `copy CSV` alone then owned a whole row directly above the grid — the least
+                important thing in the pane in its most prominent place. Below the grid was worse: it either
+                floats at the pane's bottom, detached from the table it belongs to, or sits under it and gets
+                scrolled out of reach exactly when the table is big enough to want it. So the action moves to
+                where an action on a read surface belongs, the RIGHT-CLICK, through the panel's own menu
+                (`openCtxMenu`) — an iframe cannot put items in the browser's one. */}
+            {noCollapse ? null : (
+                <div class="r-df-bar">
+                    <button class="r-df-btn" onClick={() => setCollapsed(v => !v)}>{collapsed ? "▸ show table" : "▾ hide table"}</button>
+                    {!collapsed ? <button class="r-df-btn" onClick={copyCsv}>{copied ? "copied ✓" : "copy CSV"}</button> : null}
+                </div>
+            )}
+            {collapsed && !noCollapse ? null : <>
                 <div class="r-df-scroll">
                     <table class="r-df-table">
                         <thead><tr>
@@ -680,7 +694,7 @@ function clearFindPaint(): void {
  *     it holds still so you can read, and resumes following the moment you return to the bottom.
  *  Deliberately children-based (not a section schema): each tool's sections legitimately differ (python has a
  *  DataFrame/LaTeX/image; exec has a console), while the CONTAINER behaviour is what's worth sharing. */
-export function OutputCell({ children, text, corner }: { children: ComponentChildren; text?: boolean; corner?: ComponentChildren }) {
+export function OutputCell({ children, text, corner, fill }: { children: ComponentChildren; text?: boolean; corner?: ComponentChildren; fill?: boolean }) {
     const box = useRef<HTMLDivElement>(null);
     const follow = useRef(true);                       // tail-follow armed? (parked at the bottom)
     const [dragH, setDragH] = useState<number | null>(null);   // a drag pins THIS cell; null → the configured cap
@@ -691,7 +705,11 @@ export function OutputCell({ children, text, corner }: { children: ComponentChil
     const [idx, setIdx] = useState(0);                 // which match is current
     const [count, setCount] = useState(0);
     const input = useRef<HTMLInputElement>(null);
-    const cap = dragH ?? outMaxH.value;
+    // `fill` gives up the cap and takes the height of whatever contains it. In the LOG a cell is capped so
+    // one step's output cannot swallow the transcript; in the BENCH the pane IS the cap — you dragged the
+    // divider to say how much you wanted — and a short box floating in a tall empty pane reads as output
+    // that got cut off. A drag still pins it either way: that is you overriding both.
+    const cap = dragH ?? (fill ? 0 : outMaxH.value);
 
     const [overflows, setOverflows] = useState(false);
     // Runs after EVERY render — i.e. on each streamed delta — so the newest line stays visible while following.
@@ -781,7 +799,7 @@ export function OutputCell({ children, text, corner }: { children: ComponentChil
         window.addEventListener("pointerup", up);
     };
     return (
-        <div class="r-outcell">
+        <div class={`r-outcell${fill ? " fill" : ""}`}>
             {/* Ctrl/Cmd+F opens an in-cell find (the cell is focusable so the shortcut is scoped to it, not the page). */}
             {findOpen ? (
                 <div class="r-find" role="search">
@@ -999,9 +1017,49 @@ function PyOutSection({ label, cls, children, cite, open = true, foldInFocus }: 
         onToggle={(e: any) => foldInFocus && setShown(!!e.currentTarget.open)}
         {...(cite ? { "data-cite": cite } : {})}><summary class="r-py-lbl">{label}</summary>{children}</details>;
 }
+/** WHICH SECTIONS a python result actually has, in the order the log stacks them, with the labels the log
+ *  uses. Single-sourced because two surfaces compose them differently — the LOG stacks them as disclosures
+ *  (you read a step top to bottom) and the BENCH puts them behind tabs (you are iterating, and want one at a
+ *  time) — and a section that existed in one and not the other, or was called something else, would be a
+ *  reader wondering which surface is lying. The exclusivity rules are the interesting part: a returned
+ *  DataFrame supersedes the raw value, and an error supersedes any of them. */
+export type PyOutSectionId = "stdout" | "error" | "df" | "latex" | "value" | "image" | "token";
+/** Which sections a python result HAS, in the log's order and with the log's labels — shared by the step's
+ *  stacked disclosures and the bench's tab strip so neither can name or omit a section the other shows. */
+export function pyOutSections(d: Extract<RenderDescriptor, { type: "python-out" }>): { id: PyOutSectionId; label: string }[] {
+    const out: { id: PyOutSectionId; label: string }[] = [];
+    if (d.stdout) out.push({ id: "stdout", label: "stdout" });
+    if (d.error) out.push({ id: "error", label: "error" });
+    if (d.image) out.push({ id: "image", label: "image" });
+    if (d.token) out.push({ id: "token", label: "token" });
+    if (d.df && !d.error) out.push({ id: "df", label: "value (DataFrame)" });
+    else if (d.value != null && !d.image && !d.token && !d.error)
+        out.push(d.latex ? { id: "latex", label: "value (LaTeX)" } : { id: "value", label: "value" });
+    return out;
+}
+
+/** ONE section's BODY, with no disclosure or tab around it — the half both surfaces share. Keeping the
+ *  bodies here is what stops the bench growing a second, subtly different renderer for the same data. */
+function PyOutBody({ id, d, marks, lineMap, fill }: { id: PyOutSectionId; d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][]; lineMap?: number[] | null; fill?: boolean }) {
+    switch (id) {
+        case "stdout": return <OutputCell text fill={fill}><SeenSplit text={d.stdout!} seen={d.seen} marks={alignedMarks(marks, d.stdout!)} /></OutputCell>;
+        case "error": return <OutputCell fill={fill}><Traceback text={d.error!} map={lineMap} /></OutputCell>;
+        case "image": return <div class="r-image"><ClickableImg src={d.image!} alt="output image" /><div class="r-image-label">returned image</div></div>;
+        case "token": return <code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code>;
+        case "df": return <PyDfTable columns={d.df!.columns} rows={d.df!.rows} noCollapse={fill} />;
+        // A sympy return auto-flagged `latex` → typeset the value (display mode), not a raw code block.
+        case "latex": return <div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} />;
+        // In a cell like the output above it: a returned value can be as long as anything printed on the way
+        // there, and it is the half you most often want to search — so it is capped, scrollable and
+        // Ctrl+F-able by being wrapped, rather than by each section inventing its own.
+        case "value": return <OutputCell fill={fill}><Code text={String(d.value)} lang="json" /></OutputCell>;
+    }
+}
+
 // `python_exec`'s Out slot: captured stdout, then one of a returned image / a minted
 // @pt·@box token / the raw value / a Python traceback.
 function PythonOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: { d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null }) {
+    const sections = pyOutSections(d);
     return (
         <div class="r-python r-py-out">
             {/* Only the captured OUTPUT scrolls (and hosts the find bar) — the returned value/table/image sit
@@ -1014,22 +1072,99 @@ function PythonOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }:
                 elapsed footer goes INSIDE it when it exists and after the last section when it does not.
                 Never both, and never an empty section conjured up to hold it: a container that exists only
                 to carry a footer is chrome pretending to be output. */}
+            {/* Which sections exist is `pyOutSections`, shared with the bench so the two surfaces cannot
+                disagree about what a result HAS; the composition around them is each surface's own. Only
+                the IMAGE is bare here — it is a picture, and a disclosure around a picture is a lid. */}
             {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout" foldInFocus={!live}>
-                <OutputCell text><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
+                <PyOutBody id="stdout" d={d} marks={marks} />
                 <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} />
             </PyOutSection> : null}
-            {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
-            {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
-            {d.error ? <PyOutSection label="error" cls="r-py-err" cite="out"><OutputCell><Traceback text={d.error} map={lineMap} /></OutputCell></PyOutSection> : null}
-            {d.df && !d.error ? <PyOutSection label="value (DataFrame)" cls="r-py-val" cite="out"><PyDfTable columns={d.df.columns} rows={d.df.rows} /></PyOutSection> : null}
-            {/* A sympy return auto-flagged `latex` → typeset the value (display mode), not a raw code block. */}
-            {d.latex && d.value != null && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value (LaTeX)" cls="r-py-val" cite="out"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} /></PyOutSection> : null}
-            {/* In the same cell as the output above it: a returned value can be as long as anything printed
-                on the way there, and it is the half you most often want to search. Capped, scrollable and
-                Ctrl+F-able for free by being wrapped, rather than each section inventing its own. */}
-            {d.value != null && !d.latex && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value" cls="r-py-val" cite="out"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
+            {d.image ? <PyOutBody id="image" d={d} /> : null}
+            {d.token ? <PyOutSection label="token" cls="r-py-token"><PyOutBody id="token" d={d} /></PyOutSection> : null}
+            {sections.filter((x) => x.id !== "stdout" && x.id !== "image" && x.id !== "token").map((x) => (
+                <PyOutSection key={x.id} label={x.label} cls={x.id === "error" ? "r-py-err" : "r-py-val"} cite="out">
+                    <PyOutBody id={x.id} d={d} lineMap={lineMap} />
+                </PyOutSection>
+            ))}
             {/* No console to hang it off — so it goes after the last section instead. */}
             {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} /> : null}
+        </div>
+    );
+}
+
+/** THE BENCH'S OUTPUT PANE — the same section renderers a step's Out uses, composed for a workbench instead
+ *  of a log.
+ *
+ *  The two surfaces are opposite reading modes, which is why the composition differs while the renderers do
+ *  not. A step is a row in a SCROLLING transcript: you read it top to bottom, so stacked disclosures are
+ *  right and a folded stdout is a kindness. The bench is a LOOP — edit, run, look, edit — in a pane whose
+ *  height you already had to fight the editor for, so stacking meant the output you ran the script to see
+ *  arrived collapsed behind two clicks, every single run.
+ *
+ *  THE STRIP IS AT THE TOP of the pane, under the divider, rather than along the bottom edge: the divider and
+ *  the label of the pane it resizes then stay together, and the strip does not drift away from its content as
+ *  the pane grows. (DevTools' drawer and VSCode's panel both do this; PyCharm's bottom tabs work because they
+ *  belong to the tool WINDOW rather than to one pane.)
+ *
+ *  NOTHING IS HIDDEN SILENTLY, which is the one thing tabs are worse at than disclosures: a disclosure at
+ *  least advertises that something exists. So every section a result has gets a tab, an ERROR is marked and
+ *  steals the selection, a chosen tab survives the next run when it still exists (or the loop would reset
+ *  your view on every run), and a script that produced nothing SAYS so rather than showing an empty pane. */
+export function PyBenchOut({ d, running, since, marks }: { d: Extract<RenderDescriptor, { type: "python-out" }> | null; running?: boolean; since?: number; marks?: [number, number][] }) {
+    const sections = d ? pyOutSections(d) : [];
+    // ONLY A CLICK PINS A TAB. The distinction is load-bearing rather than fussy: while a script is running,
+    // the only section that exists is the stdout streaming in, so an auto-selection would "stick" to stdout
+    // and the value you ran the script for would then land behind a tab you never chose. What survives the
+    // next run is the tab YOU picked.
+    const [pinned, setPinned] = useState<PyOutSectionId | null>(null);
+    useEffect(() => {
+        // Nothing to pick from — and the pin is LEFT ALONE rather than cleared. Every run clears the result
+        // first, so this fires between runs; clearing here wiped your choice in that gap and the next result
+        // re-picked the default, which looked exactly like the pin not working at all.
+        if (!sections.length) return;
+        // A NEW FAILURE takes the selection — you were on the value because that is what you are iterating
+        // on, and the moment it breaks that is no longer the question. It pins, so clicking away to read what
+        // was printed first holds.
+        if (sections.some((x) => x.id === "error")) { setPinned("error"); return; }
+        setPinned((p) => (p && sections.some((x) => x.id === p) ? p : null));
+    }, [d]);
+    // With nothing pinned: the LAST section, which is the returned value — stdout comes first, and what you
+    // ran the script for is the answer, not the printing on the way to it.
+    const active = sections.find((x) => x.id === pinned) ?? sections[sections.length - 1];
+    return (
+        <div class="bench-outpane">
+            {/* ALWAYS the strip, even for one section — and even while the script is still running, when the
+                only section is the stdout streaming in. Drawing it only at two-or-more meant the pane
+                RESHAPED at the moment the result landed: a bare label became a tab row, everything under it
+                moved, and the surface you had been watching for the last ten seconds turned into a different
+                one. The header of a pane should not depend on what happens to be in it. */}
+            <div class="bench-tabs" role="tablist">
+                {sections.map((x) => (
+                    <button key={x.id} role="tab" aria-selected={x.id === active?.id}
+                        class={`bench-tab${x.id === active?.id ? " on" : ""}${x.id === "error" ? " err" : ""}`}
+                        onClick={() => setPinned(x.id)}>{x.label}</button>
+                ))}
+                {/* While it runs and nothing has printed yet there is no section to name — but the strip
+                    still has to be the same height, or it appears from nowhere with the first line. */}
+                {!sections.length ? <span class="bench-tab dim" aria-hidden="true">output</span> : null}
+            </div>
+            <div class="bench-outbody">
+                {/* The states that are not a section, each said out loud — an empty pane is
+                    indistinguishable from a bench that did not run. There is no "nothing yet" case: until
+                    the first run this whole pane is absent and the editor has the bench to itself. */}
+                {running && !d ? <span class="dim">running…</span>
+                    : !d ? null
+                        : !active ? <span class="dim">(ran — no output, no return)</span>
+                            : <>
+                                <PyOutBody id={active.id} d={d} marks={marks} fill />
+                            </>}
+            </div>
+            {/* ONLY WHILE IT RUNS. The live clock is the pane saying it is still going, which is the one
+                moment that fact is worth a row; a settled "ran in 3.0s" is a number nobody came to the bench
+                to read, and it left the finished pane looking different from the one you had been watching
+                for the last ten seconds. (The log still reports it for a `python_exec` step, cold start
+                broken out, which is where that question actually gets asked.) */}
+            {running ? <RanFor live since={since} /> : null}
         </div>
     );
 }

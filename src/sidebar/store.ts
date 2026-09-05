@@ -221,9 +221,14 @@ export const noteAside = (hash: string, a: Aside): void => {
 export const BENCH_OPEN_KEY = "ml_bench_open";
 export const BENCH_DOCK_KEY = "ml_bench_dock";     // "drawer" | "full"  (NOT ml_bench_mode — that is the sandbox's readonly/full)
 export const BENCH_H_KEY = "ml_bench_h";   // storage.local: the bench drawer's height
+export const BENCH_SPLIT_KEY = "ml_bench_split";   // storage.local: the editor's share of the bench, 0..1
 export const benchOpen = signal(false);   // is the bench showing (as a drawer, or as the full-page view)?
 export const benchDock = signal<"drawer" | "full">("drawer");   // its SHAPE — a remembered preference, not re-chosen each time
 export const benchH = signal(280);   // px — the drawer's dragged height
+/** THE EDITOR'S SHARE of the bench, as a fraction — the divider between the script and its output. A ratio
+ *  rather than a pixel height, because the bench is a drawer you also resize: pinning the editor to pixels
+ *  would eat the whole output pane the moment the drawer got shorter. */
+export const benchSplit = signal(0.55);
 
 /** What the bench's sandbox IS — Python/Pyodide versions and the packages that actually installed.
  *  A SIGNAL rather than component state because two surfaces name it (the drawer's header chip and the

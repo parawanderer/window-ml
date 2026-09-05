@@ -2632,12 +2632,24 @@ test("python bench: opens from the header, runs a script, and renders the sandbo
     // …and the run's completion is when the version chip is filled in: the sandbox is warm NOW, so learning
     // what it is costs nothing, where doing it on mount would make every glance at the bench pay a cold start.
     assert.ok(w.pyCalls.some((c) => c.env), "the env probe rides the run's completion");
-    // The result renders through the python-out panel (stdout).
-    const out = w.shadow.querySelector(".bench-out .r-py-out");
-    assert.ok(out, "result renders in the python-out panel");
-    assert.match(out.textContent, /hi/, "stdout shown");
-    // stdout is a collapsible section (a <details>), like the other blocks.
-    assert.equal(out.querySelector(".r-py-stdout").tagName, "DETAILS", "stdout is a collapsible section");
+    // The result renders in the output PANE — the same section renderers the log uses, composed as TABS
+    // rather than as stacked disclosures. In a log a step is a row in a scrolling transcript you read top to
+    // bottom, so a folded stdout is a kindness; in the bench you are in a loop, and the output you ran the
+    // script to see was arriving collapsed behind two clicks on every run.
+    const out = w.shadow.querySelector(".bench-outbody");
+    assert.ok(out, "result renders in the output pane");
+    assert.deepEqual([...w.shadow.querySelectorAll(".bench-tab")].map((b) => b.textContent), ["stdout", "value"],
+        "one tab per section the result actually has");
+    // You LAND ON THE VALUE — stdout comes first, but what you ran the script for is the answer, not the
+    // printing on the way to it. An auto-pick never sticks; only a tab you clicked does.
+    assert.equal(w.shadow.querySelector(".bench-tab.on").textContent, "value");
+    assert.match(out.textContent, /1/, "the returned value is what is on screen");
+    assert.equal(out.querySelector(".r-py-sec"), null, "…and nothing is folded behind a disclosure here");
+    // stdout is one click, not two: in the log it is a `details` you open, which in a loop you were paying
+    // on every single run.
+    [...w.shadow.querySelectorAll(".bench-tab")].find((b) => b.textContent === "stdout").click();
+    await w.flush();
+    assert.match(w.shadow.querySelector(".bench-outbody").textContent, /hi/, "stdout shown");
     // The info note is a tooltip now, not always-shown prose.
     assert.equal(w.shadow.querySelector(".bench-note"), null, "no always-shown note");
     assert.ok(w.shadow.querySelector(".bench-info .tt-pop"), "the note is a hover tooltip");
@@ -2652,11 +2664,13 @@ test("python bench: a returned DataFrame renders as a real table (PyDfTable), no
     await w.tick();
     w.shadow.querySelector(".bench-play").click();
     await w.tick();
-    const df = w.shadow.querySelector(".bench-out .r-df-scroll, .bench-out table.dftable, .bench-out .r-py-val table");
-    assert.ok(df || w.shadow.querySelector(".bench-out .r-py-val"), "the value section renders");
+    assert.ok(w.shadow.querySelector(".bench-outbody .r-df-scroll"), "the value section renders as a real table");
     // The DataFrame table (PyDfTable) shows the column headers.
-    assert.match(w.shadow.querySelector(".bench-out .r-py-val").textContent, /foo/);
-    assert.match(w.shadow.querySelector(".bench-out .r-py-val").textContent, /bar/);
+    assert.match(w.shadow.querySelector(".bench-outbody").textContent, /foo/);
+    assert.match(w.shadow.querySelector(".bench-outbody").textContent, /bar/);
+    // …and WITHOUT the log's hide/show control: the tab strip already decides what is on screen, so a
+    // second control for "do not show me this" only undoes the choice the first one just made.
+    assert.equal(w.shadow.querySelector(".bench-outbody .r-df-bar"), null, "no collapse bar in the bench");
 });
 
 // A pandas column can legitimately hold a dict or a list — `dict(per_q)` in a cell is an ordinary thing to
@@ -2678,7 +2692,7 @@ test("python bench: a DataFrame cell holding a dict renders as JSON, not [object
     await w.tick();
     w.shadow.querySelector(".bench-play").click();
     await w.tick();
-    const text = w.shadow.querySelector(".bench-out .r-py-val").textContent;
+    const text = w.shadow.querySelector(".bench-outbody").textContent;
     assert.doesNotMatch(text, /\[object Object\]/, "a dict cell is not JS default coercion");
     assert.match(text, /"Q1":\s*1500/, "…it is the value, as JSON");
     assert.match(text, /\["a","b"\]|\[\s*"a"/, "and so is a list cell");
@@ -2700,7 +2714,7 @@ test("python bench: a cell that cannot be serialised says so, and says what it w
     await w.tick();
     w.shadow.querySelector(".bench-play").click();
     await w.tick();
-    const cell = w.shadow.querySelector(".bench-out .r-td-unrend");
+    const cell = w.shadow.querySelector(".bench-outbody .r-td-unrend");
     assert.ok(cell, "the unrenderable cell is marked, not left blank or coerced");
     assert.match(cell.textContent, /unrenderable/);
     // The TYPE is most of the answer to "why is my column empty".
@@ -2708,7 +2722,7 @@ test("python bench: a cell that cannot be serialised says so, and says what it w
     assert.match(tip, /could not be serialised/i);
     assert.match(tip, /the model received the value itself/i,
         "…and it says the failure is in the PREVIEW, not in the run");
-    assert.doesNotMatch(w.shadow.querySelector(".bench-out .r-py-val").textContent, /\[object Object\]/);
+    assert.doesNotMatch(w.shadow.querySelector(".bench-outbody").textContent, /\[object Object\]/);
 });
 
 // `{}` for something that is NOT an empty object is the same wrong fact in the same place, just quieter — and
@@ -2728,12 +2742,12 @@ test("python bench: a Map, a Set or an Error is marked rather than printed as {}
     w.shadow.querySelector(".bench-play").click();
     await w.tick();
 
-    const marks = [...w.shadow.querySelectorAll(".bench-out .r-td-unrend")];
+    const marks = [...w.shadow.querySelectorAll(".bench-outbody .r-td-unrend")];
     assert.equal(marks.length, 2, "the Map and the Error are marked; a genuinely empty object is not");
     assert.deepEqual(marks.map((m) => m.textContent), ["unrenderable Map", "unrenderable Error"],
         "…and each says what it WAS, which is most of the answer to 'why is my column empty'");
     // A plain `{}` is left alone: there, `{}` is the truth.
-    assert.match(w.shadow.querySelector(".bench-out .r-py-val").textContent, /\{\}/);
+    assert.match(w.shadow.querySelector(".bench-outbody").textContent, /\{\}/);
 });
 
 // The SANDBOX-marked case, which the two above cannot produce: pandas flattens an arbitrary object to `{}`
@@ -2754,7 +2768,7 @@ test("python bench: a cell the SANDBOX marked names its Python type, and blames 
     w.shadow.querySelector(".bench-play").click();
     await w.tick();
 
-    const marks = [...w.shadow.querySelectorAll(".bench-out .r-td-unrend")];
+    const marks = [...w.shadow.querySelectorAll(".bench-outbody .r-td-unrend")];
     assert.equal(marks.length, 1, "only the marked cell; the dict beside it has a JSON form and keeps it");
     assert.equal(marks[0].textContent, "unrenderable Widget", "the PYTHON type, carried across");
     // The cause differs from the browser-side one and so does the explanation: naming the wrong cause sends
@@ -2762,7 +2776,7 @@ test("python bench: a cell the SANDBOX marked names its Python type, and blames 
     const tip = await hoverTip(w, marks[0]);
     assert.match(tip, /would show as an empty object/i);
     assert.doesNotMatch(tip, /circular/i);
-    assert.match(w.shadow.querySelector(".bench-out .r-df-table").textContent, /"q1"/,
+    assert.match(w.shadow.querySelector(".bench-outbody .r-df-table").textContent, /"q1"/,
         "the dict cell is untouched — the marker is only for what would otherwise be LOST");
 });
 
@@ -7135,6 +7149,17 @@ test("history: an evicted model keeps its colour, and says it is gone", async ()
     // name it is a colour nothing on screen explains.
     const ghost = w.shadow.querySelector(".vram-row.ghost");
     assert.ok(ghost, "an evicted model still drawn keeps a row");
+    // …FOLDED, though. These rows are a reference you consult, not a list you read: inline they push the
+    // models that are actually loaded down the panel and make a box with two models look like a box with
+    // six. (The body stays mounted while closed — that is how the disclosure has something to slide — so
+    // the row is findable here either way; `aria-hidden` is the state.)
+    const fold = ghost.closest(".disc");
+    assert.ok(fold, "the ghost rows live in a disclosure");
+    assert.equal(fold.querySelector(".disc-head").getAttribute("aria-expanded"), "false", "…collapsed by default");
+    assert.match(fold.querySelector(".disc-label").textContent, /not resident/);
+    fold.querySelector(".disc-head").click();
+    await w.flush();
+    assert.equal(fold.querySelector(".disc-head").getAttribute("aria-expanded"), "true", "…and it opens");
     assert.match(ghost.textContent, /gemma4:31b/);
     assert.match(ghost.textContent, /evicted/);
     assert.equal(ghost.querySelector(".vram-x"), null, "…with nothing to evict");
@@ -7147,9 +7172,11 @@ test("history: an evicted model keeps its colour, and says it is gone", async ()
     const tip = w.shadow.querySelector(".rc-tip:not(.vram-rowtip)");
     assert.ok(tip, "the band is still hoverable after the model evicted");
     assert.match(tip.textContent, /gemma4:31b/, "it names what was there");
-    // "not resident now", not "evicted": the figure beside it is a reading from an instant that has passed,
-    // and "evicted" reads as something that happened AT that instant rather than since.
-    assert.match(tip.textContent, /not resident now/, "…and says it no longer is");
+    // …and it does NOT annotate that with what happened later. The tooltip reads a sample from the PAST, the
+    // stamp beside it says which instant, and at that instant the model WAS there — so a "gone" marker
+    // answers a question nobody asked at the place they asked it. Whether it is resident NOW is the model
+    // list's question, and the ghost row above is where that is answered.
+    assert.doesNotMatch(tip.textContent, /not resident now|\bgone\b/, "history is not annotated with the present");
 });
 
 // A box with more cards than the curated palette. Eight A100s plus system RAM is NINE pools, and
@@ -8040,7 +8067,7 @@ test("python: a traceback's user lines are links, and the deepest one is marked"
     w.shadow.querySelector(".bench-play").click();
     await w.tick();
 
-    const links = [...w.shadow.querySelectorAll(".bench-out .tb-line")];
+    const links = [...w.shadow.querySelectorAll(".bench-outbody .tb-line")];
     assert.equal(links.length, 2, "both <python_exec> frames are addressable");
     // The CONTROL is the whole frame reference, not the bare number: two characters is a poor hit target,
     // and what you are clicking is the frame. (The bench draws unreflowed source, so the numbers are the
@@ -8048,7 +8075,7 @@ test("python: a traceback's user lines are links, and the deepest one is marked"
     assert.deepEqual(links.map((b) => b.textContent),
         ['File "<python_exec>", line 5', 'File "<python_exec>", line 2']);
     // The DEEPEST user frame is where it actually failed; the ones above are the call path.
-    const rows = [...w.shadow.querySelectorAll(".bench-out .tbline")];
+    const rows = [...w.shadow.querySelectorAll(".bench-outbody .tbline")];
     const failed = rows.filter((r) => r.classList.contains("tb-fail"));
     assert.equal(failed.length, 1, "exactly one line is called out as the failure");
     // The tooltip is a hidden child of the row (read into the shared floating layer on hover), so it is in
@@ -8060,7 +8087,7 @@ test("python: a traceback's user lines are links, and the deepest one is marked"
     const dim = rows.filter((r) => r.classList.contains("dim"));
     assert.equal(dim.length, 1);
     assert.match(dim[0].textContent, /<exec>/);
-    assert.match(w.shadow.querySelector(".bench-out .code.tb").textContent, /ValueError: boom/,
+    assert.match(w.shadow.querySelector(".bench-outbody .code.tb").textContent, /ValueError: boom/,
         "and every line of the original is still there");
 });
 

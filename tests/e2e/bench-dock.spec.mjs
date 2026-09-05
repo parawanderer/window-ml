@@ -356,6 +356,258 @@ test("the drawer's grab handle is centred, and nothing interactive sits under it
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+/** Run a script in the bench and wait for it to SETTLE. The signal is the live elapsed readout going away —
+ *  it is the pane's own "still running", so its absence is the finish, and it survives the pane having no
+ *  footer once settled. (Waiting on the Run button re-enabling would be the same thing read off the header.) */
+const runInBench = async (frame, code) => {
+    await frame.locator(".bench-code").fill(code);
+    await frame.locator(".bench-play").click();
+    // …but only once it has actually STARTED, or an immediate check catches the pre-run state.
+    for (let i = 0; i < 30 && !(await frame.locator(".bench-outpane").count()); i++) await sleep(100);
+    for (let i = 0; i < 100; i++) {
+        if (!(await frame.locator(".bench-outpane .r-ranfor.live").count())
+            && await frame.locator(".bench-play:not([disabled])").count()) return;
+        await sleep(400);
+    }
+    throw new Error("the bench never produced a result");
+};
+
+// THE OUTPUT IS A PANE WITH TABS, not a block stacked under the editor. The log stacks these sections as
+// disclosures because a step is a row in a scrolling transcript; the bench is a LOOP, and there the output
+// you ran the script to see was arriving COLLAPSED behind two clicks on every single run. Same renderers
+// either way — `pyOutSections` is shared, so the two surfaces cannot disagree about what a result HAS.
+test("the output pane tabs its sections, and lands you on the value rather than on stdout", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await runInBench(frame, "print('one')\nprint('two')\nreturn {'answer': 42}");
+
+        const tabs = frame.locator(".bench-tab");
+        expect(await tabs.allTextContents()).toEqual(["stdout", "value"]);
+        await expect(frame.locator(".bench-tab.on"), "the VALUE is what you ran it for").toHaveText("value");
+        await expect(frame.locator(".bench-outbody")).toContainText("42");
+        // Nothing is folded away: the thing you ran the script to see is on screen, not behind a disclosure.
+        await expect(frame.locator(".bench-outbody .r-py-sec")).toHaveCount(0);
+
+        await tabs.filter({ hasText: "stdout" }).click();
+        await expect(frame.locator(".bench-outbody")).toContainText("one");
+        await expect(frame.locator(".bench-outbody")).toContainText("two");
+        await expect(frame.locator(".bench-outbody")).not.toContainText("42");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE ONE THING TABS ARE WORSE AT than disclosures is that they can hide something with no sign of it. So a
+// failure is MARKED and takes the selection — you were looking at the value because that is what you are
+// iterating on, and the moment it breaks that is no longer the question.
+test("a failure marks its tab and takes the selection; anything else leaves you where you were", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await runInBench(frame, "print('before it broke')\nreturn 1");
+        await frame.locator(".bench-tab", { hasText: "stdout" }).click();
+        await expect(frame.locator(".bench-tab.on")).toHaveText("stdout");
+
+        // A run that merely printed something must NOT move you off the tab you are working in.
+        await runInBench(frame, "print('still fine')\nreturn 2");
+        await expect(frame.locator(".bench-tab.on"), "your tab survives the next run").toHaveText("stdout");
+
+        // A failure does.
+        await runInBench(frame, "print('before it broke')\nraise ValueError('boom')");
+        await expect(frame.locator(".bench-tab.on")).toHaveText("error");
+        await expect(frame.locator(".bench-tab.err"), "…and it is marked, so clicking away cannot hide it").toHaveCount(1);
+        await expect(frame.locator(".bench-outbody")).toContainText("boom");
+        // What it printed on the way there is still one click away, not lost.
+        await frame.locator(".bench-tab", { hasText: "stdout" }).click();
+        await expect(frame.locator(".bench-outbody")).toContainText("before it broke");
+        await expect(frame.locator(".bench-tab.err"), "the mark stays while you read it").toHaveCount(1);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// UNTIL YOU RUN IT, THERE IS NO OUTPUT PANE — the editor has the whole bench. An empty pane with a line of
+// placeholder in it is chrome promising something it does not have, and it takes half the room you came here
+// to write in. It arrives on ▶ (carrying "running…", which is the feedback that moment needs) and stays.
+test("the output pane arrives with the first run, and the editor has the bench until then", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await expect(frame.locator(".bench-code")).toBeVisible();
+        await expect(frame.locator(".bench-outpane"), "nothing to show, so nothing is shown").toHaveCount(0);
+        await expect(frame.locator(".bench-div"), "…and nothing to divide either").toHaveCount(0);
+
+        const wholeBench = (await frame.locator(".bench-split").boundingBox()).height;
+        const editorAlone = (await frame.locator(".bench-code").boundingBox()).height;
+        expect(editorAlone / wholeBench, "the editor has all of it").toBeGreaterThan(0.9);
+
+        await runInBench(frame, "print('now there is something')");
+        await expect(frame.locator(".bench-outpane")).toBeVisible();
+        await expect(frame.locator(".bench-div")).toBeVisible();
+        expect((await frame.locator(".bench-code").boundingBox()).height).toBeLessThan(editorAlone);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// FULL-PAGE IS THE SAME COMPONENT — one `PythonBench`, one output renderer. The drawer only injects its grip
+// and shape controls into the shared header, and full-page takes its height from the view instead. Worth
+// pinning because "the other mode renders it differently" is exactly the drift a shared component prevents.
+test("full-page draws the same tabbed output pane the drawer does", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await frame.locator('[aria-label="Expand the Python bench"]').click();
+        await expect(frame.locator(".bench-drawer")).toHaveCount(0);
+
+        await runInBench(frame, "print('one')\nreturn {'answer': 42}");
+        expect(await frame.locator(".bench-tab").allTextContents()).toEqual(["stdout", "value"]);
+        await expect(frame.locator(".bench-tab.on")).toHaveText("value");
+        await expect(frame.locator(".bench-div")).toBeVisible();
+        // …and it is using the VIEW's height rather than its content's, or the divider has nothing to divide.
+        const split = await frame.locator(".bench-split").boundingBox();
+        expect(split.height, "the split is given the page's height").toBeGreaterThan(300);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE DIVIDER sizes the two panes against each other. A RATIO, not a pixel height: the bench is itself
+// resizable (the drawer's edge, and the panel it lives in), so pinning the editor to pixels would let a
+// shorter drawer eat the whole output pane.
+test("the divider resizes the script against its output, and the ratio is remembered", async () => {
+    const { fake, ext, page, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await runInBench(frame, "print('hello')");
+        const before = (await frame.locator(".bench-code").boundingBox()).height;
+
+        const d = await frame.locator(".bench-div").boundingBox();
+        await page.mouse.move(d.x + d.width / 2, d.y + d.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(d.x + d.width / 2, d.y - 70, { steps: 8 });
+        await page.mouse.up();
+        await sleep(300);
+        const after = (await frame.locator(".bench-code").boundingBox()).height;
+        expect(after, `expected the editor to shrink from ${before}`).toBeLessThan(before - 30);
+        // …and the output took the room, rather than the drawer growing.
+        expect((await frame.locator(".bench-drawer").boundingBox()).height).toBeCloseTo(
+            (await frame.locator(".bench-drawer").boundingBox()).height, 0);
+
+        // It is a workspace you leave set up: the ratio survives a reload. It has to be RUN again first —
+        // a fresh bench has no result and therefore no output pane at all, so the editor is full height
+        // until there is something to divide it with.
+        await page.reload();
+        const frame2 = await openRunInSidebar(page, { task: "read the page" });
+        await expect(frame2.locator(".bench-code")).toBeVisible({ timeout: 15000 });
+        await runInBench(frame2, "print('hello')");
+        const restored = (await frame2.locator(".bench-code").boundingBox()).height;
+        expect(Math.abs(restored - after)).toBeLessThan(14);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE DIVIDER IS ONE LINE AND A HANDLE. It drew its own hairline for a while, a few pixels under the
+// editor's own bottom border, which put TWO rules across the bench with the pill stranded between them
+// belonging to neither. And the pill's offset is SET rather than left to fall out of centring — centred it
+// read as sitting ON the border, and the space above it read as padding the textarea had grown.
+test("the divider draws no second rule, and its pill sits a set 4px below the editor", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await runInBench(frame, "print('hello')");
+        const geo = await frame.evaluate(() => {
+            const ta = document.querySelector(".bench-code").getBoundingClientRect();
+            const pill = document.querySelector(".bench-div-pill").getBoundingClientRect();
+            const div = document.querySelector(".bench-div");
+            const before = getComputedStyle(div, "::before");
+            return { gap: pill.top - ta.bottom, rule: before.content, bg: before.backgroundColor };
+        });
+        expect(geo.gap, `the pill hangs 4px under the editor's border, got ${geo.gap}`).toBeGreaterThan(3);
+        expect(geo.gap).toBeLessThan(6);
+        // No second rule: the editor's own border is the line, and a `::before` here would double it.
+        expect(geo.rule === "none" || geo.bg === "rgba(0, 0, 0, 0)").toBe(true);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE SELECTED SECTION FILLS THE PANE. A short box floating in a tall empty pane reads as output that got
+// cut off — and the divider is where you already said how much room you wanted, so a second cap here would
+// be the pane arguing with the gesture that sized it.
+test("the output fills its pane — text and a DataFrame alike — and the table loses its collapse control", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await runInBench(frame, "print('a line')\nreturn 1");
+        const fill = async (sel) => {
+            const body = await frame.locator(".bench-outbody").boundingBox();
+            const inner = await frame.locator(sel).boundingBox();
+            return inner.height / body.height;
+        };
+        expect(await fill(".bench-outbody .r-outcell"), "a one-line value still fills the pane").toBeGreaterThan(0.8);
+
+        await runInBench(frame, "import pandas as pd\nprint('built it')\nreturn pd.DataFrame({'a': [1, 2], 'b': [3, 4]})");
+        await expect(frame.locator(".bench-tab.on"), "a returned frame is a real table, not a JSON blob").toHaveText("value (DataFrame)");
+        await expect(frame.locator(".bench-outbody .r-df-table")).toBeVisible();
+        expect(await fill(".bench-outbody .r-df"), "so does a table").toBeGreaterThan(0.8);
+        // Collapsing is for a LOG, where a wide table sits in a transcript you are reading past. Here the tab
+        // strip already decides what is on screen, so a "hide table" undoes the choice you just made with it.
+        await expect(frame.locator(".bench-outbody .r-df-btn", { hasText: /hide|show/ })).toHaveCount(0);
+        await expect(frame.locator(".bench-outbody .r-df-btn", { hasText: "copy CSV" }), "copy stays — that one does something").toHaveCount(1);
+        // …at the pane's BOTTOM RIGHT. Alone above the grid it was the least important thing in the pane
+        // sitting in the most prominent place, with a whole row to itself.
+        const copy = await frame.locator(".bench-outbody .r-df-btn", { hasText: "copy CSV" }).boundingBox();
+        const grid = await frame.locator(".bench-outbody .r-df-scroll").boundingBox();
+        const pane = await frame.locator(".bench-outbody").boundingBox();
+        expect(copy.y, "below the grid, not above it").toBeGreaterThan(grid.y + grid.height - 1);
+        expect(copy.y + copy.height, "…at the bottom of the pane").toBeGreaterThan(pane.y + pane.height - 40);
+        expect(copy.x + copy.width, "…and to the right").toBeGreaterThan(pane.x + pane.width - 60);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// LIVE STDOUT — the SAME worker tee the model-invoked `python_exec` gets, painting a different widget. The
+// interesting part is the last hop: the SW relays a page's chunks through that tab's content script, and the
+// bench is an extension iframe INSIDE a tab, so it HAS a `sender.tab` and would have had its own output
+// posted to the page instead. The discriminator is the sending FRAME's url, which Chrome sets.
+test("the bench streams stdout as the script runs, and the value supersedes it at the end", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        // Warm the sandbox first: a cold start is seconds of nothing, which would make this test about
+        // Pyodide's download rather than about the tee.
+        await runInBench(frame, "print('warm')");
+
+        await frame.locator(".bench-code").fill(
+            "import time\nprint('FIRST')\ntime.sleep(2)\nprint('SECOND')\nreturn {'answer': 42}");
+        await frame.locator(".bench-play").click();
+
+        // MID-RUN: the first line is on screen while the script is still sleeping, and the run is visibly
+        // alive. If this only arrived at the end the assertion below would still pass, so the elapsed
+        // "running…" readout is what pins that this is genuinely mid-flight.
+        await expect(frame.locator(".bench-outbody")).toContainText("FIRST", { timeout: 8000 });
+        await expect(frame.locator(".bench-outbody"), "…and the rest has not happened yet").not.toContainText("SECOND");
+        await expect(frame.locator(".bench-outpane .r-ranfor.live")).toBeVisible();
+
+        // SETTLED: the real result supersedes the live stdout, and the value is what you land on — the
+        // streaming pass must not leave you pinned to stdout, since you never chose it.
+        await expect(frame.locator(".bench-outpane .r-ranfor.live")).toHaveCount(0, { timeout: 20000 });
+        expect(await frame.locator(".bench-tab").allTextContents()).toEqual(["stdout", "value"]);
+        await expect(frame.locator(".bench-tab.on"), "an auto-pick never sticks — only a click does").toHaveText("value");
+        await expect(frame.locator(".bench-outbody")).toContainText("42");
+        await frame.locator(".bench-tab", { hasText: "stdout" }).click();
+        await expect(frame.locator(".bench-outbody")).toContainText("FIRST");
+        await expect(frame.locator(".bench-outbody")).toContainText("SECOND");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// A PLACEHOLDER THAT SAYS SO. Handing a script you just got working to the model is the obvious next move
+// and it is not built; drawn rather than omitted so the row's shape is settled, DISABLED rather than
+// live-but-inert, because an affordance that silently does nothing cannot be told from a bug.
+test("the send-to-model button is present and disabled, and says it is unbuilt", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        const send = frame.locator(".bench-send");
+        await expect(send).toBeVisible();
+        await expect(send).toBeDisabled();
+        await expect(send.locator(".tt-pop")).toContainText(/not built yet/i);
+        // To the RIGHT of Run, which is the live one.
+        const play = await frame.locator(".bench-play").boundingBox();
+        expect((await send.boundingBox()).x).toBeGreaterThan(play.x);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
 // NO STRIP OF THE DRAWER'S OWN GROUND BETWEEN THE HEADER AND THE EDITOR. The bench is a flex column with a
 // `gap`, and the gap applied after the header too — so the drawer's background showed through between two
 // panel-coloured surfaces. In the dark theme that is invisible; in the light one it is a white bar across the

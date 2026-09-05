@@ -15,7 +15,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
-import { launchExtension, configureExtension, waitForMl, narrate } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, narrate, narrateDone } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -235,6 +235,7 @@ const main = async () => {
         await page.screenshot({ path: path.join(ART, "find-sideways.png") }).catch(() => {});
         log(`\ndone — screenshots in ${ART}`);
         if (HOLD) {
+            await narrateDone(page);
             log("holding the browser open (HOLD=0 to skip). Close the window or Ctrl+C to exit.");
             await page.waitForEvent("close", { timeout: 0 }).catch(() => {});
         }

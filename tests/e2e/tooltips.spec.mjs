@@ -425,7 +425,7 @@ test("tooltips: dividers separate sections, names stay whole, and nothing is cli
         await frame.locator(".row").first().click();
         await expect.poll(() => frame.locator('[aria-label="Focus mode"]').count(), { timeout: 10000 }).toBe(1);
 
-        for (const label of ["Focus mode", "VRAM monitor", "Python bench", "Server tools", "Settings"]) {
+        for (const label of ["Focus mode", "VRAM monitor", "Python bench", "Settings"]) {
             const btn = frame.locator(`[aria-label="${label}"]`);
             if (!(await btn.count())) continue;
             // The real mouse, not `locator.hover()`: the layer opens on `pointerover`, and moving the mouse

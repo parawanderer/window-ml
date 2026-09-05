@@ -32,6 +32,19 @@ test("fmtTTL: BUSY stops the clock — the stamp it holds is the one from the la
     assert.equal(fmtTTL(inMs(44_000), undefined), "44s");
 });
 
+// `keep_alive: -1` pins a model in memory, and Ollama expresses that as an `expires_at` about a century out.
+// Counting down to it is true and useless — "36159d 12h" is nobody's deadline, and a day count that large
+// reads as a bug in the panel rather than as a decision someone made deliberately.
+test("fmtTTL: a deadline a century out is a PIN, not a countdown", () => {
+    const century = inMs(100 * 365 * 24 * 3600_000);
+    assert.equal(fmtTTL(century), "pinned");
+    assert.equal(expiresIn(century), "pinned — no expiry");
+    // …and busy still wins: a pinned model serving a request is described by what it is doing.
+    assert.equal(fmtTTL(century, true), "in use");
+    // The threshold is far past any keep-alive a person would set, so nothing real falls between the two.
+    assert.match(fmtTTL(inMs(30 * 24 * 3600_000)), /^(30d 0h|29d 23h)$/, "a month is still a countdown");
+});
+
 test("expiresIn: the same rule in the tooltip's prose", () => {
     assert.match(expiresIn(inMs(30_000)), /^expires in 30s$/);
     assert.match(expiresIn(inMs(10 * 60_000)), /^expires in 10m$/);

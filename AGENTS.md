@@ -1790,6 +1790,13 @@ rate includes the network; that whole matrix (openai/ollama x streamed/not) is p
   can never be mistaken for part of the product and a demo about the sidebar cannot have its narration hidden
   by the sidebar. `narrate(page, null)` clears it for a screenshot that should show the product alone. Call it
   at every beat, not once at the start.
+
+  The banner also says WHOSE WINDOW IT IS. A headful demo takes the pointer and the keyboard, and a watcher
+  who cannot tell a finished demo from a paused one either waits for nothing or clicks into the middle of a
+  beat — so every `narrate` marks the run as still driving, and **`narrateDone(page)` flips it** to "the
+  browser is yours". Call `narrateDone` immediately before holding the browser open (or before exiting),
+  never after a later `narrate`, which sets the status back to running. (`annotate-diff-demo.mjs` and
+  `line-map-demo.mjs` predate this rule and narrate nothing at all — a follow-up, not a licence.)
 - **RULE — a demo about what happens INSIDE a run must call `openRunInSidebar(page)`** (harness.mjs). The
   panel opens on the SESSIONS LIST, not on the run, so a demo that only slides the sidebar open queries an
   empty transcript, reads zero of everything, and reports that the feature does not work — which every demo

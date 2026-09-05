@@ -269,7 +269,6 @@ function BandTip({ bands, frame, history, ceiling, scope, at: hoverSample }: { b
         // leaving a coloured area on the chart with nothing below it to explain it.
         ?? [...history].reverse().flatMap((f) => f.filter((b) => b.model === name && b.bytes > 0)).at(0);
     if (!band) return null;   // hovering a model that isn't on THIS device — its own track shows the tip
-    const gone = !bands.some((b) => b.model === name);
     const m = (loadedModels.value || []).find((x) => x.model === name);
     // Follows the cursor, offset up-left so it never sits under the pointer (which would flicker as the
     // pointer enters the tip itself) and clamped inside the plot so it can't run off the narrow panel.
@@ -283,11 +282,12 @@ function BandTip({ bands, frame, history, ceiling, scope, at: hoverSample }: { b
             {/* Bytes AND the share of this device — a model is "big" only relative to the card it is on. */}
             <div class="rc-tip-line"><span class="rc-tip-size">{formatBytes(band.bytes)} <span class="rc-tip-pct">({percentOf(band.bytes, ceiling)})</span></span></div>
             <SampleStamp at={hoverSample} />
-            {/* The figure above is from an instant that has passed, so the tip has to say whether the model is
-                STILL there — otherwise a reader takes a historical reading for a current one, which is the
-                one misreading a time-travelling tooltip makes easy. Its row is also gone from the list
-                below, so this is the only place that can explain why the colour is still on the chart. */}
-            {gone ? <span class="rc-tip-gone">not resident now</span> : null}
+            {/* NO "not resident now" HERE, and none on the consumer rows either. This tooltip reads a sample
+                from the PAST: it answers what was on this card at that instant, the stamp above says which
+                instant, and at that instant the model WAS there. Annotating it with what happened afterwards
+                answers a question nobody asked at the place they asked it. It was here to explain why a
+                colour was still on the chart with no row under it — which the model list's GHOST rows now do,
+                where "is it resident" is actually the question being asked. */}
             {/* Badges and cost each break onto their OWN line. On one line the tip grew past the panel and was
                 clipped at the window edge — and the figure that matters (how much, what share) is the part
                 that got cut. */}
@@ -396,7 +396,12 @@ function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf }: {
                                         ? <i class="rc-tip-dot" style={{ background: colorFor(c.model) }} />
                                         : <i class="rc-tip-dot rc-tip-dot-none" />}
                                     <span class="rc-tip-cname">{c.label}</span>
-                                    {c.model && !now.has(c.label) ? <span class="rc-tip-gone">gone</span> : null}
+                                    {/* NO "gone" MARKER HERE. This tooltip reads a sample from the PAST — it
+                                        answers "what was on this card at that instant", and at that instant
+                                        the model was resident, so annotating it with what happened later is
+                                        answering a question nobody asked at the place they asked it. Whether
+                                        a model is resident NOW is the model list's job, where the row says
+                                        so and the tooltip on it explains. */}
                                 </span>
                                 <span class="rc-tip-amt">{formatBytes(c.bytes)}</span>
                                 <span class="rc-tip-pct">{percentOf(c.bytes, r.p.ceiling)}</span>

@@ -10,7 +10,7 @@ import type { MlDebugEvent, MlConfig, ElementContext } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, showLane, showModels, FOCUS_KEY, focusMode,
-    benchOpen, benchDock, benchH, viewReturn, markReturn, openBench, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY,
+    benchOpen, benchDock, benchH, benchSplit, viewReturn, markReturn, openBench, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY,
     benchEnv, BENCH_ENV_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
     vramOpen, sidebarOpen, backendError, surface, atBottom, resWindowS, vramH } from "./store";
@@ -349,14 +349,22 @@ function App() {
                     }
                     openBench();
                 }}><IconBench /><span class="tt-pop" role="tooltip">Python bench — run scripts in the sandbox</span></button> : null}
-                {/* Straight to the server-tool list, which is a thing you go looking for rather than a
-                    setting you happen to pass — it is where you choose what an agent may reach for. */}
-                {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Server tools" onClick={() => { fetchModels(); markReturn(); openSettingsAt("advanced", "servertools"); }}><IconTools /><span class="tt-pop" role="tooltip">Server-side tools — choose what agents can call</span></button> : null}
+                {/* NOT IN THE HEADER. It was a shortcut straight to the server-tool list, on the reasoning
+                    that choosing what an agent may reach for is a thing you go looking for rather than a
+                    setting you happen to pass. True, and it still lost: the row is what you navigate the
+                    panel with, and one more icon in it costs every OTHER control a little legibility every
+                    time you scan the row — for a trip you make rarely, and which Settings → Advanced already
+                    serves. `openSettingsAt("advanced", "servertools")` is intact, so bringing it back (or
+                    linking it from somewhere better) is one line. */}
                 {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); markReturn(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
             </div>
             <BackendOfflineBanner />
             {vramOpen.value && !inSettings && !inBench ? <VramPanel /> : null}
-            <div class="view" data-rev={r} ref={viewRef} onScroll={onViewScroll} onWheel={endPin} onTouchMove={endPin}>
+            {/* THE BENCH IS THE ONE VIEW THAT DOES NOT SCROLL. It is a split with a draggable divider, so it
+                has to be given the height rather than take it from its content — a `flex: 1` inside an
+                `overflow-y: auto` column resolves to the content's own height and the divider then has
+                nothing to divide. Every other view is a document and keeps the scroller. */}
+            <div class={`view${v.name === "bench" ? " view-bench" : ""}`} data-rev={r} ref={viewRef} onScroll={onViewScroll} onWheel={endPin} onTouchMove={endPin}>
                 <div ref={contentRef}>
                     {v.name === "settings" ? <Settings />
                         : v.name === "bench" ? <PythonBench />
@@ -439,7 +447,7 @@ function mount(): void {
     // ONE floating tooltip layer for the whole surface (see tooltip-layer.ts): nothing clips it, it opens
     // whichever way there is room, and the source nodes stay display:none so their prose is never copied.
     try { installTooltipLayer(document); } catch { /* no DOM in a test harness */ }
-    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [VRAM_PALETTE_KEY]: "", [FOCUS_KEY]: false, [BENCH_OPEN_KEY]: false, [BENCH_DOCK_KEY]: "drawer", [BENCH_H_KEY]: 280 }, (d: any) => {
+    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [VRAM_PALETTE_KEY]: "", [FOCUS_KEY]: false, [BENCH_OPEN_KEY]: false, [BENCH_DOCK_KEY]: "drawer", [BENCH_H_KEY]: 280, [BENCH_SPLIT_KEY]: 0 }, (d: any) => {
         if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont();
         codeWrap.value = d[WRAP_KEY] !== false; codeLineNumbers.value = !!d[LINES_KEY]; applyCodePrefs();
         showStatsTokens.value = d[STATS_TOKENS_KEY] !== false; showStatsTps.value = !!d[STATS_TPS_KEY];
@@ -464,6 +472,7 @@ function mount(): void {
         benchOpen.value = !!d[BENCH_OPEN_KEY];
         benchDock.value = d[BENCH_DOCK_KEY] === "full" ? "full" : "drawer";
         if (typeof d[BENCH_H_KEY] === "number" && d[BENCH_H_KEY] > 0) benchH.value = d[BENCH_H_KEY];
+        if (typeof d[BENCH_SPLIT_KEY] === "number" && d[BENCH_SPLIT_KEY] > 0) benchSplit.value = d[BENCH_SPLIT_KEY];
         // The sandbox's version is a property of the wheels this build ships, not of this session — so it is
         // remembered rather than re-read, which would cost a Pyodide start on every panel open.
         if (d[BENCH_ENV_KEY]?.python) benchEnv.value = d[BENCH_ENV_KEY];
