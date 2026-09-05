@@ -9,26 +9,28 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { MlDebugEvent, MlConfig, ElementContext } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 import {
-    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden,
+    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, laneEnabled, showLane, showModels, LANEH_KEY, laneH, LANE_H_DEFAULT, FOCUS_KEY, focusMode,
+    benchOpen, benchDock, benchH, benchSplit, viewReturn, markReturn, openBench, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY,
+    benchEnv, BENCH_ENV_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
     vramOpen, sidebarOpen, backendError, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
-import { ContextMenu, Hash, highlightPos } from "./ui-kit";
+import { ContextMenu, CursorTipLayer, Hash, highlightPos } from "./ui-kit";
 import type { InvocationInfo } from "../contract";
 import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
-import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge } from "./reply";
-import { AgentRunView, RunStatsBar } from "./agent-detail";
+import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge, EmbedRunView } from "./reply";
+import { AgentRunView } from "./agent-detail";
 import { Composer } from "./composer";
-import { fetchModels, pollPs, pollBackendHealth, VramPanel, PythonBench, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS } from "./vram";
+import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, VramPanel, PythonBench, BenchDrawer, BenchVer, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
 import { CardApp, endActiveCardDrag } from "./hud-card";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
 } from "./card-state";
 import { shownModel, sessionProfile } from "./model";
 import { exportSession, exportSessionJson, printSession } from "./export";
-import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
-import { IconWarn, IconGear, IconExport, IconVram, IconBench } from "./icons";
-import { Settings } from "./settings";
+import { applyTheme, applyFont, applyCodePrefs, applyFocus, initThemeStyle } from "./prefs";
+import { IconWarn, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse } from "./icons";
+import { Settings, openSettingsAt } from "./settings";
 
 
 /* ------------------------------ components ------------------------------- */
@@ -89,7 +91,11 @@ function DetailView({ hash }: { hash: string }) {
     const s = sessionMap.get(hash);
     if (!s) return <div class="empty">Session not found.</div>;
     if (s.kind === "agent") return <AgentRunView s={s} />;
-    return <><OptionsBlock s={s} />{s.turns.map(t => <MessageTurn key={t.id} t={t} />)}</>;
+    // An EMBED session is not a conversation. It reports through the chat events — a model call is a model
+    // call, and reusing the machinery costs no new event kind — but rendering it as user/assistant bubbles
+    // presents a request for vectors as something somebody said, which is where the confusion starts.
+    if (s.kind === "embed") return <EmbedRunView s={s} />;
+    return <><OptionsBlock s={s} />{s.turns.map(t => <MessageTurn key={t.id} t={t} hash={s.hash} />)}</>;
 }
 
 
@@ -185,6 +191,9 @@ function App() {
     // lives in the content-script host (sidebar/shell.ts), not here.
     const inSettings = v.name === "settings";
     const inBench = v.name === "bench";
+    // Where `‹` goes. Only from a view that REPLACED another one — from the sessions list there is nothing
+    // behind you, and a stale value from a previous visit would send you somewhere you did not come from.
+    const backTo = (inBench || v.name === "settings") ? viewReturn.value : null;
     const detailSession = v.name === "detail" ? sessionMap.get(v.hash) : null;
     // Lazily summarise session titles whenever the data or open-state changes.
     // `open` is read (not just used in deps) so App re-renders on open/close.
@@ -200,6 +209,13 @@ function App() {
         const id = setInterval(pollPs, VRAM_POLL_MS);
         return () => clearInterval(id);
     }, []);
+    // The live feed, when the server has one, and ONLY while something is looking at it. Gated exactly like
+    // the poll above (which self-gates internally): the overlay app is mounted in every tab, so subscribing on
+    // mount would have every tab holding a subscription for a panel nobody has open. The interval STAYS
+    // regardless — it stands down while the stream carries and comes back on its own if it drops, so a stock
+    // Ollama with no /api/events at all is served by exactly the same code path it always was.
+    const feedWanted = open && (vramOpen.value || v.name === "detail");
+    useEffect(() => (feedWanted ? connectResourceStream() : undefined), [feedWanted]);
     useEffect(() => { pollPs(); }, [v.name, vramOpen.value, open]);
     // Stick-to-bottom: while a session's detail is open and the user is parked at the bottom,
     // keep the log pinned to the latest as it grows — but if they've scrolled UP to read, leave
@@ -221,6 +237,36 @@ function App() {
         atBottom.v = dist < 40;
     };
     const endPin = () => { pinning.current = false; };   // a user scroll gesture cancels the auto-follow
+    /**
+     * A wheel over the RESOURCE PANEL scrolls the transcript underneath it.
+     *
+     * The panel is a fixed-height sibling of the scroll container rather than content inside it, so a wheel
+     * with the pointer resting on the chart had nothing to scroll and the gesture simply did nothing. Where
+     * the pointer happens to be sitting is not a reason for the page to stop responding.
+     *
+     * Forwarded only when the panel cannot take the scroll itself: dragged tall enough to overflow, it
+     * scrolls its own content first and this hands over only at the ends. `deltaMode` is honoured because a
+     * mouse wheel reports LINES and a page key reports PAGES, and treating either as pixels moves the view
+     * by a few pixels for a gesture that meant a screenful.
+     */
+    const wheelThroughPanel = (e: WheelEvent) => {
+        const target = e.target as Element | null;
+        // The CHART claims the wheel for itself — there it scrubs the window along the session (see
+        // `wheelScrub`), which is a different and more specific meaning than "scroll the page". It calls
+        // preventDefault when it acts, so anything still arriving here from inside the chart is a gesture it
+        // declined, and should scroll like everywhere else in the panel.
+        if (e.defaultPrevented) return;
+        const panel = target?.closest?.(".vram") as HTMLElement | null;
+        if (!panel) return;
+        const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * panel.clientHeight : e.deltaY;
+        const room = panel.scrollHeight - panel.clientHeight;
+        if (room > 1 && ((dy < 0 && panel.scrollTop > 0) || (dy > 0 && panel.scrollTop < room - 1))) return;
+        const el = viewRef.current;
+        if (!el) return;
+        endPin();
+        el.scrollTop += dy;
+        e.preventDefault();
+    };
     const pinBottom = (smooth: boolean) => {
         const el = viewRef.current;
         if (!el) return;
@@ -242,10 +288,17 @@ function App() {
         return () => ro.disconnect();
     }, [detailKey]);
     return (
-        <div class="app">
+        <div class="app" onWheel={wheelThroughPanel}>
             <ContextMenu />
+            <CursorTipLayer />{/* the cursor-following tip (a marked failing line, and anything else too wide to anchor) */}
             <div class="head">
-                {v.name !== "list" ? <button class="tt nav" aria-label="Back to sessions" onClick={() => (view.value = { name: "list" })}>‹<span class="tt-pop left" role="tooltip">Back to sessions</span></button> : null}
+                {v.name !== "list" && !inBench ? <button class="tt nav" aria-label={backTo ? "Back" : "Back to sessions"} onClick={() => {
+                    // Back is a RETURN — to the exact place you left, from ANY view that replaced it
+                    // (settings, the server-tool list, the full-page bench). Landing on the sessions list is
+                    // what made glancing at a setting mid-run cost you the run you were reading.
+                    if (backTo) { viewReturn.value = null; view.value = backTo; return; }
+                    view.value = { name: "list" };
+                }}>‹<span class="tt-pop left" role="tooltip">{backTo?.name === "detail" ? "Back to the session you were reading" : "Back to sessions"}</span></button> : null}
                 {detailSession
                     ? <>
                         <ModelStatusDot model={shownModel(detailSession)} inFlight={detailSession.status === "pending"} />
@@ -254,16 +307,64 @@ function App() {
                         {detailSession.kind === "agent" ? <AgentBadge /> : null}
                     </>
                     : <b>{inSettings ? "Settings" : inBench ? "Python bench" : `Sessions (${sessionMap.size})`}</b>}
+                {/* Same fact in both shapes: the bench is one thing, and which sandbox it is over does not
+                    depend on whether it is docked. */}
+                {inBench ? <BenchVer /> : null}
                 <span class="sp" />
                 {v.name === "detail" ? <Hash hash={v.hash} /> : null}
                 {v.name === "detail" ? <ExportMenu hash={v.hash} /> : null}
+                {/* Focus mode: read the transcript as a conversation. Only offered on a DETAIL view, because
+                    it quiets things that only exist there. Nothing is removed from the session — every
+                    disclosure still opens, the export is unchanged, and turning it off brings it all back. */}
+                {v.name === "detail"
+                    ? <button class={`tt hbtn${focusMode.value ? " on" : ""}`} aria-label="Focus mode" aria-pressed={focusMode.value}
+                        onClick={() => { focusMode.value = !focusMode.value; applyFocus(); chrome.storage.local.set({ [FOCUS_KEY]: focusMode.value }); }}>
+                        <IconBrain />
+                        <span class="tt-pop" role="tooltip">{focusMode.value ? "Focus mode on — show the step counters, badges and controls again" : "Focus mode — read it as a conversation, quieting step counters, badges and controls"}</span>
+                    </button>
+                    : null}
+                {/* FULL mode's way back to the drawer — the same choice the drawer's ⤢ offers, from the other
+                    side. Two modes, one control, so neither is a trapdoor. */}
+                {inBench ? <button class="tt hbtn" aria-label="Close the Python bench" onClick={() => {
+                    // Same destination as docking — what differs is whether the bench comes with you. That
+                    // is the distinction the glyphs carry, and why there is no `‹` here to muddle it.
+                    benchOpen.value = false; chrome.storage.local.set({ [BENCH_OPEN_KEY]: false });
+                    const to = viewReturn.value; viewReturn.value = null;
+                    view.value = to ?? { name: "list" };
+                }}><IconClose /><span class="tt-pop" role="tooltip">Close the bench and go back to what you were reading. Your script is kept.</span></button> : null}
+                {inBench ? <button class="tt hbtn" aria-label="Dock the Python bench" onClick={() => {
+                    benchDock.value = "drawer"; chrome.storage.local.set({ [BENCH_DOCK_KEY]: "drawer" });
+                    benchOpen.value = true; chrome.storage.local.set({ [BENCH_OPEN_KEY]: true });
+                    vramOpen.value = false;
+                    const to = viewReturn.value; viewReturn.value = null;
+                    view.value = to ?? { name: "list" };
+                }}><IconCollapse /><span class="tt-pop" role="tooltip">Dock it to the bottom, so you can read a run while you work in it.</span></button> : null}
                 {!inSettings && !inBench ? <button class={`tt hbtn${vramOpen.value ? " on" : ""}`} aria-label="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /><span class="tt-pop" role="tooltip">VRAM monitor</span></button> : null}
-                {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Python bench" onClick={() => (view.value = { name: "bench" })}><IconBench /><span class="tt-pop" role="tooltip">Python bench — run scripts in the sandbox</span></button> : null}
-                {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
+                {!inSettings && !inBench ? <button class={`tt hbtn${benchOpen.value ? " on" : ""}`} aria-label="Python bench" aria-pressed={benchOpen.value} onClick={() => {
+                    // The toolbar button TOGGLES; a code block's ▶ always opens (it is handing over a
+                    // script). Both go through the same opener, which honours the dock preference.
+                    if (benchOpen.value && benchDock.value !== "full") {
+                        benchOpen.value = false; chrome.storage.local.set({ [BENCH_OPEN_KEY]: false });
+                        return;
+                    }
+                    openBench();
+                }}><IconBench /><span class="tt-pop" role="tooltip">Python bench — run scripts in the sandbox</span></button> : null}
+                {/* NOT IN THE HEADER. It was a shortcut straight to the server-tool list, on the reasoning
+                    that choosing what an agent may reach for is a thing you go looking for rather than a
+                    setting you happen to pass. True, and it still lost: the row is what you navigate the
+                    panel with, and one more icon in it costs every OTHER control a little legibility every
+                    time you scan the row — for a trip you make rarely, and which Settings → Advanced already
+                    serves. `openSettingsAt("advanced", "servertools")` is intact, so bringing it back (or
+                    linking it from somewhere better) is one line. */}
+                {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); markReturn(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
             </div>
             <BackendOfflineBanner />
             {vramOpen.value && !inSettings && !inBench ? <VramPanel /> : null}
-            <div class="view" data-rev={r} ref={viewRef} onScroll={onViewScroll} onWheel={endPin} onTouchMove={endPin}>
+            {/* THE BENCH IS THE ONE VIEW THAT DOES NOT SCROLL. It is a split with a draggable divider, so it
+                has to be given the height rather than take it from its content — a `flex: 1` inside an
+                `overflow-y: auto` column resolves to the content's own height and the divider then has
+                nothing to divide. Every other view is a document and keeps the scroller. */}
+            <div class={`view${v.name === "bench" ? " view-bench" : ""}`} data-rev={r} ref={viewRef} onScroll={onViewScroll} onWheel={endPin} onTouchMove={endPin}>
                 <div ref={contentRef}>
                     {v.name === "settings" ? <Settings />
                         : v.name === "bench" ? <PythonBench />
@@ -271,7 +372,13 @@ function App() {
                                 : <DetailView hash={v.hash} />}
                 </div>
             </div>
-            {detailSession ? <RunStatsBar s={detailSession} /> : null}
+            {/* THE BENCH, docked. A sibling of the scroll container rather than content inside it, so the
+                transcript keeps its own scroll position while you work below it — which is the whole point
+                of the drawer. Not on the settings or full-bench views, where it would be a second copy. */}
+            {benchOpen.value && benchDock.value === "drawer" && !inSettings && !inBench ? <BenchDrawer /> : null}
+            {/* The run-stats readout lives in the composer's own footer, opposite the context gauge — the two
+                are the same kind of fact (what this session has spent, how full it is) and were split across
+                the composer, which made the spend line read as part of the transcript above it. */}
             {detailSession ? <Composer s={detailSession} /> : null}
         </div>
     );
@@ -340,18 +447,44 @@ function mount(): void {
     // ONE floating tooltip layer for the whole surface (see tooltip-layer.ts): nothing clips it, it opens
     // whichever way there is room, and the source nodes stay display:none so their prose is never copied.
     try { installTooltipLayer(document); } catch { /* no DOM in a test harness */ }
-    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [] }, (d: any) => {
+    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [LANEH_KEY]: LANE_H_DEFAULT, [VRAM_PALETTE_KEY]: "", [FOCUS_KEY]: false, [BENCH_OPEN_KEY]: false, [BENCH_DOCK_KEY]: "drawer", [BENCH_H_KEY]: 280, [BENCH_SPLIT_KEY]: 0 }, (d: any) => {
         if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont();
         codeWrap.value = d[WRAP_KEY] !== false; codeLineNumbers.value = !!d[LINES_KEY]; applyCodePrefs();
         showStatsTokens.value = d[STATS_TOKENS_KEY] !== false; showStatsTps.value = !!d[STATS_TPS_KEY];
         if (typeof d[OUTMAX_KEY] === "number") outMaxH.value = d[OUTMAX_KEY];
         if (typeof d[RESWIN_KEY] === "number") resWindowS.value = d[RESWIN_KEY];
         if (Array.isArray(d[LANE_HIDDEN_KEY])) laneHidden.value = d[LANE_HIDDEN_KEY];
+        if (typeof d[LANE_SCOPE_KEY] === "boolean") laneScoped.value = d[LANE_SCOPE_KEY];
+        // An unknown palette name (a downgrade, a typo in storage) falls back rather than leaving every model
+        // colourless, which is what indexing an absent palette would do.
+        if (d[VRAM_PALETTE_KEY] && VRAM_PALETTES[d[VRAM_PALETTE_KEY]]) vramPalette.value = d[VRAM_PALETTE_KEY];
+        // Absent means never set, which is BOTH shown — not both hidden, which is what reading a missing
+        // object as falsy would give and would look like the panel had lost half of itself.
+        if (typeof d[LANEH_KEY] === "number" && d[LANEH_KEY] > 0) laneH.value = d[LANEH_KEY];
+        if (d[SECTIONS_KEY] && typeof d[SECTIONS_KEY] === "object") {
+            const sec = d[SECTIONS_KEY];
+            laneEnabled.value = sec.laneOn !== false;
+            // `lane` is the OLD single key, which meant "expanded". Read as the open state, never as the
+            // enable — a record written by collapsing the section must not come back as the lane switched off.
+            showLane.value = (sec.laneOpen ?? sec.lane) !== false;
+            showModels.value = sec.models !== false;
+        }
         if (typeof d[VRAMH_KEY] === "number") vramH.value = d[VRAMH_KEY];
         showOutTimes.value = d[OUTTS_KEY] !== false;
+        focusMode.value = !!d[FOCUS_KEY]; applyFocus();
+        // The bench remembers whether it was open, how it was docked and how tall it was — it is a workspace
+        // you leave set up, not a dialog you dismiss.
+        benchOpen.value = !!d[BENCH_OPEN_KEY];
+        benchDock.value = d[BENCH_DOCK_KEY] === "full" ? "full" : "drawer";
+        if (typeof d[BENCH_H_KEY] === "number" && d[BENCH_H_KEY] > 0) benchH.value = d[BENCH_H_KEY];
+        if (typeof d[BENCH_SPLIT_KEY] === "number" && d[BENCH_SPLIT_KEY] > 0) benchSplit.value = d[BENCH_SPLIT_KEY];
+        // The sandbox's version is a property of the wheels this build ships, not of this session — so it is
+        // remembered rather than re-read, which would cost a Pyodide start on every panel open.
+        if (d[BENCH_ENV_KEY]?.python) benchEnv.value = d[BENCH_ENV_KEY];
     });
     applyTheme();
     applyCodePrefs();
+    applyFocus();
     fetchModels();
     render(<Root />, root);
 

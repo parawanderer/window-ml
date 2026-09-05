@@ -41,6 +41,8 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     CONFIG_REQUEST: { type: "GET_CONFIG", responseType: "CONFIG_RESPONSE" },
     INVOCATION_REQUEST: { type: "GET_INVOCATION", responseType: "INVOCATION_RESPONSE" },
     PS_REQUEST: { type: "OLLAMA_PS", responseType: "PS_RESPONSE" },
+    // ml.__events() — the debug dump (see the background's DUMP_EVENTS).
+    DUMP_EVENTS_REQUEST: { type: "DUMP_EVENTS", responseType: "DUMP_EVENTS_RESPONSE" },
     UNLOAD_REQUEST: { type: "OLLAMA_UNLOAD", responseType: "UNLOAD_RESPONSE" },
     CAPTURE_TAB_REQUEST: { type: "CAPTURE_TAB", responseType: "CAPTURE_TAB_RESPONSE" },
     SAVE_SESSION_REQUEST: { type: "SAVE_SESSION", responseType: "SAVE_SESSION_RESPONSE" },

@@ -100,6 +100,14 @@ export interface MlConfig {
     exportToolDefs: boolean;
     /** experimental: auto-approve read-only exec surveys via the mediated interpreter */
     autoApproveReadonly: boolean;
+    /** Server-side tool FUNCTIONS the user has turned off, as the `<bundle>__<fn>` names a run would see.
+     *  A run can still ask for the bundle; the disabled functions are simply not built, so a backend with
+     *  forty tools can be curated down to the handful worth offering a model. Per FUNCTION rather than per
+     *  bundle, because a bundle usually mixes something worth calling with several that are not. */
+    serverToolsOff: string[];
+    /** Server-side tool bundles a HUD-started run always gets, without naming them. A run driven from the
+     *  Commander bar has no code to pass `serverTools`, so without this there is no way to give it one. */
+    commanderServerTools: string[];
     /** experimental: auto-approve python_exec (the sandbox is isolated by construction) */
     autoApprovePython: boolean;
     /** also pierce CLOSED shadow roots. A document_start patch (shadow-patch.ts, main world) wraps
@@ -130,6 +138,14 @@ export interface MlConfig {
      *  user-generated PROSE endpoints (issues/pulls/comments/discussions/reviews/releases — a prompt-injection
      *  surface) or a credentialed fetch: those still ask. See self-source.ts. */
     autoApproveSelfSource: boolean;
+    /** Ask for the chat stream as varint-delimited PROTOBUF instead of OpenAI SSE, where the backend serves
+     *  it (a patched Ollama). One `Accept` header; a backend that does not speak it answers with the SSE it
+     *  always did, so this is a preference rather than a commitment. Measured at 25x fewer bytes for the same
+     *  tokens (7343 → 292), because the envelope JSON repeats per token is sent once. Tool calls and
+     *  reasoning ride it; a `toolIds` call does not, since OpenWebUI's citations are emitted on a route
+     *  protobuf is not served over. Off by default: it is only worth anything over a slow link, and the
+     *  backends that serve it are the exception. */
+    protoStream: boolean;
     /** Hostnames the USER has trusted to supply their OWN ml.agent approval gate (a page's
      *  `approve` callback / the page-loop confirm). Empty by default: EVERY other origin's
      *  privileged tool calls route through the unforgeable background gate + trusted surface,
@@ -490,9 +506,12 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoTitles: true,
     exportToolDefs: false,
     autoApproveReadonly: true,
+    serverToolsOff: [],
+    commanderServerTools: [],
     autoApprovePython: true,
     autoApproveSameOriginAuth: false,   // Advanced, default off: a same-origin as-you fetch always asks
     autoApproveSelfSource: true,        // default on: an uncredentialed read of the agent's OWN repo source is free
+    protoStream: false,                 // opt-in: only a patched backend serves it, and it saves bytes not time
     pierceClosedShadow: true,
     cdp: false,
     pageApprovalDomains: [],
@@ -520,7 +539,7 @@ export const detectGroundingModel = (models: string[]): string =>
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch"> & {
+    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "serverToolsOff" | "commanderServerTools" | "autoApprovePython" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
@@ -684,6 +703,29 @@ export interface JsonSchema {
     [k: string]: unknown;
 }
 
+/** A retry's link back to the call it revises — the model names an earlier call with `revises`, and the
+ *  panel draws a diff of the two sources. WE compute that diff, never the model: asked what it changed a
+ *  model answers from what it MEANT to change, and the two disagree exactly when the diff is worth reading.
+ *  Its `claim` therefore sits BESIDE the diff and never instead of it (the same rule a `token:` label
+ *  follows). `before` is the earlier source verbatim; both sides are reflowed by the renderer before
+ *  comparing, or pure spacing differences drown the real change.
+ *  @unstable */
+export interface CodeRevision {
+    /** The resolved pointer, canonicalised to its minted id — so it is stable even when the model named a
+     *  tool alias or a label. */
+    ref: string;
+    /** Which tool made the earlier call. */
+    tool: string;
+    /** The step seq to scroll to, when the earlier call still has one. */
+    seq?: number;
+    /** The model's own name for that output, if it labelled it. */
+    label?: string;
+    /** The earlier source, verbatim. */
+    before: string;
+    /** The model's one-line account of what it changed. A CLAIM, shown beside the computed diff. */
+    claim?: string;
+}
+
 /** A tool's return: a string, or an envelope also carrying live DOM nodes
  *  (`elements`, debug-only) and/or a screenshot (`image`, inline vision). A tool
  *  that computes its own visualization (e.g. `locate`'s badged Set-of-Marks
@@ -816,7 +858,7 @@ export type RenderDescriptor = (
     // uses it to say that pointer macros were expanded, so a reader comparing this against the raw args does
     // not conclude the log is lying to them. `marks`: byte ranges in `text` a renderer may highlight, each
     // with the original it replaced (hover fodder).
-    | { type: "code"; text: string; lang?: string; format?: boolean; note?: string; marks?: { start: number; end: number; from: string }[] }
+    | { type: "code"; text: string; lang?: string; format?: boolean; note?: string; marks?: { start: number; end: number; from: string }[]; revision?: CodeRevision }
     | { type: "table"; columns: string[]; rows: (string | number)[][] }
     | { type: "keyval"; pairs: [string, string][] }
     | { type: "elements"; items: { path: string; text?: string; index?: number }[] }
@@ -834,13 +876,16 @@ export type RenderDescriptor = (
     // `python_exec`'s In slot: a notebook-cell header — the run mode (from `cast`), the
     // input screenshot the script saw, the Python source (highlighted, NOT beautified), and
     // the loaded DataFrame(s) — each with its variable name + provenance (which sheet/table).
-    | { type: "python-in"; mode: "script" | "pt" | "box"; code: string; image?: string; imageToken?: string; tables?: TablePreview[] }
+    | { type: "python-in"; mode: "script" | "pt" | "box"; code: string; image?: string; imageToken?: string; tables?: TablePreview[]; revision?: CodeRevision }
     // `python_exec`'s Out slot: captured stdout, a returned image, a minted @pt/@box token,
     // the raw/JSON value, or a Python traceback.
     | { type: "python-out"; stdout?: string; seen?: number; image?: string; token?: string; value?: string; error?: string; latex?: boolean; df?: { columns: string[]; rows: (string | number | null)[][] } }
     // `exec`'s Out, the JS twin of python-out: the SAME data its raw result string carries, split into
     // sections (console / value / error) so a JS run reads like a notebook cell too instead of one blob.
-    | { type: "exec-out"; stdout?: string; seen?: number; value?: string; error?: string; token?: string }
+    // `errorLine` is the line of the MODEL'S source that threw (exec-trace.ts) — absent when it cannot be
+    // known, never guessed. The python twin reads its line out of the traceback text; JS has no traceback
+    // worth rendering (an evaluated script's stack is mostly the wrapper), so it carries the number.
+    | { type: "exec-out"; stdout?: string; seen?: number; value?: string; error?: string; errorLine?: number; token?: string; stdoutLabel?: string }
     // A DELEGATED `look`'s Out slot: the exact image the vision reader saw, WHICH model read it, and
     // its text output — so a sub-call look reads like `locate`'s substeps (the native look just shows
     // the screenshot, since the agent itself is the viewer).
@@ -864,7 +909,7 @@ export type RenderDescriptor = (
     // place that failure is visible; and the winning rung says whether the Markdown is the SITE's authored
     // text or our own reduction of its markup. Present only on the POST-call render (the approval card's
     // `render()` runs before any rung has been tried).
-    | { type: "action"; verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; crossOrigin?: string; ask?: string; answeredBy?: string; tokens?: number; askBody?: string; askBodyLang?: string; askBodyTruncated?: boolean; pipe?: string; attempts?: FetchAttempt[]; resolvedBy?: FetchAttempt["strategy"] }
+    | { type: "action"; verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; crossOrigin?: string; offMachine?: string; ask?: string; answeredBy?: string; tokens?: number; askBody?: string; askBodyLang?: string; askBodyTruncated?: boolean; pipe?: string; attempts?: FetchAttempt[]; resolvedBy?: FetchAttempt["strategy"] }
 );
 // The slot a descriptor fills is decided by which hook produced it (a tool's `render()`
 // method / run()-returned `renderIn` → the In slot; a run()-returned `render` / an
@@ -995,6 +1040,12 @@ export interface RemoteTiming {
     durationMs: number;
     /** Elapsed before evaluation began — resolution, scheduling, a downstream connect. */
     queuedMs?: number;
+    /** COLD START of the executor's runtime, charged to the call that paid for it and absent on every
+     *  later one. The distinction a model's `load_duration` exists to make, for a sandbox: a first
+     *  `python_exec` spends seconds fetching Pyodide and its wheels before a line of the script runs, and
+     *  a single elapsed figure blames the script for time it never spent. Reported BY the executor — the
+     *  worker, here — since anything measured downstream is measuring the message bus too. */
+    bootMs?: number;
 }
 
 /** Where a remote tool actually runs. `via` names the dispatch mechanism, because "an HTTP endpoint
@@ -1286,7 +1337,7 @@ export interface MlHistory {
 export type PageRequestType =
     | "LLM_REQUEST" | "LLM_STREAM_REQUEST" | "B64_REQUEST" | "LIST_MODELS_REQUEST"
     | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST" | "EMBED_REQUEST"
-    | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST"
+    | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST" | "DUMP_EVENTS_REQUEST"
     | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST" | "FETCH_URL_REQUEST"
     | "CDP_SHADOW_RESOLVE_REQUEST"   // read-only: resolve a `>>>` selector into a SEALED closed shadow root via CDP (discovery)
     | "LIST_SERVER_TOOLS_REQUEST"   // discover the OpenWebUI server-side tools this key may use (valid `toolIds`)
@@ -1303,6 +1354,7 @@ export type PageRequestType =
 export type BackgroundMessageType =
     | "FETCH_LLM" | "FETCH_IMAGE_B64" | "LIST_MODELS" | "GET_MODEL" | "GET_CONFIG"
     | "SET_MODEL" | "MODEL_CAPS" | "EMBED" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
+    | "DUMP_EVENTS"   // ml.__events(): the raw inputs the resource panel derives its timeline from
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE" | "FETCH_URL"
     | "CDP_SHADOW_RESOLVE"   // read-only CDP resolve of a `>>>` selector across sealed shadow roots (discovery half of sealed reach)
     | "LIST_SERVER_TOOLS"   // GET OpenWebUI /api/v1/tools/ — the server-side tools, with their function specs
@@ -1517,6 +1569,12 @@ export interface PageToolEnvelope {
     renderOut?: RenderDescriptor;
     /** what locate fed into the model's context (snap-inject) — computed page-side, surfaced in the render + export */
     feedback?: ToolFeedback;
+    /** THE EXECUTOR'S OWN CLOCK — a sandbox's cold start and script time, a remote tool's evaluate and queue.
+     *  It has to cross with the result: the background measures wall time around the whole dispatch, which
+     *  contains the network and the far end's overhead, so without this the timeline can only draw one
+     *  undifferentiated span and a first `python_exec` reads as a slow script rather than as a runtime
+     *  being downloaded. */
+    remoteMs?: RemoteTiming;
     /** a readonlyTry that the mediated interpreter HANDLED (→ auto-approve) */
     readonly?: boolean;
     /** prior grants a readonlyTry REUSED (cached ml.fetch URLs) — surfaced as the "reused a grant" note on
@@ -1615,6 +1673,16 @@ export interface LoadedModel {
     gpus?: LoadedModelGpu[];
     contextLength: number | null;
     expiresAt: string | null;
+    /** Whether this runner is SERVING a request right now, from its reference count. It is the only way to
+     *  read `expiresAt` correctly: the deadline is rewritten when a request FINISHES, so during a generation
+     *  it stands still while a countdown drawn against it keeps running down, and on a long enough one it
+     *  crosses zero. It also covers traffic we never see (another client, a script, a terminal), which no
+     *  local in-flight flag can. ABSENT on a stock server, which means "not known", never "idle". */
+    busy?: boolean;
+    /** The runner's lifecycle state. A `"loading"` entry carries its NAME and zeros for everything else,
+     *  `expires_at` included, so every other field on it is "not yet known" rather than a measurement.
+     *  Absent means resident. Both fields need a patched Ollama (see docs/FORKED-BACKENDS.md). */
+    state?: string;
 }
 
 /** One accelerator the machine has, from `/api/info` `compute.supported_gpus[]`. All memory figures are raw
@@ -1738,7 +1806,14 @@ interface DebugBase {
     save: boolean;
     session: SessionRef;
 }
-export interface DebugChatStart extends DebugBase { kind: "chat"; streaming: boolean; request: DebugChatRequest; config: DebugSessionConfig; }
+export interface DebugChatStart extends DebugBase {
+    kind: "chat"; streaming: boolean; request: DebugChatRequest; config: DebugSessionConfig;
+    /** What KIND of call this session holds, when it is not an ordinary chat. `ml.embed()` reports through
+     *  this same event — it is a model call that occupies VRAM and takes time, and reusing the machinery
+     *  costs no new event kind — but it is not a chat, and labelling it one is a claim about something that
+     *  never happened. Absent means chat. */
+    sessionKind?: "embed";
+}
 export interface DebugChatResult extends DebugBase { kind: "chat-result"; content: string; sources: unknown[] | null; structured: boolean; model: string | null; extend: ExtendProfile | null; reasoning: string | null; usage: TokenUsage | null; }
 export interface DebugChatError extends DebugBase { kind: "chat-error"; error: string; }
 
@@ -1755,7 +1830,10 @@ export interface DebugAgentConfig {
     /** caller supplied their own `system` (vs the built-in preamble) */
     customSystem: boolean;
     /** description/parameters let the sidebar show the FULL tool definitions (a JSON tree), not just names. */
-    tools: { name: string; requiresApproval: boolean; vision?: boolean; description?: string; parameters?: JsonSchema; summary?: string }[];
+    /** The run's resolved toolset. `remote` is present when a tool dispatches somewhere else — the single
+     *  most important fact about one in a RECORD of a run, since an export listing it beside the local tools
+     *  cannot otherwise say that its arguments left the machine. */
+    tools: { name: string; requiresApproval: boolean; vision?: boolean; description?: string; parameters?: JsonSchema; summary?: string; remote?: RemoteToolTarget }[];
     maxSteps: number;
     think: boolean | null;
     env: boolean;
@@ -1811,6 +1889,13 @@ export interface DebugAgentStep extends DebugBase {
     /** How long the approval gate was OPEN, in ms — a human deciding, which is the step's wall time but not
      *  the machine's work. Absent when nothing was gated (auto-approved, read-only, denied without a prompt). */
     approveMs?: number;
+    /** PLUMBING: the gap between the model call returning and the tool starting, in ms — parsing the call,
+     *  validating its arguments, building the context, the hop to the page on a delegated run. Excludes the
+     *  approval gate, which is `approveMs` and its own phase; counting it here would draw the same seconds
+     *  twice. It exists because the timeline reconstructs a block's start by subtracting the parts it knows
+     *  about, so an unmeasured part does not merely go unlabelled — it shifts the whole block later than the
+     *  work happened, against an axis shared with the memory trace. */
+    dispatchMs?: number;
     /** A REMOTE executor's own measurement, when the tool ran somewhere else. `toolMs` above is OUR wall
      *  clock around the whole dispatch, so it contains the network and the far end's overhead too; this is
      *  what lets the timeline draw those apart instead of charging the difference to the tool. */
@@ -1930,9 +2015,11 @@ export interface MlApi {
      *  `ml.answer`: live inside a tool call (an approved `exec`), throws from the console outside a run.
      *
      *  SYNCHRONOUS inside `exec` for a reference written LITERALLY — `@tool:abc1234`, or the same string
-     *  passed directly — because every such reference is resolved before the script starts. So
-     *  `@tool:abc1234.length` is a number, not `undefined` on a promise. A COMPUTED reference (one built at
-     *  runtime) or a call with `pipe` cannot be known in advance and stays a promise. `await` is safe on
+     *  passed directly — and for the no-argument listing, because all of those are resolved before the
+     *  script starts. So `@tool:abc1234.length` is a number, not `undefined` on a promise, and the macro
+     *  and the longhand call it expands to are the same object. Two cases stay a promise: a COMPUTED
+     *  reference (built at runtime, so no static pass can see it), and a call with `pipe`, which mints its
+     *  own pointer for the reduction and so has to go back to the run rather than reduce what is in hand. `await` is safe on
      *  both, since awaiting a non-promise is a no-op — so if in doubt, await. */
     dereference(ref: string, options?: { pipe?: string | string[] | null }): DerefValue | Promise<DerefValue>;
     /** The TS-like type of some JSON — one document's shape, or the JOINED type of several. Same-shaped
@@ -1997,7 +2084,7 @@ export interface MlApi {
     fetchTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; render?: "latex" | "img"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; render?: "latex" | "img"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
     /** Read-only self-introspection tool for ml.agent (pass via `extraTools`): reports the run's model,
@@ -2085,6 +2172,10 @@ export interface MlApi {
     config(): Promise<MlPublicConfig>;
     setModel(model: string): Promise<string>;
     ps(): Promise<LoadedModel[]>;
+    /** DEBUG DUMP of everything the resource panel derives its timeline from — the `__mlDebug` stream, the
+     *  server's event frames, the current ps/info. Underscored: a debugging aid, not API, and its shape may
+     *  change freely. `{ download: true }` saves it as a file rather than only returning it. */
+    __events(opts?: { download?: boolean }): Promise<Record<string, unknown>>;
     unload(model?: string | null): Promise<string[]>;
     /** List the OpenWebUI server-side tools available to the configured API key —
      *  the valid ids for `ml.chat`'s `toolIds`, with each one's function specs.

@@ -75,12 +75,23 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* STICKY, not absolute: the panel scrolls once a height is set, and an absolutely-positioned grip sits at the
    bottom of the CONTENT — so it scrolled out of reach exactly when you most wanted to drag it back. Sticky
    keeps it on the visible bottom edge. */
-.vram-grip { position: sticky; bottom: 0; margin-top: auto; height: 7px; flex: 0 0 auto; cursor: ns-resize;
+/* THE drag grip — one pill, wherever an edge resizes. It was written three different ways (the resource
+   panel's, the output cell's, and a background-gradient hack in the bench), which is three chances for the
+   same affordance to look like three different things. A short CENTRED pill rather than a full-width bar:
+   a bar spanning the edge reads as an inert scrollbar track. The hit area stays full width; only the pill
+   is painted, and it GROWS on hover so the target announces itself before you press. */
+.vram-grip { height: 7px; flex: 0 0 auto; cursor: ns-resize; touch-action: none;
              display: flex; align-items: center; justify-content: center; background: var(--panel); }
+.vram-grip { position: sticky; bottom: 0; margin-top: auto; }
 .vram-grip::after { content: ""; width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2);
                     opacity: .55; transition: width .12s ease, opacity .12s ease; }
 .vram-grip:hover::after { width: 52px; opacity: 1; background: var(--panel-2-hover); }
-.vram-head { display: flex; align-items: center; }
+/* ONE ROW, always. The header gains and loses controls as you use the panel — the zoom chip appears when you
+   scrub, the view picker only once capacity is known — and a row that reflows when one arrives shifts every
+   surface below it, including the strip you are mid-drag on. So it never wraps, and the total (the longest
+   item, and the one you can still read at half length) is what gives up width. */
+.vram-head { display: flex; align-items: center; flex-wrap: nowrap; gap: 4px; min-height: 2.4em; }
+.vram-head > .vram-total { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vram-total { color: var(--fg); font-weight: 600; font-size: 0.92em; font-variant-numeric: tabular-nums; }
 .vram-free { background: var(--panel-2); color: var(--fg); border: none; border-radius: 4px; padding: 3px 8px; font-size: 0.83em; cursor: pointer; }
 .vram-free:hover { background: var(--panel-2-hover); }
@@ -122,13 +133,15 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-editor { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; padding: 6px;
              background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.78em; }
 .rc-etrack { display: flex; flex-direction: column; gap: 3px; }
-.rc-erow { display: flex; align-items: center; gap: 4px; }
+.rc-erow { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .rc-emode { font: inherit; color: var(--fg-dim); background: var(--panel); border: 1px solid var(--border);
             border-radius: 3px; padding: 0 3px; }
 .rc-ex, .rc-eadd { color: var(--fg-faint); background: none; border: 1px solid transparent; border-radius: 3px;
                    cursor: pointer; font: inherit; padding: 0 5px; }
 .rc-ex:hover, .rc-eadd:hover { color: var(--fg); background: var(--panel); border-color: var(--border); }
-.rc-eseries { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+/* Series sit inline with the track's mode, not under it — see the comment at the markup. `min-width: 0`
+   so a long series list wraps inside the row instead of forcing the row wider than the panel. */
+.rc-eseries { display: flex; flex-wrap: wrap; gap: 4px 10px; min-width: 0; margin-left: 8px; }
 .rc-eopt { display: inline-flex; align-items: center; gap: 3px; color: var(--fg-dim); cursor: pointer; position: relative; }
 /* A stack the rule would refuse is DISABLED with the reason, not hidden — the constraint should teach. */
 .rc-eopt.off { opacity: .5; cursor: help; }
@@ -202,7 +215,16 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    which is what left a slab of empty space to the right of the short ones. */
 .rc-tip-model { flex-direction: column; align-items: flex-start; gap: 3px; width: max-content; max-width: min(300px, 92vw); }
 .rc-tip-model .rc-tip-line { display: flex; align-items: center; gap: 5px; }
+/* THIS TIP IS A COLUMN, and two of its children were written for the ROW tip. `flex-basis: 100%` means
+   "take the whole line" in a row and "be as tall as the container" in a column — which is what threw the
+   spacing around. And a child sized to its own content makes the divider below span the timestamp rather
+   than the tip, so the rule stops short and reads as a stray mark. */
+.rc-tip-model > .rc-tip-facts, .rc-tip-model > .vram-cost { flex-basis: auto; align-self: stretch; }
+.rc-tip-model > .rc-tip-when { align-self: stretch; }
 .rc-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
+/* The residual's placeholder: same footprint so the names align, an empty ring so it cannot be read as a
+   model's colour. */
+.rc-tip-dot-none { background: transparent; border: 1px solid var(--fg-faint); opacity: .55; }
 /* The pool tip is a small table, not a one-liner: how big, how much is used, and BY WHAT — the consumer list
    is repeated here so the answer is complete without looking away from the cursor. */
 .rc-tip-pool { flex-direction: column; align-items: stretch; gap: 1px; min-width: 150px; }
@@ -218,18 +240,49 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* The drag selection, drawn in every track at once: the ranges only mean anything compared across pools. */
 /* What the lane draws, and what it leaves out. Each chip carries its count: a filter that makes you toggle
    blindly to find out what it hides is worse than none. */
-.rc-lane-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin: 3px 0 0; }
+/* The lane's kind filters. They ride the `events` DISCLOSURE HEADER (see LaneFilterBar) rather than sitting
+   in its body, so opening the lane does not spend a row on them — hence no top margin and no wrapping: this
+   is half of one line, and a wrap here would push the lane down by exactly the row that was removed. */
+.rc-lane-filter { display: flex; align-items: center; gap: 3px; overflow: hidden; }
+/* The scope switch: a two-segment control in the panel header. A SEGMENTED pair rather than one toggling
+   label, because a toggle that reads "this session" has to be read twice — once for the text, once to work
+   out whether that is the current state or the thing it will do. Both options visible, one lit, answers it
+   at a glance. The lit segment is a filled chip rather than accent-coloured text, which is what made the
+   old chip hard to read: accent on the panel ground has too little contrast in dark mode. */
+.rc-scope { display: inline-flex; align-items: stretch; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.rc-scope-seg { padding: 0 7px; font-size: 0.7em; line-height: 1.9; border: 0; background: none; color: var(--fg-faint); cursor: pointer; position: relative; }
+.rc-scope-seg + .rc-scope-seg { border-left: 1px solid var(--border); }
+.rc-scope-seg:hover { background: var(--panel-2-hover); color: var(--fg-dim); }
+.rc-scope-seg.on { background: var(--accent); color: var(--accent-fg, #fff); font-weight: 600; }
+.rc-scope-seg.on:hover { background: var(--accent); }
 .rc-lane-chip { padding: 0 5px; font-size: 0.7em; line-height: 1.6; cursor: pointer; color: var(--fg-dim);
                 background: var(--panel-2); border: 1px solid var(--border); border-radius: 3px;
                 font-variant-numeric: tabular-nums; }
 .rc-lane-chip:hover { background: var(--panel-2-hover); }
+/* A closed lane's chips are a SUMMARY, not controls — no hover, no pointer, nothing to press. */
+.rc-lane-chip.static { cursor: inherit; }
+.rc-lane-chip.static:hover { background: var(--panel-2); }
 .rc-lane-chip.off { opacity: .45; text-decoration: line-through; }
+/* The SCOPE chip is a mode switch, not a fifth kind filter — the kind chips subtract from what is drawn,
+   this one changes whose events are drawn at all. Pushed to its own end of the row with a rule before it, so
+   it stops reading as one more thing to untick. */
+.rc-lane-chip.scope { margin-left: auto; border-left-width: 1px; }
+.rc-lane-chip.scope::before {
+    content: ""; position: absolute; left: -7px; top: 2px; bottom: 2px; width: 1px; background: var(--border);
+}
+.rc-lane-chip.scope { position: relative; }
 .rc-lane-chip.scope.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 50%, transparent); }
-.rc-lane-count { margin-left: auto; font-size: 0.7em; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+/* NO second auto margin. Both this and the scope chip claimed `margin-left: auto`, and a flex row spends the
+   free space on the FIRST one — so the chip landed mid-row with a second gap opening after it, reading as a
+   control that had come loose from everything. The chip takes the row's slack; the count follows it, and the
+   two read as one right-hand group: whose events, and how many of them are drawn. */
+.rc-lane-count { margin-left: 4px; font-size: 0.7em; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
 /* The scrub strip: the whole session in one bar, with a box for the slice the chart is drawing. Its axis is
    LINEAR in time (an overview should show a ten-minute hole at its true width), so the runs are blocks and
    the gaps are the spaces between them. */
-.rc-scrub { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; }
+/* `gap` has to be column-only: the connector wraps onto its own row, and a row-gap pushed it away from the
+   track it is supposed to start at. */
+.rc-scrub { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; margin: 4px 0 0; }
 .rc-scrub-track { position: relative; flex: 1 1 auto; height: 14px; cursor: ew-resize;
                   background: var(--panel-2); border-radius: 3px; overflow: hidden; }
 .rc-scrub-run { position: absolute; top: 3px; bottom: 3px; background: var(--fg-faint); opacity: .5; border-radius: 2px; }
@@ -249,18 +302,49 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-brush { position: absolute; top: 0; bottom: 0; z-index: 4; pointer-events: none;
             background: color-mix(in srgb, var(--accent) 18%, transparent);
             border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); }
+/* The hovered event's stretch, shaded on the trace above it. Softer than the brush and with no hard edges:
+   the brush is a SELECTION you made and holds until you leave it, this is a passing answer to "which part of
+   the line is this block about". In the model's own colour, so the shade and the block read as one thing. */
+.rc-hoverspan { position: absolute; top: 0; bottom: 0; z-index: 3; pointer-events: none;
+    background: color-mix(in srgb, var(--model, var(--accent)) 14%, transparent);
+    border-left: 1px solid color-mix(in srgb, var(--model, var(--accent)) 55%, transparent);
+    border-right: 1px solid color-mix(in srgb, var(--model, var(--accent)) 55%, transparent); }
 .rc-plot { cursor: crosshair; }
 /* The way out of a zoom, beside the view picker. */
-.vram-zoom { background: var(--panel-2); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px;
+/* The label is a DURATION that changes as you scrub — "7s" one moment, "1m 28s" the next — so without a
+   floor and tabular figures the chip resizes under the cursor and shoves its neighbours along the row. */
+.vram-zoom { min-width: 5.5em; text-align: center; font-variant-numeric: tabular-nums; margin-right: 6px;
+    background: var(--panel-2); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px;
              padding: 2px 7px; font-size: 0.8em; cursor: pointer; font-variant-numeric: tabular-nums; }
 .vram-zoom:hover { background: var(--panel-2-hover); }
 .rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: help; z-index: 3; }
 .rc-rule::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;
     background: repeating-linear-gradient(to bottom, var(--fg-dim) 0 3px, transparent 3px 6px); }
-.rc-rule-evict::before { background: repeating-linear-gradient(to bottom, var(--danger, #ef4444) 0 3px, transparent 3px 6px); opacity: .85; }
+/* The model's OWN colour when the event names one — a rule is an annotation on that model's trace, and
+   matching it to the band above is what makes the two read as one thing. `--model` is set inline per rule;
+   the danger colour is the fallback for an event with no model (the server does emit bare unloads). */
+.rc-rule-evict::before { background: repeating-linear-gradient(to bottom, var(--model, var(--danger, #ef4444)) 0 3px, transparent 3px 6px); opacity: .85; }
+.rc-rule-load::before { background: repeating-linear-gradient(to bottom, var(--model, var(--fg-dim)) 0 3px, transparent 3px 6px); opacity: .85; }
 /* Hovered — in THIS plot or any other, since one eviction is drawn in all of them. */
 .rc-rule:hover::before, .rc-rule.hot::before { width: 3px; left: 3px; opacity: 1; }
 .rc-lane { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 0; }
+/* THE ROWS, IN A BOX OF THEIR OWN. The lane re-packs as the window moves, so its natural height changes
+   constantly — and unbounded inside a fixed-height panel every row it gained came off the charts above it,
+   which shrank while you were dragging the panel. Capped and scrolling, nothing above it moves. Horizontal
+   scrolling is refused: the lane shares the plot's x-axis, and a lane that could scroll sideways would stop
+   lining up with the memory trace it exists to be read against. */
+.rc-lane-rows { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; overflow-x: hidden;
+                overscroll-behavior: contain;
+                /* THE BOX HAS A BOTTOM. Without it the bars floated in the panel with nothing saying where
+                   their space ended — and since the box is a fixed height that scrolls, "where it ends" is a
+                   fact the reader needs. The rule stays put while the rows scroll under it. */
+                border-bottom: 1px solid var(--border); }
+/* …AND THAT RULE IS THE HANDLE. A centred pill reads as a drawer's grab, which this is not; the edge of a box
+   is the ordinary place to resize one from. The strip is transparent and sits ON the border, pulled up over
+   it so the line itself is what the pointer finds — the same border-is-the-line pairing the bench editor and
+   its divider already use. It brightens on hover, which is the whole affordance. */
+.rc-lane-grip { flex: 0 0 auto; height: 9px; margin-top: -5px; cursor: ns-resize; touch-action: none; }
+.rc-lane-grip:hover + *, .rc-lane-rows:has(+ .rc-lane-grip:hover) { border-bottom-color: var(--fg-faint); }
 .rc-lane-row { position: relative; display: flex; gap: 3px; height: 9px; }
 .rc-lane-seg { position: relative; min-width: 2px; height: 100%; }
 .rc-ev { position: absolute; top: 0; height: 100%; min-width: 3px; padding: 0; border: none; border-radius: 2px;
@@ -279,7 +363,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 @keyframes rc-ev-live { 0%, 100% { opacity: .95; } 50% { opacity: .55; } }
 @media (prefers-reduced-motion: reduce) { .rc-ev.open { animation: none; } }
 .rc-ev { transition: opacity .12s ease; }
-.rc-ev:hover { opacity: 1; outline: 1px solid var(--fg-dim); }
+/* The hovered block draws ABOVE its neighbours. An outline is painted on the element's own layer, so a bar
+   packed hard against the next one had that edge covered by it — and the one thing the outline is for is
+   telling you where this block ENDS when several abut. */
+.rc-ev:hover { opacity: 1; outline: 1px solid var(--fg-dim); z-index: 5; }
 /* A composite step: hard stops at each phase boundary, built inline from the phases themselves (the model's
    own colour for its work, a neutral for the human's wait, a wash of the same colour for the tool). The
    fallback here only matters if an event arrives with no phases. */
@@ -288,14 +375,53 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* The WAIT phase is drawn as a hollow neutral stop in that same gradient (see phaseGradient), so a step that
    sat at an approval gate can never read as work: the bar is wide because a person was deciding. */
 .rc-ev-gen { background: var(--accent); }
+/* AN ASIDE — a model call YOU triggered while reading, not part of the run. OUTLINED rather than filled,
+   because the filled bars beside it are the agent's work and this is not: it spent tokens on this box (so
+   it is drawn) but it belongs to your reading session (so it must not read as a step). */
+.rc-ev-aside {
+    background: transparent;
+    border: 1px dashed color-mix(in srgb, var(--model, var(--fg-faint)) 70%, transparent);
+    opacity: 0.9;
+}
 /* A background embedding call: a small model working BESIDE the driver rather than in its sequence, so it is
    quieter and reads as something happening underneath. */
 .rc-ev-embed { background: color-mix(in srgb, var(--ok, #22c55e) 60%, transparent); }
-.rc-ev-run { background: color-mix(in srgb, var(--fg-dim) 45%, transparent); }
+/* A run is the CONTAINER the other blocks sit inside, and it is the widest bar in the lane — as a full-height
+   solid fill it read as the heaviest piece of work rather than as the thing holding it. HEIGHT carries that
+   distinction instead of texture: the top row is always a run wrapper and never anything else, so a solid bar
+   at half height says "this is the span everything below happens within" more plainly than a pattern did, and
+   it keeps the model colour the rest of the lane reads by. */
+.rc-ev-run, .rc-ev-session {
+    top: 50%; height: 50%; transform: translateY(-50%);
+    background: var(--model, var(--fg-dim));
+}
+/* A SESSION container is not a run: nothing was driven, it is just the stretch some `ml.chat()` or
+   `ml.embed()` calls happened in. Drawn HOLLOW — a bracket around its own spans rather than a bar of work —
+   so a glance tells the two apart without reading the chip counts. */
+.rc-ev-session {
+    background: none;
+    border: 1px solid var(--model, var(--fg-dim));
+    border-radius: 3px;
+    opacity: .85;
+}
 /* A load is the wait before a token — striped, because it is time spent NOT generating. The real fill is
    built inline from the model's colour (loadStripes); this is what it falls back to. */
 .rc-ev-load { background: repeating-linear-gradient(45deg, var(--warn, #f59e0b) 0 3px, var(--panel) 3px 8px);
               outline: 1px solid var(--border); outline-offset: -1px; }
+/* The CONTEXT half of a load, over the striped span: the KV cache and compute buffers being allocated. A
+   tighter, denser stripe than the weights half, with a hairline at the boundary, so the split reads as a
+   change of texture. Drawn as an overlay rather than as a gradient stop, because a stop takes a colour and a
+   stripe is a pattern — the same reason the approval wait is an overlay. */
+.rc-ev-ctxphase { position: absolute; top: 0; bottom: 0; pointer-events: none;
+  background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--model, var(--warn, #f59e0b)) 80%, transparent) 0 2px, transparent 2px 5px);
+  border-left: 1px solid color-mix(in srgb, var(--model, var(--fg)) 70%, transparent); }
+
+/* SERVING: the box working, from the server's own view — so it covers requests this browser never made,
+   which is the reason it is worth drawing at all. Solid (unlike a load, which is a wait) and in the model's
+   own colour, at half weight so it reads as a backdrop to the steps drawn against it rather than competing
+   with them. */
+.rc-ev-serve { background: color-mix(in srgb, var(--model, var(--accent)) 55%, transparent);
+               outline: 1px solid color-mix(in srgb, var(--model, var(--accent)) 35%, transparent); outline-offset: -1px; }
 .rc-tip-event { flex-direction: column; align-items: stretch; gap: 2px; min-width: 150px; }
 .rc-tip-event .rc-tip-line { display: flex; align-items: center; gap: 5px; }
 .rc-tip-event .rc-tip-size { margin-left: auto; }
@@ -307,26 +433,124 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-chip-dim { color: var(--fg-faint); }
 /* A note is prose ABOUT the block, not a fact in it — no border, and set apart. */
 .rc-tip-note { color: var(--fg-faint); font-size: 0.92em; }
-.rc-tip-when { color: var(--fg-dim); font-size: 0.92em; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rc-tip-event code { font-family: var(--mono, ui-monospace, monospace); font-size: 0.95em;
                      padding: 0 3px; background: var(--panel-2); border-radius: 3px; }
 /* Phases are separated by their rule; the name/duration pair is the line itself. */
 .rc-tip-event .rc-tip-name { font-weight: 600; }
-.rc-tip-rule { height: 1px; margin: 2px 0; background: var(--border); }
+/* The container already spaces its children (`gap`), so the rule's own margin only ADDS to it — 2px of gap
+   plus 2px of margin either side left the line floating in the middle of a gap rather than reading as the
+   top of the section under it. A hair more below than above does that. */
+/* A separator is a BORDER on the section it opens, never an element of its own — see the note in EventTip.
+   The standalone rule is kept only for the tooltips that still use it, and is inert at an edge. */
+.rc-tip-rule { height: 1px; margin: 1px 0 2px; background: var(--border); }
+.rc-tip-rule + .rc-tip-rule, .rc-tip > .rc-tip-rule:first-child, .rc-tip > .rc-tip-rule:last-child { display: none; }
+.rc-tip > .sep { border-top: 1px solid var(--border); margin-top: 3px; padding-top: 3px; }
+/* …and never on the FIRST thing in the tip, where it would be a line under the tip's own edge. */
+.rc-tip > .sep:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
 .rc-tip-consumer { display: inline-flex; align-items: center; gap: 5px; }
 .rc-tip-pct { opacity: .7; font-variant-numeric: tabular-nums; }
-.rc-tip-gone { padding: 0 4px; font-size: 0.9em; color: var(--fg-faint); border: 1px solid var(--border); border-radius: 3px; }
 .rc-tip-dim { color: var(--fg-faint); }
+/* WHEN the figures above were measured. Ruled off, because it is a different kind of fact from the rest of
+   the tip: those describe a quantity, this one says which instant the quantity is from. */
+.rc-tip-when { padding-top: 3px; border-top: 1px solid var(--border); color: var(--fg-faint);
+  font-size: 0.92em; font-variant-numeric: tabular-nums; display: flex; gap: 6px; }
+.rc-tip-ago { opacity: .75; }
+.rc-tip-holders { display: flex; flex-wrap: wrap; gap: 2px 8px; }
+/* The swatch sits flush against the name without this — it reads as part of the word. */
+.rc-tip-name .rc-swatch { margin-right: 5px; }
+/* The stacked reading: one row per series at the hovered datapoint. The nearest to the pointer is marked
+   rather than being the only one shown, because where two lines CROSS the one underneath is unreachable by
+   hover and that crossing is the moment worth reading. */
+/* A COLUMN of full-width sections, not the base tip's centred row-wrap — otherwise every rule spans only its
+   own text and no two readings line up. The base .rc-tip is a centred flex-WRAP row, which is right for the
+   one-line tips and wrong for a table; the overrides here are what make this one a table. */
+.rc-tip-pools { flex-direction: column; align-items: stretch; gap: 0; min-width: 250px; padding: 7px 9px; }
+/* EVERY row is the same three columns: name (takes the slack), amount, share. Nesting is expressed by
+   indenting inside the NAME column, so a consumer's figures land on the same right edge as its pool's —
+   which is the whole reason this is a grid rather than a stack of flex rows each formatting its own tail. */
+.rc-tip-pools .rc-tip-row { display: grid; grid-template-columns: 1fr auto auto; align-items: baseline;
+  column-gap: 10px; line-height: 1.55; }
+.rc-tip-pools .rc-tip-label { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.rc-tip-pools .rc-tip-cname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-tip-pools .rc-tip-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Fixed width so the percentages form a column of their own — ragged ones ("<1%", "39%", "6.1%") otherwise
+   push the amounts around and nothing above lines up with anything below. */
+.rc-tip-pools .rc-tip-pct { min-width: 40px; text-align: right; font-variant-numeric: tabular-nums;
+  color: var(--fg-faint); margin-left: 0; }
+/* The denominator is context, not a reading, so it recedes — and it only appears on a POOL row, because a
+   consumer's share is already of that same pool. */
+.rc-tip-pools .rc-tip-of { color: var(--fg-faint); }
+/* The stamp leads (it applies to everything below it), so its rule sits UNDER it and spans the whole tip. */
+.rc-tip-pools .rc-tip-when { margin: 0 0 5px; padding: 0 0 5px; border-top: none;
+  border-bottom: 1px solid var(--border); justify-content: space-between; }
+/* One rule between pools. Not above the first — a line directly under the stamp's own rule reads as a gap
+   rather than as a divider. */
+.rc-tip-pools .rc-tip-sect + .rc-tip-sect { margin-top: 5px; padding-top: 5px; border-top: 1px solid var(--border); }
+.rc-tip-pools .rc-tip-poolrow { color: var(--fg-dim); }
+.rc-tip-pools .rc-tip-poolrow.near { color: var(--fg); }
+.rc-tip-pools .rc-tip-poolrow.near .rc-tip-label { font-weight: 600; }
+/* What is resident on the pool ABOVE, so it hangs off a rail inside the NAME column — the indent says
+   "belongs to" without moving its figures out of line with the pool's. */
+.rc-tip-pools .rc-tip-consumer-row { color: var(--fg-faint); }
+.rc-tip-pools .rc-tip-consumer-row .rc-tip-label { margin-left: 3px; padding-left: 9px; border-left: 1px solid var(--border); }
+/* The fallback line's hover: a rule at the datapoint and a dot on it, so the figure in the tip is visibly a
+   reading of one point rather than of wherever the pointer happens to be. */
+.vram-spark-wrap { position: relative; cursor: crosshair; }
+.vram-spark-rule { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 2; }
+.vram-spark-dot { fill: var(--accent); }
 .rc-tip-name { color: var(--fg); font-weight: 600; }
 .rc-tip-size { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 /* Hovering either the band or its row lights the other — they describe the same model. */
 .vram-row.hot { background: var(--panel-2); border-radius: 3px; }
+/* The fold under a SCOPED model list — a real BUTTON with a turning chevron. It was a bare line of text,
+   which made it the one interactive thing on the panel that did not look interactive: quiet is right for
+   something that is the way to a fact rather than a fact, invisible is not. */
+.vram-others { display: flex; align-items: center; gap: 4px; width: 100%; padding: 2px 3px; margin-top: 1px;
+    background: none; border: 0; border-radius: 4px; cursor: pointer; color: var(--fg-faint);
+    text-align: left; font: inherit; font-size: 0.83em; }
+.vram-others:hover { color: var(--fg-dim); background: var(--panel-2); }
+.vram-others .tri { display: inline-flex; transition: transform .18s cubic-bezier(.2, .7, .2, 1); }
+.vram-others.open .tri { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .vram-others .tri { transition: none; } }
+/* ---------------------------------- DISCLOSURE ----------------------------------
+   ONE sliding section, used everywhere something opens: the model list's fold, the agent's system prompt and
+   tool definitions, the server-tool list. All three were a pill button that injected a box into the layout,
+   which reads as content appearing rather than a section opening, and says nothing about being closable.
+
+   The slide is `grid-template-rows: 0fr → 1fr` because the content's height is not known in advance and
+   `height: auto` cannot be transitioned at all. The child needs `min-height: 0` or a grid item refuses to
+   shrink below its content and nothing moves. */
+.disc { display: flex; flex-direction: column; }
+/* The header LINE. Normally just the button; with an `aside` it is the button plus controls beside it, which
+   is how a section's own toggles share the header instead of costing a row of their own in a body. The button
+   then shrinks to its label so the rest of the line is the aside's, and its hover no longer spans the row. */
+.disc-headrow { display: contents; }
+.disc-headrow.has-aside { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.disc-headrow.has-aside > .disc-head { width: auto; flex: 0 0 auto; }
+.disc-headrow.has-aside > :not(.disc-head) { min-width: 0; flex: 1 1 auto; }
+.disc-head { display: flex; align-items: center; gap: 4px; width: 100%; padding: 2px 3px;
+    background: none; border: 0; border-radius: 4px; cursor: pointer; color: var(--fg-dim);
+    text-align: left; font: inherit; font-size: 0.86em; }
+.disc-head:hover { color: var(--fg); background: var(--panel-2); }
+.disc-head .tri { display: inline-flex; transition: transform .18s cubic-bezier(.2, .7, .2, 1); }
+.disc.open .disc-head .tri { transform: rotate(90deg); }
+.disc-note { color: var(--fg-faint); }
+.disc-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .2s cubic-bezier(.2, .7, .2, 1); }
+.disc.open > .disc-body { grid-template-rows: 1fr; }
+.disc-body > div { overflow: hidden; min-height: 0; }
+@media (prefers-reduced-motion: reduce) {
+    .disc-head .tri, .disc-body { transition: none; }
+}
 /* The model row's follow-along tip. `position: fixed` because the row is outside the plot and the panel's
    own scrolling would otherwise clip it. */
 /* The row tip carries .rc-tip for the shared look; it only differs in being FIXED (the row is outside the
    plot) and in stacking its lines. */
 .vram-rowtip { position: fixed; z-index: 40; flex-direction: column; align-items: stretch; gap: 1px; }
-.vram-rowtip-name { display: flex; align-items: center; gap: 5px; font-weight: 600; }
+/* The name and its badges WRAP AS A LINE, and the name itself does not break mid-token. As a plain flex row
+   a long id ("qwen3.8-flash-next:vision") was broken across two lines while "on CUDA0 87.70 GiB" and "chat
+   model" sat beside it as further columns — three ragged columns instead of a sentence. */
+.vram-rowtip-name { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 5px; font-weight: 600;
+                    max-width: 100%; overflow-wrap: anywhere; }
 .vram-rowtip-dim { color: var(--fg-faint); }
 /* A SPLIT model is the interesting case — it is slower than its total size suggests. */
 .vram-rowtip-split { color: var(--warn, #f59e0b); }
@@ -350,6 +574,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Every model on this pool is hidden from the totals — the same treatment its row gets, so a selection is
    legible from the chart as well as from the list. */
 .rc-key.off { opacity: .45; text-decoration: line-through; }
+/* It is a switch now, so it has to look like one — the legend was previously inert text and a click target
+   that reads as a label is one nobody finds. */
+.rc-key[role="button"] { cursor: pointer; border-radius: 3px; padding: 0 3px; }
+.rc-key[role="button"]:hover { background: var(--panel-2); }
+.rc-key[role="button"]:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 .rc-swatch { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
 .rc-swatch-other { background: var(--fg-faint); opacity: .5; }
 .rc-swatch-free { border: 1px solid var(--border); }
@@ -376,11 +605,22 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Its card stopped being reported: real memory with no pool to draw it against. */
 .vram-orphan { padding: 0 4px; font-size: 0.72em; color: var(--danger, #ef4444); border: 1px solid var(--danger, #ef4444);
                border-radius: 3px; opacity: .85; }
-.vram-embed { padding: 0 4px; font-size: 0.72em; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 3px; }
+/* The kind badges share ONE geometry, so a row of them reads as a row. They differ in WEIGHT only: `embed`
+   is the notable case and `chat` the ordinary one, which is a colour difference, not a shape one. Giving
+   `chat` a capsule while `embed` and the context chip stayed rectangles made the odd one out the common
+   case, and read as two unrelated kinds of thing on the same line. */
+.vram-embed, .vram-chat { padding: 0 4px; font-size: 0.72em; border: 1px solid var(--border); border-radius: 3px;
+    line-height: 1.6; }
+.vram-embed { color: var(--fg-dim); }
+.vram-chat { color: var(--fg-faint); }
 /* Live keep-alive countdown — same chip shape as the context badge, sat beside it. */
 .vram-ttl { flex: 0 0 auto; color: var(--fg-faint); font-size: 0.9em; font-variant-numeric: tabular-nums;
   border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; line-height: 1.35; cursor: help; }
 .vram-ttl::before { content: "⏱"; opacity: 0.7; margin-right: 3px; }
+/* Held while the runner serves a request: a PAUSE glyph, because the chip is otherwise a number that ticks
+   and a frozen one reads as a stalled panel rather than as a stopped clock. */
+.vram-ttl.busy { color: var(--fg-dim); border-style: dashed; }
+.vram-ttl.busy::before { content: "⏸"; }
 .vram-gb { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .vram-x { background: transparent; border: none; color: var(--fg-faint); cursor: pointer; padding: 0 4px; font-size: 0.92em; border-radius: 3px; line-height: 1; }
 .vram-x:hover { background: var(--panel-2); color: var(--err); }
@@ -446,7 +686,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .model-pick-opt:hover { background: var(--panel-2); }
 .model-pick-opt.on { color: var(--accent); font-weight: 600; }
 .model-pick-none { padding: 8px 9px; color: var(--fg-faint); font-size: .85em; line-height: 1.4; }
-.set-note { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: var(--fg-dim); font-size: 0.92em; line-height: 1.4; }
+/* A note explains the control ABOVE it, and had no margin at all — so it sat flush against that control and
+   the two read as one box with a seam. */
+.set-note { margin: 6px 0 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: var(--fg-dim); font-size: 0.92em; line-height: 1.4; }
 .set-note b { color: var(--fg); }
 .set-note code { background: var(--panel-2); border-radius: 3px; padding: 0 3px; font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; }
 .set-hint { color: var(--fg-faint); font-size: 0.83em; line-height: 1.35; margin: 4px; }
@@ -455,9 +697,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .set-warn { color: var(--warn); font-size: 0.83em; line-height: 1.35; margin: 4px; }
 /* "Override ignored" badge — a small red pill flagging a moot setting (e.g. a vision override on an
    Ollama model whose capability we auto-detect). */
-.set-moot { display: inline-block; margin: 4px; font-size: 0.78em; color: var(--err);
-    border: 1px solid color-mix(in srgb, var(--err) 55%, transparent); border-radius: 999px; padding: 2px 9px;
-    background: color-mix(in srgb, var(--err) 12%, transparent); }
+/* A control that is MOOT, not one that is wrong: the setting is fine, it just cannot apply because something
+   was detected for you. In the error colour it read as a problem to fix — this is information. */
+.set-moot { display: inline-block; margin: 4px; font-size: 0.78em; color: var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 2px 9px;
+    background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
 /* model liveness test */
 /* Model-status card: a bordered panel so the role/status grid reads as one unit. */
@@ -553,13 +797,45 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    generated selector in a tool result) must never widen the panel — wide content
    wraps, or scrolls inside its own box (code blocks, tables), never the page. */
 .view { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px; min-width: 0; }
+/* THE BENCH IS THE ONE VIEW THAT DOES NOT SCROLL. It is a split with a draggable divider, so it has to be
+   GIVEN the height — a `flex: 1` inside a scroller resolves to the content's own height, and a divider then
+   has nothing to divide. Every other view is a document and keeps the scroller. */
+/* …and it takes NO PADDING. Every other view is a document, where a margin off the panel edge is what stops
+   the text running into the chrome; the bench is a workspace that should fill the space it was given, and the
+   inset drew a frame of panel ground around a header, an editor and an output pane that each already carry
+   their own edge — three nested boxes to say one thing. The drawer has never had it. */
+.view-bench { display: flex; overflow: hidden; padding: 0; }
+.view-bench > div { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .empty { color: var(--fg-faint); padding: 16px 8px; text-align: center; }
 
 /* Python bench — a debug workbench that runs scripts against the model's sandbox. */
-.bench { display: flex; flex-direction: column; gap: 8px; }
+/* `position: relative` so the environment panel can float against this box rather than sit in the flow —
+   opening it used to PUSH the editor down, which moves the code you opened it to compare against. */
+.bench { position: relative; display: flex; flex-direction: column; gap: var(--bench-gap); --bench-gap: 8px; }
+/* THE HEADER IS FLUSH WITH THE EDITOR. The column's `gap` applies after the header too, which showed the
+   drawer's own ground between two panel-coloured surfaces — a white bar across the drawer in the light
+   theme, and invisible in the dark one, which is how it shipped. The gap belongs between the BODY's rows
+   (editor, output); a chrome strip sits ON the thing it names. Cancelled against the variable rather than a
+   written-down 8, so changing the gap cannot leave a sliver behind. */
+.bench-top { margin-bottom: calc(-1 * var(--bench-gap)); }
+/* The environment panel: a popover under the header, not a row. It is read while you type, so it must not
+   reflow what is underneath it; and it is bounded so a long package list scrolls instead of covering the
+   whole bench. */
+/* THE ENVIRONMENT PANEL — a popover hanging under the header's button, not a row. In the flow it PUSHED the
+   editor down, which moves the code you opened it to compare against. Bounded so a long package list scrolls
+   inside it rather than covering the whole bench. */
+.bench-env {
+    position: absolute; top: 28px; left: 6px; z-index: 6;
+    max-width: min(420px, calc(100% - 12px)); max-height: min(60vh, 320px); overflow: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.32); padding: 8px 10px;
+}
 .bench-info { color: var(--fg-faint); cursor: help; font-size: 1.05em; margin-right: 2px; }
 .bench-info:hover { color: var(--fg-dim); }
-.bench-code { width: 100%; min-height: 180px; resize: vertical; box-sizing: border-box;
+/* No `resize` of its own: the DIVIDER owns that gesture. Three resize grips in one drawer — its edge, the
+   field's corner, and nothing at all for the output — is two too many, and the corner one could not shrink
+   the output pane, which is the direction you usually want. */
+.bench-code { width: 100%; height: 100%; resize: none; box-sizing: border-box;
     background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 9px;
     font: 0.88em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; white-space: pre; overflow: auto; }
 .bench-code:focus { outline: none; border-color: var(--accent); }
@@ -572,8 +848,60 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
     color: var(--accent-fg); background: var(--accent); cursor: pointer; }
 .bench-run:hover:not(:disabled) { filter: brightness(1.08); }
 .bench-run:disabled { opacity: 0.5; cursor: default; }
-.bench-out { display: flex; flex-direction: column; gap: 4px; }
-.bench-out .io-label { color: var(--fg-dim); font-size: 0.85em; font-weight: 600; }
+/* --- the bench's two panes, and the divider between them ------------------------------------------
+   The script and its output are the same workspace seen twice, and how much of each you want depends
+   entirely on what you are doing — so they are sized against each other rather than one being fixed and
+   the other taking what is left. `min-height: 0` on both, or a flex item refuses to shrink below its
+   content and the output pane pushes the editor off the top the first time a script prints a lot. */
+.bench-split { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.bench-pane { flex-basis: 0; min-height: 0; display: flex; flex-direction: column; }
+/* A real grab target — 11px, because a 1px line is a rule, not a control — carrying ONLY a pill. It drew its
+   own hairline at first, which put a second full-width line a few pixels under the editor's own bottom
+   border and left the pill sitting between the two, belonging to neither. The editor's border IS the line;
+   this is the handle for it, the same pairing the drawer's top edge already uses.
+
+   The pill's 4px offset is SET, not left to fall out of centring: centred, it read as sitting ON the
+   editor's border, and the space above it read as padding the textarea had grown. Stated as a padding it is
+   one number, and a test can name it. */
+.bench-div { flex: 0 0 auto; height: 11px; position: relative; cursor: ns-resize; touch-action: none;
+    display: flex; align-items: flex-start; justify-content: center; padding-top: 4px; box-sizing: border-box; }
+.bench-div-pill { width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2);
+    opacity: .55; transition: width .12s ease, opacity .12s ease; pointer-events: none; }
+.bench-div:hover .bench-div-pill { width: 52px; opacity: 1; background: var(--panel-2-hover); }
+@media (prefers-reduced-motion: reduce) { .bench-div-pill { transition: none; } }
+
+/* THE OUTPUT PANE — a tab strip, the selected section, and how long the run took. */
+.bench-outpane { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+/* At the TOP of the pane, under the divider: the divider and the label of the pane it resizes then stay
+   together, and the strip does not drift away from its content as the pane grows. */
+.bench-tabs { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 2px; overflow-x: auto;
+    border-bottom: 1px solid var(--border); }
+.bench-tabs::-webkit-scrollbar { height: 0; }
+.bench-tab { font: inherit; font-size: 0.8em; color: var(--fg-faint); background: transparent;
+    border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    padding: 3px 9px; cursor: pointer; white-space: nowrap; }
+.bench-tab:hover { color: var(--fg-dim); }
+.bench-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
+/* A failure is MARKED, not just selected — the strip has to say a run went wrong even once you have
+   clicked away to look at what it printed on the way there. */
+.bench-tab.err { color: var(--err); }
+.bench-tab.err.on { border-bottom-color: var(--err); }
+/* THE SELECTED SECTION FILLS THE PANE — a table, a traceback, plain text, all of them. A short box floating
+   in a tall empty pane reads as output that got cut off, and you already said how much room you wanted by
+   dragging the divider, so capping it again here would be the pane arguing with the gesture that sized it.
+   (Text and code get this from `.r-outcell.fill`; a DataFrame is not inside a cell, so it is handled here.) */
+.bench-outbody { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* Room to breathe around the grid: in the log a table is one block among many and its own border does the
+   separating, but here it IS the pane, and butting against the edges reads as clipped. */
+.bench-outbody > .r-df { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 5px;
+    padding: 2px 3px 5px; }
+/* A GRID IS NOT TEXT: it keeps its natural height and grows only as far as the pane, rather than stretching
+   to fill it. Stretched, a two-row frame drew its border around a screenful of nothing, which reads as a
+   table that failed to load — where the same empty space below an unbordered grid reads as what it is. The
+   cap becomes the pane instead of the log's fixed 320px, so a long frame still uses everything you gave it
+   and scrolls inside. */
+.bench-outbody > .r-df > .r-df-scroll { flex: 0 1 auto; min-height: 0; max-height: none; }
+.bench-outpane .r-ranfor { flex: 0 0 auto; }
 .sp { flex: 1; }
 .tag { font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 999px; text-transform: uppercase; }
 .tag.session { background: var(--panel-2); color: var(--fg-dim); }
@@ -998,7 +1326,10 @@ details.io[open] > summary .io-preview { display: none; }
     text-transform: none; letter-spacing: normal; text-align: left; text-indent: 0;
     writing-mode: horizontal-tb;
 }
-.tt-layer.wrap { white-space: normal; }
+/* `overflow-wrap: anywhere` is what the comment above has always claimed and the rule never had: without it
+   an unbreakable token (a 44-char sheet id, a generated tool name in a pointer) runs past max-width and is
+   clipped by the layer's own box, so the end of the very thing being explained is the part you cannot read. */
+.tt-layer.wrap { white-space: normal; overflow-wrap: anywhere; }
 .tt-layer[hidden] { display: none; }
 
 
@@ -1016,17 +1347,94 @@ details.io[open] > summary .io-preview { display: none; }
 
 /* DevTools run-stats readout — a thin muted bar above the detail composer (cumulative in/out tokens + tok/s).
    Reuses `.tt` for the provenance tooltip; overrides its inline-flex so the bar can right-align full width. */
-.run-stats { display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding: 2px 12px 0; font-size: 11px; color: var(--fg-faint); font-variant-numeric: tabular-nums; cursor: default; }
-.run-stats .rstat { white-space: nowrap; }
-.run-stats .rstat-ic { opacity: .7; margin-right: 3px; }
+/* Sits in the composer footer, at the opposite end from the context gauge — so no padding or justification
+   of its own: the footer is the row. */
+.run-stats { display: flex; align-items: center; gap: 9px; font-size: 11px; color: var(--fg-faint); font-variant-numeric: tabular-nums; cursor: default; }
+.run-stats .rstat { white-space: nowrap; display: inline-flex; align-items: center; }
+/* An inline-flex row, so the SVG centres on the digits rather than sitting on the text baseline — which is
+   what makes a glyph arrow look dropped beside tabular figures. `line-height: 0` keeps it from adding a row. */
+.run-stats .rstat-ic { opacity: .7; margin-right: 3px; display: inline-flex; align-items: center; line-height: 0; }
 .run-stats .rstat-tps { color: var(--fg-dim); }
+
+/* ---------------------------------- FOCUS MODE ----------------------------------
+   Read the transcript as a conversation. Everything here is a HIDE, never a restructure: the elements stay
+   in the DOM, so search, copy, export and the mode's own off switch all see the same document. What goes is
+   the machinery a debugger wants and a reader does not — the step counters, the approval badges, the "you"
+   label, the model pill, the copy/raw controls, and the collapsed tool row's output preview. What STAYS is
+   everything that carries meaning: the tool name and its status dot (a run is a sequence of actions and
+   hiding them would hide what happened), the thinking disclosures, timestamps, and every expandable body. */
+html[data-focus] .step-pill,
+html[data-focus] .appr-badge,
+html[data-focus] .astep-preview,
+/* The "you" label, scoped to the user bubble. The same class carries an EXCEPTIONAL label on a reply (a
+   step-cap stop), which is not chrome and stays. */
+html[data-focus] .msg.user .who,
+html[data-focus] .msg .mrow .raw-btn { display: none; }
+/* The model pill sits inside a tooltip wrapper, so hiding the inner element alone would leave its empty
+   shell holding a gap in the header row.
+   The COPY button stays on a model reply: focus mode quiets CHROME — counters, badges, provenance — and
+   copying the answer is the reason you are reading it. It goes on the user's own bubble, where the row is
+   repositioned as an overlay and there is nothing to copy you did not just write. */
+html[data-focus] .msg .mrow .tt:has(> .model-name),
+html[data-focus] .msg.user .mrow .tt:has(> .icon-btn) { display: none; }
+/* …but NOT the thinking block's token estimate, which shares `.astep-preview` with the collapsed tool row's
+   output preview. That preview is spam here; this is a PROGRESS indicator — on a long think it is the only
+   sign the run is moving rather than stuck, and a reading mode wants that more than a debugging one does. */
+html[data-focus] .astep-tokest { display: inline; }
+/* With "you" gone, the user bubble's header row held nothing but a right-aligned timestamp — a full empty
+   band above every prompt, which is the opposite of what a reading mode is for. The row is FLOATED instead
+   of hidden: the timestamp is still worth having (it is the only clock in the transcript), it just has no
+   business occupying a line of its own to show one short number. */
+html[data-focus] .msg.user { position: relative; }
+html[data-focus] .msg.user .mrow { position: absolute; top: 4px; right: 8px; margin: 0; pointer-events: none; }
+html[data-focus] .msg.user .mrow .sp { display: none; }
+/* A SETTLED python step's input dataframes and its captured stdout fold away in focus mode: what a reader
+   wants from a python step is the code and the answer, and the data that went in plus everything printed on
+   the way is the debugger's half. Only ever applied to a section marked `focus-fold`, which the renderer sets
+   only once the step is no longer streaming — folding output mid-run would hide the thing proving the run is
+   alive. Outside focus mode nothing folds: there you are reading the console on purpose.
+
+
+   Unlike the rest of this block it is NOT a CSS hide: a section you cannot open is worse than one that is
+   simply gone, and the point of folding is that the thing is still one click away. So the fold seeds the
+   `details`' own state (see `useFocusFold`) and this only marks it. */
+html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
+    content: " — folded in focus mode"; color: var(--fg-faint); font-style: italic; }
 
 /* Shared tool OUTPUT CELL (python_exec / exec / any future tool): capped height → scrolls, with a drag grip.
    Jupyter's output area — tall output can't bury the transcript, and tail-follow keeps the newest line in view. */
 .r-outcell { position: relative; }
+/* A cell that takes its height from what CONTAINS it instead of from the cap — the bench's output pane,
+   where the divider you dragged already said how much room you wanted, and a capped box would leave dead
+   space under it that reads as output having been cut off. */
+.r-outcell.fill { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* And the SURFACE inside it reaches the bottom too, not just the scroll box. The block that carries the
+   background is the `pre` the text renders into, so a two-line result left a short grey card floating in a
+   tall pane — which reads as output that got clipped, the exact thing filling the pane was meant to stop.
+   The LAST child grows (`SeenSplit` emits up to three, and it is the final one that should reach the end). */
+.r-outcell.fill > .r-outscroll { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.r-outcell.fill > .r-outscroll > * { flex: 0 0 auto; }
+.r-outcell.fill > .r-outscroll > :last-child { flex: 1 0 auto; }
+/* …AND THE PAINTED SURFACE IS THE INNER `code`, not the `pre`. The highlighter's theme puts its background
+   on `code.hljs`, so stretching the `pre` filled the pane with a transparent block and left the grey card
+   sitting two lines tall inside it — which looks exactly like the bug it was meant to fix, from one element
+   further in. Measured rather than guessed at: the `pre` was already 186px and the `code` 54px. */
+.r-outcell.fill > .r-outscroll > .code { display: flex; flex-direction: column; }
+.r-outcell.fill > .r-outscroll > .code > code { flex: 1 0 auto; }
+/* …and NO BORDER on it once it fills. A code block carries one because in a transcript it is a block among
+   paragraphs and needs an edge; here it IS the pane, so its border draws a second boundary a few pixels
+   inside the pane's own — a box in a box, which reads as the output being inset rather than as the surface
+   it is. The pane's edge is the edge. */
+.r-outcell.fill > .r-outscroll > .code { border: none; border-radius: 0; }
 /* Vertical only: the cell exists to CAP HEIGHT. Horizontal is the inner code block's job (it honours the
    wrap/scroll pref), so letting the cell scroll sideways too just produced a stray bar under short content. */
 .r-outscroll { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+/* WRAP ⇄ SCROLL applies to tool OUTPUT too, not only to code blocks. Settings offers one preference and it
+   read as global, but it only ever reached `.code` — so turning line-breaking off left every streamed
+   console and traceback wrapping anyway, with no way to see a long line whole. Scoped to `.r-outtext` (a
+   cell whose content is plain lines) rather than to every cell: `white-space: pre` on one holding a table
+   or a JSON tree would be about something else entirely. */
+:root[data-codewrap="off"] .r-outtext { overflow-x: auto; white-space: pre; }
 /* A short CENTRED handle, not a full-width bar: a bar spanning the cell reads as an inert horizontal
    scrollbar track ("why is there a scrollbar with nothing to scroll?"). The hit area stays full-width and
    9px tall so it is still easy to grab; only the pill is painted. */
@@ -1040,9 +1448,15 @@ details.io[open] > summary .io-preview { display: none; }
 .rr-toggle.reserved button { opacity: .45; cursor: default; }
 
 /* In-cell find bar (Ctrl/Cmd+F while the output cell is focused) — VSCode-ish, top-right, substring only.
-   Matches paint via the CSS Custom Highlight API, so the syntax highlighting underneath is untouched. */
-.r-outcell { position: relative; }
-.r-outscroll:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+   Matches paint via the CSS Custom Highlight API, so the syntax highlighting underneath is untouched.
+   (`.r-outcell { position: relative }` is what anchors the bar, and it is declared once, up with the cell.) */
+/* FOCUS-VISIBLE, not focus, and muted. The cell is focusable so Ctrl+F can be scoped to it, which meant
+   every CLICK on an output — reading it, selecting a line — painted an accent-blue ring around the block.
+   That is the browser's "you tabbed here" affordance being spent on a pointer gesture that needs no
+   feedback: the find bar is its own confirmation. Keyboard focus still gets a ring, in a colour that says
+   "focused" without competing with the output it surrounds. */
+.r-outscroll:focus { outline: none; }
+.r-outscroll:focus-visible { outline: 1px solid var(--fg-faint); outline-offset: -1px; }
 .r-find { position: absolute; top: 2px; right: 8px; z-index: 3; display: flex; align-items: center; gap: 4px;
           padding: 3px 5px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
 .r-find-q { width: 130px; padding: 2px 5px; font: inherit; font-size: 11px; color: var(--fg);
@@ -1184,7 +1598,13 @@ details.io[open] > summary .io-preview { display: none; }
 /* Raw In args tree: a corner copy button (a tree isn't drag-selectable like the old text block). Small
    left inset so the flush-left braces don't hug the block edge; right room so text never runs under copy. */
 .jt-args { position: relative; padding: 1px 22px 1px 2px; }
-.jt-args-copy { position: absolute; top: 0; right: 0; z-index: 1; }
+/* The copy control for an output cell's RAW view. On the cell, not inside it: it used to sit in the
+   scrolling element and slid away with the text — on a wide line, right off the edge. Same reasoning as the
+   find bar beside it, and it yields to the find bar when that is open, since only one of them can own the
+   corner and the one you just summoned wins. */
+.r-outcorner { position: absolute; top: 2px; right: 6px; z-index: 2; opacity: .5; transition: opacity .12s ease; }
+.r-outcell:hover .r-outcorner, .r-outcorner:focus-within { opacity: 1; }
+.r-outcell:has(.r-find) .r-outcorner { display: none; }
 
 .msg { border-radius: 7px; padding: 6px 9px; margin-bottom: 8px; border: 1px solid var(--border); }
 .msg.user { background: var(--user-bg); }
@@ -1391,6 +1811,12 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 /* Prose caption: the model's narration (not a tool label) — lighter weight, and flex so a long line
    ellipsizes within the wider pill instead of overflowing. */
 .card-orb.prose .card-orb-label { flex: 1 1 auto; min-width: 0; font-weight: 500; }
+/* The live readout — a climbing token count, or a stall's elapsed seconds. NEVER shrinks and never
+   ellipsizes: it is the only part of the pill that is still saying something, and it was the part being cut.
+   Tabular figures so the digits do not shuffle the pill's width as the number ticks, and a reserved minimum
+   so the pill stops resizing every time "~990 tok" becomes "~1.0k tok". */
+.card-orb-live { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums;
+    min-width: 5.5ch; text-align: right; opacity: .75; font-weight: 500; }
 @keyframes orb-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.22); } }
 @keyframes orb-label-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .card-orb-ic, .card-orb-label { animation: none; } }
@@ -1566,12 +1992,6 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 /* Step-budget segmented control — a pretty pill selector (macOS-style raised selected), NOT a bare select. */
 .card-cmp-budget { display: flex; align-items: center; gap: 8px; }
 .card-cmp-budget-label { color: var(--fg-faint); font-size: .82em; }
-/* "◊ live" — stream the thinking for a UI-started run. Off = quiet outline; on = accent-filled. */
-.card-cmp-stream { font-size: .8em; font-weight: 600; padding: 2px 9px; border-radius: 999px; cursor: pointer;
-    color: var(--fg-faint); border: 1px solid var(--border); background: transparent; }
-.card-cmp-stream:hover { color: var(--fg); border-color: var(--fg-faint); }
-.card-cmp-stream.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-    background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--panel-2); border: 1px solid var(--border); }
 .seg .seg-opt {
     border: none; background: transparent; color: var(--fg-dim);
@@ -1848,6 +2268,54 @@ html[data-surface="card"] .appr-btn.no:hover {
 /* A hallucinated / unresolvable token — visible, never silent. */
 .tok-unresolved { display: inline-block; padding: 0 5px; border: 1px dashed var(--err);
     color: var(--err); border-radius: 3px; font-size: 0.85em; font-family: ui-monospace, monospace; cursor: help; }
+/* A traceback, rendered. The deepest USER frame is where it failed; the ones above are the call path, and
+   an `<exec>` frame is the prelude's own call site — dimmed rather than dropped, because the raw view has to
+   stay recoverable and quietly deleting a line of what the model received is what the raw-view rule forbids. */
+.code.tb .tbline.dim { opacity: .45; }
+.code.tb .tbline.tb-fail { background: color-mix(in srgb, var(--err) 12%, transparent); }
+/* The line numbers are LINKS, but they inherit the traceback's own colour rather than introducing a third
+   one: a blue number inside red error text reads as a value that is somehow different from the numbers around
+   it, when it is the same number with something you can do to it. The dotted underline is the whole
+   affordance, and the hover is what confirms it. */
+/* `.tt` is inline-flex, which would break the line's flow inside a `<pre>`; the wrapper is inline so the
+   number still sits in the sentence it belongs to. */
+.code.tb .tb-line-wrap { display: inline; }
+.code.tb .tb-line { font: inherit; color: inherit; background: none; border: 0; padding: 0;
+    border-bottom: 1px dotted currentColor; cursor: pointer; }
+.code.tb .tb-line:hover { background: color-mix(in srgb, currentColor 16%, transparent); border-radius: 2px; }
+/* WHERE IT BROKE, on the code itself. The traceback gives you a number; this is the line it names — which is
+   the thing you were going to go looking for. */
+.cline.cline-fail { background: color-mix(in srgb, var(--err) 13%, transparent); cursor: help; }
+/* The cursor-following tip. `.rc-tip` for the shared look; it only differs in following the pointer. */
+.cursor-tip { max-width: min(320px, 92vw); white-space: normal; }
+.cline.cline-fail .lno { color: var(--err); font-weight: 600; }
+/* The SAME green flash a cited step gets — it is the same gesture, "show me the thing this is about". */
+@keyframes clinePulse { 0% { background: color-mix(in srgb, var(--ok) 40%, transparent); } 100% { background: transparent; } }
+/* The green flash a cited line gets when a citation or a traceback frame jumps to it — the confirmation
+   that the click landed where it said. Its own class, not a colour on .cline, so a line can be marked and
+   pulsed at once. */
+.cline-pulse { animation: clinePulse 1.4s ease-out forwards; }
+/* RED for the line that FAILED. Green says "here is the thing you asked for", which on the failing line is
+   the one colour it is not — flashing over the red mark already there and saying the opposite of it. It
+   settles back to the mark rather than to nothing, because the mark outlives the click. */
+@keyframes clinePulseFail { 0% { background: color-mix(in srgb, var(--err) 45%, transparent); }
+                          100% { background: color-mix(in srgb, var(--err) 13%, transparent); } }
+/* The same flash in the failure colour, for the line a traceback names. */
+.cline-pulse-fail { animation: clinePulseFail 1.4s ease-out forwards; }
+@media (prefers-reduced-motion: reduce) {
+    .cline-pulse { animation: none; background: color-mix(in srgb, var(--ok) 20%, transparent); }
+    .cline-pulse-fail { animation: none; background: color-mix(in srgb, var(--err) 30%, transparent); }
+}
+
+/* HOW LONG IT RAN, under the output. Small, grey, italic: it is an annotation on the thing above it, not a
+   result of its own — and a script's elapsed time is the one fact about it the transcript cannot give you,
+   since the timestamps either side include the model's own turn. */
+.r-ranfor { font-size: 0.82em; font-style: italic; color: var(--fg-faint); padding: 2px 2px 0;
+    font-variant-numeric: tabular-nums; }
+/* While it is still going the number is MOVING, which is the half that says the thing is alive rather than
+   stuck — so it is a touch brighter than the settled one. */
+.r-ranfor.live { color: var(--fg-dim); }
+
 /* Click-to-step: pulse the cited step green when you jump to it. */
 @keyframes astepPulse { 0% { background: color-mix(in srgb, var(--ok) 45%, transparent); }
     100% { background: transparent; } }
@@ -1859,3 +2327,397 @@ html[data-surface="card"] .appr-btn.no:hover {
 .rp-note { font-size: .85em; color: var(--fg-dim); margin: 0 0 4px; font-style: italic; }
 /* A hint REPORTING a failure rather than explaining a control. */
 .hint.err { color: var(--err, #ef4444); }
+
+/* A span of code that was SUBSTITUTED for something the author did not write — `exec`'s expanded pointer
+   macros. Underlined rather than filled, so it marks a region without competing with syntax highlighting;
+   `help` because the original is in the tooltip. */
+code .expanded { border-bottom: 1px dashed var(--ok, #22c55e); cursor: help; }
+code .expanded:hover { background: color-mix(in srgb, var(--ok, #22c55e) 12%, transparent); }
+
+/* The scrub window's handles. The middle pans, the edges resize — so the cursor has to say which is which
+   before the drag starts, since the two gestures are indistinguishable until you have already made one. */
+.rc-scrub-track.z-from, .rc-scrub-track.z-to { cursor: ew-resize; }
+.rc-scrub-track.z-pan { cursor: grab; }
+.rc-scrub-track.z-pan:active { cursor: grabbing; }
+/* A visible grip on each edge, for the same reason: a handle nobody can see is one nobody reaches for. */
+.rc-scrub-win::before, .rc-scrub-win::after {
+    content: ""; position: absolute; top: 0; bottom: 0; width: 2px;
+    background: var(--accent); opacity: .75; border-radius: 1px;
+}
+.rc-scrub-win::before { left: 0; }
+.rc-scrub-win::after { right: 0; }
+
+/* A tooltip trigger INSIDE a code block. `.tt` is inline-flex, which would take the marked span out of the
+   line's normal inline flow and break the code's alignment; this keeps it plain inline text that happens to
+   carry a tooltip. */
+.tt.tt-code { display: inline; }
+.tt-layer code { font-family: var(--mono, ui-monospace, monospace); font-size: 0.95em; }
+
+/* Time spent WAITING at the approval gate — the step's wall clock, none of the machine's work. Striped for
+   exactly the reason a model load is: flat, a wide block reads as a lot of work having happened. The gaps
+   are transparent so the neutral fill beneath still shows through. */
+.rc-ev-wait {
+    position: absolute; top: 0; bottom: 0; pointer-events: none; border-radius: inherit;
+    background: repeating-linear-gradient(45deg,
+        color-mix(in srgb, var(--fg-faint) 60%, transparent) 0 3px, transparent 3px 8px);
+}
+
+/* A step outside the lineage hovered in the event lane. The lane dims its own bars the same way, so the two
+   surfaces pick out the same work together rather than each highlighting on its own terms. */
+.astep.away { opacity: .35; transition: opacity .12s ease; }
+
+/* Where the work is, marked on the scrub strip. A hairline rather than a block: the strip's job is to say
+   which stretch you are looking at, and a dense run of events must not turn it into a solid bar that hides
+   the window. Under .rc-scrub-win, so the window box still reads clearly on top of them. */
+.rc-scrub-ev {
+    position: absolute; top: 1px; bottom: 1px; min-width: 2px;
+    border-radius: 1px; opacity: .55; pointer-events: none;
+    background: var(--fg-dim);
+}
+
+/* Where a model is, beside its name rather than under it: it is part of identifying the thing, not a third
+   fact of equal weight to the residency and cost lines below. Normal weight, so the name still leads. */
+.vram-rowtip-where { font-weight: 400; color: var(--fg-dim); }
+
+/* While a lane block is hovered, everything in the transcript that is not part of its lineage recedes. The
+   steps carry `.away` themselves (they know their own seq); the messages around them — the task, the answer,
+   a steer — belong to no lineage at all, so they all recede together. Without this the log half-dimmed and
+   the focus read as broken rather than as scoped. */
+html[data-lane-focus] .msg { opacity: .35; transition: opacity .12s ease; }
+/* …except when the hovered bar is the generation that produced the answer, which is the answer. Dimming the
+   very thing the bar points at is the failure this affordance exists to avoid. */
+html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
+
+/* The chosen palette, shown beside its picker: eight names in a dropdown say nothing about whether the hues
+   read as distinct, which is the entire question being asked. */
+.pal-swatches { display: inline-flex; gap: 3px; margin-left: 8px; vertical-align: middle; }
+.pal-swatches i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+/* A step's pointer: a handle you can take away with you. Quiet by default — it is metadata about the step,
+   not part of its output — and it announces itself as clickable on hover, because a chip that copies is not
+   something a reader would otherwise try. */
+/* Bottom RIGHT of the step card. It is a handle to take away, not something to read on the way down, so it
+   sits out of the reading column the In/Out share and out of the way of the next step's header. */
+.astep-token { display: flex; justify-content: flex-end; margin: 3px 0 0; }
+/* METADATA about the step, not part of its output — so it is smaller and quieter than the Out it names, the
+   same weight as the other small chips in this card. Two things had made it read as a broken input field:
+   it inherited the body's full size, and the hover-only "copy" label was hidden with opacity, which leaves
+   its box in the layout — so the chip carried a wide dead margin nothing was in. */
+/* The same size as the APPROVED badge on the step's own header (.appr, 0.72em): both are chips ABOUT the
+   step rather than content of it, and two pieces of step metadata at two different sizes is the
+   inconsistency. Rounded the same way too, so they read as one family. */
+.tok-chip { display: inline-flex; align-items: center; gap: 5px; padding: 0 6px; cursor: pointer;
+    font-size: 0.72em; line-height: 1.6; color: var(--fg-dim); background: none;
+    border: 1px solid var(--border); border-radius: 999px; }
+.tok-chip code { font-family: var(--mono, ui-monospace, monospace); font-size: 1em; color: var(--fg-dim); }
+/* A fixed-size glyph rather than a hover-only word: the chip is right-aligned, so anything that changes its
+   width on hover slides the pointer text sideways under the cursor that just arrived at it. The copy and
+   check icons share a box, so the confirmation does not move it either. */
+.tok-chip-icon { display: inline-flex; width: 11px; height: 11px; color: var(--fg-faint); }
+.tok-chip-icon svg { width: 11px; height: 11px; }
+.tok-chip:hover { border-color: var(--fg-faint); background: var(--panel-2); }
+.tok-chip:hover code, .tok-chip:hover .tok-chip-icon { color: var(--fg); }
+
+/* `.set-row` had no rule at all, so its children were plain inline boxes and a control sat flush against the
+   text beside it. One row, laid out. `.col` stacks instead, for a section whose parts are full-width. */
+.set-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.set-row.col { flex-direction: column; align-items: stretch; }
+
+/* The scrub window's edges, joined to the lane's. Hairlines in the accent, so it reads as the same selection
+   continuing rather than as a third thing drawn between two charts. */
+/* Spans the gap between the strip and the lane EXACTLY: the lane's own top margin sits below this, so a
+   height alone left the lines ending in mid-air a couple of pixels short of the thing they point at. */
+.rc-zoomlink { display: block; flex: 0 0 100%; width: 100%; height: 11px; margin: 0 0 -6px; overflow: visible; }
+.rc-zoomlink path { fill: none; stroke: var(--accent); stroke-width: 1; opacity: .45; }
+
+/* The block you double-clicked, after the window has moved to it — the window is necessarily wider than a
+   short block, so this is what turns "somewhere in here" into "this one". */
+@keyframes rcEvPulse { 0% { outline-color: var(--accent); } 100% { outline-color: transparent; } }
+/* Same reason as the hover outline, and it must beat it: a pulse says 'this is the one you clicked'. */
+.rc-ev.pulse { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 6; animation: rcEvPulse 1.4s ease-out forwards; }
+@media (prefers-reduced-motion: reduce) { .rc-ev.pulse { animation: none; } }
+
+/* Server-tool curation: a bundle, then its functions. Indented under their bundle so "which server is this
+   from" is answered by position rather than by repeating the prefix on every row. */
+.srv-curate { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 0; }
+/* One SERVER-SIDE TOOL BUNDLE in the settings browser: a box per bundle, its functions listed inside. The
+   backend groups tools this way and two bundles can both expose `search`, so the grouping is load-bearing
+   rather than decorative. */
+.srv-bundle { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; background: var(--panel); }
+/* The bundle's own row — its name and id, above the functions it holds. */
+.srv-bundle-head { display: flex; align-items: center; gap: 8px; }
+/* The bundle's id, which is what `ml.agent({serverTools})` is given. */
+.srv-bundle-name { font-weight: 600; }
+/* ONE FUNCTION inside a bundle — indented under it, because this is the entry a run would actually be
+   handed (named `<bundle>__<fn>`), not the bundle. */
+.srv-fn { margin-left: 10px; gap: 6px; }
+.srv-fn code { color: var(--fg); }
+.srv-fn .hint { min-width: 0; overflow-wrap: anywhere; }
+
+/* A fixed slot, so "playing" and "paused" are the same width and the button does not move under the cursor
+   at the moment the view leaves or rejoins live. */
+.rc-live-icon { display: inline-block; width: 1em; margin-right: 4px; text-align: center; }
+
+/* The session a block belongs to, in the all-sessions view. Monospace because it is an id you might match
+   against the header's hash, not a word. */
+.rc-chip-hash { font-family: var(--mono, ui-monospace, monospace); letter-spacing: .02em; }
+
+/* The curation filter. Full width, because what you type into it is a name that may be long. */
+.srv-find { margin: 6px 0 0; }
+.srv-find input { flex: 1 1 auto; min-width: 0; }
+
+/* What a model IS, on its row tooltip — the same fact the badge carries, repeated where the name is named. */
+.vram-rowtip-kind { color: var(--fg-faint); font-weight: 400; }
+
+/* An `ml.embed()` session: a list of CALLS, not a conversation. One row per call — what went in, what came
+   back, how long it took — so a request for vectors never reads as something somebody said. */
+.embed-run { display: flex; flex-direction: column; gap: 4px; }
+/* A REMOTE TOOL CALL as one line: what went out, an arrow, what came back, and how long it took. Compact
+   because it appears in a list of them; the full arguments live in the step's own In block. */
+.embed-call { display: flex; align-items: baseline; gap: 8px; padding: 5px 8px;
+    border: 1px solid var(--border); border-radius: 6px; background: var(--panel); font-size: .92em; }
+.embed-call.err { border-color: color-mix(in srgb, var(--err) 45%, transparent); }
+/* The arguments that left the machine, monospaced — the half a reader checks first. */
+.embed-in { color: var(--fg); font-family: var(--mono, ui-monospace, monospace); }
+/* The direction mark between the call and its result. Faint: it is punctuation, not a reading. */
+.embed-arrow { color: var(--fg-faint); }
+/* What came back. Wraps anywhere, since a remote result has no line structure we control. */
+.embed-out { color: var(--fg-dim); overflow-wrap: anywhere; }
+/* How long the far end said it took. Tabular figures so a column of these stays aligned. */
+.embed-ms { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+
+/* An embed session in the list. Same shape as the agent badge — it answers the same question, "what IS this"
+   — in the neutral colour, since an embed is a side errand rather than a run to go and read. */
+.agent-badge.embed-badge { background: var(--panel-2); color: var(--fg-dim); border: 1px solid var(--border); }
+
+/* --- code-block affordances: annotate / bench / copy ---------------------------------------------
+   Quiet until you go looking. A toolbar that competes with the code for attention is the opposite of
+   what a code block is for, so it sits at half opacity and comes up on hover or keyboard focus. */
+.code-block { position: relative; }
+/* THE TOOLBAR ON A RENDERED CODE BLOCK — explain / bench / copy. Absolutely positioned in the block's own
+   corner and QUIET (a third opacity until the block is hovered), because a toolbar competing with the code
+   for attention is the opposite of what a code block is for. */
+.code-tools {
+    position: absolute; top: 3px; right: 6px; z-index: 3;
+    display: flex; align-items: center; gap: 4px;
+    opacity: 0.35; transition: opacity 0.15s ease;
+}
+.code-block:hover .code-tools, .code-tools:focus-within { opacity: 1; }
+/* ONE BUTTON in that toolbar. Sized off the code's own font so it never towers over the line it sits on. */
+.code-tool {
+    font: inherit; font-size: 0.82em; line-height: 1;
+    padding: 2px 6px; border-radius: 5px; cursor: pointer;
+    color: var(--fg-dim); background: var(--panel); border: 1px solid var(--border);
+}
+.code-tool:hover:not(:disabled) { color: var(--fg); border-color: var(--fg-dim); }
+.code-tool:disabled { opacity: 0.5; cursor: default; }
+.code-tool.on { color: var(--kind); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+/* The transient confirmation a toolbar button leaves behind ('copied'), in place of a toast — the answer
+   belongs where the button is, and it goes away on its own. */
+.code-tools-flash { font-size: 0.78em; color: var(--ok); }
+
+/* A margin note: its own row under the line it is about, so it survives a narrow panel and a
+   horizontally scrolled block. `sticky` keeps it readable when the code is scrolled sideways. */
+.lnote {
+    display: flex; align-items: baseline; gap: 6px;
+    position: sticky; left: 0; width: fit-content;
+    /* A measure, not a cage. 62ch INCLUDED the gutter indent (border-box), leaving ~57 for a note capped at
+       120 characters — so an ordinary one wrapped with half the panel empty beside it, which reads as a
+       mistake rather than as a line length. Wide enough that a note wraps only when it is genuinely long. */
+    max-width: calc(92ch + 2.2em + 22px);
+    padding: 1px 0 3px calc(2.2em + 22px);   /* aligns under the code, clear of the 2.2em gutter + its rule */
+    font-size: 0.86em; font-style: italic; color: var(--fg-faint);
+    white-space: normal;
+}
+/* An ARROW, not a rail: the note belongs to the line above it, and a bar says "a block starts here" while a
+   turnstile says "…and this is about that". Quiet, because a marker competing with the code it annotates is
+   the wrong way round. */
+.lnote-mark { flex: 0 0 auto; font-style: normal; opacity: 0.55; line-height: 1; }
+.lnote-txt code { font-style: normal; }
+
+/* --- a retry's diff against the call it revises ---------------------------------------------------
+   Above the code, not inside it: the diff is about the RELATIONSHIP between two calls, and folding it into
+   the block would make the reader parse one thing as two. */
+.r-diff { margin: 0 0 6px; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.r-diff-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px; background: var(--panel); flex-wrap: wrap; }
+.r-diff-tri { background: none; border: 0; padding: 0; cursor: pointer; color: var(--fg-faint); display: flex; }
+.r-diff-tri svg { transition: transform 0.15s ease; }
+.r-diff-tri.open svg { transform: rotate(90deg); }
+.r-diff-lbl { font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-faint); }
+/* The chrome comes from `.tok-chip` (the shared PointerChip) — it IS a pointer, so it must not read as a
+   different kind of thing here. Only the things specific to sitting in a header row are set locally. */
+.r-diff-ref { padding: 1px 8px; }
+.r-diff-stat { margin-left: auto; font-size: 0.82em; font-variant-numeric: tabular-nums; }
+.r-diff-add { color: var(--ok); }
+.r-diff-del { color: var(--err); }
+.r-diff-same { margin-left: auto; font-size: 0.82em; color: var(--fg-faint); font-style: italic; }
+/* The model's CLAIM. It shares the HEADER's ground and its quiet grey, because it is part of the same
+   band — the header says what this diff is, the claim says what the model thinks it did, and giving the
+   second its own colour made it read as a warning about the step rather than as a caption. Its TAG carries
+   the "this is a claim, not the computed half" signal on its own. */
+/* A hairline above it: the claim shares the header's ground, so without a rule the two run together into one
+   tall band and the reader cannot see where "what this is" ends and "what the model says about it" begins. */
+.r-diff-claim { padding: 4px 8px; font-size: 0.9em; color: var(--fg-dim); background: var(--panel); border-top: 1px solid var(--border); }
+.r-diff-claim-tag { font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-faint); margin-right: 4px; }
+.r-diff-body { margin: 0; border-top: 1px solid var(--border); border-radius: 0; }
+/* ONE ROW OF A DIFF — the gutter's two line numbers, the +/- sign, then the text. A flex row so the
+   numbers stay put when the text wraps, which is what lets a diff row, a margin note and a failure mark
+   all name the same line and be read straight down. */
+.dline { display: flex; align-items: flex-start; }
+/* An added line: the new side only, so the colour says which side you are reading. */
+.dline-add { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+/* A removed line. */
+.dline-del { background: color-mix(in srgb, var(--err) 13%, transparent); }
+/* The elision between hunks — 'N lines skipped'. Never used for ONE line, which costs more to say than
+   to show and leaves the reader wondering what was hidden. */
+.dline-gap { color: var(--fg-faint); font-style: italic; }
+/* The gutter: OLD line, NEW line, then the sign. `user-select: none` on all three, so copying a diff copies
+   the code and not a column of numbers — the same rule the timestamp gutter follows. */
+.dno {
+    flex: 0 0 auto; width: 2.1em; padding-right: 6px; text-align: right;
+    color: var(--fg-faint); opacity: 0.7; user-select: none; font-variant-numeric: tabular-nums;
+}
+/* One rule after the pair, not between them: they are one gutter with two columns, and ruling both made a
+   three-part fence out of something that should read as a margin. */
+.dno + .dno { border-right: 1px solid var(--border); margin-right: 8px; }
+/* The +/− column, with real air after it: butted against the code, the sign reads as part of the first
+   token rather than as a marker for the line. */
+.dsign { flex: 0 0 auto; width: 1.1em; margin-right: 0.7em; text-align: center; user-select: none; opacity: 0.8; }
+.dline-add .dsign { color: var(--ok); }
+.dline-del .dsign { color: var(--err); }
+/* The code itself in a diff row, beside the gutter. Inherits the block's wrap setting so a diff and the
+   code under it break lines the same way. */
+.dtext { flex: 1 1 auto; min-width: 0; white-space: inherit; }
+
+/* A collapsed running step's elapsed time. Dimmer than the word beside it: "running" is the fact, the
+   number is the detail you look at only when it starts feeling long. */
+.astep-elapsed { font-variant-numeric: tabular-nums; opacity: 0.75; }
+
+/* --- the Python bench, docked as a bottom drawer -------------------------------------------------
+   A SIBLING of the scroll container, not content inside it, so the transcript keeps its own scroll
+   position while you work below it — which is the whole point of the drawer over the full-page view. */
+.bench-drawer {
+    flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0;
+    border-top: 1px solid var(--border); background: var(--bg);
+}
+/* ONE ROW does the drawer's naming AND its resizing. A title row and a grab strip stacked would cost two
+   rows out of a drawer whose entire value is the space under them, and the grip's own row was empty either
+   side of its pill — so the name lives in that space on the left and the shape controls on the right, with
+   the pill still centred and the whole strip still the drag target. The row IS the top edge, which is where
+   a hand goes for a drawer. */
+.bench-top { position: relative; display: flex; align-items: center; gap: 6px; padding: 5px 4px 1px; flex: 0 0 auto;
+    cursor: ns-resize; touch-action: none; background: var(--panel); }
+/* The controls in the strip are CONTROLS, not part of the drag target. Without this they inherit the
+   resize cursor and read as somewhere to grab. */
+.bench-top > .hbtn, .bench-top > .bench-play, .bench-top .bench-env-btn,
+.bench-top .bench-mode, .bench-top .bench-mode select { cursor: pointer; }
+/* THE GRAB PILL, centred on the ROW — the only place a drawer handle reads as one. Centring it in the
+   leftover space instead (a flex child in the spacer) put it visibly off to one side, because the name and
+   its controls are far wider than the two icons opposite. What forced that was the pill landing on the mode
+   picker; the picker sits in the RIGHT group now, so the row's middle is genuinely empty. `pointer-events:
+   none` besides: in a panel narrow enough for the two groups to meet, the pill still cannot swallow a click
+   meant for the control under it. */
+.bench-grip-pill { position: absolute; top: 3px; left: 50%; transform: translateX(-50%);
+    width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2); opacity: .55;
+    transition: width .12s ease, opacity .12s ease; pointer-events: none; }
+.bench-top:hover .bench-grip-pill { width: 52px; opacity: 1; background: var(--panel-2-hover); }
+.bench-title { font-size: 0.78em; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--fg-faint); white-space: nowrap; padding-left: 3px; }
+/* RUN — the IDE shape: a green OUTLINE triangle on a transparent button, like PyCharm's. The first version
+   was a solid green block, which read as a call-to-action dropped into a row of quiet icons and pulled the
+   eye away from the code. The colour goes on the GLYPH instead: it still says "this is the action" without
+   outshouting the four controls beside it. It replaces a Run button at the far BOTTOM of the panel, which
+   put the action as far from the script's name as the layout allowed and spent a whole row doing it. */
+.bench-play {
+    display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+    padding: 3px; margin-left: 2px; border-radius: 5px; cursor: pointer;
+    color: var(--ok); background: transparent; border: none;
+}
+.bench-play:hover:not(:disabled) { background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.bench-play:disabled { opacity: .4; cursor: default; }
+/* SEND TO THE MODEL — hand the script you just got working to the model as a turn. A placeholder, and
+   DISABLED so that reads as "not built yet" rather than as a button that ignores you: an affordance which
+   silently does nothing cannot be told from a bug, so you try it twice. Quiet beside Run, which is the one
+   action in the row that is actually live. */
+.bench-send { display: inline-flex; align-items: center; justify-content: center; line-height: 0;
+    padding: 3px; border-radius: 5px; color: var(--fg-faint); background: transparent; border: none;
+    opacity: .45; cursor: default; }
+/* Running: the same box, with a spinner where the triangle was. Swapping the GLYPH rather than the button
+   keeps the row from reflowing at the exact moment you are watching it. */
+.bench-play-spin { width: 13px; height: 13px; border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--ok) 30%, transparent);
+    border-top-color: var(--ok); animation: bench-spin .7s linear infinite; }
+@keyframes bench-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .bench-play-spin { animation: none; } }
+/* The environment button, in the header beside the mode picker. `.on` while its body is open, so the row
+   says which disclosure the panel below it belongs to. */
+.bench-env-btn.on { color: var(--fg); border-color: var(--fg-dim); }
+/* The sandbox's python version. A CHIP, not prose: it is a fact about the machine you are typing at, read
+   at a glance and never scanned as a sentence. */
+.bench-ver { font: 0.72em/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--fg-dim); background: var(--panel-2); border-radius: 999px; padding: 3px 6px; white-space: nowrap; cursor: help; }
+
+.bench-drawer .bench { flex: 1 1 auto; min-height: 0; }
+/* FULL-PAGE is the same split, given the view's height instead of the drawer's — see `.view-bench`. */
+.bench-full { flex: 1 1 auto; min-height: 0; }
+
+/* An aside's model, in its tooltip header. Quiet: the label is what it DID, this is what ran it. */
+.rc-tip-aside-model { font-size: 0.85em; color: var(--fg-faint); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* THE RAW VIEW GETS THE SAME BOX A CODE BLOCK AND AN OUT SECTION HAVE. It is the same kind of thing — a
+   capped, scrollable, findable cell of text — and leaving it unboxed made the two halves of a step look
+   like different sorts of content, with the model-facing one the less substantial-looking of the pair.
+   On the cell rather than on the JSON tree inside it, so the find bar and the resize grip sit ON the box
+   the way they do in an Out. */
+.io-raw > .r-outcell {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+    padding: 0.55em 0.7em;
+}
+/* …EXCEPT while the step is still streaming. A pending Out has no descriptor yet, so it renders through the
+   RAW path and then switches to the rendered one when the result lands — and the box above indents it by
+   0.7em that the rendered view does not have, so the whole output JUMPED ~9px left the instant the step
+   finished. The padding is right for the raw view you deliberately toggle to; live output is not that, it is
+   the Out's own content arriving, and it has to sit where its finished form will sit. */
+.io-raw > .r-outcell:has(.astep-streaming) { padding-left: 0; padding-right: 0; border-color: transparent; background: transparent; }
+
+/* A pointer link inside model prose — a note, a retry's claim. Underlined like a link and coloured like one,
+   but a BUTTON: it navigates within the panel rather than going anywhere, so it must not offer a context
+   menu full of "open in new tab". */
+.prose-link { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+
+/* --- the bench's environment panel -----------------------------------------------------------------
+   A panel, not a tooltip: this is read while writing, and it is about to become a thing you search and
+   then act on. It opens UPWARD out of the bench's bar, so in drawer mode it does not push the editor. */
+/* (`.bench-env` itself — the popover box — is defined up with the bench layout, since where it opens is a
+   fact about the header it hangs from. There is no second rule for it here: there were two for a while, one
+   opening DOWNWARD from the header and this one opening UPWARD out of the old bottom bar, and the later of
+   them won — so the panel opened off the top of the drawer.) */
+.bench-env-btn {
+    display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+    font: inherit; font-size: 0.82em; padding: 2px 7px; border-radius: 5px;
+    color: var(--fg-dim); background: var(--panel); border: 1px solid var(--border);
+}
+.bench-env-btn:hover { color: var(--fg); border-color: var(--fg-dim); }
+.bench-env-btn .tri { display: flex; transition: transform 0.15s ease; }
+/* The button sits in the header and the panel hangs below it — they are siblings now, so the open state is
+   read off the BUTTON. The old selector reached down from `.bench-env`, which no longer contains it, and the
+   chevron simply stopped turning. */
+.bench-env-btn.on .tri { transform: rotate(90deg); }
+.bench-env-ver { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+/* Plain content now: the BOX is `.bench-env` around it, which is what hangs off the header. This used to
+   carry the positioning itself, from when the button lived in a bar at the bottom and the panel had to open
+   upward out of it. */
+.bench-env-body { min-width: 240px; }
+.bench-env-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.86em; color: var(--fg-dim); }
+.bench-env-q {
+    flex: 1 1 90px; min-width: 90px; font: inherit; font-size: 1em; padding: 2px 6px;
+    color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+}
+.bench-env-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.bench-env-list li { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; font-size: 0.88em; }
+.bench-env-pv { color: var(--fg-faint); font-variant-numeric: tabular-nums; margin-left: auto; }
+.bench-env-err { color: var(--err); font-size: 0.88em; }
+/* Said plainly rather than drawn as a control that does nothing — an affordance that silently no-ops is
+   worse than an absent one, because you cannot tell it from a bug. */
+.bench-env-soon { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--border);
+                  font-size: 0.82em; font-style: italic; color: var(--fg-faint); }

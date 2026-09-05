@@ -6,15 +6,17 @@
 import atomOneDark from "highlight.js/styles/atom-one-dark.css";
 import atomOneLight from "highlight.js/styles/atom-one-light.css";
 import katexCss from "katex/dist/katex.min.css";
-import { config, fontScale, codeWrap, codeLineNumbers, BASE_FS } from "./store";
+import { config, fontScale, codeWrap, codeLineNumbers, focusMode, BASE_FS } from "./store";
 
 let hljsStyleEl: HTMLStyleElement | null = null;   // holds the active Atom One theme
 const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
 
+/** The theme to draw in — the explicit choice, else the OS preference. */
 export const resolveTheme = (): "dark" | "light" => {
     const t = config.value.theme;
     return (t === "light" || t === "dark") ? t : (themeMedia.matches ? "dark" : "light");
 };
+/** Put the resolved theme on the root element, which is where every colour token is defined. */
 export const applyTheme = (): void => {
     const t = resolveTheme();
     document.documentElement.setAttribute("data-theme", t);
@@ -51,4 +53,12 @@ export const applyFont = (): void => {
 export const applyCodePrefs = (): void => {
     document.documentElement.setAttribute("data-codewrap", codeWrap.value ? "on" : "off");
     document.documentElement.setAttribute("data-codelines", codeLineNumbers.value ? "on" : "off");
+};
+
+/** Focus mode rides a root attribute for the same reason the code prefs do: it is purely presentational, so
+ *  CSS can own all of it and no component has to learn about it. Keeping it out of the markup also means an
+ *  element hidden here is still THERE — the transcript a reader is looking at is the same one they can export,
+ *  search, or read with the mode off. */
+export const applyFocus = (): void => {
+    document.documentElement.toggleAttribute("data-focus", focusMode.value);
 };

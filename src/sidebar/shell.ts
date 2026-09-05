@@ -18,6 +18,7 @@ import { resolveContextContainer, domToContext } from "../dom";   // right-click
 import type { DebugMode, ElementContext } from "../contract";
 
 const WIDTH_KEY = "ml_debug_width";
+const CARD_W_KEY = "ml_card_width";   // the corner card's dragged width
 const MIN_W = 280, TAB_W = 34, DEFAULT_W = 400;
 
 // The hover-highlight box + its label. Pulled out of SHELL_CSS so the devtools-mode
@@ -126,7 +127,14 @@ const CARD_CSS = `
   to   { -webkit-backdrop-filter: blur(30px) saturate(102%); backdrop-filter: blur(30px) saturate(102%); background: rgba(250, 250, 252, .72); }
 }
 @media (prefers-reduced-motion: reduce) { #${SB_CARD}-wrap.ml-materialize { animation: none; } }
-#${SB_CARD}-wrap.no-anim { transition: none; }
+/* NEVER animate while the POINTER is driving. A drag must track the hand 1:1; the spring is for a
+   programmatic move — snapping to a corner, a state change, the reset button — where the animation IS the
+   feedback that something happened. This was already applied on every drag and did nothing, because
+   the .no-anim rule and the [data-state="expanded"] rule are both specificity (1,1,0): a TIE, resolved by
+   source order, and the state rule is declared later. Hence !important rather than moving this below it —
+   an override that depends on staying under every state rule is one a future state rule defeats again,
+   silently. (No backticks in here: this whole stylesheet is a template literal.) */
+#${SB_CARD}-wrap.no-anim { transition: none !important; }
 /* The acrylic tracks the APP's resolved theme (set on the wrap by the shell from config.theme), NOT
    the OS — otherwise a user who forces Light while the OS is dark gets dark text on a dark acrylic. */
 #${SB_CARD}-wrap[data-theme="dark"] { background: rgb(24 24 27 / 71%); border-color: rgba(255, 255, 255, .12);
@@ -186,12 +194,27 @@ const CARD_CSS = `
 #${SB_CARD}-wrap[data-state="composer"] { box-shadow: 0 24px 70px rgba(0, 0, 0, .34), 0 6px 18px rgba(0, 0, 0, .18); }
 #${SB_CARD}-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }
 /* Resize handle on the FREE edge (bottom corner → drag the top up; top corner → drag the bottom down). */
-#${SB_CARD}-resize { position: absolute; left: 0; right: 0; height: 9px; cursor: ns-resize; z-index: 3; }
+/* Same gating as the width handle below: cardH consults the dragged height ONLY for the expanded card, so
+   in every other state this was a grabbable edge that did nothing. (No backticks in here - this block is a
+   template literal, so one would end the string.) */
+#${SB_CARD}-resize { display: none; position: absolute; left: 0; right: 0; height: 9px; cursor: ns-resize; z-index: 3; }
+#${SB_CARD}-wrap[data-state="expanded"] #${SB_CARD}-resize { display: block; }
 #${SB_CARD}-wrap[data-corner^="bottom"] #${SB_CARD}-resize { top: 0; }
 #${SB_CARD}-wrap[data-corner^="top"] #${SB_CARD}-resize { bottom: 0; }
 #${SB_CARD}-resize::after { content: ""; position: absolute; top: 3px; left: 50%; transform: translateX(-50%);
   width: 34px; height: 3px; border-radius: 2px; background: currentColor; opacity: 0; transition: opacity .15s; color: var(--fg-faint, #888); }
 #${SB_CARD}-resize:hover::after { opacity: .5; }
+/* The WIDTH handle, on whichever VERTICAL edge is free — the mirror of the height handle above. */
+/* Hidden outside the expanded card, because that is the only state the drag DOES anything in — a handle you
+   can grab that then does nothing is a worse affordance than none at all. */
+#${SB_CARD}-resize-x { display: none; position: absolute; top: 0; bottom: 0; width: 9px; cursor: ew-resize; z-index: 3; }
+#${SB_CARD}-wrap[data-state="expanded"] #${SB_CARD}-resize-x { display: block; }
+#${SB_CARD}-wrap[data-corner$="right"] #${SB_CARD}-resize-x { left: 0; }
+#${SB_CARD}-wrap[data-corner$="left"] #${SB_CARD}-resize-x { right: 0; }
+#${SB_CARD}-resize-x::after { content: ""; position: absolute; left: 3px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 34px; border-radius: 2px; background: currentColor; opacity: 0; transition: opacity .15s; color: var(--fg-faint, #888); }
+#${SB_CARD}-wrap[data-corner$="left"] #${SB_CARD}-resize-x::after { left: auto; right: 3px; }
+#${SB_CARD}-resize-x:hover::after { opacity: .5; }
 #${SB_CARD}-wrap:not([data-state="expanded"]) #${SB_CARD}-resize { display: none; }
 /* Right-click corner menu (drawn HERE in the shell, not the pill iframe which would clip it). */
 #${SB_CARD}-menu { position: fixed; z-index: 2147483002; min-width: 150px; padding: 4px;
@@ -251,6 +274,11 @@ let overlayReady = false;                    // the OVERLAY iframe app has hands
 // height → cardAutoH), capped at 72vh, UNLESS the user dragged the top edge (cardManualH, persisted).
 let cardAutoH = 200;
 let cardManualH: number | null = null;   // transient drag override (discarded when content changes / on unmount)
+// WIDTH is the opposite kind of override and so has the opposite lifetime. Height is content-driven, so a
+// drag is a momentary "hold it here" that the next step's content supersedes; width is a fixed per-state
+// constant that content never argues with, so a dragged width is a PREFERENCE and is persisted. Discarding
+// it on the next event, the way the height is, would make the card snap back mid-run every time.
+let cardManualW: number | null = null;
 let cardProseW: number | null = null;    // the caption pill's measured content width (app-reported), clamped for orbprose
 let cardDrag: { left: number; top: number } | null = null;   // live grab-drag position (px); null when resting
 // The PAGE element that had focus before the card borrowed it for an approval prompt — handed back when the
@@ -329,16 +357,26 @@ const CARD_MARGIN = 20;
 const CARD_BORDER = 2;   // the wrap's 1px top+bottom border (box-sizing: border-box), added back to the content height
 const ORB_SIZE = 54;
 const CARD_W: Record<string, number> = { orb: ORB_SIZE, orblabel: 230, orbprose: 360, toast: 340, expanded: 384, composer: 560, hidden: 340 };
+const CARD_MIN_W = 260;    // narrower than this and the transcript's code blocks have nowhere to go
 const PROSE_MIN_W = 150;   // never narrower than the icon + a couple of words (a 1-word caption still reads as a pill)
 const cardW = (state: string): number => {
     // orbprose FITS its caption: the app measures the text's natural width and posts it; we clamp to
     // [PROSE_MIN_W, orbprose max] so a short line hugs the text and a long one caps + ellipsizes. The width
     // change animates via the wrap's CSS transition, so the pill smoothly grows/shrinks as new prose lands.
-    if (state === "orbprose" && cardProseW != null) {
+    // BOTH pill states fit their text. orblabel used to be a fixed 230px, which cut a perfectly ordinary
+    // phase label ("Waiting for the page…") on a screen with room for twice that. The cap is shared, so a
+    // long label still ellipsizes rather than growing a capsule across the viewport.
+    if ((state === "orbprose" || state === "orblabel") && cardProseW != null) {
         return Math.min(Math.max(cardProseW, PROSE_MIN_W), CARD_W.orbprose, window.innerWidth - 2 * CARD_MARGIN);
     }
     // MAXIMISED: a corner window ~90% of the viewport width (leaves a margin so the page shows through).
     if (state === "maximized") return Math.min(Math.round(window.innerWidth * 0.9), window.innerWidth - 2 * CARD_MARGIN);
+    // ONLY the fully expanded card. It is the one state whose width is a reading measure the user has a
+    // reason to choose. Everything else is sized by what it contains or by its own job — the orb is a circle,
+    // its capsule hugs a caption, a toast is a transient one-liner, the composer is a Spotlight bar centred on
+    // the screen — and applying a width chosen for reading a transcript to any of them just deforms it.
+    if (cardManualW && state === "expanded")
+        return Math.min(Math.max(cardManualW, CARD_MIN_W), window.innerWidth - 2 * CARD_MARGIN);
     return Math.min(CARD_W[state] ?? 340, window.innerWidth - 2 * CARD_MARGIN);
 };
 const cardH = (state: string): number => {
@@ -396,6 +434,35 @@ function startCardResize(e: PointerEvent): void {
         if (frame) frame.style.pointerEvents = "";
         cardWrap?.classList.remove("no-anim");
         // Not persisted — a drag is a momentary override that the next event snaps back to content.
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+}
+
+// Drag the free VERTICAL edge to resize the card's WIDTH. Which edge is free depends on the corner it is
+// anchored to — a right-anchored card grows leftwards, so its handle is on the left — exactly like the height
+// handle sitting on whichever horizontal edge is free. `cardPos` derives `left` from the width for a
+// right-hand corner, so the anchored edge stays put with no extra bookkeeping.
+function startCardResizeX(e: PointerEvent): void {
+    if (!cardWrap) return;
+    e.preventDefault();
+    if (frame) frame.style.pointerEvents = "none";   // let the drag cross the iframe
+    cardWrap.classList.add("no-anim");               // track the pointer 1:1 (no spring lag while dragging)
+    const rect = cardWrap.getBoundingClientRect();
+    const rightAnchored = (cardWrap.dataset.corner || "").endsWith("right");
+    const anchor = rightAnchored ? rect.right : rect.left;   // the fixed edge; width grows from it
+    const onMove = (ev: PointerEvent) => {
+        const raw = rightAnchored ? anchor - ev.clientX : ev.clientX - anchor;
+        cardManualW = Math.max(CARD_MIN_W, Math.min(window.innerWidth - 2 * CARD_MARGIN, Math.round(raw)));
+        layoutCard();
+    };
+    const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        if (frame) frame.style.pointerEvents = "";
+        cardWrap?.classList.remove("no-anim");
+        // Persisted, unlike the height: nothing about the content will supersede this choice.
+        if (cardManualW) try { chrome.storage.local.set({ [CARD_W_KEY]: cardManualW }); } catch { /* opaque origin */ }
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -1042,7 +1109,18 @@ function mountCard(): void {
     handle.title = "Drag to resize · double-click to auto-fit";
     handle.addEventListener("pointerdown", startCardResize);
     handle.addEventListener("dblclick", () => { cardManualH = null; layoutCard(); });   // back to auto-fit
-    cardWrap.append(frame, handle);
+    const handleX = document.createElement("div");
+    handleX.id = `${SB_CARD}-resize-x`;
+    handleX.title = "Drag to resize · double-click for the default width";
+    handleX.addEventListener("pointerdown", startCardResizeX);
+    handleX.addEventListener("dblclick", () => {
+        cardManualW = null; layoutCard();
+        try { chrome.storage.local.remove(CARD_W_KEY); } catch { /* opaque origin */ }
+    });
+    // A width the user chose survives the page, so restore it before the first reveal — arriving late would
+    // make the card visibly jump from the default to the chosen size.
+    try { chrome.storage.local.get({ [CARD_W_KEY]: 0 }, (d: any) => { if (d[CARD_W_KEY]) { cardManualW = d[CARD_W_KEY]; layoutCard(); } }); } catch { /* opaque origin */ }
+    cardWrap.append(frame, handle, handleX);
     root.append(cardWrap);
     (document.documentElement || document.body).append(cardHost);
     layoutCard();   // position the (hidden) card at its corner up front, so the first reveal FLIES from there

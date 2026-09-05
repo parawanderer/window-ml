@@ -1,0 +1,8 @@
+{
+  "_": "WHERE THIS SCHEMA COMES FROM, as a checkable fact rather than a note. The definition is not ours: it lives BESIDE THE ENCODER in the ollama fork, which is what makes it the definition rather than a copy of one \u2014 the same file is also published in the mlbox notes repo, and pinning to that one would have been pinning to a copy. This vendored copy exists because a fresh checkout must be able to generate without the network, and `blob` is what stops it drifting: a git blob id is content-addressed, so `git hash-object src/proto/chat.proto` proves the copy is byte-for-byte the file at that commit offline. `npm run gen-proto -- --check` does that, asks GitHub whether the commit still carries that blob, and says so when upstream has moved on. Do not edit chat.proto: replace it wholesale, update `commit` and `blob`, and re-run the generator.",
+  "repo": "parawanderer/ollama",
+  "path": "middleware/chat.proto",
+  "commit": "d2b54b9a4c018385f9d5f28622968c1ee244f9bf",
+  "blob": "d8b318babff6d2730dd1e11437219d69487bef86",
+  "branch": "slop"
+}

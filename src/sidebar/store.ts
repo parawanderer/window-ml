@@ -6,12 +6,18 @@ import { signal } from "@preact/signals";
 import type { DebugSessionConfig, DebugAgentConfig, MlConfig, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, TokenUsage, SubcallUsage, AnswerMedia, PersistGrant, ReusedGrant, GenPhase, RemoteTiming } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 
-export const FONT_KEY = "ml_debug_fontscale";
+export const FONT_KEY = "ml_debug_fontscale";   // storage.local: the panel's font scale
 export const BASE_FS = 12, MIN_FS = 0.8, MAX_FS = 1.6;   // font-scale bounds (× BASE_FS px)
 // Sidebar-only code-block display prefs (storage.local, like fontScale — not part
 // of the ml config the popup/background share).
 export const WRAP_KEY = "ml_debug_codewrap";     // true = break-line (default); false = horizontal scroll
 export const LINES_KEY = "ml_debug_codelines";   // line-number gutter on code blocks
+// FOCUS MODE: read the transcript as a conversation. It hides the machinery a debugger wants and a reader
+// does not — step counters, approval badges, the "you" label, the model pill, the copy/raw controls, the
+// collapsed tool row's output preview. It is a DISPLAY pref, not a filter: nothing is dropped from the
+// session, every disclosure still opens, and turning it off brings it all back. Sidebar-only (storage.local,
+// like the font scale), because it is how you are reading right now rather than how the agent should run.
+export const FOCUS_KEY = "ml_debug_focus";
 export const STATS_TOKENS_KEY = "ml_debug_stats_tokens";   // DevTools run-stats bar: cumulative in/out tokens (default on)
 export const STATS_TPS_KEY = "ml_debug_stats_tps";         // DevTools run-stats bar: generation tok/s (default off)
 export const OUTTS_KEY = "ml_debug_outts";                 // show per-line timestamps on streamed tool output
@@ -21,7 +27,7 @@ export const OUTMAX_KEY = "ml_debug_outmax";               // max height (px) of
 // How tall the VRAM/resource panel is. It sits above the session list and competes with it for height, so
 // which one you want more of depends on what you are doing — hence draggable, and remembered.
 export const VRAMH_KEY = "ml_vram_h";
-export const RESWIN_KEY = "ml_res_window";
+export const RESWIN_KEY = "ml_res_window";   // storage.local: seconds of history the resource chart DRAWS (retention is separate)
 export const RESWIN_DEFAULT = 300;                         // 5 minutes — readable at this width
 
 export type Status = "pending" | "ok" | "err";
@@ -46,8 +52,10 @@ export interface Session {
     createdTs: number; lastTs: number; status: Status;
     config: DebugSessionConfig; turns: Turn[];
     title?: string;   // AI-summarised title (lazy; see title generation below)
-    // ml.agent runs (kind === "agent"): a task + a list of steps + a final summary.
-    kind?: "agent";
+    // What this session IS. `agent` is an ml.agent run — a task, a list of steps, a final summary. `embed`
+    // is `ml.embed()`, which reports through the chat events (a model call is a model call) but is not a
+    // chat. ABSENT means an ordinary `ml.chat()`.
+    kind?: "agent" | "embed";
     task?: string;
     taskImages?: string[];   // composer attachments the user pasted with the initial task (data URLs)
     pageUrl?: string;        // the page the run STARTED on (a run that navigates ends elsewhere)
@@ -87,11 +95,19 @@ export interface Session {
 
 // --- state: a Map (O(1) lookup) + a version signal to notify Preact of changes ---
 export const sessionMap = new Map<string, Session>();
+// THE REPAINT SIGNAL. `sessionMap` is a plain Map for O(1) lookup, so nothing about mutating it is
+// observable — bumping this is what tells Preact something changed. Anything that writes session state
+// bumps it; anything that reads must SUBSCRIBE (and retain the read, per the minifier gotcha).
 export const rev = signal(0);
+// WHICH VIEW is on screen. `settings` and `bench` REPLACE the others, which is why leaving them needs
+// `viewReturn` — see it below.
 export const view = signal<{ name: "list" } | { name: "detail"; hash: string } | { name: "settings" } | { name: "bench" }>({ name: "list" });
-export const fontScale = signal(1);
+export const fontScale = signal(1);   // × BASE_FS px — the panel's text size (Settings → Appearance)
 export const codeWrap = signal(true);          // wrap long code lines vs. horizontal scroll
 export const codeLineNumbers = signal(false);  // show a line-number gutter on code blocks
+// FOCUS MODE: read the run as a conversation. A DISPLAY pref, not a filter — it quiets chrome (counters,
+// badges, provenance) via CSS on a root attribute, so nothing is dropped and turning it off restores it.
+export const focusMode = signal(false);
 export const showStatsTokens = signal(true);   // DevTools run-stats bar: cumulative in/out tokens (default on)
 export const showStatsTps = signal(false);     // DevTools run-stats bar: generation tok/s (default off)
 export const OUTMAX_DEFAULT = 260;             // px — roughly 14 lines; enough to read, small enough not to bury the page
@@ -110,9 +126,39 @@ export const brush = signal<{ from: number; to: number } | null>(null);
 // SCOPE is not — it follows what you are looking at, and a stored scope would silently hide another run's
 // events on a later visit for a reason nothing on screen explains.
 export const LANE_HIDDEN_KEY = "ml_lane_hidden";
-export const laneHidden = signal<string[]>([]);
-/** Restrict the lane to the session being read, when one is open. */
-export const laneScoped = signal(false);
+export const laneHidden = signal<string[]>([]);   // event-lane kinds to HIDE (an exclusion list, so a new kind is visible by default)
+/** Restrict the lane to the session being read. ON by default and remembered: the lane sits above a
+ *  transcript, and events from runs you are not reading are noise against it. With nothing open there is
+ *  nothing to scope to, so the overview shows no run events at all — turn this off to see every session's. */
+export const LANE_SCOPE_KEY = "ml_lane_scope";
+export const laneScoped = signal(true);   // the panel is about THIS session (vs the whole box) — window, model list and lane all read it
+// The panel's two SECTIONS, remembered. Both compete with the chart for whatever height the panel has been
+// dragged to, and which of the three you want depends on what you are doing: reading a run's shape wants the
+// lane, watching memory move wants the plot, deciding what to evict wants the model list. Hidden, not
+// removed — the data behind each keeps being collected either way.
+/** The step seqs lit by whatever is hovered in the event lane, or null when nothing is. The lane already
+ *  dims its own bars by lineage; this carries the same focus into the transcript, so hovering a block says
+ *  which part of the log it is about. Seqs rather than event ids, because the log is keyed by step. */
+export const laneLitSeqs = signal<Set<number> | null>(null);
+export const SECTIONS_KEY = "ml_res_sections";   // storage.local: which resource-panel sections the panel draws / has open
+/** Whether the panel draws the event section AT ALL — the track editor's "event lane" checkbox. Separate from
+ *  `showLane`, which is only whether that section is expanded: one signal did both, so unchecking the setting
+ *  merely collapsed the row it was meant to remove and the `events …` header stayed sitting there. */
+export const laneEnabled = signal(true);
+// COLLAPSED by default. The lane is CONTENT — what happened — and it competes with the chart for whatever
+// height the panel was dragged to; the scrub strip above it is NAVIGATION and stays, so the panel does not
+// jump in height the first time anything runs. Its chip row is always drawn and is the control.
+export const showLane = signal(false);
+export const LANEH_KEY = "ml_res_laneh";   // storage.local: the event lane's own height, in px
+/** How tall the event LANE is, independent of the panel. Its default is a cap rather than "as tall as it
+ *  needs to be", which is the whole point: the lane re-packs as the window moves — a step entering the view
+ *  can add a row — and inside a fixed-height panel every row it gained came straight off the CHARTS above it,
+ *  which shrank while you were dragging. Bounded, it scrolls instead, and nothing above it moves. */
+export const LANE_H_DEFAULT = 96;
+/** The event lane's height in px — dragged from its own bottom edge, remembered, double-click to reset. */
+export const laneH = signal(LANE_H_DEFAULT);
+export const showModels = signal(true);   // draw the resource panel's model list (it competes with the chart for height)
+// The resource chart's CROSSHAIR — where the pointer is, shared so every track mirrors the same instant.
 export const crosshair = signal<{ frac: number; t: number | null; msPerPx?: number } | null>(null);
 export const resWindowS = signal(RESWIN_DEFAULT);  // seconds of history the resource chart shows (Settings → Appearance)
 export const outMaxH = signal(OUTMAX_DEFAULT); // max height of a tool output cell (Settings → Appearance); 0 = uncapped
@@ -151,3 +197,115 @@ export const atBottom = { v: true };
 // "card" (a transparent, curated HUD). The shell sets it via __mlSidebarSurface; components read it to drop
 // debug chrome in the card. Cross-cutting (read by the agent-detail views + the HUD), so it lives here.
 export const surface = signal<"panel" | "card">("panel");
+
+/** localStorage, tolerantly: an opaque origin (a sandboxed frame) throws on access rather than returning
+ *  null, and a display preference is never worth failing a render over. */
+export const lsGet = (k: string): string | null => { try { return localStorage.getItem(k); } catch { return null; } };
+/** Write to localStorage, tolerantly — see lsGet. */
+export const lsSet = (k: string, v: string): void => { try { localStorage.setItem(k, v); } catch { /* opaque origin — skip */ } };
+/** The Python bench's script. The bench reads it when it MOUNTS, which is what lets a code block hand it
+ *  a script and then navigate: the bench is only rendered while it is the open view, so arriving there
+ *  always picks the new source up. */
+export const BENCH_CODE_KEY = "ml_bench_code";
+
+/** A model call YOU triggered while READING a run — the code annotator, an on-demand summary. Recorded so
+ *  the event lane can draw it, and kept apart from the run's own steps for the reason that matters: it
+ *  spent tokens on this box (so hiding it would be dishonest) but it is not the agent's work (so charging
+ *  it to the run would make two runs incomparable on the strength of how much someone poked at one).
+ *  Session-scoped and in memory only: it describes this reading session, not the run's record. */
+export interface Aside { t: number; ms: number; label: string; model?: string; seq?: number; }
+export const asides = new Map<string, Aside[]>();   // per session hash — see Aside above
+/** Record one, and bump `rev` so the panel picks it up. Bounded per session — a long debugging session
+ *  should not grow a list nobody reads. */
+export const noteAside = (hash: string, a: Aside): void => {
+    const list = asides.get(hash) ?? [];
+    list.push(a);
+    if (list.length > 100) list.shift();
+    asides.set(hash, list);
+    rev.value++;
+};
+
+/* --- the Python bench's own presentation ------------------------------------------------------------
+   The bench used to REPLACE the session view, so "try this snippet" cost you your place in the run you
+   opened it from — which is exactly the trip you would be making. It is a bottom DRAWER by default, with a
+   full-page mode for a long script, and returning from full lands back on the view you left rather than on
+   the sessions list. */
+export const BENCH_OPEN_KEY = "ml_bench_open";
+export const BENCH_DOCK_KEY = "ml_bench_dock";     // "drawer" | "full"  (NOT ml_bench_mode — that is the sandbox's readonly/full)
+export const BENCH_H_KEY = "ml_bench_h";   // storage.local: the bench drawer's height
+export const BENCH_SPLIT_KEY = "ml_bench_split";   // storage.local: the editor's share of the bench, 0..1
+export const benchOpen = signal(false);   // is the bench showing (as a drawer, or as the full-page view)?
+export const benchDock = signal<"drawer" | "full">("drawer");   // its SHAPE — a remembered preference, not re-chosen each time
+export const benchH = signal(280);   // px — the drawer's dragged height
+/** THE EDITOR'S SHARE of the bench, as a fraction — the divider between the script and its output. A ratio
+ *  rather than a pixel height, because the bench is a drawer you also resize: pinning the editor to pixels
+ *  would eat the whole output pane the moment the drawer got shorter. */
+export const benchSplit = signal(0.55);
+
+/** What the bench's sandbox IS — Python/Pyodide versions and the packages that actually installed.
+ *  A SIGNAL rather than component state because two surfaces name it (the drawer's header chip and the
+ *  environment panel) and reading it is not free: it STARTS Pyodide, which is the cold start the panel is
+ *  deliberately lazy about. So it is learned once — when you open the panel, or opportunistically after a
+ *  run, when the sandbox is already warm — and CACHED across sessions, since it is a property of the
+ *  wheels this build bundles rather than of this session. */
+export interface BenchEnvInfo { python: string; pyodide: string; packages: { name: string; version?: string }[] }
+export const BENCH_ENV_KEY = "ml_bench_env";   // storage.local: the sandbox's versions + packages, once learned
+/** What the bench's Pyodide sandbox IS, once anything has asked it — null until then, never guessed. */
+export const benchEnv = signal<BenchEnvInfo | null>(null);
+/** Record what the sandbox reported, and remember it for next time. */
+export function noteBenchEnv(env: BenchEnvInfo) {
+    benchEnv.value = env;
+    try { chrome.storage.local.set({ [BENCH_ENV_KEY]: env }); } catch { /* no chrome in a bare render */ }
+}
+/** WHERE TO GO BACK TO. Settings, the server-tool list and the full-page bench all REPLACE the view, and
+ *  `‹` sent you to the sessions list from every one of them — so glancing at a setting mid-run cost you the
+ *  run you were reading and you had to find your way back in. One signal for all of them rather than one
+ *  per destination: two would drift, and they are the same question ("what was I looking at"). */
+export const viewReturn = signal<{ name: "list" } | { name: "detail"; hash: string } | null>(null);
+/** Record the current view as the place to return to — a no-op unless it is somewhere you can return TO. */
+export const markReturn = (): void => {
+    const v = view.value;
+    if (v.name === "list" || v.name === "detail") viewReturn.value = v;
+};
+
+/** What a bench run came back with — the offscreen sandbox's result, plus the timings the worker measured. */
+export interface BenchRun { ok: boolean; value?: unknown; stdout: string; error?: string; bootMs?: number; runMs?: number; table?: { columns: string[]; rows: (string | number | null)[][] } }
+
+// THE BENCH'S WORKING STATE, HOISTED OUT OF THE COMPONENT. The drawer and the full page are two different
+// mount sites, so `⤢` unmounts one bench and mounts another — and as component state every one of these was
+// destroyed by the switch: your script, your last result, the output you were reading, even a run still in
+// flight. Signals survive it, so changing the SHAPE of the bench now changes only its shape. `code` and
+// `mode` are additionally mirrored to localStorage, which is what carries them across a reload.
+/** The script in the Python bench's editor — the workbench's own draft, not any step's code. */
+export const benchCode = signal<string>(lsGet(BENCH_CODE_KEY) ?? "import numpy as np\nreturn int(np.arange(10).sum())");
+/** Which sandbox the bench runs in: `readonly` (hardened, no network) or `full`. Mirrors `python_exec`'s. */
+export const benchMode = signal<"readonly" | "full">(lsGet("ml_bench_mode") === "full" ? "full" : "readonly");
+/** Is a bench script in flight right now — what the header's ▶ spinner and the disabled Run button read. */
+export const benchRunning = signal(false);
+/** What the bench's last run returned, and what its output pane is drawing. */
+export const benchResult = signal<BenchRun | null>(null);
+/** Streamed stdout and its produced-at marks — see the note at PythonBench's `run`. */
+export const benchLive = signal<{ text: string; marks: [number, number][] } | null>(null);
+
+/** OPEN THE BENCH, from anywhere — the toolbar button, a code block's ▶. One function because there were
+ *  two and they disagreed: the code block's sent you straight to the full page, which is precisely the trip
+ *  the drawer exists to stop (you press it FROM a step, to compare against that step). The dock is a
+ *  remembered preference, so this honours it rather than choosing for you.
+ *
+ *  `code`, when given, becomes the bench's script — the bench reads that key on MOUNT, so writing it before
+ *  opening is the handover. */
+export const openBench = (code?: string): void => {
+    // The bench reads the SIGNAL now, not the key on mount — it is no longer remounted on every open — so a
+    // handed-over script has to be written to both: the signal for this session, the key for the next.
+    if (code != null) { lsSet(BENCH_CODE_KEY, code); benchCode.value = code; }
+    if (benchDock.value === "full") {
+        markReturn();
+        benchOpen.value = true;
+        view.value = { name: "bench" };
+        return;
+    }
+    benchOpen.value = true;
+    try { chrome.storage.local.set({ [BENCH_OPEN_KEY]: true }); } catch { /* no chrome in a bare render */ }
+    // Two draggable strips on the same bottom edge is not a layout — opening one puts the other away.
+    vramOpen.value = false;
+};

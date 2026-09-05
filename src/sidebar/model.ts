@@ -47,13 +47,31 @@ export const shownModel = (s: Session): string => {
     if (last?.status === "ok" && last.model) return last.model;   // actually resolved
     return last ? resolveModel(last.reqModel, last.extend) : resolveModel(s.config.model, null);
 };
+/** Which model profile a session actually ran on — `utility` or the default. Read from the RESOLVED
+ *  model the server reported, not from what the caller requested (which is null for a utility run). */
 export function sessionProfile(s: Session): "utility" | "default" | null {
     const last = s.turns[s.turns.length - 1];
     return last ? turnProfile(last) : null;
 }
 
-// The ":latest" tag is implicit — normalise it off so a model id matches its resident/config form.
-export const normModel = (m: string): string => m.replace(/:latest$/, "");
+// ONE model, spelled two ways by one server. `/api/ps` reports Ollama's SHORT name (`gemma4:31b`) while the
+// event stream reports the fully-qualified one (`registry.ollama.ai/library/gemma4:31b`) — so without this
+// the panel drew every streamed model a SECOND time, in its own colour, badged "off-box" as though it had
+// never been resident. The inverse of Ollama's own ShortName: the default registry comes off, then the
+// default `library` namespace, then the implicit `:latest` tag. Deliberately only the DEFAULTS — a model
+// pulled from elsewhere (`hf.co/user/model`) keeps its prefix, because ps keeps it too, and stripping to the
+// last path segment would collide two genuinely different models that happen to share a name.
+const DEFAULT_REGISTRY = "registry.ollama.ai/";
+const DEFAULT_NAMESPACE = "library/";
+/** ONE CANONICAL NAME for a model. The event stream names them fully-qualified
+ *  (`registry.ollama.ai/library/gemma4:31b`) while `/api/ps` names them short, in the same frame — so
+ *  without this every streamed model is drawn TWICE, once as a phantom "off-box" row. The inverse of
+ *  Ollama's own ShortName: default registry, default `library` namespace, implicit `:latest`. */
+export const normModel = (m: string): string => {
+    let s = m.startsWith(DEFAULT_REGISTRY) ? m.slice(DEFAULT_REGISTRY.length) : m;
+    if (s.startsWith(DEFAULT_NAMESPACE)) s = s.slice(DEFAULT_NAMESPACE.length);
+    return s.replace(/:latest$/, "");
+};
 // The context window we last OBSERVED each model loaded with (from /api/ps). A model's window is a
 // property of the model, not of whether it's resident right now — so the usage gauge keeps measuring
 // occupancy after the model is evicted from VRAM instead of flipping to a different metric. Overwritten

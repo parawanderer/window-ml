@@ -45,6 +45,15 @@ const openSettings = async (w, tab) => {
     }
 };
 
+
+// The panel's tooltip is not an attribute — it follows the cursor and is read into one shared layer (see
+// the tooltip RULE in AGENTS.md), so a test hovers for it instead of reading `title`.
+const hoverTip = async (w, el) => {
+    el.dispatchEvent(new w.window.PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 60 }));
+    await w.flush();
+    return w.shadow.querySelector(".cursor-tip")?.textContent ?? "";
+};
+
 test("sidebar mounts and shows the empty state", async () => {
     const w = await loadSidebarWorld();
     assert.ok(w.shadow, "shadow root mounted");
@@ -437,6 +446,27 @@ test("button #3 (sidebar step): 'Approve + remember' renders, unfurls its URLs, 
     assert.equal(msg.seq, 1);
 });
 
+// Focus mode reads the run as a conversation. A tool call is kept OPEN after you decide so the result fills
+// in on the same cell — right when you are debugging, wrong when you are reading: every approval would
+// permanently widen the transcript, which is the thing focus mode exists to narrow.
+test("focus mode: a decided step collapses; outside focus mode it stays open", async () => {
+    const openAfterDecide = async (focus) => {
+        const w = await loadSidebarWorld(focus ? { local: { ml_debug_focus: true } } : undefined);
+        await w.dispatch(agentStart("fm", "fetch stuff"));
+        await w.dispatch(grantStep("fm"));
+        w.shadow.querySelector(".row").click();
+        await w.tick();
+        // An awaiting step auto-unfurls, so you review the call before deciding — true in both modes.
+        assert.ok(!w.shadow.querySelector(".astep-preview"), "a gate is open before you decide");
+        w.window.postMessage = () => {};
+        w.shadow.querySelector(".astep-approve .appr-btn:not(.remember)").click();
+        await w.tick();
+        return !w.shadow.querySelector(".astep-preview");   // a preview line only shows while COLLAPSED
+    };
+    assert.equal(await openAfterDecide(false), true, "debugging: it stays open and the Out fills in there");
+    assert.equal(await openAfterDecide(true), false, "reading: it collapses back to its one-line preview");
+});
+
 test("button #3 (sidebar step): plain Approve posts persist:false (one-off)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("b3s2", "fetch stuff"));
@@ -647,6 +677,47 @@ test("Settings CDP toggle: flag ON but the debugger permission is INACTIVE → a
     await w.flush();
     const hint = [...w.shadow.querySelectorAll(".set-hint")].map(e => e.textContent).join(" ");
     assert.match(hint, /isn't active|reload the extension/i, "guides the user to reload + accept, not a dead end");
+});
+
+// The macro's mark is a byte RANGE, and the renderer highlights around it segment by segment — so the span
+// it wraps has to be exactly the generated call and nothing either side of it. `expandPointers` is tested for
+// producing the right range; this is the other half, that the range is what actually gets underlined.
+test("pointer macro: the underline wraps EXACTLY the expanded call, not the code around it", async () => {
+    const w = await loadSidebarWorld();
+    const src = `const n = ml.dereference("@tool:a39f599").length; console.log("@tool:not-a-macro", n);`;
+    const at = src.indexOf('ml.dereference');
+    await w.dispatch(agentStart("mac", "read it"));
+    await w.dispatch(agentStep("mac", 1, {
+        seq: 1, tool: "exec", arguments: { js: src }, result: "ok",
+        renderIn: { type: "code", text: src, lang: "javascript", note: "1 pointer macro expanded",
+                    marks: [{ start: at, end: at + 'ml.dereference("@tool:a39f599")'.length, from: "@tool:a39f599" }] },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const head = w.shadow.querySelector('[data-astep-seq="1"] .astep-head');
+    head.click();
+    await w.tick();
+
+    const marks = w.shadow.querySelectorAll('[data-astep-seq="1"] code .expanded');
+    assert.equal(marks.length, 1, "one mark, for the one expansion");
+    // The tooltip lives INSIDE the mark, so read the mark's own text without it.
+    const markText = [...marks[0].childNodes]
+        .filter((n) => !(n.classList && n.classList.contains("tt-pop")))
+        .map((n) => n.textContent).join("");
+    assert.equal(markText, 'ml.dereference("@tool:a39f599")',
+        "exactly the generated call — no leading `const n = `, no trailing `.length`");
+    // (Whether the tooltip is display:none — which is what stops its prose being selected along with the
+    // code — is a CSS fact, and this world loads no stylesheet, so asserting it here would assert nothing.)
+    // The pointer written INSIDE A STRING is not a macro and must not be underlined: the renderer marks what
+    // the expander marked, and marking by search would have caught this one too.
+    const body = w.shadow.querySelector('[data-astep-seq="1"] .astep-body').textContent;
+    assert.ok(body.includes("@tool:not-a-macro"), "the string literal is still shown verbatim");
+
+    // The original spelling rides the tooltip, so hovering the underline says what the model actually wrote.
+    const pop = marks[0].querySelector(".tt-pop");
+    assert.ok(pop, "the mark carries a tooltip");
+    assert.match(pop.textContent, /Expanded from/);
+    assert.match(pop.textContent, /@tool:a39f599/);
 });
 
 test("output-cap raise: the approval card calls out the raised limit + the model's justification", async () => {
@@ -1481,7 +1552,14 @@ test("VRAM monitor shows the context a model was LOADED with (Ollama preallocate
     assert.deepEqual(chips, ["256K", "8K"], "compact context chip per reporting model, none for the old server");
     assert.equal(w.shadow.querySelectorAll(".vram-row").length, 3, "the non-reporting model still gets a row");
     // The tooltip explains WHY it matters (preallocation), not just what it is.
-    assert.match(w.shadow.querySelector(".vram-ctx .tt-pop").textContent, /preallocates/i);
+    const tip = w.shadow.querySelector(".vram-ctx .tt-pop").textContent;
+    assert.match(tip, /preallocates/i);
+    // …and it RECONCILES the chip with the exact count. 262,144 tokens IS 256K, binary — but a chip reading
+    // "256K" beside a tooltip reading "262,144" looks like two different numbers, and the reader has nothing
+    // on screen telling them which to trust. Both forms, chip's first, plus the word that explains the gap.
+    assert.match(tip, /256K-token context window/, "the chip's own figure leads");
+    assert.match(tip, /262,144 tokens exactly/, "…then the exact count the server reported");
+    assert.match(tip, /binary/, "…and why the two look different");
 });
 
 test("VRAM monitor: clicking a colour dot hides that model from the total", async () => {
@@ -2464,7 +2542,7 @@ test("agent options: the tool definitions viewer renders a JSON tree of each too
     // Open the "agent options" block, then reveal the tool definitions.
     w.shadow.querySelector(".block .block-head").click();
     await w.tick();
-    const toolsBtn = [...w.shadow.querySelectorAll(".raw-btn")].find(b => /tool definitions/.test(b.textContent));
+    const toolsBtn = [...w.shadow.querySelectorAll(".disc-head")].find(b => /tool definitions/.test(b.textContent));
     assert.ok(toolsBtn, "a 'tool definitions' toggle appears when the config carries full defs");
     toolsBtn.click();
     await w.tick();
@@ -2544,18 +2622,34 @@ test("python bench: opens from the header, runs a script, and renders the sandbo
     ta.value = "print('hi')\nreturn 1";
     ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
-    w.shadow.querySelector(".bench-run").click();
+    w.shadow.querySelector(".bench-play").click();
     await w.tick();
     // The PYTHON_EXEC payload carried the code; default mode readonly → hardened.
-    assert.equal(w.pyCalls.length, 1);
-    assert.match(w.pyCalls[0].code, /print\('hi'\)/);
-    assert.equal(w.pyCalls[0].hardened, true, "readonly mode → hardened");
-    // The result renders through the python-out panel (stdout).
-    const out = w.shadow.querySelector(".bench-out .r-py-out");
-    assert.ok(out, "result renders in the python-out panel");
-    assert.match(out.textContent, /hi/, "stdout shown");
-    // stdout is a collapsible section (a <details>), like the other blocks.
-    assert.equal(out.querySelector(".r-py-stdout").tagName, "DETAILS", "stdout is a collapsible section");
+    const runs = w.pyCalls.filter((c) => !c.env);
+    assert.equal(runs.length, 1, "ONE run — the env probe below is not a second execution of your script");
+    assert.match(runs[0].code, /print\('hi'\)/);
+    assert.equal(runs[0].hardened, true, "readonly mode → hardened");
+    // …and the run's completion is when the version chip is filled in: the sandbox is warm NOW, so learning
+    // what it is costs nothing, where doing it on mount would make every glance at the bench pay a cold start.
+    assert.ok(w.pyCalls.some((c) => c.env), "the env probe rides the run's completion");
+    // The result renders in the output PANE — the same section renderers the log uses, composed as TABS
+    // rather than as stacked disclosures. In a log a step is a row in a scrolling transcript you read top to
+    // bottom, so a folded stdout is a kindness; in the bench you are in a loop, and the output you ran the
+    // script to see was arriving collapsed behind two clicks on every run.
+    const out = w.shadow.querySelector(".bench-outbody");
+    assert.ok(out, "result renders in the output pane");
+    assert.deepEqual([...w.shadow.querySelectorAll(".bench-tab")].map((b) => b.textContent), ["stdout", "value"],
+        "one tab per section the result actually has");
+    // You LAND ON THE VALUE — stdout comes first, but what you ran the script for is the answer, not the
+    // printing on the way to it. An auto-pick never sticks; only a tab you clicked does.
+    assert.equal(w.shadow.querySelector(".bench-tab.on").textContent, "value");
+    assert.match(out.textContent, /1/, "the returned value is what is on screen");
+    assert.equal(out.querySelector(".r-py-sec"), null, "…and nothing is folded behind a disclosure here");
+    // stdout is one click, not two: in the log it is a `details` you open, which in a loop you were paying
+    // on every single run.
+    [...w.shadow.querySelectorAll(".bench-tab")].find((b) => b.textContent === "stdout").click();
+    await w.flush();
+    assert.match(w.shadow.querySelector(".bench-outbody").textContent, /hi/, "stdout shown");
     // The info note is a tooltip now, not always-shown prose.
     assert.equal(w.shadow.querySelector(".bench-note"), null, "no always-shown note");
     assert.ok(w.shadow.querySelector(".bench-info .tt-pop"), "the note is a hover tooltip");
@@ -2568,13 +2662,122 @@ test("python bench: a returned DataFrame renders as a real table (PyDfTable), no
     const ta = w.shadow.querySelector(".bench-code");
     ta.value = "return df"; ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
-    w.shadow.querySelector(".bench-run").click();
+    w.shadow.querySelector(".bench-play").click();
     await w.tick();
-    const df = w.shadow.querySelector(".bench-out .r-df-scroll, .bench-out table.dftable, .bench-out .r-py-val table");
-    assert.ok(df || w.shadow.querySelector(".bench-out .r-py-val"), "the value section renders");
+    assert.ok(w.shadow.querySelector(".bench-outbody .r-df-scroll"), "the value section renders as a real table");
     // The DataFrame table (PyDfTable) shows the column headers.
-    assert.match(w.shadow.querySelector(".bench-out .r-py-val").textContent, /foo/);
-    assert.match(w.shadow.querySelector(".bench-out .r-py-val").textContent, /bar/);
+    assert.match(w.shadow.querySelector(".bench-outbody").textContent, /foo/);
+    assert.match(w.shadow.querySelector(".bench-outbody").textContent, /bar/);
+    // …and WITHOUT the log's hide/show control: the tab strip already decides what is on screen, so a
+    // second control for "do not show me this" only undoes the choice the first one just made.
+    assert.equal(w.shadow.querySelector(".bench-outbody .r-df-bar"), null, "no collapse bar in the bench");
+});
+
+// A pandas column can legitimately hold a dict or a list — `dict(per_q)` in a cell is an ordinary thing to
+// write — and `String()` renders those as "[object Object]": a wrong answer printed exactly where the reader
+// is looking for the right one. It shipped for as long as it did because nothing asserted on a non-scalar
+// cell's TEXT.
+test("python bench: a DataFrame cell holding a dict renders as JSON, not [object Object]", async () => {
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: "", stdout: "",
+        table: { columns: ["metric", "value"], rows: [
+            ["Grand total", 6260],
+            ["Per quarter", { Q1: 1500, Q2: 1600 }],
+            ["Tags", ["a", "b"]],
+            ["Missing", null],
+        ] } }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const ta = w.shadow.querySelector(".bench-code");
+    ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
+    await w.tick();
+    w.shadow.querySelector(".bench-play").click();
+    await w.tick();
+    const text = w.shadow.querySelector(".bench-outbody").textContent;
+    assert.doesNotMatch(text, /\[object Object\]/, "a dict cell is not JS default coercion");
+    assert.match(text, /"Q1":\s*1500/, "…it is the value, as JSON");
+    assert.match(text, /\["a","b"\]|\[\s*"a"/, "and so is a list cell");
+    assert.match(text, /NaN/, "a null cell still reads as NaN, the pandas spelling");
+    assert.match(text, /6260/, "scalars are untouched");
+});
+
+// A value we genuinely cannot serialise is NOT an empty cell, and must not look like one. `[object Object]`
+// was the old answer: a wrong fact printed exactly where the reader is looking for the right one.
+test("python bench: a cell that cannot be serialised says so, and says what it was", async () => {
+    const circular = { name: "loop" };
+    circular.self = circular;
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: "", stdout: "",
+        table: { columns: ["metric", "value"], rows: [["fine", 1], ["broken", circular]] } }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const ta = w.shadow.querySelector(".bench-code");
+    ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
+    await w.tick();
+    w.shadow.querySelector(".bench-play").click();
+    await w.tick();
+    const cell = w.shadow.querySelector(".bench-outbody .r-td-unrend");
+    assert.ok(cell, "the unrenderable cell is marked, not left blank or coerced");
+    assert.match(cell.textContent, /unrenderable/);
+    // The TYPE is most of the answer to "why is my column empty".
+    const tip = await hoverTip(w, cell);
+    assert.match(tip, /could not be serialised/i);
+    assert.match(tip, /the model received the value itself/i,
+        "…and it says the failure is in the PREVIEW, not in the run");
+    assert.doesNotMatch(w.shadow.querySelector(".bench-outbody").textContent, /\[object Object\]/);
+});
+
+// `{}` for something that is NOT an empty object is the same wrong fact in the same place, just quieter — and
+// unlike a function, a Map/Set/Error survives a structured clone, so these genuinely arrive.
+test("python bench: a Map, a Set or an Error is marked rather than printed as {}", async () => {
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: "", stdout: "",
+        table: { columns: ["what", "value"], rows: [
+            ["a real empty object", {}],
+            ["a Map", new Map([["a", 1], ["b", 2]])],
+            ["an Error", new Error("nope")],
+        ] } }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const ta = w.shadow.querySelector(".bench-code");
+    ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
+    await w.tick();
+    w.shadow.querySelector(".bench-play").click();
+    await w.tick();
+
+    const marks = [...w.shadow.querySelectorAll(".bench-outbody .r-td-unrend")];
+    assert.equal(marks.length, 2, "the Map and the Error are marked; a genuinely empty object is not");
+    assert.deepEqual(marks.map((m) => m.textContent), ["unrenderable Map", "unrenderable Error"],
+        "…and each says what it WAS, which is most of the answer to 'why is my column empty'");
+    // A plain `{}` is left alone: there, `{}` is the truth.
+    assert.match(w.shadow.querySelector(".bench-outbody").textContent, /\{\}/);
+});
+
+// The SANDBOX-marked case, which the two above cannot produce: pandas flattens an arbitrary object to `{}`
+// on its way out, so by the time it reaches the browser there is nothing left to detect. The type is
+// recorded at the producer (python-runtime.ts) and read back here — the two halves of one mechanism, and
+// this is the half that draws it.
+test("python bench: a cell the SANDBOX marked names its Python type, and blames the preview", async () => {
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: "", stdout: "",
+        table: { columns: ["name", "meta"], rows: [
+            ["a", { q1: 1 }],
+            ["b", { __ml_unrenderable__: "Widget" }],
+        ] } }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const ta = w.shadow.querySelector(".bench-code");
+    ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
+    await w.tick();
+    w.shadow.querySelector(".bench-play").click();
+    await w.tick();
+
+    const marks = [...w.shadow.querySelectorAll(".bench-outbody .r-td-unrend")];
+    assert.equal(marks.length, 1, "only the marked cell; the dict beside it has a JSON form and keeps it");
+    assert.equal(marks[0].textContent, "unrenderable Widget", "the PYTHON type, carried across");
+    // The cause differs from the browser-side one and so does the explanation: naming the wrong cause sends
+    // the reader looking in the wrong half of the system.
+    const tip = await hoverTip(w, marks[0]);
+    assert.match(tip, /would show as an empty object/i);
+    assert.doesNotMatch(tip, /circular/i);
+    assert.match(w.shadow.querySelector(".bench-outbody .r-df-table").textContent, /"q1"/,
+        "the dict cell is untouched — the marker is only for what would otherwise be LOST");
 });
 
 test("python bench: full mode sends hardened:false", async () => {
@@ -2588,7 +2791,7 @@ test("python bench: full mode sends hardened:false", async () => {
     ta.value = "return 1";
     ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
-    w.shadow.querySelector(".bench-run").click();
+    w.shadow.querySelector(".bench-play").click();
     await w.tick();
     assert.equal(w.pyCalls[0].hardened, false, "full mode → not hardened");
 });
@@ -3098,7 +3301,7 @@ test("agent options block renders the config + reveals the system prompt", async
     assert.match(w.shadow.querySelector(".opts").textContent, /maxSteps: 8/);
     assert.match(w.shadow.querySelector(".opts").textContent, /tools \(2\): look, click ⚠/);
 
-    w.shadow.querySelector(".sys-block .raw-btn").click();   // reveal the system prompt
+    w.shadow.querySelector(".sys-block .disc-head").click();   // open the system prompt section
     await w.tick();
     assert.match(w.shadow.querySelector(".sys-block .code").textContent, /automation agent/);
 });
@@ -3938,7 +4141,7 @@ test("card corner menu: the request carries the run hash + live flag (for Copy i
     // With the menu open, the NEXT pointerdown inside the card asks the shell to dismiss it — the shell's
     // own outside-click handler can't see an in-iframe click (and the page window is already blurred).
     posted.length = 0;
-    w.window.dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true }));
+    w.window.dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true, composed: true }));
     await w.tick();
     assert.ok(posted.some(m => m.__mlSidebarCornerMenuDismiss), "an in-card click dismisses the open menu");
 });
@@ -4406,7 +4609,7 @@ test("raw In args: a key documented in the tool schema gets a hover tooltip; an 
     assert.match(bogus.querySelector(".tt-pop").textContent, /Not in this tool's parameter schema/, "…with a hallucinated-arg warning");
     const tips = [...w.shadow.querySelectorAll(".astep.tool .jt-key-doc .tt-pop")].map(n => n.textContent).join(" | ");
     assert.match(tips, /CSS selector or @pt/, "tooltip text is the schema description");
-    assert.ok(w.shadow.querySelector(".astep.tool .jt-args-copy"), "the tree carries a copy-JSON button (a tree isn't drag-selectable)");
+    assert.ok(w.shadow.querySelector(".astep.tool .r-outcorner"), "the raw view carries a copy button — on the CELL, so it does not scroll away with the text");
 });
 
 test("raw In args: malformed schema / non-object args never crash the panel (falls back safely)", async () => {
@@ -5164,7 +5367,10 @@ test("HUD orb (streaming): the thinking phase carries a LIVE token count in the 
     await w.flush();
     const label = w.shadow.querySelector(".card-orb-label");
     assert.ok(label, "the streaming orb auto-expands to a caption (there's live detail to show)");
-    assert.match(label.textContent, /~1\.2k tok/, "the live token count rides the thinking phase");
+    // The count is its OWN span, not part of the label: the pill ellipsizes on width, and concatenated it
+    // was the number that got cut — the one part of the pill still saying something.
+    assert.doesNotMatch(label.textContent, /tok/, "the label is the phase, and it is what may be truncated");
+    assert.match(w.shadow.querySelector(".card-orb-live").textContent, /~1\.2k tok/, "the live count rides beside it");
 });
 
 test("HUD orb (non-streaming): a STALLED run shows an elapsed heartbeat + phase, and NO token count", async () => {
@@ -5176,8 +5382,12 @@ test("HUD orb (non-streaming): a STALLED run shows an elapsed heartbeat + phase,
     await w.flush();
     const label = w.shadow.querySelector(".card-orb-label");
     assert.ok(label, "the stalled orb auto-expands so the liveness readout is visible");
-    assert.match(label.textContent, /Viewing the screen… · \d+s/, "the elapsed heartbeat proves the pipe is alive");
-    assert.doesNotMatch(label.textContent, /tok/, "non-streaming has no live token count (can't know mid-generation)");
+    assert.match(label.textContent, /^Viewing the screen…$/, "the phase");
+    // The elapsed readout is what proves the pipe is alive, so it sits where truncation cannot reach it —
+    // a cut "· 1…" is the liveness proof saying nothing at the moment you most need it.
+    const live = w.shadow.querySelector(".card-orb-live");
+    assert.match(live.textContent, /· \d+s/, "the elapsed heartbeat");
+    assert.doesNotMatch(live.textContent, /tok/, "non-streaming has no live token count (can't know mid-generation)");
 });
 
 // The DevTools run-stats bar (RunStatsBar) — cumulative token SPEND + generation rate below the detail
@@ -5192,7 +5402,14 @@ test("DevTools run-stats bar: cumulative in/out tokens summed across calls (defa
     await openRun(w);
     const bar = w.shadow.querySelector(".run-stats");
     assert.ok(bar, "the run-stats bar renders");
-    assert.match(bar.textContent, /240 in · 50 out/, "cumulative in/out summed across both calls");
+    // Two figures now, each with its own arrow: one shared ↕ made the arrow mean "tokens" and left the
+    // direction to the words, which is backwards for a readout you take in at a glance.
+    assert.match(bar.textContent, /240 in/, "cumulative IN summed across both calls");
+    assert.match(bar.textContent, /50 out/, "…and cumulative OUT");
+    const stats = [...bar.querySelectorAll(".rstat")].filter((e) => !e.classList.contains("rstat-tps"));
+    assert.equal(stats.length, 2, "in and out are separate figures");
+    assert.equal(stats[0].querySelectorAll("svg").length, 1, "each carries its own direction arrow");
+    assert.equal(stats[1].querySelectorAll("svg").length, 1);
     assert.doesNotMatch(bar.textContent, /tok\/s/, "tok/s is OFF by default");
 });
 
@@ -5257,13 +5474,26 @@ test("tool output cell: python_exec AND exec both render into the shared capped/
     await w.dispatch(agentResult("outcell", "done", 3));
     await openRun(w);
     for (const head of [...w.shadow.querySelectorAll(".astep.tool .astep-head")]) { head.click(); await w.tick(); }
-    // Each code tool's OUT renders its captured output through the shared cell…
+    // Each code tool's OUT renders its captured output through the shared cell — every text section of it,
+    // since a returned VALUE can be as long as anything printed on the way there and is the half you most
+    // often want to search. So: both tools, and both of their sections (stdout + value).
     const outCells = w.shadow.querySelectorAll(".r-py-out .r-outcell");
-    assert.equal(outCells.length, 2, "BOTH tools' Out use the shared cell (not one bespoke each)");
-    // …and the SAME component wraps a descriptor-less tool's plain OUT, so a big fetch_url page is
-    // scrollable + findable too. (The IN block is the call — short, already a code block — so it gets no cell.)
-    assert.equal(w.shadow.querySelectorAll(".r-outcell").length, outCells.length + 1,
-        "the descriptor-less tool's Out reuses the same cell — and nothing wraps the In");
+    assert.equal(outCells.length, 4, "BOTH tools' stdout AND value use the shared cell (not one bespoke each)");
+    for (const cls of [".r-py-stdout", ".r-py-val"]) {
+        assert.equal(w.shadow.querySelectorAll(`${cls} .r-outcell`).length, 2, `both tools' ${cls} is a cell`);
+    }
+    // …and the SAME component wraps the RAW view of either slot — a descriptor-less tool's plain Out, and
+    // the raw In, which is the view you go to in order to SEARCH for a token and the one with no structure
+    // of its own to cap it. A call carrying a base64 image or a wide table stretches the step to any height
+    // otherwise, which is the case the cap exists for. The RENDERED In is not wrapped: it is already a code
+    // block with its own chrome.
+    const rawIns = [...w.shadow.querySelectorAll(".astep.tool .io")]
+        .filter((io) => io.querySelector(".io-label")?.textContent.startsWith("In"));
+    assert.ok(rawIns.length >= 3, "every step has an In block");
+    assert.equal(w.shadow.querySelectorAll("[data-cite='in'] .r-outcell").length, rawIns.length,
+        "each In's RAW view is a cell — findable and capped like an Out");
+    // The rendered In stays uncelled — a code block already caps and scrolls itself.
+    assert.equal(w.shadow.querySelectorAll(".r-py-in .r-outcell").length, 0, "the rendered In is not double-wrapped");
     for (const cell of outCells) {
         const scroll = cell.querySelector(".r-outscroll");
         assert.ok(scroll, "the cell scrolls its overflow");
@@ -5307,7 +5537,7 @@ test("live output: the doomed tail is marked AS IT STREAMS, at the call's own ra
     const lbl = w.shadow.querySelector(".r-unseen-lbl.live");
     assert.ok(lbl, "the streaming view marks where the model's cut will fall");
     assert.match(lbl.textContent, /cutoff/i, "…labelled as the model's cutoff, not a past-tense 'was clipped'");
-    assert.match(lbl.getAttribute("title") || "", /NOT be part of the result sent to the model/i, "with a hover explainer");
+    assert.match(await hoverTip(w, lbl), /NOT be part of the result sent to the model/i, "with a hover explainer");
     const tail = w.shadow.querySelector(".r-unseen");
     assert.ok(tail && tail.textContent.trim().length >= 100, "exactly the text past the RAISED 600-char cap is marked");
 });
@@ -5328,7 +5558,7 @@ test("streamed timestamps survive the DONE and time the settled output", async (
     const stamps = [...w.shadow.querySelectorAll(".r-ts")].map(e => e.textContent).filter(Boolean);
     assert.ok(stamps.length >= 2, "the settled output still shows the executor's timestamps");
     assert.notEqual(stamps[0], stamps[1], "and a later line shows its own (changed) time");
-    assert.match(w.shadow.querySelector(".r-ts[title]").getAttribute("title"), /\d\d:\d\d:\d\d\.\d\d\d/, "hover carries millisecond precision");
+    assert.match(await hoverTip(w, w.shadow.querySelector(".r-ts.hoverable")), /\d\d:\d\d:\d\d\.\d\d\d/, "hover carries millisecond precision");
 });
 
 // Settings copy must stay attached to the control it describes: inserting a new toggle between a select and
@@ -5720,7 +5950,7 @@ test("the resource chart window is configurable, and short by default", async ()
     assert.equal(RESWIN_DEFAULT, 300, "5 minutes — 30 squeezed into a narrow panel is an unreadable smear");
     // The knob belongs in DevTools Settings (the superset), per the AGENTS rule for user-editable config.
     const settings = await import("node:fs").then((fs) => fs.readFileSync("src/sidebar/settings.tsx", "utf8"));
-    assert.match(settings, /Resource chart window/, "surfaced in Settings → Appearance");
+    assert.match(settings, /Chart window/, "surfaced in Settings → Appearance → Resource panel");
     assert.match(settings, /RESWIN_KEY/, "and persisted");
     assert.match(settings, /Samples are kept for the whole session either way/,
         "the note distinguishes what is DRAWN from what is retained");
@@ -5772,7 +6002,7 @@ test("overview: the line tooltip gives size, usage and the consumers", async () 
     w.shadow.querySelector(".rc-plot").dispatchEvent(new w.window.PointerEvent("pointermove", { bubbles: true }));
     await w.flush();
 
-    const tip = w.shadow.querySelector(".rc-tip-pool");
+    const tip = w.shadow.querySelector(".rc-tip-pools");
     assert.ok(tip, "hovering a pool's line opens the tip");
     assert.match(tip.textContent, /CUDA0/, "which device");
     assert.match(tip.textContent, /of 23\.99 GiB/, "how big the pool is");
@@ -6329,8 +6559,12 @@ test("resource figures: bytes always come with the percentage of the pool", asyn
     const key = w.shadow.querySelector(".rc-legend .rc-key");
     key.dispatchEvent(new w.window.MouseEvent("pointerenter", {}));
     await w.flush();
-    assert.match(w.shadow.querySelector(".rc-tip-pool").textContent, /GiB of .*GiB \(\d[\d.]*%\)/,
-        "the key's figure is a share");
+    // The tip is a TABLE, so the share is its own column rather than a parenthetical at the end of a
+    // sentence — the parens existed to separate it from the prose it used to sit in, and in a column they
+    // are noise. What must survive is that the amount is still quoted against the ceiling it is a share of.
+    const poolRow = w.shadow.querySelector(".rc-tip-pools .rc-tip-poolrow");
+    assert.match(poolRow.querySelector(".rc-tip-amt").textContent, /GiB of .*GiB/, "the amount, against its ceiling");
+    assert.match(poolRow.querySelector(".rc-tip-pct").textContent, /^\s*<?\d[\d.]*%\s*$/, "…and the share, in its own column");
 
     // A device track's header says the same thing in its compact form.
     w.shadow.querySelector('[aria-label="Edit tracks"]').click();
@@ -6354,7 +6588,279 @@ async function untilTrue(w, fn, why) {
 }
 const mouse = (w, el, type, init = {}) => el.dispatchEvent(new w.window.MouseEvent(type, { bubbles: true, ...init }));
 
-test("tooltips: the band and row tips track the newest sample, not the moment you hovered", async () => {
+// Focus mode: read a run as a conversation. Every rule is a HIDE, never a restructure — the elements stay in
+// the document, so search, copy and the export see the same transcript whichever way the toggle is set, and
+// turning it off brings everything back. What must SURVIVE it is the point of the test: a run is a sequence of
+// actions, so the tool names and their bodies are content, not chrome.
+test("focus mode: quiets the machinery, keeps what happened, and is fully reversible", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("f1", "find the login button", "qwen3:14b"));
+    await w.dispatch(agentStep("f1", 1, { thought: "Let me look" }));
+    await w.dispatch(agentStep("f1", 1, { tool: "exec", arguments: { js: "1" }, result: "a top navigation bar", approval: "readonly" }));
+    await w.dispatch(agentResult("f1", "Top-right.", 2));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    // jsdom applies no stylesheet, so VISIBILITY is not observable here — the rules themselves are asserted
+    // against a real browser in tests/e2e. What this checks is the contract the CSS rests on: the toggle sets
+    // the attribute, and every element the rules name is still in the document either way.
+    const present = (sel) => w.shadow.querySelectorAll(sel).length;
+    const before = {
+        step: present(".step-pill"), appr: present(".appr-badge"),
+        you: present(".msg.user .who"), preview: present(".astep-preview"),
+    };
+    assert.ok(before.step && before.appr && before.you && before.preview, `all four are there to begin with (${JSON.stringify(before)})`);
+
+    const btn = w.shadow.querySelector('[aria-label="Focus mode"]');
+    assert.ok(btn, "the detail header offers the toggle");
+    btn.click();
+    await w.tick();
+
+    assert.equal(w.shadow.documentElement.hasAttribute("data-focus"), true,
+        "it rides a root attribute, so CSS owns all of it and no component learns about the mode");
+    // The elements are still THERE — hidden by CSS, not removed. That is what keeps the export, a text search
+    // and the toggle's own reversal reading the same document.
+    assert.ok(w.shadow.querySelector(".step-pill"), "hidden, not deleted");
+    assert.ok(w.shadow.querySelector(".appr-badge"), "hidden, not deleted");
+    // …and what stays visible is everything that says what actually happened.
+    assert.ok(w.shadow.querySelector(".astep.tool .tool-name"), "the tool name survives — it IS the transcript");
+    assert.ok(w.shadow.querySelector(".utext"), "the user's own message survives");
+    assert.match(w.shadow.body.textContent, /Top-right\./, "and the answer");
+
+    btn.click();
+    await w.tick();
+    assert.equal(w.shadow.documentElement.hasAttribute("data-focus"), false, "off again");
+});
+
+// WHAT FOCUS MODE HIDES is a CSS question (jsdom applies no stylesheet), so the rules are read directly.
+// The distinction it encodes: focus mode quiets CHROME — step counters, approval badges, provenance — and
+// never the thing you came to do. Copying the answer is the reason you are reading it.
+test("focus mode hides the raw toggle and the model pill, and KEEPS the copy button on a reply", () => {
+    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
+    const hidden = css.split("\n").filter((l) => l.startsWith("html[data-focus]") && !l.includes("{ display: inline"));
+    const named = (sel) => hidden.some((l) => l.includes(sel));
+    assert.ok(named(".raw-btn"), "the raw toggle is chrome — hidden");
+    assert.ok(named(".tt:has(> .model-name)"), "so is the model pill");
+    assert.ok(named(".step-pill") && named(".appr-badge"), "…and the step counter and approval badge");
+    // The copy button is hidden ONLY on the user's own bubble, where the row is repositioned as an overlay
+    // and there is nothing to copy you did not just write.
+    const copyRules = hidden.filter((l) => l.includes(".icon-btn"));
+    assert.equal(copyRules.length, 1, "exactly one rule touches the copy button");
+    assert.match(copyRules[0], /\.msg\.user\b/, "and it is scoped to the user's bubble, so a reply keeps its copy");
+});
+
+// A COLLAPSED running step. "running…" says the thing is alive; it does not say whether it has been alive
+// for two seconds or two minutes, which is the difference between waiting and going to look.
+test("a collapsed running step counts up, and stays quiet for the first half second", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("tick", "do a slow thing"));
+    // ts is when the step STARTED. A step that has just begun shows the word and no number: an ordinary
+    // fast tool must not flash a figure on its way past.
+    await w.dispatch(agentStep("tick", 1, { seq: 1, tool: "python_exec", pending: true, ts: Date.now() }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const preview = () => w.shadow.querySelector(".astep-preview").textContent;
+    assert.match(preview(), /running…/);
+    assert.equal(w.shadow.querySelector(".astep-elapsed"), null, "silent under half a second");
+
+    // …and one that has been going a while says how long, in the row you are looking at rather than only
+    // inside the step you would have to open.
+    await w.dispatch(agentStep("tick", 1, { seq: 1, tool: "python_exec", pending: true, ts: Date.now() - 4200 }));
+    await w.tick();
+    const el = w.shadow.querySelector(".astep-elapsed");
+    assert.ok(el, "past the threshold it reports the elapsed time");
+    assert.match(el.textContent, /\(4\.[0-9]s\)/, `expected ~4.2s, got ${el.textContent}`);
+    assert.match(preview(), /running….*4\./, "beside the word, not instead of it");
+});
+
+test("the elapsed timer stops when the step lands, and the settled figure takes over", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("tick2", "do a slow thing"));
+    await w.dispatch(agentStep("tick2", 1, { seq: 1, tool: "exec", pending: true, ts: Date.now() - 3000 }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".astep-elapsed"), "ticking while it runs");
+    // DONE. A finished step has a measured `toolMs`, so the estimate has nothing left to say.
+    await w.dispatch(agentStep("tick2", 1, { seq: 1, tool: "exec", result: "2", toolMs: 3100 }));
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".astep-elapsed"), null, "the live counter is gone once it landed");
+});
+
+// THE TOOLTIP HAS TWO RENDER MODES, picked by the TYPE of what it is given — one function, no way to
+// choose the wrong one. A STRING is markdown TEXT, because that is where content from outside arrives (a
+// JSON Schema's description, a tool result, a model's prose) and treating it as markup would be an
+// injection. Anything else is authored JSX.
+//
+// Asserted against the MODULE rather than through a world: the sidebar runs its own copy of preact in a vm
+// sandbox, so a vnode built here would not be one the world could render — and what is worth pinning is
+// which slot a value lands in, not preact's ability to draw it.
+test("a tooltip treats a string as markdown text and anything else as an authored node", async () => {
+    const { cursorTipOn, cursorTip } = await import("../src/sidebar/ui-kit.tsx");
+    const set = (content) => {
+        cursorTip.value = null;
+        cursorTipOn(content).onPointerMove({ clientX: 1, clientY: 2 });
+        return cursorTip.value;
+    };
+    const str = set("reads `df['total']` and *sorts* by it");
+    assert.equal(str.text, "reads `df['total']` and *sorts* by it", "kept as TEXT, to be rendered as markdown");
+    assert.equal(str.node, undefined, "…and not as a node, which would render it as markup");
+
+    // Anything that is not a string is ours, and goes down the node path untouched.
+    const vnode = { type: "span", props: { children: "authored" } };
+    const rich = set(vnode);
+    assert.equal(rich.node, vnode);
+    assert.equal(rich.text, undefined);
+
+    // Leaving resets it, so a tip cannot outlive the thing it was about.
+    cursorTipOn("x").onPointerLeave();
+    assert.equal(cursorTip.value, null);
+});
+
+// …and the renderer a string goes through ESCAPES. This is the whole reason a string is markdown rather
+// than markup: schema descriptions and tool results are not ours to trust.
+test("the tooltip's markdown renderer renders formatting and escapes markup", async () => {
+    const { mdInline } = await import("../src/sidebar/format.ts");
+    const html = mdInline("reads `df['total']` and *sorts* by it");
+    // The apostrophes are entity-escaped inside the code span, which is the renderer doing its job.
+    assert.match(html, /<code>df\[&#39;total&#39;\]<\/code>/);
+    assert.match(html, /<em>sorts<\/em>/);
+    assert.doesNotMatch(html, /^<p>/, "inline: no paragraph wrapper to break a one-line tip");
+
+    const hostile = mdInline("<img src=x onerror=alert(1)> and <b>bold?</b>");
+    assert.doesNotMatch(hostile, /<img/, "no element is created from the text");
+    assert.doesNotMatch(hostile, /<b>/);
+    assert.match(hostile, /&lt;img src=x/, "…it is shown as the text it is");
+});
+
+// WHAT INLINE MARKDOWN WILL NOT DO. These surfaces — a margin note, a tooltip, the model's claim — carry
+// text we did not author, in places with no room. So: no images (unbounded pixels in a gutter, and a tool
+// result could put them there), and no links to the outside web from a model's prose (a one-click egress in
+// chrome the reader trusts, whose text and destination markdown lets disagree). Pinned, because both are
+// currently true by ACCIDENT of how the inline renderer works and would be easy to lose.
+test("inline markdown renders no images and no model-authored external links", async () => {
+    const { mdInline } = await import("../src/sidebar/format.ts");
+    for (const src of ["![shot](data:image/png;base64,AAAA)", "![shot](https://example.com/x.png)"]) {
+        const html = mdInline(src);
+        assert.doesNotMatch(html, /<img/, `no image from ${src}`);
+        assert.doesNotMatch(html, /src=/, "…and nothing that could become one");
+    }
+    // A pointer link stays TEXT here: making it a link needs the run to navigate to (the step's seq), which
+    // this renderer has none of — and a link that goes nowhere is worse than plain text. The answer
+    // renderer, which HAS that context, is where pointer links live.
+    assert.doesNotMatch(mdInline("see [the totals](@tool:abc1234)"), /<a /);
+});
+
+// THE POINTER CHIP is ONE component (ui-kit's PointerChip) — the copy chip under a step and the "revises"
+// pill on a retry both draw through it. It was a CSS copy for a while, which is exactly how two surfaces
+// start drawing the same thing differently; this is what stops that coming back.
+test("a pointer reads the same whether it is copied under a step or revised by one", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("chip", "retry it"));
+    await w.dispatch(agentStep("chip", 1, {
+        seq: 1, tool: "python_exec", result: "1", token: "@tool:abc1234",
+        arguments: { code: "x = 1" },
+        renderIn: { type: "python-in", mode: "script", code: "x = 1",
+                    revision: { ref: "@tool:dead000", tool: "python_exec", seq: 0, before: "x = 0" } },
+    }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+
+    const chips = [...w.shadow.querySelectorAll(".tok-chip")];
+    assert.equal(chips.length, 2, "the step's own pointer, and the one it revises");
+    // Same shell, so the same class carries the chrome and each still says its own thing.
+    assert.ok(chips.every((c) => c.querySelector("code")), "both draw the reference as code");
+    assert.ok(chips.every((c) => c.querySelector(".tt-pop")), "…and both explain themselves on hover");
+});
+
+// WHAT THE PILL SAYS depends on whether the model NAMED the output it is revising. A name it wrote is worth
+// more than a hex address; a name we invent is worth less than one.
+test("the revises pill shows the model's own name for the call, and the raw pointer when it has none", async () => {
+    const step = (revision) => ({
+        seq: 1, tool: "python_exec", result: "1", arguments: { code: "x = 1" },
+        renderIn: { type: "python-in", mode: "script", code: "x = 1", revision },
+    });
+    // NAMED: the tool prefixes it, so "the q1+q2 totals" cannot be mistaken for a step title.
+    const named = await loadSidebarWorld();
+    await named.dispatch(agentStart("n", "retry"));
+    await named.dispatch(agentStep("n", 1, step({ ref: "@tool:abc1234", tool: "python_exec", seq: 0, before: "x = 0", label: "the q1+q2 totals" })));
+    named.shadow.querySelector(".row").click(); await named.tick();
+    named.shadow.querySelector(".astep-head").click(); await named.tick();
+    const pill = named.shadow.querySelector(".r-diff-ref");
+    assert.equal(pill.textContent.replace(/\s+/g, " ").trim().split("Go to")[0].trim(), "python_exec: the q1+q2 totals");
+
+    // UNNAMED: the raw pointer, which you can at least copy and dereference — better than a label we made up.
+    const bare = await loadSidebarWorld();
+    await bare.dispatch(agentStart("b", "retry"));
+    await bare.dispatch(agentStep("b", 1, step({ ref: "@tool:dead000", tool: "python_exec", seq: 0, before: "x = 0" })));
+    bare.shadow.querySelector(".row").click(); await bare.tick();
+    bare.shadow.querySelector(".astep-head").click(); await bare.tick();
+    const barePill = bare.shadow.querySelector(".r-diff-ref");
+    assert.match(barePill.textContent, /@tool:dead000/);
+    assert.doesNotMatch(barePill.textContent, /python_exec:/, "no invented name, and no empty prefix either");
+});
+
+// THE DIFF'S GUTTER, across every combination of the two things that decide it. The numbers earn their
+// width because the new-side column matches the gutter of the code block below — read straight down between
+// a diff row, a margin note and the failure mark. With that gutter off they line up with nothing, so they
+// are just width taken in a narrow panel. A failure turns the block's gutter on by itself, so the two can
+// never disagree; these tests are the proof of that rather than the hope.
+const diffStep = (hash, { failed, seq = 1 } = {}) => ({
+    seq, tool: "python_exec", arguments: { code: "x = 1\nreturn x" },
+    result: failed ? "Python error: boom" : "1",
+    renderIn: {
+        type: "python-in", mode: "script", code: "x = 1\nreturn x",
+        revision: { ref: "@tool:abc1234", tool: "python_exec", seq: 0, before: "x = 0\nreturn x", claim: "bumped it" },
+    },
+    ...(failed ? { renderOut: { type: "python-out", error: 'File "<python_exec>", line 1, in _user\nBoom' } } : {}),
+});
+
+for (const [lines, failed, wantNums, why] of [
+    [false, false, false, "no gutter below and nothing went wrong → nothing to line up with"],
+    [true, false, true, "you asked for line numbers, so the block has them and the diff matches"],
+    [false, true, true, "a failure turns the block's gutter on by itself, so the diff follows"],
+    [true, true, true, "both, and it is still one gutter"],
+]) {
+    test(`diff gutter: lines=${lines} failed=${failed} → numbers ${wantNums ? "shown" : "hidden"}`, async () => {
+        const w = await loadSidebarWorld({ local: { ml_debug_codelines: lines } });
+        await w.dispatch(agentStart("dg", "retry it"));
+        await w.dispatch(agentStep("dg", 1, diffStep("dg", { failed })));
+        w.shadow.querySelector(".row").click(); await w.tick();
+        w.shadow.querySelector(".astep-head").click(); await w.tick();
+
+        const diff = w.shadow.querySelector(".r-diff");
+        assert.ok(diff, "the diff renders either way");
+        // A failure opens it; a success shows one collapsed line, so open it to see the rows.
+        if (!failed) { diff.querySelector(".r-diff-tri").click(); await w.tick(); }
+        const rows = w.shadow.querySelectorAll(".r-diff-body .dline");
+        assert.ok(rows.length, "the rows are drawn");
+        assert.equal(w.shadow.querySelectorAll(".r-diff-body .dno").length > 0, wantNums, why);
+        // The two must not disagree: if the diff numbers, the block below it numbers too.
+        if (wantNums) assert.ok(w.shadow.querySelector(".r-py-in .lno"), "…and the block below has its gutter");
+    });
+}
+
+test("diff gutter: a row carries only the side it exists on, and the new side matches the block below", async () => {
+    const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
+    await w.dispatch(agentStart("dg2", "retry it"));
+    await w.dispatch(agentStep("dg2", 1, diffStep("dg2", {})));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+    w.shadow.querySelector(".r-diff-tri").click(); await w.tick();
+
+    const del = w.shadow.querySelector(".dline-del"), add = w.shadow.querySelector(".dline-add");
+    const nos = (el) => [...el.querySelectorAll(".dno")].map((n) => n.textContent);
+    assert.deepEqual(nos(del), ["1", ""], "a deletion has no line in the NEW text");
+    assert.deepEqual(nos(add), ["", "1"], "an addition has none in the OLD");
+    // The point of the new column: it is the same number the code block below draws for that line.
+    const blockLine = [...w.shadow.querySelectorAll(".r-py-in .cline")]
+        .find((el) => el.textContent.includes("x = 1"))?.getAttribute("data-line");
+    assert.equal(nos(add)[1], blockLine, "the diff's new-side number IS the block's line number");
+    // A gap keeps the columns so the sign stays in one place down the block.
+    const same = w.shadow.querySelector(".dline:not(.dline-add):not(.dline-del)");
+    if (same) assert.equal(same.querySelectorAll(".dno").length, 2);
+});
+
+test("tooltips: a chart tip reads the DATAPOINT under the cursor; the row tip reads the present", async () => {
     const w = await loadSidebarWorld({ vram: growModel(19), info: INFO_2CARD, ...STACKED_LAYOUT });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
@@ -6364,7 +6870,7 @@ test("tooltips: the band and row tips track the newest sample, not the moment yo
     // A band needs two samples to have a shape at all.
     await untilTrue(w, () => w.shadow.querySelector(".rc-band"), "no model band was ever drawn");
     mouse(w, w.shadow.querySelector(".rc-band"), "pointerenter");
-    mouse(w, w.shadow.querySelector(".rc-plot"), "pointermove");
+    mouse(w, w.shadow.querySelector(".rc-plot"), "pointermove", { clientX: 10, clientY: 10 });
     const row = w.shadow.querySelector(".vram-row");
     mouse(w, row, "pointerenter");
     mouse(w, row, "pointermove", { clientX: 40, clientY: 40 });
@@ -6374,16 +6880,20 @@ test("tooltips: the band and row tips track the newest sample, not the moment yo
     const rowTip = () => w.shadow.querySelector(".vram-rowtip")?.textContent || "";
     assert.match(bandTip(), /19\.00 GiB/, "the band tip opens on what is resident");
     assert.match(rowTip(), /19\.00 GiB/, "so does the row tip");
+    // The chart is a history, so a reading off it is only meaningful with the instant attached.
+    assert.match(bandTip(), /\d\d:\d\d:\d\d/, "the band tip stamps the datapoint it read");
 
-    // The model grows while both are open.
+    // The model grows while both are open. The ROW is a list of what is resident NOW, so its tip follows; the
+    // pointer is over the newest datapoint, which is that same reading, so the chart's does too. Reading an
+    // OLDER datapoint needs real layout (jsdom reports every element as zero-sized, so every fraction clamps
+    // to the right edge) and is asserted in tests/e2e/resource-panel.spec.mjs against a real plot.
     w.setVram(growModel(31));
     await untilTrue(w, () => rowTip().includes("31.00 GiB"), `the row tip froze at hover time (${rowTip()})`);
-    assert.match(bandTip(), /31\.00 GiB/, "the band tip follows the band it is naming");
-    assert.doesNotMatch(bandTip(), /19\.00 GiB/);
     assert.doesNotMatch(rowTip(), /19\.00 GiB/);
+    await untilTrue(w, () => bandTip().includes("31.00 GiB"), `hovering the newest point still read stale (${bandTip()})`);
 });
 
-test("tooltips: the pool tip follows the newest sample too", async () => {
+test("tooltips: the overview pool tip reads its datapoint, and carries the line's own swatch", async () => {
     const w = await loadSidebarWorld({ vram: growModel(19), info: INFO_2CARD });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
@@ -6394,13 +6904,19 @@ test("tooltips: the pool tip follows the newest sample too", async () => {
     const key = w.shadow.querySelector(".rc-legend .rc-key");
     assert.ok(key, "the overview draws pool keys");
     mouse(w, key, "pointerenter");                       // → the cursor-following pool tip
-    mouse(w, w.shadow.querySelector(".rc-plot"), "pointermove");
+    mouse(w, w.shadow.querySelector(".rc-plot"), "pointermove", { clientX: 10_000, clientY: 10 });
     await w.flush();
 
-    const poolTip = () => w.shadow.querySelector(".rc-tip-pool")?.textContent || "";
+    const tip = () => w.shadow.querySelector(".rc-tip-pools");
+    const poolTip = () => tip()?.textContent || "";
     assert.match(poolTip(), /19\.00 GiB of /, "the pool tip opens on what is on that pool");
-    assert.match(poolTip(), /\(\d+[\d.]*%\)/, "…quoting the figure AND its share");
+    // The share is a COLUMN now, not a parenthetical — see the table note above.
+    assert.match(tip().querySelector(".rc-tip-pct").textContent, /\d[\d.]*%/, "…quoting the figure AND its share");
+    // Several lines cross in one plot, so the tip carries the same swatch the legend key does — without it
+    // you are matching a device name to a stroke by eye.
+    assert.ok(tip().querySelector(".rc-swatch"), "the pool tip carries its line's colour");
 
+    // Hovering the newest datapoint, it tracks live.
     w.setVram(growModel(31));
     await untilTrue(w, () => poolTip().includes("31.00 GiB"), `the pool tip froze at hover time (${poolTip()})`);
     assert.doesNotMatch(poolTip(), /19\.00 GiB/);
@@ -6633,6 +7149,17 @@ test("history: an evicted model keeps its colour, and says it is gone", async ()
     // name it is a colour nothing on screen explains.
     const ghost = w.shadow.querySelector(".vram-row.ghost");
     assert.ok(ghost, "an evicted model still drawn keeps a row");
+    // …FOLDED, though. These rows are a reference you consult, not a list you read: inline they push the
+    // models that are actually loaded down the panel and make a box with two models look like a box with
+    // six. (The body stays mounted while closed — that is how the disclosure has something to slide — so
+    // the row is findable here either way; `aria-hidden` is the state.)
+    const fold = ghost.closest(".disc");
+    assert.ok(fold, "the ghost rows live in a disclosure");
+    assert.equal(fold.querySelector(".disc-head").getAttribute("aria-expanded"), "false", "…collapsed by default");
+    assert.match(fold.querySelector(".disc-label").textContent, /not resident/);
+    fold.querySelector(".disc-head").click();
+    await w.flush();
+    assert.equal(fold.querySelector(".disc-head").getAttribute("aria-expanded"), "true", "…and it opens");
     assert.match(ghost.textContent, /gemma4:31b/);
     assert.match(ghost.textContent, /evicted/);
     assert.equal(ghost.querySelector(".vram-x"), null, "…with nothing to evict");
@@ -6645,7 +7172,11 @@ test("history: an evicted model keeps its colour, and says it is gone", async ()
     const tip = w.shadow.querySelector(".rc-tip:not(.vram-rowtip)");
     assert.ok(tip, "the band is still hoverable after the model evicted");
     assert.match(tip.textContent, /gemma4:31b/, "it names what was there");
-    assert.match(tip.textContent, /evicted/, "…and says it no longer is");
+    // …and it does NOT annotate that with what happened later. The tooltip reads a sample from the PAST, the
+    // stamp beside it says which instant, and at that instant the model WAS there — so a "gone" marker
+    // answers a question nobody asked at the place they asked it. Whether it is resident NOW is the model
+    // list's question, and the ghost row above is where that is answered.
+    assert.doesNotMatch(tip.textContent, /not resident now|\bgone\b/, "history is not annotated with the present");
 });
 
 // A box with more cards than the curated palette. Eight A100s plus system RAM is NINE pools, and
@@ -6765,6 +7296,9 @@ test("model tooltips: carry what the model has cost, with the rate's basis said 
 // answers alone (did that slow turn spend its time LOADING a model, or was the model already there?).
 test("event lane: spans render, a tool step is one phased block, and clicking opens its step", async () => {
     const w = await loadSidebarWorld({
+        // The lane scopes to the OPEN session by default, and these render it in the list view — so they ask
+        // for every session's events explicitly. What the scoping itself does has its own test.
+        local: { ml_lane_scope: false },
         vram: [{ model: "qwen3.8:27b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
                  gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
         info: INFO_2CARD,
@@ -6807,7 +7341,10 @@ test("event lane: spans render, a tool step is one phased block, and clicking op
     // The figures are BADGES — one chip per fact, so it is visible which numbers belong together.
     const chips = [...tip.querySelectorAll(".rc-chip")].map((c) => c.textContent);
     assert.ok(chips.includes("500 in") && chips.includes("60 out"), `what the model call cost (${chips.join(", ")})`);
-    assert.ok(tip.querySelector(".rc-tip-rule"), "the two halves are separated, not run together");
+    // A separator is a BORDER on the section it opens, never an element of its own — a standalone rule can
+    // end up with nothing on one side of it, which this tooltip produced three different ways.
+    assert.ok(tip.querySelector(".sep"), "the two halves are separated, not run together");
+    assert.equal(tip.querySelector(".rc-tip-rule"), null, "…and not by a floating line");
 
     // Clicking goes to the step that produced it.
     tool.click();
@@ -6898,6 +7435,9 @@ test("event lane: an eviction rules through the plot and names itself", async ()
 // step, and the run that contains it — and drops everything else back.
 test("event lane: hovering a sub-call lights its lineage and dims the rest", async () => {
     const w = await loadSidebarWorld({
+        // The lane scopes to the OPEN session by default, and these render it in the list view — so they ask
+        // for every session's events explicitly. What the scoping itself does has its own test.
+        local: { ml_lane_scope: false },
         vram: [{ model: "qwen3.8:27b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
                  gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
         info: INFO_2CARD,
@@ -6950,6 +7490,9 @@ test("event lane: hovering a sub-call lights its lineage and dims the rest", asy
 // bands use, so the tip is identifiable at a glance from the list below it.
 test("event lane: the tooltip's model line carries the model's colour", async () => {
     const w = await loadSidebarWorld({
+        // The lane scopes to the OPEN session by default, and these render it in the list view — so they ask
+        // for every session's events explicitly. What the scoping itself does has its own test.
+        local: { ml_lane_scope: false },
         vram: [{ model: "gemma4:31b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
                  gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
         info: INFO_2CARD,
@@ -6977,9 +7520,13 @@ test("event lane: the tooltip's model line carries the model's colour", async ()
     assert.equal(dot.getAttribute("style"), rowDot.getAttribute("style"));
     // Every phase carries the swatch of the stripe it describes, so the tooltip's sections and the block's
     // parts read as the same things rather than a list you map onto a picture yourself.
+    // The HEADER says what the block is, then one row per phase. The first phase used to take the header
+    // line, which left a machine event with no phases showing nothing but a model name — a serving span and
+    // a load looked identical and neither said which it was.
     const dots = [...tip.querySelectorAll(".rc-tip-dot")];
-    assert.equal(dots.length, 2, "one per phase: the model, then the tool");
-    assert.notEqual(dots[0].getAttribute("style"), dots[1].getAttribute("style"), "…and they differ, as the stripes do");
+    assert.equal(dots.length, 3, "the block, then one per phase: the model, then the tool");
+    const phaseDots = dots.slice(1);
+    assert.notEqual(phaseDots[0].getAttribute("style"), phaseDots[1].getAttribute("style"), "…and they differ, as the stripes do");
     // The tool phase says WHAT it is: a bare "exec" reads as a label of unknown kind.
     assert.match(tip.textContent, /tool call:/);
     assert.ok(tip.querySelector("code"), "…with the tool name as an identifier");
@@ -7001,13 +7548,20 @@ test("pool tooltip: each model consumer carries its colour, the residual doesn't
     key.dispatchEvent(new w.window.MouseEvent("pointerenter", {}));
     await w.flush();
 
-    const tip = w.shadow.querySelector(".rc-tip-pool");
-    const modelLine = [...tip.querySelectorAll(".rc-tip-line")].find((l) => l.textContent.includes("qwen3.5:35b"));
+    const tip = w.shadow.querySelector(".rc-tip-pools");
+    const modelLine = [...tip.querySelectorAll(".rc-tip-row")].find((l) => l.textContent.includes("qwen3.5:35b"));
     assert.ok(modelLine.querySelector(".rc-tip-dot"), "the model consumer has a dot");
     assert.equal(modelLine.querySelector(".rc-tip-dot").getAttribute("style"),
         w.shadow.querySelector(".vram-row .vram-dot").getAttribute("style"), "…in the colour its row uses");
-    const residual = [...tip.querySelectorAll(".rc-tip-line")].find((l) => /driver overhead|unattributed/.test(l.textContent));
-    if (residual) assert.equal(residual.querySelector(".rc-tip-dot"), null, "the residual is not a model");
+    // The residual keeps the dot's FOOTPRINT so the names line up in the grid's first column, but as an empty
+    // ring: omitting it left the column ragged, and a filled one would claim the residual is a model.
+    const residual = [...tip.querySelectorAll(".rc-tip-row")].find((l) => /driver overhead|unattributed/.test(l.textContent));
+    if (residual) {
+        const ring = residual.querySelector(".rc-tip-dot");
+        assert.ok(ring, "the residual still occupies the dot column, so the names align");
+        assert.ok(ring.classList.contains("rc-tip-dot-none"), "…as an empty ring, not a model's colour");
+        assert.equal(ring.getAttribute("style"), null, "…and it carries no colour of its own");
+    }
 });
 
 // The rules were written INLINE in the per-pool view, so the Overview preset — the default — had none at all:
@@ -7114,6 +7668,9 @@ test("every displayed figure updates: no stale number survives a change", async 
 // fetch. Their difference is what getting TO the model cost, which is a different diagnosis from a slow model.
 test("event lane: the tooltip separates generation time from the network", async () => {
     const w = await loadSidebarWorld({
+        // The lane scopes to the OPEN session by default, and these render it in the list view — so they ask
+        // for every session's events explicitly. What the scoping itself does has its own test.
+        local: { ml_lane_scope: false },
         vram: [{ model: "gemma4:31b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
                  gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
         info: INFO_2CARD,
@@ -7200,14 +7757,18 @@ test("a card that vanishes mid-session: re-shape, keep the trace, say what happe
     assert.match(chip.querySelector(".tt-pop").textContent, /stopped reporting/);
 });
 
-// The scrub strip: the whole session in one bar, with a box for the slice the chart is drawing. It only
-// appears when there IS something to scrub — a box covering the whole strip is a control that cannot do
-// anything, and drawing one implies otherwise.
+// The scrub strip: the whole session in one bar, with a box for the slice the chart is drawing. It is drawn
+// for as long as there is a WINDOW, even while that window is wider than the session and the box therefore
+// fills the strip — which is the state every live view is in for its first minutes. It used to be withheld
+// there, on the reasoning that a full-width box is a control that cannot do anything; the cost was that the
+// control DELETED ITSELF, both on a fresh open and whenever a stretch-while-following was remembered as the
+// new width, and reappeared minutes later when the session outgrew it. It takes the chart's wheel-scrub with
+// it when it goes, so there is then no way back at all.
 //
 // The UNPIN/re-pin round trip is an e2e: in a session a few seconds long, every position is within one poll
 // of the tail (TAIL_SLACK_MS), so "dragged back" and "following live" are genuinely the same state here —
 // correct behaviour, and untestable at this timescale. The rule itself is covered by scrubExtent's own test.
-test("scrub strip: appears once the session outgrows the window, and the box follows the drag", async () => {
+test("scrub strip: is there from the first samples, and narrows as the session outgrows the window", async () => {
     const GB = 1024 ** 3;
     const w = await loadSidebarWorld({
         vram: [{ model: "big:27b", vramGB: 19, vramBytes: 19 * GB, sizeBytes: 19 * GB,
@@ -7219,16 +7780,27 @@ test("scrub strip: appears once the session outgrows the window, and the box fol
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
-    assert.equal(w.shadow.querySelectorAll(".rc-scrub").length, 0, "no strip while the window covers everything");
-
     for (let i = 0; i < 60 && !w.shadow.querySelector(".rc-scrub"); i++) {
         await w.flush(); await new Promise((r) => setTimeout(r, 200));
     }
-    const strip = w.shadow.querySelector(".rc-scrub");
-    assert.ok(strip, "the strip appears once there is history the window doesn't cover");
+    let strip = w.shadow.querySelector(".rc-scrub");
+    assert.ok(strip, "the strip is drawn as soon as there is a session to draw");
+    assert.ok(Number(/width:\s*([\d.]+)%/.exec(strip.querySelector(".rc-scrub-win").getAttribute("style"))[1]) > 90,
+        "…full width to begin with, because the window is wider than the session so far");
     assert.ok(strip.querySelectorAll(".rc-scrub-run").length >= 1, "the session's runs are drawn as blocks");
+    // Wait until the box is a genuine BOX and not the whole strip. The strip appears the instant history
+    // exceeds the window, at which point the window still covers ~100% of it — and a grab at x=0 then lands
+    // on the window's own LEFT HANDLE, which means resize, not pan. This test passed for a while on that
+    // mix-up, because a resize dragged to the far left also produces `left: 0%`.
+    for (let i = 0; i < 60; i++) {
+        const st = w.shadow.querySelector(".rc-scrub-win")?.getAttribute("style") || "";
+        if (Number(/width:\s*([\d.]+)%/.exec(st)?.[1] ?? 100) < 50) break;
+        await w.flush(); await new Promise((r) => setTimeout(r, 200));
+    }
+    strip = w.shadow.querySelector(".rc-scrub");
     const boxBefore = strip.querySelector(".rc-scrub-win").getAttribute("style");
     assert.match(boxBefore, /left:\s*[\d.]+%/, "the window is a box on the strip");
+    assert.ok(Number(/width:\s*([\d.]+)%/.exec(boxBefore)[1]) < 50, "…a box, with strip either side of it to pan into");
     assert.ok(strip.querySelector(".rc-scrub-live").classList.contains("on"), "it starts pinned to live");
 
     // Dragging the box moves the window through the session — it scrolls, it does not zoom.
@@ -7248,6 +7820,9 @@ test("scrub strip: appears once the session outgrows the window, and the box fol
 test("lane filter: chips say what they hide, kinds persist, scope follows what you're reading", async () => {
     const GB = 1024 ** 3;
     const w = await loadSidebarWorld({
+        // The kind-chip half needs events on screen, and scoping (the default) hides every run's while
+        // nothing is open — so this world starts unscoped and the scope half toggles it on below.
+        local: { ml_lane_scope: false },
         vram: [{ model: "gemma4:31b", vramGB: 19, vramBytes: 19 * GB, sizeBytes: 19 * GB,
                  gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * GB }], expiresAt: null }],
         info: INFO_2CARD,
@@ -7270,6 +7845,9 @@ test("lane filter: chips say what they hide, kinds persist, scope follows what y
     await w.flush();
 
     const bars = () => w.shadow.querySelectorAll(".rc-ev").length;
+    // Only the bars a RUN owns. Machine events (a load, an eviction) belong to no session and survive every
+    // scoping — counting them would make "scoped to nothing" look like it had failed to hide anything.
+    const runBars = () => w.shadow.querySelectorAll(".rc-ev-run, .rc-ev-tool, .rc-ev-gen, .rc-ev-embed").length;
     const chip = (label) => [...w.shadow.querySelectorAll(".rc-lane-chip")].find((c) => c.textContent.startsWith(label));
     assert.ok(bars() >= 4, "both runs' events are drawn");
     // A chip carries its COUNT: a filter that makes you toggle blindly to learn what it hides is worse than none.
@@ -7286,19 +7864,35 @@ test("lane filter: chips say what they hide, kinds persist, scope follows what y
     await w.flush();
     assert.equal(bars(), before, "and toggling back restores them");
 
-    // Scope is only offered where "this run" names something — not in the list view.
-    assert.equal(chip("this run"), undefined, "no scope chip in the list");
+    // Scoping is the DEFAULT, and its control is offered everywhere — in the list view it is the only thing
+    // that says why there are no run events, and the only way to get them. It is a SEGMENTED pair in the
+    // panel header rather than a chip in this filter row: it decides the window, the model list and the lane
+    // together, where these chips each hide one kind, and sitting among them said it was one of them.
+    const seg = (label) => [...w.shadow.querySelectorAll(".rc-scope-seg")].find(b => b.textContent.trim().startsWith(label));
+    assert.ok(seg("session") && seg("full"), "the scope switch is offered in the list view too");
+    // Both states are VISIBLE, one lit — a single toggling label has to be read twice to work out whether it
+    // names the current state or the thing it will do.
+    assert.ok(seg("full").getAttribute("aria-pressed") === "true", "starts on full (the fixture's default)");
+    const all = runBars();
+
+    // Scoping with NOTHING open shows no run's events at all — that is the intended overview, not an empty
+    // panel: there is no session to scope to.
+    seg("session").click();
+    await w.flush();
+    assert.equal(runBars(), 0, "nothing open, so no run events");
+    assert.equal(seg("session").getAttribute("aria-pressed"), "true", "…and the switch says which it is on");
+    assert.deepEqual(w.localStore.ml_lane_scope, true, "remembered, like the kind chips");
+
+    // Reading ONE run: its events come back, the other run's stay gone.
     w.shadow.querySelectorAll(".row")[0].click();
     await w.flush();
-    const scope = chip("this run");
-    assert.ok(scope, "reading a run, the scope chip appears");
-    const all = bars();
-    scope.click();
-    await w.flush();
-    assert.ok(bars() < all, "scoping drops the other run's events");
+    const scoped = runBars();
+    assert.ok(scoped > 0 && scoped < all, `only this session's events (${scoped} of ${all})`);
+    // And the AXIS follows too — one switch, one meaning. The window is the session's own stretch, not the
+    // rolling one, so the chart cannot draw ten minutes of a shared box around a list showing one model.
+    assert.ok(w.shadow.querySelector(".rc-scope-seg.on").textContent.trim().startsWith("session"));
     // …but NOT the machine's own: an eviction has no run to belong to, and hiding it would remove the events
     // the chart exists for. (Covered exactly in resource-model.test.mjs; here it is the scope chip working.)
-    assert.ok(scope.classList.contains("on"));
 });
 
 // ---- Settings → Server-side tools: the read-only browser for what the backend exposes ----
@@ -7317,8 +7911,8 @@ test("server tools: listed on demand, one entry per FUNCTION", async () => {
 
     // Fetched on EXPAND, not on mount: a settings panel opening should not call the backend for a section
     // nobody looked at.
-    const btn = [...w.shadow.querySelectorAll(".raw-btn")].find(b => /list server tools/i.test(b.textContent));
-    assert.ok(btn, `the section offers to list them — buttons: ${[...w.shadow.querySelectorAll(".raw-btn")].map(b => b.textContent.trim()).join(" | ")} — has heading: ${/server-side tools/i.test(w.shadow.textContent)}`);
+    const btn = [...w.shadow.querySelectorAll(".disc-head")].find(b => /server tools/i.test(b.textContent));
+    assert.ok(btn, `the section offers to open them — sections: ${[...w.shadow.querySelectorAll(".disc-head")].map(b => b.textContent.trim()).join(" | ")} — has heading: ${/server-side tools/i.test(w.shadow.textContent)}`);
     btn.click();
     await w.flush();
 
@@ -7335,8 +7929,8 @@ test("server tools: an EMPTY list explains itself instead of reading as an error
     // failure, and a blank panel would look like one.
     const w = await loadSidebarWorld({ serverTools: [] });
     await openSettings(w, "Advanced");
-    const b2 = [...w.shadow.querySelectorAll(".raw-btn")].find(b => /list server tools/i.test(b.textContent));
-    assert.ok(b2, `no list button — buttons: ${[...w.shadow.querySelectorAll(".raw-btn")].map(b => b.textContent.trim()).join(" | ")}`);
+    const b2 = [...w.shadow.querySelectorAll(".disc-head")].find(b => /server tools/i.test(b.textContent));
+    assert.ok(b2, `no section — sections: ${[...w.shadow.querySelectorAll(".disc-head")].map(b => b.textContent.trim()).join(" | ")}`);
     b2.click();
     await w.flush();
     assert.match(w.shadow.body.innerHTML, /no server-side tools configured/i);
@@ -7345,9 +7939,623 @@ test("server tools: an EMPTY list explains itself instead of reading as an error
 test("server tools: an unreachable backend says so, and does not look empty", async () => {
     const w = await loadSidebarWorld({ serverTools: () => { throw new Error("Failed to fetch"); } });
     await openSettings(w, "Advanced");
-    const b3 = [...w.shadow.querySelectorAll(".raw-btn")].find(b => /list server tools/i.test(b.textContent));
+    const b3 = [...w.shadow.querySelectorAll(".disc-head")].find(b => /server tools/i.test(b.textContent));
     assert.ok(b3, "no list button");
     b3.click();
     await w.flush();
     assert.match(w.shadow.body.innerHTML, /could not reach the backend/i);
+});
+
+// A session may carry NO config — `ml.embed()` reports through the chat events and has none to speak of.
+// Dereferencing it blanked the whole detail view: one absent field took the entire transcript with it, so
+// clicking that session's bar in the event lane showed nothing at all.
+test("a session with no config opens instead of blanking the view", async () => {
+    const w = await loadSidebarWorld();
+    const hash = "embedsess";
+    await w.dispatch({ kind: "chat", id: "e1", ts: 1000, save: false, session: { hash, turn: 0 },
+                       streaming: false, sessionKind: "embed", config: null,
+                       request: { model: "nomic-embed-text", extend: null,
+                                  messages: [{ role: "user", content: "embed 24 inputs" }],
+                                  images: null, toolIds: null, schema: false, think: null, maxTokens: null } });
+    await w.dispatch({ kind: "chat-result", id: "e1", ts: 1400, save: false, session: { hash, turn: 0 },
+                       content: "24 vectors · 1024 dimensions", sources: null, structured: false,
+                       model: "nomic-embed-text", extend: null, reasoning: null,
+                       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, genMs: 400 } });
+
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    // The transcript is THERE — the failure was a blank view, not a missing options block.
+    const body = w.shadow.body.innerHTML;
+    assert.match(body, /24 vectors/, "the session's own content renders");
+
+    // …and it renders as a list of CALLS, not a conversation: an embed reports through the chat events, but
+    // drawing it as user/assistant bubbles presents a request for vectors as something somebody said.
+    assert.equal(w.shadow.querySelectorAll(".embed-call").length, 1, "one row per embed call");
+    assert.equal(w.shadow.querySelectorAll(".msg.user, .msg.asst").length, 0, "no chat bubbles");
+    assert.match(w.shadow.querySelector(".embed-call").textContent, /embed 24 inputs/, "what went in");
+    assert.match(w.shadow.querySelector(".embed-call").textContent, /24 vectors/, "…and what came back");
+    assert.match(w.shadow.querySelector(".embed-call").textContent, /400ms/, "…and how long it took");
+});
+
+// ---- Disclosure: the one sliding section, used everywhere something opens ----
+// The panel had three of these written three different ways, all a pill button that injected a box into the
+// layout on click — which reads as content appearing rather than a section opening, gives no hint it can be
+// closed, and jumps whatever is below it. One component, so the next one is free and they cannot disagree
+// about what a chevron means.
+
+test("disclosure: opens, closes, and keeps its content mounted so reopening is instant", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("disc1", "a task", "m", 20, {
+        system: "SYSTEM PROMPT TEXT", tools: [{ name: "exec", description: "run js", parameters: { type: "object", properties: {} } }],
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    // The agent-options block is itself collapsed; open it to reach the sections inside.
+    w.shadow.querySelector(".agent-opts .block-head").click();
+    await w.tick();
+
+    const heads = [...w.shadow.querySelectorAll(".disc-head")];
+    assert.ok(heads.length >= 2, "the agent options block uses it for the system prompt and the tool defs");
+    const sys = heads.find(h => /system prompt/.test(h.textContent));
+    assert.ok(sys, "the system prompt is a disclosure, not a bare button");
+    const disc = sys.closest(".disc");
+
+    // CLOSED is the resting state, and it SAYS so — a reader using the keyboard gets the same answer.
+    assert.equal(sys.getAttribute("aria-expanded"), "false");
+    assert.ok(!disc.classList.contains("open"));
+    // The body is in the DOM while closed: there has to be something for the grid to slide, and content that
+    // only exists once open can only appear.
+    assert.ok(disc.querySelector(".disc-body"), "the body is mounted, collapsed by the grid");
+    assert.match(disc.querySelector(".disc-body").textContent, /SYSTEM PROMPT TEXT/,
+        "…including its content, so reopening is instant and a landed fetch stays landed");
+    assert.equal(disc.querySelector(".disc-body").getAttribute("aria-hidden"), "true",
+        "and it is hidden from assistive tech while collapsed, since it is visually not there");
+
+    sys.click();
+    await w.tick();
+    assert.equal(sys.getAttribute("aria-expanded"), "true");
+    assert.ok(disc.classList.contains("open"), "opening is a CLASS, so the slide is CSS and nothing measures");
+    assert.equal(disc.querySelector(".disc-body").getAttribute("aria-hidden"), "false");
+
+    // And it closes again — the thing a button that injects a box could never do.
+    sys.click();
+    await w.tick();
+    assert.equal(sys.getAttribute("aria-expanded"), "false");
+    assert.ok(!disc.classList.contains("open"));
+});
+
+test("disclosure: a count rides the header, and the chevron is the only decoration", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("disc2", "a task", "m", 20, {
+        system: "sys", tools: [
+            { name: "exec", description: "", parameters: { type: "object", properties: {} } },
+            { name: "look", description: "", parameters: { type: "object", properties: {} } },
+        ],
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".agent-opts .block-head").click();
+    await w.tick();
+    const tools = [...w.shadow.querySelectorAll(".disc-head")].find(h => /tool definitions/.test(h.textContent));
+    assert.ok(tools);
+    // The count is a NOTE on the header rather than part of the label: "(24)" welded into the sentence made
+    // the label change every time the number did, which is not what a section is called.
+    assert.equal(tools.querySelector(".disc-note").textContent, "2");
+    assert.ok(tools.querySelector(".tri"), "a chevron, which the CSS turns");
+});
+
+// The rendered traceback: line numbers that are LINKS into the reflowed code.
+//
+// A traceback's whole content is a line number, and the rendered view reflows the code — so this is the one
+// thing that must not silently disagree. The formatter publishes its map on the In block; the traceback maps
+// through it. The text is never rewritten: this is a rendering of it.
+test("python: a traceback's user lines are links, and the deepest one is marked", async () => {
+    const err = [
+        "Traceback (most recent call last):",
+        '  File "<exec>", line 175, in <module>',
+        '  File "<python_exec>", line 5, in _user',
+        '  File "<python_exec>", line 2, in inner',
+        "ValueError: boom",
+    ].join("\n");
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: false, error: err, stdout: "" }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const ta = w.shadow.querySelector(".bench-code");
+    ta.value = "x = 1"; ta.dispatchEvent(new w.window.Event("input"));
+    await w.tick();
+    w.shadow.querySelector(".bench-play").click();
+    await w.tick();
+
+    const links = [...w.shadow.querySelectorAll(".bench-outbody .tb-line")];
+    assert.equal(links.length, 2, "both <python_exec> frames are addressable");
+    // The CONTROL is the whole frame reference, not the bare number: two characters is a poor hit target,
+    // and what you are clicking is the frame. (The bench draws unreflowed source, so the numbers are the
+    // interpreter's own here — the remap only has something to do when the code moved.)
+    assert.deepEqual(links.map((b) => b.textContent),
+        ['File "<python_exec>", line 5', 'File "<python_exec>", line 2']);
+    // The DEEPEST user frame is where it actually failed; the ones above are the call path.
+    const rows = [...w.shadow.querySelectorAll(".bench-outbody .tbline")];
+    const failed = rows.filter((r) => r.classList.contains("tb-fail"));
+    assert.equal(failed.length, 1, "exactly one line is called out as the failure");
+    // The tooltip is a hidden child of the row (read into the shared floating layer on hover), so it is in
+    // `textContent` too — compare the row without it.
+    const rowText = (el) => { const c = el.cloneNode(true); c.querySelectorAll(".tt-pop").forEach((n) => n.remove()); return c.textContent; };
+    assert.match(rowText(failed[0]).replace(/\s+/g, " "), /line 2, in inner/);
+    // The prelude's own frame is about nothing the user wrote — dimmed, never dropped: the raw view has to
+    // stay recoverable, and deleting a line of what the model received is what the raw-view rule forbids.
+    const dim = rows.filter((r) => r.classList.contains("dim"));
+    assert.equal(dim.length, 1);
+    assert.match(dim[0].textContent, /<exec>/);
+    assert.match(w.shadow.querySelector(".bench-outbody .code.tb").textContent, /ValueError: boom/,
+        "and every line of the original is still there");
+});
+
+// WHERE IT BROKE, marked on the CODE. A traceback tells you a number; the number is only useful once you
+// have found the line it names, which on a reflowed block is not the line the number literally says.
+test("python: the failing line is marked in the code, mapped through the reflow", async () => {
+    // Line 3 is the failing one, and line 4 is long enough that the reflow moves everything after it.
+    const code = [
+        "import pandas as pd",
+        "def total(frame):",
+        "    return frame['nope'].sum()",
+        "rows = pd.DataFrame([{'aaaaaaaaaaaaaaa': 1, 'bbbbbbbbbbbbbbb': 2, 'ccccccccccccccc': 3, 'ddddddddddddddd': 4}])",
+        "total(rows)",
+    ].join("\n");
+    const err = [
+        "Traceback (most recent call last):",
+        '  File "<exec>", line 170, in <module>',
+        '  File "<python_exec>", line 5, in _user',
+        '  File "<python_exec>", line 3, in total',
+        "KeyError: 'nope'",
+    ].join("\n");
+    const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
+    await w.dispatch(agentStart("pyfail", "crunch"));
+    await w.dispatch(agentStep("pyfail", 1, {
+        // The result IS the traceback — that is what the model received, and the raw view has to be able to
+        // give it back verbatim once the render starts showing different numbers.
+        seq: 1, tool: "python_exec", arguments: { code }, result: err,
+        renderIn: { type: "python-in", mode: "script", code },
+        renderOut: { type: "python-out", error: err },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep-head").click();   // a step is collapsed until you open it
+    await w.tick();
+
+    const marked = w.shadow.querySelector(".cline.cline-fail");
+    assert.ok(marked, "the failing line is called out in the code, not only in the traceback");
+    assert.match(marked.textContent, /frame\['nope'\]/, "…and it is the line that actually failed");
+    // It is the DEEPEST user frame — line 3 — not the call path (line 5) and not the prelude's `<exec>`.
+    assert.doesNotMatch(marked.textContent, /total\(rows\)/);
+    // The caveat appears only when the formatter MOVED that line. This one it did not, so saying it might
+    // have looked different would be noise that undermines the times it is true. The panel's own tooltip,
+    // not a native `title`: the native one waits about a second, which on a mark you are hovering to find
+    // out what it means is long enough to have given up.
+    assert.equal(marked.getAttribute("title"), null, "not the slow native tooltip");
+    assert.equal(marked.querySelector(".tt-pop").textContent, "This line failed.");
+
+    // The traceback's own line numbers are links, and they inherit its colour rather than introducing a
+    // third one — a blue number inside red error text reads as a different KIND of number.
+    const links = [...w.shadow.querySelectorAll(".tb-line")];
+    // THE NUMBERS SHOWN ARE THE ROWS ABOVE, not the ones CPython printed. The code beside this is reflowed,
+    // so repeating the traceback's own number sends the reader to a line that is not the one that failed —
+    // which is the entire failure mode this whole subsystem exists to prevent, reintroduced by the render.
+    // Line 3 did not move, so it reads 3; the call site on line 5 did, so it reads where it now sits.
+    // Read the expected rows off the DRAWN code rather than recomputing the map: the invariant is that the
+    // traceback and the block agree, and comparing the render against itself is what actually says so.
+    const rowOf = (needle) => [...w.shadow.querySelectorAll(".cline")]
+        .find((el) => el.textContent.includes(needle))?.getAttribute("data-line");
+    const callSite = rowOf("total(rows)"), failed = rowOf("frame['nope']");
+    // The CONTROL is the whole frame reference, not the bare number: two characters is a poor hit target,
+    // and what you are clicking is the frame.
+    assert.deepEqual(links.map((b) => b.textContent),
+        [`File "<python_exec>", line ${callSite}`, `File "<python_exec>", line ${failed}`]);
+    assert.ok(links.every((b) => b.textContent.startsWith('File "')), "…so `File \"` is inside the button too");
+    assert.notEqual(callSite, "5", "…and the test would prove nothing if the reflow had not moved it");
+    // A moved number's tooltip says BOTH, so the two views cannot read as a contradiction.
+    assert.match(links[0].parentElement.querySelector(".tt-pop").textContent, /model wrote it as line 5/);
+    assert.doesNotMatch(links[1].parentElement.querySelector(".tt-pop").textContent, /model wrote it as/,
+        "…and the line that did not move says nothing, since an unconditional caveat is noise");
+
+    // The remap belongs to the RENDER and nowhere else. The raw view is the model-facing text verbatim, so
+    // the numbers CPython actually produced stay recoverable there (the raw-view rule).
+    const rawBtn = [...w.shadow.querySelectorAll(".rr-toggle button")].filter((b) => b.textContent === "raw");
+    rawBtn[rawBtn.length - 1].click();
+    await w.tick();
+    const rawTxt = w.shadow.querySelector(".astep [data-cite='out']").textContent;
+    assert.match(rawTxt, /line 5, in _user/, "the raw view keeps the number the model was given");
+    assert.match(rawTxt, /line 3, in total/);
+});
+
+// THE JS TWIN of the remap. `exec` has no traceback to render — an evaluated script's stack is almost
+// entirely the wrapper — so it reports one line, and the same rule applies to it: the number shown is the
+// row the reader is looking at, while the model keeps the number it was given.
+test("exec: the rendered error names the row on SCREEN, and raw keeps the model's line", async () => {
+    // One dense line the beautifier breaks into many, so the model's line 1 is not row 1 of what is drawn.
+    const js = "const rows=[{a:1},{a:2},{a:3}];\nreturn rows.map(r=>r.b.toFixed(1));";
+    const msg = "Cannot read properties of undefined (reading 'toFixed') (line 2)";
+    const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
+    await w.dispatch(agentStart("jsfail", "crunch"));
+    await w.dispatch(agentStep("jsfail", 1, {
+        seq: 1, tool: "exec", arguments: { js }, result: `Error: ${msg}`,
+        renderIn: { type: "code", text: js, lang: "javascript", format: true },
+        renderOut: { type: "exec-out", error: msg, errorLine: 2 },
+    }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+
+    const link = w.shadow.querySelector(".r-py-err .tb-line");
+    assert.ok(link, "the failure's line is a control, not just text");
+    const drawn = [...w.shadow.querySelectorAll(".cline")]
+        .find((el) => el.textContent.includes("toFixed"))?.getAttribute("data-line");
+    assert.notEqual(drawn, "2", "the beautifier moved it — otherwise this test proves nothing");
+    // The whole `(line N)` is the control, for the same reason the python frame is.
+    assert.equal(link.textContent, `(line ${drawn})`, "the rendered error names the row the reader is looking at");
+    assert.match(link.parentElement.querySelector(".tt-pop").textContent, /model wrote it as line 2/);
+
+    // …and the model-facing text is unchanged, recoverable in raw.
+    const rawBtn = [...w.shadow.querySelectorAll(".rr-toggle button")].filter((b) => b.textContent === "raw");
+    rawBtn[rawBtn.length - 1].click(); await w.tick();
+    assert.match(w.shadow.querySelector(".astep [data-cite='out']").textContent, /\(line 2\)/,
+        "the model was told its OWN line, and that is what raw shows");
+});
+
+// A step's RAW In is where you go to search for a token — a selector buried in a wide args object, the one
+// key that differs between two calls — and it is the view with no structure of its own to cap it. So it
+// gets the same cell an Out does: capped, scrollable, and findable with Ctrl+F.
+test("the raw In is a findable cell, and the JSON tree inside it is what gets searched", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rawfind", "look at args"));
+    await w.dispatch(agentStep("rawfind", 1, {
+        seq: 1, tool: "click", arguments: { selector: "#checkout-submit-button", index: 0, verify: true },
+        result: "clicked",
+    }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+
+    const inBlock = [...w.shadow.querySelectorAll(".io")]
+        .find((io) => io.querySelector(".io-label")?.textContent.startsWith("In"));
+    const cell = inBlock.querySelector(".r-outcell");
+    assert.ok(cell, "the raw In renders through the shared cell");
+    // The JSON TREE is inside it — that composition is the point of the change, since the tree is what you
+    // are searching. It is expanded by default (`allOpen`), so a find is not looking at collapsed nodes.
+    assert.ok(cell.querySelector(".jt-args"), "…with the JSON tree inside, not instead of it");
+    assert.match(cell.textContent, /checkout-submit-button/);
+
+    // Ctrl+F inside the cell opens its find bar, and the tree's text is searchable.
+    cell.querySelector(".r-outscroll").dispatchEvent(
+        new w.window.KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true }));
+    await w.tick();
+    const q = cell.querySelector(".r-find-q");
+    assert.ok(q, "the find bar opens on the raw In, the same as on an Out");
+    q.value = "checkout"; q.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.flush();
+    assert.match(cell.querySelector(".r-find-n")?.textContent ?? "", /1 of 1/,
+        "it finds the selector in the tree — one match, not 'No results'");
+});
+
+// THE COMPOSITION QUESTION the cell raises: a JSON tree that could collapse would hide text from the find,
+// and a search reporting "No results" over data that is right there reads as the find being broken. It
+// cannot happen, and this is why: the raw In passes `allOpen`, which makes every node non-collapsible at
+// EVERY depth (`collapsible = !allOpen`), so there is nothing to hide. Pinned, because the day someone
+// makes this tree collapsible for good reasons, the find silently starts lying.
+test("the raw In's JSON tree cannot collapse at any depth, so nothing hides from the find", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("deep", "nested args"));
+    await w.dispatch(agentStep("deep", 1, {
+        seq: 1, tool: "python_exec", result: "ok",
+        arguments: { tables: { sales: { source: "#grid", opts: { header: { row: 2, tag: "buried-marker" } } } } },
+    }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+
+    const cell = [...w.shadow.querySelectorAll(".io")]
+        .find((io) => io.querySelector(".io-label")?.textContent.startsWith("In"))
+        .querySelector(".r-outcell");
+    // Four levels deep, and every level is drawn — no chevron, no click target, nothing to fold away.
+    assert.match(cell.textContent, /buried-marker/, "the deepest value is rendered, not behind a fold");
+    assert.equal(cell.querySelectorAll(".jt-branch .tri").length, 0, "no node offers to collapse");
+    assert.equal(cell.querySelectorAll(".jt-clickable").length, 0, "…and none is clickable");
+    assert.equal(cell.querySelectorAll(".jt-preview").length, 0,
+        "no node is showing a COLLAPSED preview instead of its contents");
+
+    // So a find reaches it. This is the assertion that would fail the day the tree becomes collapsible.
+    cell.querySelector(".r-outscroll").dispatchEvent(
+        new w.window.KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true }));
+    await w.tick();
+    const q = cell.querySelector(".r-find-q");
+    q.value = "buried-marker"; q.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.flush();
+    assert.match(cell.querySelector(".r-find-n").textContent, /1 of 1/, "the four-deep value is findable");
+});
+
+// TWO FAILING STEPS OPEN AT ONCE. A document-wide lookup finds the FIRST In block on the page, so both
+// tracebacks jumped into the first step's code — confidently, and at a line number that meant nothing there.
+test("python: each traceback jumps into ITS OWN step's code, not the first one on the page", async () => {
+    const codeA = ["a1 = 1", "a2 = 2", "raise ValueError('A')"].join("\n");
+    const codeB = ["b1 = 1", "b2 = 2", "b3 = 3", "b4 = 4", "raise ValueError('B')"].join("\n");
+    const tb = (line) => [
+        "Traceback (most recent call last):",
+        '  File "<exec>", line 170, in <module>',
+        `  File "<python_exec>", line ${line}, in _user`,
+        "ValueError: x",
+    ].join("\n");
+
+    const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
+    await w.dispatch(agentStart("two", "two failures"));
+    for (const [i, code, line] of [[1, codeA, 3], [2, codeB, 5]]) {
+        await w.dispatch(agentStep("two", i, {
+            seq: i, tool: "python_exec", arguments: { code }, result: "Python error",
+            renderIn: { type: "python-in", mode: "script", code },
+            renderOut: { type: "python-out", error: tb(line) },
+        }));
+    }
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (const head of w.shadow.querySelectorAll(".astep-head")) { head.click(); await w.tick(); }
+
+    const steps = [...w.shadow.querySelectorAll(".astep")];
+    assert.equal(steps.length, 2, "both steps are open");
+    // Each step marks its OWN failing line: step 1 at line 3, step 2 at line 5.
+    const marked = steps.map((st) => st.querySelector(".cline.cline-fail")?.textContent || "");
+    assert.match(marked[0], /raise ValueError\('A'\)/, "step 1 marks its own line 3");
+    assert.match(marked[1], /raise ValueError\('B'\)/, "step 2 marks its own line 5 — not step 1's");
+
+    // And clicking the SECOND traceback's link lands in the SECOND step's code. The bug was that it found
+    // the first `[data-cite='in']` in the whole document and pulsed a line there.
+    const link = steps[1].querySelector(".tb-line");
+    assert.ok(link, "the second step's traceback has a link");
+    link.click();
+    // NO tick: the pulse is a class added imperatively, and a Preact re-render rewrites an element's class
+    // list from its own vdom — the same hazard `scrollToStepSeq` documents. Asserting after a flush would be
+    // testing whether the class survived a render, not whether the jump landed in the right place.
+    assert.equal(steps[0].querySelector(".cline-pulse, .cline-pulse-fail"), null,
+        "the FIRST step's code was not touched");
+    assert.ok(steps[1].querySelector(".cline-pulse, .cline-pulse-fail"),
+        "…the second step's was");
+    // The deepest frame is the failure, so it flashes RED — green would be the one colour that line is not.
+    assert.ok(steps[1].querySelector(".cline-pulse-fail"), "the failing line flashes red, not green");
+});
+
+// HOW LONG IT RAN, under the output. A script's elapsed time is the one fact about it the transcript cannot
+// give you: the timestamps either side include the model's own turn. And while it is still going, the
+// difference between "slow" and "stuck".
+//
+// It hangs off the CONSOLE when there is one and off the last section when there is not — the console is not
+// always there, and conjuring an empty one to hold a footer would be chrome pretending to be output.
+
+test("out footer: the elapsed time sits inside the console when there IS one", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ran1", "compute"));
+    await w.dispatch(agentStep("ran1", 1, {
+        seq: 1, tool: "python_exec", toolMs: 1234, arguments: { code: "print(1)" }, result: "ok",
+        renderOut: { type: "python-out", stdout: "1\n", value: "42" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep-head").click();
+    await w.tick();
+
+    const foot = w.shadow.querySelector(".r-ranfor");
+    assert.ok(foot, "the footer rendered");
+    assert.match(foot.textContent, /ran in 1\.2s/, "the tool's own wall clock, humanised");
+    assert.ok(foot.closest(".r-py-stdout"), "…inside the console section, which exists here");
+});
+
+test("out footer: with no console it goes after the last section instead", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ran2", "compute"));
+    await w.dispatch(agentStep("ran2", 1, {
+        seq: 1, tool: "python_exec", toolMs: 400, arguments: { code: "1+1" }, result: "ok",
+        renderOut: { type: "python-out", value: "2" },   // nothing printed
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep-head").click();
+    await w.tick();
+
+    const foots = [...w.shadow.querySelectorAll(".r-ranfor")];
+    assert.equal(foots.length, 1, "exactly one footer — never both placements");
+    assert.equal(foots[0].closest(".r-py-stdout"), null, "there is no console to sit in");
+    assert.match(foots[0].textContent, /ran in 400ms/);
+    // And no empty console section was conjured up to hold it.
+    assert.equal(w.shadow.querySelector(".r-py-stdout"), null);
+});
+
+test("out footer: while the step is RUNNING it counts up instead", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ran3", "compute"));
+    await w.dispatch(agentStep("ran3", 1, {
+        seq: 1, tool: "python_exec", pending: true, ts: Date.now() - 2500,
+        arguments: { code: "time.sleep(9)" }, streamOutput: "working\n",
+        renderOut: { type: "python-out", stdout: "working\n" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const open = w.shadow.querySelector(".astep-head");
+    if (open) { open.click(); await w.tick(); }
+
+    const foot = w.shadow.querySelector(".r-ranfor");
+    assert.ok(foot, "a running step has one too — that is the case it matters most for");
+    assert.match(foot.textContent, /running…/, "it says it has not finished");
+    assert.ok(foot.classList.contains("live"));
+    // ~2.5s in, and NOT a final "ran in": a settled figure on a step still going would be a measurement
+    // that is quietly still growing.
+    assert.match(foot.textContent, /[23](\.\d)?s/);
+    assert.doesNotMatch(foot.textContent, /ran in/);
+});
+
+// An EMBED wraps a whole rendered output, and a DataFrame render brings its own controls — copy CSV, hide
+// table, a sortable column header. Clicking one bubbled to the embed's jump and yanked the reader up to the
+// source step, which is the opposite of the request: they were operating the table in front of them.
+test("embed: a click on the render's OWN controls does not jump to the source step", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("em", "totals"));
+    await w.dispatch(agentStep("em", 1, { seq: 1, tool: "python_exec", token: "aa11bb2", result: "table",
+        renderOut: { type: "python-out", df: { columns: ["rep", "total"], rows: [["Gia", 850], ["Kim", 810]] } } }));
+    await w.dispatch(agentResult("em", "Ranked:\n\n![rep totals](@tool:aa11bb2:out)", 1));
+    await openRun(w);
+    const embed = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(embed, "the embed renders");
+    assert.ok(embed.querySelector("table"), "…as the DataFrame render, with its own controls");
+
+    let jumps = 0;
+    for (const el of w.shadow.querySelectorAll("*")) el.scrollIntoView = () => { jumps++; };
+
+    const copy = [...embed.querySelectorAll("button")].find((b) => /copy csv/i.test(b.textContent || ""));
+    assert.ok(copy, "the DataFrame render offers copy CSV");
+    copy.dispatchEvent(new w.window.MouseEvent("click", { bubbles: true }));
+    await w.tick();
+    assert.equal(jumps, 0, "copy CSV operated the table and did NOT scroll to the source");
+
+    const th = embed.querySelector("th:not(.r-df-idx)");
+    assert.ok(th, "…and the columns are sortable headers");
+    th.dispatchEvent(new w.window.MouseEvent("click", { bubbles: true }));
+    await w.tick();
+    assert.equal(jumps, 0, "a sort header is a control too — a <th> with a handler, not a <button>");
+
+    // …and the INERT parts still jump, or the guard would have removed the feature rather than scoped it.
+    const cell = embed.querySelector("tbody td");
+    assert.ok(cell, "a body cell is inert");
+    cell.dispatchEvent(new w.window.MouseEvent("click", { bubbles: true }));
+    await w.tick();
+    assert.ok(jumps > 0, "clicking the render itself still goes to the step that produced it");
+});
+
+// A CITATION IS A DIFFERENT PLACE TO SHOW CODE, NOT A DIFFERENT KIND OF THING. An embedded
+// `![the code](@tool:…:in)` rendered a bare `Code`, so the same block was explainable at its step and inert
+// three lines further down in the answer, purely because of where it was cited. Both go through CodeRender
+// now, which is also what keeps the surface split in ONE place (CodeTools) rather than two.
+test("embed: a cited code block carries the same affordances the step's own block has", async () => {
+    const w = await loadSidebarWorld({ config: { utilityModel: "small:1b" } });
+    await w.dispatch(agentStart("ce", "compute"));
+    await w.dispatch(agentStep("ce", 1, { seq: 1, tool: "python_exec", token: "cc11dd2", result: "42",
+        arguments: { code: "q = [1, 2]\nreturn sum(q)" },
+        renderIn: { type: "python-in", mode: "script", code: "q = [1, 2]\nreturn sum(q)" } }));
+    await w.dispatch(agentResult("ce", "Here it is:\n\n![the code](@tool:cc11dd2:in)", 1));
+    await openRun(w);
+    const embed = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(embed, "the embed renders");
+    assert.ok(embed.querySelector(".code-block"), "…as a real code block, not a bare pre");
+    const tools = embed.querySelector(".code-tools");
+    assert.ok(tools, "…with its toolbar");
+    const labels = [...tools.querySelectorAll("button")].map((b) => (b.getAttribute("aria-label") || b.textContent || "").toLowerCase());
+    assert.ok(labels.some((l) => /explain/.test(l)), "explain is offered on the panel");
+    assert.ok(labels.some((l) => /bench/.test(l)), "…and so is the bench, which the panel can navigate to");
+});
+
+test("embed: on the HUD card the cited block keeps explain and drops the bench", async () => {
+    // The card is a reading surface with no navigation of its own: sending someone to the bench from a
+    // corner card either does nothing or replaces what they were reading. Understanding the code is exactly
+    // what the card IS for, so explain stays. Asserted here because the embed reaches CodeTools by a
+    // different route from a step's own block and could have bypassed the split entirely.
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" }, config: { utilityModel: "small:1b" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("ch", "compute", "m"));
+    await w.dispatch(agentStep("ch", 1, { seq: 1, tool: "python_exec", token: "cc11dd3", result: "42",
+        arguments: { code: "return 42" },
+        renderIn: { type: "python-in", mode: "script", code: "return 42" } }));
+    await w.dispatch(agentResult("ch", "Here:\n\n![the code](@tool:cc11dd3:in)", 1));
+    await w.flush();
+
+    // LOUD, not a shrug: a guard that returns early when the embed is missing is how this passes on the day
+    // the card stops rendering citations at all.
+    const embed = w.window.document.querySelector(".card-body .tok-ref");
+    assert.ok(embed, "the card renders the cited block");
+    const tools = embed.querySelector(".code-tools");
+    assert.ok(tools, "…with a toolbar");
+    const labels = [...tools.querySelectorAll("button")].map((b) => (b.getAttribute("aria-label") || b.textContent || "").toLowerCase());
+    assert.ok(labels.some((l) => /explain/.test(l)), "explain stays on the card");
+    assert.ok(!labels.some((l) => /bench/.test(l)), "the bench does NOT — the card cannot navigate there");
+});
+
+// THE GAUGE AND THE FIGURES BESIDE IT MUST AGREE ABOUT WHAT USAGE THE SESSION HAS. They read it from two
+// near-copies: the in/out figures took both `steps` and `turns`, the gauge took ONE of them chosen by
+// `s.kind`. So a session whose usage landed on the other collection showed its spend with no gauge at all —
+// which reads as the gauge having broken, a foot away from a number that is plainly updating.
+test("usage: the gauge reads the same samples as the in/out figures, whichever collection they landed on", async () => {
+    const w = await loadSidebarWorld({ vram: [{ model: "gemma4:31b", vramGB: 21, contextLength: 1000, expiresAt: null }] });
+    await w.dispatch(agentStart("mix", "compute", "gemma4:31b"));
+    // Usage on a TURN of a session whose kind is "agent" — the mismatch the gauge used to fall through.
+    await w.dispatch({ kind: "agent-say", id: "mix", ts: Date.now(), save: false,
+        session: { hash: "mix", turn: 0 }, text: "go" });
+    await w.dispatch(agentStep("mix", 1, { seq: 1, thought: "thinking",
+        usage: { promptTokens: 300, completionTokens: 20, totalTokens: 320, genMs: 100 } }));
+    await w.dispatch(agentResult("mix", "done", 1));
+    await w.raw({ __mlSidebarOpen: true });   // shell open → the ps poll can supply the denominator
+    await openRun(w);
+    await w.tick(); await w.flush();
+    assert.ok(w.shadow.querySelector(".run-stats"), "the in/out figures render");
+    assert.ok(w.shadow.querySelector(".usage-gauge"), "…and so does the gauge, from the same samples");
+});
+
+test("usage: occupancy is the LATEST sample by time, not whichever collection is concatenated last", async () => {
+    // Ordering matters because occupancy means "how full is the window NOW". Concatenating steps-then-turns
+    // would make a turn the last sample even when a step is newer, and report a stale occupancy.
+    const w = await loadSidebarWorld({ vram: [{ model: "gemma4:31b", vramGB: 21, contextLength: 1000, expiresAt: null }] });
+    const t0 = Date.now();
+    await w.dispatch(agentStart("ord", "compute", "gemma4:31b"));
+    await w.dispatch(agentStep("ord", 1, { seq: 1, ts: t0 + 1000, thought: "later",
+        usage: { promptTokens: 700, completionTokens: 0, totalTokens: 700, genMs: 10 } }));
+    await w.dispatch(agentStep("ord", 2, { seq: 2, ts: t0 + 2000, thought: "latest",
+        usage: { promptTokens: 200, completionTokens: 0, totalTokens: 200, genMs: 10 } }));
+    await w.dispatch(agentResult("ord", "done", 2));
+    await w.raw({ __mlSidebarOpen: true });
+    await openRun(w);
+    await w.tick(); await w.flush();
+    assert.match(w.shadow.querySelector(".usage-pct").textContent, /20%/,
+        "the newest sample (200/1000), not the largest and not the first");
+});
+
+// The environment panel opens OVER the editor, so "click off it" is the first thing anyone tries to dismiss
+// it — and it did nothing: the only way out was finding the button again, behind the panel you were trying
+// to close.
+// (`composed: true` on the synthetic events: a real pointer event crosses the shadow boundary and a
+// hand-built one does not, so without it the document-level listener never sees the click and the test
+// would report the dismiss as broken when it works.)
+test("python bench: the environment panel closes on an outside click, and on Escape", async () => {
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: 1, stdout: "" }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    // `flush`, not `tick`: the dismiss is armed in an EFFECT, and Preact defers those — a click delivered
+    // before the listener exists finds nothing to close it, which reads as the feature not working.
+    const openIt = async () => { w.shadow.querySelector(".bench-env-btn").click(); await w.flush(); };
+
+    await openIt();
+    assert.ok(w.shadow.querySelector(".bench-env-body"), "the panel opens");
+
+    // A click INSIDE it must not close it — you are reading and filtering.
+    w.shadow.querySelector(".bench-env-body").dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true, composed: true }));
+    await w.flush();
+    assert.ok(w.shadow.querySelector(".bench-env-body"), "…and stays open while you use it");
+
+    // A click anywhere else closes it.
+    w.shadow.querySelector(".bench-code").dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true, composed: true }));
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".bench-env-body"), null, "clicking off it dismisses it");
+
+    // Escape does too.
+    await openIt();
+    assert.ok(w.shadow.querySelector(".bench-env-body"), "reopened");
+    w.window.document.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".bench-env-body"), null, "Escape dismisses it");
+});
+
+test("python bench: the BUTTON still toggles — the outside-click handler must not fight it", async () => {
+    // The trap: a capture-phase dismiss that also fires for the button would close the panel and let the
+    // button's own click reopen it, so it would look like the dismiss never worked. Or, if ordered the other
+    // way, the button would appear dead on the second press.
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: 1, stdout: "" }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const btn = () => w.shadow.querySelector(".bench-env-btn");
+    btn().dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true, composed: true }));
+    btn().click(); await w.tick();
+    assert.ok(w.shadow.querySelector(".bench-env-body"), "first press opens");
+    btn().dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true, composed: true }));
+    btn().click(); await w.tick();
+    assert.equal(w.shadow.querySelector(".bench-env-body"), null, "second press closes");
 });

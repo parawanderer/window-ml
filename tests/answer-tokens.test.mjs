@@ -2,8 +2,9 @@
 // surface relies on. Rendering is tested at the surfaces; this locks down what IS and ISN'T a token.
 import { test } from "node:test";
 import assert from "node:assert";
-import { splitAnswer, hasTokens, resolveTokenStep } from "../src/answer-tokens.ts";
+import { splitAnswer, hasTokens, resolveTokenStep, tokenIdsIn } from "../src/answer-tokens.ts";
 import { toolToken } from "../src/util.ts";
+import { markdown } from "../src/sidebar/format.ts";
 
 test("splitAnswer: a token link splits into prose + token + prose; default slot is out; embed vs link", () => {
     // LINK form `[…]` → embed:false (renders as a clickable jump).
@@ -104,4 +105,89 @@ test("resolveTokenStep: matches by the token the loop MINTED onto the step; null
     // a step with NO minted token (thought, un-tokened tool call) is never a target, even if its seq would derive it
     assert.equal(resolveTokenStep(toolToken("abcd1234", 1), steps), null, "an un-tokened step can't be cited");
     assert.equal(resolveTokenStep(idFor2, [{ tool: "x" }]), null, "no tokens at all → null");
+});
+
+// A CITATION INSIDE CODE IS BEING EXPLAINED, NOT MADE. A model writing `![example](@tool:abc1234)` in
+// backticks is showing you the syntax; expanding it swallows the explanation and renders the thing being
+// described in place of the description. Same rule the `@tool:` macro follows in exec — a C macro does not
+// expand inside a string or a comment.
+test("a pointer inside an inline code span is left as text", () => {
+    const segs = splitAnswer("write `![example](@tool:abc1234)` to embed it");
+    assert.equal(segs.length, 1, "one prose segment");
+    assert.equal(segs[0].kind, "prose");
+    assert.match(segs[0].text, /`!\[example\]\(@tool:abc1234\)`/, "verbatim, backticks and all");
+});
+
+test("...the LINK form too", () => {
+    const segs = splitAnswer("use `[label](@tool:abc1234)` for a jump");
+    assert.deepEqual(segs.map((s) => s.kind), ["prose"]);
+});
+
+test("a pointer inside a fenced block is left as text", () => {
+    const md = "Here is how:\n\n```\n![shot](@tool:abc1234)\n```\n\ndone";
+    assert.deepEqual(splitAnswer(md).map((s) => s.kind), ["prose"]);
+});
+
+test("a fence containing backticks does not leak code-ness into the prose after it", () => {
+    // Fences are matched first and skipped wholesale: pairing inline backticks across one would mark half
+    // the document as code and silently stop citing anything below it.
+    const md = "```\na ` stray tick\n```\n\nthe table ![t](@tool:abc1234) is above";
+    const segs = splitAnswer(md);
+    assert.ok(segs.some((s) => s.kind === "token" && s.id === "abc1234"), "the real citation still resolves");
+});
+
+test("a REAL citation beside an explained one: one renders, one does not", () => {
+    const segs = splitAnswer("spelled `![x](@tool:abc1234)`, it renders as ![x](@tool:def5678)");
+    const toks = segs.filter((s) => s.kind === "token");
+    assert.equal(toks.length, 1, "only the one outside the backticks");
+    assert.equal(toks[0].id, "def5678");
+});
+
+test("an UNTERMINATED backtick does not swallow the rest of the answer", () => {
+    // A stray tick is ordinary in prose. Treating it as opening a span to end-of-document would silently
+    // stop every citation after it, which is a far worse failure than rendering one that was being quoted.
+    const segs = splitAnswer("a ` stray tick, then ![t](@tool:abc1234)");
+    assert.ok(segs.some((s) => s.kind === "token"), "the citation after it still resolves");
+});
+
+test("double-backtick spans close on a run of exactly two, so an inner single tick is inside", () => {
+    const segs = splitAnswer("``a ` b ![x](@tool:abc1234)`` after");
+    assert.deepEqual(segs.map((s) => s.kind), ["prose"]);
+});
+
+test("tokenIdsIn skips a mentioned citation, so it cannot dedup an output that was never shown", () => {
+    assert.deepEqual([...tokenIdsIn("as in `![x](@tool:abc1234)`")], []);
+    assert.deepEqual([...tokenIdsIn("as in ![x](@tool:abc1234)")], ["abc1234"]);
+});
+
+// EVERY SHAPE OF CODE BLOCK a model might reach for, since the point is that it can explain the syntax in
+// whichever one it picks.
+test("a tilde fence hides a pointer too, and closes only on its own marker", () => {
+    assert.deepEqual(splitAnswer("~~~\n![x](@tool:abc1234)\n~~~").map((s) => s.kind), ["prose"]);
+});
+
+test("a fence with a language tag still hides it", () => {
+    assert.deepEqual(splitAnswer("```markdown\n![x](@tool:abc1234)\n```").map((s) => s.kind), ["prose"]);
+});
+
+test("a fence INDENTED inside a list item still hides it", () => {
+    const md = "- like so:\n  ```\n  ![x](@tool:abc1234)\n  ```";
+    assert.deepEqual(splitAnswer(md).map((s) => s.kind), ["prose"]);
+});
+
+test("a fence does not hide the citations AFTER it", () => {
+    const segs = splitAnswer("```\n![a](@tool:abc1234)\n```\n\nand ![b](@tool:def5678)");
+    const toks = segs.filter((s) => s.kind === "token");
+    assert.deepEqual(toks.map((t) => t.id), ["def5678"], "the fence closes; the one after it is a real cite");
+});
+
+// A 4-SPACE INDENT IS NOT CODE HERE, and that is a decision coupled to the renderer rather than an oversight:
+// `markdown()` emits a plain <p> for an indented block, so treating it as code would leave an unexpanded
+// `![x](@tool:…)` in ordinary prose — a citation that looks broken instead of one that looks explained. Both
+// halves are asserted, so a renderer that later grows indented-code support fails HERE and forces the choice.
+test("a 4-space indented block is not code — and the renderer agrees", () => {
+    const md = "text:\n\n    ![x](@tool:abc1234)\n\nafter";
+    assert.ok(splitAnswer(md).some((s) => s.kind === "token"), "the citation still resolves");
+    const html = markdown("text:\n\n    an indented line\n\nafter");
+    assert.ok(!/<pre|<code/.test(html), "…because markdown() does not make a code block of it either");
 });

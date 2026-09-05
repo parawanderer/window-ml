@@ -11,15 +11,30 @@ import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundin
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS, modelKinds, embedDims } from "./store";
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS, modelKinds, embedDims, view } from "./store";
+import { VRAM_PALETTES, VRAM_PALETTE_KEY, vramPalette } from "./vram";
 import { truncate } from "./format";
 import { ToolDefsView } from "./agent-detail";   // the SAME viewer an agent run uses for its local toolset
 import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
 import { IconCheck } from "./icons";
+import { Disclosure } from "./ui-kit";
+
+/** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is
+ *  why the select needs to know which values it already has an option for. */
+const RESWIN_PRESETS = [60, 180, RESWIN_DEFAULT, 900, 1800, 0];
+/** A window length as a person would say it — for the option a drag creates, which has no preset name. */
+function fmtWindow(s: number): string {
+    if (!s) return "Everything kept";
+    if (s < 60) return `${s} seconds`;
+    const m = s / 60;
+    return `${Number.isInteger(m) ? m : m.toFixed(1)} minute${m === 1 ? "" : "s"}`;
+}
 
 // Update one config field: mirror it into the signal (live UI), optionally
 // persist to chrome.storage.sync (which the popup also reads → they sync).
-function setField(key: keyof MlConfig, value: string | number | boolean, persist = true): void {
+// String LISTS are config values too (the server-tool curation) — the signature took scalars only, so a
+// list field could not be written at all without a cast at every call site.
+function setField(key: keyof MlConfig, value: string | number | boolean | string[], persist = true): void {
     config.value = { ...config.value, [key]: value };
     if (persist) chrome.storage.sync.set({ [key]: value });
     if (key === "theme") applyTheme();
@@ -55,7 +70,19 @@ function Section({ id, title, children }: { id: string; title: ComponentChildren
  * Fetched on EXPAND, not on mount: it is a network call to the backend, and a settings panel opening should
  * not make one for a section nobody looked at.
  */
+/** The `<bundle>__<fn>` name a run would see — the SAME flattening `buildServerTools` applies, so what is
+ *  ticked here is what is (or is not) built there. Two spellings of one identity is how a curation list ends
+ *  up silently disabling nothing. */
+const srvToolName = (bundleId: string, fn: string) => {
+    const safe = (x: string) => String(x).replace(/[^A-Za-z0-9_]/g, "_").replace(/^(\d)/, "_$1");
+    return `${safe(bundleId)}__${safe(fn)}`;
+};
+/** Add or remove one entry, without duplicates. */
+const toggled = (list: readonly string[], name: string, present: boolean): string[] =>
+    present ? [...new Set([...list, name])] : list.filter((x) => x !== name);
+
 function ServerToolsSection() {
+    const c = config.value;
     const [state, setState] = useState<{ status: "idle" | "loading" | "done" | "error"; tools: ServerTool[]; error?: string }>({ status: "idle", tools: [] });
 
     const load = () => {
@@ -70,6 +97,16 @@ function ServerToolsSection() {
 
     // One tool per FUNCTION, which is also how `ml.agent({serverTools})` exposes them — so what you read
     // here is what a run would actually be given, not a bundle summary it has to be unpacked from.
+    // Free-text filter over the curation list. A bundle survives if IT matches (so a server name shows all of
+    // its tools) or if any of its functions does; a function survives if it matches or its bundle does.
+    const [srvQuery, setSrvQuery] = useState("");
+    const q = srvQuery.trim().toLowerCase();
+    const hit = (...parts: (string | undefined)[]) => !q || parts.some((p) => (p || "").toLowerCase().includes(q));
+    const bundleHit = (b: ServerTool) => hit(b.id, b.name, b.description);
+    const fnMatches = (b: ServerTool, f: { name: string; description?: string }) =>
+        bundleHit(b) || hit(f.name, f.description);
+    const matching = state.tools.filter((b) => bundleHit(b) || (b.functions || []).some((f) => fnMatches(b, f)));
+
     const defs = state.tools.flatMap((b) => (b.functions || []).map((f) => ({
         name: `${b.id}__${f.name}`,
         description: f.description || "",
@@ -81,19 +118,28 @@ function ServerToolsSection() {
     return (
         <Section id="servertools" title="Server-side tools">
             <div class="set-row col">
-                <div class="hint">
+                {/* `set-note`, like every other section's explanation — this was bare `hint` prose, which is
+                    the style used for a short inline status beside a control, not for the paragraph that
+                    explains what a section is. */}
+                <div class="set-note">
                     Tools configured in OpenWebUI that a run can be given with <code>serverTools</code>, and that
                     you can call from the console as <code>ml.dynamicTools.&lt;bundle&gt;.&lt;fn&gt;()</code>. They
                     run on the server, so their arguments leave this machine and every call needs approval.
                 </div>
-                <div class="set-row">
-                    <button class="raw-btn" onClick={load} disabled={state.status === "loading"}>
-                        {state.status === "loading" ? "loading…" : state.status === "done" ? "refresh" : "list server tools"}
-                    </button>
-                    {state.status === "done"
-                        ? <span class="hint">{state.tools.length} bundle{state.tools.length === 1 ? "" : "s"}, {defs.length} function{defs.length === 1 ? "" : "s"}</span>
-                        : null}
-                </div>
+                {/* An ACCORDION that fetches on the opening edge, not a button that injects a list: opening
+                    a section is the gesture, and "list server tools" described the mechanism instead. The
+                    fetch still happens on EXPAND rather than on mount — a settings panel opening should not
+                    call the backend for a section nobody looked at — and the refresh stays a separate
+                    control, since re-opening a section is not a request to re-request. */}
+                <Disclosure label="server tools" onOpen={() => { if (state.status === "idle") load(); }}
+                    note={state.status === "loading" ? "loading…"
+                        : state.status === "done" ? `${state.tools.length} bundle${state.tools.length === 1 ? "" : "s"}, ${defs.length} function${defs.length === 1 ? "" : "s"}`
+                        : undefined}>
+                    <div class="set-row">
+                        <button class="raw-btn" onClick={load} disabled={state.status === "loading"}>
+                            {state.status === "loading" ? "loading…" : "refresh"}
+                        </button>
+                    </div>
                 {/* An empty list is not an error and must not read as one: a bare-Ollama backend has no such
                     concept, and a stock OpenWebUI has none configured. Say which. */}
                 {state.status === "error"
@@ -101,7 +147,58 @@ function ServerToolsSection() {
                     : state.status === "done" && !defs.length
                         ? <div class="hint">none — this backend has no server-side tools configured (a bare Ollama endpoint has no such concept).</div>
                         : null}
+                {/* CURATION. A backend with forty tools is not a toolset — it is a list to choose from, and a
+                    tool a model can see is a tool it will try. A disabled function is not built at all, so it
+                    never reaches a prompt; the bundle can still be asked for by a run. "Commander" is the
+                    other half: a HUD-started run has no code to name a bundle, so this is the only way to
+                    give it one. */}
+                {/* A backend can expose dozens; curating them means finding one first. Matches the bundle's
+                    name AND the function's, so "search" finds it whether you remember the tool or the server
+                    it came from — and a bundle with no match disappears entirely rather than sitting there
+                    empty, which would read as a bundle that has no functions. */}
+                {state.status === "done" && state.tools.length > 1 ? (
+                    <label class="set-field srv-find">
+                        <span>Find</span>
+                        <input type="search" value={srvQuery} placeholder="filter by tool or server name…"
+                            onInput={(e: any) => setSrvQuery(e.target.value)} />
+                    </label>
+                ) : null}
+                {state.status === "done" && state.tools.length ? (
+                    <div class="srv-curate">
+                        {matching.length === 0
+                            ? <div class="hint">Nothing matches “{srvQuery}”.</div> : null}
+                        {matching.map((b) => (
+                            <div class="srv-bundle" key={b.id}>
+                                <div class="srv-bundle-head">
+                                    <span class="srv-bundle-name">{b.name || b.id}</span>
+                                    <span class="sp" />
+                                    <label class="set-check tt">
+                                        <input type="checkbox" checked={(c.commanderServerTools || []).includes(b.id)}
+                                            onChange={(e: any) => setField("commanderServerTools",
+                                                toggled(c.commanderServerTools || [], b.id, e.target.checked))} />
+                                        <span>Commander</span>
+                                        <span class="tt-pop wrap left" role="tooltip">Give this bundle to every run started from the HUD/Commander bar. A run driven from there has no code to ask for it.</span>
+                                    </label>
+                                </div>
+                                {(b.functions || []).filter((f) => fnMatches(b, f)).map((f) => {
+                                    const name = srvToolName(b.id, f.name);
+                                    const on = !(c.serverToolsOff || []).includes(name);
+                                    return (
+                                        <label class="set-check srv-fn" key={name}>
+                                            <input type="checkbox" checked={on}
+                                                onChange={(e: any) => setField("serverToolsOff",
+                                                    toggled(c.serverToolsOff || [], name, !e.target.checked))} />
+                                            <code>{f.name}</code>
+                                            {f.description ? <span class="hint">{f.description}</span> : null}
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                        ))}
+                    </div>
+                ) : null}
                 {defs.length ? <ToolDefsView tools={defs} /> : null}
+                </Disclosure>
             </div>
         </Section>
     );
@@ -147,6 +244,7 @@ const TIP = {
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked. The agent can likewise read its own setup without asking — ml.getModel/config/models/capabilities/ps/serverTools, the same non-secret values any page can read; every other ml method still prompts.",
     autoApprovePython: "Experimental. Run readonly-mode python_exec calls without an approval prompt. A readonly run is isolated by construction — the WASM sandbox has no DOM, no filesystem, and (in this mode) no network or JS/extension scope — so it's a pure function over the injected data and can't affect the page or exfiltrate. A `mode:'full'` call (which the agent must explicitly request to get network) ALWAYS asks. Code with hidden/bidi characters also still asks.",
     autoApproveSameOriginAuth: "Advanced, default OFF. Auto-approve a fetch that spends your session on the SAME origin you're already on — a fetch_url/ml.fetch with credentials:true (sends your cookies), or a rendered:true load in a normal (non-incognito) tab that inherits your login. OFF keeps you in charge: those always ask. This never touches cross-origin fetches (always ask) or the uncredentialed same-origin reads (already free — the page could fetch its own origin itself).",
+    protoStream: "Default OFF. Ask for the streamed chat reply as varint-delimited PROTOBUF (Accept: application/protobuf) rather than OpenAI SSE, which re-sends the id/model/created/choices envelope for every token — measured here at 25x fewer bytes (7343 → 292). Purely opt-in and self-negotiating: a backend that doesn't serve it answers with the usual SSE, so nothing breaks. Tool calls and reasoning decode fine. Skipped for a call carrying toolIds, because OpenWebUI's source citations are emitted on a different route than protobuf is served over and would vanish silently. Saves BYTES, not time.",
     autoApproveSelfSource: "Default ON. Auto-approve an UNCREDENTIALED fetch_url/ml.fetch of the agent's OWN repo source — committed files (raw.githubusercontent.com) or structural/code API endpoints (api.github.com/repos/<owner>/<repo>/…), locked to this build's repoUrl — so it can read the code it's running to explain/debug itself. NEVER auto-approves user-generated PROSE endpoints (issues/pulls/comments/discussions/reviews/releases — a prompt-injection surface), a credentialed fetch, or a rendered load; those still ask. Public, read-only, uncredentialed → near-zero risk.",
     cdp: "Experimental. Use chrome.debugger (CDP) for two things a normal page context can't do: (1) CLICK surfaces a synthetic click can't reach — cross-origin iframes and declarative/native closed shadow roots; (2) run imperative `exec` on strict-CSP / Trusted-Types pages (GitHub, Google apps) where main-world eval is blocked. The debugger is exempt from the page's CSP/TT, so it's the only mechanism that works. The `debugger` permission is declared at install; this toggle gates USAGE (the API stays unused until it's on AND the model hits a reserved surface). Still gated by the per-action approval. Attaching flashes Chrome's \"is debugging this browser\" banner — only for these reserved actions, so the flash marks the risk. Off by default; while off, a reserved click / a blocked exec just reports an actionable error and the agent falls back to read-only / ml.fetch.",
     pierceClosedShadow: "Let the DOM tools reach inside CLOSED shadow roots too (normally selector-invisible). A tiny script captures each closed root as the page builds it — the tools then treat it like an open root (same `host >>> inner` syntax). Closed shadow DOM is encapsulation, not a security boundary, so this doesn't cross any origin. On by default: the capture script wraps attachShadow on every page regardless of this setting (capture only — page behaviour is unchanged), so this just gates whether the tools use it. Turn it off to keep the tools' selector reach limited to open roots. Declarative/native closed roots still can't be captured; the agent falls back to visual locate/@pt for those.",
@@ -421,6 +519,18 @@ const SETTINGS_TABS = [
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number]["id"];
 const settingsTab = signal<SettingsTab>("connection");
+/**
+ * Open Settings at a particular section, for a shortcut elsewhere in the UI.
+ *
+ * Selects the tab AND force-opens the section: sections remember whether you collapsed them, so a shortcut
+ * that only switched tabs could land you on a heading you had shut weeks ago and look like it did nothing.
+ */
+export function openSettingsAt(tab: SettingsTab, section: string): void {
+    settingsTab.value = tab;
+    collapsedSections.value = { ...collapsedSections.value, [section]: false };
+    try { localStorage.setItem(SECT_KEY, JSON.stringify(collapsedSections.value)); } catch { /* private mode */ }
+    view.value = { name: "settings" };
+}
 
 // ── Permissions tab ──────────────────────────────────────────────────────────
 // Two grants the USER manages here (the page never touches either): the per-domain
@@ -716,6 +826,9 @@ function useVisionProbe(model: string): boolean | null {
     return sees;
 }
 
+/** THE SETTINGS VIEW — the SUPERSET of the toolbar popup: every user-editable config surfaces here, and
+ *  a new flag MUST appear here even if it never reaches the popup (the popup is a curated subset of the
+ *  common knobs; inverting that is the rule this exists to hold). */
 export function Settings() {
     const c = config.value;
     const tab = settingsTab.value;
@@ -752,6 +865,18 @@ export function Settings() {
     // out not to embed is a runtime surprise, where a shorter list costs nothing — a user can still type one.
     const embedListed = models.value.filter(m => modelFilterAllows(m, c.modelFilter) && producesEmbeddings(modelKinds.value[m] ?? null));
     const notListed = (v: string) => !!v.trim() && models.value.length > 0 && !models.value.includes(v.trim());
+    // What is WRONG with the configured embedding model, if anything — said on the field rather than left to
+    // fail at request time. Only complains about what it can actually establish: a model whose capabilities
+    // the server never reported is unknown, not wrong, so it passes.
+    const embedProblem = (() => {
+        const v = c.embeddingModel.trim();
+        if (!v) return "";
+        if (!modelFilterAllows(v, c.modelFilter)) return "The model access filter excludes this model, so ml.embed would be refused.";
+        const kinds = modelKinds.value[v];
+        if (kinds && !producesEmbeddings(kinds)) return `${v} does not report the embedding capability — ml.embed would fail against it.`;
+        if (models.value.length > 0 && !models.value.includes(v)) return `${v} is not on this server's model list.`;
+        return "";
+    })();
     const filterValid = (() => { if (!c.modelFilter.trim()) return true; try { new RegExp(c.modelFilter); return true; } catch { return false; } })();
     // A configured model id the current filter excludes (non-empty + no match) → flag it (ModelPicker cls).
     const excl = (v: string) => !!v.trim() && !modelFilterAllows(v, c.modelFilter);
@@ -850,19 +975,40 @@ export function Settings() {
                 </label>
                 </Section>
 
+                {/* An embedding model is a MODEL, and this sat under Advanced — where you would look for it
+                    only after failing to find it here. */}
+                <Section id="embeddings" title="Embeddings">
+                <div class="set-note">Model for <code>ml.embed</code> — comparing text by meaning rather than spelling. Only models that report the <b>embedding</b> capability are listed; these are small and fast, so they default to living on the CPU and staying loaded.</div>
+                <div class="set-field">
+                    <Lbl tip={TIP.embeddingModel}>Embedding model</Lbl>
+                    {/* The same picker every other model field uses. This was a bare input with a datalist,
+                        so it had no dropdown to open — you had to already know the name of a model whose whole
+                        point is that you cannot tell it apart from a chat model by looking. */}
+                    <ModelPicker fieldKey="embeddingModel" options={embedListed} placeholder="none configured"
+                        cls={embedProblem ? "err" : ""} />
+                    {/* The field accepts anything typed — a server we cannot interrogate is not a reason to
+                        refuse a model that works. But a model we CAN see, and that does not report the
+                        capability, fails at request time with nothing on screen to explain it. */}
+                    {embedProblem ? <div class="hint err">{embedProblem}</div> : null}
+                    {!embedProblem && !embedListed.length && models.value.length
+                        ? <div class="hint">No model on this server reports the <b>embedding</b> capability, so there is nothing to suggest. Anything typed here is still accepted.</div> : null}
+                    {c.embeddingModel.trim() && embedDims.value[c.embeddingModel.trim()]
+                        ? <div class="set-hint">{embedDims.value[c.embeddingModel.trim()]} dimensions</div> : null}
+                </div>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.embeddingKeepAlive}
+                        onChange={(e: any) => setField("embeddingKeepAlive", e.target.checked)} />
+                    <Lbl tip={TIP.embeddingKeepAlive}>Keep loaded (no expiry)</Lbl>
+                </label>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.embeddingForceCpu}
+                        onChange={(e: any) => setField("embeddingForceCpu", e.target.checked)} />
+                    <Lbl tip={TIP.embeddingForceCpu}>Run on CPU (uses no VRAM)</Lbl>
+                </label>
+                </Section>
+
                 <Section id="grounding" title="Visual grounding">
                 <div class="set-note">Optional coordinate model for the agent's <code>locate</code> tool. <b>Loads an extra model into VRAM</b> — leave off if memory is tight. Off = <code>locate</code> still works via the Set-of-Marks screenshot tool (no extra model). Recommended: <code>qwen2.5vl:7b</code> (or <code>:3b</code>); accuracy is unproven.</div>
-                <label class="set-field"><span>Resource chart window</span>
-                    <select value={String(resWindowS.value)}
-                        onChange={(e: any) => { resWindowS.value = Number(e.target.value); chrome.storage.local.set({ [RESWIN_KEY]: resWindowS.value }); }}>
-                        <option value="60">1 minute</option>
-                        <option value="180">3 minutes</option>
-                        <option value={String(RESWIN_DEFAULT)}>5 minutes</option>
-                        <option value="900">15 minutes</option>
-                        <option value="1800">30 minutes</option>
-                        <option value="0">Everything kept</option>
-                    </select></label>
-                <div class="set-note">How much history the VRAM/RAM chart DRAWS. Samples are kept for the whole session either way — this only sets how far back the chart looks, because a long window squeezed into a narrow panel smears into an unreadable blur. Gaps stay gaps: while the panel is closed nothing is sampled, so the line breaks rather than being drawn across.</div>
                 <label class="set-check">
                     <input type="checkbox" checked={c.groundingEnabled}
                         onChange={(e: any) => setField("groundingEnabled", e.target.checked)} />
@@ -933,6 +1079,40 @@ export function Settings() {
                 </label>
                 </Section>
 
+                {/* The resource panel's own APPEARANCE. Both of these lived inside "Visual grounding" on the
+                    Models tab, which is where they were written rather than where they belong — one is how far
+                    back a chart draws and the other is which hues it draws in, and neither has anything to do
+                    with a coordinate model. */}
+                <Section id="resourcepanel" title="Resource panel">
+                <label class="set-field"><span>Chart window</span>
+                    <select value={String(resWindowS.value)}
+                        onChange={(e: any) => { resWindowS.value = Number(e.target.value); chrome.storage.local.set({ [RESWIN_KEY]: resWindowS.value }); }}>
+                        <option value="60">1 minute</option>
+                        <option value="180">3 minutes</option>
+                        <option value={String(RESWIN_DEFAULT)}>5 minutes</option>
+                        <option value="900">15 minutes</option>
+                        <option value="1800">30 minutes</option>
+                        <option value="0">Everything kept</option>
+                        {/* The chart's scrub strip edits this same quantity by dragging its left edge, which
+                            lands on values no preset names. Without a matching option the select renders
+                            BLANK — a control that shows nothing while the thing it controls is plainly set. */}
+                        {RESWIN_PRESETS.includes(resWindowS.value) ? null
+                            : <option value={String(resWindowS.value)}>{fmtWindow(resWindowS.value)} (dragged)</option>}
+                    </select></label>
+                <div class="set-note">How much history the VRAM/RAM chart DRAWS. Samples are kept for the whole session either way — this only sets how far back the chart looks, because a long window squeezed into a narrow panel smears into an unreadable blur. Gaps stay gaps: while the panel is closed nothing is sampled, so the line breaks rather than being drawn across.</div>
+                <label class="set-field"><span>Model colours</span>
+                    <select value={vramPalette.value}
+                        onChange={(e: any) => { vramPalette.value = e.target.value; chrome.storage.local.set({ [VRAM_PALETTE_KEY]: vramPalette.value }); }}>
+                        <option value="vivid">Vivid</option>
+                        <option value="grafana">Grafana</option>
+                        <option value="cool">Cool</option>
+                        <option value="warm">Warm</option>
+                    </select></label>
+                <div class="set-note">Which palette a model's colour is drawn from. A model's colour is its identity across the whole panel — the line, its band, its row, its blocks in the event lane, its ticks on the strip — so which hues read as distinct is worth choosing rather than being stuck with. The assignment is a hash of the model's name, so a given model keeps the same colour within a palette.
+                    <span class="pal-swatches">{(VRAM_PALETTES[vramPalette.value] ?? []).map((c) => <i key={c} style={{ background: c }} />)}</span>
+                </div>
+                </Section>
+
                 <Section id="codeblocks" title="Code blocks">
                 <label class="set-field"><span>Long lines</span>
                     <select value={codeWrap.value ? "wrap" : "scroll"}
@@ -1000,27 +1180,6 @@ export function Settings() {
                 </label>
                 </Section>
 
-                <Section id="embeddings" title="Embeddings">
-                <div class="set-note">Model for <code>ml.embed</code> — comparing text by meaning rather than spelling. Only models that report the <b>embedding</b> capability are listed; these are small and fast, so they default to living on the CPU and staying loaded.</div>
-                <div class="set-field">
-                    <Lbl tip={TIP.embeddingModel}>Embedding model</Lbl>
-                    <input list="embedModels" {...text("embeddingModel")} placeholder="none configured" />
-                    <datalist id="embedModels">{embedListed.map(m => <option key={m} value={m} />)}</datalist>
-                    {c.embeddingModel.trim() && embedDims.value[c.embeddingModel.trim()]
-                        ? <div class="set-hint">{embedDims.value[c.embeddingModel.trim()]} dimensions</div> : null}
-                </div>
-                <label class="set-check">
-                    <input type="checkbox" checked={c.embeddingKeepAlive}
-                        onChange={(e: any) => setField("embeddingKeepAlive", e.target.checked)} />
-                    <Lbl tip={TIP.embeddingKeepAlive}>Keep loaded (no expiry)</Lbl>
-                </label>
-                <label class="set-check">
-                    <input type="checkbox" checked={c.embeddingForceCpu}
-                        onChange={(e: any) => setField("embeddingForceCpu", e.target.checked)} />
-                    <Lbl tip={TIP.embeddingForceCpu}>Run on CPU (uses no VRAM)</Lbl>
-                </label>
-                </Section>
-
                 <Section id="pointers" title="Output pointers">
                 <div class="set-note">A tool output can be kept under a name you give it (<code>token: "the sales table"</code>) and read back later with <code>dereference</code>. When a name isn't recalled exactly, this picks how the near matches are ranked. A near match is only used when it clearly beats the runner-up, and it is always reported.</div>
                 <div class="set-field">
@@ -1070,6 +1229,15 @@ export function Settings() {
                     <input type="checkbox" checked={c.autoApproveSelfSource}
                         onChange={(e: any) => setField("autoApproveSelfSource", e.target.checked)} />
                     <Lbl tip={TIP.autoApproveSelfSource}>Auto-approve reading the agent's own repo source</Lbl>
+                </label>
+                </Section>
+
+                <Section id="protostream" title="Streaming wire format">
+                <div class="set-note">Ask for the streamed reply as <b>protobuf</b> instead of OpenAI's SSE. The SSE format re-sends the <code>id</code>, <code>model</code>, <code>created</code> and <code>choices[0].delta</code> wrapper <b>for every token</b> — about 224 bytes of envelope around 5 bytes of text; protobuf sends that once and a token costs a tag, a length and its own bytes. Measured here at <b>25x fewer bytes</b> (7343 → 292 on a short reply). It is one <code>Accept</code> header, so a backend that doesn't speak it (anything but a patched Ollama) answers with the SSE it always did and nothing changes. <b>Bytes, not speed</b> — worth it over a slow link and not otherwise, which is why it is <b>off by default</b>. Tool calls and reasoning ride it fine. <b>Server-side tools</b> (<code>toolIds</code>) always keep SSE: their <b>citations</b> travel on a different route that protobuf isn't served over, so they'd be lost without a word.</div>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.protoStream}
+                        onChange={(e: any) => setField("protoStream", e.target.checked)} />
+                    <Lbl tip={TIP.protoStream}>Stream replies as protobuf where the backend serves it</Lbl>
                 </label>
                 </Section>
 

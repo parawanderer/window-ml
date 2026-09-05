@@ -129,3 +129,88 @@ test("a page that was never approved cannot run a server tool", async () => {
         await ext.context.close(); await site.stop(); await fake.stop();
     }
 });
+
+// What you WATCH stream in must still be there once the step lands. A remote tool's frames and its returned
+// value are different things — progress it produced as it worked, and what it answered with — and the panel
+// was replacing one with the other, so the output vanished at exactly the moment the step finished. (The
+// descriptor was also built with a `code:` field the `code` render does not have, so it drew an empty block
+// and only the result survived.) This asserts BOTH halves are present afterwards.
+test("a server tool's streamed output survives the step landing, beside its result", async () => {
+    const fake = await startFakeLlm({ model: "fake-model", streamDelayMs: 20 });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: fake.url, apiKey: "k", apiFormat: "openai", model: "fake-model", debugMode: "overlay",
+        });
+        fake.setServerTools([BUNDLE]);
+        // Deliberately DIFFERENT text in the frames and in the result: if the panel showed only one of them,
+        // a fixture where they matched would pass while the bug was still there.
+        fake.setServerToolScript({ frames: [
+            { type: "output", text: "PROGRESS-ONE\n", atMs: 5 },
+            { type: "output", text: "PROGRESS-TWO\n", atMs: 40 },
+            { type: "result", result: "FINAL-ANSWER", name: "search_web", durationMs: 900, queuedMs: 10 },
+        ] });
+        fake.setScript([
+            { tool: "srv1__search_web", args: { q: "ollama" } },
+            { content: "done" },
+        ]);
+
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1400, height: 900 });
+        await page.goto(site.url + "/");
+        await waitForMl(page);
+        const run = page.evaluate(() => window.ml.agent("search for ollama", {
+            serverTools: ["srv1"], maxSteps: 4, approvalRouting: "both", stream: true,
+        }));
+
+        // Open the overlay and drop into the live session, so the step's rendered Out is on screen.
+        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
+        await page.evaluate(() => {
+            const root = document.getElementById("ml-sb-root").shadowRoot;
+            const panel = root.getElementById("ml-sb-host");
+            panel.style.width = "700px";
+            panel.classList.add("open");
+            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+        });
+        const frame = await (async () => {
+            for (let i = 0; i < 60; i++) {
+                const f = page.frames().find((fr) => /sidebar\.html/.test(fr.url()));
+                if (f) return f;
+                await sleep(100);
+            }
+            throw new Error("sidebar iframe never appeared");
+        })();
+        for (let i = 0; i < 40; i++) {
+            const row = frame.locator("button.row").first();
+            if (await row.count()) { await row.click({ timeout: 2000 }).catch(() => {}); break; }
+            await sleep(200);
+        }
+
+        await ext.sw.evaluate(async () => {
+            for (let i = 0; i < 150; i++) {
+                const pending = globalThis.__mlApprovals?.list?.() || [];
+                if (pending.length) { globalThis.__mlApprovals.resolve(pending[0].key, true); return; }
+                await new Promise((r) => setTimeout(r, 100));
+            }
+            throw new Error("no approval gate appeared for the server tool");
+        });
+        await run;
+
+        // The finished step, expanded.
+        const step = frame.locator(".astep", { hasText: "srv1__search_web" }).first();
+        await expect.poll(() => step.count(), { timeout: 15000 }).toBeGreaterThan(0);
+        if (!(await step.evaluate((e) => e.classList.contains("open")))) {
+            await step.locator(".astep-head").click();
+        }
+        await expect.poll(async () => (await step.innerText()).includes("FINAL-ANSWER"), { timeout: 10000 }).toBe(true);
+
+        const shown = await step.innerText();
+        expect(shown, "the streamed frames are still there after the step landed").toContain("PROGRESS-ONE");
+        expect(shown, "…all of them, not just the last").toContain("PROGRESS-TWO");
+        expect(shown, "…beside what the tool actually returned").toContain("FINAL-ANSWER");
+    } finally {
+        await ext.context.close(); await site.stop(); await fake.stop();
+    }
+});

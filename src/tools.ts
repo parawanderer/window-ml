@@ -16,8 +16,11 @@ export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "h
 export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
 import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom";
 import { expandPointers } from "./pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
-import { runPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
-import { DEREF_TOOL } from "./token-pipe";
+import { execErrorLine } from "./exec-trace";       // a stack frame → the model's own line number
+import { runPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
+import { outputCapParams, retryParams } from "./tool-params";
+import { DEREF_TOOL, type DerefRead } from "./token-pipe";
+import { DerefText } from "./ml-agent";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";
@@ -35,6 +38,26 @@ import { answerItemFromString, type AnswerSet } from "./answer-set";
 const answerEcho = (set: AnswerSet): string =>
     set.length ? set.dump().map(d => `  [${d.i}] ${d.kind}: ${d.preview}`).join("\n") : "  (empty)";
 import { BUILD_INFO } from "./build-info.gen";
+
+/**
+ * Wrap a pre-resolved pointer read as the SAME value the asynchronous `ml.dereference` returns.
+ *
+ * `ctx.deref` hands back the transport envelope (`{ value, meta, warning }`); the method the model actually
+ * calls returns a {@link DerefText} — a String subclass, which is what makes `.length`, `.split`, template
+ * interpolation and `JSON.parse` work on a pointer without any further explanation. Returning the envelope
+ * from the synchronous path instead would give `.length` of `undefined` and a TypeError on `.split`: the
+ * plausible-wrong-answer shape the sync pointers exist to remove, reintroduced one layer down.
+ *
+ * `.pipe()` re-reads through the real asynchronous method, because a piped read mints its own pointer.
+ */
+function derefValue(read: DerefRead): DerefText {
+    // The advisory goes to the console rather than into the value, exactly as the async path does — this is
+    // about to be split or parsed by the calling script, and exec captures console output into the result.
+    if (read.warning) { try { console.warn(read.warning); } catch { /* no console in this realm */ } }
+    const g = globalThis as unknown as { ml?: { dereference?: (r: string, o: { pipe: string | string[] }) => Promise<DerefText> } };
+    const id = read.meta?.id ? `@tool:${read.meta.id}` : "";
+    return new DerefText(read.value, read.meta, (stages) => Promise.resolve(g.ml!.dereference!(id, { pipe: stages })));
+}
 
 // A single-element tool (describeElement/ancestors) uses the FIRST of N matches — say so, so
 // a loose selector's wrong pick doesn't silently mislead the run (the model can narrow it).
@@ -433,7 +456,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 properties: {
                     selector: { type: "string", description: "CSS selector for possible matches." },
                     n: { type: "integer", description: "How many matches to sample (default 5; raise it when you'll `pipe`)." },
-                    pipe: { type: "string", description: "Optional. Scan/filter the sampled lines before they reach you. " + PIPE_SYNTAX }
+                    pipe: { type: "string", description: "Optional. Scan/filter the sampled lines before they reach you. " + PIPE_REF }
                 },
                 required: ["selector"]
             },
@@ -550,8 +573,8 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 type: "object",
                 properties: {
                     js: { type: "string", description: "JavaScript to run. console.log to print observations and/or end with an expression to return its value. Output is truncated to ~500 chars — return a filtered summary, not a full dump." },
-                    maxChars: { type: "number", description: "Raise the per-slot output truncation for THIS call (default 500, max 8000). A raise needs human approval + `maxCharsReason`. Prefer a filtered summary instead." },
-                    maxCharsReason: { type: "string", description: "Why this call needs more than the default 500 chars — required when `maxChars` exceeds it; shown to the human on the approval card." },
+                    ...outputCapParams(500, 8000, "Prefer a filtered summary instead."),
+                    ...retryParams("exec"),
                 },
                 required: ["js"]
             },
@@ -577,13 +600,19 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // `DerefRead` is a String subclass, so a synchronous return is directly usable — `.length`,
                 // `.split`, template interpolation, `JSON.parse` — with nothing else to explain.
                 const handles = [...new Set(expansions.map(e => e.from))];
-                const pointers = new Map<string, { value?: unknown; error?: string }>();
-                if (handles.length && ctx?.deref) {
+                // The empty key is the NO-ARGUMENT listing ("what does this session hold?"). Pre-resolving it
+                // keeps `ml.dereference()` synchronous — the read a model makes before it knows any id, so
+                // leaving it async would put a promise in the call most likely to be written without an await.
+                // Only when the source actually contains one: on the background path every pre-resolve is a
+                // round trip, and a listing nobody asked for is a wasted one on every exec call.
+                const wantsList = /\bml\s*\.\s*dereference\s*\(\s*\)/.test(js) ? [""] : [];
+                const pointers = new Map<string, { read?: DerefRead; value?: DerefText; error?: string }>();
+                if ((handles.length || wantsList.length) && ctx?.deref) {
                     // Concurrently, and a FAILED read is stored rather than thrown: a bad handle sitting in a
                     // branch the script never reaches must not turn a working program into a failing one.
                     // Eager fetch, lazy failure.
-                    await Promise.all(handles.map(async (ref) => {
-                        try { pointers.set(ref, { value: await ctx.deref!(ref) }); }
+                    await Promise.all([...handles, ...wantsList].map(async (ref) => {
+                        try { pointers.set(ref, { read: await ctx.deref!(ref) }); }
                         catch (e) { pointers.set(ref, { error: errText(e) }); }
                     }));
                 }
@@ -620,14 +649,22 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 const mlSync = realMl && pointers.size
                     ? new Proxy(realMl, {
                         get: (t, prop, r) => (prop === "dereference"
-                            ? (ref: unknown, options?: unknown) => {
-                                const hit = pointers.get(String(ref));
-                                // Not pre-resolved: a COMPUTED handle, which no static pass can see, or a
-                                // `pipe` option that changes what the read returns. Fall through to the real async
-                                // method rather than refusing — a literal is a value, and anything else keeps
-                                // working exactly as it did. Nothing loses a capability by this being sync.
+                            ? (ref: unknown, options?: { pipe?: string | string[] | null }) => {
+                                const hit = pointers.get(ref === undefined ? "" : String(ref));
+                                // TWO cases stay asynchronous, and only these two. A COMPUTED handle, which no
+                                // static pass can see — a literal is a value, a handle built at runtime keeps
+                                // working exactly as it did, so nothing loses a capability by this being sync.
+                                // And a `pipe`, because a piped read MINTS ITS OWN POINTER for the reduction:
+                                // running the dialect locally over the text we already hold would return the
+                                // right string and silently skip the mint, leaving the model unable to cite
+                                // what it just built.
                                 if (!hit || options !== undefined) return (t as unknown as { dereference: (r: unknown, o?: unknown) => unknown }).dereference(ref, options);
                                 if (hit.error) throw new Error(hit.error);
+                                // Constructed once per handle and CACHED, so the macro and the longhand call it
+                                // expands to return the same object and `===` holds between them. Lazily, because
+                                // building it emits the read's advisory to the console and the capture that
+                                // collects console output for the model is not installed until below.
+                                if (!hit.value) hit.value = derefValue(hit.read!);
                                 return hit.value;
                             }
                             : Reflect.get(t, prop, r)),
@@ -636,6 +673,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
 
                 let result: unknown;
                 let failed: unknown;
+                // WHICH WRAPPER RAN, so a stack line can be turned back into the model's own line number.
+                // The two paths wrap the source differently and the offset is measured against the wrapper
+                // actually used (see exec-trace.ts) — recorded here because only this code knows which it
+                // took, and the `src` parameter is the eval wrapper's own, not part of the shape.
+                let wrapKind: "eval" | "async" = "eval";
+                const wrapParams = mlSync ? ["state", "ml"] : ["state"];
                 try {
                     try {
                         // Fast path — preserves the last expression's value. Runs the source with the agent's
@@ -656,6 +699,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         // must `return` its value here (no last-expression auto-return).
                         // A genuine syntax error re-throws from this attempt and is reported.
                         if (e instanceof SyntaxError) {
+                            wrapKind = "async";
                             const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as { new (...args: string[]): (...a: unknown[]) => Promise<unknown> };
                             // eval threw away the completion value when it rejected top-level
                             // await/return. Re-run as an async body — but first preserve the REPL
@@ -686,7 +730,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // The UI's RENDERED Out — parity with python_exec's cell (console / value / error sections +
                 // a rendered⇄raw toggle) instead of one raw blob. Carries exactly the same data the raw
                 // `content` string does, so the model-facing result is byte-identical (the raw-view rule).
-                const execRender = (value?: string, error?: string): import("./contract").RenderDescriptor => {
+                const execRender = (value?: string, error?: string, errorLine?: number | null): import("./contract").RenderDescriptor => {
                     const joined = logs.join("\n");
                     return {
                         type: "exec-out",
@@ -694,6 +738,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         // ENDED (`seen`) so the surplus renders marked instead of silently passing as "what it read".
                         ...(logs.length ? { stdout: clipOut(joined, UI_OUT_CAP), seen: Math.min(joined.length, cap) } : {}),
                         ...(error != null ? { error } : {}),
+                        ...(errorLine != null ? { errorLine } : {}),
                         ...(value != null ? { value } : {}),
                     };
                 };
@@ -702,6 +747,14 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     // errText, NOT `.message`: a rejected `ml.*` call (makeBackgroundTaskPromise) rejects with a
                     // STRING (the actionable message), which has no `.message` → the "Error: undefined" bug.
                     const msg = errText(failed);
+                    // WHERE it threw. Python has said this for a while; without it a JS failure gave the
+                    // reader (and the model) half an answer. Null whenever it cannot be known — a frame from
+                    // inside a library the code called, a stack the engine did not provide — because a
+                    // confident wrong line is worse than none: it sends you to read innocent code.
+                    const at = await execErrorLine((failed as Error)?.stack, wrapKind, wrapParams, js.split("\n").length);
+                    // Told to the MODEL too, not only drawn: it is retrying this code, and "line 12" is the
+                    // difference between a targeted fix and a rewrite.
+                    const where = at != null ? ` (line ${at})` : "";
                     // STRICT-PAGE eval BLOCK (CSP omits 'unsafe-eval' / Trusted Types): the eval was refused at
                     // COMPILE time — nothing ran. Signal the executor to re-run the SAME (approved) source via
                     // CDP `Runtime.evaluate` (debugger, CSP-exempt). The background decides — run it (cdp on +
@@ -716,7 +769,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     const hint = arrayish
                         ? " — querySelectorAll / .children / getElementsBy* return a NodeList/HTMLCollection, not an Array. Wrap it first: [...document.querySelectorAll('…')].map(…) or Array.from(…)."
                         : "";
-                    return { content: withLogs(`Error: ${msg}${hint}`), render: execRender(undefined, `${msg}${hint}`) };
+                    return { content: withLogs(`Error: ${msg}${where}${hint}`), render: execRender(undefined, `${msg}${where}${hint}`, at) };
                 }
 
                 // DOM node results come back hoverable (see the loop's envelope).
@@ -1007,7 +1060,7 @@ export function buildDereferenceTool(defineTool: (tool?: Partial<MlTool>) => MlT
         description: "Read an output this run already produced, by its @tool:<id> pointer — instead of re-running a tool or retyping a value. Free, changes nothing, and can read MORE than the truncated copy you were shown. " +
             "BINDING: reading a builtin by NAME ('python_exec') resolves to its LATEST call and replies with that call's STABLE @tool:<id> — so if you didn't ask for a token when you ran it but now want to keep or show the output, read it here and you get a pinned id you can cite. The name is a moving target (it follows the newest call); the id is not. " +
             "BY YOUR OWN LABEL: if you named an output when you ran it (`token: \"the sales table\"`), read it back with @tool:\"the sales table\" — quoted. That is the handle worth using, because you chose it and will remember it; a hex id you have to copy exactly. Quoting is what makes it unambiguous, so a label may safely read like a tool name. " +
-            "A `pipe`d read is itself given a pointer, so you can cite the REDUCTION you just made rather than the whole output. Optional `pipe` reduces the value first. " + PIPE_SYNTAX +
+            "A `pipe`d read is itself given a pointer, so you can cite the REDUCTION you just made rather than the whole output. Optional `pipe` reduces the value first. " + PIPE_REF +
             " The reply says what the value is and when it was captured (a pointer is a snapshot — the page may have changed since).",
         parameters: {
             type: "object",

@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { jsonResponse, htmlResponse, streamResponse, loadBackground } = require("./helpers");
+const { jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground } = require("./helpers");
 
 const IMG = "data:image/png;base64,AAA";
 
@@ -658,6 +658,8 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     assert.deepEqual(res.data, {
         model: "qwen3:235b", ocrModel: "qwen2.5vl", ocrNumCtx: 8192, apiFormat: "ollama", defaultModelVision: "",
         utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: true, autoApprovePython: true,
+        // The server-tool curation: the page needs it before it builds a run's toolset.
+        serverToolsOff: [], commanderServerTools: [],
         autoApproveSameOriginAuth: false, autoApproveSelfSource: true,
         pierceClosedShadow: true, cdp: false,
         groundingEnabled: false, groundingModel: "", groundingRange: 1000, debugMode: "off",
@@ -1481,6 +1483,31 @@ test("OLLAMA_PS reports loaded models with VRAM usage", async () => {
           contextLength: null, expiresAt: "later" },
     ] });
     assert.ok(!("gpus" in res.data[1]), "a CPU-resident model has NO gpus key — absence is the signal, not []");
+});
+
+test("OLLAMA_PS: `busy` and `state` ride through, and a LOADING entry's zero deadline is dropped", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({
+            models: [
+                // Serving a request: the deadline it carries is the one written when the LAST request
+                // finished, so the panel must not count down against it.
+                { model: "a", size_vram: 1e9, size: 1e9, expires_at: "2026-09-04T18:20:34Z", busy: true },
+                // Still loading: the patched server sends the name and ZEROS for everything else, and Go's
+                // zero time parses to a deadline in year 1 — a countdown of minus two thousand years.
+                { model: "b", size_vram: 0, size: 0, expires_at: "0001-01-01T00:00:00Z", state: "loading" },
+                // A stock server sends neither field. Absent means "not known", never "idle"/"resident".
+                { model: "c", size_vram: 1e9, size: 1e9, expires_at: "later" },
+            ]
+        })
+    });
+
+    const [a, b, c] = (await bg.send({ type: "OLLAMA_PS", payload: {} })).data;
+    assert.equal(a.busy, true, "the freeze signal reaches the panel");
+    assert.equal(a.expiresAt, "2026-09-04T18:20:34Z", "the stamp is still carried — busy says how to READ it");
+    assert.equal(b.state, "loading");
+    assert.equal(b.expiresAt, null, "a loading entry's zero time is not a deadline");
+    assert.ok(!("busy" in c) && !("state" in c), "a stock server's silence stays silence, not a default");
 });
 
 // A tiny helper: drains microtasks/macrotasks so port messages settle.
@@ -3280,4 +3307,222 @@ test("SERVER_TOOL_EXEC: an UNTRUSTED page cannot run a tool it holds no grant fo
     const res = await bg.send({ type: "SERVER_TOOL_EXEC", payload: { toolId: "srv1", name: "send_email", args: { to: "a@b.c" } } }, page);
     assert.match(res.error, /needs approval/);
     assert.equal(fetched, false, "refused BEFORE the privileged fetch, not after");
+});
+
+// A remote tool's output is CITABLE by DECLARATION (`remote`), never by name — its name is generated from
+// the server's bundle, so no hardcoded list can hold it. The background builds the loop's ToolMeta from the
+// START_RUN payload, and dropping `remote` there made the whole feature page-path-only in a way nothing
+// surfaced: the tool ran, streamed and rendered exactly as it should, and only reading the pointer back
+// faulted with "nothing has been captured in this run", which reads as a pointer bug.
+test("START_RUN: a REMOTE tool's output is citable on the background path, so a pointer read resolves", async () => {
+    let turn = 0;
+    let derefResult = null;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            const msgs = call.body?.messages || [];
+            turn++;
+            if (turn === 1) return jsonResponse({ choices: [{ message: { content: null, tool_calls: [
+                { id: "c1", type: "function", function: { name: "srv1__search", arguments: JSON.stringify({ q: "pricing" }) } },
+            ] } }] });
+            if (turn === 2) return jsonResponse({ choices: [{ message: { content: null, tool_calls: [
+                { id: "c2", type: "function", function: { name: "dereference", arguments: JSON.stringify({ token: "@tool:srv1__search" }) } },
+            ] } }] });
+            const tr = [...msgs].reverse().find(m => m.role === "tool");
+            derefResult = tr ? (typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content)) : null;
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            }
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "srv1__search"
+                && !msg.payload?.renderOnly && !msg.payload?.precheck) {
+                return { result: "Plans start at $12/month." };
+            }
+            return undefined;
+        },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "rt", task: "search then read it back", systemPrompt: "S", toolTokens: true,
+        tools: [
+            { name: "srv1__search", requiresApproval: true, description: "", capabilities: [],
+              parameters: { type: "object", properties: { q: { type: "string" } } },
+              remote: { via: "openwebui", toolId: "srv1", fn: "search" } },
+            { name: "dereference", requiresApproval: false, description: "", capabilities: [],
+              parameters: { type: "object", properties: { token: { type: "string" } } } },
+        ],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    // Two tool calls with an approval round-trip between them, so this settles over several ticks rather
+    // than the single one a one-step run needs.
+    for (let i = 0; i < 50 && derefResult == null; i++) await new Promise(r => setTimeout(r, 10));
+
+    assert.ok(derefResult, `the dereference call produced a tool result (reached turn ${turn})`);
+    assert.doesNotMatch(derefResult, /MemoryFault|has been captured/i,
+        `the remote output was citable, so the read resolved — got: ${derefResult}`);
+    assert.match(derefResult, /\$12\/month/, "…and it read back the remote tool's own output");
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// PROTOBUF CHAT STREAMING. The same tokens as ~22x fewer bytes, because OpenAI's SSE re-sends the id/model/
+// created/choices envelope for EVERY token. Opt-in by config, but SELF-NEGOTIATING on the wire: we send one
+// `Accept` header and decide from what comes back, so a backend that does not serve it answers with the SSE
+// it always did and the miss IS the fallback.
+
+/** Frame a protobuf message the way the server does: its byte length as a varint, then its bytes. */
+const pbFrame = (body) => {
+    const out = [];
+    let n = body.length;
+    do { out.push(n > 127 ? (n & 0x7f) | 0x80 : n); n >>>= 7; } while (n);
+    return [...out, ...body];
+};
+/** A length-delimited protobuf string field. */
+const pbStr = (field, text) => {
+    const b = [...new TextEncoder().encode(text)];
+    return [(field << 3) | 2, b.length, ...b];
+};
+/** A varint field. */
+const pbVar = (field, n) => [(field << 3) | 0, n];
+/** Frame.delta{content} — Frame field 2, Delta field 1. */
+const pbDelta = (text) => { const d = pbStr(1, text); return pbFrame([0x12, d.length, ...d]); };
+/** Frame.end{finish_reason, prompt_tokens, completion_tokens} — Frame field 3. */
+const pbEnd = (reason, pt, ct) => {
+    const e = [...pbStr(1, reason), ...pbVar(2, pt), ...pbVar(3, ct)];
+    return pbFrame([0x1a, e.length, ...e]);
+};
+/** Frame.start{id, model} — Frame field 1. */
+const pbStart = (id, model) => {
+    const st = [...pbStr(1, id), ...pbStr(2, model)];
+    return pbFrame([0x0a, st.length, ...st]);
+};
+
+test("protobuf stream: asks for it, decodes the deltas, and reports the usage from End", async () => {
+    let accept = null;
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: true },
+        onFetch: (call) => {
+            accept = call.opts?.headers?.Accept ?? null;
+            return binaryStreamResponse([
+                [...pbStart("chatcmpl-1", "gemma4:e2b"), ...pbDelta("Hel")],
+                [...pbDelta("lo"), ...pbEnd("stop", 11, 2)],
+            ]);
+        }
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+
+    assert.equal(accept, "application/protobuf", "the one header that opts in");
+    const deltas = client.messages.filter(m => m.type === "chunk").map(m => m.delta);
+    const done = client.messages.find(m => m.type === "done");
+    assert.deepEqual(deltas, ["Hel", "lo"], "each Delta reaches the caller as it lands");
+    assert.equal(done.content, "Hello");
+    // `End` replaces the finish chunk, the usage chunk AND `data: [DONE]` — one frame for all three.
+    assert.equal(done.usage?.promptTokens, 11);
+    assert.equal(done.usage?.completionTokens, 2);
+});
+
+test("protobuf stream: a message split across two network reads still arrives whole", async () => {
+    // The failure this exists for only ever shows up on a real link: chunk boundaries have NOTHING to do with
+    // message boundaries, so a frame arrives in halves and a reader that assumes otherwise loses it.
+    const wire = [...pbDelta("Hello"), ...pbEnd("stop", 1, 1)];
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: true },
+        onFetch: () => binaryStreamResponse([wire.slice(0, 3), wire.slice(3, 4), wire.slice(4)]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    assert.equal(client.messages.find(m => m.type === "done")?.content, "Hello");
+});
+
+test("protobuf stream: a stream CUT mid-frame is an error, not a short answer", async () => {
+    // Partial output returned as a finished answer is a wrong answer dressed as a complete one, and the
+    // caller cannot tell the difference — so held bytes at the end are a transport failure.
+    const wire = [...pbDelta("Hel"), ...pbDelta("lo")];
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: true },
+        onFetch: () => binaryStreamResponse([wire.slice(0, wire.length - 2)]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    assert.ok(client.messages.find(m => m.type === "error"), "it reports rather than truncating");
+    assert.equal(client.messages.find(m => m.type === "done"), undefined);
+});
+
+test("protobuf stream: a backend that answers SSE anyway is parsed as SSE", async () => {
+    // THE MISS IS THE FALLBACK. We ask hopefully; an older build, a proxy that drops the header, or a stock
+    // server all answer with what they always did, and asking cost one header rather than a probe request.
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: true },
+        onFetch: () => streamResponse([
+            'data: {"choices":[{"delta":{"content":"plain"}}]}\n',
+            "data: [DONE]\n"
+        ]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    assert.equal(client.messages.find(m => m.type === "done")?.content, "plain");
+});
+
+test("protobuf stream: a TOOL CALL decodes out of a Delta, and the hand-back is still visible", async () => {
+    // The field and the encoder filling it landed upstream together, in one commit — so the value here is
+    // not that a generated decoder ran ahead of the wire, it is that regenerating from a PINNED schema
+    // absorbed the change with no edit on our side. Verified against the live box too
+    // (tests/e2e/proto-stream-live.mjs).
+    // Delta.tool_calls (field 3) { ToolCall.function (field 4) { Function.name (field 1) = "get_weather" } }
+    const fn = pbStr(1, "get_weather");
+    const tc = [0x22, fn.length, ...fn];
+    const d = [0x1a, tc.length, ...tc];
+    const frame = pbFrame([0x12, d.length, ...d]);
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: true },
+        onFetch: () => binaryStreamResponse([[...frame, ...pbEnd("tool_calls", 5, 1)]]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    // No content and a tool_calls finish is the HAND-BACK shape the server-tool retry keys on, so it has to
+    // survive the format change or that loop would read a hand-back as a plain empty completion.
+    const done = client.messages.find(m => m.type === "done");
+    assert.equal(done?.content, "");
+    assert.equal(done?.usage?.promptTokens, 5);
+});
+
+test("protobuf stream: a toolIds call keeps SSE — the schema has nowhere to put SOURCES", async () => {
+    // PERMANENT, not a gap waiting on a field — which is why this gate did not go away when the encoder
+    // gained tool calls. `sources` is emitted by OpenWebUI ahead of the model's first token, on the route
+    // that proxies ollama's NATIVE /api/chat and parses it line by line; the protobuf encoder lives on the
+    // raw-passthrough route that path never touches. A field for it could never be filled, and a permanently
+    // empty one is indistinguishable from "there were none".
+    let accept = "unset";
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: true },
+        onFetch: (call) => {
+            accept = call.opts?.headers?.Accept ?? null;
+            return streamResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n', "data: [DONE]\n"]);
+        }
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }], toolIds: ["srv1"] } });
+    await settle();
+    assert.equal(accept, undefined, "no Accept: application/protobuf on a tool call");
+});
+
+test("protobuf stream: OFF by default — the header is not sent unless asked for", async () => {
+    let accept = "unset";
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            accept = call.opts?.headers?.Accept ?? null;
+            return streamResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n', "data: [DONE]\n"]);
+        }
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    assert.equal(accept, undefined);
 });

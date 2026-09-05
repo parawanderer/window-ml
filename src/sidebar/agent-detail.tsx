@@ -8,17 +8,19 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { RenderDescriptor, DebugAgentConfig, PersistGrant } from "../contract";
 import { resolveOutputCap, runStats, fmtTokPerSec, runStatsProvenance } from "../contract";
 import { externalSheetIds } from "../dom";
-import { config, surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps } from "./store";
+import { config, surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode } from "./store";
 import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
-import { IconChevron, IconWarn } from "./icons";
+import { IconChevron, IconWarn, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
+import { usageSamples } from "./usage";
 import {
-    Code, CopyBtn, SheetChip, Hash, Stamp, ClickableImg, Dot,
-    decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText,
+    Code, CopyBtn, SheetChip, Hash, Stamp, ClickableImg, Dot, Disclosure,
+    decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
-import { RenderPanel, OutputCell, SeenSplit } from "./render-panel";
+import { deepestUserLine } from "../py-format";
+import { RenderPanel, OutputCell, SeenSplit, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";
 import { ReplyBubble } from "./reply";
 import { CodeExplain, codeOf } from "./summaries";
 import { groupTurns } from "./debug-reducer";
@@ -28,15 +30,30 @@ import type { AgentTurnGroup } from "./debug-reducer";
 // own (a grey inline preview shows when collapsed). If a descriptor targets THIS
 // block it renders by default with a per-block rendered⇄raw toggle (e.g. exec's
 // In renders pretty JS while its Out stays raw). `raw` is the plain fallback.
-export function IoBlock({ label, tip, preview, render, raw, marks, reserve }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; marks?: [number, number][]; reserve?: boolean }) {
+/** Which citation slot this block IS, for the anchors below. Only In and Out are cited. */
+const slotOf = (label: string): "in" | "out" | undefined =>
+    label === "In" ? "in" : label === "Out" ? "out" : undefined;
+
+/** ONE HALF OF A STEP — the In (what the model sent) or the Out (what it got back), each with a
+ *  rendered⇄raw toggle. The raw view is the model-facing text VERBATIM and is never optional: that is
+ *  the raw-view rule, and this is where it is enforced. Both views carry the slot's `data-cite` anchor,
+ *  so a citation lands on the half it named. */
+export function IoBlock({ label, tip, preview, render, raw, rawText, marks, reserve, failLine, live, ranMs, ranSince, ctx, lineMap, remoteMs, failed }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; rawText?: string; marks?: [number, number][]; reserve?: boolean; failLine?: number | null; live?: boolean; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null; failed?: boolean }) {
     const [showRaw, setShowRaw] = useState(false);   // rendered by default when a descriptor targets this block
-    // The capped/scrollable/findable cell is for tool OUTPUT — a fetch_url page, a big sampleText dump. The In
-    // block is the CALL (args / the code being run): short, and it already renders in its own code block, so
-    // wrapping it there only added chrome (and a stray horizontal scrollbar) for nothing.
-    const cell = (body: ComponentChildren) => label === "Out" ? <OutputCell>{body}</OutputCell> : <>{body}</>;
+    // The capped, scrollable, FINDABLE cell wraps the RAW view of either slot — which is the view you go to
+    // in order to search for a token, and the one with no structure of its own to cap it. It is also where an
+    // In block gets big: a call carrying a base64 image or a wide table stretches the step to any height,
+    // exactly the case the cap exists for. The RENDERED views are not wrapped here — an Out's renderer puts
+    // its own sections in cells, and a rendered In is already a code block with its own chrome.
+    // `text`: the RAW view is plain model-facing lines, so it honours the wrap preference like any other
+    // output. One setting called "line breaking" that reached only `.code` blocks meant turning it off left
+    // the raw JSON, the console and every traceback wrapping anyway — the setting quietly meaning less than
+    // it said. (A RENDERED view is not wrapped here at all: its renderer puts its own sections in cells.)
+    const cell = (body: ComponentChildren) => (
+        <OutputCell text corner={rawText ? <CopyBtn text={rawText} tip="copy raw" /> : undefined}>{body}</OutputCell>);
     return (
         <details class="io" open>
-            <summary class="io-label" title={tip}>{label}: <span class="io-preview">{preview}</span></summary>
+            <summary class="io-label" {...(tip ? cursorTipOn(tip) : {})}>{label}: <span class="io-preview">{preview}</span></summary>
             <div class="io-body">
                 {/* The toggle is also rendered (DISABLED) while output is still streaming: the descriptor only
                     arrives when the step settles, and letting the row appear then pushed everything down — the
@@ -47,15 +64,28 @@ export function IoBlock({ label, tip, preview, render, raw, marks, reserve }: { 
                             <span class="tt"><button class={showRaw ? "" : "on"} disabled={!render} onClick={() => setShowRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">{render ? "A debug visualisation for you — not shown to the model." : "Available once this step finishes."}</span></span>
                             <span class="tt"><button class={showRaw ? "on" : ""} disabled={!render} onClick={() => setShowRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">{render ? "Exactly what the model sent/received. All it knows." : "Available once this step finishes."}</span></span>
                         </div>
-                        {render && !showRaw ? <RenderPanel d={render} marks={marks} /> : cell(raw)}
+                        {render && !showRaw ? <RenderPanel d={render} marks={marks} failLine={failLine} live={live} ranMs={ranMs} ranSince={ranSince} ctx={ctx} lineMap={lineMap} remoteMs={remoteMs} failed={failed} />
+                            /* RAW is shared by every tool and has no renderer-specific structure, so it
+                               carries the DEFAULT anchor for the slot. A rendered view may declare a finer
+                               one (python-in's code, python-out's value) and wins by being the visible
+                               match; when it declares none, this is still the right half of the step. */
+                            : <div class="io-raw" data-cite={slotOf(label)}>{cell(raw)}</div>}
                     </>
-                    : cell(raw)}
+                    : <div data-cite={slotOf(label)}>{cell(raw)}</div>}
+                {/* WHILE IT RUNS the footer lives HERE, outside the branches, because there is no render
+                    descriptor yet — one only lands when the step settles, and a pending step with nothing
+                    streamed yet takes the other branch entirely. Settled, the descriptor owns it (inside the
+                    console when there is one, after the last section when there is not), so exactly one is
+                    ever drawn. This is the case it matters most for: the number moving is what says the
+                    thing is alive rather than stuck. */}
+                {live && !render ? <RanFor live since={ranSince} /> : null}
             </div>
         </details>
     );
 }
 
 
+/** The `step 3/20` counter on a step header. */
 export const StepPill = ({ step, max }: { step: number; max?: number }) =>
     <span class="step-pill">step {step}{max ? `/${max}` : ""}</span>;
 
@@ -77,7 +107,11 @@ export function ThoughtBlock({ thought, live }: { thought: string; live?: boolea
                     where the ticking count (with a trailing "…") IS the "it's working" cue. No live DOT: it
                     would take a slot that vanishes on settle, jerking "thinking" left. The row's structure is
                     IDENTICAL live vs settled, so nothing shifts. */}
-                {!open && (surface.value !== "card" || live) ? <span class="astep-preview">~{tokEst} tokens{live ? "…" : ""}</span> : null}
+                {/* Its OWN class beside the shared one. `.astep-preview` is also the collapsed TOOL row's output
+                    preview, which focus mode hides as spam — and hiding this with it took away the only sign
+                    that a long think is progressing rather than stuck, which is the opposite of what a reading
+                    mode wants. Two classes rather than a new one: the styling is shared, the visibility is not. */}
+                {!open && (surface.value !== "card" || live) ? <span class="astep-preview astep-tokest">~{tokEst} tokens{live ? "…" : ""}</span> : null}
             </button>
             {/* Live: plain text (partial markdown mid-stream renders ugly); finished: markdown. */}
             {open
@@ -99,6 +133,8 @@ export function liveCutoff(st: AgentStep): number | undefined {
     return resolveOutputCap(st.tool, a.maxChars, a.maxCharsReason).cap;
 }
 
+/** Did this tool call FAIL, read off the model-facing result text. Biased toward "failed": a false
+ *  positive withholds a citation token, a false negative would cite an ERROR as an answer. */
 export const toolFailed = (result?: string): boolean => !!result && /^(Error:|Denied)/.test(result);
 
 // One tool call: collapsed by default. Expanded, a descriptor renders by default
@@ -117,6 +153,8 @@ export const APPROVAL = {
     skipped: { label: "skipped", tip: "No prompt needed — the target didn't resolve (no element / stale @pt / bad selector), so the action could only fail. It never ran." },
     cancelled: { label: "cancelled", tip: "You cancelled the run while this call was awaiting approval — it never ran." },
 } as const;
+/** WHY a gated call ran — auto-approved read-only, sandboxed, you clicked, you denied. The provenance
+ *  badge, in the colour that says which; a step's left border matches it. */
 export const ApprovalBadge = ({ approval }: { approval: keyof typeof APPROVAL }) => (
     <span class={`tt appr-badge appr-${approval}`}>
         <span class={`appr ${approval === "denied" ? "no" : (approval === "skipped" || approval === "cancelled") ? "skip" : "yes"}`}>{APPROVAL[approval].label}</span>
@@ -180,7 +218,10 @@ export function OutputRaiseNote({ tool, args }: { tool?: string; args?: Record<s
 export const GRANT_KIND: Record<string, { noun: string; nounN: string }> = {
     "fetch-url": { noun: "URL", nounN: "URLs" },
 };
+/** The URLs one persisted grant covers — what "remember this" actually authorised. */
 export function grantUrlsOf(g: PersistGrant): string[] { return g.kind === "fetch-url" ? [...new Set(g.urls)] : []; }
+/** Would approving this ALSO grant something for the rest of the session? The difference between a
+ *  one-shot yes and a standing one, which the button cannot show by itself. */
 export function hasPersistGrants(grants?: PersistGrant[]): boolean { return !!grants?.some(g => grantUrlsOf(g).length > 0); }
 
 // The collapsed "Keep" grant card shown above the approval buttons — a deterministic per-kind SUMMARY of
@@ -189,6 +230,9 @@ export function hasPersistGrants(grants?: PersistGrant[]): boolean { return !!gr
 // Shared by the sidebar step and the HUD card. (The "Keep" button does approve + persist.)
 // Deliberate two-key combo for Keep (⌘K on mac, Ctrl+K elsewhere) — NOT Enter-adjacent, on purpose.
 export const KEEP_HINT = (typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent || "")) ? "⌘K" : "Ctrl K";
+/** What approving this call also GRANTS for the rest of the session — a host you will not be asked
+ *  about again. Shown before you decide, because a one-shot approval and a session grant are different
+ *  decisions and the button looks the same. */
 export function GrantCard({ grants }: { grants: PersistGrant[] }) {
     const byKind = new Map<string, number>();
     for (const g of grants) { const n = grantUrlsOf(g).length; if (n) byKind.set(g.kind, (byKind.get(g.kind) || 0) + n); }
@@ -204,6 +248,46 @@ export function GrantCard({ grants }: { grants: PersistGrant[] }) {
     );
 }
 
+/** A step's pointer, click-to-copy. Copies the full `@tool:<id>` rather than the bare hex: that is the form
+ *  that resolves everywhere — in the composer, in `ml.dereference`, in a `@tool:` macro inside `exec` — and
+ *  making someone add the prefix by hand is how you get a fault instead of a read. */
+function TokenChip({ token }: { token: string }) {
+    const [done, setDone] = useState(false);
+    const ref = `@tool:${token}`;
+    const copy = () => {
+        // `navigator.clipboard` needs a secure context and can reject; the textarea fallback is what makes
+        // this work in an extension iframe where it sometimes does not.
+        const ok = () => { setDone(true); setTimeout(() => setDone(false), 1200); };
+        try {
+            navigator.clipboard?.writeText(ref).then(ok, () => fallback());
+            if (!navigator.clipboard) fallback();
+        } catch { fallback(); }
+        function fallback() {
+            try {
+                const ta = document.createElement("textarea");
+                ta.value = ref; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.opacity = "0";
+                document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+                ok();
+            } catch { /* nothing else to try; the text is on screen to read */ }
+        }
+    };
+    return (
+        <div class="astep-token">
+            {/* The trailing GLYPH is a glyph, not a word. A hover-only label changes the chip's width, and
+                the chip is right-aligned, so the pointer text jumped sideways every time the cursor
+                arrived. Two icons of the same box mean the affordance is always visible and the
+                confirmation costs no layout either. */}
+            <PointerChip label={ref} onClick={copy}
+                trailing={<span class="tok-chip-icon">{done ? <IconCheck /> : <IconCopy />}</span>}
+                tip={<>This step's output kept as a pointer. Copy it and paste it into the composer to ask about this exact output, or read it in `exec` as {ref}.</>} />
+        </div>
+    );
+}
+
+/** ONE TOOL CALL in a run — the header (name, status, approval badge, live preview), the approval gate
+ *  when it is waiting on you, and both I/O halves when it is open. The step is where the two render
+ *  descriptors meet, so it is also what passes the failing line and the reflow map from the Out to the
+ *  In: neither renderer can see the other. */
 export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const [expanded, setExpanded] = useState(false);
     const [decided, setDecided] = useState(false);   // hide the controls the instant we click (before the DONE lands)
@@ -217,16 +301,52 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const inRender = st.renderIn;
     const outRender = st.renderOut;
     const issues = st.argIssues?.length ? st.argIssues : null;
+    // The DEEPEST user frame of a python traceback, or — for JS, which has no traceback to read — the line
+    // `exec` measured off the stack (exec-trace.ts). Both are a line of the model's own source, so both
+    // travel the same route into the In block's rendered code. Read here because the step holds both
+    // descriptors and neither renderer can see the other.
+    const failLine = outRender && outRender.type === "python-out" && outRender.error
+        ? deepestUserLine(outRender.error)
+        : outRender && outRender.type === "exec-out" ? outRender.errorLine ?? null : null;
+    // …and the In block's reflow map, handed ACROSS to the Out block. A failure reports a line of the model's
+    // source, but the reader is looking at reflowed code — so the rendered error names the row on screen
+    // while the raw view keeps the number the model was given. Only the step can pass this across.
+    const inMap = inLineMap(inRender);
+    // DID THIS STEP FAIL. Only the step knows — a python error lives on the Out descriptor and a JS one in
+    // the result text — and the In block needs it to decide whether a retry's diff opens: "what did I
+    // change" is the question you are asking about a FAILURE, and pinning a diff open above a step that
+    // worked pushes the output you actually came for out of the viewport.
+    const stepFailed = toolFailed(st.result)
+        || (outRender?.type === "python-out" && !!outRender.error)
+        || (outRender?.type === "exec-out" && !!outRender.error);
     // Design A: a background-hosted call blocked on the human gate. Render approve/deny here — the
     // decision is made in this (extension-origin) iframe, unforgeable by the page. Needs the run hash +
     // the step seq to correlate; without them (a page-loop run) fall back to the plain pending view.
     const awaiting = !!(st.awaitingApproval && st.pending && !decided && hash && st.seq != null);
     // A pending approval AUTO-UNFURLS the In so you review the call before deciding (no extra click).
+    // So does being the step someone just navigated TO — from a lane block or an answer citation, both of
+    // which say "open this step". Landing on a collapsed row that merely pulses is the promise half-kept:
+    // you are shown WHERE it is and not WHAT it was, which is the thing you clicked for.
+    //
+    // Derived DURING RENDER into a sticky flag, the same way the containing block does it (card-showwork's
+    // `stuckOpen`): `revealSeq` auto-clears about a second later so a re-click of the same seq re-triggers,
+    // and reading it directly would collapse the step again right after it opened. Sticky also means the
+    // header toggle still works afterwards — it clears the flag, so a collapse actually collapses.
+    // Hovering a block in the event lane dims every step outside its lineage, the same way the lane dims its
+    // own bars — so the bar and the rows it is about are picked out together.
+    const litSeqs = laneLitSeqs.value;
+    const dimmed = !!litSeqs && st.seq != null && !litSeqs.has(st.seq);
     const open = expanded || awaiting;
     // Keep the step expanded after you decide (setExpanded), so it doesn't collapse when `awaiting`
     // clears — you see the Out result fill in on the same open cell.
+    //
+    // FOCUS MODE inverts that, because it is reading the run as a conversation: a call you have just
+    // decided on is finished being the thing you are looking at, and leaving it open means every approval
+    // permanently widens the transcript you came to read. It collapses to its one-line preview instead,
+    // which still fills in with the result. Deciding is also the one moment a collapse cannot lose you
+    // anything — you have just read the call in order to approve it.
     const decide = (ok: boolean, persist = false) => {
-        setExpanded(true); setDecided(true);
+        setExpanded(!focusMode.value); setDecided(true);
         if (hash && st.seq != null) decidedSteps.add(stepKey(hash, st.seq));
         void decideGate(st, hash!, st.seq!, ok, persist);   // fetch_url: grant its host in-gesture, then post
         rev.value++;   // re-render the run footer so it drops "waiting for your approval" at once
@@ -244,7 +364,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const sheetGrants = awaiting ? externalSheetGrant(st.arguments) : [];
     const showGrants = awaiting && hasPersistGrants(st.grants);
     return (
-        <div data-astep-seq={st.seq} class={`astep tool${open ? " open" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
+        <div data-astep-seq={st.seq} class={`astep tool${dimmed ? " away" : ""}${open ? " open" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setExpanded(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
@@ -254,8 +374,8 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     : <span class="tool-name">{st.tool}</span>}
                 {st.approval ? <ApprovalBadge approval={st.approval} /> : null}
                 {st.elements ? <span class="tt el-count">{st.elements} el<span class="tt-pop wrap" role="tooltip">DOM nodes returned (reach them in the console via onStep).</span></span> : null}
-                {issues ? <span class="arg-warn" title={issues.join("; ")}><IconWarn />{issues.length}</span> : null}
-                {!open ? <span class="astep-preview">{awaiting ? <span class="dim">needs approval</span> : st.pending ? (st.streamOutput ? <span class="astep-livepreview">{collapsedPreview(st.streamOutput).text}</span> : <span class="dim">running…</span>) : collapsedPreview(st.result || "").text}</span> : null}
+                {issues ? <span class="arg-warn" {...cursorTipOn(issues.join("; "))}><IconWarn />{issues.length}</span> : null}
+                {!open ? <span class="astep-preview">{awaiting ? <span class="dim">needs approval</span> : st.pending ? (st.streamOutput ? <span class="astep-livepreview">{collapsedPreview(st.streamOutput).text}</span> : <span class="dim">running…<RunningFor since={st.ts} /></span>) : collapsedPreview(st.result || "").text}</span> : null}
             </button>
             {open
                 ? <div class="astep-body">
@@ -264,17 +384,40 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     {args || inRender
                         ? <IoBlock label="In" tip="The arguments the model passed to this tool call."
                             preview={inlineJson(args || {})} render={inRender}
-                            raw={<RawArgs args={args || {}} schema={paramSchema} />} />
+                            /* WHERE IT BROKE, from the Out's traceback, marked on the In's code. The step is
+                               the only place that holds both halves — the two RenderDescriptors are rendered
+                               in separate blocks and neither can see the other. */
+                            failLine={failLine}
+                            /* Which step this code came from, and what it produced — so the block can ask
+                               the utility model to annotate ITSELF. Only the step holds both halves. */
+                            ctx={hash && st.seq != null ? { hash, seq: st.seq, result: st.result } : undefined}
+                            failed={stepFailed}
+                            raw={<RawArgs args={args || {}} schema={paramSchema} />} rawText={rawArgsText(args || {})} />
                         : null}
                     <IoBlock label="Out" tip="What the tool returned to the model." marks={st.streamMarks} reserve={!!st.pending && st.streamOutput != null}
+                        /* HOW LONG IT RAN. `toolMs` is the tool's own wall clock, not the step's — a human at
+                           an approval gate is the step's time and none of the machine's work. Live, it ticks
+                           from when the step started, which is the difference between "slow" and "stuck". */
+                        live={!!st.pending} ranMs={st.toolMs} ranSince={st.ts} lineMap={inMap} remoteMs={st.remoteMs}
                         preview={st.pending ? (st.streamOutput ? inlineText(st.streamOutput) : "running…") : inlineText(st.result || "")} render={outRender}
                         raw={st.pending
                             ? (st.streamOutput != null
                                 // LIVE tool output (ctx.stream — console.log / print) filling in Jupyter-style while it runs.
                                 ? <div class="astep-streaming"><SeenSplit text={st.streamOutput} seen={liveCutoff(st)} live marks={st.streamMarks} /></div>
                                 : <span class="dim">running…</span>)
-                            : (st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">(no output)</span>} />
+                            : (st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">(no output)</span>}
+                        rawText={st.pending ? undefined : (st.modelResult ?? st.result ?? "") || undefined} />
                     {st.feedback ? <FeedbackBlock fb={st.feedback} /> : null}
+                    {/* The step's POINTER, when the run minted one — a first-class handle the model reads its
+                        own outputs back through and can cite in an answer, which until now existed only in
+                        the model's context. Click to copy: paste it into the composer to ask about this exact
+                        output. Under the Out it names, because it is a handle ON that output, not a property
+                        of the call — putting it above made it the first thing you read about a step, which it
+                        is not.
+
+                        DevTools only. The HUD is a glance surface for someone driving a task and a hex handle
+                        there is noise; this belongs on the surface you open when you are debugging. */}
+                    {st.token && surface.value !== "card" ? <TokenChip token={st.token} /> : null}
                 </div>
                 : null}
             {/* On-demand plain-English gloss for a code step — CARD's Show-work trace only (the debug panel
@@ -357,9 +500,15 @@ export interface JsonSchemaNode { description?: string; properties?: Record<stri
 // elsewhere) + a dotted underline so you can tell which keys carry docs — a debugging affordance over raw args.
 export function JtKey({ name, desc, unknown }: { name: string; desc?: string; unknown?: boolean }) {
     if (unknown) return <span class="tt jt-key jt-key-unknown" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip">Not in this tool's parameter schema — likely a hallucinated argument, so the tool will ignore it or error.</span></span>;
-    if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip">{desc}</span></span>;
+    // The description comes from the tool's own JSON Schema, which is written in markdown — backticked
+    // identifiers, mostly. Printed raw it showed the backticks, which reads as a rendering that gave up.
+    if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip"><TipText md={desc} /></span></span>;
     return <span class="jt-key">{name}:</span>;
 }
+/** A JSON TREE — the raw args, a tool's parameter schema. Collapsible by default; `allOpen` makes it
+ *  non-collapsible at EVERY depth, which is what the raw In view passes so nothing can be folded away
+ *  from a Ctrl+F. Keys carry their schema `description` as a tooltip, and one not in the schema is
+ *  flagged as a likely hallucinated argument. */
 export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean }) {
     const branch = !!v && typeof v === "object";
     const [open, setOpen] = useState(allOpen || (defaultOpen ?? depth < 1));   // allOpen → expanded at EVERY depth (the raw In view)
@@ -404,9 +553,14 @@ export function RawArgs({ args, schema }: { args: unknown; schema?: JsonSchemaNo
     try { json = pretty(args ?? {}); } catch { ok = false; }   // circular / non-serialisable → use the fallback
     const tree = ok && !!args && typeof args === "object";
     return <div class="jt-args">
-        <span class="jt-args-copy"><CopyBtn text={ok ? json : String(args)} tip="copy JSON" /></span>
         {tree ? <JsonNode v={args} schema={schema} allOpen defaultOpen /> : <Code text={ok ? json : String(args)} lang="json" />}
     </div>;
+}
+
+/** The text `RawArgs` would copy — so the copy button can live on the CELL, outside the scrolling area,
+ *  while still offering exactly what the view below it shows. */
+export function rawArgsText(args: unknown): string {
+    try { return pretty(args ?? {}); } catch { return String(args); }
 }
 
 // The agent's full tool definitions — name, approval/vision badges, description, and a JSON tree of
@@ -428,15 +582,19 @@ export function ToolDefCard({ t }: { t: DebugAgentConfig["tools"][number] }) {
         </> : null}
     </div>;
 }
+/** The agent's full TOOL DEFINITIONS — name, badges, description, and a tree of the parameter schema
+ *  the model actually sees. Shared by a run's "agent options" block and the Settings server-tool
+ *  browser, so a remote tool and a local one are read the same way rather than in two dialects. */
 export function ToolDefsView({ tools }: { tools: DebugAgentConfig["tools"] }) {
     return <div class="tooldefs">{tools.map((t, i) => <ToolDefCard key={i} t={t} />)}</div>;
 }
 
+/** WHAT THIS RUN WAS GIVEN — the system prompt, the toolset, maxSteps, vision, hints, streaming, and
+ *  every option that shapes behaviour. The first thing to read when a run did something surprising:
+ *  usually it was configured to. */
 export function AgentOptionsBlock({ s }: { s: Session }) {
     const c = s.agentConfig;
     const [open, setOpen] = useState(false);
-    const [showSys, setShowSys] = useState(false);
-    const [showTools, setShowTools] = useState(false);
     if (!c) return null;
     // The full defs (description + parameter schema) are only in newer events; older ones carry names
     // only, so the "show tool defs" viewer would just repeat the summary line — hide it then.
@@ -474,14 +632,18 @@ export function AgentOptionsBlock({ s }: { s: Session }) {
                 ? <div class="tbody">
                     {noVision ? <div class="tt tt-row arg-issues"><IconWarn /><span>visual tools unavailable — no vision model (set an OCR/vision model in Settings → Models)</span><span class="tt-pop wrap left" role="tooltip">ml.agent couldn't resolve a vision reader, so look/locate weren't wired.</span></div> : null}
                     <pre class="opts">{lines.join("\n")}</pre>
+                    {/* Sections that OPEN, not buttons that inject a box: same disclosure the rest of the
+                        panel uses, so a chevron means the same thing everywhere. */}
                     <div class="sys-block">
-                        <button class="raw-btn" onClick={() => setShowSys(v => !v)}>{showSys ? "hide" : "show"} system prompt{c.customSystem ? " (custom)" : ""}</button>
-                        {showSys ? <Code text={c.system} lang="markdown" /> : null}
+                        <Disclosure label={<>system prompt{c.customSystem ? " (custom)" : ""}</>}>
+                            <Code text={c.system} lang="markdown" />
+                        </Disclosure>
                     </div>
                     {hasToolDefs
                         ? <div class="sys-block">
-                            <button class="raw-btn" onClick={() => setShowTools(v => !v)}>{showTools ? "hide" : "show"} tool definitions ({c.tools.length})</button>
-                            {showTools ? <ToolDefsView tools={c.tools} /> : null}
+                            <Disclosure label="tool definitions" note={`${c.tools.length}`}>
+                                <ToolDefsView tools={c.tools} />
+                            </Disclosure>
                         </div>
                         : null}
                 </div>
@@ -541,30 +703,36 @@ export function NavDivider({ url }: { url: string }) {
     );
 }
 
-// Every per-call usage sample a session recorded — agent runs stamp usage per STEP; chat sessions per TURN.
-function sessionUsages(s: Session): (import("../contract").TokenUsage | null | undefined)[] {
-    return [...(s.steps || []).map(st => st.usage), ...(s.turns || []).map(t => t.usage)];
-}
+// Every per-call usage sample a session recorded — see `usageSamples`, which is shared with the context
+// gauge sitting next to this bar. It was a near-copy here that read both collections while the gauge read
+// one, which is how a session could show its spend and no gauge at all.
 
 // The DevTools bottom-bar run-stats readout: cumulative in/out token SPEND and the generation rate, with a
 // hover tooltip recording HOW the rate was measured (Ollama generation time vs wall-clock incl. network). Each
 // figure is independently toggled in Settings → Appearance (chrome.storage.local prefs); with both off, or no
 // usage reported yet, it renders nothing. Panel chrome — the HUD card has no such bar.
 export function RunStatsBar({ s }: { s: Session }) {
-    const rs = runStats(sessionUsages(s));
+    const rs = runStats(usageSamples(s));
     const tps = fmtTokPerSec(rs);
     const showTok = showStatsTokens.value && rs.calls > 0;
     const showTps = showStatsTps.value && tps != null;
     if (!showTok && !showTps) return null;
     return (
         <div class="run-stats tt" role="status" aria-label="run token stats">
-            {showTok ? <span class="rstat"><span class="rstat-ic" aria-hidden="true">↕</span>{rs.inTokens.toLocaleString()} in · {rs.outTokens.toLocaleString()} out</span> : null}
+            {/* Two figures, each with its own direction. One ↕ for the pair meant the arrow said "tokens"
+                and the WORDS carried the direction — which is backwards for something read in passing. */}
+            {showTok ? <>
+                <span class="rstat"><span class="rstat-ic" aria-hidden="true"><IconIn /></span>{rs.inTokens.toLocaleString()} in</span>
+                <span class="rstat"><span class="rstat-ic" aria-hidden="true"><IconOut /></span>{rs.outTokens.toLocaleString()} out</span>
+            </> : null}
             {showTps ? <span class="rstat rstat-tps">{tps}</span> : null}
             <span class="tt-pop left" role="tooltip">{runStatsProvenance(rs)}</span>
         </div>
     );
 }
 
+/** A whole agent run, as a transcript: the task, each turn's thinking and tool steps, and the answer.
+ *  A multi-turn session reads as a chat log, with the follow-ups interleaved where they arrived. */
 export function AgentRunView({ s }: { s: Session }) {
     // Skip an empty step group — one carrying only a usage sample (final-answer token counts), no
     // thought/reasoning/tool. KEEP a reasoning-only turn (the final-answer turn shows its thinking here).

@@ -12,6 +12,9 @@ import { RenderPanel } from "./render-panel";
 import { intentFor, codeOf, ensureCodeSummary, ensureActionSummary, codeSummaries } from "./summaries";
 import { HostAccessNote, OutputRaiseNote, externalSheetGrant } from "./agent-detail";
 
+/** THE CONSENT SURFACE for a gated call — what the agent wants to do, said as an intent sentence with
+ *  the part that matters picked out, plus the actual code or arguments (you cannot approve what you
+ *  cannot see). The utility model glosses a code snippet in plain English above it, best-effort. */
 export function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: string }) {
     const rv = rev.value;   // subscribe: the utility-model gloss lands on a rev bump (this reads a signal →
                             // auto-memoized, so without this it wouldn't re-render for it). Retained via data-rev.
@@ -61,6 +64,11 @@ export function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; 
                             appears AFTER you approve, so warn here, visually, BEFORE. (Same-origin frames / shadow
                             roots don't warn — not a security boundary.) */}
                         {intent.crossOrigin ? <div class="action-xorigin"><IconWarn /><span><b>Privileged click into an embedded cross-origin frame</b> — <b class="xorigin-host">{intent.crossOrigin}</b>. It uses a real debugger click and your session on that site.</span></div> : null}
+                        {/* A REMOTE call. The risk is not "this might change your page" but "this sends your
+                            data somewhere", which has no read-only version to auto-approve — so it gets its
+                            own warning rather than borrowing the frame-click one, whose words describe a
+                            debugger click that is not happening here. */}
+                        {intent.offMachine ? <div class="action-xorigin"><IconWarn /><span><b>These arguments leave this machine</b> — they are sent to <b class="xorigin-host">{intent.offMachine}</b> on the configured server, which runs the tool and can act on them.</span></div> : null}
                       </div>
                     : <div class="action-card">
                         {/* Utility-model gloss (if any) ABOVE the render — but it must NOT replace a

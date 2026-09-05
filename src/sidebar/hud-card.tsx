@@ -79,7 +79,9 @@ let orbLeaveTimer = 0;
 // because the cursor happens to be sitting on it where it landed. A genuine leave+re-enter re-arms it, so a
 // deliberate hover still expands. (Set false in the drag cleanup; set true on a real pointerleave.)
 let orbHoverArmed = true;
+/** Pointer entered the orb — expand it, unless a drag is in progress or hover is disarmed. */
 export const orbEnter = () => { if (orbDragging || !orbHoverArmed) return; clearTimeout(orbLeaveTimer); orbHover.value = true; };
+/** Pointer left the orb — collapse it after a grace period, so crossing a gap does not close it. */
 export const orbLeave = (e: any) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     if (e.clientX > r.left && e.clientX < r.right && e.clientY > r.top && e.clientY < r.bottom) return;   // spurious (resize) — pointer still inside
@@ -87,6 +89,7 @@ export const orbLeave = (e: any) => {
     clearTimeout(orbLeaveTimer);
     orbLeaveTimer = window.setTimeout(() => { orbHover.value = false; }, 140);
 };
+/** Begin dragging the HUD card — it snaps to whichever corner you let go nearest. */
 export const startCardDrag = (e: any) => {
     if (e.button != null && e.button !== 0) return;                                          // left / touch only
     if ((e.target as HTMLElement).closest("button, input, textarea, a, .seg")) return;       // not on a control
@@ -145,6 +148,7 @@ export const startCardDrag = (e: any) => {
 // blur, nor does its pointerdown reach the shell's outside-click handler. So the NEXT pointerdown in the
 // card tells the shell to dismiss the menu. Single-armed so repeated right-clicks don't stack listeners.
 let menuDismissArmed = false;
+/** Close the card's menu on the next click outside it. */
 export function armMenuDismiss(): void {
     if (menuDismissArmed) return;
     menuDismissArmed = true;
@@ -163,15 +167,19 @@ export function armMenuDismiss(): void {
 // RESHAPES: the blob stretches into a capsule that spells out what it's doing ("👁 Looking at the
 // screen…") — the shell springs the container wider, the label fades in. Draggable + right-click move
 // like every HUD state. (Emoji for now; a looping custom SVG per tool slots into `.card-orb-ic` later.)
-export function Orb({ icon, label, wide, prose }: { icon: string; label: string; wide: boolean; prose?: boolean }) {
+export function Orb({ icon, label, suffix, wide, prose }: { icon: string; label: string; suffix?: string; wide: boolean; prose?: boolean }) {
     return (
         <div class="card-app" data-rev={rev.value}>
             <div class={`card-orb${wide ? " wide" : ""}${prose ? " prose" : ""}`}
                 onPointerEnter={orbEnter} onPointerLeave={orbLeave}
                 onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}
-                title={prose ? label : undefined}>
+                title={prose ? label + (suffix || "") : undefined}>
                 <span class="card-orb-ic" aria-hidden="true">{icon}</span>
+                {/* The label ellipsizes; the live readout does NOT. Two spans rather than one string because
+                    the pill cuts on width, and concatenated it cut the number — the one part still saying
+                    something — leaving "· 1…" where "· 10s" was the whole point. */}
                 {wide ? <span class="card-orb-label">{label}</span> : null}
+                {wide && suffix ? <span class="card-orb-live">{suffix}</span> : null}
             </div>
         </div>
     );
@@ -207,6 +215,9 @@ export function CardTabs({ runs, selected }: { runs: Session[]; selected?: strin
     );
 }
 
+/** THE HUD CARD — the corner surface an off-mode run lives in: the composer, live progress, approval
+ *  gates and the completion card, over the page rather than in a panel. Reuses the sidebar's own
+ *  components, so what you read there is what you read here. */
 export function CardApp() {
     const r = rev.value;   // subscribe to session changes (retained via data-rev below)
     const composing = composerOpen.value;   // Spotlight bar open → the HUD morphs into the task input
@@ -337,7 +348,10 @@ export function CardApp() {
             // the label ellipsizes). Measure the label's real glyph extent with a Range — the label has
             // overflow:hidden + a flex width, so its offsetWidth/scrollWidth is clamped to the CURRENT pill and
             // wouldn't shrink for a short line; a Range over the text reports the true layout width regardless.
-            const orb = app.querySelector(".card-orb.prose") as HTMLElement | null;
+            // ANY wide pill, not just the prose one. The hover capsule (orblabel) spells out the current
+            // phase and was pinned to a fixed width, so "Waiting for the page…" was cut to "Waiting for t…"
+            // with screen to spare — the same problem the prose pill already measures its way out of.
+            const orb = app.querySelector(".card-orb.wide") as HTMLElement | null;
             const lbl = orb?.querySelector(".card-orb-label") as HTMLElement | null;
             // Guarded: Range.getBoundingClientRect is a layout call (unavailable under jsdom, and a hostile
             // environment could throw) — a measurement failure must never abort the effect and strand the
@@ -348,7 +362,13 @@ export function CardApp() {
                 const textW = range.getBoundingClientRect().width;
                 const cs = getComputedStyle(orb);
                 const ic = orb.querySelector(".card-orb-ic") as HTMLElement | null;
-                const chrome = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + (parseFloat(cs.columnGap || cs.gap) || 9) + (ic?.offsetWidth || 20);
+                // The live readout NEVER shrinks (it is the only part still saying anything), so its width
+                // is part of the chrome the label has to fit around — leaving it out under-measured the pill
+                // by exactly the readout, which is then what pushed the label into ellipsis.
+                const live = orb.querySelector(".card-orb-live") as HTMLElement | null;
+                const gap = parseFloat(cs.columnGap || cs.gap) || 9;
+                const chrome = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight)
+                    + gap + (ic?.offsetWidth || 20) + (live ? gap + live.offsetWidth : 0);
                 if (textW > 0) window.parent.postMessage({ __mlSidebarCardW: Math.ceil(chrome + textW) + 4 }, "*");
             } catch { /* no layout available (jsdom) → shell uses the fixed orbprose width */ }
         };
@@ -449,10 +469,10 @@ export function CardApp() {
 
     if (state === "orbprose") {
         // The live caption: current phase + a live token count (streaming) / narration / stall heartbeat.
-        return <Orb icon={orb!.icon} label={orb!.label} wide prose />;
+        return <Orb icon={orb!.icon} label={orb!.label} suffix={orb!.suffix} wide prose />;
     }
     if (state === "orb" || state === "orblabel") {
-        return <Orb icon={orb!.icon} label={orb!.label} wide={state === "orblabel"} />;
+        return <Orb icon={orb!.icon} label={orb!.label} suffix={orb!.suffix} wide={state === "orblabel"} />;
     }
     if (state === "toast") {
         // MULTI-RUN collapsed → a calm SUMMARY: 🤖 + a generic status + a count badge, no per-run title, no
@@ -520,7 +540,7 @@ export function CardApp() {
                                 // HUD is answer-first: no "Running JavaScript…" activity line and no model-chip /
                                 // reply-bubble chrome (that's DevTools/sidebar detail — the LiveStream component).
                                 ? <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.liveStream.content, { math: true }) }} />
-                                : (() => { const o = orbStatus(run, nowTick.value || Date.now(), residentNow(run.model)); return <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{o.icon}</span>{o.label}<span class="pill-dots"><i /><i /><i /></span></div>; })()}
+                                : (() => { const o = orbStatus(run, nowTick.value || Date.now(), residentNow(run.model)); return <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{o.icon}</span>{o.label}{o.suffix ? <span class="card-orb-live">{o.suffix}</span> : null}<span class="pill-dots"><i /><i /><i /></span></div>; })()}
                           </>
                         : <>
                             {/* "Show work" sits ABOVE the answer now — the audit trail is the header, the answer

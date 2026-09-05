@@ -13,6 +13,8 @@ import { AgentTurn, SteerSeen } from "./agent-detail";
 import { buildRunBlocks, ensureBlockSummary, blockSummaries, blockKey, groupTurns } from "./debug-reducer";
 import type { RunTaskBlock } from "./debug-reducer";
 
+/** The HUD card's "show work" TRACE — a run's steps, folded, on the corner surface. The same step rows
+ *  the panel draws, so a run reads the same in both places. */
 export function ShowWork({ run }: { run: Session }) {
     // Reading cardShowWorkHash auto-memoizes this component; `run` is mutated in place (same ref), so also
     // subscribe to `rev` — else a landed Explain gloss (rev bump) wouldn't re-render. Retained via data-rev.

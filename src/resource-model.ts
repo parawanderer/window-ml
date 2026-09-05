@@ -172,6 +172,14 @@ export interface ResourceSample {
     t: number;
     models: ModelResidency[];
     capacity: Capacity | null;
+    /** Models the server said were LOADING at this instant — a `load.start` with no `load.complete` yet.
+     *
+     *  For most of a load there is no runner object in Ollama at all, so `/api/ps` does not report the model
+     *  coarsely, it does not report it AT ALL — while the device's own `free_memory` has already dropped by
+     *  the whole allocation. Read literally that is a card 92% full with nothing accounting for it, and the
+     *  panel said exactly that: "unattributed 87.82 GiB", beside a model row calling the model off-box. Both
+     *  claims came from treating an absence as a measurement. This is the evidence that it is neither. */
+    loading?: string[];
 }
 
 /** Raw `/api/ps` entry → residency. `gpus` is ABSENT for a CPU-resident model — that is the contract, and it
@@ -323,13 +331,29 @@ export function deviceBands(sample: ResourceSample, deviceId: string): Band[] {
     if (unknown > 0) bands.push({ key: "unknown", label: "placement unknown", bytes: unknown, kind: "unknown" });
     // Everything in use that we cannot attribute to a model of ours. Clamped: `free` is sampled independently
     // of `ps`, so a race can make the arithmetic go slightly negative.
-    const used = Math.max(0, cap.totalBytes - cap.freeBytes);
+    // `ps` and `/api/info` are SEPARATE samples, so a model can be reported resident a poll before the free
+    // bytes catch up. Read literally, `total - free` is then just the idle overhead while attribution is the
+    // whole model — the residual clamps to zero and the line COLLAPSES to the floor for one sample before
+    // springing back, which looks like memory that was freed and re-taken. Attribution is a lower bound on
+    // what is in use: what we can see resident is in use whatever the other sample says yet.
+    const used = Math.max(0, cap.totalBytes - cap.freeBytes, attributed + unknown);
     const residual = Math.max(0, used - attributed - unknown);
     // Name the residual by MAGNITUDE: under the floor it is the driver's own context (present even on an idle
-    // card), above it there is genuinely something else on the card worth telling the reader about.
-    bands.push({ key: "other", label: residual < DRIVER_OVERHEAD_FLOOR ? DRIVER_BAND_LABEL : OTHER_BAND_LABEL, bytes: residual, kind: "other" });
+    // card), above it there is genuinely something else on the card worth telling the reader about — UNLESS a
+    // load is in flight, in which case we know what it is and "unattributed" is simply wrong. A loading model
+    // holds its allocation before any runner exists to report it, so the residual IS the load.
+    bands.push({ key: "other", bytes: residual, kind: "other",
+        label: residual < DRIVER_OVERHEAD_FLOOR ? DRIVER_BAND_LABEL : loadingLabel(sample) ?? OTHER_BAND_LABEL });
     bands.push({ key: "free", label: "free", bytes: Math.max(0, cap.freeBytes), kind: "free" });
     return bands;
+}
+
+/** What a large residual is, when a load explains it: `loading gemma4:31b`, or a count when several are.
+ *  Null when nothing is loading, which is when the residual is genuinely unattributed. */
+function loadingLabel(sample: ResourceSample): string | null {
+    const l = sample.loading;
+    if (!l?.length) return null;
+    return l.length === 1 ? `loading ${l[0]}` : `loading ${l.length} models`;
 }
 
 /** The host's RAM split the same way — model spill first, then everything else in use, then free. */
@@ -543,6 +567,25 @@ export function sameBoxOnly(samples: ResourceSample[], cap: Capacity | null, swi
  *  memory that was never measured. (Same rule as never inventing a timestamp for an unmarked line.) */
 export const MAX_SAMPLE_GAP_MS = 15_000;
 
+/** The same rule, for a STREAMED history. It is a different number because a gap means a different thing on
+ *  each transport, and using the polling one under the stream is a bug that hides the whole event lane.
+ *
+ *  Polling runs at a fixed 2s while the panel is open, so 15s between samples really did mean nobody was
+ *  watching. The stream's cadence is ADAPTIVE by design — 1s while a load is in flight or the body is
+ *  changing, 15s when nothing is happening — so 15s apart is the NORMAL idle spacing and means "nothing
+ *  changed", the opposite of "nothing was measured". Reading it as a hole broke an idle history into
+ *  single-sample segments, and since a lone sample draws no line, every event placed in one was dropped:
+ *  a lane counting four loads and drawing none.
+ *
+ *  Three missed idle samples, which is a stream that has genuinely stopped rather than one that is quiet. */
+export const STREAM_MAX_GAP_MS = 45_000;
+
+/** The stream's IDLE cadence. It is the grace `placeEvents` needs on a streamed history for the same reason
+ *  the poll interval is on a polled one: the last sample can be a whole idle interval old while the chart's
+ *  right edge means "now", so without it the newest events — the ones you are watching for — are the only
+ *  ones that never appear. Fifteen seconds is a long time to be blind to the thing you opened the panel for. */
+export const STREAM_SAMPLE_MS = 15_000;
+
 /** Split history into contiguous runs, so the chart draws several segments rather than one line bridging
  *  every gap. A single sample is its own segment (it renders as a point, not a line). */
 export function segments(samples: ResourceSample[], maxGapMs: number = MAX_SAMPLE_GAP_MS): ResourceSample[][] {
@@ -609,9 +652,14 @@ export function residencyEvents(samples: ResourceSample[], knownLoads: ResourceE
  *  time — it is an overview, and a 10-minute hole in the middle of a session is a fact about the session that
  *  an overview should show at its true width, not collapse the way the chart's segments do.
  *
- *  Returns null when there is nothing to scrub: no samples, or a session so short that the window covers all
- *  of it — a strip whose box is the whole strip is a control that cannot do anything, and drawing one implies
- *  otherwise. */
+ *  Returns null only when there is no WINDOW at all (the "everything" setting, which is not a viewport onto
+ *  anything) or no session to draw. It deliberately does NOT return null for a window that happens to cover
+ *  the whole session: that is a state a live view passes through constantly — the rolling window is wider
+ *  than a session that has just started, and a width dragged while following is REMEMBERED, so stretching
+ *  the box to the full width once made the control delete itself and reappear minutes later when the session
+ *  outgrew it. A control that vanishes is worse than one that is momentarily at its limit, and it took the
+ *  only way back with it: the chart's wheel-scrub reads this too. Full-width and draggable says the same
+ *  thing honestly. */
 export interface ScrubExtent {
     /** First and last sample in the session. */
     from: number;
@@ -631,18 +679,19 @@ export function scrubExtent(
     samples: readonly { t: number }[],
     window: { from: number; to: number } | null,
 ): ScrubExtent | null {
+    if (!window) return null;   // no viewport: the plot already IS the whole session
     if (samples.length < 2) return null;
     const from = samples[0].t, to = samples[samples.length - 1].t;
     const span = to - from;
     if (span <= 0) return null;
-    const w = window ?? { from, to };
     // Clamped, because a window can legitimately extend past the samples (the rolling window reaches back
     // before the first sample on a fresh open, and forward to now).
     const clamp = (t: number) => Math.min(1, Math.max(0, (t - from) / span));
-    const windowFrom = clamp(w.from), windowTo = clamp(w.to);
-    // Nothing to scrub if the window already covers everything there is.
-    if (windowFrom <= 0 && windowTo >= 1) return null;
-    return { from, to, windowFrom, windowTo, atTail: w.to >= to - TAIL_SLACK_MS };
+    return {
+        from, to,
+        windowFrom: clamp(window.from), windowTo: clamp(window.to),
+        atTail: window.to >= to - TAIL_SLACK_MS,
+    };
 }
 
 /** Move a window to a new position on the strip, keeping its DURATION. Dragging the box scrolls time; it does
@@ -663,12 +712,220 @@ export function scrubTo(
     return { from: start, to: start + width };
 }
 
+/** Which part of the scrub window a pointer landed on. The EDGES resize, the middle pans — the same
+ *  vocabulary every timeline control uses, and the reason a drag on the box must not silently mean
+ *  "recentre on the cursor" when the cursor is on a handle.
+ *
+ *  `edgePx` is converted to a fraction against the track's width so the handles are a constant, clickable
+ *  size on screen rather than a constant slice of a window that may be 2% wide.
+ *
+ *  THE CAP APPLIES INSIDE THE WINDOW ONLY. A handle is capped at a third of the window so a narrow one keeps
+ *  a middle to pan by — but the cap was applied to the OUTSIDE reach as well, which is what made a hairline
+ *  window impossible to widen: a few pixels across, its handles were one or two pixels on either side of it,
+ *  so every grab landed on the pan zone and the only way out was discarding the zoom.
+ *
+ *  Outside, the reach is always the full `edgePx`. Nothing is given up for it — the pan middle is exactly as
+ *  it was — and the narrower the window, the more the reach outside it is what you actually hit, which is
+ *  the right way round: a window too small to aim at is a window you want to make bigger. */
+export function scrubZone(
+    extent: { windowFrom: number; windowTo: number },
+    frac: number,
+    trackPx: number,
+    edgePx = 7,
+): "from" | "to" | "pan" | "outside" {
+    const { windowFrom: a, windowTo: b } = extent;
+    const outer = trackPx > 0 ? edgePx / trackPx : 0;   // never capped: this is the reach OUTSIDE the window
+    const inner = Math.min(outer, (b - a) / 3);         // capped: the window must keep a middle to pan by
+    if (frac < a - outer || frac > b + outer) return "outside";
+    if (frac <= a + inner) return "from";
+    if (frac >= b - inner) return "to";
+    return "pan";
+}
+
+/** Move ONE edge of the window, keeping the other fixed. Clamped to the session and to a minimum span, so a
+ *  drag past the opposite edge parks against it rather than inverting the range into something with a
+ *  negative duration that every consumer would then have to defend against. */
+export function scrubResize(
+    extent: { from: number; to: number },
+    window: { from: number; to: number },
+    edge: "from" | "to",
+    frac: number,
+    minMs = MIN_SCOPE_MS,
+): { from: number; to: number } {
+    const span = extent.to - extent.from;
+    const at = extent.from + Math.min(1, Math.max(0, frac)) * span;
+    const min = Math.min(minMs, span);
+    return edge === "from"
+        ? { from: Math.max(extent.from, Math.min(at, window.to - min)), to: window.to }
+        : { from: window.from, to: Math.min(extent.to, Math.max(at, window.from + min)) };
+}
+
+/** A SELECTED WINDOW, never narrower than the panel can draw. Widened symmetrically about its own centre, so
+ *  the stretch you picked stays in the middle of what you get rather than sliding to one end.
+ *
+ *  A drag can resolve to almost no time at all even when the hand moved a long way, because the axis is
+ *  SEGMENTED: a densely-sampled run occupies a lot of width for a little time. The result is a window of a
+ *  few milliseconds, which contains no samples, draws as an empty plot, and reads as the panel breaking
+ *  rather than as a selection that was too small to mean anything. `scopeToSpan` already widens a too-short
+ *  block for the same reason; this is the same rule for a hand-made selection.
+ *
+ *  Returns null for a window with no extent at all (from >= to), which is not a selection to widen but a
+ *  click to ignore. */
+export function clampWindow(win: { from: number; to: number }, minMs = MIN_SCOPE_MS): { from: number; to: number } | null {
+    const span = win.to - win.from;
+    if (span <= 0) return null;
+    if (span >= minMs) return win;
+    const mid = win.from + span / 2, half = minMs / 2;
+    return { from: mid - half, to: mid + half };
+}
+
+/** THE SAMPLES A WINDOW SHOULD DRAW — the ones inside it, PLUS the nearest on each side.
+ *
+ *  A plain filter is wrong once the window gets narrower than the poll interval, which is exactly what
+ *  zooming into a single long event does: the window falls between two polls, the filter returns fewer than
+ *  two samples, and the chart draws an empty box. The panel then looks broken rather than zoomed — no line,
+ *  no ceiling, no tracks — while the thing you zoomed in ON, an event spanning the whole window, is still
+ *  perfectly well defined.
+ *
+ *  The BRACKETING samples are what a line needs to cross the window at all: the value did not stop existing
+ *  between two measurements. They sit outside the window by construction, so a renderer must clip to the
+ *  window rather than to the data's extent — which is what a time axis does anyway.
+ *
+ *  Not interpolation: these are real measurements, drawn where they were actually taken. Inventing a sample
+ *  at the window's edge would be a reading nobody took, which is the thing this panel refuses to do
+ *  everywhere else (see the gaps, which stay gaps). */
+export function windowSamples<T extends { t: number }>(all: readonly T[], window: { from: number; to: number } | null): T[] {
+    if (!window) return [...all];
+    const inside: T[] = [];
+    let before: T | null = null, after: T | null = null;
+    for (const s of all) {
+        if (s.t < window.from) { before = s; continue; }         // `all` is ordered, so the last one wins
+        if (s.t > window.to) { if (!after) after = s; continue; }   // …and the first one past the end
+        inside.push(s);
+    }
+    // Only reach outside when the window cannot draw itself. A window with plenty of samples must not have
+    // its scale stretched by a neighbour that is minutes away.
+    if (inside.length >= 2) return inside;
+    return [...(before ? [before] : []), ...inside, ...(after ? [after] : [])];
+}
+
+/** WHAT A FINISHED SCRUB DRAG MEANT. Two outcomes, and telling them apart is the whole point: a window
+ *  PINNED to a range, or FOLLOWING with a width.
+ *
+ *  The rule that used to be here — "ends at the tail → rejoin live" — is right for a PAN (you dragged the
+ *  box to the end, you want to follow) and wrong for a RESIZE of the left edge, which never moves `to` at
+ *  all. So every widen-while-following was read as "rejoin live", which threw the new width away and
+ *  snapped the strip back: the window could be narrowed but never stretched.
+ *
+ *  Following with a width is not a special case of a pinned range — it IS `resWindowS`, the same quantity
+ *  Settings names — so a left-edge drag against the tail returns seconds, and the caller stores it. */
+export function scrubIntent(
+    extent: { from: number; to: number },
+    next: { from: number; to: number },
+    tailSlackMs: number,
+): { live: true; windowS: number } | { live: false; window: { from: number; to: number } } {
+    // AT THE TAIL → follow, AT THE WIDTH ON SCREEN. One rule for every gesture, which is what makes it
+    // predictable: whatever the window looks like when you let go against the right edge is what live then
+    // means. Two separate bugs came from not having it. Rejoining live RESTORED whatever `resWindowS` was
+    // last set to, so narrowing a pinned window and dragging it back to the edge made it snap large again —
+    // and a left-edge stretch while already following was read as "you dropped at the tail, rejoin live",
+    // which threw the new width away, so the window could be narrowed but never widened.
+    if (next.to >= extent.to - tailSlackMs)
+        return { live: true, windowS: Math.max(1, Math.round((next.to - next.from) / 1000)) };
+    return { live: false, window: next };
+}
+
+/** Slide the window along the strip by a fraction of ITS OWN width, for a wheel gesture over the plot.
+ *  Relative to the window rather than to the session, so one notch moves the same visible distance whether
+ *  you are looking at ten seconds of a ten-minute session or all of it. */
+export function scrubNudge(
+    extent: { from: number; to: number },
+    window: { from: number; to: number },
+    byWindowFraction: number,
+): { from: number; to: number } {
+    const width = window.to - window.from;
+    const span = extent.to - extent.from;
+    if (width >= span) return { from: extent.from, to: extent.to };
+    const center = (window.from + window.to) / 2 + width * byWindowFraction;
+    return scrubTo(extent, window, (center - extent.from) / span);
+}
+
+/**
+ * A PINCH → a narrower or wider window, ANCHORED so the instant under your fingers stays under them.
+ *
+ * A trackpad pinch reaches the page as a `wheel` carrying `ctrlKey`, which is the platform convention rather
+ * than anything we invented — it is how the browser tells its own page-zoom apart from a scroll. So zooming
+ * the timeline costs no new surface: the same handler that scrolls the window along reads one more flag and
+ * changes what the gesture means. Sideways slides, pinch zooms, which is what both gestures already mean
+ * everywhere else on a trackpad.
+ *
+ * The factor is EXPONENTIAL in the delta, so the gesture is smooth and symmetric: pinching out by an amount
+ * and back in by the same amount returns to where you started, where a linear step accumulates drift and a
+ * `sign(delta) * step` moves in visible jumps.
+ *
+ * The anchor is read LINEARLY across the window, which the plot's own axis is not — it is segmented and
+ * flex-weighted by sample counts. That is deliberate and matches `scrubNudge`, which slides by a fraction of
+ * the window's own width for the same reason: consistency between the two gestures on one axis matters more
+ * than an exactness neither of them has, and the anchor is about the zoom FEELING fixed rather than about
+ * naming an instant.
+ */
+export function scrubPinch(
+    extent: { from: number; to: number },
+    window: { from: number; to: number },
+    deltaY: number,
+    anchorFrac: number,
+    minMs = MIN_SCOPE_MS,
+): { from: number; to: number } {
+    const span = extent.to - extent.from;
+    const width = window.to - window.from;
+    if (!(span > 0) || !(width > 0)) return window;
+    // Pinching OUT gives a negative delta (the same sign a scroll-up carries) and means "closer", so the
+    // window gets narrower. Capped per event, because a trackpad can deliver a very large delta in one frame
+    // and a single flick should not cross the whole zoom range.
+    const factor = Math.exp(Math.max(-0.5, Math.min(0.5, deltaY * 0.01)));
+    const next = Math.max(Math.min(minMs, span), Math.min(span, width * factor));
+    const anchor = window.from + Math.min(1, Math.max(0, anchorFrac)) * width;
+    // Keep the anchored instant at the same FRACTION of the window, which is what makes it stay under the
+    // pointer as the width changes.
+    let from = anchor - (anchor - window.from) * (next / width);
+    from = Math.max(extent.from, Math.min(from, extent.to - next));
+    return { from, to: from + next };
+}
+
+/**
+ * How far a wheel gesture should slide the window, as a fraction of the window's own width.
+ *
+ * Two things this gets right that a `Math.sign(delta) * step` does not, and both were visible as the same
+ * symptom — the chart scrubbing erratically under a trackpad:
+ *
+ * It reads BOTH AXES, taking whichever dominates. A trackpad swipe is a stream of events carrying a mixture
+ * of `deltaX` and `deltaY`, so reading only one axis means a horizontal swipe does nothing except through
+ * whatever incidental vertical jitter it happens to carry. Dominant-axis rather than summed, so a diagonal
+ * gesture is not counted twice.
+ *
+ * And it is PROPORTIONAL to the distance, scaled by the plot's own width, so the window travels 1:1 with the
+ * gesture: swipe across half the plot and the window moves half its width. A fixed step per event is what
+ * made it inconsistent — one mouse notch and one of the dozens of tiny events a trackpad emits for the same
+ * physical movement were treated identically, so the same swipe moved wildly different distances depending
+ * on how the hardware chose to quantise it.
+ *
+ * `deltaMode` is honoured because a mouse reports LINES and a page gesture reports PAGES; treating either as
+ * pixels moves the window by a few pixels for a gesture that meant a screenful.
+ */
+export function wheelScrubFraction(deltaX: number, deltaY: number, deltaMode: number, plotPx: number): number {
+    if (!(plotPx > 0)) return 0;
+    const scale = deltaMode === 1 ? 16 : deltaMode === 2 ? plotPx : 1;
+    const dx = deltaX * scale, dy = deltaY * scale;
+    const d = Math.abs(dx) > Math.abs(dy) ? dx : dy;
+    return d / plotPx;
+}
+
 /** The TIME at a fraction across the whole plot — the inverse of `placeEvents`, for turning a drag into a
  *  time range. The plot is segments laid out with flex weights proportional to their sample counts, so the
  *  fraction is spent across the segments in those proportions and then interpolated INSIDE the one it lands
  *  in. A fraction landing in a gap between segments resolves to that gap's near edge: nothing was measured
  *  there, so the honest answer is the last moment that was. */
-export function timeAtFraction(runs: { t: number }[][], frac: number): number | null {
+export function locateFraction<T extends { t: number }>(runs: T[][], frac: number): { run: T[]; within: number } | null {
     const live = runs.filter((r) => r.length > 0);
     if (!live.length) return null;
     const weights = live.map((r) => Math.max(1, r.length));
@@ -677,14 +934,37 @@ export function timeAtFraction(runs: { t: number }[][], frac: number): number | 
     const f = Math.min(1, Math.max(0, frac));
     for (let i = 0; i < live.length; i++) {
         const share = weights[i] / total;
-        if (f <= acc + share || i === live.length - 1) {
-            const within = share > 0 ? Math.min(1, Math.max(0, (f - acc) / share)) : 0;
-            const from = live[i][0].t, to = live[i].at(-1)!.t;
-            return from + (to - from) * within;
-        }
+        if (f <= acc + share || i === live.length - 1)
+            return { run: live[i], within: share > 0 ? Math.min(1, Math.max(0, (f - acc) / share)) : 0 };
         acc += share;
     }
-    return live.at(-1)!.at(-1)!.t;
+    return { run: live.at(-1)!, within: 1 };
+}
+
+export function timeAtFraction(runs: { t: number }[][], frac: number): number | null {
+    const at = locateFraction(runs, frac);
+    if (!at) return null;
+    // Interpolate along the INDEX axis, not between the segment's first and last stamps. A polyline places
+    // sample i at i/(n-1) of the width, so samples are evenly spaced by POSITION and not by time; reading the
+    // label off the elapsed time assumes a fixed cadence. The event stream's cadence is adaptive by design
+    // (1s while a load is in flight, 15s idle), so under it the two mappings diverge, and the crosshair would
+    // name an instant several seconds from the datapoint drawn beneath it.
+    const { run, within } = at;
+    if (run.length === 1) return run[0].t;
+    const pos = within * (run.length - 1);
+    const i = Math.min(run.length - 2, Math.floor(pos));
+    return run[i].t + (run[i + 1].t - run[i].t) * (pos - i);
+}
+
+/** The DATAPOINT under a fraction of the plot's width — what a Grafana-style hover reads, as opposed to the
+ *  interpolated instant the crosshair labels. It snaps to a real sample rather than interpolating between
+ *  two, because the values in the tooltip are measurements: a figure halfway between two polls was never
+ *  observed, and presenting one as though it had been is the whole failure mode a memory panel must not have. */
+export function sampleAtFraction<T extends { t: number }>(runs: T[][], frac: number): T | null {
+    const at = locateFraction(runs, frac);
+    if (!at) return null;
+    const { run, within } = at;
+    return run[Math.round(within * (run.length - 1))] ?? null;
 }
 
 /** What the lane draws. Everything is shown by default; this is how a busy session is narrowed.
@@ -694,25 +974,112 @@ export function timeAtFraction(runs: { t: number }[][], frac: number): number | 
  *  "which of them" — sub-calls are the numerous ones (a vision reader fires several per step) and loads and
  *  evictions are the rare, expensive ones you may want alone. */
 export interface LaneFilter {
-    /** A session hash to restrict to, or null for every session. */
+    /** The session being read, or null when none is (the overview list). */
     hash: string | null;
+    /** Whether the lane shows only that session's events, or every session's. Scoping is the DEFAULT: the
+     *  lane sits above a transcript, and events from runs you are not reading are noise against it. With
+     *  scoping on and no session open there is nothing to scope to, so a run's events are shown NOWHERE —
+     *  which is the intended overview, not an empty-looking bug. */
+    scope: "session" | "all";
     /** Kinds to HIDE. An exclusion list, so a kind added later is visible by default rather than silently
      *  filtered out by a stored preference that predates it. */
     hidden: readonly ResourceEvent["kind"][];
+    /** The models the scoped session actually ran, delegated readers included. A MACHINE event carries no
+     *  session, so scoping cannot ask who owns it — but it can ask whether the model is one this session was
+     *  using, which is the question a reader is really asking. Undefined means "not known", and everything
+     *  machine-side is kept, since inventing an empty set would silently hide the lot. */
+    models?: readonly string[];
 }
 
-export const EMPTY_LANE_FILTER: LaneFilter = { hash: null, hidden: [] };
+export const EMPTY_LANE_FILTER: LaneFilter = { hash: null, scope: "all", hidden: [] };
 
-/** Apply a filter. An event with no `ref` (an eviction — it belongs to the machine, not to a run) survives a
- *  session scope: it is what the memory trace is DOING, and hiding it because it has no owner would remove
- *  the events the chart exists for. */
+/** Apply a filter. An event with no `ref` belongs to the MACHINE rather than to a run — a load, an eviction,
+ *  the box serving someone else — so a session scope cannot ask who owns it. It asks the useful question
+ *  instead: is this a model the session was using? A qwen session was drawing gemma's loads and evictions
+ *  because "no ref" was read as "always relevant", and on a shared box that is most of the lane. Kept when
+ *  the models are unknown, since an empty set would hide everything the chart exists to show. */
 export function filterEvents(events: readonly ResourceEvent[], filter: LaneFilter): ResourceEvent[] {
     const hidden = new Set(filter.hidden);
+    const mine = filter.models ? new Set(filter.models) : null;
     return events.filter((e) => {
         if (hidden.has(e.kind)) return false;
-        if (filter.hash && e.ref && e.ref.hash !== filter.hash) return false;
-        return true;
+        if (filter.scope !== "session") return true;
+        if (e.ref) return e.ref.hash === filter.hash;
+        // A machine event about a model this session ran EXPLAINS the session — an eviction mid-run is why
+        // the next turn paid a load. One about a model it never touched is another tenant's traffic.
+        if (!mine) return true;
+        // An event with no model at all cannot be attributed either way (the server emits a bare `unload`).
+        // Dropped while scoped and kept in full: unattributable is not the same as unrelated, but a lane
+        // asked for one session should not answer with something it cannot place.
+        return e.model ? mine.has(e.model) : false;
     });
+}
+
+/** The stretch of time a SESSION occupies, for a panel scoped to it. Scoping the lane and the model list but
+ *  not the axis left the two disagreeing about what "this session" means: the list said one model, the chart
+ *  still drew ten minutes of a shared box either side of it.
+ *
+ *  Derived from the session's own events rather than from its turns, so it covers whatever the lane draws —
+ *  including a tool that was still running when the snapshot was taken. `now` extends a LIVE session to the
+ *  present instead of stopping at its last finished event, which would otherwise pin the window behind the
+ *  memory trace it is meant to sit under.
+ *
+ *  `minMs` is a floor, because a three-second session is a slit: a window narrower than a couple of samples
+ *  contains no measurements and draws as an empty plot, which reads as the panel breaking rather than as a
+ *  short run. Returns null when the session has no events at all — there is nothing to frame, and inventing
+ *  a window would be a claim about when it happened. */
+export function sessionWindow(
+    events: readonly ResourceEvent[], hash: string | null, now: number,
+    { minMs = 30_000, padFrac = 0.04 }: { minMs?: number; padFrac?: number } = {},
+): { from: number; to: number } | null {
+    if (!hash) return null;
+    let from = Infinity, to = -Infinity;
+    for (const e of events) {
+        if (e.ref?.hash !== hash) continue;
+        from = Math.min(from, e.t);
+        // An OPEN span has no end; `until` is where it had reached, which is the right right-edge for it.
+        to = Math.max(to, e.until ?? e.t);
+    }
+    if (!Number.isFinite(from)) return null;
+    // Still going, or only just finished: follow the clock rather than stopping short of it.
+    if (now - to < minMs) to = now;
+    const pad = Math.max((to - from) * padFrac, 1000);
+    from -= pad; to += pad;
+    // Widen around the CENTRE, so a short session sits in the middle of its window instead of against an edge.
+    const grow = minMs - (to - from);
+    if (grow > 0) { from -= grow / 2; to += grow / 2; }
+    return { from, to };
+}
+
+/** Is this the SAME machine edge we already hold? A subscriber that reconnects is backfilled with the ring
+ *  again — the whole ten minutes when the worker is fresh, which an MV3 respawn guarantees — so every span
+ *  in that window arrives a second time and the lane doubles. Measured on a real box: four serving periods
+ *  drawn as "serving 8", two loads as three (one load's opening edge fell outside the replayed window, so
+ *  only its duplicate closed).
+ *
+ *  Identity is kind + model + when, with a TOLERANCE. The instant is derived as `helloAt + frame.t`, and
+ *  since each connection anchors on its own hello the same edge lands within the jitter between two hellos
+ *  rather than on the exact same millisecond. A second is far tighter than the spacing of anything the
+ *  server actually emits, and collapsing two genuinely distinct edges that close together is a far smaller
+ *  error than drawing everything twice. */
+export function sameMachineEvent(a: ResourceEvent, b: ResourceEvent, tolMs = 1500): boolean {
+    if (a.kind !== b.kind || a.model !== b.model) return false;
+    if (Math.abs(a.t - b.t) > tolMs) return false;
+    // A span and an instant of the same kind at the same moment are not the same thing, and two spans that
+    // start together but end apart are two different periods of work.
+    if ((a.until == null) !== (b.until == null)) return false;
+    return a.until == null || Math.abs((a.until as number) - (b.until as number)) <= tolMs;
+}
+
+/** Append unless we already hold it. Bounded by `cap`, dropping oldest. */
+export function addMachineEvent(list: readonly ResourceEvent[], e: ResourceEvent, cap: number, tolMs = 1500): ResourceEvent[] {
+    // Backwards: a duplicate arrives in a REPLAY of recent history, so the match is near the end.
+    for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].t < e.t - tolMs - 1) break;          // the list is time-ordered; nothing older can match
+        if (sameMachineEvent(list[i], e, tolMs)) return list as ResourceEvent[];
+    }
+    const next = [...list, e];
+    return next.length > cap ? next.slice(next.length - cap) : next;
 }
 
 /** How many of each kind are in a set — for a filter control that says what it is hiding rather than making
@@ -731,6 +1098,11 @@ export function lineageOf(events: readonly ResourceEvent[], id: string | undefin
     const out = new Set<string>();
     if (!id) return out;
     const byId = new Map(events.filter((e) => e.id).map((e) => [e.id!, e]));
+    // A focus on an event that is NOT DRAWN is not a focus. The hover is held in a signal, so it outlives the
+    // thing it pointed at — a click that navigates, a filter chip, the window moving — and an id that matches
+    // nothing produced a lineage of exactly one unmatchable member, which dimmed every bar and every step at
+    // once. That reads as the whole lane disappearing rather than as a stale highlight.
+    if (!byId.has(id)) return out;
     out.add(id);
     // ANCESTORS: straight up the chain.
     for (let cur = byId.get(id)?.parent; cur && !out.has(cur); cur = byId.get(cur)?.parent) out.add(cur);
@@ -762,25 +1134,173 @@ export function lineageOf(events: readonly ResourceEvent[], id: string | undefin
  *  visible — which means packing has to reserve the same width, or two events that do not overlap in time
  *  are drawn overlapping and read as one longer bar. */
 export const MIN_EV_SPAN = 0.006;
+/** The narrowest window double-clicking a bar will scope to. A tool call that took 40ms is a real event
+ *  worth pointing at, but a 40ms window contains no samples at all and draws as an empty plot — so a short
+ *  block is widened around its own centre rather than scoped to exactly itself. */
+export const MIN_SCOPE_MS = 2500;
+
+/**
+ * The time window to scope the panel to when a lane block is double-clicked: the block's own extent,
+ * widened symmetrically if it is shorter than {@link MIN_SCOPE_MS}.
+ *
+ * An OPEN event (work still in flight) has no end, so `now` stands in for one — scoping to it while it
+ * runs is the case where this is most useful and least able to know where it stops.
+ */
+export function scopeToSpan(from: number, until: number | null | undefined, now: number, minMs = MIN_SCOPE_MS): { from: number; to: number } {
+    const to = until ?? now;
+    const pad = Math.max(0, (minMs - (to - from)) / 2);
+    return { from: from - pad, to: to + pad };
+}
+
+/**
+ * The same thing, but guaranteed to contain enough SAMPLES to draw.
+ *
+ * A window is only as useful as the trace inside it, and everything here needs a segment of at least two
+ * samples: `segments()` drops shorter ones, so the tracks, the lane and the strip all render nothing and the
+ * panel appears to vanish. A time floor cannot promise that — scoping to a 400ms tool call on a box polled
+ * every two seconds is a window with one sample in it, or none — so this widens symmetrically until the
+ * window actually covers `minSamples`, and gives up only when the session does not have that many.
+ */
+export function scopeAround(
+    samples: readonly { t: number }[],
+    from: number,
+    until: number | null | undefined,
+    now: number,
+    minSamples = 3,
+): { from: number; to: number } {
+    let w = scopeToSpan(from, until, now);
+    if (samples.length <= minSamples) return { from: samples[0]?.t ?? w.from, to: samples[samples.length - 1]?.t ?? w.to };
+    const covered = (r: { from: number; to: number }) => samples.reduce((n, s) => n + (s.t >= r.from && s.t <= r.to ? 1 : 0), 0);
+    // Grow by the window's own width each round, so a very short scope reaches a useful size in a few steps
+    // rather than crawling, and a long one is left alone.
+    for (let i = 0; i < 40 && covered(w) < minSamples; i++) {
+        const grow = Math.max(1000, (w.to - w.from) / 2);
+        w = { from: w.from - grow, to: w.to + grow };
+    }
+    return w;
+}
+
 /** A hair of separation reserved BETWEEN bars in a row. Two bars that merely touch read as one bar with a
  *  seam — which is the same misreading as an overlap, arrived at differently. */
 export const EV_ROW_GAP = 0.004;
 
-export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN): EventPlacement[][] {
+/**
+ * Pack placed events into rows, ONE RUN AT A TIME.
+ *
+ * A run and everything under it — its steps, their sub-calls — is a tree, and the tree is what a reader is
+ * following. Packing every event together by start time interleaves two concurrent runs into the same rows,
+ * so a step of one sits between two steps of the other and the shape of neither survives. Each run instead
+ * gets a contiguous BAND: its own container bar, its steps beneath, its sub-calls beneath those. A second
+ * run overlapping in time starts a new band below rather than filling gaps in the first.
+ *
+ * This is not only a multi-model case: a server or cloud backend runs the SAME model several times at once,
+ * so the grouping is by RUN, never by model.
+ *
+ * Events belonging to no run (an eviction — a fact about the machine) are packed last, in a band of their
+ * own, so they cannot push a run's rows apart.
+ */
+/** The most rows the lane will ever draw, across every band. Each row is a few pixels, so without a TOTAL
+ *  cap a box running ten agents at once would push the transcript off the screen — banding made the per-run
+ *  cap insufficient, because the number of bands is the number of concurrent runs. */
+export const MAX_LANE_ROWS = 10;
+
+export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN, maxTotal = MAX_LANE_ROWS): EventPlacement[][] {
+    const groups = new Map<string, EventPlacement[]>();
+    for (const p of placed) {
+        const key = p.event.ref?.hash ?? "";
+        (groups.get(key) ?? groups.set(key, []).get(key)!).push(p);
+    }
+    // Runs in the order they STARTED, and the machine's own events last: a band's position should say when
+    // its run began, and an eviction belongs to no run at all.
+    const order = [...groups.entries()].sort((a, b) => {
+        if (!a[0] !== !b[0]) return a[0] ? -1 : 1;
+        return Math.min(...a[1].map((p) => p.run + p.from)) - Math.min(...b[1].map((p) => p.run + p.from));
+    });
+    const out: EventPlacement[][] = [];
+    // The drawn end of each existing row, so a later band can be told whether it would collide.
+    const ends: number[] = [];
+    const endOf = (p: EventPlacement) => p.run + Math.max(p.to, p.from + minSpan) + EV_ROW_GAP;
+    const startOf = (p: EventPlacement) => p.run + p.from;
+
+    for (const [, band] of order) {
+        const rows = packBand(band, maxRows, minSpan);
+        // REUSE rows where the band cannot collide. Banding exists so a tree is never interleaved with
+        // another — but two runs that never overlap in TIME cannot interleave, so stacking them costs rows
+        // for nothing, and most runs are sequential rather than concurrent. The band is placed as a WHOLE at
+        // the first depth where every one of its rows clears what is already there: moving rows independently
+        // would let one run's steps slide under another's container, which is the interleaving this prevents.
+        // Placed at the TOP only when everything already drawn has finished before this band begins — which
+        // is exactly the sequential case. Anything else appends. Allowing a band to start partway down would
+        // let it share a row with another run's sub-calls while overlapping that run's container, so the two
+        // trees would interleave by depth: the thing banding exists to prevent, arrived at sideways.
+        const bandStart = Math.min(...band.map(startOf));
+        const clearsEverything = ends.length > 0 && ends.every((e) => bandStart >= e);
+        let at = clearsEverything ? 0 : out.length;
+        // Out of room even appending: everything left CROWDS into the last row rather than being dropped. A
+        // bar drawn overlapping is a legibility problem; a run not drawn at all is a lie about what ran.
+        if (at >= out.length && out.length + rows.length > maxTotal) {
+            const last = out[out.length - 1] ?? (out.push([]), ends.push(0), out[0]);
+            for (const r of rows) last.push(...r);
+            continue;
+        }
+        rows.forEach((row, i) => {
+            const k = at + i;
+            if (!out[k]) { out[k] = []; ends[k] = 0; }
+            out[k].push(...row);
+            ends[k] = Math.max(ends[k], ...row.map(endOf));
+        });
+    }
+    return out;
+}
+
+/** One run's own rows — the greedy first-fit the whole lane used to get, applied within a band. */
+/** Which row-tier an event belongs to. The lane is a CONTAINMENT picture, so depth has to mean something:
+ *  a run CONTAINS its steps, so it goes above them; the machine's own spans are the ground the run happened
+ *  on, so they go below. Packing by start time alone made the order incidental — a container whose first
+ *  step began at the same instant landed UNDER its own children, and a model load could take the top row
+ *  from the run it was loading for.
+ *
+ *  A tier is only a preference between things drawn at the same time: within one tier, packing is unchanged
+ *  and two bars still share a row whenever they cannot overlap. */
+export function laneTier(kind: string): number {
+    if (kind === "run" || kind === "session") return 0;      // the container
+    if (kind === "gen" || kind === "tool" || kind === "embed") return 1;   // its own work
+    return 2;                                               // the machine: loads, serving, evictions
+}
+
+function packBand(placed: EventPlacement[], maxRows: number, minSpan: number): EventPlacement[][] {
     const rows: EventPlacement[][] = [];
-    const ends: number[] = [];   // per row: [run, to] as a comparable number
     // The END is the DRAWN end, not the true one: see MIN_EV_SPAN.
-    const key = (p: EventPlacement, edge: "from" | "to") =>
-        p.run + (edge === "from" ? p.from : Math.max(p.to, p.from + minSpan) + EV_ROW_GAP);
-    for (const p of [...placed].sort((a, b) => key(a, "from") - key(b, "from"))) {
-        let r = ends.findIndex((e) => e <= key(p, "from"));
+    const start = (p: EventPlacement) => p.run + p.from;
+    const end = (p: EventPlacement, pad: boolean) =>
+        p.run + Math.max(p.to, p.from + minSpan) + (pad ? EV_ROW_GAP : 0);
+    // A true INTERVAL test against the row's members, not a running end. The running end assumed events
+    // arrived in increasing start order, which stopped being true the moment they were sorted by tier — a
+    // load that abuts a step it precedes was then refused the row it belongs on, because a later-starting
+    // member had already pushed the end past it.
+    const fits = (row: EventPlacement[], p: EventPlacement, pad: boolean) =>
+        row.every((q) => end(q, pad) <= start(p) || end(p, pad) <= start(q));
+    // TIER first, then time. Sorting by time alone let whatever happened to begin earliest take the top row,
+    // which on a lane whose depth means containment is a wrong picture rather than an untidy one.
+    for (const p of [...placed].sort((a, b) =>
+        laneTier(a.event.kind) - laneTier(b.event.kind) || start(a) - start(b))) {
+        let r = rows.findIndex((row) => fits(row, p, true));
+        // Nothing fits WITH the separation reserved. Before opening a row, try again without it. Rows are the
+        // lane's scarcest resource and its only claim about time: two bars on separate rows say they OVERLAP.
+        // Spending a row to buy a bar 0.4% of clearance therefore asserts an overlap that isn't there, which
+        // is the same misreading the separation exists to prevent, arrived at from the other side. This is the
+        // ordinary case rather than an edge one — a model LOAD ends exactly where the block it precedes
+        // begins, so every load abutted its own step and was pushed below it.
+        if (r < 0) r = rows.findIndex((row) => fits(row, p, false));
         if (r < 0) {
             if (rows.length >= maxRows) r = rows.length - 1;   // out of rows: crowd the last one rather than drop the event
-            else { rows.push([]); ends.push(0); r = rows.length - 1; }
+            else { rows.push([]); r = rows.length - 1; }
         }
         rows[r].push(p);
-        ends[r] = Math.max(ends[r], key(p, "to"));
     }
+    // Each row back in time order: it is packed by tier, and a row read left to right should be in the order
+    // the things on it happened.
+    for (const row of rows) row.sort((a, b) => start(a) - start(b));
     return rows;
 }
 
@@ -812,6 +1332,13 @@ export function placeEvents(runs: { t: number }[][], events: ResourceEvent[], gr
 /** An annotation on the time axis — a run starting, a model loading or being evicted, a context reload.
  *  Kept separate from the samples because events are instants while samples are a cadence, and because the
  *  event source (the debug bus) is independent of the poll. */
+/** The parts a span divides into. Named rather than inline because the surfaces that render a phase have to
+ *  be TOTAL over it: a tooltip that fell through to a default label shipped a model load's two halves as the
+ *  word "tool", which reads as a wrong fact rather than as a missing one. */
+// `boot` is an executor's COLD START — a sandbox fetching its runtime before the code runs. Like a model
+// load it is the step's wall time and none of the work you asked for, so it is drawn apart from `tool`.
+export type PhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "boot" | "dispatch" | "weights" | "context";
+
 export interface ResourceEvent {
     t: number;
     /** When it ENDED, for the kinds that have a duration. Absent → an instant (a vertical rule); present → a
@@ -822,7 +1349,12 @@ export interface ResourceEvent {
      *  the driver runs. It is NOT produced yet; the kind exists so that when it is, it renders and hovers like
      *  everything else instead of arriving as an unlabelled bar. Its whole point is that it OVERLAPS the
      *  driver's own events rather than following them, which the lane's row packing already handles. */
-    kind: "run" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
+    /** `aside` is a model call YOU triggered while reading — the code annotator, a summary. It belongs on the
+     *  timeline because it spent tokens on this box and takes time you can see, and it is a separate kind
+     *  because it is NOT part of the run: charging it to the run would make two runs incomparable on the
+     *  strength of how much someone poked at one of them. Drawn outlined rather than filled, for the same
+     *  reason. */
+    kind: "run" | "session" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note" | "serve" | "aside";
     label: string;
     model?: string;
     /** This event's own id, and the event that SPAWNED it. A delegated sub-call — a vision reader, an
@@ -834,7 +1366,10 @@ export interface ResourceEvent {
     /** Where this happened, so a click can go there: a session hash, and the step within it. Events are
      *  CROSS-SESSION — a model load belongs to the machine's timeline, not to whichever chat provoked it — so
      *  the reference is how the lane gets you back to the one that did. */
-    ref?: { hash: string; seq?: number };
+    /** Where clicking this span goes. `seq` names a STEP; without one it is a container, and `answer` says
+     *  WHICH of the session's answers it ends at — a session holds one per run, so without it every run
+     *  clicked through to the same final answer. */
+    ref?: { hash: string; seq?: number; answer?: number };
     /** A composite span's PHASES, in order, each ending at `until`. A tool step is one block because it is one
      *  step and you reason about its parts together — but the parts are different kinds of time and must look
      *  different: the model generating the call, the human deciding whether to allow it, and the tool actually
@@ -849,8 +1384,23 @@ export interface ResourceEvent {
      *  `queue`/`net` subdivide a REMOTE tool's time the same way, and for the same reason — because the
      *  executor reported its own numbers. What it said it spent evaluating is `tool`, what it spent getting
      *  started is `queue`, and whatever is left of OUR wall clock is `net`: the network and the far end's
-     *  overhead. A local tool is all `tool`, which is exactly true rather than a fallback. */
-    phases?: { kind: "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net"; until: number }[];
+     *  overhead. A local tool is all `tool`, which is exactly true rather than a fallback.
+     *
+     *  `weights`/`context` split a LOAD, and only when the server reported the boundary. They are not
+     *  "loading" and "warming up": the second half ALLOCATES, and on a long-context model it allocates most
+     *  of the footprint — measured as a second memory step some seconds after the weights land, immediately
+     *  before the model will serve. So the span says "resident at 4s, usable at 10s", which is a readiness
+     *  fact and the explanation a reader otherwise lacks for a memory trace that went flat while they waited. */
+    phases?: { kind: PhaseKind; until: number }[];
+    /** What a model LOAD moved into memory, as the server measured it: `loadBytes` is the whole load,
+     *  `weightsBytes` the first half — so the context is the difference. Only a patched Ollama reports them
+     *  (`size_vram` on the `load.weights` and `load.complete` edges).
+     *
+     *  They differ from the DEVICE's own step by the CUDA context floor (~0.69 GiB per card), which is
+     *  agreement rather than drift: the device figure includes the driver context, the model's does not.
+     *  Do not reconcile the two to zero. */
+    loadBytes?: number;
+    weightsBytes?: number;
     /** This span has NOT FINISHED: `until` is where it had reached when the snapshot was taken, not where it
      *  ended. Only ever set by an `eventsFrom` given a `now` — a surface drawing live. It exists so the UI can
      *  say "still going" rather than drawing a bar whose right edge looks like a measured end. */
@@ -872,6 +1422,9 @@ export interface ResourceEvent {
          *  into model work and box latency, which are not the same kind of thing and cannot be compared
          *  between two models while they are one number. */
         promptEvalMs?: number;
+        /** How long the model took to LOAD before this call could start (`load_duration`). Inside `wallMs`,
+         *  so anything deriving "network" from the wall clock has to subtract it — see the tooltip. */
+        loadMs?: number;
     };
 }
 

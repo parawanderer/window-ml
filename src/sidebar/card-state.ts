@@ -18,11 +18,15 @@ export const cardDetail = signal(true);                    // multi-run: tabbed 
 export const cardCollapsedSet = signal<Set<string>>(new Set());   // run hashes collapsed to a toast (finished cards)
 export const cardDismissedSet = signal<Set<string>>(new Set());   // run hashes the user dismissed (× on a card)
 export const cardSteerHash = signal<string>("");   // a LIVE run whose HUD card is showing the inline steer box (orb → "Steer this run…")
+/** Has this run's HUD card been folded to its pill? */
 export const isCardCollapsed = (h: string): boolean => cardCollapsedSet.value.has(h);
+/** Has this run's card been dismissed? Dismissal is per RUN, so a new one still shows. */
 export const isCardDismissed = (h: string): boolean => cardDismissedSet.value.has(h);
+/** Fold or unfold one run's card, remembering it for that run. */
 export const setCardCollapsed = (h: string, v: boolean): void => {
     const s = new Set(cardCollapsedSet.value); v ? s.add(h) : s.delete(h); cardCollapsedSet.value = s;
 };
+/** Dismiss one run's card — it does not come back for that run, and does not suppress the next. */
 export const dismissCardRun = (h: string): void => {
     const s = new Set(cardDismissedSet.value); s.add(h); cardDismissedSet.value = s;
     if (cardSelectedHash.value === h) cardSelectedHash.value = "";   // let the reconciler auto-pick the next
@@ -36,7 +40,12 @@ export const composerElement = signal<ElementContext | null>(null);   // right-c
 export const composerTarget = signal<{ mode: "new" } | { mode: "append"; hash: string }>({ mode: "new" });
 export const composerMaxSteps = signal(20);         // step budget for a UI-started run (persists across opens)
 export const STEP_BUDGETS = [10, 20, 50];           // the segmented presets in the composer
-export const composerStream = signal(true);         // stream the model's thinking live for a UI-started run — ON by default for Commander (you want to SEE it work); toggle off per-run. Persists across opens. (Console ml.agent stays default-off — the primitive is unchanged.)
+// Stream the model's thinking live for a UI-started run. ALWAYS on for the Commander: a run you start from
+// the HUD is one you are watching, so the reactive mode is the only one that makes sense there — the toggle
+// that used to sit in the composer bar had one useful setting and cost a button. Kept as a signal because it
+// is what the run is started with, and it is the seam a control would come back through if one is ever
+// wanted. (Console `ml.agent` stays default-off — the primitive is unchanged.)
+export const composerStream = signal(true);
 export const composerStarting = signal(0);          // timestamp: a UI run was sent, awaiting its first event (bridge pill)
 // Per-call model pick for a UI-started run. "" = follow the configured default (so switching the default
 // from the dropdown just keeps this on it). A non-"" value overrides the model FOR THIS RUN ONLY — the
@@ -65,6 +74,7 @@ export function setDefaultModel(id: string): void {
     composerModelOpen.value = false;
 }
 export const orbHover = signal(false);              // hovering the working orb → it stretches into a labelled capsule
+/** Runs whose card title we have already asked the utility model for — one attempt each, success or not. */
 export const cardTitleTried = new Set<string>();
 
 // A live, not-yet-decided approval gate (mirrors PendingNote's blocked check).
@@ -75,11 +85,14 @@ export const isPendingGate = (hash: string, st: AgentStep): boolean =>
 // A run is TERMINAL once its turn settled (not mid-turn): a follow-up run() keeps the prior summary, so
 // the status guard is what stops a stale answer showing instead of the working orb.
 export const runIsDone = (s: Session): boolean => s.status !== "pending" && (s.summary != null || !!s.error || !!s.cancelled);
+/** Is this run WAITING ON YOU — a gate open with no decision yet? What makes a card demand attention
+ *  rather than merely report. */
 export const runIsPending = (s: Session): boolean => (s.steps || []).some(st => isPendingGate(s.hash, st));
 // The runs the card cares about: non-silent agent runs the user hasn't dismissed. A silent run
 // (ml.agent({ silent })) shows no card (approvals still surface, handled per-run below). Stable tab
 // order by createdTs so tabs don't reshuffle as runs emit.
 export const cardWorthy = (s: Session): boolean => s.kind === "agent" && !s.agentConfig?.silent && !isCardDismissed(s.hash);
+/** The runs the HUD should show, oldest first — not dismissed, and worth a card. */
 export const cardRuns = (): Session[] => [...sessionMap.values()].filter(cardWorthy).sort((a, b) => a.createdTs - b.createdTs);
 // The run whose card is showing. STICKY (badge-don't-steal): keep the current selection while it's still
 // card-worthy — a new concurrent run adds a tab, it never hijacks the view. Auto-pick only when nothing

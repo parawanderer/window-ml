@@ -20,6 +20,7 @@ import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpEval, cdpScreensh
 import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
+import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -358,7 +359,11 @@ const pendingPrints = new Map<string, { html: string; timer: ReturnType<typeof s
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
 // chunk the offscreen doc forwards can be relayed to the RIGHT page. Set when a streaming PYTHON_EXEC starts,
 // deleted when it resolves. Only populated for opt-in streaming runs (a bounded, short-lived map).
-const pyStreamTabs = new Map<string, number>();
+/** streamId → where its live stdout goes. A TAB id relays through that tab's content script (a page's
+ *  `ml.pythonExec`, i.e. the agent's tool); NULL means the caller was one of our OWN surfaces — the sidebar's
+ *  Python bench — which is not reachable that way and is broadcast to instead. Both callers ask for the same
+ *  worker tee; only the last hop differs. */
+const pyStreamTabs = new Map<string, number | null>();
 // The same, for a server tool's frames: streamId (the page's requestId) → tabId, so a frame reaches the
 // page that asked for it and no other.
 const serverToolTabs = new Map<string, number>();
@@ -677,7 +682,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // Durable resume: snapshot the run NOW (before the first step) + after each step (the checkpoint dep),
         // so an SW evicted mid-run rehydrates from storage. Cleared when the run settles (finally).
         persistRun(runId, { p, tabId, messages: resumeMessages || [], sub: snapSub() });
-        const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities }));
+        // `remote` has to survive into the loop's ToolMeta: it is what makes a remote tool's output CITABLE
+        // (`meta?.remote` in agent-loop), and it cannot be recovered from the name — the name is generated
+        // from the server's own bundle, so no hardcoded list can hold it. Dropping it here made the whole
+        // feature page-path-only, silently: the tool ran, streamed and rendered exactly as it should, and
+        // only reading the pointer back faulted with "nothing has been captured in this run".
+        const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities, ...(t.remote ? { remote: t.remote } : {}) }));
         const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
         // Cross-origin navigation consent: origins this run may navigate to WITHOUT re-prompting — seeded
@@ -793,7 +803,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             resumed: resurrected || undefined,   // the sidebar can mark it "resumed after interruption"
             config: {
                 system: p.systemPrompt, customSystem: false,
-                tools: p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, vision: t.capabilities.includes("vision"), description: t.description, parameters: t.parameters, summary: t.summary })),
+                tools: p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, vision: t.capabilities.includes("vision"), description: t.description, parameters: t.parameters, summary: t.summary, ...(t.remote ? { remote: t.remote } : {}) })),
                 maxSteps: p.maxSteps, think: p.think, env: true, vision: null, hints: null, unattended: p.unattended, silent: p.silent,
                 stream: p.stream,
             },
@@ -1034,7 +1044,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                         // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):
                         // the loop injects it into the model's next turn (pushToolImages).
-                        return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images };
+                        return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs };
                     } finally {
                         pendingGrants.delete(tabId);   // grants were for THIS approved call's sub-ops only
                         if (onStream) delegateStreams.delete(runId);   // the call is done — stop routing live chunks to it
@@ -1240,10 +1250,18 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     }
                 }
             }
-            // LIVE stdout streaming (opt-in): record streamId→tab so a PY_STDOUT chunk reaches this page.
+            // LIVE stdout streaming (opt-in): record where this run's chunks go. The discriminator is the
+            // sending FRAME's own url, not `sender.tab` — the overlay sidebar is an extension iframe INSIDE a
+            // tab, so it has one, and relaying its chunks through that tab's content script would post them
+            // to the page instead of to the bench that asked. `sender.url` is set by Chrome and a page cannot
+            // forge it.
             const streamId: string | undefined = message.payload?.stream ? message.requestId : undefined;
-            if (streamId && sender.tab?.id != null) pyStreamTabs.set(streamId, sender.tab.id);
-            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId };
+            if (streamId) {
+                const fromSurface = (sender.url || "").startsWith(chrome.runtime.getURL(""));
+                if (fromSurface) pyStreamTabs.set(streamId, null);
+                else if (sender.tab?.id != null) pyStreamTabs.set(streamId, sender.tab.id);
+            }
+            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(message.payload?.env ? { env: true } : {}) };
             const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
             attempt()
                 .catch((err) => {
@@ -1286,8 +1304,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     if (message.type === "PY_STDOUT") {
         // A live stdout chunk from the offscreen Pyodide host → relay to the run's page (keyed by streamId), which
         // resolves it as a PYTHON_EXEC_RESPONSE progress event to the awaiting ml.pythonExec (→ the tool's ctx.stream).
+        if (!pyStreamTabs.has(message.streamId)) return false;
         const tabId = pyStreamTabs.get(message.streamId);
-        if (tabId != null) chrome.tabs.sendMessage(tabId, { type: "PYTHON_STREAM", requestId: message.streamId, chunk: message.chunk, ts: message.ts }).catch(() => { /* page gone → drop */ });
+        const chunk = { type: "PYTHON_STREAM", requestId: message.streamId, chunk: message.chunk, ts: message.ts };
+        // A SURFACE (the bench) is an extension context, so the chunk goes out on the runtime channel every
+        // such context hears; it is filtered by requestId at the other end, which is unique per run. A PAGE
+        // is reached the long way, through its content script.
+        if (tabId == null) chrome.runtime.sendMessage(chunk).catch(() => { /* nobody listening → drop */ });
+        else chrome.tabs.sendMessage(tabId, chunk).catch(() => { /* page gone → drop */ });
         return false;
     }
     if (message.type === "SERVER_TOOL_EXEC") {
@@ -1589,6 +1613,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     defaultModelVision: config.defaultModelVision,
                     utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
                     autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
+                    serverToolsOff: config.serverToolsOff || [], commanderServerTools: config.commanderServerTools || [],
                     autoApproveSameOriginAuth: config.autoApproveSameOriginAuth, autoApproveSelfSource: config.autoApproveSelfSource,
                     pierceClosedShadow: config.pierceClosedShadow, cdp: config.cdp,
                     groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
@@ -1621,6 +1646,27 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             .then(config => modelCapabilities(config, (message.payload && message.payload.model) || config.model))
             .then(caps => sendResponse({ data: caps }))
             .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "DUMP_EVENTS") {
+        // `ml.__events()` — everything the panel derives its timeline FROM, in one object, so a lane that
+        // draws something impossible can be reproduced instead of described. Deliberately the raw INPUTS
+        // rather than the drawn events: the derivation (`eventsFrom` + `machineEventFrom`) is pure and
+        // shared, so a fixture built from these exercises the real thing rather than a snapshot of its
+        // output. Exposes nothing the page cannot already see — the debug stream is what the page itself
+        // emitted, and the frames are machine capacity, no URL and no key.
+        (async () => {
+            const tabId = sender.tab?.id;
+            sendResponse({ data: {
+                capturedAt: Date.now(),
+                tabId: tabId ?? null,
+                debug: tabId != null ? (debugBuffer.get(tabId) || []) : [],
+                frames: recentFrames(),
+                stream: resourceStreamStatus(),
+                ps: await listLoadedModels().catch(() => null),
+                info: await fetchOllamaInfo().catch(() => null),
+            } });
+        })();
         return true;
 
     } else if (message.type === "OLLAMA_PS") {
@@ -1784,6 +1830,14 @@ function resetDebug(tabId: number): void {
     const ports = devtoolsPorts.get(tabId);
     if (ports) for (const p of ports) { try { p.postMessage({ reset: true }); } catch { /* port closing */ } }
 }
+
+// The resource panel's live feed. ONE connection to the server's event stream per worker, fanned out to
+// every open panel — see sw-events.ts, which also owns the reconnect and the backfill that makes an evicted
+// worker cost latency rather than history.
+chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== "ml-resource") return;
+    subscribeResourceEvents(port);
+});
 
 chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "ml-devtools") return;

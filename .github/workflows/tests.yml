@@ -142,8 +142,26 @@ jobs:
   tools:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 so the CSS ratchet below can diff against the merge base. Without it the checkout is
+      # shallow, the base ref is missing, and the check SKIPS — quietly, which is the worst of both.
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - run: python3 -m unittest discover -s openwebui/tests -v
+      # The component index has to be able to FIND what a change adds, or the next person rebuilds it —
+      # this repo has grown a duplicate pointer chip, a fourth drag grip and a second view-return signal
+      # exactly that way. No node_modules needed: it is plain node reading files.
+      - name: Every sidebar export is documented
+        run: node scripts/components.mjs --undocumented
+      # CSS is a RATCHET, not a rule: 300+ existing classes have no comment and a check that ships red is
+      # one people learn to scroll past. Only classes a PR adds under a new family are asked about.
+      - name: Every new CSS family is documented
+        run: |
+          # No extra fetch: `fetch-depth: 0` above already has every ref, and a `--depth=1` fetch here would
+          # SHALLOW the base ref and break the merge-base it exists to find.
+          base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")
+          if [ -z "$base" ]; then echo "no merge base — skipping the CSS ratchet"; exit 0; fi
+          node scripts/components.mjs --new-css "$base"
 
   build:
     runs-on: ubuntu-latest

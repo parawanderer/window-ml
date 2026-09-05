@@ -13,6 +13,10 @@ import type { ResourceEvent } from "../resource-model";
 /** The little a session must expose for these to work. */
 export interface UsageSource {
     hash: string;
+    /** What this session IS. Only an AGENT session carries this — a chat leaves it unset — so the container
+     *  is a run when it says "agent" and a session otherwise. The bar reads "run · <model>" for an agent,
+     *  which is simply untrue of a `ml.chat()`: there is no run, and the lane should not assert one. */
+    kind?: "chat" | "agent" | "embed";
     /** The model the run/chat resolved to — the fallback owner of any usage a turn doesn't name itself. */
     model?: string | null;
     /** When the run STARTED and when it was last heard from. A step's timestamp is when it FINISHED, so a run
@@ -20,10 +24,20 @@ export interface UsageSource {
      *  through then sits outside the run that caused it. */
     createdTs?: number;
     lastTs?: number;
+    /** Where each run ENDED. An answer terminates a run; the next turn starts a new one. Without these the
+     *  lane can only draw one container per session, which is a claim that a conversation is one piece of
+     *  work. `atStep` is the step it answered at, which is how the steps are divided between runs. */
+    answers?: { ts?: number; atStep?: number }[];
     turns?: { ts?: number; model?: string | null; usage?: TokenUsage | null }[];
     /** A model call in flight RIGHT NOW. The ONLY stamp for it: a step's `ts` is when the step FINISHED, so
      *  without this a generation is invisible until it is over and then appears back-dated. */
     liveTurn?: { step: number; startedTs: number; phases?: GenPhase[] } | null;
+    /** Model calls YOU triggered while READING this session — the code annotator, an on-demand summary.
+     *  Drawn on the lane because they spent tokens on this box and took visible time, and kept out of the
+     *  run's cost because they are not the run's work: charging them would make two runs incomparable on
+     *  the strength of how much someone poked at one. Carrying no `usage` is how that is enforced rather
+     *  than remembered. */
+    asides?: { t: number; ms: number; label: string; model?: string; seq?: number }[];
     steps?: {
         seq?: number; step?: number; ts?: number;
         tool?: string;
@@ -34,9 +48,11 @@ export interface UsageSource {
         awaitingApproval?: boolean;
         /** How long the tool itself ran (the loop measures it around the dispatch, excluding the gate). */
         toolMs?: number;
+        /** Plumbing between the model call returning and the tool starting — see AgentStep.dispatchMs. */
+        dispatchMs?: number;
         /** What a REMOTE executor said IT spent. `toolMs` is our wall clock around the whole dispatch, so it
          *  also contains the network; this is what lets the two be drawn apart. */
-        remoteMs?: { durationMs: number; queuedMs?: number } | null;
+        remoteMs?: { durationMs: number; queuedMs?: number; bootMs?: number } | null;
         /** How long the approval gate was open — the human's time, measured separately for exactly that
          *  reason: it is the step's wall clock but not the machine's work. */
         approveMs?: number;
@@ -132,8 +148,57 @@ export function genPhases(from: number, genMs: number, marks?: GenPhase[]): NonN
  *   FINISHED work is returned, which is what anything durable wants: an export must not contain a span whose
  *   right edge is "when the file was written".
  */
+/** A session's RUNS. A run is a set of turns terminating in an ANSWER — not the whole session, which is what
+ *  this drew for a long time: one container bar spanning every turn of a conversation, so the widest thing on
+ *  screen (and the one every hover, double-click and scope-to-span reads off) meant "this browsing session"
+ *  rather than "this piece of work". A three-turn conversation is three runs.
+ *
+ *  The boundary is the one the transcript already segments by (`buildRunBlocks`, `answers[].atStep`), derived
+ *  here from the answers directly rather than through that builder: it is shaped for rendering, refuses a
+ *  single-answer session, and the lane needs only the extents. Steps after the last answer are a run still
+ *  going, and a session with no answer yet is one open run. */
+export function runBlocksOf(s: UsageSource): { from: number; until: number; steps: NonNullable<UsageSource["steps"]>; index: number; last: boolean }[] {
+    const steps = (s.steps || []).filter((st) => !!st.ts);
+    const answers = (s.answers || []).slice().sort((a, b) => (a.atStep ?? 0) - (b.atStep ?? 0));
+    const blocks: { from: number; until: number; steps: typeof steps; index: number; last: boolean }[] = [];
+    let prev = -Infinity;
+    const push = (until: number, mine: typeof steps, index: number, last: boolean) => {
+        const stamps = mine.map((st) => st.ts!).filter(Boolean);
+        // The FIRST run starts when the session did; a later one has no stamp of its own before its first
+        // step finished, so it starts at the previous run's end — a follow-up begins when you asked for it.
+        const from = index === 0 ? Math.min(s.createdTs || Infinity, ...stamps) : (blocks.at(-1)?.until ?? Math.min(...stamps));
+        if (!Number.isFinite(from)) return;
+        blocks.push({ from, until: Math.max(until, ...stamps, from), steps: mine, index, last });
+    };
+    for (let i = 0; i < answers.length; i++) {
+        const boundary = answers[i].atStep ?? Infinity;
+        push(answers[i].ts || 0, steps.filter((st) => (st.step ?? 0) > prev && (st.step ?? 0) <= boundary),
+             i, i === answers.length - 1 && !steps.some((st) => (st.step ?? 0) > boundary));
+        prev = boundary;
+    }
+    const trailing = steps.filter((st) => (st.step ?? 0) > prev);
+    // Steps past the last answer are a run in progress. With no answers at all, that is every step — the
+    // ordinary shape of a run you are watching.
+    if (trailing.length || !blocks.length) push(s.lastTs || 0, trailing, blocks.length, true);
+    return blocks;
+}
+
+/** THE EVENT TIMELINE — what happened, when, derived from what sessions already record. Spans run
+ *  BACKWARDS from a finish stamp (the timestamp we hold is the end), a tool step is ONE event with
+ *  PHASES rather than three, and a model load is its own event because "slow" and "not there yet" are
+ *  different answers. Pass `now` for in-flight work; omit it for a durable document. */
 export function eventsFrom(sessions: readonly UsageSource[], now?: number): ResourceEvent[] {
     const out: ResourceEvent[] = [];
+    // A reader's own model calls. Emitted with NO cost and NO parent: they are not part of any step's
+    // lineage, so hovering a step must not light them and they must not appear inside the run's totals.
+    const asidesOf = (s: UsageSource) => {
+        for (const a of s.asides || []) {
+            if (!a.t || !(a.ms > 0)) continue;
+            out.push({ t: a.t, until: a.t + a.ms, kind: "aside", label: a.label,
+                       ...(a.model ? { model: a.model } : {}),
+                       ref: { hash: s.hash, ...(a.seq != null ? { seq: a.seq } : {}) } });
+        }
+    };
     const costOf = (u: TokenUsage): ResourceEvent["cost"] => {
         const s = runStats([u]);
         return {
@@ -143,6 +208,10 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
             ...(u.evalMs != null ? { evalMs: u.evalMs } : {}),
             ...(u.genMs != null ? { wallMs: u.genMs } : {}),
             ...(u.promptEvalMs != null ? { promptEvalMs: u.promptEvalMs } : {}),
+            // Carried so the tooltip can take it OUT of the wall clock: a call that triggered a load has the
+            // whole load inside its wall time, and what is left after subtracting only generation and prompt
+            // eval was being reported as network — 70.8s of it, on a real box.
+            ...(u.loadMs != null ? { loadMs: u.loadMs } : {}),
         };
     };
     const call = (ts: number | undefined, u: TokenUsage | null | undefined, model: string | null | undefined,
@@ -166,7 +235,17 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
         }
     };
     for (const s of sessions) {
-        const runId = `run:${s.hash}`;
+        asidesOf(s);
+        // Which RUN a step belongs to. A session is a sequence of runs (turns ending in an answer), so a
+        // child's container is the block its step falls in — parenting everything to one session-wide id is
+        // what made the lane draw a conversation as a single piece of work.
+        const blocks = s.kind === "agent" ? runBlocksOf(s) : [];
+        const runIdOf = (step?: number): string => {
+            if (!blocks.length) return `run:${s.hash}`;
+            const i = blocks.findIndex((b) => b.steps.some((st) => (st.step ?? 0) === (step ?? -1)));
+            return `run:${s.hash}:${i >= 0 ? i : blocks.length - 1}`;
+        };
+        const runId = runIdOf();
         for (const t of s.turns || []) call(t.ts, t.usage, t.model || s.model, { hash: s.hash });
         const steps = s.steps || [];
         // A turn's USAGE rides its thought record, not the tool call it decided on: the loop emits the
@@ -194,32 +273,47 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
                 const turnU = st.usage ?? (folded.has(st.step ?? 0) ? turnUsage.get(st.step ?? 0)!.usage : null);
                 const genMs = turnU?.genMs ?? turnU?.evalMs ?? 0;
                 const waitMs = st.approveMs ?? 0;
-                const from = st.ts - st.toolMs - waitMs - genMs;
-                // Three kinds of time, in the order they happened: the model, the human, the tool. Only the
-                // first and last are work; the middle is a person deciding, and it is often the largest.
+                // PLUMBING between the model finishing and the tool starting. Counted in the block's extent
+                // rather than left out: the start is reconstructed by subtracting the parts we know about, so
+                // an unmeasured part shifts the whole block LATER than the work happened — which, on an axis
+                // shared with the memory trace, draws a block after the memory movement it caused.
+                const dispatchMs = st.dispatchMs ?? 0;
+                const from = st.ts - st.toolMs - waitMs - genMs - dispatchMs;
+                // Four kinds of time, in the order they happened: the model, the plumbing, the human, the
+                // tool. Only the first and last are work; the middle two are a step getting from one to the
+                // other, and one of them is a person deciding, which is often the largest of all.
                 const phases: NonNullable<ResourceEvent["phases"]> = [];
                 // The model's own stretch subdivides further on a streamed call — thinking, then the tool-call
                 // fragments, and back again if it interleaved.
                 if (genMs > 0) phases.push(...genPhases(from, genMs, turnU?.genPhases));
-                if (waitMs > 0) phases.push({ kind: "wait", until: from + genMs + waitMs });
+                if (dispatchMs > 0) phases.push({ kind: "dispatch", until: from + genMs + dispatchMs });
+                if (waitMs > 0) phases.push({ kind: "wait", until: from + genMs + dispatchMs + waitMs });
                 // A REMOTE tool splits further, and only because it reported its own numbers: what it spent
                 // evaluating, what it spent getting started, and — by subtraction — what the network cost.
                 // Drawn network-FIRST: the request has to get there before anything else happens, and the
                 // return leg is folded in with it because nothing measures the two halves separately.
                 const rm = st.remoteMs;
-                const toolStart = from + genMs + waitMs;
+                const toolStart = from + genMs + dispatchMs + waitMs;
                 if (rm && rm.durationMs >= 0 && st.toolMs != null && rm.durationMs <= st.toolMs) {
-                    const q = Math.max(0, Math.min(rm.queuedMs ?? 0, st.toolMs - rm.durationMs));
-                    const net = Math.max(0, st.toolMs - rm.durationMs - q);
-                    if (net > 0) phases.push({ kind: "net", until: toolStart + net });
-                    if (q > 0) phases.push({ kind: "queue", until: toolStart + net + q });
+                    // A COLD START comes first and is drawn first, for the same reason a model's `load` is:
+                    // it is the step's wall time but not the work you asked for, and a first python_exec that
+                    // spends four seconds fetching a runtime looks identical to a slow script without it.
+                    // A PHASE rather than its own event, because unlike a model load this happens INSIDE the
+                    // dispatch `toolMs` already measures — a separate span in front would draw it twice.
+                    const spare = st.toolMs - rm.durationMs;
+                    const boot = Math.max(0, Math.min(rm.bootMs ?? 0, spare));
+                    const q = Math.max(0, Math.min(rm.queuedMs ?? 0, spare - boot));
+                    const net = Math.max(0, spare - boot - q);
+                    if (boot > 0) phases.push({ kind: "boot", until: toolStart + boot });
+                    if (net > 0) phases.push({ kind: "net", until: toolStart + boot + net });
+                    if (q > 0) phases.push({ kind: "queue", until: toolStart + boot + net + q });
                 }
                 phases.push({ kind: "tool", until: st.ts });
                 const stepId = `step:${s.hash}:${st.seq ?? st.step ?? 0}`;
                 out.push({
                     t: from, until: st.ts, phases, kind: "tool",
                     label: st.tool, tool: st.tool, model: s.model || undefined,
-                    id: stepId, parent: runId,
+                    id: stepId, parent: runIdOf(st.step),
                     ref: { hash: s.hash, seq: st.seq },
                     ...(turnU ? { cost: costOf(turnU) } : {}),
                 });
@@ -249,7 +343,10 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
             }
             // Folded into the tool block above → drawing it again here would double the same seconds.
             if (!st.tool && folded.has(st.step ?? 0) && turnUsage.get(st.step ?? 0) === st) continue;
-            call(st.ts, st.usage, s.model, { hash: s.hash, seq: st.seq }, `step:${s.hash}:${st.seq ?? st.step ?? 0}`, runId);
+            // `gen:`, not `step:`. A generation record carries no `seq`, so the id fell back to its STEP
+            // number — and in a later run a TOOL with that seq minted the identical string, so hovering one
+            // lit the other and clicking went to the wrong place. Two numbering spaces cannot share a prefix.
+            call(st.ts, st.usage, s.model, { hash: s.hash, seq: st.seq }, `gen:${s.hash}:${st.step ?? 0}`, runIdOf(st.step));
         }
         // ── IN FLIGHT ────────────────────────────────────────────────────────────────────────────────
         // Everything above is history: it is derived from a step's FINISH stamp, so none of it exists until
@@ -263,7 +360,7 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
             if (lt && lt.startedTs <= now) {
                 out.push({ t: lt.startedTs, until: now, open: true, kind: "gen",
                            label: s.model ? `${s.model} · generating` : "generating", model: s.model || undefined,
-                           id: `live:${s.hash}`, parent: runId, ref: { hash: s.hash },
+                           id: `live:${s.hash}`, parent: runIdOf(lt.step), ref: { hash: s.hash },
                            phases: genPhases(lt.startedTs, now - lt.startedTs, lt.phases) });
             }
             for (const st of steps) {
@@ -275,33 +372,74 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
                 out.push({ t: st.ts, until: now, open: true, kind: "tool",
                            label: waiting ? `${st.tool || "tool"} · awaiting approval` : `${st.tool || "tool"} · running`,
                            tool: st.tool, model: s.model || undefined,
-                           id: `step:${s.hash}:${st.seq ?? st.step ?? 0}`, parent: runId,
+                           id: `step:${s.hash}:${st.seq ?? st.step ?? 0}`, parent: runIdOf(st.step),
                            ref: { hash: s.hash, seq: st.seq },
                            phases: [{ kind: waiting ? "wait" : "tool", until: now }] });
             }
         }
-        // The run itself, so a generation can be read against the turn that contained it.
+        // The container(s). An AGENT session draws one per RUN — a set of turns ending in an answer — because
+        // that is the unit of work: a three-turn conversation is three runs, and drawing one bar across all of
+        // them makes the widest shape on screen (the one every hover, double-click and scope-to-span reads
+        // off) mean "this browsing session". A chat or an embed session has no such structure and keeps one.
         const stamps = steps.map((st) => st.ts).filter((t): t is number => !!t);
-        // Bounded by the session's own start/end where they exist: a step stamp is an END, so the run would
-        // otherwise begin after its first call finished.
-        if (s.createdTs) stamps.push(s.createdTs);
-        if (s.lastTs) stamps.push(s.lastTs);
-        if (stamps.length > 1) {
-            // The run's own cost is the sum of its steps — a container bar with nothing to read is just a
-            // shape, and this is the one place the whole turn's spend is visible against the memory trace.
-            const runCost = runStats(steps.map((st) => st.usage));
-            const live = now != null && (s.liveTurn || steps.some((st) => st.pending));
+        const containers = s.kind === "agent"
+            ? blocks.map((b) => ({ from: b.from, until: b.until, steps: b.steps, id: `run:${s.hash}:${b.index}`,
+                                   index: b.index, last: b.last }))
+            : [{ from: Math.min(...[...stamps, s.createdTs].filter((t): t is number => !!t)),
+                 until: Math.max(...[...stamps, s.lastTs].filter((t): t is number => !!t)),
+                 steps, id: `run:${s.hash}`, index: 0, last: true }];
+        for (const c of containers) {
+            // Inverted extents are unusable; EQUAL ones are not. A run whose whole span falls inside one
+            // millisecond is a real instant, and the lane widens a too-short event for visibility anyway —
+            // skipping it instead would silently drop the container that everything inside it is parented to.
+            if (!Number.isFinite(c.from) || !Number.isFinite(c.until) || c.until < c.from) continue;
+            // The run's own cost is the sum of ITS steps — a container bar with nothing to read is just a
+            // shape, and this is the one place a run's whole spend is visible against the memory trace.
+            const runCost = runStats(c.steps.map((st) => st.usage));
+            // Only the LAST run of a session can still be going; an earlier one ended at its answer.
+            const live = c.last && now != null && (s.liveTurn || c.steps.some((st) => st.pending));
             // A live run's container must reach `now`, or the open spans inside it stick out past the bar that
             // is supposed to contain them. Only the END is extended: a run STARTED when it started, and letting
             // `now` into the minimum would make a clock that disagrees with the run's own stamps move its
             // beginning — which is how a skewed reading turns into a span that runs backwards.
-            const until = Math.max(...stamps, ...(live ? [now] : []));
-            out.push({ t: Math.min(...stamps), until, kind: "run", ...(live ? { open: true as const } : {}),
-                       label: s.model ? `run · ${s.model}` : "run", model: s.model || undefined,
-                       id: runId, ref: { hash: s.hash },
+            const until = live ? Math.max(c.until, now!) : c.until;
+            // A container is a RUN only when the session IS an agent run. Testing for `kind === "chat"`
+            // instead never fired: the reducer sets `kind` on an agent session and leaves it UNSET on a chat,
+            // so every container stayed a run and the lane's counter credited an embedding model with runs it
+            // never had. Absence of the marker is the chat case, not a third state.
+            const noun = s.kind === "agent" ? "run" : s.kind === "embed" ? "embed" : "chat";
+            out.push({ t: c.from, until, kind: s.kind === "agent" ? "run" : "session",
+                       ...(live ? { open: true as const } : {}),
+                       // Numbered only when there is more than one, so an ordinary single-run session reads
+                       // the way it always did rather than gaining a "1 of 1".
+                       label: `${noun}${containers.length > 1 ? ` ${c.index + 1}/${containers.length}` : ""}${s.model ? ` · ${s.model}` : ""}`,
+                       model: s.model || undefined,
+                       // Clicking a run opens ITS answer, not the session's last one.
+                       id: c.id, ref: { hash: s.hash, ...(s.kind === "agent" ? { answer: c.index } : {}) },
                        ...(runCost.calls ? { cost: { inTokens: runCost.inTokens, outTokens: runCost.outTokens,
                                                      tokPerSec: runCost.tokPerSec, genBasis: runCost.genBasis } } : {}) });
         }
     }
     return out.sort((a, b) => a.t - b.t);
+}
+
+
+/** DROP A LOAD WE ONLY INFERRED WHEN THE SERVER REPORTED THE SAME ONE.
+ *
+ *  There are two sources for "the model was being loaded" and they are not alternatives: `load_duration` on
+ *  the API response, which every server sends, and `load.start`/`load.complete` on the event stream, which
+ *  only a patched Ollama sends. With the stream carrying, BOTH described the same load and the lane drew it
+ *  twice — one bar under another, and the kind-filter counting "loads 5" for three real loads. The reported
+ *  one wins: it is measured at both edges rather than reconstructed backwards from a finish stamp, and it
+ *  carries the weights/context split, which the inferred one cannot have.
+ *
+ *  Matched on MODEL AND OVERLAP rather than on a start instant. The two are derived from different clocks —
+ *  ours, running backwards from when the response landed, against the server's own — so they agree on which
+ *  load they mean and never on exactly when it began. */
+export function dropInferredLoads(inferred: ResourceEvent[], reported: ResourceEvent[]): ResourceEvent[] {
+    const loads = reported.filter((e) => e.kind === "load");
+    if (!loads.length) return inferred;
+    const overlaps = (a: ResourceEvent, b: ResourceEvent) =>
+        a.t < (b.until ?? b.t) && (a.until ?? a.t) > b.t;
+    return inferred.filter((e) => !(e.kind === "load" && loads.some((r) => r.model === e.model && overlaps(e, r))));
 }

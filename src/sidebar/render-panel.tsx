@@ -4,18 +4,29 @@
 // Extracted from app.tsx; leans on the shared primitives in ./ui-kit.
 import type { ComponentChildren } from "preact";
 import { GLYPH, RESOLVED_LABEL, rungLabel, rungMeta } from "./fetch-ladder";
+import { IconChevron } from "./icons";
+import { scrollToStepSeq } from "./answer-render";
 import { useState, useRef, useEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { RenderDescriptor, LocateSubstep, TableSource } from "../contract";
+import type { RenderDescriptor, LocateSubstep, TableSource, CodeRevision } from "../contract";
+import { codeDiff, diffStat } from "../diff";
 import { elementReference } from "../dom";
-import { rev, view, sessionMap, outMaxH, showOutTimes } from "./store";
-import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, hourNow, armHourTick, dayBreaks } from "./timestamps";
-import { markdown, truncate, pretty } from "./format";
+import { pyFormat, lineChanged } from "../py-format";
+import { lineMapBetween } from "../line-map";
+import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, config, lsSet, BENCH_CODE_KEY, surface, codeLineNumbers, openBench } from "./store";
+import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmtDur, hourNow, armHourTick, dayBreaks } from "./timestamps";
+import { markdown, truncate, pretty, highlight } from "./format";
+import { codeNotes, notesState, notesHidden, fetchLineNotes, toggleLineNotes } from "./summaries";
+import { Prose } from "./prose";
+import { notesByLine } from "./annotate";
 import {
-    openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText,
+    openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText, stepKey, displaySource, cursorTipOn, PointerChip, TipText,
     highlightToken, highlightEl, clearHighlight, tokenHover, pickedHover,
 } from "./ui-kit";
 
+/** A tool's returned DOM ELEMENTS, as a hoverable list. Each row carries the same stateless
+ *  `clickSelector` the model was handed, so hovering outlines the node on the page and "copy reference"
+ *  yields something that actually resolves. */
 export function RenderElements({ items }: { items: { path: string; text?: string; index?: number }[] }) {
     const single = items.length === 1;   // one element → the #0 badge is noise; just show the element
     return (
@@ -31,7 +42,7 @@ export function RenderElements({ items }: { items: { path: string; text?: string
                 ]);
                 return (
                     <div class="r-el" key={it.index ?? i}
-                        title={isTok ? undefined : "right-click to copy a reference"}
+                        {...(isTok ? {} : cursorTipOn("Right-click to copy a document.querySelector(…) for this element."))}
                         onPointerEnter={() => (isTok ? highlightToken(it.path) : highlightEl(it.path))} onPointerLeave={clearHighlight}
                         onContextMenu={isTok ? undefined : menu}>
                         {single ? null : <span class="r-el-idx">#{it.index ?? i}</span>}
@@ -43,6 +54,8 @@ export function RenderElements({ items }: { items: { path: string; text?: string
         </div>
     );
 }
+/** A plain TABLE from a `table` render descriptor — the simple one. A DataFrame gets `PyDfTable`
+ *  instead, which is the spreadsheet-shaped view with sorting, resizing and an index gutter. */
 export function RenderTable({ columns, rows }: { columns: string[]; rows: (string | number | null)[][] }) {
     return (
         <div class="r-table-wrap">
@@ -115,11 +128,76 @@ const PY_MODE = {
 // copy-CSV. Zero-dep (no grid library — it's a capped debug preview). Human-only, so it shows
 // up to PY_DF_ROWS rows, not the model's cap.
 const PY_DF_ROWS = 200;
-const csvField = (v: string | number | null): string => {
-    const s = v == null ? "" : String(v);
+/** One DataFrame cell as text. A pandas column can legitimately hold a dict or a list — `dict(per_q)` in a
+ *  cell is an ordinary thing to write — and `String()` renders those as `[object Object]`, which is a wrong
+ *  answer printed in the place the reader is looking for the right one. Serialised as JSON instead, which is
+ *  what the value IS by the time it reaches here (the sandbox returns through `json.dumps`).
+ *
+ *  Exported and pure so it is testable: this shipped for as long as it did because nothing asserted on the
+ *  text of a non-scalar cell. */
+/** The producer's marker for a cell it could not represent — set in python-runtime.ts, where the real type
+ *  is still known. Without it an arbitrary object arrives from pandas as `{}`, which is a PLAUSIBLE value
+ *  and so reads as the truth. */
+const UNRENDERABLE = "__ml_unrenderable__";
+const markedType = (v: unknown): string | null => {
+    const rec = v as Record<string, unknown> | null;
+    return rec && typeof rec === "object" && typeof rec[UNRENDERABLE] === "string" ? (rec[UNRENDERABLE] as string) : null;
+};
+
+/** ONE DATAFRAME CELL as text — or NULL when it has no honest representation, which the table draws as a
+ *  marker naming the type. `[object Object]` and a bare `{}` are both a wrong fact printed exactly where
+ *  the reader is looking for the right one. The CSV copy goes through this too, so what you paste cannot
+ *  disagree with what you saw. */
+export const dfCell = (v: unknown): string | null => {
+    if (v == null) return "NaN";
+    if (typeof v === "object") {
+        if (markedType(v)) return null;                              // named by the producer, not guessed
+        // `null` means "no text for this" — NOT the string "null", which would be a value that isn't there.
+        // The caller renders a marker; the CSV writes an empty field, since a CSV has no way to say this.
+        let j: string | undefined;
+        try { j = JSON.stringify(v); } catch { return null; }        // circular
+        if (j === undefined) return null;                             // a function, a symbol
+        // AN EMPTY OBJECT FOR SOMETHING THAT IS NOT ONE. `Map`, `Set` and `Error` all stringify to `{}` —
+        // and unlike a function they survive a structured clone, so they genuinely arrive here. Printing
+        // `{}` for a Map of five entries is the same wrong-fact-in-the-right-place as `[object Object]`,
+        // just quieter. A plain `{}` or `[]` is left alone: there it is the truth.
+        const empty = j === "{}" || j === "[]";
+        // REALM-SAFE. `v.constructor === Object` is false for a plain object that came from another realm —
+        // an iframe, a jsdom window — which is precisely where this runs, so it would mark every ordinary
+        // `{}` as unrenderable. The brand check has no such problem.
+        const brand = Object.prototype.toString.call(v);
+        const plain = brand === "[object Object]" || brand === "[object Array]";
+        if (empty && !plain) return null;
+        return j;
+    }
+    return String(v);
+};
+
+/** What went wrong with a cell we could not render, and what it WAS — a type is most of the answer when the
+ *  question is "why is my column empty". Kept next to `dfCell` so the two cannot disagree about which values
+ *  are unrenderable. */
+export const dfCellType = (v: unknown): string => {
+    const marked = markedType(v);
+    if (marked) return marked;      // the Python type name, carried across from the sandbox
+    if (Array.isArray(v)) return "list";
+    if (v instanceof Date) return "datetime";
+    const ctor = (v as { constructor?: { name?: string } })?.constructor?.name;
+    return ctor && ctor !== "Object" ? ctor : typeof v;
+};
+const csvField = (v: unknown): string => {
+    // The same coercion as the table, or the copied CSV disagrees with what is on screen.
+    const s = v == null ? "" : (dfCell(v) ?? "");
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
-export function PyDfTable({ columns, rows }: { columns: string[]; rows: (string | number | null)[][] }) {
+/** A pandas DataFrame, drawn as JUPYTER draws one: numbered index gutter, sticky header, zebra rows,
+ *  right-aligned monospace numbers, NaN styling — plus click-to-sort, drag-to-resize, collapse and
+ *  copy-CSV. Zero-dep, no grid library. A cell with no JSON form renders as a marker naming its type
+ *  rather than as `[object Object]`.
+ *
+ *  `noCollapse` drops the hide/show control. Collapsing is for a LOG, where a wide table sits in a scrolling
+ *  transcript you are reading past; in the bench the tab strip already decides what is on screen, so a
+ *  second control for "don't show me this" is one that undoes the choice you just made with the first. */
+export function PyDfTable({ columns, rows, noCollapse }: { columns: string[]; rows: (string | number | null)[][]; noCollapse?: boolean }) {
     const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
     const [collapsed, setCollapsed] = useState(false);
     const [sort, setSort] = useState<{ c: number; dir: 1 | -1 } | null>(null);
@@ -152,27 +230,56 @@ export function PyDfTable({ columns, rows }: { columns: string[]; rows: (string 
     };
 
     return (
-        <div class="r-df">
-            <div class="r-df-bar">
-                <button class="r-df-btn" onClick={() => setCollapsed(v => !v)}>{collapsed ? "▸ show table" : "▾ hide table"}</button>
-                {!collapsed ? <button class="r-df-btn" onClick={copyCsv}>{copied ? "copied ✓" : "copy CSV"}</button> : null}
-            </div>
-            {collapsed ? null : <>
+        <div class={`r-df${noCollapse ? " r-df-bare" : ""}`}
+            {...(noCollapse ? { onContextMenu: (e: MouseEvent) => openCtxMenu(e, [{ label: copied ? "Copied ✓" : "Copy as CSV", run: copyCsv }]) } : {})}>
+            {/* NO BAR IN THE BENCH. `hide table` is meaningless where the tab strip already decides what is
+                on screen, and `copy CSV` alone then owned a whole row directly above the grid — the least
+                important thing in the pane in its most prominent place. Below the grid was worse: it either
+                floats at the pane's bottom, detached from the table it belongs to, or sits under it and gets
+                scrolled out of reach exactly when the table is big enough to want it. So the action moves to
+                where an action on a read surface belongs, the RIGHT-CLICK, through the panel's own menu
+                (`openCtxMenu`) — an iframe cannot put items in the browser's one. */}
+            {noCollapse ? null : (
+                <div class="r-df-bar">
+                    <button class="r-df-btn" onClick={() => setCollapsed(v => !v)}>{collapsed ? "▸ show table" : "▾ hide table"}</button>
+                    {!collapsed ? <button class="r-df-btn" onClick={copyCsv}>{copied ? "copied ✓" : "copy CSV"}</button> : null}
+                </div>
+            )}
+            {collapsed && !noCollapse ? null : <>
                 <div class="r-df-scroll">
                     <table class="r-df-table">
                         <thead><tr>
                             <th class="r-df-idx"></th>
                             {cols.map((c, j) => (
-                                <th key={j} style={widths[j] ? { width: `${widths[j]}px` } : undefined} onClick={() => cycleSort(j)} title="click to sort">
+                                <th key={j} style={widths[j] ? { width: `${widths[j]}px` } : undefined} onClick={() => cycleSort(j)} {...cursorTipOn("Click to sort by this column.")}>
                                     {c}{sort && sort.c === j ? <span class="r-df-sort">{sort.dir === 1 ? " ▲" : " ▼"}</span> : null}
-                                    <span class="r-df-resize" title="drag to resize" onPointerDown={(e: any) => startResize(j, e)} onClick={(e: any) => e.stopPropagation()} />
+                                    <span class="r-df-resize" aria-label="Drag to resize this column" {...cursorTipOn("Drag to resize this column.")} onPointerDown={(e: any) => startResize(j, e)} onClick={(e: any) => e.stopPropagation()} />
                                 </th>
                             ))}
                         </tr></thead>
                         <tbody>{shown.map(([origIdx, row], i) => (
                             <tr key={i}>
                                 <td class="r-df-idx">{origIdx}</td>
-                                {cols.map((_, j) => { const c = row[j]; return <td key={j} class={typeof c === "number" ? "r-td-num" : (c == null ? "r-td-nan" : undefined)}>{c == null ? "NaN" : String(c)}</td>; })}
+                                {cols.map((_, j) => {
+                                    const c = row[j];
+                                    const text = dfCell(c);
+                                    // A value with NO text is not an empty cell and must not look like one:
+                                    // `[object Object]` was the old answer and it is a wrong fact printed
+                                    // exactly where the reader is looking for the right one. The same marker
+                                    // an unresolvable pointer uses, because it is the same situation — we
+                                    // know something is there and cannot show it — and it says what it was.
+                                    return <td key={j} class={typeof c === "number" ? "r-td-num" : (c == null ? "r-td-nan" : undefined)}>
+                                        {/* Two different situations, and the tooltip says which: a value the
+                                            SANDBOX marked (it has no JSON form at all, and pandas would have
+                                            flattened it to an empty object) versus one that arrived here and
+                                            could not be serialised (circular, a Map, a Set). Naming the wrong
+                                            cause sends the reader looking in the wrong half of the system. */}
+                                        {text ?? <span class="tok-unresolved r-td-unrend"
+                                            {...cursorTipOn(markedType(c)
+                                                ? `This cell holds a ${dfCellType(c)}, which has no JSON form — without this marker it would show as an empty object, which is a value it is not. The run itself is unaffected; only this preview cannot show it.`
+                                                : `This cell holds a ${dfCellType(c)} that could not be serialised for display (circular, or not JSON-representable). The model received the value itself; only this preview cannot show it.`)}>unrenderable {dfCellType(c)}</span>}
+                                    </td>;
+                                })}
                             </tr>
                         ))}</tbody>
                     </table>
@@ -191,7 +298,182 @@ function tableSourceDesc(s: TableSource): { short: string; tip: string } {
         default: return { short: s.label, tip: `This data was extracted from a table on the current page (${s.label}).` };
     }
 }
-function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in" }> }) {
+/** One input dataframe, as a section that focus mode can fold once the step has settled. Its own component
+ *  because the fold has to seed a `details`' state (see `useFocusFold`) and hooks cannot live inside a map. */
+function PyInTable({ fold, label, children }: { fold: boolean; label: ComponentChildren; children: ComponentChildren }) {
+    const [open, setOpen] = useFocusFold(fold);
+    return (
+        <details class={`r-py-table r-py-sec${fold ? " focus-fold" : ""}`} open={open}
+            onToggle={(e: any) => setOpen(!!e.currentTarget.open)}>
+            <summary class="r-py-lbl">{label}</summary>
+            {children}
+        </details>
+    );
+}
+
+/** Which step a code block belongs to, and what it produced — everything the block needs to ask the
+ *  utility model about ITSELF. Threaded down from the step because a RenderDescriptor is serializable
+ *  data and knows nothing about the run it came from. Absent (the export, a preview) → no tools. */
+export interface CodeCtx { hash: string; seq: number; result?: string; }
+
+/** The affordances on a rendered code block: annotate it, show/hide those annotations, and get the source
+ *  somewhere you can run it. Deliberately quiet — half-opacity until the block is hovered, because a
+ *  toolbar competing with the code for attention is the opposite of what a code block is for. */
+function CodeTools({ ctx, lang, src }: { ctx: CodeCtx; lang: string; src: string }) {
+    const rv = rev.value;   // subscribe: notes land on a rev bump (the step is signal-memoized → won't)
+    const [flash, setFlash] = useState("");
+    const key = stepKey(ctx.hash, ctx.seq);
+    const notes = codeNotes.get(key);
+    const state = notesState.get(key);
+    const hasUtility = !!config.value.utilityModel.trim();
+    const say = (msg: string) => { setFlash(msg); setTimeout(() => setFlash(""), 1600); };
+    // The HUD card is a READING surface — an answer and the steps behind it, over the page. The bench is a
+    // debug tool on the panel's own navigation, which the card does not have: sending someone there from a
+    // corner card would either do nothing or replace what they were reading. Explain stays, because
+    // understanding the code IS what that card is for.
+    const python = lang === "python" && surface.value !== "card";
+    return (
+        <div class="code-tools" data-rev={rv}>
+            {flash ? <span class="code-tools-flash">{flash}</span> : null}
+            {/* One button, two roles. Before there are notes it ASKS; once they exist there is nothing
+                left to ask, so it becomes the show/hide the notes need. */}
+            {notes
+                ? <button class={`tt code-tool${notesHidden.has(key) ? "" : " on"}`} onClick={() => toggleLineNotes(key)}>
+                    <span>💡 notes</span>
+                    <span class="tt-pop wrap left" role="tooltip">{notesHidden.has(key) ? "Show" : "Hide"} the line notes. They are model-generated, so treat them as a gloss rather than an authority.</span>
+                </button>
+                : <button class="tt code-tool" disabled={!hasUtility || state === "loading"}
+                    onClick={() => fetchLineNotes(key, lang, src, ctx.result)}>
+                    <span>💡 {state === "loading" ? "reading…" : state === "error" ? "retry" : "explain"}</span>
+                    <span class="tt-pop wrap left" role="tooltip">{!hasUtility
+                        ? "Set a utility model in Settings to annotate code."
+                        : state === "error"
+                            ? "The utility model returned nothing usable. Ask again?"
+                            : "Annotate the interesting lines with the utility model, given this code and what it printed. Model-generated and approximate — a good-enough gloss, not a precise explanation."}</span>
+                </button>}
+            {python
+                /* The REFLOWED source, deliberately: it is the code that ran (py-format never changes a
+                   token) and it is what you are looking at, so what lands in the bench is what you pressed
+                   the button next to. `openBench` is shared with the toolbar button and honours the dock —
+                   this used to go straight to the full page, which is exactly the trip the drawer exists to
+                   stop, since you press this FROM a step in order to compare against that step. */
+                ? <button class="tt code-tool" onClick={() => openBench(src)}>
+                    <span>▶ bench</span>
+                    <span class="tt-pop wrap left" role="tooltip">Open this script in the Python bench, where you can edit it and run it against the same sandbox. Replaces whatever is in the bench now.</span>
+                </button>
+                : <button class="tt code-tool" onClick={() => { void copyText(src); say("copied"); }}>
+                    <span>copy</span>
+                    <span class="tt-pop wrap left" role="tooltip">Copy the source exactly as shown here — reflowed for reading, with the same tokens that ran.</span>
+                </button>}
+        </div>
+    );
+}
+
+/** The notes to draw on a block, or undefined when there are none / they are hidden. Reads `rev` so a
+ *  landed annotation repaints. */
+function notesForBlock(ctx: CodeCtx | undefined, rv: number): Map<number, string> | undefined {
+    void rv;
+    if (!ctx) return undefined;
+    const key = stepKey(ctx.hash, ctx.seq);
+    const notes = codeNotes.get(key);
+    return notes && !notesHidden.has(key) ? notesByLine(notes) : undefined;
+}
+
+/** WHAT CHANGED SINCE THE CALL THIS REVISES. The commonest loop in a run is: a code tool fails, the model
+ *  retries with a tweak, and the reader diffs two twenty-line blocks by eye to find the one line that moved.
+ *
+ *  Both sides are REFLOWED before comparing (the same `displaySource`/`pyFormat` the block itself draws
+ *  through), or pure spacing differences drown the real change — a model writes dense on purpose, and two
+ *  calls it wrote a minute apart are not spaced the same way.
+ *
+ *  The header says WHAT it is diffing against and takes you there, because a diff whose other side you
+ *  cannot see is half an answer. The model's own account of the change sits BESIDE the diff, marked as its
+ *  claim: it answers from what it MEANT to change, and the two disagree exactly when this is worth reading. */
+function CodeDiff({ revision, after, lang, hash, failed }: { revision: CodeRevision; after: string; lang: string; hash?: string; failed?: boolean }) {
+    // OPEN ONLY WHEN THE STEP FAILED. That is when "what did I change" is the question you are actually
+    // asking — a retry that WORKED is a step whose output you want, and pinning a diff open above it pushes
+    // that output out of the viewport to answer a question nobody asked. Collapsed it is one line, and the
+    // line still says what it revises and by how much, so nothing is hidden.
+    //
+    // Focus mode folds it either way: it reads the run as a conversation, and this is a debugger's question
+    // even on a failure. Seeded like every other focus fold (see useFocusFold) rather than bound to the
+    // signal, so a diff you opened stays open through the next poll.
+    // THE NUMBERS ONLY WHEN THEY LINE UP WITH SOMETHING. They earn their width because the new-side column
+    // is the same numbering the code block below draws — so a diff row, a margin note and the failure mark
+    // all name the same line and you can read straight down between them. With the block's own gutter off
+    // they line up with nothing, and are just width taken in a narrow panel. A failure turns that gutter on
+    // by itself (see `Code`), so the two can never disagree.
+    const nums = codeLineNumbers.value || !!failed;
+    const focus = focusMode.value;
+    const [open, setOpen] = useState(!!failed && !focus);
+    const seeded = useRef(focus);
+    if (seeded.current !== focus) { seeded.current = focus; setOpen(!!failed && !focus); }
+    const before = lang === "python" ? pyFormat(revision.before).text : displaySource(revision.before, lang, true);
+    const rows = useMemo(() => codeDiff(before, after), [before, after]);
+    // Nothing to show is not the same as nothing to say: a retry whose source is IDENTICAL is a fact worth
+    // stating, since the model believes it changed something.
+    const stat = rows ? diffStat(rows) : { added: 0, removed: 0 };
+    return (
+        <div class={`r-diff${open ? "" : " closed"}`}>
+            <div class="r-diff-head">
+                <button class={`r-diff-tri${open ? " open" : ""}`} onClick={() => setOpen(!open)} aria-expanded={open}>
+                    <IconChevron />
+                </button>
+                <span class="r-diff-lbl">revises</span>
+                {/* The pill IS the pointer, and it navigates — the same gesture a citation makes. The SHELL
+                    is the shared PointerChip, so a reference reads the same here as it does under a step:
+                    it was a CSS copy of that chip for a while, which is exactly how two surfaces start
+                    drawing the same thing differently.
+                    The LABEL is the model's own name for the output when it gave one, prefixed by the tool
+                    so `the q1+q2 totals` is not mistaken for a step title — and the raw pointer when it did
+                    not, because an id you can copy beats a name we invented. */}
+                <PointerChip cls="r-diff-ref"
+                    label={revision.label ? `${revision.tool}: ${revision.label}` : revision.ref}
+                    onClick={() => scrollToStepSeq(revision.seq, hash, "in")}
+                    tip={<>Go to the {revision.tool} call this revises{revision.label ? <> — the model called it "{revision.label}"</> : null}.</>} />
+                {rows
+                    ? <span class="r-diff-stat"><b class="r-diff-add">+{stat.added}</b> <b class="r-diff-del">−{stat.removed}</b></span>
+                    : <span class="r-diff-same">no change — the source is identical</span>}
+            </div>
+            {/* The model's CLAIM, always marked as one. It is never a substitute for the rows below it, and it
+                lives INSIDE the fold — collapsed, this has to be one line. */}
+            {open && revision.claim
+                ? <div class="r-diff-claim"{...cursorTipOn("The model's own account of what it changed. The diff below is computed from the two sources; this is not.")}>
+                    <span class="r-diff-claim-tag">the model says:</span> <Prose md={revision.claim} steps={sessionMap.get(hash || "")?.steps} hash={hash} /></div>
+                : null}
+            {open && rows
+                /* BOTH line numbers, old then new — the standard two-column gutter, and the reason it earns
+                   its width here is that the NEW column is the same numbering the code block below this one
+                   draws. So a diff row, a margin note and a failure mark all name the same line, and you can
+                   read straight down between them instead of counting. A row that exists on only one side
+                   leaves the other column blank, which is exactly the claim being made. */
+                ? <pre class={`code r-diff-body${nums ? " numbered" : ""}`}><code class="hljs">{rows.map((r, i) => r.kind === "gap"
+                    ? <span class="dline dline-gap" key={i}>{nums ? <><span class="dno" /><span class="dno" /></> : null}<span class="dsign" />
+                        <span class="dtext">{`⋮ ${r.skipped} unchanged line${r.skipped === 1 ? "" : "s"}`}</span>{"\n"}</span>
+                    : <span class={`dline dline-${r.kind}`} key={i}>
+                        {nums ? <>
+                            <span class="dno">{r.kind === "add" ? "" : r.a}</span>
+                            <span class="dno">{r.kind === "del" ? "" : r.b}</span>
+                        </> : null}
+                        <span class="dsign">{r.kind === "add" ? "+" : r.kind === "del" ? "−" : " "}</span>
+                        <span class="dtext" dangerouslySetInnerHTML={{ __html: highlight(r.text, lang) || "&nbsp;" }} />
+                        {"\n"}
+                    </span>)}</code></pre>
+                : null}
+        </div>
+    );
+}
+
+function PythonInRender({ d, live, failLine, ctx, failed }: { d: Extract<RenderDescriptor, { type: "python-in" }>; live?: boolean; failLine?: number | null; ctx?: CodeCtx; failed?: boolean }) {
+    const rv = rev.value;   // subscribe: a landed annotation repaints the block (retained via data-rev below)
+    const fmt = useMemo(() => pyFormat(d.code), [d.code]);
+    // WHERE IT BROKE, marked on the code rather than only in the traceback — the traceback tells you a
+    // number, and the number is only useful once you have found the line it names. Mapped through the
+    // formatter, so it survives the reflow.
+    const failAt = failLine != null ? (fmt.map[failLine] ?? failLine) : null;
+    const failNote = failLine != null && lineChanged(d.code, fmt, failLine)
+        ? `This line failed. It is shown reflowed for reading — in the code as written it was one longer line.`
+        : "This line failed.";
     return (
         <div class="r-python r-py-in">
             <div class="r-py-mode">Mode: <span class="tt"><span class="r-py-modeval">{PY_MODE[d.mode].label}</span><span class="tt-pop left" role="tooltip">{PY_MODE[d.mode].tip}</span></span></div>
@@ -201,19 +483,34 @@ function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in
             {(d.tables || []).map((t, i) => {
                 const src = tableSourceDesc(t.source);
                 const cols = t.columns?.length || t.rows?.[0]?.length || 0;
-                return <div key={i} class="r-py-table">
-                    <div class="r-py-lbl">
+                // A SECTION, like the Out block's, so focus mode can fold the input data once the step has
+                // settled — what a reader wants from a python step is the code and the answer, and the
+                // dataframe that went in is the debugger's half. Open everywhere else, so nothing is hidden
+                // from the view whose job is debugging.
+                return <PyInTable key={i} fold={!live} label={<>
                         input table → <b class="r-py-var">{t.name}</b>{t.rows ? ` (${t.rows.length} × ${cols})` : ""}
                         {" · "}
                         {t.source.kind === "sheet-external"
                             ? <SheetChip id={t.source.label} label={t.source.name || undefined} />   /* id → a friendly chip; name = the real sheet title */
                             : <span class="tt r-py-src"><span class="r-py-srcval">{src.short}</span><span class="tt-pop left" role="tooltip">{src.tip}</span></span>}
-                    </div>
+                </>}>
                     {t.rows ? <PyDfTable columns={t.columns || []} rows={t.rows} />
                         : <div class="dim r-py-more">loaded via pd.read_html (no clean row preview)</div>}
-                </div>;
+                </PyInTable>;
             })}
-            <Code text={d.code} lang="python" />
+            {/* The CITED cell for `:in`. A python step renders its inputs (image, dataframes) above the
+                source, and a citation that scrolled to the top of the step landed the reader on a table when
+                what they clicked was the code. The renderer declares it because only the renderer knows
+                which of its sections is the answer. */}
+            {/* REFLOWED for reading (see py-format.ts) — tokens untouched, so this is the code that ran. The
+                line MAP is published on the element rather than passed between descriptors: the In and the
+                Out are two independent RenderDescriptors rendered in two separate blocks, and threading one
+                through the other would couple them for the sake of one number. */}
+            {d.revision ? <CodeDiff revision={d.revision} after={fmt.text} lang="python" hash={ctx?.hash} failed={failed} /> : null}
+            <div class="code-block" data-cite="in" data-rev={rv} data-py-map={fmt.changed ? JSON.stringify(fmt.map) : undefined}>
+                {ctx ? <CodeTools ctx={ctx} lang="python" src={fmt.text} /> : null}
+                <Code text={fmt.text} lang="python" lineIds="pyline" markLine={failAt} markTitle={failNote} notes={notesForBlock(ctx, rv)} />
+            </div>
         </div>
     );
 }
@@ -267,7 +564,7 @@ export function TimedOutput({ text, marks }: { text: string; marks?: [number, nu
         if (ts != null) prevTs = ts;
         rows.push(
             <div class="r-ts-row" key={i}>
-                <span class={`r-ts${tip ? " hoverable" : ""}`} title={tip}>{repeat ? "" : label}</span>
+                <span class={`r-ts${tip ? " hoverable" : ""}`} {...(tip ? cursorTipOn(tip) : {})}>{repeat ? "" : label}</span>
                 <span class="r-ts-line">{line}</span>
             </div>,
         );
@@ -275,6 +572,9 @@ export function TimedOutput({ text, marks }: { text: string; marks?: [number, nu
     return <div class={`code r-timed${short ? " short" : ""}`}>{rows}</div>;
 }
 
+/** Captured output with the tail the MODEL NEVER RECEIVED marked. A tool clips its model-facing result
+ *  to a context budget while the UI keeps far more, so without this you would read the surplus as "what
+ *  the model saw". Everything past `seen` renders dimmed under an explicit label. */
 export function SeenSplit({ text, seen, live, marks }: { text: string; seen?: number; live?: boolean; marks?: [number, number][] }) {
     if (seen == null || seen >= text.length) return <TimedOutput text={text} marks={marks} />;
     return (
@@ -283,9 +583,9 @@ export function SeenSplit({ text, seen, live, marks }: { text: string; seen?: nu
             {/* While the tool is still RUNNING we already know where the model's cut will fall, so mark it as it
                 streams rather than springing it on you at the end — greyed, with a "?" that explains why. */}
             <div class={`r-unseen-lbl${live ? " live" : ""}`}
-                title={live
+                {...cursorTipOn(live
                     ? "Past this point the output is beyond the model's per-call output cap — it is still being captured for you, but it will NOT be part of the result sent to the model."
-                    : "The tool captured this, but it was clipped out of the result sent to the model (its output cap). The model never read it."}>
+                    : "The tool captured this, but it was clipped out of the result sent to the model (its output cap). The model never read it.")}>
                 {live ? "beyond the model's cutoff " : "↓ captured, but NOT sent to the model"}{live ? <span class="r-unseen-q">?</span> : null}
             </div>
             <div class="r-unseen"><TimedOutput text={text.slice(seen)} marks={marks?.map(([o, t]) => [o - seen, t] as [number, number])} /></div>
@@ -338,6 +638,40 @@ function rangesFor(root: HTMLElement, query: string, caseSensitive: boolean): Ra
 
 // Paint the matches (all + the current one) via the global highlight registry. A no-op where the API is
 // missing (jsdom / older engines) — find still counts and scrolls, it just doesn't tint.
+/** The nearest thing between a match and its cell that ACTUALLY scrolls sideways — or null when nothing
+ *  does. The cell is the wrong element to scroll: with wrapping off, the overflow lives on `code.hljs`
+ *  inside it, so adjusting the cell's own scrollLeft moves nothing at all.
+ *
+ *  Bounded by the cell so a match can never scroll the panel or the page out from under the reader, and
+ *  `> clientWidth + 1` because sub-pixel layout makes a non-scrolling element report a scrollWidth a hair
+ *  larger than its client width, which would otherwise pick a scroller that cannot scroll. */
+export function scrollerX(from: Node | null, bound: HTMLElement): HTMLElement | null {
+    let el: HTMLElement | null = (from && (from as Element).nodeType === 1
+        ? (from as HTMLElement) : (from?.parentElement ?? null));
+    while (el) {
+        if (scrollsX(el)) return el;
+        if (el === bound) return null;
+        el = el.parentElement;
+    }
+    return null;
+}
+
+/** Does this element actually SCROLL sideways — as opposed to merely containing something wider than
+ *  itself? Those are different questions and conflating them is a real bug: `scrollWidth > clientWidth` is
+ *  true of any block whose child overflows VISIBLY, so the walk stopped at a JSON-tree row and set
+ *  `scrollLeft` on something that does not scroll, while the cell that does stayed put. Nothing moved and
+ *  the find looked broken in precisely the case it had just been fixed for.
+ *
+ *  `hidden` counts: it clips visually but still accepts a programmatic `scrollLeft`, and the output cell was
+ *  exactly that until the wrap preference started reaching it. */
+function scrollsX(el: HTMLElement): boolean {
+    if (el.scrollWidth <= el.clientWidth + 1) return false;
+    // No computed style available (jsdom) → fall back to the overflow test alone, which is what the pure
+    // unit tests exercise. A missing style must not make this return "nothing scrolls" in a real browser.
+    const ov = typeof getComputedStyle === "function" ? getComputedStyle(el).overflowX : "auto";
+    return ov === "auto" || ov === "scroll" || ov === "hidden";
+}
+
 function paintFind(all: Range[], current: Range | null): void {
     const reg = (globalThis as any).CSS?.highlights;
     if (!reg) return;
@@ -360,7 +694,7 @@ function clearFindPaint(): void {
  *     it holds still so you can read, and resumes following the moment you return to the bottom.
  *  Deliberately children-based (not a section schema): each tool's sections legitimately differ (python has a
  *  DataFrame/LaTeX/image; exec has a console), while the CONTAINER behaviour is what's worth sharing. */
-export function OutputCell({ children }: { children: ComponentChildren }) {
+export function OutputCell({ children, text, corner, fill }: { children: ComponentChildren; text?: boolean; corner?: ComponentChildren; fill?: boolean }) {
     const box = useRef<HTMLDivElement>(null);
     const follow = useRef(true);                       // tail-follow armed? (parked at the bottom)
     const [dragH, setDragH] = useState<number | null>(null);   // a drag pins THIS cell; null → the configured cap
@@ -371,7 +705,11 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
     const [idx, setIdx] = useState(0);                 // which match is current
     const [count, setCount] = useState(0);
     const input = useRef<HTMLInputElement>(null);
-    const cap = dragH ?? outMaxH.value;
+    // `fill` gives up the cap and takes the height of whatever contains it. In the LOG a cell is capped so
+    // one step's output cannot swallow the transcript; in the BENCH the pane IS the cap — you dragged the
+    // divider to say how much you wanted — and a short box floating in a tall empty pane reads as output
+    // that got cut off. A drag still pins it either way: that is you overriding both.
+    const cap = dragH ?? (fill ? 0 : outMaxH.value);
 
     const [overflows, setOverflows] = useState(false);
     // Runs after EVERY render — i.e. on each streamed delta — so the newest line stays visible while following.
@@ -415,6 +753,21 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
         try {
             const box0 = el.getBoundingClientRect(), hit = r.getBoundingClientRect();
             el.scrollTop += (hit.top - box0.top) - el.clientHeight / 3;
+            // SIDEWAYS TOO, and not on the same element. With wrapping off a long line scrolls horizontally,
+            // but the scroller is `code.hljs` inside the cell (the highlight theme puts overflow-x there) —
+            // so a match to the right of the fold was painted and counted while the view never moved, which
+            // reads as the find being broken on exactly the lines you needed it for.
+            const sx = scrollerX(r.startContainer, el);
+            if (sx) {
+                const b = sx.getBoundingClientRect();
+                // Only if it is actually out of view, and only just far enough. Parking it at a fraction of
+                // the width the way the vertical does would yank an already-visible match sideways on every
+                // ↑/↓, which no editor does and which loses your place in the line.
+                const pad = Math.min(40, sx.clientWidth / 4);
+                const left = hit.left - b.left, right = hit.right - b.left;
+                if (left < pad) sx.scrollLeft += left - pad;
+                else if (right > sx.clientWidth - pad) sx.scrollLeft += right - (sx.clientWidth - pad);
+            }
         } catch { /* detached range → nothing to scroll to */ }
     };
     const jump = (delta: number): void => {
@@ -446,48 +799,372 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
         window.addEventListener("pointerup", up);
     };
     return (
-        <div class="r-outcell">
+        <div class={`r-outcell${fill ? " fill" : ""}`}>
             {/* Ctrl/Cmd+F opens an in-cell find (the cell is focusable so the shortcut is scoped to it, not the page). */}
             {findOpen ? (
                 <div class="r-find" role="search">
                     <input ref={input} class="r-find-q" value={q} placeholder="Find" spellcheck={false}
                         onInput={(e: any) => { setIdx(0); setQ(e.target.value); }} onKeyDown={onFindKey} />
-                    <button class={`r-find-case${cs ? " on" : ""}`} title="Match case" aria-pressed={cs}
+                    <button class={`r-find-case${cs ? " on" : ""}`} aria-label="Match case" {...cursorTipOn("Match case")} aria-pressed={cs}
                         onClick={() => { setIdx(0); setCs(v => !v); }}>Aa</button>
                     <span class="r-find-n">{q ? (count ? `${Math.min(idx, Math.max(count - 1, 0)) + 1} of ${count}` : "No results") : ""}</span>
-                    <button class="r-find-nav" title="Previous match" onClick={() => jump(-1)} disabled={!count}>↑</button>
-                    <button class="r-find-nav" title="Next match" onClick={() => jump(1)} disabled={!count}>↓</button>
-                    <button class="r-find-x" title="Close (Esc)" onClick={closeFind}>✕</button>
+                    <button class="r-find-nav" aria-label="Previous match" {...cursorTipOn("Previous match")} onClick={() => jump(-1)} disabled={!count}>↑</button>
+                    <button class="r-find-nav" aria-label="Next match" {...cursorTipOn("Next match")} onClick={() => jump(1)} disabled={!count}>↓</button>
+                    <button class="r-find-x" aria-label="Close find" {...cursorTipOn("Close (Esc)")} onClick={closeFind}>✕</button>
                 </div>
             ) : null}
-            <div class="r-outscroll" ref={box} tabIndex={0} onKeyDown={onKey} onScroll={onScroll}
+            {/* `text` marks a cell whose content is PLAIN OUTPUT — a console stream, a traceback — as opposed
+                to a rendered structure (a table, a JSON tree). Only those honour the wrap preference, because
+                only those have lines to leave unbroken; forcing `white-space: pre` on a table would be about
+                a different thing entirely. */}
+            {/* A CORNER CONTROL belongs to the CELL, not to its content — the copy button used to live inside
+                the scrolling element, so it slid away with the text and, on a wide line, off the edge
+                entirely. The find bar was already positioned out here for the same reason; anything you
+                reach for WHILE reading has to stay where you last saw it. */}
+            {corner ? <span class="r-outcorner">{corner}</span> : null}
+            <div class={`r-outscroll${text ? " r-outtext" : ""}`} ref={box} tabIndex={0} onKeyDown={onKey} onScroll={onScroll}
                 style={cap > 0 ? { maxHeight: `${cap}px` } : undefined}>{children}</div>
-            {overflows || dragH != null ? <div class="r-outgrip" role="separator" aria-label="Drag to resize this output" title="Drag to resize this output" onPointerDown={onGrab} /> : null}
+            {overflows || dragH != null ? <div class="r-outgrip" role="separator" aria-label="Drag to resize this output" {...cursorTipOn("Drag to resize this output")} onPointerDown={onGrab} /> : null}
         </div>
     );
+}
+
+/** A python traceback, with its user frames turned into links.
+ *
+ *  A traceback's whole content is a line number, so it is the one thing that must survive the rendered view
+ *  reflowing the code. Each `File "<python_exec>", line N` is mapped through the formatter's line map and
+ *  becomes a click target: it scrolls to the In block and pulses that line, the same green flash a cited
+ *  step gets, because it is the same gesture — "show me the thing this is about".
+ *
+ *  The DEEPEST user frame is where the failure actually happened, so it is marked; the frames above it are
+ *  the call path. Frames in `<exec>` are the prelude's own call site and are about nothing the user wrote —
+ *  they are dimmed rather than dropped, because the RAW view must stay recoverable and quietly deleting a
+ *  line of what the model received is exactly what the raw-view rule forbids.
+ *
+ *  The text itself is never rewritten. This is a rendering of it. */
+/** The In block's line map — original line → the line the READER sees, after the reflow that block draws.
+ *  ONE implementation, because there are now three consumers (the mark on the code, the number a JS failure
+ *  reports, and every frame of a python traceback) and three copies of this arithmetic would be three
+ *  chances to disagree about which line a failure was on. Null when nothing moved, which is also the answer
+ *  for a descriptor that is not code. */
+export function inLineMap(d: RenderDescriptor | undefined): number[] | null {
+    if (!d) return null;
+    if (d.type === "python-in") { const f = pyFormat(d.code); return f.changed ? f.map : null; }
+    if (d.type === "code") {
+        const shown = displaySource(d.text, d.lang, d.format, d.marks);
+        return shown === d.text ? null : lineMapBetween(d.text, shown);
+    }
+    return null;
+}
+/** The row a source line is drawn on. Identity when nothing moved — never null, because "we could not map
+ *  it" and "it did not move" produce the same right answer here. */
+export const shownLine = (map: number[] | null | undefined, line: number): number => map?.[line] ?? line;
+
+/** Show the line a failure NAMES, in the code block above it — the same gesture (and the same pulse) a
+ *  citation makes, because it is the same intent: show me the thing this is about. Lifted out of the python
+ *  traceback so a JS failure, which reports exactly one line and has no traceback to render, lands
+ *  identically instead of growing a second near-copy of this. */
+const jumpToLine = (line: number, isFail: boolean, from: Element) => {
+    // The map lives on the In block, published by the renderer that reflowed the code — so a line number
+    // written against the ORIGINAL source lands on the line that is actually on screen.
+    // Scoped from the CLICKED BUTTON, not from a ref on the block: the ref is null at click time here
+    // and a null scope silently falls back to the document, which is the bug being fixed wearing a
+    // disguise. The event's own target cannot be null — it is what was clicked.
+    const scope: Element | Document = from.closest(".astep") ?? from.closest(".bench-out") ?? document;
+    const holder = scope.querySelector("[data-py-map], [data-cite='in']");
+    const raw = holder?.getAttribute("data-py-map");
+    let shown = line;
+    if (raw) { try { const m = JSON.parse(raw) as number[]; if (m[line]) shown = m[line]; } catch { /* unmapped */ } }
+    const el = holder?.querySelector(`.cline[data-line="${shown}"]`);
+    if (!el) return;
+    // MARK FIRST, then scroll. The mark is the answer; the scroll is a convenience — and doing it the
+    // other way round means any environment where `scrollIntoView` is missing (jsdom, and anything
+    // embedding this in a stripped DOM) loses the answer to a failed nicety.
+    // RED for the line that failed, green for the rest of the call path. Green means "here is the thing
+    // you asked for"; on the failing line it would be the one colour the line is not, flashing over the
+    // red mark already there and saying the opposite of it.
+    const cls = isFail ? "cline-pulse-fail" : "cline-pulse";
+    el.classList.add(cls);
+    setTimeout(() => el.classList.remove(cls), 1400);
+    try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch { /* not every DOM has it */ }
+};
+
+function Traceback({ text, map }: { text: string; map?: number[] | null }) {
+    // SCOPED TO ITS OWN STEP, found by walking up from this element. A document-wide lookup finds the FIRST
+    // In block on the page, so with two failing steps open both tracebacks jumped into the first one's code —
+    // confidently, and at a line number that meant nothing there. Walking up needs no prop threaded through
+    // two renderers that otherwise know nothing about each other.
+    const rows = text.split("\n");
+    // Which rows name a user line, so the last of them can be called out as the failure.
+    const userRows = rows.map((r, i) => (/File "<python_exec>", line (\d+)/.test(r) ? i : -1)).filter((i) => i >= 0);
+    const deepest = userRows.length ? userRows[userRows.length - 1] : -1;
+    const jump = jumpToLine;
+    return (
+        <pre class="code tb"><code class="hljs">{rows.map((r, i) => {
+            // `_user` is the name of the wrapper the sandbox indents the code into — an implementation
+            // detail, and one that makes a perfectly correct frame read as nonsense ("line 5, in _user"
+            // looks like it is pointing at something internal, so the reader distrusts the number too).
+            // Renamed HERE and not in the traceback text: the raw view and the model's copy stay verbatim.
+            const r0 = r.replace(/, in _user$/, ", at the top level of your code");
+            // Split so the CONTROL is the whole frame reference — `File "<python_exec>", line 9` — and not
+            // the bare number. Two characters is a poor hit target, and the reference is the semantic unit:
+            // what you are clicking is the FRAME, so that is what should look clickable.
+            const m = /^(\s*)(File "<python_exec>", line )(\d+)(.*)$/.exec(r0);
+            if (!m) return <span class={`tbline${/File "<exec>"/.test(r) ? " dim" : ""}`} key={i}>{r0}{"\n"}</span>;
+            const line = Number(m[3]);
+            // As DRAWN, for the same reason ExecError does it: the block above is reflowed, so the
+            // traceback's own number names a row that is not the one it means. The raw view keeps the
+            // traceback verbatim — this is a rendering of it, and remapping the number is the whole
+            // difference between a rendering that helps and one that misdirects.
+            const at = shownLine(map, line);
+            return (
+                <span class={`tbline${i === deepest ? " tb-fail" : ""}`} key={i}>
+                    {m[1]}
+                    {/* The panel's own tooltip, not the native one: `title` waits about a second before it
+                        appears, which on something you are hovering to decide whether to click is long
+                        enough to have moved on. */}
+                    <span class="tt tb-line-wrap">
+                        <button class="tb-line" onClick={(e: MouseEvent) => jump(line, i === deepest, e.currentTarget as Element)}>{m[2]}{at}</button>
+                        <span class="tt-pop wrap" role="tooltip">{(i === deepest
+                            ? `Line ${at} — where it failed. Click to show it in the code above.`
+                            : `Line ${at}. Click to show it in the code above.`)
+                            + (at !== line ? ` The model wrote it as line ${line}; the code is reflowed for reading here.` : "")}</span>
+                    </span>
+                    {m[4]}{"\n"}
+                </span>
+            );
+        })}</code></pre>
+    );
+}
+
+/** HOW LONG IT RAN, under the output. A script's elapsed time is the one thing about it you cannot read off
+ *  the transcript — the timestamps either side include the model's own turn — and while it is still going it
+ *  is the difference between "slow" and "stuck".
+ *
+ *  Live, it ticks; finished, it is what the loop measured (`toolMs`, the tool's own wall clock, which is not
+ *  the step's: a human at an approval gate is the step's time and none of the machine's work). */
+/** A COLLAPSED step's live elapsed time. "running…" says a thing is alive; it does not say whether it has
+ *  been alive for two seconds or two minutes, which is the difference between waiting and going to look.
+ *  Silent under half a second, so an ordinary fast tool does not flash a number on its way past. */
+export function RunningFor({ since }: { since?: number }) {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        if (since == null) return;
+        // A tenth of a second, like the Out footer: visibly moving, and cleared on unmount or the interval
+        // keeps a jsdom window alive and the test runner never exits.
+        const id = setInterval(() => setNow(Date.now()), 100);
+        return () => clearInterval(id);
+    }, [since]);
+    const ms = since == null ? 0 : Math.max(0, now - since);
+    if (ms < 500) return null;
+    return <span class="astep-elapsed"> ({fmtDur(ms)})</span>;
+}
+
+/** HOW LONG A SCRIPT RAN, under its output — ticking while it is in flight, settled once it lands. A
+ *  first `python_exec` splits its COLD START from the script, because one figure would charge the code
+ *  for the seconds spent fetching a runtime. */
+export function RanFor({ live, ms, since, remote }: { live?: boolean; ms?: number; since?: number; remote?: { durationMs: number; bootMs?: number } | null }) {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        if (!live || since == null) return;
+        // A tenth of a second: fast enough that the number is visibly moving (which is the point — it says
+        // the thing is alive), slow enough to cost nothing. Cleared on unmount, or the interval keeps a
+        // jsdom window alive and the test runner never exits.
+        const id = setInterval(() => setNow(Date.now()), 100);
+        return () => clearInterval(id);
+    }, [live, since]);
+    if (live && since != null) return <div class="r-ranfor live">running… {fmtDur(Math.max(0, now - since))}</div>;
+    if (ms == null) return null;
+    // A COLD START is not the script. The first python_exec of a session spends seconds fetching Pyodide and
+    // its wheels before a line of the code runs, and a single figure charges the script for time it never
+    // spent — the same confusion a model's `load_duration` exists to settle. Shown only when this call is
+    // the one that paid for it: every later run is warm and has nothing to explain.
+    const boot = remote?.bootMs;
+    if (boot != null) return (
+        <div class="r-ranfor" {...cursorTipOn(`${fmtDur(boot)} starting the Python sandbox (downloading the runtime and its packages — once per session), then ${fmtDur(remote!.durationMs)} actually running your code. This call paid for the cold start; later ones will not.`)}>
+            ran in {fmtDur(ms)} — <b class="r-ranfor-part">{fmtDur(boot)}</b> cold start,{" "}
+            <b class="r-ranfor-part">{fmtDur(remote!.durationMs)}</b> script
+        </div>
+    );
+    return <div class="r-ranfor">ran in {fmtDur(ms)}</div>;
 }
 
 // A collapsible section of the python-out block (stdout / value / error / token). Same disclosure
 // pattern as the In:/Out: blocks — open by default, its label is the summary. A big stdout can be
 // folded away to get to the value.
-function PyOutSection({ label, cls, children }: { label: string; cls: string; children: ComponentChildren }) {
-    return <details class={`r-py-sec ${cls}`} open><summary class="r-py-lbl">{label}</summary>{children}</details>;
+/** Should this section start folded? Focus mode reads the run as a conversation, so a SETTLED python step's
+ *  inputs and its captured output fold — but the reader must still be able to open one, which rules out the
+ *  CSS hide the rest of focus mode uses. So it seeds the `details`' own state.
+ *
+ *  Re-seeded when the MODE changes and not on every render: binding `open` straight to the signal would slam
+ *  a section you had just opened shut on the panel's next poll, and never re-seeding would leave the fold not
+ *  applying until the step was re-mounted. */
+function useFocusFold(fold: boolean | undefined): [boolean, (v: boolean) => void] {
+    const focus = focusMode.value;
+    const [open, setOpen] = useState(!(fold && focus));
+    const seeded = useRef(focus);
+    if (seeded.current !== focus) { seeded.current = focus; if (fold) setOpen(!focus); }
+    return [open, setOpen];
 }
+
+function PyOutSection({ label, cls, children, cite, open = true, foldInFocus }: { label: string; cls: string; children: ComponentChildren; cite?: "in" | "out"; open?: boolean; foldInFocus?: boolean }) {
+    // `foldInFocus` is a CLASS, not a different `open`: focus mode is a CSS-only hide everywhere else (see
+    // the FOCUS MODE block), so the section keeps one real open/closed state and turning the mode off
+    // restores exactly what you left. A `details` whose openness depended on the mode would forget it.
+    const [shown, setShown] = useFocusFold(foldInFocus);
+    const isOpen = foldInFocus ? shown : open;
+    return <details class={`r-py-sec ${cls}${foldInFocus ? " focus-fold" : ""}`} open={isOpen}
+        onToggle={(e: any) => foldInFocus && setShown(!!e.currentTarget.open)}
+        {...(cite ? { "data-cite": cite } : {})}><summary class="r-py-lbl">{label}</summary>{children}</details>;
+}
+/** WHICH SECTIONS a python result actually has, in the order the log stacks them, with the labels the log
+ *  uses. Single-sourced because two surfaces compose them differently — the LOG stacks them as disclosures
+ *  (you read a step top to bottom) and the BENCH puts them behind tabs (you are iterating, and want one at a
+ *  time) — and a section that existed in one and not the other, or was called something else, would be a
+ *  reader wondering which surface is lying. The exclusivity rules are the interesting part: a returned
+ *  DataFrame supersedes the raw value, and an error supersedes any of them. */
+export type PyOutSectionId = "stdout" | "error" | "df" | "latex" | "value" | "image" | "token";
+/** Which sections a python result HAS, in the log's order and with the log's labels — shared by the step's
+ *  stacked disclosures and the bench's tab strip so neither can name or omit a section the other shows. */
+export function pyOutSections(d: Extract<RenderDescriptor, { type: "python-out" }>): { id: PyOutSectionId; label: string }[] {
+    const out: { id: PyOutSectionId; label: string }[] = [];
+    if (d.stdout) out.push({ id: "stdout", label: "stdout" });
+    if (d.error) out.push({ id: "error", label: "error" });
+    if (d.image) out.push({ id: "image", label: "image" });
+    if (d.token) out.push({ id: "token", label: "token" });
+    if (d.df && !d.error) out.push({ id: "df", label: "value (DataFrame)" });
+    else if (d.value != null && !d.image && !d.token && !d.error)
+        out.push(d.latex ? { id: "latex", label: "value (LaTeX)" } : { id: "value", label: "value" });
+    return out;
+}
+
+/** ONE section's BODY, with no disclosure or tab around it — the half both surfaces share. Keeping the
+ *  bodies here is what stops the bench growing a second, subtly different renderer for the same data. */
+function PyOutBody({ id, d, marks, lineMap, fill }: { id: PyOutSectionId; d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][]; lineMap?: number[] | null; fill?: boolean }) {
+    switch (id) {
+        case "stdout": return <OutputCell text fill={fill}><SeenSplit text={d.stdout!} seen={d.seen} marks={alignedMarks(marks, d.stdout!)} /></OutputCell>;
+        case "error": return <OutputCell fill={fill}><Traceback text={d.error!} map={lineMap} /></OutputCell>;
+        case "image": return <div class="r-image"><ClickableImg src={d.image!} alt="output image" /><div class="r-image-label">returned image</div></div>;
+        case "token": return <code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code>;
+        case "df": return <PyDfTable columns={d.df!.columns} rows={d.df!.rows} noCollapse={fill} />;
+        // A sympy return auto-flagged `latex` → typeset the value (display mode), not a raw code block.
+        case "latex": return <div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} />;
+        // In a cell like the output above it: a returned value can be as long as anything printed on the way
+        // there, and it is the half you most often want to search — so it is capped, scrollable and
+        // Ctrl+F-able by being wrapped, rather than by each section inventing its own.
+        case "value": return <OutputCell fill={fill}><Code text={String(d.value)} lang="json" /></OutputCell>;
+    }
+}
+
 // `python_exec`'s Out slot: captured stdout, then one of a returned image / a minted
 // @pt·@box token / the raw value / a Python traceback.
-function PythonOutRender({ d, marks }: { d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][] }) {
+function PythonOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: { d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null }) {
+    const sections = pyOutSections(d);
     return (
         <div class="r-python r-py-out">
             {/* Only the captured OUTPUT scrolls (and hosts the find bar) — the returned value/table/image sit
                 below it, always visible, like a notebook cell's result. */}
-            {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout"><OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell></PyOutSection> : null}
-            {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
-            {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
-            {d.error ? <PyOutSection label="error" cls="r-py-err"><Code text={d.error} lang="text" /></PyOutSection> : null}
-            {d.df && !d.error ? <PyOutSection label="value (DataFrame)" cls="r-py-val"><PyDfTable columns={d.df.columns} rows={d.df.rows} /></PyOutSection> : null}
-            {/* A sympy return auto-flagged `latex` → typeset the value (display mode), not a raw code block. */}
-            {d.latex && d.value != null && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value (LaTeX)" cls="r-py-val"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} /></PyOutSection> : null}
-            {d.value != null && !d.latex && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
+            {/* FOCUS MODE folds stdout — but only once the step has SETTLED. While it is still streaming the
+                output is the thing proving the run is alive, which is exactly what a reading mode should not
+                hide; `live` is what tells the two apart. Outside focus mode nothing folds: there you are
+                reading the console on purpose. */}
+            {/* The stdout section is NOT always there — it renders only when something was printed — so the
+                elapsed footer goes INSIDE it when it exists and after the last section when it does not.
+                Never both, and never an empty section conjured up to hold it: a container that exists only
+                to carry a footer is chrome pretending to be output. */}
+            {/* Which sections exist is `pyOutSections`, shared with the bench so the two surfaces cannot
+                disagree about what a result HAS; the composition around them is each surface's own. Only
+                the IMAGE is bare here — it is a picture, and a disclosure around a picture is a lid. */}
+            {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout" foldInFocus={!live}>
+                <PyOutBody id="stdout" d={d} marks={marks} />
+                <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} />
+            </PyOutSection> : null}
+            {d.image ? <PyOutBody id="image" d={d} /> : null}
+            {d.token ? <PyOutSection label="token" cls="r-py-token"><PyOutBody id="token" d={d} /></PyOutSection> : null}
+            {sections.filter((x) => x.id !== "stdout" && x.id !== "image" && x.id !== "token").map((x) => (
+                <PyOutSection key={x.id} label={x.label} cls={x.id === "error" ? "r-py-err" : "r-py-val"} cite="out">
+                    <PyOutBody id={x.id} d={d} lineMap={lineMap} />
+                </PyOutSection>
+            ))}
+            {/* No console to hang it off — so it goes after the last section instead. */}
+            {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} /> : null}
+        </div>
+    );
+}
+
+/** THE BENCH'S OUTPUT PANE — the same section renderers a step's Out uses, composed for a workbench instead
+ *  of a log.
+ *
+ *  The two surfaces are opposite reading modes, which is why the composition differs while the renderers do
+ *  not. A step is a row in a SCROLLING transcript: you read it top to bottom, so stacked disclosures are
+ *  right and a folded stdout is a kindness. The bench is a LOOP — edit, run, look, edit — in a pane whose
+ *  height you already had to fight the editor for, so stacking meant the output you ran the script to see
+ *  arrived collapsed behind two clicks, every single run.
+ *
+ *  THE STRIP IS AT THE TOP of the pane, under the divider, rather than along the bottom edge: the divider and
+ *  the label of the pane it resizes then stay together, and the strip does not drift away from its content as
+ *  the pane grows. (DevTools' drawer and VSCode's panel both do this; PyCharm's bottom tabs work because they
+ *  belong to the tool WINDOW rather than to one pane.)
+ *
+ *  NOTHING IS HIDDEN SILENTLY, which is the one thing tabs are worse at than disclosures: a disclosure at
+ *  least advertises that something exists. So every section a result has gets a tab, an ERROR is marked and
+ *  steals the selection, a chosen tab survives the next run when it still exists (or the loop would reset
+ *  your view on every run), and a script that produced nothing SAYS so rather than showing an empty pane. */
+export function PyBenchOut({ d, running, marks }: { d: Extract<RenderDescriptor, { type: "python-out" }> | null; running?: boolean; marks?: [number, number][] }) {
+    const sections = d ? pyOutSections(d) : [];
+    // ONLY A CLICK PINS A TAB. The distinction is load-bearing rather than fussy: while a script is running,
+    // the only section that exists is the stdout streaming in, so an auto-selection would "stick" to stdout
+    // and the value you ran the script for would then land behind a tab you never chose. What survives the
+    // next run is the tab YOU picked.
+    const [pinned, setPinned] = useState<PyOutSectionId | null>(null);
+    useEffect(() => {
+        // Nothing to pick from — and the pin is LEFT ALONE rather than cleared. Every run clears the result
+        // first, so this fires between runs; clearing here wiped your choice in that gap and the next result
+        // re-picked the default, which looked exactly like the pin not working at all.
+        if (!sections.length) return;
+        // A NEW FAILURE takes the selection — you were on the value because that is what you are iterating
+        // on, and the moment it breaks that is no longer the question. It pins, so clicking away to read what
+        // was printed first holds.
+        if (sections.some((x) => x.id === "error")) { setPinned("error"); return; }
+        setPinned((p) => (p && sections.some((x) => x.id === p) ? p : null));
+    }, [d]);
+    // With nothing pinned: the LAST section, which is the returned value — stdout comes first, and what you
+    // ran the script for is the answer, not the printing on the way to it.
+    const active = sections.find((x) => x.id === pinned) ?? sections[sections.length - 1];
+    return (
+        <div class="bench-outpane">
+            {/* ALWAYS the strip, even for one section — and even while the script is still running, when the
+                only section is the stdout streaming in. Drawing it only at two-or-more meant the pane
+                RESHAPED at the moment the result landed: a bare label became a tab row, everything under it
+                moved, and the surface you had been watching for the last ten seconds turned into a different
+                one. The header of a pane should not depend on what happens to be in it. */}
+            <div class="bench-tabs" role="tablist">
+                {sections.map((x) => (
+                    <button key={x.id} role="tab" aria-selected={x.id === active?.id}
+                        class={`bench-tab${x.id === active?.id ? " on" : ""}${x.id === "error" ? " err" : ""}`}
+                        onClick={() => setPinned(x.id)}>{x.label}</button>
+                ))}
+                {/* While it runs and nothing has printed yet there is no section to name — but the strip
+                    still has to be the same height, or it appears from nowhere with the first line. */}
+                {!sections.length ? <span class="bench-tab dim" aria-hidden="true">output</span> : null}
+            </div>
+            <div class="bench-outbody">
+                {/* The states that are not a section, each said out loud — an empty pane is
+                    indistinguishable from a bench that did not run. There is no "nothing yet" case: until
+                    the first run this whole pane is absent and the editor has the bench to itself. */}
+                {running && !d ? <span class="dim">running…</span>
+                    : !d ? null
+                        : !active ? <span class="dim">(ran — no output, no return)</span>
+                            : <>
+                                <PyOutBody id={active.id} d={d} marks={marks} fill />
+                            </>}
+            </div>
+            {/* NO TIMING ROW AT ALL. A settled "ran in 3.0s" is a number nobody came to the bench to read, and
+                it left the finished pane looking different from the one you had been watching; keeping only
+                the live clock was worse, because then the pane gained and lost a row on every run. Liveness
+                is already said where you are looking when you start a run — the ▶ in the header becomes a
+                spinner. (The log still reports the duration for a `python_exec` step, cold start broken out,
+                which is where that question actually gets asked.) */}
         </div>
     );
 }
@@ -495,13 +1172,86 @@ function PythonOutRender({ d, marks }: { d: Extract<RenderDescriptor, { type: "p
 // `exec`'s Out slot — the JS twin of PythonOutRender, so a JS run reads like the same notebook cell:
 // captured console output, then the returned value (or the thrown error). Reuses PyOutSection so both
 // tools share one look; "console" (not "stdout") because that's what the JS side actually captured.
-function ExecOutRender({ d, marks }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][] }) {
+/** A `code` In block — `exec`'s beautified JS, and anything else that renders as source. It publishes the
+ *  same `data-cite` anchor and `data-py-map` the Python one does, so a stack trace beside it maps and jumps
+ *  identically: the mapping is a property of SHOWING REFORMATTED CODE, not of the language. */
+/** A CODE BLOCK WITH ITS AFFORDANCES — the highlighted source plus `CodeTools` (explain / bench / copy), the
+ *  retry diff when the call revises another, and a failing line marked and mapped through the reflow.
+ *
+ *  Exported so the ANSWER's embedded citations draw code the same way a step does: `![the code](@tool:…:in)`
+ *  used to render a bare `Code`, so the same block was explainable in one surface and inert in the other,
+ *  purely because of where it was cited. Pass `ctx` to get the tools; without it this is just the block. */
+export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDescriptor, { type: "code" }>; failLine?: number | null; ctx?: CodeCtx; failed?: boolean }) {
+    const rv = rev.value;   // subscribe: a landed annotation repaints the block (retained via data-rev below)
+    const [map, setMap] = useState<number[] | null>(null);
+    const shownFail = failLine != null ? (map?.[failLine] ?? failLine) : null;
+    // The annotator has to number the lines the READER sees, and `Code` beautifies JS internally — so the
+    // source it will draw is derived here rather than assumed to be `d.text`.
+    const shown = displaySource(d.text, d.lang, d.format, d.marks);
+    return (
+        <div class="code-block" data-cite="in" data-rev={rv} data-py-map={map ? JSON.stringify(map) : undefined}>
+            {d.revision ? <CodeDiff revision={d.revision} after={shown} lang={d.lang === "python" ? "python" : "javascript"} hash={ctx?.hash} failed={failed} /> : null}
+            {ctx ? <CodeTools ctx={ctx} lang={d.lang === "python" ? "python" : "javascript"} src={shown} /> : null}
+            {/* Said out loud, because the rendered text is not always what the caller typed: `exec` expands
+                pointer macros before running, so a reader comparing this against the raw args would
+                otherwise conclude the log is lying to them. */}
+            {d.note ? <div class="rp-note">{d.note}</div> : null}
+            {/* The same caveat the python side carries, and for the same reason: a beautifier breaks one
+                statement across several rows, so the marked row is where the statement STARTS and the token
+                that actually threw can be a few lines down. Said only when the line really moved — an
+                unconditional caveat is noise that undermines the times it is true. */}
+            <Code text={d.text} lang={d.lang} format={d.format} marks={d.marks} onMap={setMap}
+                lineIds="line" markLine={shownFail}
+                markTitle={shownFail != null && shownFail !== failLine
+                    ? "This line failed. It is shown reflowed for reading — in the code as written this was one line, so the failure is somewhere in the statement starting here."
+                    : "This line failed."}
+                notes={notesForBlock(ctx, rv)} />
+        </div>
+    );
+}
+
+/** A JS failure, with the LINE it happened on made clickable — the counterpart to a python traceback frame.
+ *  JS gives us one line and no call path (an evaluated script's stack is mostly the wrapper), so there is
+ *  nothing to render as a traceback; the number is marked in place, in the message text the model also
+ *  received. No line → the message verbatim, which is what it always was. */
+function ExecError({ text, line, map }: { text: string; line?: number; map?: number[] | null }) {
+    const m = line != null ? /^([\s\S]*)\(line (\d+)\)([\s\S]*)$/.exec(text) : null;
+    if (!m) return <Code text={text} lang="text" />;
+    // THE NUMBER SHOWN IS THE ROW ABOVE. The model was told its own line, and that is what the raw view (and
+    // its context) keeps — but the block beside this one is REFLOWED, so repeating the model's number here
+    // points the reader at a line that is not the one that failed. The remap belongs to the human-facing
+    // render and nowhere else; the tooltip says both numbers so the two views cannot look like a
+    // contradiction.
+    const at = shownLine(map, line!);
+    return (
+        <pre class="code tb"><code class="hljs"><span class="tbline tb-fail">
+            {m[1]}
+            <span class="tt tb-line-wrap">
+                {/* The whole `(line 9)`, for the same reason the python frame is: the number alone is a
+                    two-character target, and what you are clicking is the reference. */}
+                <button class="tb-line" onClick={(e: MouseEvent) => jumpToLine(line!, true, e.currentTarget as Element)}>(line {at})</button>
+                <span class="tt-pop wrap" role="tooltip">Line {at} — where it failed. Click to show it in the code above.{at !== line ? ` The model wrote it as line ${line}; the code is reflowed for reading here.` : ""}</span>
+            </span>
+            {m[3]}
+        </span></code></pre>
+    );
+}
+
+function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null }) {
     return (
         <div class="r-python r-py-out">
-            {d.stdout ? <PyOutSection label="console" cls="r-py-stdout"><OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell></PyOutSection> : null}
+            {/* "console" for exec, but a REMOTE tool's streamed frames are not a console — the section is the
+                same shape (progress produced as it worked) and only the word differs. */}
+            {/* Inside the console when there IS one, after the last section when there is not — see the note
+                in PythonOutRender. */}
+            {d.stdout ? <PyOutSection label={d.stdoutLabel ?? "console"} cls="r-py-stdout" foldInFocus={!live}>
+                <OutputCell text><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell>
+                <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} />
+            </PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
-            {d.error ? <PyOutSection label="error" cls="r-py-err"><Code text={d.error} lang="text" /></PyOutSection> : null}
-            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
+            {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell text><ExecError text={d.error} line={d.errorLine} map={lineMap} /></OutputCell></PyOutSection> : null}
+            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
+            {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} /> : null}
         </div>
     );
 }
@@ -528,7 +1278,10 @@ function LookRender({ d }: { d: Extract<RenderDescriptor, { type: "look" }> }) {
     );
 }
 
-export function RenderPanel({ d, marks }: { d: RenderDescriptor; marks?: [number, number][] }) {
+/** `lineMap` is the IN block's reflow map, handed to the OUT block so a failure can name the row the
+ *  reader is actually looking at. The two are separate descriptors that cannot see each other; only the
+ *  step holds both, so it is the step that passes this across. */
+export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, lineMap, remoteMs, failed }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null; failed?: boolean }) {
     switch (d.type) {
         case "image": {
             // If the label references an @pt/@box (e.g. look's `element "@pt:…"`), hovering the shot
@@ -537,13 +1290,7 @@ export function RenderPanel({ d, marks }: { d: RenderDescriptor; marks?: [number
             return <div class={`r-image${th.onPointerEnter ? " r-hoverable" : ""}`} {...th}>
                 <ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
         }
-        case "code": return (<>
-            {/* Said out loud, because the rendered text is not always what the caller typed: `exec` expands
-                pointer macros before running, so a reader comparing this against the raw args would
-                otherwise conclude the log is lying to them. */}
-            {d.note ? <div class="rp-note">{d.note}</div> : null}
-            <Code text={d.text} lang={d.lang} format={d.format} />
-        </>);
+        case "code": return <CodeRender d={d} failLine={failLine} ctx={ctx} failed={failed} />;
         case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
@@ -585,7 +1332,7 @@ function FetchLadder({ attempts, resolvedBy }: { attempts: import("../contract")
                         <div>
                             <span class="r-action-verb">{d.verb}</span>{" "}
                             {d.input ? <><b class="r-action-input">“{truncate(d.input, 120)}”</b>{" "}</> : null}
-                            <span class="r-action-target" title="right-click to open or copy"
+                            <span class="r-action-target" {...cursorTipOn("Right-click to open this or copy it.")}
                                 onContextMenu={e => openCtxMenu(e, [
                                     { label: "Open in new tab", run: () => { try { window.open(target, "_blank", "noopener"); } catch { /* popup blocked */ } } },
                                     { label: "Copy URL", run: () => { try { void navigator.clipboard?.writeText(target); } catch { /* no clipboard */ } } },
@@ -611,9 +1358,9 @@ function FetchLadder({ attempts, resolvedBy }: { attempts: import("../contract")
             }
             return <Code text={pretty(d)} lang="json" />;
         case "locate": return <LocateRender d={d} />;
-        case "python-in": return <PythonInRender d={d} />;
-        case "python-out": return <PythonOutRender d={d} marks={marks} />;
-        case "exec-out": return <ExecOutRender d={d} marks={marks} />;
+        case "python-in": return <PythonInRender d={d} live={live} failLine={failLine} ctx={ctx} failed={failed} />;
+        case "python-out": return <PythonOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} lineMap={lineMap} remoteMs={remoteMs} />;
+        case "exec-out": return <ExecOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} lineMap={lineMap} remoteMs={remoteMs} />;
         case "look": return <LookRender d={d} />;
         default: return <Code text={pretty(d)} lang="json" />;   // unknown type → dump it
     }

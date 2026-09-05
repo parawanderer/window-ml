@@ -177,10 +177,10 @@ export function ComposerCard() {
                 <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste a screenshot)</span></button>
                 <span class="card-cmp-hint"><kbd class="kb">↵</kbd> send · <kbd class="kb">esc</kbd> cancel</span>
                 <span class="sp" />
-                {/* Stream the model's thinking live — so a long reasoning phase shows its words, not a frozen count. */}
-                <button class={`card-cmp-stream${composerStream.value ? " on" : ""}`} aria-pressed={composerStream.value}
-                    title="Stream the model's thinking live (see what it's doing during a long reasoning phase)"
-                    onClick={() => (composerStream.value = !composerStream.value)}>◊ live</button>
+                {/* No `live` toggle. Streaming is what the Commander IS — a run you watch — so it was a
+                    control whose only useful setting was the one it already had, sitting in a bar that has
+                    too many. The signal stays (it is what the run is started with, and it is the seam a
+                    control would return through); the button is gone. */}
                 {/* Step budget — a pretty segmented control (not a bare <select>); caps the agent loop. */}
                 <div class="card-cmp-budget" title="How many tool steps the agent may take">
                     <span class="card-cmp-budget-label">Steps</span>

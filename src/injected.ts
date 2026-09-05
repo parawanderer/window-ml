@@ -37,13 +37,14 @@ import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } fro
 import { evalReadonly } from "./readonly-exec";
 import { expandPointers } from "./pointer-macro";   // `@tool:` → a real dereference call, before the dialect sees it
 import { htmlToMarkdown } from "./html-to-md";
-import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
+import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
+import { citeParam } from "./tool-params";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine } from "./dom";
 import { makeAnswerFacade, finalizeAnswer, resolveOutputs } from "./answer-set";
 import { isSelfSourceUrl } from "./self-source";
 import { BUILD_INFO } from "./build-info.gen";
 import { accessibleName, roleOf, ariaState } from "./a11y";
-import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
+import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, PIPE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
 import type { DerefValue, ShotBox, ServerTool, OllamaInfo, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
@@ -71,6 +72,14 @@ import type { AgentControl } from "./ml-agent";
 
 /** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
  *  builds a DataFrame from (rows or read_html html). Internal to injected.ts. */
+/** ONE session for every `ml.embed()` on this page, created lazily. Embedding is usually done in a loop, so
+ *  a session per call would flood the list with one-turn entries; a single accumulating session keeps the
+ *  spans on the lane without burying everything else. */
+let _embedHash: string | null = null;
+let _embedTurn = 0;
+const embedSession = () => ({ hash: (_embedHash ||= `embed${Math.random().toString(16).slice(2, 8)}`), turn: _embedTurn });
+const embedTurn = () => ++_embedTurn;
+
 type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } };
 
 (function() {
@@ -518,10 +527,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], serverTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, images = [], _control = null }: {
+        agent: async function(task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, images = [], _control = null }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
             serverTools?: string[];
+            /** HUD-only: also give this run the server-tool bundles marked always-present in Settings. A run
+             *  driven from the Commander bar has no code to name one; a scripted call said what it wanted. */
+            commanderTools?: boolean;
             system?: string | null;
             hints?: string | null;
             maxSteps?: number;
@@ -565,10 +577,25 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // function schemas the model sees are the server's own. A bundle that does not resolve (a stock
             // backend, a revoked key, a wrong id) is simply absent — a run should degrade to the tools it
             // does have rather than failing before it starts.
-            if (serverTools.length) {
+            // The user's curation is read beside the resolution it shapes. A config that cannot be read
+            // curates NOTHING out and adds nothing: a run losing its tools because a message failed is worse
+            // than one offering a tool the user had hidden.
+            let srvOff: string[] = [], srvAlways: string[] = [];
+            if (serverTools.length || commanderTools) {
+                try {
+                    const cfg = await this.config();
+                    srvOff = cfg?.serverToolsOff || [];
+                    // Bundles marked always-present, for a run started from the HUD. Only that surface: a
+                    // scripted `ml.agent()` said exactly what it wanted and must not gain tools behind its
+                    // back.
+                    if (commanderTools) srvAlways = cfg?.commanderServerTools || [];
+                } catch { /* no curation, no additions */ }
+            }
+            const wantBundles = [...new Set([...serverTools, ...srvAlways])];
+            if (wantBundles.length) {
                 try {
                     const bundles = await this.serverTools();
-                    toolset = [...toolset, ...buildServerTools(this as unknown as MlApi, bundles, serverTools)];
+                    toolset = [...toolset, ...buildServerTools(this as unknown as MlApi, bundles, wantBundles, srvOff)];
                 } catch { /* unreachable backend → no server tools, run anyway */ }
             }
             // Vision facts resolved ONCE below and carried on every tool's ToolContext, so nothing re-derives
@@ -714,7 +741,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 toolset = [...toolset, buildDereferenceTool(window.ml.defineTool)];
                 toolset = toolset.map(t => CITABLE_TOOLS.has(t.name)
                     ? { ...t, parameters: { ...t.parameters, properties: { ...(t.parameters as { properties?: Record<string, unknown> }).properties,
-                        token: { type: ["boolean", "string"], description: "Keep a handle to this call's output. `true`, or better a SHORT LABEL for yourself (\"the pricing table\") — the label is how you'll recognise it a dozen steps later, and you can find it by that name. The result then ends with an @tool:<id>: embed it in your answer with `![caption](@tool:<id>:out)`, and/or read it back with `dereference`. Opt in whenever the output is worth keeping — to show OR to reuse; off for exploratory steps." } } } }
+                        token: citeParam("the pricing table") } } }
                     : t);
             }
             const byName = Object.fromEntries(toolset.map(t => [t.name, t]));
@@ -739,6 +766,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     if (toolset.some(t => t.name === "exec")) systemPrompt += SHADOW_EXEC_NOTE;
                 }
                 if (toolset.some(t => t.name === "agent_api_docs")) systemPrompt += SELF_CLAUSE;
+                // The pipe dialect, ONCE, when anything in this toolset actually takes a `pipe`. Detected
+                // from the SCHEMA rather than a list of tool names, so a new tool that grows a `pipe`
+                // parameter is covered without anyone remembering this line — and a toolset with none of
+                // them pays nothing. The tool and its dialect always arrive together, which is what lets
+                // the parameters themselves be one sentence pointing here.
+                if (toolset.some(t => !!(t.parameters?.properties as Record<string, unknown> | undefined)?.pipe))
+                    systemPrompt += PIPE_CLAUSE;
                 // Deterministic-compute clause. python_exec is the better calculator; when it's
                 // absent, exec (read-only JS: Array/Math/.reduce) is the fallback — either way the
                 // model must compute, never guess. Mutually exclusive so the prompt isn't doubled.
@@ -789,7 +823,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const mlApi = this as unknown as MlApi;   // typed self-ref for the deps' chatMeta (capabilities/ps)
             if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, images: turnImages.length ? turnImages : undefined, model: runModel, maxSteps, pageUrl: location.href, pageTitle: document.title || undefined, config: {
                 system: systemPrompt, customSystem: !!system,
-                tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary })),
+                tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary, ...(t.remote ? { remote: t.remote } : {}) })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null,
                 driverSees, visionModel: runVisionModel, hints: hints || null, silent: silent || undefined, unattended: unattended || undefined,
                 navigate, crossOrigin: crossOrigin || undefined, approvalRouting: approvalRouting !== "ui" ? approvalRouting : undefined,
@@ -1013,6 +1047,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const deps: AgentLoopDeps = {
                 callModel: (messages) => this.step(messages as NeutralMessage[], { tools: toolDefs, model, think, signal }),
                 runTool: runToolDep,
+                // The pending step's pretty In. Page-side the tool object is right here, so this is
+                // `descriptorFor` over an EMPTY envelope — the tool's own render(input, args), and nothing
+                // that would need it to have run. Defensive: a throwing custom render must not stop a step.
+                renderFor: async (name, args) => {
+                    try { return descriptorFor(byName[name], {} as ToolRenderInput, args).in; }
+                    catch { return undefined; }
+                },
                 approve: async ({ tool, arguments: args }) => {
                     const d = normalizeApproval(await approve({ tool, arguments: args }), args);
                     // Remember every approved external sheet for the rest of this page session (keyed off the
@@ -1595,7 +1636,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     properties: {
                         url: { type: "string", description: "The URL to go to (absolute or site-relative, e.g. \"/dashboard\")." },
                         verify: { type: "string", enum: ["viewport", "text", "text-all"], description: "Fold a view of the DESTINATION page into the result (saves a `wait`+`look`/`fetch` turn to see where you landed). \"viewport\" = a SCREENSHOT (an inline look); \"text\" = the page distilled to clean Markdown (nav/chrome stripped — cheaper, no vision needed); \"text-all\" = the same Markdown but keeping nav/header/footer. Omit to skip." },
-                        pipe: { type: "string", description: "Optional, only with verify:\"text\"/\"text-all\". Scan/filter the destination page's Markdown before it reaches you — e.g. \"grep -i '^## ' | head\" to see just the headings of where you landed. " + PIPE_SYNTAX },
+                        pipe: { type: "string", description: "Optional, only with verify:\"text\"/\"text-all\". Scan/filter the destination page's Markdown before it reaches you — e.g. \"grep -i '^## ' | head\" to see just the headings of where you landed. " + PIPE_REF },
                     },
                     required: ["url"],
                 },
@@ -1691,7 +1732,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. Renders in INCOGNITO (no session/cookies): same-origin is FREE, cross-origin asks once then remembered (needs 'Allow in Incognito'). Add credentials:true to render in the user's SESSION (a normal tab with cookies) — always re-asks. Slower/heavier; never cached." },
                         ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
                         format: { type: "string", enum: ["markdown", "html"], description: "What DOCUMENT to fetch. \"markdown\" (default) negotiates for the site's own Markdown version of the page and falls back to converting its HTML. \"html\" returns the ORIGINAL markup in one plain request, no negotiation — for when you need the markup itself (a selector, an attribute, an embedded script). Data bodies (JSON/CSV/code) are unaffected either way." },
-                        pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). " + PIPE_SYNTAX + " For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
+                        pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). " + PIPE_REF + " For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
                     },
                     required: ["url"],
                 },
@@ -1916,7 +1957,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @returns {Promise<{ ok, value?, stdout, error?, inputImage?, inputTables? }>}
          *   `inputImage`/`inputTables` are what the sandbox saw (for the debug render).
          */
-        pythonExec: async function(code: string, { image = null, mode = "readonly", margin = 0, tableRaw = false, tables = null, onStdout = undefined }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null; onStdout?: (chunk: string, ts?: number) => void } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox }> {
+        pythonExec: async function(code: string, { image = null, mode = "readonly", margin = 0, tableRaw = false, tables = null, onStdout = undefined }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null; onStdout?: (chunk: string, ts?: number) => void } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; bootMs?: number; runMs?: number }> {
             // raw: the sandbox must see the container's/point's actual pixels — NOT the
             // look-verify overlay (the drawn @box outline / @pt marker) or its padding.
             // `margin` sets the crop radius around an @pt (default: the look-radius).
@@ -1957,11 +1998,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // Alias each df in the `tables` dict by its SOURCE string too (e.g. a single source "current"
             // → tables['current']): a model that passed `"tables": "current"` naturally reaches for
             // tables['current'], not the internal `df` name. Accommodate it (string sources only).
+            // bootMs/runMs come back from the WORKER (the executor): a cold start is charged to the call
+            // that paid for it, so a first run does not report the runtime download as its own script time.
             const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE",
                 { code, image: img, hardened: mode !== "full", stream: !!onStdout, tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: typeof specs[i].src === "string" ? specs[i].src as string : null })) },
                 undefined, null,
                 // LIVE stdout (opt-in): each PYTHON_STREAM chunk for this run → onStdout (the tool's ctx.stream).
-                onStdout ? { type: "PYTHON_STREAM", onProgress: (d) => onStdout(String((d as { chunk?: string }).chunk ?? ""), (d as { ts?: number }).ts) } : undefined) as { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" };
+                onStdout ? { type: "PYTHON_STREAM", onProgress: (d) => onStdout(String((d as { chunk?: string }).chunk ?? ""), (d as { ts?: number }).ts) } : undefined) as { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
             const extra: { inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } } = {};
             if (img) extra.inputImage = img;
             if (imageBox) extra.imageBox = imageBox;   // for cast:'pt'/'box' → project image px → viewport
@@ -2481,8 +2524,41 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
         embed: async function<T extends string | string[]>(input: T, opts?: { model?: string }): Promise<T extends string[] ? Embedding[] : Embedding> {
             const many = Array.isArray(input);
             const inputs = (many ? input as string[] : [input as string]).map(String);
+            // An embed is a real model call: it occupies VRAM and takes time, and it emitted NOTHING — so an
+            // embedding model's footprint moved on the memory trace with no event beside it to explain why.
+            // Reported through the ordinary chat machinery so it needs no new event kind, and into ONE
+            // session for the page rather than a session per call: embedding is usually done in a loop, and
+            // a hundred one-turn sessions is a flood, not a record.
+            const t0 = Date.now();
+            const session = embedSession();
+            const turn = embedTurn();
+            emitDebug({ kind: "chat", id: session.hash, ts: t0, save: false, session, streaming: false, sessionKind: "embed",
+                        // A real config, not null: an embed has no chat options to speak of, but every
+                        // consumer of a session expects the shape.
+                        config: { model: opts?.model || null, system: null, think: null, schema: false,
+                                  toolIds: null, maxTokens: null, save: false } as never,
+                        request: {
+                model: opts?.model || null, extend: null,
+                messages: [{ role: "user", content: `embed ${inputs.length} input${inputs.length === 1 ? "" : "s"}` }],
+                images: null, toolIds: null, schema: false, think: null, maxTokens: null,
+            } });
             const r = await makeBackgroundTaskPromise<{ model: string; vectors: number[][] }>(
-                "EMBED_REQUEST", "EMBED_RESPONSE", { inputs, ...(opts?.model ? { model: opts.model } : {}) });
+                "EMBED_REQUEST", "EMBED_RESPONSE", { inputs, ...(opts?.model ? { model: opts.model } : {}) })
+                .catch((e) => {
+                    emitDebug({ kind: "chat-result", id: session.hash, ts: Date.now(), save: false, session,
+                                content: `embed failed: ${String((e as Error)?.message || e)}`, model: opts?.model || null,
+                                sources: null, structured: false, extend: null, reasoning: null, usage: null });
+                    throw e;
+                });
+            // Wall clock only — the endpoint reports no eval timings and no token counts, so the span says
+            // how long it took and claims nothing about how much it read.
+            emitDebug({ kind: "chat-result", id: session.hash, ts: Date.now(), save: false, session,
+                        content: `${r.vectors.length} vector${r.vectors.length === 1 ? "" : "s"} · ${r.vectors[0]?.length ?? 0} dimensions`,
+                        // Token counts are UNKNOWN here — the endpoint reports none — so they are zero rather than invented,
+                        // and `genBasis` says the rate is wall clock.
+                        model: r.model || opts?.model || null, sources: null, structured: false, extend: null, reasoning: null,
+                        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, genMs: Date.now() - t0 } });
+            void turn;
             const out = r.vectors.map(v => Embedding.from(v));
             // The one cast a conditional return type always needs; the SHAPE is checked by the branch above.
             return (many ? out : out[0]) as T extends string[] ? Embedding[] : Embedding;
@@ -2586,6 +2662,37 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          */
         ps: async function(): Promise<LoadedModel[]> {
             return makeBackgroundTaskPromise("PS_REQUEST", "PS_RESPONSE", {});
+        },
+        /**
+         * DEBUG DUMP — everything the resource panel derives its timeline from, in one object. For reporting a
+         * lane that draws something that makes no sense: the drawn events are DERIVED (`eventsFrom` +
+         * `machineEventFrom`, both pure), so handing over the INPUTS lets the exact picture be rebuilt and
+         * turned into a test, where a screenshot can only be described.
+         *
+         * `{ debug }` is this tab's own `__mlDebug` stream (runs, steps, usage), `{ frames }` the server's
+         * event-stream frames with the wall clock each was resolved to, plus the current `ps`/`info` and the
+         * stream's status. Underscored because it is a debugging aid, not API: shape may change freely.
+         *
+         * TWO THINGS TO KNOW when capturing. `frames` is only collected while a resource panel is OPEN —
+         * nothing subscribes to the stream when nobody is looking — so open the panel before the run you
+         * want. And `debug` is the BACKGROUND's ring: it holds everything in `debugMode: "devtools"`, and
+         * only the background-hosted half of a run in `"overlay"`.
+         *
+         * @param opts.download Save it as `ml-events-<time>.json` instead of only returning it.
+         * @returns {Promise<object>} The raw inputs, JSON-serializable.
+         */
+        __events: async function(opts?: { download?: boolean }): Promise<Record<string, unknown>> {
+            const dump = await makeBackgroundTaskPromise("DUMP_EVENTS_REQUEST", "DUMP_EVENTS_RESPONSE", {}) as Record<string, unknown>;
+            if (opts?.download) {
+                // Straight to a file: this is usually several megabytes of screenshots and step results, which
+                // no console can be asked to hold, let alone copy out of.
+                const url = URL.createObjectURL(new Blob([JSON.stringify(dump, null, 1)], { type: "application/json" }));
+                const a = document.createElement("a");
+                a.href = url; a.download = `ml-events-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(url), 10_000);
+            }
+            return dump;
         },
         /**
          * Evict a model from VRAM (keep_alive: 0).
@@ -2738,6 +2845,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
         opts.toolTokens = true;   // HUD runs auto-enable tool tokens (the rich answer card is where citing exact outputs pays off)
         // createAgent (not ml.agent) so the run registers a HANDLE the sidebar/HUD composer can drive —
         // follow-up run()s + say() steering from the "Send a message to this session…" box.
+        // Bundles the user marked always-present. Read HERE rather than inside `ml.agent`, because this is
+        // the surface that needs them: a Commander run has no code to name a bundle, while a scripted
+        // `ml.agent()` said exactly what it wanted and must not have tools added behind its back.
+        // `commanderTools` rather than resolving the bundles HERE: reading the config first made starting a
+        // run wait on a message round-trip, so a slow or unanswered read delayed — or never started — a run
+        // the user had already typed. The loop already reads the config in its own async setup.
+        opts.commanderTools = true;
         try { void ml.createAgent(opts).run(task, images); }
         catch (err) { console.error("ml: UI-started run failed:", err); }
     });

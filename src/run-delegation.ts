@@ -219,6 +219,11 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
             cdpExec: env.cdpExec,     // strict-page exec → the BACKGROUND re-runs the source via CDP eval (CSP-exempt)
             cdpShadowClick: env.cdpShadowClick,   // sealed-shadow `>>>` click → the BACKGROUND CDP-resolves + clicks it
             cdpType: env.cdpType,   // trusted-keyboard type (canvas / remote desktop / sealed field) → BACKGROUND types via CDP
+            // THE EXECUTOR'S OWN CLOCK — a sandbox's cold start and script time, a remote tool's evaluate and
+            // queue. It was dropped here, so on the background path (which is EVERY run with a debug surface
+            // open) the timeline had only our wall clock: a first python_exec read as a slow script rather
+            // than as a runtime being downloaded, and a remote tool's net/queue split never drew at all.
+            remoteMs: env.remoteMs,
         };
     });
 }

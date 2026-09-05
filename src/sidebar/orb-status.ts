@@ -60,6 +60,8 @@ export function startupPhase(run: Session, modelResident?: boolean): { icon: str
     return { icon: "⏳", label: "Waiting for the model…", short: "waiting" };
 }
 
+/** What the HUD orb should SAY a run is doing right now — the icon and the short label. Headless
+ *  progress: the whole status when there is no panel open to read. */
 export function activityFor(run: Session, modelResident?: boolean): { icon: string; label: string; short: string } {
     const cur = currentTurnSteps(run);
     // A tool actively RUNNING (pending) wins — that's the live op.
@@ -120,7 +122,17 @@ function oneLine(s: string, cap = 140): string {
 // detail worth showing without a hover: streamed tokens ticking, the model's narration, or a stall's elapsed
 // readout. The calm ambient phase (no live detail) stays a bare circle — caption is the "something's
 // happening, show it" flag.
-export interface OrbStatus { icon: string; label: string; caption: boolean; }
+export interface OrbStatus {
+    icon: string;
+    label: string;
+    /** The LIVE readout — a token count that is climbing, or the elapsed seconds of a stall. Kept OUT of
+     *  `label` so a surface can render it in its own non-shrinking span: the pill ellipsizes on width, and
+     *  with the two concatenated it was the readout that got cut ("Waiting for the model… · 1…" at ten
+     *  seconds). That is precisely backwards — the phase label is the part you have already read, and the
+     *  number is the only thing on the pill that is still telling you something. */
+    suffix?: string;
+    caption: boolean;
+}
 
 // No fresh activity for this long → append an elapsed "· Ns" so a frozen phase still proves the pipe is
 // alive (the "did it hang or is it just slow?" case, especially with nothing to stream).
@@ -136,17 +148,17 @@ export function orbStatus(run: Session, now: number = Date.now(), modelResident?
     // (1) The model is emitting REPLY prose (not hidden reasoning) — its in-between/final output. Stream it
     //     live as the caption; that live typing is itself the liveness signal, so pair it with the count.
     const liveContent = run.liveStream?.content?.trim();
-    if (liveContent) return { icon: "💬", label: oneLine(liveContent) + tokSuffix, caption: true };
+    if (liveContent) return { icon: "💬", label: oneLine(liveContent), suffix: tokSuffix || undefined, caption: true };
 
     // (2) Tool or thinking phase. A narrated `thought` (if any) rides as the caption over the phase label.
     const prose = liveProseFor(run);
     const a = activityFor(run, modelResident);
-    let label = prose || a.label;
+    const label = prose || a.label;
     let caption = !!prose || !!tokSuffix;                                // narrating or streaming → expand to show it
-    if (tokSuffix) label += tokSuffix;                                   // streaming → live count (it's moving)
-    else if (now - (run.lastTs || 0) > STALL_MS) {                       // quiet → elapsed heartbeat (still alive)
-        label += ` · ${Math.round((now - (run.lastTs || 0)) / 1000)}s`;
+    let suffix = tokSuffix || undefined;                                 // streaming → live count (it's moving)
+    if (!suffix && now - (run.lastTs || 0) > STALL_MS) {                 // quiet → elapsed heartbeat (still alive)
+        suffix = ` · ${Math.round((now - (run.lastTs || 0)) / 1000)}s`;
         caption = true;                                                  // a stall IS the case we most want visible
     }
-    return { icon: a.icon, label, caption };
+    return { icon: a.icon, label, suffix, caption };
 }

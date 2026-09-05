@@ -11,23 +11,131 @@ import { cardShowWorkHash, revealSeq } from "./store";
 import { pretty, markdown, inlineMarkdown } from "./format";
 import { IconChevron, IconEye, IconCheck } from "./icons";
 import { ClickableImg, Code, SheetChip } from "./ui-kit";
-import { RenderPanel, PyDfTable } from "./render-panel";
+import { RenderPanel, PyDfTable, CodeRender } from "./render-panel";
+import type { CodeCtx } from "./render-panel";
 
 // Scroll the transcript to the step that minted a @tool token + pulse it green — the provenance click. In the
 // HUD it first EXPANDS "Show work" (the step row is otherwise not rendered); in a MULTI-TASK run the step also
 // lives inside a per-task BLOCK that may be collapsed, so it sets `revealSeq` to force THAT block open too (the
 // bug: it only worked when the run wasn't segmented into blocks). Then it retries the scroll for a few frames,
 // since the block open → re-render → paint is async.
-export function scrollToStepSeq(seq?: number, hash?: string): void {
-    if (seq == null) return;
-    if (hash) cardShowWorkHash.value = hash;   // open the HUD "Show work" so the step exists to scroll to
-    revealSeq.value = seq;                      // force-open the per-task block that holds this step (if collapsed)
-    const doScroll = (): boolean => {
-        const el = document.querySelector(`[data-astep-seq="${seq}"]`);
-        if (!el) return false;
+/**
+ * Scroll to a run's ANSWER and highlight it, the same gesture `scrollToStepSeq` performs for a step.
+ *
+ * The lane's final generation is the answer, and it carries no step seq — so a click on that bar could
+ * navigate to the run and then had nothing to reach. The LAST matching anchor is the target: a multi-turn run
+ * has several answers and the event names only the run, so the newest is the honest choice.
+ */
+/** @param which WHICH answer, when a session has several — a run is a set of turns ending in an answer, so a
+ *  session holds one per run. Without it every run in the lane clicked through to the same final answer,
+ *  which is what "the last one" degrades to once runs became plural. An out-of-range index falls back to the
+ *  last, since a stale reference should still land somewhere real. */
+export function scrollToAnswer(hash?: string, which?: number): void {
+    if (!hash) return;
+    const attempt = (tries = 0): void => {
+        const all = document.querySelectorAll(`[data-answer-hash="${CSS.escape(hash)}"]`);
+        const el = (which != null && all[which]) || all[all.length - 1];
+        if (!el) { if (tries < 8) requestAnimationFrame(() => attempt(tries + 1)); return; }
         el.scrollIntoView({ block: "center", behavior: "smooth" });
         el.classList.add("astep-pulse");
         setTimeout(() => el.classList.remove("astep-pulse"), 1400);
+    };
+    attempt();
+}
+
+/** The anchor for a slot, chosen by what is actually ON SCREEN. Both the rendered and the raw view of a step
+ *  are in the DOM at once (the rendered⇄raw toggle switches which is shown), and a collapsed disclosure keeps
+ *  its content mounted — so the first `[data-cite]` match can easily be one nobody can see, and scrolling to
+ *  it lands the reader on blank space. Zero-sized is the test that catches all of those at once: a hidden
+ *  branch, a collapsed grid row, a `display: none` sibling.
+ *
+ *  A renderer declares its own anchor when one of its sections IS the answer (python-in's code, not the input
+ *  table; python-out's value, not the console). Everything else falls back to the slot's section, and then to
+ *  the step — neither of which is a failure, just a coarser answer. */
+export function visibleAnchor(root: Element, slot: "in" | "out"): Element | null {
+    const seen = [...root.querySelectorAll(`[data-cite="${slot}"]`)];
+    const shown = seen.find((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    });
+    // Nothing visible does NOT mean fall through to something hidden: it means this step has no on-screen
+    // cell for that slot right now, and the step itself is the honest place to land.
+    return shown ?? null;
+}
+
+/** Scroll to a cited step — and, when the citation named a SLOT, to the cell inside it that the slot is
+ *  actually about. A `python-in` step renders a source block AND the input dataframes; a `python-out` renders
+ *  stdout AND the returned value. Landing on the step container means the reader still has to find the part
+ *  they clicked, which on a tall step can be off screen entirely.
+ *
+ *  The anchor is declared by the RENDERER (`data-cite` on its primary cell), because only the renderer knows
+ *  which of its sections is the answer — the code, not the input table; the value, not the console. A
+ *  descriptor that declares none falls back to the step, which is where this always landed. */
+export function scrollToStepSeq(seq?: number, hash?: string, slot?: "in" | "out"): void {
+    if (seq == null) return;
+    if (hash) cardShowWorkHash.value = hash;   // open the HUD "Show work" so the step exists to scroll to
+    revealSeq.value = seq;                      // force-open the per-task block that holds this step (if collapsed)
+    // Opening the step is done by pressing its OWN opener, once, rather than through a signal the row reads:
+    // subscribing a step to a signal that changes on click re-rendered the answer subtree around it and left
+    // a citation without its run, which threw from inside the very click meant to navigate. Borrowing the
+    // affordance also means this cannot desync from what the toggle means.
+    const pulse = (el: Element): void => {
+        el.classList.add("astep-pulse");
+        setTimeout(() => el.classList.remove("astep-pulse"), 1400);
+    };
+    const doScroll = (): boolean => {
+        const found = document.querySelector(`[data-astep-seq="${seq}"]`);
+        if (!found) return false;
+        // OPEN it FIRST, if it is collapsed. Scrolling to a row that merely pulses shows you where the step
+        // is and not what it was, which is the thing you clicked for.
+        //
+        // Pressing the row's own opener rather than reading a signal inside the row: subscribing a step to a
+        // signal that changes on click re-rendered the answer subtree around it and left a citation without
+        // its run, which threw from inside the very click meant to navigate. Borrowing the affordance also
+        // means this cannot desync from what the toggle means.
+        //
+        // Before the pulse, not after, because the toggle re-renders the row and Preact rewrites an
+        // element's class list from its own vdom when it does — a class added first is wiped by it. The
+        // element is then RE-QUERIED for the same reason: the node that comes back need not be the one we
+        // pressed.
+        const collapsed = !found.classList.contains("open");
+        if (collapsed) (found.querySelector(".astep-head") as HTMLElement | null)?.click();
+        const row = document.querySelector(`[data-astep-seq="${seq}"]`) ?? found;
+        // The slot's own cell if the renderer declared one, else the step — the fallback is not a failure,
+        // it is what a descriptor with a single cell (an image, an action) correctly wants.
+        const cell = slot ? visibleAnchor(row, slot) : null;
+        const el = cell ?? row;
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        // A COLLAPSED step has no visible cells YET — the open we just triggered re-renders in a microtask —
+        // so the lookup above finds nothing and lands on the row. That is the whole reason a slot citation
+        // felt like it ignored the slot: it worked on an already-open step and never on a closed one, which
+        // is the case you are usually in. Re-query on a macrotask, after that render, and go to the cell.
+        // …and it may take MORE than one macrotask. A single setTimeout(0) was enough when a step was a code
+        // block and a result; it is not once the block carries a toolbar, a diff and syntax highlighting, and
+        // the failure is silent — you land on the row and it looks like the slot was ignored. So WAIT FOR THE
+        // ANCHOR rather than guessing how long the render takes: retry on animation frames, stop at the first
+        // one that finds it, and give up after a bound so a slot that genuinely has no cell (an image, an
+        // action) simply keeps the row it already scrolled to.
+        if (collapsed && slot) {
+            let tries = 0;
+            const seek = (): void => {
+                const again = document.querySelector(`[data-astep-seq="${seq}"]`);
+                const now = again ? visibleAnchor(again, slot) : null;
+                if (now) { now.scrollIntoView({ block: "center", behavior: "smooth" }); return; }
+                if (++tries < 20) requestAnimationFrame(seek);
+            };
+            requestAnimationFrame(seek);
+        }
+        // The PULSE stays on the step, whatever we scrolled to: it is the thing being identified, and a
+        // flashing sub-cell inside an unmarked row reads as a glitch rather than as "this one".
+        pulse(row);
+        // The toggle's re-render lands in a microtask and rewrites the row's class list from its own vdom,
+        // wiping the pulse we just added. So re-apply it on a MACROTASK, which runs after that — and
+        // re-query, because the node that comes back need not be the one we pressed.
+        if (collapsed) setTimeout(() => {
+            const again = document.querySelector(`[data-astep-seq="${seq}"]`);
+            if (again && !again.classList.contains("astep-pulse")) pulse(again);
+        }, 0);
         return true;
     };
     // Retry across a handful of frames: expanding Show-work AND a collapsed block are async re-renders, so the
@@ -71,12 +179,18 @@ export const aliasOf = (run: Session) => (name: string): boolean => (run.steps |
 // A FOCUSED, answer-appropriate render of a cited slot: the CODE for :in, the table/image/value for :out — NOT
 // the full tool-step In/Out render (which carries debug chrome, e.g. python's input table). Reuses RenderPanel
 // ONLY for pure data (image/table/elements), so the tool-step rendering is untouched (the constraint).
-function tokenRender(d: RenderDescriptor | undefined, rawText: string): { node: ComponentChildren; block: boolean } {
+// `ctx` gives an embedded code block the SAME affordances the step's own block has (explain, and the bench on
+// the panel). A citation is a different PLACE to show the code, not a different KIND of thing — and the split
+// by surface stays where it already lives, inside CodeTools: the HUD card is a reading surface with no
+// navigation of its own, so it keeps explain and drops the bench.
+function tokenRender(d: RenderDescriptor | undefined, rawText: string, ctx?: CodeCtx): { node: ComponentChildren; block: boolean } {
     switch (d?.type) {
         case "image": case "table": case "elements": return { node: <RenderPanel d={d} />, block: true };
         case "look": return { node: <ClickableImg src={d.image} alt={d.label || "look"} />, block: true };
-        case "code": return { node: <Code text={d.text} lang={d.lang} format={d.format} />, block: true };
-        case "python-in": return { node: <Code text={d.code} lang="python" />, block: true };   // just the code, not the input table
+        case "code": return { node: <CodeRender d={d} ctx={ctx} />, block: true };
+        // Just the code, not the input table — but rendered through CodeRender so it is explainable and
+        // benchable, which is the commonest thing a model cites and the one you most want to poke at.
+        case "python-in": return { node: <CodeRender d={{ type: "code", text: d.code, lang: "python" }} ctx={ctx} />, block: true };
         case "python-out":
             // Use the SAME rich DataFrame renderer the python step shows (index gutter / sort / resize /
             // copy-CSV / hide), not the bare RenderTable — a cited/auto-appended df should read identically
@@ -103,7 +217,23 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
     // prior turn's hex citation show "unresolved" in the per-turn-scoped surfaces (the DevTools reply).
     const step = resolveTokenStep(seg.id, run.steps ?? [], scope) as AgentStep | null;
     if (!step) return <span class="tok-ref tok-unresolved" title={`No step in this run produced @tool:${seg.id} — the model may have invented it.`}>⟨unresolved @tool:{seg.id}⟩</span>;
-    const jump = () => scrollToStepSeq(step.seq, run.hash);
+    // The SLOT rides along, so an  citation lands on the value it cited rather than on the top of a
+    // step whose console output may be taller than the viewport.
+    const jump = () => scrollToStepSeq(step.seq, run.hash, seg.slot === "in" || seg.slot === "out" ? seg.slot : undefined);
+    // An EMBED wraps a whole rendered output, and those have controls of their own — copy CSV, hide table,
+    // a sortable column header. Clicking one used to bubble to the jump and yank the reader up to the source
+    // step, which is the opposite of what they asked for: they were operating the table in front of them.
+    // So the jump is what you get from the INERT parts of the embed; anything interactive keeps its click.
+    // Not `closest("button")` — the DataFrame's sort header is a <th> with a handler, so the test is
+    // "does this carry its own behaviour", which is what these roles and the tabindex say.
+    const onEmbedClick = (e: MouseEvent) => {
+        const t = e.target as HTMLElement | null;
+        const hit = t?.closest?.('button, a, input, select, textarea, summary, label, [role="button"], [tabindex], th, .r-df-resize');
+        // …stopping AT the embed itself, which is a role=button with a tabindex of its own — without this the
+        // walk finds the wrapper for every click, including the inert ones, and the jump never fires at all.
+        if (hit && hit !== e.currentTarget) return;
+        jump();
+    };
     const provenance = `Click to see the exact operation that produced this — step ${step.localStep ?? step.step} · ${step.tool || "tool"}`;
     // LINK form `[label](@tool:…)` — a clickable JUMP to the output (the source step), NOT an inline expansion
     // (that's the `![…]` embed form below). `label` is the link text.
@@ -147,10 +277,10 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
                 // mid-sentence stays INLINE (`\(…\)`). Use inlineMarkdown so the lone wrapping <p> is STRIPPED —
                 // that block-level <p> was forcing an inline formula onto its own line (the "inline is broken" bug).
                 ? { node: <span dangerouslySetInnerHTML={{ __html: inlineMarkdown(standalone ? `\\[${rawText}\\]` : `\\(${rawText}\\)`) }} />, block: !!standalone }
-                : tokenRender(d, rawText);
+                : tokenRender(d, rawText, step.seq != null ? { hash: run.hash, seq: step.seq, result: step.result } : undefined);
     const tip = (label && !block ? `${label} · ` : "") + provenance;   // inline → prepend the label to the tooltip
     return <span class={`tok-ref ${block ? "tok-block" : "tok-inline"}`} role="button" tabIndex={0}
-        onClick={jump} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>
+        onClick={onEmbedClick} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>
         {node}
         {/* The caption is model-authored prose — render it as markdown+math (a lone wrapping <p> stripped) so a
             model that writes inline `$…$`/`\(…\)` in the label typesets it. markdown() escapes HTML, so this is
@@ -283,6 +413,8 @@ const REUSED_KIND: Record<string, { noun: string; nounN: string }> = {
     "fetch-url": { noun: "URL", nounN: "URLs" },
     sheet: { noun: "sheet", nounN: "sheets" },
 };
+/** WHY THIS RAN WITHOUT ASKING — the prior grants a call reused (a cached `ml.fetch` URL, an approved
+ *  sheet). Shown on the step, because an auto-run with no explanation reads as a gate that failed. */
 export function ReusedBlock({ reused }: { reused: ReusedGrant[] }) {
     // Summarise per-kind (e.g. "2 URLs · 1 sheet") — deterministic, no payload.
     const byKind = new Map<string, ReusedGrant[]>();

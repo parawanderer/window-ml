@@ -28,13 +28,16 @@ test("_truncate tolerates null/undefined", () => {
     assert.equal(ml._truncate(undefined, 5), "");
 });
 
-test("__mlStartAgent (HUD composer relay) runs a REAL createAgent().run() in the page", () => {
+test("__mlStartAgent (HUD composer relay) runs a REAL createAgent().run() in the page", async () => {
     // The Spotlight composer → shell → page: injected must start a genuine session via createAgent().run()
     // (so it registers a HANDLE the composer can then steer), not a bare ml.agent(). Stub createAgent.
     const { ml, window } = loadDomWorld();
     let createdOpts = null, ranWith = null;
     ml.createAgent = (opts) => { createdOpts = opts; return { run: (task) => { ranWith = task; return Promise.resolve({ summary: "" }); } }; };
     window.dispatchEvent(new window.MessageEvent("message", { data: { __mlStartAgent: { task: "do a thing", maxSteps: 20 } }, source: window }));
+    // The handler reads the config first (for bundles marked always-present), so the run starts a microtask
+    // later — the message is an extension round-trip, not a network one.
+    await new Promise((r) => setTimeout(r, 0));
     assert.equal(ranWith, "do a thing", "the page ran createAgent().run() with the composer's task");
     assert.equal(createdOpts?.maxSteps, 20, "the composer's step budget threads through");
     // A UI-started run gets a capable default kit (click/type/python) via extraTools — the model tried to
@@ -2285,11 +2288,11 @@ test("fetch_url pipe: filters the returned text through the grep/head pipeline (
 
     // A command outside the dialect → an actionable error. The exec escape hatch is GATED on exec being wired.
     const withExec = { hasTool: (n) => n === "exec", tools: ["exec"], model: null, capabilities: null };
-    const err = await tool.run({ url, pipe: "sed 's/a/b/'" }, withExec);
+    const err = await tool.run({ url, pipe: "awk '{print $1}'" }, withExec);
     assert.match(String(err), /Pipe error/, "surfaces the interpreter error");
     assert.match(String(err), /const \{ markdown \} = await ml\.fetch/, "with exec wired → points at the exec escape hatch");
     // Without exec wired, the hint is omitted (no misleading suggestion to use a tool it doesn't have).
-    const errNoExec = await tool.run({ url, pipe: "sed 's/a/b/'" }, { hasTool: () => false, tools: [], model: null, capabilities: null });
+    const errNoExec = await tool.run({ url, pipe: "awk '{print $1}'" }, { hasTool: () => false, tools: [], model: null, capabilities: null });
     assert.match(String(errNoExec), /not a real shell/i, "still explains the dialect");
     assert.doesNotMatch(String(errNoExec), /use exec/, "no exec suggestion when exec isn't available");
 
@@ -3623,22 +3626,57 @@ test("exec Out: a raised (approved) output cap moves where the model's view ends
 
 // ---- exec: pointers are SYNC, because the lexical pass knows them before anything runs ----
 
+/** The shape `ToolContext.deref` actually resolves to — the run loop's read envelope, not the text. */
+const read = (value, id) => ({ value, meta: { id, kind: "text", tool: "python_exec", step: 1 } });
+
 test("exec: a @tool: pointer is a VALUE, not a promise", async () => {
     // The whole reason the macro is worth having. On a promise, `.length` is `undefined` with no error —
     // the plausible-wrong-answer shape this codebase keeps designing out.
     const world = loadPageWorld({});
     const tool = world.ml.domTools.find(t => t.name === "exec");
-    const ctx = { deref: async (ref) => (ref === "@tool:a39f599" ? "alpha\nbeta\ngamma" : (() => { throw new Error("no such pointer"); })()) };
+    // The envelope the real resolver returns (agent-loop's `derefLocally`) — `{ value, meta }`, NOT a bare
+    // string. Stubbing a string here is what hid the shim handing the script the envelope itself, whose
+    // `.length` is undefined: the exact failure this test claims to be about.
+    const ctx = { deref: async (ref) => (ref === "@tool:a39f599" ? read("alpha\nbeta\ngamma", "a39f599") : (() => { throw new Error("no such pointer"); })()) };
 
     const out = await tool.run({ js: `@tool:a39f599.split("\\n").length` }, ctx);
     assert.match(typeof out === "string" ? out : out.content, /\b3\b/, "read, split and counted — no await anywhere");
+
+    // It is the SAME value the asynchronous method returns: a String subclass, so `.length` and `.split`
+    // work, `.type`/`.id` answer what it is, and it interpolates without a cast.
+    const shape = await tool.run({ js: `const v = @tool:a39f599; return [typeof v.length, v.type, v.id, \`\${v}\`.length].join("|")` }, ctx);
+    assert.match(typeof shape === "string" ? shape : shape.content, /number\|text\|a39f599\|16/);
+});
+
+test("exec: the macro and the longhand call are the SAME object", async () => {
+    // `@tool:x` expands to `ml.dereference("@tool:x")`, so the two spellings must be interchangeable — which
+    // includes identity. A fresh wrapper per read would make `===` false between a line and its own macro.
+    const world = loadPageWorld({});
+    const tool = world.ml.domTools.find(t => t.name === "exec");
+    let calls = 0;
+    const ctx = { deref: async (ref) => { calls++; return read("alpha", "a39f599"); } };
+
+    const out = await tool.run({ js: `const v = ml.dereference("@tool:a39f599"); return v === @tool:a39f599;` }, ctx);
+    assert.match(typeof out === "string" ? out : out.content, /true/);
+    assert.equal(calls, 1, "resolved once, then cached — not re-read per mention");
+});
+
+test("exec: `ml.dereference()` with no argument is synchronous too", async () => {
+    // The listing is the read a model makes BEFORE it knows any id, so leaving it on the async path would put
+    // a promise in the one call most likely to be written without an await.
+    const world = loadPageWorld({});
+    const tool = world.ml.domTools.find(t => t.name === "exec");
+    const ctx = { deref: async (ref) => read(ref ? "a value" : "a39f599 text python_exec 2 steps ago", "") };
+
+    const out = await tool.run({ js: `return ml.dereference().split(" ")[0];` }, ctx);
+    assert.match(typeof out === "string" ? out : out.content, /a39f599/);
 });
 
 test("exec: several pointers resolve concurrently, before a line runs", async () => {
     const world = loadPageWorld({});
     const tool = world.ml.domTools.find(t => t.name === "exec");
     const seen = [];
-    const ctx = { deref: async (ref) => { seen.push(ref); return ref === "@tool:a39f599" ? "one" : "two"; } };
+    const ctx = { deref: async (ref) => { seen.push(ref); return ref === "@tool:a39f599" ? read("one", "a39f599") : read("two", "b4c8d10"); } };
 
     const out = await tool.run({ js: `[@tool:a39f599, @tool:python_exec].join("-")` }, ctx);
     assert.match(typeof out === "string" ? out : out.content, /one-two/);
@@ -3650,7 +3688,7 @@ test("exec: a BAD pointer fails only when read, not when hydrated", async () => 
     // program into a failing one.
     const world = loadPageWorld({});
     const tool = world.ml.domTools.find(t => t.name === "exec");
-    const ctx = { deref: async (ref) => { if (ref === "@tool:baaaaad") throw new Error("MemoryFault: no such pointer"); return "fine"; } };
+    const ctx = { deref: async (ref) => { if (ref === "@tool:baaaaad") throw new Error("MemoryFault: no such pointer"); return read("fine", "a39f599"); } };
 
     const ok = await tool.run({ js: `false ? @tool:baaaaad : @tool:a39f599` }, ctx);
     assert.match(typeof ok === "string" ? ok : ok.content, /fine/, "the unreachable bad pointer never surfaced");
@@ -3665,7 +3703,89 @@ test("exec: a COMPUTED handle still works — it just stays asynchronous", async
     // capability that worked before.
     const world = loadPageWorld({});
     const tool = world.ml.domTools.find(t => t.name === "exec");
-    const ctx = { deref: async () => "computed-value" };
+    const ctx = { deref: async () => read("computed-value", "a39f599") };
     const out = await tool.run({ js: `const r = "@tool:a39f599"; @tool:a39f599; return await ml.dereference(r);` }, ctx);
     assert.match(typeof out === "string" ? out : out.content, /computed-value/);
+});
+
+// ---- a remote tool's output is a pointer, and can be NAMED at call time ----
+
+test("server tools: `token` is a SIBLING of the server's own properties, never a wrapper", async () => {
+    // A wrapper (`{args: {...}, token}`) would nest every remote tool's arguments to add one optional field
+    // — the same opaque-object problem that made this one tool per FUNCTION rather than one dispatcher.
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const [tool] = buildServerTools({}, [{
+        id: "srv1", name: "Search", description: "", kind: "local",
+        functions: [{ name: "search_web", description: "", parameters: { type: "object", properties: { q: { type: "string" } }, required: ["q"] } }],
+    }], ["srv1"]);
+
+    assert.deepEqual(Object.keys(tool.parameters.properties).sort(), ["q", "token"]);
+    assert.deepEqual(tool.parameters.required, ["q"], "ours is optional and does not touch theirs");
+    assert.ok(!("args" in tool.parameters.properties), "the server's schema is not nested inside an envelope");
+});
+
+test("server tools: a function that ALREADY has `token` keeps its own", async () => {
+    // Shadowing a real parameter to add a convenience is worse than the model reaching for the name alias.
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const [tool] = buildServerTools({}, [{
+        id: "srv1", name: "S", description: "", kind: "local",
+        functions: [{ name: "f", description: "", parameters: { type: "object", properties: { token: { type: "number", description: "theirs" } } } }],
+    }], ["srv1"]);
+    assert.equal(tool.parameters.properties.token.type, "number", "the server's own, untouched");
+});
+
+test("server tools: `token` is stripped before the call leaves the machine", async () => {
+    // It is ours, added to their schema. The server never declared it and must not receive it.
+    let sent = null;
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const ml = { execServerTool: async (id, name, args) => { sent = args; return { ok: true, result: { result: "x", durationMs: 1 }, output: "", marks: [], events: [] }; } };
+    const [tool] = buildServerTools(ml, [{
+        id: "srv1", name: "S", description: "", kind: "local",
+        functions: [{ name: "f", description: "", parameters: { type: "object", properties: { q: { type: "string" } } } }],
+    }], ["srv1"]);
+    await tool.run({ q: "hello", token: "my label" });
+    assert.deepEqual(sent, { q: "hello" });
+});
+
+// A consent card may not say something that is not happening. `crossOrigin` means ONE thing — a privileged
+// debugger click reaching into an embedded third-party frame — and the card states it in those words, so a
+// remote tool borrowing the field for emphasis made a web-search call warn about a debugger click into an
+// iframe that was never involved.
+test("server tools: the approval says the ARGUMENTS leave, not that a frame is being clicked", async () => {
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const [tool] = buildServerTools({}, [{
+        id: "srv1", name: "SearXNG", description: "", kind: "local",
+        functions: [{ name: "search_web", description: "", parameters: { type: "object", properties: { q: { type: "string" } } } }],
+    }], ["srv1"]);
+    const r = tool.render(null, { q: "pricing" });
+    assert.equal(r.type, "action");
+    assert.equal(r.crossOrigin, undefined, "nothing here is a cross-origin frame click");
+    // Named from the BUNDLE, the same identity the background mints its grant from — a friendly tool name
+    // cannot make the card say one destination while the grant authorises another.
+    assert.equal(r.offMachine, "SearXNG");
+    assert.match(r.target, /search_web/);
+});
+
+// Curation is what makes a forty-tool backend usable: a tool the model can SEE is a tool it will try, so a
+// disabled function must not be built at all rather than built and hidden.
+test("server tools: a curated-out function is never built, while its siblings still are", async () => {
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const bundle = {
+        id: "srv1", name: "Search", description: "", kind: "local",
+        functions: [
+            { name: "search_web", description: "", parameters: { type: "object", properties: {} } },
+            { name: "send_email", description: "", parameters: { type: "object", properties: {} } },
+        ],
+    };
+    const all = buildServerTools({}, [bundle], ["srv1"]);
+    assert.deepEqual(all.map(t => t.name).sort(), ["srv1__search_web", "srv1__send_email"]);
+
+    // Disabled by the SAME `<bundle>__<fn>` name a run would see — two spellings of one identity is how a
+    // curation list ends up disabling nothing.
+    const curated = buildServerTools({}, [bundle], ["srv1"], ["srv1__send_email"]);
+    assert.deepEqual(curated.map(t => t.name), ["srv1__search_web"], "the other function is untouched");
+
+    // The bundle can still be asked for with everything in it turned off — that is an empty toolset, not an
+    // error, and a run should degrade rather than fail before it starts.
+    assert.deepEqual(buildServerTools({}, [bundle], ["srv1"], ["srv1__search_web", "srv1__send_email"]), []);
 });

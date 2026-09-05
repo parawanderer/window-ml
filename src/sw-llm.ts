@@ -6,6 +6,9 @@
 // and chrome/fetch. All server JSON is genuinely opaque, so it's typed `any`; our own data uses the contract.
 import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, GenPhase } from "./contract";
 import { DEFAULT_CONFIG, modelFilterAllows, generatesText, producesEmbeddings } from "./contract";   // single source of truth (see contract.ts)
+import { loadedFrom } from "./resource-events";
+import { createFrameReader } from "./protostream";
+import { Frame } from "./proto/chat.gen";
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {
@@ -435,6 +438,32 @@ function rateLimitWaitMs(retryAfter: string | null, body: string): number {
 export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSignal) {
     const config = await getConfig();
     const headers = authHeaders(config);
+    /**
+     * MAY THIS CALL ASK FOR PROTOBUF? Only when the format carries nothing the wire would drop.
+     *
+     * TOOL CALLS ARE FINE. They were in the schema from the start and the encoder fills them now — verified
+     * against the live box, not taken on report (`tests/e2e/proto-stream-live.mjs`): a `tools` request came
+     * back with `finish=tool_calls` and `get_weather({"city":"Paris"})` decoded out of a Delta. Reasoning
+     * rides it too.
+     *
+     * `toolIds` DOES NOT, and this is permanent rather than a gap waiting on a field. `sources` is not part
+     * of a completion at all: OpenWebUI emits it, ahead of the model's first token, narrating a retrieval it
+     * already did — and it does so on `/api/chat/completions`, which proxies ollama's NATIVE `/api/chat` and
+     * parses the stream line by line to run filter functions. The protobuf encoder lives on
+     * `/ollama/v1/chat/completions`, a raw passthrough that path never touches. So a `sources` field in the
+     * schema could never be populated: it would be permanently empty, which is not "no sources" and not
+     * "sources dropped" but indistinguishable from both — an absent field says "ask elsewhere", an
+     * always-empty one says "there were none". Confirmed by the people who own both routes; a protobuf
+     * server-tool stream would mean teaching OpenWebUI's transcoder to emit it, which is real work and not
+     * this. Until then such a call keeps the format that carries provenance.
+     *
+     * A `schema` call never streams at all (structured output skips the streaming path), so it is excluded
+     * for tidiness rather than because anything would be lost.
+     *
+     * Ollama-native is excluded because it is NDJSON with its own shape; this replaces the OpenAI SSE.
+     */
+    const protoEligible = !!config.protoStream && (config.apiFormat || "openai") !== "ollama"
+        && !payload.toolIds?.length && !payload.schema;
 
     // Model resolution, in priority order: an explicit model always wins; then
     // the extend:"utility" profile's utilityModel; then the OCR model (ml.read
@@ -574,7 +603,10 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
             try {
                 res = await fetch(config.chatUrl, {
                     method: "POST",
-                    headers,
+                    // ONE HEADER, and only where nothing can be lost by it — see `protoEligible`. A server
+                    // that does not speak it answers with the SSE it always did, so this is safe to send
+                    // hopefully rather than after sniffing a version.
+                    headers: stream && protoEligible ? { ...headers, Accept: "application/protobuf" } : headers,
                     body: JSON.stringify({ ...requestBody, stream }),
                     signal,   // ABORT_TASK → this fetch rejects with an AbortError (kills a slow generation)
                 });
@@ -688,6 +720,13 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
     const _t0 = Date.now();   // wall-clock of this streamed call → usage.genMs
 
     const consume = async (res: Response) => {
+        // NEGOTIATED BY WHAT CAME BACK, not by what we asked for. We send `Accept: application/protobuf` when
+        // it is safe to (see `wantsProto`), and a server, proxy or build that does not do it answers with the
+        // SSE it always did — so the miss IS the fallback and the opt-in costs nothing when it is not there.
+        // The same shape as the Markdown ladder's first rung, and for the same reason: one request, and its
+        // failure is the old path rather than a wasted round trip.
+        if ((res.headers?.get?.("content-type") || "").includes("application/protobuf"))
+            return consumeProto(res);
         const reader = res.body!.getReader();
         const decoder = new TextDecoder();
         let buffer = "", content = "", reasoning = "", sawToolCall = false;
@@ -716,6 +755,55 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
         }
         if (buffer.trim()) handleLine(buffer.trim());
         return { content, sawToolCall, sources, reasoning: reasoning || null, usage };
+    };
+
+    /**
+     * The same stream as varint-delimited protobuf: measured at 25x fewer bytes for the same tokens.
+     *
+     * The saving is structural rather than a compression trick. OpenAI's SSE re-sends `id`, `object`,
+     * `created`, `model`, `system_fingerprint` and a nested `choices[0].delta` wrapper for EVERY token —
+     * measured at ~224 bytes of envelope around ~5 bytes of text. Here the invariant half arrives once, in
+     * `Start`, and a token costs a tag, a length and its own bytes.
+     *
+     * NO TextDecoder ANYWHERE in this path: it is binary, and decoding it as UTF-8 corrupts it silently
+     * rather than throwing, which is the worst way for this to go wrong.
+     */
+    const consumeProto = async (res: Response) => {
+        const reader = res.body!.getReader();
+        const frames = createFrameReader();
+        let content = "", reasoning = "", sawToolCall = false;
+        let usage: TokenUsage | null = null;
+        const handle = (bytes: Uint8Array) => {
+            const f = Frame.decode(bytes);
+            if (f.delta) {
+                if (f.delta.content) { content += f.delta.content; onDelta(f.delta.content); }
+                if (f.delta.reasoning) reasoning += f.delta.reasoning;
+                // TOOL CALLS ARRIVE HERE. The field and the encoder that fills it landed upstream in ONE
+                // commit, after the handover had told us they were missing — so the schema never ran ahead of
+                // the wire, and the reason this needed no change on our side is only that we regenerate from
+                // a PINNED schema rather than hand-writing to the fields visible on the day.
+                if (f.delta.toolCalls?.length) sawToolCall = true;
+            }
+            if (f.end) {
+                if (f.end.finishReason === "tool_calls") sawToolCall = true;
+                usage = normalizeUsage({
+                    prompt_tokens: f.end.promptTokens, completion_tokens: f.end.completionTokens,
+                    total_tokens: (f.end.promptTokens || 0) + (f.end.completionTokens || 0),
+                });
+            }
+            // `Start` carries the id/model/created that JSON repeated per token. Nothing downstream reads
+            // them — the resolved model is already known here — so they are decoded and dropped.
+        };
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            for (const frame of frames.push(value)) handle(frame);
+        }
+        // BYTES STILL HELD mean the stream stopped in the middle of a frame. Partial output returned as a
+        // finished answer is a wrong answer dressed as a complete one, and the caller cannot tell — so this
+        // is a transport failure, the same rule `createToolStream` follows for a stream with no result frame.
+        if (frames.pending) throw new Error("protobuf stream ended mid-frame");
+        return { content, sawToolCall, sources: [] as unknown[], reasoning: reasoning || null, usage };
     };
 
     if (payload.toolIds?.length) {
@@ -941,7 +1029,7 @@ export async function setModel(model: unknown): Promise<string> {
 // OpenWebUI /ollama passthrough or a direct Ollama server — and returns it
 // along with the currently loaded models. /api/ps only exists on Ollama, so
 // it doubles as the discriminator.
-async function findOllamaBase(config: MlConfig): Promise<{ base: string; loaded: any[] }> {
+export async function findOllamaBase(config: MlConfig): Promise<{ base: string; loaded: any[] }> {
     const origin = new URL(config.chatUrl).origin;
     for (const base of [`${origin}/ollama`, origin]) {
         try {
@@ -959,25 +1047,10 @@ async function findOllamaBase(config: MlConfig): Promise<{ base: string; loaded:
 export async function listLoadedModels(): Promise<LoadedModel[]> {
     const config = await getConfig();
     const { loaded } = await findOllamaBase(config);
-    return loaded.map((m: any) => ({
-        model: m.model || m.name,
-        vramGB: m.size_vram ? +(m.size_vram / 1e9).toFixed(1) : null,
-        sizeGB: m.size ? +(m.size / 1e9).toFixed(1) : null,
-        // EXACT bytes alongside the rounded GB: the resource panel's bands subtract these from exact capacity
-        // figures, so rounding here would accumulate into visibly wrong sums.
-        vramBytes: typeof m.size_vram === "number" ? m.size_vram : null,
-        sizeBytes: typeof m.size === "number" ? m.size : null,
-        // Which devices it occupies. `gpus` is ABSENT for a CPU-resident model — the server's way of saying
-        // so — and that absence is preserved here rather than normalised to an empty array.
-        ...(Array.isArray(m.gpus) ? { gpus: m.gpus.map((g: any) => ({
-            id: String(g.gpu_id ?? ""), runner: String(g.runner ?? ""), vramBytes: Number(g.size_vram) || 0,
-        })) } : {}),
-        // The context window it was loaded with. Ollama preallocates KV cache for the
-        // FULL window, so this explains a big share of size_vram (a 256K-ctx load is
-        // mostly cache). Older servers don't report it → null, and the UI hides it.
-        contextLength: typeof m.context_length === "number" ? m.context_length : null,
-        expiresAt: m.expires_at || null,
-    }));
+    // The row -> LoadedModel mapping lives in resource-events.ts because the event stream's `sample` frames
+    // embed this same body verbatim. Two transports, one parser: the polled panel and the streamed one
+    // cannot end up disagreeing about what a model IS.
+    return loadedFrom(loaded);
 }
 
 /** GET Ollama `/api/info` — the machine's CAPACITY (per-device VRAM, system RAM), through the same base
