@@ -13,7 +13,7 @@
 import { PY_PACKAGE_LOADS } from "./python-env";
 import { wrapUserCode, harden, unharden } from "./python-runtime";
 
-type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean };
+type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
 // two never have to be inferred from one another.
 type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
@@ -102,9 +102,41 @@ async function run(code: string, image: string | null, hardened: boolean, tables
 // (harden/unharden) can't overlap another run — one leaking capabilities into the other.
 // The worker owns the instance, so the invariant lives here now (was offscreen's runChain).
 let runChain: Promise<unknown> = Promise.resolve();
+// WHAT THE SANDBOX ACTUALLY IS — the Python and Pyodide versions, and each package's installed version.
+// Read FROM the running interpreter rather than from our own manifest: the manifest says what we asked for,
+// and the wheel that got installed is what the code will actually import. A panel that reports the first
+// while the second is different is worse than one that reports nothing.
+async function env(): Promise<{ python: string; pyodide: string; packages: { name: string; version?: string }[] }> {
+    const py = await getPyodide();
+    const versions = py.runPython(`
+import sys, json
+from importlib.metadata import version, PackageNotFoundError
+def _v(n):
+    try: return version(n)
+    except PackageNotFoundError: return None
+json.dumps({ "python": sys.version.split()[0], "packages": { n: _v(n) for n in ${JSON.stringify(PY_PACKAGE_LOADS)} } })
+`) as string;
+    const parsed = JSON.parse(versions) as { python: string; packages: Record<string, string | null> };
+    return {
+        python: parsed.python,
+        pyodide: String(py.version ?? ""),
+        // Ordered as the manifest lists them, so the panel reads the way the tool description does.
+        packages: PY_PACKAGE_LOADS.map((name) => ({ name, ...(parsed.packages[name] ? { version: parsed.packages[name]! } : {}) })),
+    };
+}
+
 self.onmessage = (e: MessageEvent) => {
     const msg = e.data as RunMsg;
     if (!msg || typeof msg.id !== "number") return;
+    // An ENV query, not a run. It goes through the same serialized chain so it cannot land between a run's
+    // globals being set and its code executing — the interpreter is one thread and this reads from it.
+    if ((msg as unknown as { env?: boolean }).env) {
+        runChain = runChain.then(() => env()).then(
+            (info) => self.postMessage({ id: msg.id, ok: true, stdout: "", env: info }),
+            (err: unknown) => self.postMessage({ id: msg.id, ok: false, stdout: "", error: String(err) }),
+        );
+        return;
+    }
     // Live stdout streaming: when the run opted in (`stream`), post each print() chunk back as a `partial`
     // message (offscreen forwards it up the chain); the final message still carries the full result.
     // Stamped HERE, in the worker — this is where the print actually happened. The chunk then crosses

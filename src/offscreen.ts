@@ -15,7 +15,8 @@ const PY_TIMEOUT_MS = 15000;
 
 // `bootMs`/`runMs` come from the WORKER, which is the executor — anything measured downstream of it is
 // measuring the message bus as well. See python-worker.ts.
-type PyResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
+type PyEnv = { python: string; pyodide: string; packages: { name: string; version?: string }[] };
+type PyResult = { ok: boolean; env?: PyEnv; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
 
 // The worker is same-origin (extension page → chrome-extension:// worker), so it needs no
 // web_accessible_resources entry; it inherits this page's 'wasm-unsafe-eval' CSP.
@@ -52,7 +53,7 @@ function ensureWorker(): Worker {
     return w;
 }
 
-function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string): Promise<PyResult> {
+function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean): Promise<PyResult> {
     const w = ensureWorker();
     const id = nextId++;
     return new Promise((resolve) => {
@@ -64,7 +65,7 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
             killWorker("timeout");   // nuke the (still-busy) instance + fail any others queued behind it
         }, PY_TIMEOUT_MS);
         pending.set(id, { resolve, timer, streamId });   // streamId → the background can key live stdout chunks
-        w.postMessage({ id, code, image, hardened, tables, stream });
+        w.postMessage({ id, code, image, hardened, tables, stream, ...(env ? { env: true } : {}) });
     });
 }
 
@@ -72,7 +73,7 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     if (msg?.type !== "PY_RUN") return;
     // The worker serializes runs internally (single Pyodide instance + harden/unharden swap),
     // so we can forward straight through — no need to chain here.
-    runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, msg.stream, msg.streamId)
+    runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, msg.stream, msg.streamId, msg.env)
         .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
     return true;   // keep the channel open for the async result
 });

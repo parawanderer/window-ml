@@ -1560,6 +1560,12 @@ export interface PageToolEnvelope {
     renderOut?: RenderDescriptor;
     /** what locate fed into the model's context (snap-inject) — computed page-side, surfaced in the render + export */
     feedback?: ToolFeedback;
+    /** THE EXECUTOR'S OWN CLOCK — a sandbox's cold start and script time, a remote tool's evaluate and queue.
+     *  It has to cross with the result: the background measures wall time around the whole dispatch, which
+     *  contains the network and the far end's overhead, so without this the timeline can only draw one
+     *  undifferentiated span and a first `python_exec` reads as a slow script rather than as a runtime
+     *  being downloaded. */
+    remoteMs?: RemoteTiming;
     /** a readonlyTry that the mediated interpreter HANDLED (→ auto-approve) */
     readonly?: boolean;
     /** prior grants a readonlyTry REUSED (cached ml.fetch URLs) — surfaced as the "reused a grant" note on

@@ -144,13 +144,33 @@ test("python offers the bench, javascript offers a copy", async () => {
     assert.doesNotMatch(tools, /bench/);
 });
 
-test("the bench button hands the bench the script and navigates there", async () => {
+test("the bench button hands over the script and opens the DRAWER, keeping you where you are", async () => {
+    // NOT the full page. You press this FROM a step, to compare against that step — sending you to a view
+    // that replaces the transcript is exactly the trip the drawer exists to stop, and it is what this did
+    // before `openBench` became the one opener. The dock is a remembered preference, so the full-page case
+    // is the next test rather than a special case here.
     reset();
+    store.benchDock.value = "drawer";
+    store.benchOpen.value = false;
     store.view.value = { name: "detail", hash: "h1" };
     const host = await mount(PY);
     [...host.querySelectorAll(".code-tool")].find(b => /bench/.test(b.textContent)).click();
     await tick();
-    assert.equal(localStorage.getItem(store.BENCH_CODE_KEY), PY.code);
-    assert.equal(store.view.value.name, "bench");
+    assert.equal(localStorage.getItem(store.BENCH_CODE_KEY), PY.code, "the script is handed over");
+    assert.equal(store.benchOpen.value, true, "…the bench opens");
+    assert.equal(store.view.value.name, "detail", "…and you are still reading the step you pressed it from");
     store.view.value = { name: "list" };
+});
+
+test("…and it honours the dock: with full-page remembered, it goes there and remembers the way back", async () => {
+    reset();
+    store.benchDock.value = "full";
+    store.benchOpen.value = false;
+    store.view.value = { name: "detail", hash: "h1" };
+    const host = await mount(PY);
+    [...host.querySelectorAll(".code-tool")].find(b => /bench/.test(b.textContent)).click();
+    await tick();
+    assert.equal(store.view.value.name, "bench");
+    assert.deepEqual(store.viewReturn.value, { name: "detail", hash: "h1" }, "…so `back` is a return");
+    store.benchDock.value = "drawer"; store.view.value = { name: "list" };
 });

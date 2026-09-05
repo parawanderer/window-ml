@@ -1040,7 +1040,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                         // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):
                         // the loop injects it into the model's next turn (pushToolImages).
-                        return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images };
+                        return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs };
                     } finally {
                         pendingGrants.delete(tabId);   // grants were for THIS approved call's sub-ops only
                         if (onStream) delegateStreams.delete(runId);   // the call is done — stop routing live chunks to it
@@ -1249,7 +1249,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // LIVE stdout streaming (opt-in): record streamId→tab so a PY_STDOUT chunk reaches this page.
             const streamId: string | undefined = message.payload?.stream ? message.requestId : undefined;
             if (streamId && sender.tab?.id != null) pyStreamTabs.set(streamId, sender.tab.id);
-            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId };
+            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(message.payload?.env ? { env: true } : {}) };
             const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
             attempt()
                 .catch((err) => {

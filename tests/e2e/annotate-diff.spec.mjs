@@ -14,8 +14,13 @@ import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// TALL ON PURPOSE. The padding is identical on both sides, so the diff is unaffected — but the step becomes
+// taller than the viewport, which is what makes "scrolled to the code" distinguishable from "scrolled to the
+// top of the step". Without it the pill test passes with the fix REVERTED, which is how it was caught.
+const PAD = Array.from({ length: 40 }, (_, i) => `filler_${i} = ${i}  # padding, identical on both sides`);
 const V1 = [
     "import pandas as pd",
+    ...PAD,
     "rows = [{'rep':'Gia','q1':210,'q2':220},{'rep':'Kim','q1':190,'q2':205}]",
     "df = pd.DataFrame(rows)",
     "df['total'] = df['q1'] + df['q2']",
@@ -25,6 +30,7 @@ const V1 = [
 // So this step carries a diff, a failure and an annotation at once.
 const V2 = [
     "import pandas as pd",
+    ...PAD,
     "rows = [{'rep':'Gia','q1':210,'q2':220},{'rep':'Kim','q1':190,'q2':205}]",
     "df = pd.DataFrame(rows)",
     "df['half'] = df['q1'] + df['q2']",
@@ -265,5 +271,43 @@ test("the diff opens on a failed retry and collapses to one line on a successful
         await okStep.locator(".r-diff-tri").click();
         await expect(okStep.locator(".dline").first()).toBeVisible();
         await expect(okStep.locator(".r-diff-claim")).toContainText("dropped the missing quarter");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE PILL IS A POINTER, so it navigates — and it lands on the CODE, not on the top of the step. The step it
+// points at is usually COLLAPSED, which is what made this worth a test: the slot anchor is looked up while
+// the open is still re-rendering, so before the fix it found nothing visible and fell back to the row. That
+// failed only in the case you are actually in, and worked in the one a hand-check would try first.
+test("the revises pill scrolls to the OLD call's code, not to the top of its step", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        const step = frame.locator(".astep").nth(1);
+        if (!(await step.locator(".r-py-in").count())) await step.locator(".astep-head").click();
+        await expect(step.locator(".r-diff-ref")).toBeVisible({ timeout: 30000 });
+
+        // The step being pointed AT is collapsed — the ordinary case, and the one that was broken.
+        const target = frame.locator(".astep").nth(0);
+        if (await target.locator(".r-py-in").count()) await target.locator(".astep-head").click();
+        await expect(target.locator(".r-py-in")).toHaveCount(0);
+
+        await step.locator(".r-diff-ref").click();
+
+        // It opened the step…
+        await expect(target.locator(".r-py-in")).toBeVisible({ timeout: 10000 });
+        // …and scrolled to the CODE. The In block carries the `data-cite="in"` anchor; the assertion is that
+        // it is the thing on screen, not merely that it exists.
+        const anchor = target.locator("[data-cite='in']").first();
+        await expect(anchor).toBeInViewport({ timeout: 10000 });
+        await expect(anchor).toContainText("df['total']", { timeout: 10000 });
+        // THE DISTINCTION, which is the only thing worth asserting here: the step is taller than the
+        // viewport, so landing on its top and landing on its code are different places. The head must be
+        // scrolled PAST — if it is still on screen we went to the row, which is the bug.
+        await expect.poll(async () => {
+            const head = await target.locator(".astep-head").boundingBox();
+            const code = await anchor.boundingBox();
+            return head && code ? head.y < code.y - 200 : null;
+        }, { timeout: 10000 }).toBe(true);
+        // (The pulse that marks WHICH step you were sent to lasts about a second, so it is long gone by the
+        // time the assertions above have settled. It has its own coverage; this test is about WHERE.)
     } finally { await ext.context.close(); await fake.stop(); }
 });

@@ -55,9 +55,17 @@ test("a real traceback names the user's line, and the render points at it", asyn
         // 1. REAL CPYTHON reports the user's own line numbers. The sandbox indents the code into `def
         //    _user():` after a three-line prefix, so without the AST correction every one of these is +3 —
         //    and this is the only test that watches the real interpreter produce them.
-        const tb = await step.locator(".code.tb").textContent();
-        const userLines = [...tb.matchAll(/File "<python_exec>", line (\d+)/g)].map((m) => Number(m[1]));
+        //
+        //    Read from the RAW view, not the render: the render remaps each frame onto the row the reflowed
+        //    code actually draws (see the remap below), so reading it here would be asking the wrong view a
+        //    question about the interpreter. Raw is the model-facing text verbatim, which is exactly where
+        //    CPython's own numbers have to stay recoverable.
+        await step.locator(".rr-toggle button", { hasText: "raw" }).last().click();
+        const rawTb = await step.locator("[data-cite='out']").last().textContent();
+        const userLines = [...rawTb.matchAll(/File "<python_exec>", line (\d+)/g)].map((m) => Number(m[1]));
         expect(userLines, "the call site, then the function — both as the user wrote them").toEqual([5, 3]);
+        await step.locator(".rr-toggle button", { hasText: "rendered" }).last().click();
+        await expect(step.locator(".code.tb")).toBeVisible();
 
         // 2. The DEEPEST frame is marked in the CODE, mapped through the reflow. Line 4 is long enough that
         //    the formatter breaks it, so the marked line is NOT simply the number the traceback says.
@@ -78,6 +86,14 @@ test("a real traceback names the user's line, and the render points at it", asyn
         const map = JSON.parse(raw);
         expect(map[3], "the failing line did not move; the lines after it did").toBe(3);
         expect(map[5], "the call site moved down as the long line opened out").toBeGreaterThan(5);
+
+        // 3b. The RENDER names the rows on screen, which is what the raw view above is being contrasted with:
+        //     the reflow moved the call site, so the two views legitimately disagree and each is right about
+        //     its own question.
+        const shown = await step.locator(".tb-line").allTextContents();
+        expect(shown.map((t) => Number(/line (\d+)/.exec(t)[1])), "as DRAWN, not as CPython printed")
+            .toEqual([map[5], map[3]]);
+        expect(map[5], "…and the test says nothing unless the reflow actually moved it").toBeGreaterThan(5);
 
         // 4. Clicking a frame lands on the line it names, and the FAILING one flashes red rather than green —
         //    green says "here is the thing you asked for", which on the failing line is the one colour it is
@@ -226,7 +242,7 @@ test("a JS failure names the row on screen, tells the model its own line, and cl
         const map = JSON.parse(await step.locator("[data-cite='in']").getAttribute("data-py-map"));
         expect(map[4], "the failing line moved when the code was beautified").toBeGreaterThan(4);
         await expect(step.locator(".r-py-err .tb-line"), "the render names the row above it")
-            .toHaveText(String(map[4]));
+            .toHaveText(`(line ${map[4]})`);
         // The two views must not read as a contradiction, so the moved number says both.
         await expect(step.locator(".r-py-err .tb-line-wrap .tt-pop")).toContainText("model wrote it as line 4");
         await step.locator(".r-py-err .tb-line").click();
@@ -284,5 +300,62 @@ test("a cell we cannot render says what it is, and never shows as an empty objec
         await expect(bad).toHaveText("unrenderable Probe");
         // And it never reads as an empty dict, which is the specific wrong answer this exists to prevent.
         expect(await step.locator(".r-df-table").textContent()).not.toContain("{}");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// A PYTHON COLD START, end to end. The first python_exec of a session spends seconds fetching Pyodide and
+// its wheels before a line runs, and one elapsed figure charges the script for time it never spent.
+//
+// This is an e2e because the number crosses FOUR processes to reach the footer — the worker measures it,
+// then offscreen → the service worker → the page → (on a background-hosted run) back across the delegation
+// envelope. It was dropped at that last hop, which is the hop every run with a debug surface open takes:
+// unit tests at both ends passed and the panel still said "ran in 3.4s".
+test("a first python_exec splits its cold start from its script; the second reports none", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model",
+            debugMode: "overlay", autoApprovePython: true,
+        });
+        fake.setSide(() => null);
+        fake.setScript([
+            { tool: "python_exec", args: { code: "return 1 + 1", mode: "readonly" } },
+            { tool: "python_exec", args: { code: "return 2 + 2", mode: "readonly" } },
+            { content: "done" },
+        ]);
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1400, height: 900 });
+        await page.goto(`${fake.url}/api/version`);
+        await waitForMl(page);
+        await page.evaluate(() => {
+            window.ml.agent("add twice", { approvalRouting: "both", extraTools: [window.ml.pythonTool()] });
+        });
+        const frame = await openRunInSidebar(page, { task: "add twice" });
+        for (let i = 0; i < 60; i++) {
+            const pending = await ext.sw.evaluate(() => (globalThis.__mlApprovals?.list?.() || []).map((d) => d.key));
+            for (const k of pending) await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), k);
+            if (await frame.locator(".astep.tool").count() >= 2) break;
+            await sleep(400);
+        }
+        for (const i of [0, 1]) {
+            const st = frame.locator(".astep").nth(i);
+            if (!(await st.locator(".r-py-out").count())) await st.locator(".astep-head").click();
+        }
+        const first = frame.locator(".astep").nth(0).locator(".r-ranfor");
+        const second = frame.locator(".astep").nth(1).locator(".r-ranfor");
+        await expect(first).toBeVisible({ timeout: 30000 });
+
+        // The FIRST call paid for the runtime, and says so — "ran in 4.2s" alone would blame the script.
+        await expect(first).toContainText("cold start", { timeout: 20000 });
+        await expect(first).toContainText("script");
+        // The SECOND is warm: the absence is the signal, so there is nothing to explain and it says nothing.
+        await expect(second).toBeVisible();
+        await expect(second).not.toContainText("cold start");
+        // The split is real arithmetic, not a label: the two parts are each less than the whole.
+        const [whole, boot, script] = (await first.textContent()).match(/([\d.]+m?s)/g).map((t) =>
+            t.endsWith("ms") ? parseFloat(t) : parseFloat(t) * 1000);
+        expect(boot + script).toBeLessThanOrEqual(whole + 1);
+        expect(boot, "the cold start is the bulk of a first call").toBeGreaterThan(script);
     } finally { await ext.context.close(); await fake.stop(); }
 });

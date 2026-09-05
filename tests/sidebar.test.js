@@ -6661,6 +6661,119 @@ test("the elapsed timer stops when the step lands, and the settled figure takes 
     assert.equal(w.shadow.querySelector(".astep-elapsed"), null, "the live counter is gone once it landed");
 });
 
+// THE TOOLTIP HAS TWO RENDER MODES, picked by the TYPE of what it is given — one function, no way to
+// choose the wrong one. A STRING is markdown TEXT, because that is where content from outside arrives (a
+// JSON Schema's description, a tool result, a model's prose) and treating it as markup would be an
+// injection. Anything else is authored JSX.
+//
+// Asserted against the MODULE rather than through a world: the sidebar runs its own copy of preact in a vm
+// sandbox, so a vnode built here would not be one the world could render — and what is worth pinning is
+// which slot a value lands in, not preact's ability to draw it.
+test("a tooltip treats a string as markdown text and anything else as an authored node", async () => {
+    const { cursorTipOn, cursorTip } = await import("../src/sidebar/ui-kit.tsx");
+    const set = (content) => {
+        cursorTip.value = null;
+        cursorTipOn(content).onPointerMove({ clientX: 1, clientY: 2 });
+        return cursorTip.value;
+    };
+    const str = set("reads `df['total']` and *sorts* by it");
+    assert.equal(str.text, "reads `df['total']` and *sorts* by it", "kept as TEXT, to be rendered as markdown");
+    assert.equal(str.node, undefined, "…and not as a node, which would render it as markup");
+
+    // Anything that is not a string is ours, and goes down the node path untouched.
+    const vnode = { type: "span", props: { children: "authored" } };
+    const rich = set(vnode);
+    assert.equal(rich.node, vnode);
+    assert.equal(rich.text, undefined);
+
+    // Leaving resets it, so a tip cannot outlive the thing it was about.
+    cursorTipOn("x").onPointerLeave();
+    assert.equal(cursorTip.value, null);
+});
+
+// …and the renderer a string goes through ESCAPES. This is the whole reason a string is markdown rather
+// than markup: schema descriptions and tool results are not ours to trust.
+test("the tooltip's markdown renderer renders formatting and escapes markup", async () => {
+    const { mdInline } = await import("../src/sidebar/format.ts");
+    const html = mdInline("reads `df['total']` and *sorts* by it");
+    // The apostrophes are entity-escaped inside the code span, which is the renderer doing its job.
+    assert.match(html, /<code>df\[&#39;total&#39;\]<\/code>/);
+    assert.match(html, /<em>sorts<\/em>/);
+    assert.doesNotMatch(html, /^<p>/, "inline: no paragraph wrapper to break a one-line tip");
+
+    const hostile = mdInline("<img src=x onerror=alert(1)> and <b>bold?</b>");
+    assert.doesNotMatch(hostile, /<img/, "no element is created from the text");
+    assert.doesNotMatch(hostile, /<b>/);
+    assert.match(hostile, /&lt;img src=x/, "…it is shown as the text it is");
+});
+
+// WHAT INLINE MARKDOWN WILL NOT DO. These surfaces — a margin note, a tooltip, the model's claim — carry
+// text we did not author, in places with no room. So: no images (unbounded pixels in a gutter, and a tool
+// result could put them there), and no links to the outside web from a model's prose (a one-click egress in
+// chrome the reader trusts, whose text and destination markdown lets disagree). Pinned, because both are
+// currently true by ACCIDENT of how the inline renderer works and would be easy to lose.
+test("inline markdown renders no images and no model-authored external links", async () => {
+    const { mdInline } = await import("../src/sidebar/format.ts");
+    for (const src of ["![shot](data:image/png;base64,AAAA)", "![shot](https://example.com/x.png)"]) {
+        const html = mdInline(src);
+        assert.doesNotMatch(html, /<img/, `no image from ${src}`);
+        assert.doesNotMatch(html, /src=/, "…and nothing that could become one");
+    }
+    // A pointer link stays TEXT here: making it a link needs the run to navigate to (the step's seq), which
+    // this renderer has none of — and a link that goes nowhere is worse than plain text. The answer
+    // renderer, which HAS that context, is where pointer links live.
+    assert.doesNotMatch(mdInline("see [the totals](@tool:abc1234)"), /<a /);
+});
+
+// THE POINTER CHIP is ONE component (ui-kit's PointerChip) — the copy chip under a step and the "revises"
+// pill on a retry both draw through it. It was a CSS copy for a while, which is exactly how two surfaces
+// start drawing the same thing differently; this is what stops that coming back.
+test("a pointer reads the same whether it is copied under a step or revised by one", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("chip", "retry it"));
+    await w.dispatch(agentStep("chip", 1, {
+        seq: 1, tool: "python_exec", result: "1", token: "@tool:abc1234",
+        arguments: { code: "x = 1" },
+        renderIn: { type: "python-in", mode: "script", code: "x = 1",
+                    revision: { ref: "@tool:dead000", tool: "python_exec", seq: 0, before: "x = 0" } },
+    }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+
+    const chips = [...w.shadow.querySelectorAll(".tok-chip")];
+    assert.equal(chips.length, 2, "the step's own pointer, and the one it revises");
+    // Same shell, so the same class carries the chrome and each still says its own thing.
+    assert.ok(chips.every((c) => c.querySelector("code")), "both draw the reference as code");
+    assert.ok(chips.every((c) => c.querySelector(".tt-pop")), "…and both explain themselves on hover");
+});
+
+// WHAT THE PILL SAYS depends on whether the model NAMED the output it is revising. A name it wrote is worth
+// more than a hex address; a name we invent is worth less than one.
+test("the revises pill shows the model's own name for the call, and the raw pointer when it has none", async () => {
+    const step = (revision) => ({
+        seq: 1, tool: "python_exec", result: "1", arguments: { code: "x = 1" },
+        renderIn: { type: "python-in", mode: "script", code: "x = 1", revision },
+    });
+    // NAMED: the tool prefixes it, so "the q1+q2 totals" cannot be mistaken for a step title.
+    const named = await loadSidebarWorld();
+    await named.dispatch(agentStart("n", "retry"));
+    await named.dispatch(agentStep("n", 1, step({ ref: "@tool:abc1234", tool: "python_exec", seq: 0, before: "x = 0", label: "the q1+q2 totals" })));
+    named.shadow.querySelector(".row").click(); await named.tick();
+    named.shadow.querySelector(".astep-head").click(); await named.tick();
+    const pill = named.shadow.querySelector(".r-diff-ref");
+    assert.equal(pill.textContent.replace(/\s+/g, " ").trim().split("Go to")[0].trim(), "python_exec: the q1+q2 totals");
+
+    // UNNAMED: the raw pointer, which you can at least copy and dereference — better than a label we made up.
+    const bare = await loadSidebarWorld();
+    await bare.dispatch(agentStart("b", "retry"));
+    await bare.dispatch(agentStep("b", 1, step({ ref: "@tool:dead000", tool: "python_exec", seq: 0, before: "x = 0" })));
+    bare.shadow.querySelector(".row").click(); await bare.tick();
+    bare.shadow.querySelector(".astep-head").click(); await bare.tick();
+    const barePill = bare.shadow.querySelector(".r-diff-ref");
+    assert.match(barePill.textContent, /@tool:dead000/);
+    assert.doesNotMatch(barePill.textContent, /python_exec:/, "no invented name, and no empty prefix either");
+});
+
 // THE DIFF'S GUTTER, across every combination of the two things that decide it. The numbers earn their
 // width because the new-side column matches the gutter of the code block below — read straight down between
 // a diff row, a margin note and the failure mark. With that gutter off they line up with nothing, so they
@@ -7903,7 +8016,11 @@ test("python: a traceback's user lines are links, and the deepest one is marked"
 
     const links = [...w.shadow.querySelectorAll(".bench-out .tb-line")];
     assert.equal(links.length, 2, "both <python_exec> frames are addressable");
-    assert.deepEqual(links.map((b) => b.textContent), ["5", "2"]);
+    // The CONTROL is the whole frame reference, not the bare number: two characters is a poor hit target,
+    // and what you are clicking is the frame. (The bench draws unreflowed source, so the numbers are the
+    // interpreter's own here — the remap only has something to do when the code moved.)
+    assert.deepEqual(links.map((b) => b.textContent),
+        ['File "<python_exec>", line 5', 'File "<python_exec>", line 2']);
     // The DEEPEST user frame is where it actually failed; the ones above are the call path.
     const rows = [...w.shadow.querySelectorAll(".bench-out .tbline")];
     const failed = rows.filter((r) => r.classList.contains("tb-fail"));
@@ -7977,7 +8094,11 @@ test("python: the failing line is marked in the code, mapped through the reflow"
     const rowOf = (needle) => [...w.shadow.querySelectorAll(".cline")]
         .find((el) => el.textContent.includes(needle))?.getAttribute("data-line");
     const callSite = rowOf("total(rows)"), failed = rowOf("frame['nope']");
-    assert.deepEqual(links.map((b) => b.textContent), [callSite, failed]);
+    // The CONTROL is the whole frame reference, not the bare number: two characters is a poor hit target,
+    // and what you are clicking is the frame.
+    assert.deepEqual(links.map((b) => b.textContent),
+        [`File "<python_exec>", line ${callSite}`, `File "<python_exec>", line ${failed}`]);
+    assert.ok(links.every((b) => b.textContent.startsWith('File "')), "…so `File \"` is inside the button too");
     assert.notEqual(callSite, "5", "…and the test would prove nothing if the reflow had not moved it");
     // A moved number's tooltip says BOTH, so the two views cannot read as a contradiction.
     assert.match(links[0].parentElement.querySelector(".tt-pop").textContent, /model wrote it as line 5/);
@@ -8016,7 +8137,8 @@ test("exec: the rendered error names the row on SCREEN, and raw keeps the model'
     const drawn = [...w.shadow.querySelectorAll(".cline")]
         .find((el) => el.textContent.includes("toFixed"))?.getAttribute("data-line");
     assert.notEqual(drawn, "2", "the beautifier moved it — otherwise this test proves nothing");
-    assert.equal(link.textContent, drawn, "the rendered error names the row the reader is looking at");
+    // The whole `(line N)` is the control, for the same reason the python frame is.
+    assert.equal(link.textContent, `(line ${drawn})`, "the rendered error names the row the reader is looking at");
     assert.match(link.parentElement.querySelector(".tt-pop").textContent, /model wrote it as line 2/);
 
     // …and the model-facing text is unchanged, recoverable in raw.

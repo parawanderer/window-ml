@@ -10,7 +10,7 @@ import type { MlDebugEvent, MlConfig, ElementContext } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, showLane, showModels, FOCUS_KEY, focusMode,
-    benchOpen, benchDock, benchH, benchReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY,
+    benchOpen, benchDock, benchH, viewReturn, markReturn, openBench, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
     vramOpen, sidebarOpen, backendError, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
@@ -28,7 +28,7 @@ import {
 import { shownModel, sessionProfile } from "./model";
 import { exportSession, exportSessionJson, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, applyFocus, initThemeStyle } from "./prefs";
-import { IconWarn, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain } from "./icons";
+import { IconWarn, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse } from "./icons";
 import { Settings, openSettingsAt } from "./settings";
 
 
@@ -190,6 +190,9 @@ function App() {
     // lives in the content-script host (sidebar/shell.ts), not here.
     const inSettings = v.name === "settings";
     const inBench = v.name === "bench";
+    // Where `‹` goes. Only from a view that REPLACED another one — from the sessions list there is nothing
+    // behind you, and a stale value from a previous visit would send you somewhere you did not come from.
+    const backTo = (inBench || v.name === "settings") ? viewReturn.value : null;
     const detailSession = v.name === "detail" ? sessionMap.get(v.hash) : null;
     // Lazily summarise session titles whenever the data or open-state changes.
     // `open` is read (not just used in deps) so App re-renders on open/close.
@@ -288,13 +291,13 @@ function App() {
             <ContextMenu />
             <CursorTipLayer />{/* the cursor-following tip (a marked failing line, and anything else too wide to anchor) */}
             <div class="head">
-                {v.name !== "list" ? <button class="tt nav" aria-label={inBench && benchReturn.value ? "Back" : "Back to sessions"} onClick={() => {
-                    // From the FULL bench, back is a RETURN — to the exact session you were reading, at the
-                    // place you left it. Landing on the sessions list is the thing that made the bench feel
-                    // like a trip away from your work.
-                    if (inBench && benchReturn.value) { const to = benchReturn.value; benchReturn.value = null; view.value = to; return; }
+                {v.name !== "list" && !inBench ? <button class="tt nav" aria-label={backTo ? "Back" : "Back to sessions"} onClick={() => {
+                    // Back is a RETURN — to the exact place you left, from ANY view that replaced it
+                    // (settings, the server-tool list, the full-page bench). Landing on the sessions list is
+                    // what made glancing at a setting mid-run cost you the run you were reading.
+                    if (backTo) { viewReturn.value = null; view.value = backTo; return; }
                     view.value = { name: "list" };
-                }}>‹<span class="tt-pop left" role="tooltip">{inBench && benchReturn.value ? (benchReturn.value.name === "detail" ? "Back to the session you were reading" : "Back to sessions") : "Back to sessions"}</span></button> : null}
+                }}>‹<span class="tt-pop left" role="tooltip">{backTo?.name === "detail" ? "Back to the session you were reading" : "Back to sessions"}</span></button> : null}
                 {detailSession
                     ? <>
                         <ModelStatusDot model={shownModel(detailSession)} inFlight={detailSession.status === "pending"} />
@@ -318,30 +321,34 @@ function App() {
                     : null}
                 {/* FULL mode's way back to the drawer — the same choice the drawer's ⤢ offers, from the other
                     side. Two modes, one control, so neither is a trapdoor. */}
+                {inBench ? <button class="tt hbtn" aria-label="Close the Python bench" onClick={() => {
+                    // Same destination as docking — what differs is whether the bench comes with you. That
+                    // is the distinction the glyphs carry, and why there is no `‹` here to muddle it.
+                    benchOpen.value = false; chrome.storage.local.set({ [BENCH_OPEN_KEY]: false });
+                    const to = viewReturn.value; viewReturn.value = null;
+                    view.value = to ?? { name: "list" };
+                }}><IconClose /><span class="tt-pop" role="tooltip">Close the bench and go back to what you were reading. Your script is kept.</span></button> : null}
                 {inBench ? <button class="tt hbtn" aria-label="Dock the Python bench" onClick={() => {
                     benchDock.value = "drawer"; chrome.storage.local.set({ [BENCH_DOCK_KEY]: "drawer" });
                     benchOpen.value = true; chrome.storage.local.set({ [BENCH_OPEN_KEY]: true });
                     vramOpen.value = false;
-                    const to = benchReturn.value; benchReturn.value = null;
+                    const to = viewReturn.value; viewReturn.value = null;
                     view.value = to ?? { name: "list" };
-                }}>⤡<span class="tt-pop" role="tooltip">Dock it to the bottom, so you can read a run while you work in it.</span></button> : null}
+                }}><IconCollapse /><span class="tt-pop" role="tooltip">Dock it to the bottom, so you can read a run while you work in it.</span></button> : null}
                 {!inSettings && !inBench ? <button class={`tt hbtn${vramOpen.value ? " on" : ""}`} aria-label="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /><span class="tt-pop" role="tooltip">VRAM monitor</span></button> : null}
                 {!inSettings && !inBench ? <button class={`tt hbtn${benchOpen.value ? " on" : ""}`} aria-label="Python bench" aria-pressed={benchOpen.value} onClick={() => {
-                    if (benchDock.value === "full") {
-                        if (view.value.name === "list" || view.value.name === "detail") benchReturn.value = view.value;
-                        benchOpen.value = true; view.value = { name: "bench" };
+                    // The toolbar button TOGGLES; a code block's ▶ always opens (it is handing over a
+                    // script). Both go through the same opener, which honours the dock preference.
+                    if (benchOpen.value && benchDock.value !== "full") {
+                        benchOpen.value = false; chrome.storage.local.set({ [BENCH_OPEN_KEY]: false });
                         return;
                     }
-                    const open = !benchOpen.value;
-                    benchOpen.value = open; chrome.storage.local.set({ [BENCH_OPEN_KEY]: open });
-                    // Two draggable strips fighting for the same bottom edge is not a layout. Opening one
-                    // puts the other away rather than stacking them.
-                    if (open) vramOpen.value = false;
+                    openBench();
                 }}><IconBench /><span class="tt-pop" role="tooltip">Python bench — run scripts in the sandbox</span></button> : null}
                 {/* Straight to the server-tool list, which is a thing you go looking for rather than a
                     setting you happen to pass — it is where you choose what an agent may reach for. */}
-                {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Server tools" onClick={() => { fetchModels(); openSettingsAt("advanced", "servertools"); }}><IconTools /><span class="tt-pop" role="tooltip">Server-side tools — choose what agents can call</span></button> : null}
-                {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
+                {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Server tools" onClick={() => { fetchModels(); markReturn(); openSettingsAt("advanced", "servertools"); }}><IconTools /><span class="tt-pop" role="tooltip">Server-side tools — choose what agents can call</span></button> : null}
+                {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); markReturn(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
             </div>
             <BackendOfflineBanner />
             {vramOpen.value && !inSettings && !inBench ? <VramPanel /> : null}

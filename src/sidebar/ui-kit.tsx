@@ -121,6 +121,25 @@ export const Code = ({ text, lang, format, marks, lineIds, markLine, markTitle, 
     );
 };
 
+/** THE POINTER CHIP — the one shell every `@tool:` reference is drawn in: the copy chip under a step, the
+ *  "revises" pill on a retry's diff, and whatever names a pointer next. It was a CSS copy for a while and
+ *  that is the drift this exists to stop: a pointer must not read as a different KIND of thing depending on
+ *  which surface names it.
+ *
+ *  The shell only — the chip's CHROME and its tooltip. What it DOES differs (one copies, one navigates), so
+ *  the behaviour stays with the caller. `children` is the label: a pointer's own id, or a friendlier name
+ *  the model gave it. */
+export function PointerChip({ label, tip, onClick, cls, trailing }:
+    { label: ComponentChildren; tip: ComponentChildren; onClick: (e: MouseEvent) => void; cls?: string; trailing?: ComponentChildren }) {
+    return (
+        <button class={`tt tok-chip${cls ? ` ${cls}` : ""}`} onClick={onClick}>
+            <code>{label}</code>
+            {trailing}
+            <span class="tt-pop wrap left" role="tooltip">{tip}</span>
+        </button>
+    );
+}
+
 // Copy to clipboard. Falls back to execCommand when the async Clipboard API is
 // unavailable (http pages) OR blocked — a host page's Permissions-Policy can
 // withhold clipboard-write from our iframe even though the API exists, so we
@@ -304,11 +323,33 @@ export function Disclosure({ label, note, open: controlled, onOpen, onToggle, de
  *
  *  Not the native `title` for the same reason nothing else here is: it waits about a second, which on
  *  something you are hovering to decide what it MEANS is long enough to have given up. */
-export const cursorTip = signal<{ x: number; y: number; text: string } | null>(null);
+/** The one floating tip. `text` is MARKDOWN (escaped, rendered inline); `node` is authored JSX. Exactly
+ *  one of them is set — see cursorTipOn, which picks by the type of what it was given. */
+export const cursorTip = signal<{ x: number; y: number; text?: string; node?: ComponentChildren } | null>(null);
 
 /** Handlers for a trigger. Spread onto the element that should show `text` while the pointer is over it. */
-export const cursorTipOn = (text: string) => ({
-    onPointerMove: (e: PointerEvent) => { cursorTip.value = { x: e.clientX, y: e.clientY, text }; },
+/** Tooltip PROSE that came from data — a JSON Schema's `description`, a tool result, a model's own text.
+ *  Rendered as markdown for the same reason the cursor tip renders a string that way: our parameter docs are
+ *  full of backticked identifiers (`@tool:abc1234`, `pd.read_csv`), and showing the backticks is the tell
+ *  that something is being printed rather than rendered. It escapes, so text we did not author cannot
+ *  inject markup. Our OWN tooltips stay JSX children and need none of this. */
+export const TipText = ({ md }: { md: string }) => <span dangerouslySetInnerHTML={{ __html: mdInline(md) }} />;
+
+/** Attach the panel's cursor-following tooltip to an element.
+ *
+ *  TWO RENDER MODES, told apart by the TYPE of what you pass, so there is one function and no way to pick
+ *  the wrong one:
+ *   · a STRING is markdown TEXT — escaped, then rendered inline (`code`, *emphasis*, $math$). This is the
+ *     default because it is where content from OUTSIDE comes in: a JSON Schema's `description`, a tool
+ *     result, a model's own prose. Treating a string as markup would make that an injection.
+ *   · anything else is JSX — our own authored tooltip, with whatever structure it needs. Children, never an
+ *     HTML string, so there is no way to hand this something unescaped by accident. */
+export const cursorTipOn = (content: string | ComponentChildren) => ({
+    onPointerMove: (e: PointerEvent) => {
+        cursorTip.value = typeof content === "string"
+            ? { x: e.clientX, y: e.clientY, text: content }
+            : { x: e.clientX, y: e.clientY, node: content };
+    },
     onPointerLeave: () => { cursorTip.value = null; },
 });
 
@@ -317,7 +358,13 @@ export function CursorTipLayer() {
     const t = cursorTip.value;
     const { ref, style } = useTipPlacement(t ? { x: t.x, y: t.y, w: typeof window !== "undefined" ? window.innerWidth : 1e4 } : null);
     if (!t) return null;
-    return <div class="rc-tip cursor-tip" role="tooltip" ref={ref} style={style}>{t.text}</div>;
+    // A NODE renders as itself; a STRING goes through the inline markdown renderer — a tip explaining code
+    // says `df['total']` and *why*, and a tip is exactly where backticks-as-literal-backticks look like a
+    // bug. Same renderer the margin notes use, so the two cannot drift, and it escapes, so a tip built from
+    // a tool result or a JSON Schema's description cannot inject markup.
+    if (t.node !== undefined) return <div class="rc-tip cursor-tip" role="tooltip" ref={ref} style={style}>{t.node}</div>;
+    return <div class="rc-tip cursor-tip" role="tooltip" ref={ref} style={style}
+        dangerouslySetInnerHTML={{ __html: mdInline(t.text ?? "") }} />;
 }
 
 export const decidedSteps = new Set<string>();

@@ -106,3 +106,25 @@ export const IconSheet = () => (
         <path d="M2.5 6.5h11M2.5 10h11M6.5 6.5v7" stroke-width="1.2" />
     </svg>
 );
+
+
+// The bench's shape controls. Text glyphs (⤢ ⤡ ✕) sized off the FONT, so they sat wrong next to the 16px
+// stroke icons beside them in the same button container — same family, same box, same weight fixes it.
+/** Arrows OUT — take the bench full-page. */
+export const IconExpand = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 4H4v5M4 4l6 6M15 4h5v5M20 4l-6 6M9 20H4v-5M4 20l6-6M15 20h5v-5M20 20l-6-6" />
+    </svg>
+);
+/** Arrows IN — dock it back to the drawer. */
+export const IconCollapse = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 9h5V4M4 4l5 5M20 9h-5V4M20 4l-5 5M4 15h5v5M4 20l5-5M20 15h-5v5M20 20l-5-5" />
+    </svg>
+);
+/** Close. */
+export const IconClose = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+        <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+);

@@ -1169,7 +1169,17 @@ earlier call, in any of its three forms) and **`changed`** (a one-line account o
   pointer yields no diff rather than a fabricated comparison.
 - **The header says what it is diffing against and takes you there** — the pill is the resolved pointer
   (canonicalised to the minted id even when the model named an alias) and clicking it runs the same
-  `scrollToStepSeq` a citation does. `TokenValue` gained `seq` for exactly that: `step` is the loop's counter
+  `scrollToStepSeq` a citation does. It draws through the shared **`PointerChip`** (ui-kit), which is also
+  the copy chip under a step: a pointer must not read as a different KIND of thing depending on which
+  surface names it, and this was a CSS copy of that chip for a while, which is how that starts. The chip is
+  the SHELL only — one copies, one navigates. Its label is the model's own name for the output when it gave
+  one (prefixed by the tool, so `the q1+q2 totals` is not mistaken for a step title) and the raw pointer
+  when it did not, because an id you can copy beats a name we invented.
+- **`scrollToStepSeq` re-queries the slot anchor after opening a collapsed step.** The lookup ran while the
+  open was still re-rendering, so nothing was visible yet and it fell back to the row — meaning a slot
+  citation worked on an already-open step and never on a closed one, which is the case you are usually in.
+  Its test needs a step TALLER than the viewport or landing on the row and landing on the code are the same
+  place, and it passes with the fix reverted (that is how the first version was caught). `TokenValue` gained `seq` for exactly that: `step` is the loop's counter
   and several records share it, while `seq` addresses one row.
 - **It opens only when the step FAILED.** "What did I change" is the question you ask about a failure; on a
   retry that WORKED the output is the question, and a diff pinned open above it pushes that output out of
@@ -1192,11 +1202,34 @@ snippet cost you your place in the run you opened it from — which is exactly t
 not content inside it, so the transcript keeps its own scroll position while you work below it. Draggable
 from the top edge (how much you want depends on the script), `✕` closes WITHOUT discarding the draft, and
 `⤢`/`⤡` swap it with the full-page mode — two real modes, since a drawer is bad for a long script and
-full-page is bad for cross-referencing. **Back from full-page RETURNS** to the exact view you left
-(`benchReturn`); landing on the sessions list is what made the bench feel like a trip away from your work.
+full-page is bad for cross-referencing. **Full-page carries `✕` and `⤡` and NO `‹`**: back and dock meant the
+same trip, differing only in whether the bench came with you, and two adjacent chevrons for that distinction
+is the confusion itself — so both remaining controls are about the BENCH and the glyph says what happens to
+it. Both **RETURN to the exact view you left** (`viewReturn`, shared with Settings and the server-tool list,
+which had the same bug — glancing at a setting mid-run cost you the run you were reading); the return is read
+only while you are somewhere that REPLACED a view, so a stale one cannot send you where you did not come
+from. The dock is a remembered preference and `✕` does not reset it: `✕` is about the bench being open, `⤢`/`⤡`
+about its shape, and conflating them makes one of them surprising.
 Opening it puts the resource panel away: two draggable strips on the same bottom edge is not a layout. Open
 state, dock and height all persist (`chrome.storage.local`) — it is a workspace you leave set up, not a
 dialog you dismiss. Covered by `tests/e2e/bench-dock.spec.mjs`.
+
+**The bench's ENVIRONMENT panel (`BenchEnv`).** What the sandbox actually IS — the Python and Pyodide
+versions and every package you can import, each with the version that INSTALLED. Read from the running
+interpreter (a `PY_RUN` with `env: true`, answered in the worker off the same serialized chain a run uses),
+never from `PY_PACKAGES`: the manifest says what we ASKED for, and the wheel that installed is what the code
+will import — a panel reporting the first while the second differs is worse than one reporting nothing.
+A PANEL rather than a tooltip, because it is read while writing and is about to be searched and acted on;
+filterable already, since that is how you will find a package to install. Fetched on OPEN, once — reading it
+STARTS the sandbox, which is exactly what a first `python_exec` pays for, so doing it on mount would make
+every glance at the bench cost a cold start. Installing a package and choosing which the model may import
+are **stated in words, not drawn as controls that no-op**: an affordance that silently does nothing cannot be
+told from a bug, so you try it twice.
+
+**One `openBench(code?)`.** There were two openers and they disagreed: a code block's ▶ went straight to the
+FULL page, which is precisely the trip the drawer exists to stop — you press it FROM a step in order to
+compare against that step. Both go through the one function now, which honours the dock preference and puts
+the resource panel away. Caught by the demo, which is what a demo is for.
 
 **A code block's `explain` (`src/sidebar/annotate.ts`).** A utility model is shown the code AND what it
 produced, and answers under a JSON **schema** with a note per interesting line. Never automatic — it spends
@@ -1252,6 +1285,22 @@ a code line, a table cell, a whole row — it appears wherever the pointer is wh
 half a panel away from what summoned it. `cursorTipOn` follows the cursor and is read into the one shared
 floating layer (`CursorTipLayer`), which is also what makes its prose unselectable, so copying a code block
 never picks up the explanation of it.
+
+  **TWO RENDER MODES, told apart by TYPE.** `cursorTipOn` takes a `string` OR a node. A STRING is markdown
+  TEXT — escaped, then rendered inline (`code`, *emphasis*, math) — because a string is where content from
+  OUTSIDE arrives: a JSON Schema's `description`, a tool result, a model's prose. Treating one as markup
+  would be an injection. Anything else is authored JSX, passed as children rather than an HTML string, so
+  there is no way to hand it something unescaped by accident. `TipText` (ui-kit) does the same for the
+  ANCHORED `.tt-pop` tooltips whose prose comes from data — the JSON tree's key descriptions are our own
+  parameter docs, which are full of backticked identifiers, and printing the backticks reads as a renderer
+  that gave up.
+
+  **What inline markdown will NOT do, deliberately**: no images (unbounded pixels in a gutter or a tooltip,
+  and a tool result could put them there) and no links out of a model's prose — a one-click egress in chrome
+  the reader trusts, whose text and destination markdown lets disagree. A pointer link stays text there too:
+  navigating needs the run's `seq`, which this renderer has none of, and a link that goes nowhere is worse
+  than plain text. Pointer links live in the ANSWER renderer, which has that context. Both refusals have a
+  test, because both are currently true by accident of how the inline pass works.
 
   **The exception is an accessible NAME.** A `title` on an icon-only control is what a screen reader and a
   keyboard user get, and `cursorTip` is pointer-only — so those keep a name (prefer `aria-label`) and gain
@@ -1380,6 +1429,20 @@ or `cleanup` option anymore; the reply `content` is stored verbatim.
 it per format: `params.think` (openai) vs a top-level `think` (ollama native).
 
 ## Conventions
+
+**RULE — before you build a UI primitive, check whether it exists: `node scripts/components.mjs`.** One
+grep-able line per sidebar component, hook and documented CSS class — `NAME kind file:line — first sentence
+of its docstring` — so you search by CONCEPT (`grep -i pill`), which is the only way this works: nobody
+greps `tok-chip` while about to write a pill. The failure it addresses is not "I searched and could not find
+it", it is "I did not think to look": one session produced a CSS copy of the pointer chip, a FOURTH drag
+handle, and a second view-return signal, and each was one grep away. Two of those three were CSS, not JSX,
+which is why the index covers the stylesheet too.
+
+The **docstrings are the index** (nothing is duplicated into a manifest that would go stale), so the cost is
+that an undocumented export is INVISIBLE and gets rebuilt — `--undocumented` makes that loud and exits
+non-zero. What you owe it: a new shared thing gets a first sentence saying what it is FOR in words someone
+would search, and an EXTRACTION says what it replaced, because that sentence is what stops the third copy.
+Playbook: `.claude/skills/components/SKILL.md`.
 
 **RULE — self-tools get a skill + an AGENTS.md mention, and you keep both current — WITHOUT asking.**
 Any time you (or any model working on this repo) build a TOOL FOR YOURSELF — a harness, wrapper, driver,

@@ -105,6 +105,15 @@ export function scrollToStepSeq(seq?: number, hash?: string, slot?: "in" | "out"
         const cell = slot ? visibleAnchor(row, slot) : null;
         const el = cell ?? row;
         el.scrollIntoView({ block: "center", behavior: "smooth" });
+        // A COLLAPSED step has no visible cells YET — the open we just triggered re-renders in a microtask —
+        // so the lookup above finds nothing and lands on the row. That is the whole reason a slot citation
+        // felt like it ignored the slot: it worked on an already-open step and never on a closed one, which
+        // is the case you are usually in. Re-query on a macrotask, after that render, and go to the cell.
+        if (collapsed && slot) setTimeout(() => {
+            const again = document.querySelector(`[data-astep-seq="${seq}"]`);
+            const now = again ? visibleAnchor(again, slot) : null;
+            if (now) now.scrollIntoView({ block: "center", behavior: "smooth" });
+        }, 0);
         // The PULSE stays on the step, whatever we scrolled to: it is the thing being identified, and a
         // flashing sub-cell inside an unmarked row reads as a glitch rather than as "this one".
         pulse(row);

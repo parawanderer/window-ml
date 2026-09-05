@@ -13,13 +13,14 @@ import { codeDiff, diffStat } from "../diff";
 import { elementReference } from "../dom";
 import { pyFormat, lineChanged } from "../py-format";
 import { lineMapBetween } from "../line-map";
-import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, config, lsSet, BENCH_CODE_KEY, surface, codeLineNumbers } from "./store";
+import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, config, lsSet, BENCH_CODE_KEY, surface, codeLineNumbers, openBench } from "./store";
 import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmtDur, hourNow, armHourTick, dayBreaks } from "./timestamps";
 import { markdown, truncate, pretty, highlight } from "./format";
 import { codeNotes, notesState, notesHidden, fetchLineNotes, toggleLineNotes } from "./summaries";
+import { Prose } from "./prose";
 import { notesByLine } from "./annotate";
 import {
-    openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText, stepKey, displaySource, cursorTipOn,
+    openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText, stepKey, displaySource, cursorTipOn, PointerChip, TipText,
     highlightToken, highlightEl, clearHighlight, tokenHover, pickedHover,
 } from "./ui-kit";
 
@@ -325,10 +326,11 @@ function CodeTools({ ctx, lang, src }: { ctx: CodeCtx; lang: string; src: string
                 </button>}
             {python
                 /* The REFLOWED source, deliberately: it is the code that ran (py-format never changes a
-                   token) and it is what you are looking at, so what lands in the bench is what you
-                   pressed the button next to. The bench reads the key on MOUNT, so writing it and then
-                   navigating is what hands the script over. */
-                ? <button class="tt code-tool" onClick={() => { lsSet(BENCH_CODE_KEY, src); view.value = { name: "bench" }; }}>
+                   token) and it is what you are looking at, so what lands in the bench is what you pressed
+                   the button next to. `openBench` is shared with the toolbar button and honours the dock —
+                   this used to go straight to the full page, which is exactly the trip the drawer exists to
+                   stop, since you press this FROM a step in order to compare against that step. */
+                ? <button class="tt code-tool" onClick={() => openBench(src)}>
                     <span>▶ bench</span>
                     <span class="tt-pop wrap left" role="tooltip">Open this script in the Python bench, where you can edit it and run it against the same sandbox. Replaces whatever is in the bench now.</span>
                 </button>
@@ -391,11 +393,17 @@ function CodeDiff({ revision, after, lang, hash, failed }: { revision: CodeRevis
                     <IconChevron />
                 </button>
                 <span class="r-diff-lbl">revises</span>
-                {/* The pill IS the pointer, and it navigates — the same gesture a citation makes. */}
-                <button class="tok-ref r-diff-ref" onClick={() => scrollToStepSeq(revision.seq, hash, "in")}
-                    {...cursorTipOn(`Go to the ${revision.tool} call this revises${revision.label ? ` — the model called it "${revision.label}"` : ""}.`)}>
-                    {revision.label ? `${revision.tool}: ${revision.label}` : revision.ref}
-                </button>
+                {/* The pill IS the pointer, and it navigates — the same gesture a citation makes. The SHELL
+                    is the shared PointerChip, so a reference reads the same here as it does under a step:
+                    it was a CSS copy of that chip for a while, which is exactly how two surfaces start
+                    drawing the same thing differently.
+                    The LABEL is the model's own name for the output when it gave one, prefixed by the tool
+                    so `the q1+q2 totals` is not mistaken for a step title — and the raw pointer when it did
+                    not, because an id you can copy beats a name we invented. */}
+                <PointerChip cls="r-diff-ref"
+                    label={revision.label ? `${revision.tool}: ${revision.label}` : revision.ref}
+                    onClick={() => scrollToStepSeq(revision.seq, hash, "in")}
+                    tip={<>Go to the {revision.tool} call this revises{revision.label ? <> — the model called it "{revision.label}"</> : null}.</>} />
                 {rows
                     ? <span class="r-diff-stat"><b class="r-diff-add">+{stat.added}</b> <b class="r-diff-del">−{stat.removed}</b></span>
                     : <span class="r-diff-same">no change — the source is identical</span>}
@@ -404,7 +412,7 @@ function CodeDiff({ revision, after, lang, hash, failed }: { revision: CodeRevis
                 lives INSIDE the fold — collapsed, this has to be one line. */}
             {open && revision.claim
                 ? <div class="r-diff-claim"{...cursorTipOn("The model's own account of what it changed. The diff below is computed from the two sources; this is not.")}>
-                    <span class="r-diff-claim-tag">the model says</span> {revision.claim}</div>
+                    <span class="r-diff-claim-tag">the model says:</span> <Prose md={revision.claim} steps={sessionMap.get(hash || "")?.steps} hash={hash} /></div>
                 : null}
             {open && rows
                 /* BOTH line numbers, old then new — the standard two-column gutter, and the reason it earns
@@ -806,9 +814,12 @@ function Traceback({ text, map }: { text: string; map?: number[] | null }) {
             // looks like it is pointing at something internal, so the reader distrusts the number too).
             // Renamed HERE and not in the traceback text: the raw view and the model's copy stay verbatim.
             const r0 = r.replace(/, in _user$/, ", at the top level of your code");
-            const m = /^(.*File ")(<python_exec>)(", line )(\d+)(.*)$/.exec(r0);
+            // Split so the CONTROL is the whole frame reference — `File "<python_exec>", line 9` — and not
+            // the bare number. Two characters is a poor hit target, and the reference is the semantic unit:
+            // what you are clicking is the FRAME, so that is what should look clickable.
+            const m = /^(\s*)(File "<python_exec>", line )(\d+)(.*)$/.exec(r0);
             if (!m) return <span class={`tbline${/File "<exec>"/.test(r) ? " dim" : ""}`} key={i}>{r0}{"\n"}</span>;
-            const line = Number(m[4]);
+            const line = Number(m[3]);
             // As DRAWN, for the same reason ExecError does it: the block above is reflowed, so the
             // traceback's own number names a row that is not the one it means. The raw view keeps the
             // traceback verbatim — this is a rendering of it, and remapping the number is the whole
@@ -816,18 +827,18 @@ function Traceback({ text, map }: { text: string; map?: number[] | null }) {
             const at = shownLine(map, line);
             return (
                 <span class={`tbline${i === deepest ? " tb-fail" : ""}`} key={i}>
-                    {m[1]}{m[2]}{m[3]}
+                    {m[1]}
                     {/* The panel's own tooltip, not the native one: `title` waits about a second before it
                         appears, which on something you are hovering to decide whether to click is long
                         enough to have moved on. */}
                     <span class="tt tb-line-wrap">
-                        <button class="tb-line" onClick={(e: MouseEvent) => jump(line, i === deepest, e.currentTarget as Element)}>{at}</button>
+                        <button class="tb-line" onClick={(e: MouseEvent) => jump(line, i === deepest, e.currentTarget as Element)}>{m[2]}{at}</button>
                         <span class="tt-pop wrap" role="tooltip">{(i === deepest
                             ? `Line ${at} — where it failed. Click to show it in the code above.`
                             : `Line ${at}. Click to show it in the code above.`)
                             + (at !== line ? ` The model wrote it as line ${line}; the code is reflowed for reading here.` : "")}</span>
                     </span>
-                    {m[5]}{"\n"}
+                    {m[4]}{"\n"}
                 </span>
             );
         })}</code></pre>
@@ -996,12 +1007,14 @@ function ExecError({ text, line, map }: { text: string; line?: number; map?: num
     const at = shownLine(map, line!);
     return (
         <pre class="code tb"><code class="hljs"><span class="tbline tb-fail">
-            {m[1]}(line{" "}
+            {m[1]}
             <span class="tt tb-line-wrap">
-                <button class="tb-line" onClick={(e: MouseEvent) => jumpToLine(line!, true, e.currentTarget as Element)}>{at}</button>
+                {/* The whole `(line 9)`, for the same reason the python frame is: the number alone is a
+                    two-character target, and what you are clicking is the reference. */}
+                <button class="tb-line" onClick={(e: MouseEvent) => jumpToLine(line!, true, e.currentTarget as Element)}>(line {at})</button>
                 <span class="tt-pop wrap" role="tooltip">Line {at} — where it failed. Click to show it in the code above.{at !== line ? ` The model wrote it as line ${line}; the code is reflowed for reading here.` : ""}</span>
             </span>
-            ){m[3]}
+            {m[3]}
         </span></code></pre>
     );
 }

@@ -15,7 +15,7 @@ import { sessionProfile } from "./model";
 import { IconChevron, IconWarn, IconCopy, IconCheck } from "./icons";
 import {
     Code, CopyBtn, SheetChip, Hash, Stamp, ClickableImg, Dot, Disclosure,
-    decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn,
+    decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { deepestUserLine } from "../py-format";
@@ -59,7 +59,7 @@ export function IoBlock({ label, tip, preview, render, raw, marks, reserve, fail
                                carries the DEFAULT anchor for the slot. A rendered view may declare a finer
                                one (python-in's code, python-out's value) and wins by being the visible
                                match; when it declares none, this is still the right half of the step. */
-                            : <div data-cite={slotOf(label)}>{cell(raw)}</div>}
+                            : <div class="io-raw" data-cite={slotOf(label)}>{cell(raw)}</div>}
                     </>
                     : <div data-cite={slotOf(label)}>{cell(raw)}</div>}
                 {/* WHILE IT RUNS the footer lives HERE, outside the branches, because there is no render
@@ -252,15 +252,13 @@ function TokenChip({ token }: { token: string }) {
     };
     return (
         <div class="astep-token">
-            <button class="tt tok-chip" onClick={copy} aria-label={`Copy ${ref}`}>
-                <code>{ref}</code>
-                {/* A GLYPH, not a word. A hover-only label changes the chip's width, and the chip is
-                    right-aligned, so the pointer text jumped sideways every time the cursor arrived. Two
-                    icons of the same box mean the affordance is always visible and the confirmation costs
-                    no layout either. */}
-                <span class="tok-chip-icon">{done ? <IconCheck /> : <IconCopy />}</span>
-                <span class="tt-pop wrap left" role="tooltip">This step's output kept as a pointer. Copy it and paste it into the composer to ask about this exact output, or read it in `exec` as {ref}.</span>
-            </button>
+            {/* The trailing GLYPH is a glyph, not a word. A hover-only label changes the chip's width, and
+                the chip is right-aligned, so the pointer text jumped sideways every time the cursor
+                arrived. Two icons of the same box mean the affordance is always visible and the
+                confirmation costs no layout either. */}
+            <PointerChip label={ref} onClick={copy}
+                trailing={<span class="tok-chip-icon">{done ? <IconCheck /> : <IconCopy />}</span>}
+                tip={<>This step's output kept as a pointer. Copy it and paste it into the composer to ask about this exact output, or read it in `exec` as {ref}.</>} />
         </div>
     );
 }
@@ -476,7 +474,9 @@ export interface JsonSchemaNode { description?: string; properties?: Record<stri
 // elsewhere) + a dotted underline so you can tell which keys carry docs — a debugging affordance over raw args.
 export function JtKey({ name, desc, unknown }: { name: string; desc?: string; unknown?: boolean }) {
     if (unknown) return <span class="tt jt-key jt-key-unknown" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip">Not in this tool's parameter schema — likely a hallucinated argument, so the tool will ignore it or error.</span></span>;
-    if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip">{desc}</span></span>;
+    // The description comes from the tool's own JSON Schema, which is written in markdown — backticked
+    // identifiers, mostly. Printed raw it showed the backticks, which reads as a rendering that gave up.
+    if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip"><TipText md={desc} /></span></span>;
     return <span class="jt-key">{name}:</span>;
 }
 export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean }) {

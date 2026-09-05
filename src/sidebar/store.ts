@@ -215,5 +215,34 @@ export const BENCH_H_KEY = "ml_bench_h";
 export const benchOpen = signal(false);
 export const benchDock = signal<"drawer" | "full">("drawer");
 export const benchH = signal(280);
-/** Where FULL mode came from, so "back" returns to the exact place instead of the sessions list. */
-export const benchReturn = signal<{ name: "list" } | { name: "detail"; hash: string } | null>(null);
+/** WHERE TO GO BACK TO. Settings, the server-tool list and the full-page bench all REPLACE the view, and
+ *  `‹` sent you to the sessions list from every one of them — so glancing at a setting mid-run cost you the
+ *  run you were reading and you had to find your way back in. One signal for all of them rather than one
+ *  per destination: two would drift, and they are the same question ("what was I looking at"). */
+export const viewReturn = signal<{ name: "list" } | { name: "detail"; hash: string } | null>(null);
+/** Record the current view as the place to return to — a no-op unless it is somewhere you can return TO. */
+export const markReturn = (): void => {
+    const v = view.value;
+    if (v.name === "list" || v.name === "detail") viewReturn.value = v;
+};
+
+/** OPEN THE BENCH, from anywhere — the toolbar button, a code block's ▶. One function because there were
+ *  two and they disagreed: the code block's sent you straight to the full page, which is precisely the trip
+ *  the drawer exists to stop (you press it FROM a step, to compare against that step). The dock is a
+ *  remembered preference, so this honours it rather than choosing for you.
+ *
+ *  `code`, when given, becomes the bench's script — the bench reads that key on MOUNT, so writing it before
+ *  opening is the handover. */
+export const openBench = (code?: string): void => {
+    if (code != null) lsSet(BENCH_CODE_KEY, code);
+    if (benchDock.value === "full") {
+        markReturn();
+        benchOpen.value = true;
+        view.value = { name: "bench" };
+        return;
+    }
+    benchOpen.value = true;
+    try { chrome.storage.local.set({ [BENCH_OPEN_KEY]: true }); } catch { /* no chrome in a bare render */ }
+    // Two draggable strips on the same bottom edge is not a layout — opening one puts the other away.
+    vramOpen.value = false;
+};

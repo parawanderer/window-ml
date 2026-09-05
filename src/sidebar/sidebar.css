@@ -75,11 +75,17 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* STICKY, not absolute: the panel scrolls once a height is set, and an absolutely-positioned grip sits at the
    bottom of the CONTENT — so it scrolled out of reach exactly when you most wanted to drag it back. Sticky
    keeps it on the visible bottom edge. */
-.vram-grip { position: sticky; bottom: 0; margin-top: auto; height: 7px; flex: 0 0 auto; cursor: ns-resize;
+/* THE drag grip — one pill, wherever an edge resizes. It was written three different ways (the resource
+   panel's, the output cell's, and a background-gradient hack in the bench), which is three chances for the
+   same affordance to look like three different things. A short CENTRED pill rather than a full-width bar:
+   a bar spanning the edge reads as an inert scrollbar track. The hit area stays full width; only the pill
+   is painted, and it GROWS on hover so the target announces itself before you press. */
+.vram-grip, .bench-grip { height: 7px; flex: 0 0 auto; cursor: ns-resize; touch-action: none;
              display: flex; align-items: center; justify-content: center; background: var(--panel); }
-.vram-grip::after { content: ""; width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2);
+.vram-grip { position: sticky; bottom: 0; margin-top: auto; }
+.vram-grip::after, .bench-grip::after { content: ""; width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2);
                     opacity: .55; transition: width .12s ease, opacity .12s ease; }
-.vram-grip:hover::after { width: 52px; opacity: 1; background: var(--panel-2-hover); }
+.vram-grip:hover::after, .bench-grip:hover::after { width: 52px; opacity: 1; background: var(--panel-2-hover); }
 /* ONE ROW, always. The header gains and loses controls as you use the panel — the zoom chip appears when you
    scrub, the view picker only once capacity is known — and a row that reflows when one arrives shifts every
    surface below it, including the strip you are mid-drag on. So it never wraps, and the total (the longest
@@ -2334,7 +2340,11 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    horizontally scrolled block. `sticky` keeps it readable when the code is scrolled sideways. */
 .lnote {
     display: flex; align-items: baseline; gap: 6px;
-    position: sticky; left: 0; width: fit-content; max-width: 62ch;
+    position: sticky; left: 0; width: fit-content;
+    /* A measure, not a cage. 62ch INCLUDED the gutter indent (border-box), leaving ~57 for a note capped at
+       120 characters — so an ordinary one wrapped with half the panel empty beside it, which reads as a
+       mistake rather than as a line length. Wide enough that a note wraps only when it is genuinely long. */
+    max-width: calc(92ch + 2.2em + 22px);
     padding: 1px 0 3px calc(2.2em + 22px);   /* aligns under the code, clear of the 2.2em gutter + its rule */
     font-size: 0.86em; font-style: italic; color: var(--fg-faint);
     white-space: normal;
@@ -2354,12 +2364,9 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .r-diff-tri svg { transition: transform 0.15s ease; }
 .r-diff-tri.open svg { transform: rotate(90deg); }
 .r-diff-lbl { font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-faint); }
-/* A rounded chip, like every other pill in the panel — a square-cornered box here reads as a different
-   KIND of thing from the tokens and badges it sits among. */
-.r-diff-ref {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em; cursor: pointer;
-    padding: 2px 8px; border-radius: 999px;
-}
+/* The chrome comes from `.tok-chip` (the shared PointerChip) — it IS a pointer, so it must not read as a
+   different kind of thing here. Only the things specific to sitting in a header row are set locally. */
+.r-diff-ref { padding: 1px 8px; }
 .r-diff-stat { margin-left: auto; font-size: 0.82em; font-variant-numeric: tabular-nums; }
 .r-diff-add { color: var(--ok); }
 .r-diff-del { color: var(--err); }
@@ -2368,7 +2375,9 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    band — the header says what this diff is, the claim says what the model thinks it did, and giving the
    second its own colour made it read as a warning about the step rather than as a caption. Its TAG carries
    the "this is a claim, not the computed half" signal on its own. */
-.r-diff-claim { padding: 4px 8px; font-size: 0.9em; color: var(--fg-dim); background: var(--panel); }
+/* A hairline above it: the claim shares the header's ground, so without a rule the two run together into one
+   tall band and the reader cannot see where "what this is" ends and "what the model says about it" begins. */
+.r-diff-claim { padding: 4px 8px; font-size: 0.9em; color: var(--fg-dim); background: var(--panel); border-top: 1px solid var(--border); }
 .r-diff-claim-tag { font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-faint); margin-right: 4px; }
 .r-diff-body { margin: 0; border-top: 1px solid var(--border); border-radius: 0; }
 .dline { display: flex; align-items: flex-start; }
@@ -2404,16 +2413,58 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 }
 /* The grab strip. Its own row above the header so the drag target is the edge — which is where a hand
    goes for a drawer — rather than a handle hidden somewhere in the chrome. */
-.bench-grip {
-    flex: 0 0 auto; height: 7px; cursor: ns-resize; touch-action: none;
-    background: linear-gradient(var(--border), var(--border)) center/28px 2px no-repeat;
-}
-.bench-grip:hover { background: linear-gradient(var(--fg-faint), var(--fg-faint)) center/40px 2px no-repeat; }
-.bench-bar-top { display: flex; align-items: center; gap: 4px; padding: 2px 8px 4px; }
-.bench-title { font-size: 0.92em; color: var(--fg-dim); }
+
 .bench-drawer .bench { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .bench-drawer .bench-code { flex: 1 1 auto; min-height: 60px; }
 .bench-drawer .bench-out { flex: 0 1 auto; min-height: 0; overflow: auto; }
 
 /* An aside's model, in its tooltip header. Quiet: the label is what it DID, this is what ran it. */
 .rc-tip-aside-model { font-size: 0.85em; color: var(--fg-faint); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* THE RAW VIEW GETS THE SAME BOX A CODE BLOCK AND AN OUT SECTION HAVE. It is the same kind of thing — a
+   capped, scrollable, findable cell of text — and leaving it unboxed made the two halves of a step look
+   like different sorts of content, with the model-facing one the less substantial-looking of the pair.
+   On the cell rather than on the JSON tree inside it, so the find bar and the resize grip sit ON the box
+   the way they do in an Out. */
+.io-raw > .r-outcell {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+    padding: 0.55em 0.7em;
+}
+
+/* A pointer link inside model prose — a note, a retry's claim. Underlined like a link and coloured like one,
+   but a BUTTON: it navigates within the panel rather than going anywhere, so it must not offer a context
+   menu full of "open in new tab". */
+.prose-link { background: none; border: 0; padding: 0; font: inherit; cursor: pointer; }
+
+/* --- the bench's environment panel -----------------------------------------------------------------
+   A panel, not a tooltip: this is read while writing, and it is about to become a thing you search and
+   then act on. It opens UPWARD out of the bench's bar, so in drawer mode it does not push the editor. */
+.bench-env { position: relative; }
+.bench-env-btn {
+    display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+    font: inherit; font-size: 0.82em; padding: 2px 7px; border-radius: 5px;
+    color: var(--fg-dim); background: var(--panel); border: 1px solid var(--border);
+}
+.bench-env-btn:hover { color: var(--fg); border-color: var(--fg-dim); }
+.bench-env-btn .tri { display: flex; transition: transform 0.15s ease; }
+.bench-env.open .bench-env-btn .tri { transform: rotate(90deg); }
+.bench-env-ver { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+.bench-env-body {
+    position: absolute; bottom: calc(100% + 5px); left: 0; z-index: 6;
+    width: max(260px, 22vw); max-height: 46vh; overflow: auto;
+    padding: 7px 9px; border-radius: 7px;
+    background: var(--panel); border: 1px solid var(--border); box-shadow: 0 6px 20px rgba(0,0,0,.3);
+}
+.bench-env-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.86em; color: var(--fg-dim); }
+.bench-env-q {
+    flex: 1 1 90px; min-width: 90px; font: inherit; font-size: 1em; padding: 2px 6px;
+    color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+}
+.bench-env-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.bench-env-list li { display: flex; align-items: baseline; gap: 8px; padding: 2px 0; font-size: 0.88em; }
+.bench-env-pv { color: var(--fg-faint); font-variant-numeric: tabular-nums; margin-left: auto; }
+.bench-env-err { color: var(--err); font-size: 0.88em; }
+/* Said plainly rather than drawn as a control that does nothing — an affordance that silently no-ops is
+   worse than an absent one, because you cannot tell it from a bug. */
+.bench-env-soon { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--border);
+                  font-size: 0.82em; font-style: italic; color: var(--fg-faint); }
