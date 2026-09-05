@@ -9,13 +9,14 @@ import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, TableSource } from "../contract";
 import { elementReference } from "../dom";
 import { pyFormat, lineChanged } from "../py-format";
+import { lineMapBetween } from "../line-map";
 import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, config, lsSet, BENCH_CODE_KEY } from "./store";
 import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmtDur, hourNow, armHourTick, dayBreaks } from "./timestamps";
 import { markdown, truncate, pretty } from "./format";
 import { codeNotes, notesState, notesHidden, fetchLineNotes, toggleLineNotes } from "./summaries";
 import { notesByLine } from "./annotate";
 import {
-    openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText, stepKey, displaySource,
+    openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText, stepKey, displaySource, cursorTipOn,
     highlightToken, highlightEl, clearHighlight, tokenHover, pickedHover,
 } from "./ui-kit";
 
@@ -34,7 +35,7 @@ export function RenderElements({ items }: { items: { path: string; text?: string
                 ]);
                 return (
                     <div class="r-el" key={it.index ?? i}
-                        title={isTok ? undefined : "right-click to copy a reference"}
+                        {...(isTok ? {} : cursorTipOn("Right-click to copy a document.querySelector(…) for this element."))}
                         onPointerEnter={() => (isTok ? highlightToken(it.path) : highlightEl(it.path))} onPointerLeave={clearHighlight}
                         onContextMenu={isTok ? undefined : menu}>
                         {single ? null : <span class="r-el-idx">#{it.index ?? i}</span>}
@@ -219,9 +220,9 @@ export function PyDfTable({ columns, rows }: { columns: string[]; rows: (string 
                         <thead><tr>
                             <th class="r-df-idx"></th>
                             {cols.map((c, j) => (
-                                <th key={j} style={widths[j] ? { width: `${widths[j]}px` } : undefined} onClick={() => cycleSort(j)} title="click to sort">
+                                <th key={j} style={widths[j] ? { width: `${widths[j]}px` } : undefined} onClick={() => cycleSort(j)} {...cursorTipOn("Click to sort by this column.")}>
                                     {c}{sort && sort.c === j ? <span class="r-df-sort">{sort.dir === 1 ? " ▲" : " ▼"}</span> : null}
-                                    <span class="r-df-resize" title="drag to resize" onPointerDown={(e: any) => startResize(j, e)} onClick={(e: any) => e.stopPropagation()} />
+                                    <span class="r-df-resize" aria-label="Drag to resize this column" {...cursorTipOn("Drag to resize this column.")} onPointerDown={(e: any) => startResize(j, e)} onClick={(e: any) => e.stopPropagation()} />
                                 </th>
                             ))}
                         </tr></thead>
@@ -243,9 +244,9 @@ export function PyDfTable({ columns, rows }: { columns: string[]; rows: (string 
                                             could not be serialised (circular, a Map, a Set). Naming the wrong
                                             cause sends the reader looking in the wrong half of the system. */}
                                         {text ?? <span class="tok-unresolved r-td-unrend"
-                                            title={markedType(c)
+                                            {...cursorTipOn(markedType(c)
                                                 ? `This cell holds a ${dfCellType(c)}, which has no JSON form — without this marker it would show as an empty object, which is a value it is not. The run itself is unaffected; only this preview cannot show it.`
-                                                : `This cell holds a ${dfCellType(c)} that could not be serialised for display (circular, or not JSON-representable). The model received the value itself; only this preview cannot show it.`}>unrenderable {dfCellType(c)}</span>}
+                                                : `This cell holds a ${dfCellType(c)} that could not be serialised for display (circular, or not JSON-representable). The model received the value itself; only this preview cannot show it.`)}>unrenderable {dfCellType(c)}</span>}
                                     </td>;
                                 })}
                             </tr>
@@ -441,7 +442,7 @@ export function TimedOutput({ text, marks }: { text: string; marks?: [number, nu
         if (ts != null) prevTs = ts;
         rows.push(
             <div class="r-ts-row" key={i}>
-                <span class={`r-ts${tip ? " hoverable" : ""}`} title={tip}>{repeat ? "" : label}</span>
+                <span class={`r-ts${tip ? " hoverable" : ""}`} {...(tip ? cursorTipOn(tip) : {})}>{repeat ? "" : label}</span>
                 <span class="r-ts-line">{line}</span>
             </div>,
         );
@@ -457,9 +458,9 @@ export function SeenSplit({ text, seen, live, marks }: { text: string; seen?: nu
             {/* While the tool is still RUNNING we already know where the model's cut will fall, so mark it as it
                 streams rather than springing it on you at the end — greyed, with a "?" that explains why. */}
             <div class={`r-unseen-lbl${live ? " live" : ""}`}
-                title={live
+                {...cursorTipOn(live
                     ? "Past this point the output is beyond the model's per-call output cap — it is still being captured for you, but it will NOT be part of the result sent to the model."
-                    : "The tool captured this, but it was clipped out of the result sent to the model (its output cap). The model never read it."}>
+                    : "The tool captured this, but it was clipped out of the result sent to the model (its output cap). The model never read it.")}>
                 {live ? "beyond the model's cutoff " : "↓ captured, but NOT sent to the model"}{live ? <span class="r-unseen-q">?</span> : null}
             </div>
             <div class="r-unseen"><TimedOutput text={text.slice(seen)} marks={marks?.map(([o, t]) => [o - seen, t] as [number, number])} /></div>
@@ -626,17 +627,17 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
                 <div class="r-find" role="search">
                     <input ref={input} class="r-find-q" value={q} placeholder="Find" spellcheck={false}
                         onInput={(e: any) => { setIdx(0); setQ(e.target.value); }} onKeyDown={onFindKey} />
-                    <button class={`r-find-case${cs ? " on" : ""}`} title="Match case" aria-pressed={cs}
+                    <button class={`r-find-case${cs ? " on" : ""}`} aria-label="Match case" {...cursorTipOn("Match case")} aria-pressed={cs}
                         onClick={() => { setIdx(0); setCs(v => !v); }}>Aa</button>
                     <span class="r-find-n">{q ? (count ? `${Math.min(idx, Math.max(count - 1, 0)) + 1} of ${count}` : "No results") : ""}</span>
-                    <button class="r-find-nav" title="Previous match" onClick={() => jump(-1)} disabled={!count}>↑</button>
-                    <button class="r-find-nav" title="Next match" onClick={() => jump(1)} disabled={!count}>↓</button>
-                    <button class="r-find-x" title="Close (Esc)" onClick={closeFind}>✕</button>
+                    <button class="r-find-nav" aria-label="Previous match" {...cursorTipOn("Previous match")} onClick={() => jump(-1)} disabled={!count}>↑</button>
+                    <button class="r-find-nav" aria-label="Next match" {...cursorTipOn("Next match")} onClick={() => jump(1)} disabled={!count}>↓</button>
+                    <button class="r-find-x" aria-label="Close find" {...cursorTipOn("Close (Esc)")} onClick={closeFind}>✕</button>
                 </div>
             ) : null}
             <div class="r-outscroll" ref={box} tabIndex={0} onKeyDown={onKey} onScroll={onScroll}
                 style={cap > 0 ? { maxHeight: `${cap}px` } : undefined}>{children}</div>
-            {overflows || dragH != null ? <div class="r-outgrip" role="separator" aria-label="Drag to resize this output" title="Drag to resize this output" onPointerDown={onGrab} /> : null}
+            {overflows || dragH != null ? <div class="r-outgrip" role="separator" aria-label="Drag to resize this output" {...cursorTipOn("Drag to resize this output")} onPointerDown={onGrab} /> : null}
         </div>
     );
 }
@@ -654,6 +655,24 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
  *  line of what the model received is exactly what the raw-view rule forbids.
  *
  *  The text itself is never rewritten. This is a rendering of it. */
+/** The In block's line map — original line → the line the READER sees, after the reflow that block draws.
+ *  ONE implementation, because there are now three consumers (the mark on the code, the number a JS failure
+ *  reports, and every frame of a python traceback) and three copies of this arithmetic would be three
+ *  chances to disagree about which line a failure was on. Null when nothing moved, which is also the answer
+ *  for a descriptor that is not code. */
+export function inLineMap(d: RenderDescriptor | undefined): number[] | null {
+    if (!d) return null;
+    if (d.type === "python-in") { const f = pyFormat(d.code); return f.changed ? f.map : null; }
+    if (d.type === "code") {
+        const shown = displaySource(d.text, d.lang, d.format, d.marks);
+        return shown === d.text ? null : lineMapBetween(d.text, shown);
+    }
+    return null;
+}
+/** The row a source line is drawn on. Identity when nothing moved — never null, because "we could not map
+ *  it" and "it did not move" produce the same right answer here. */
+export const shownLine = (map: number[] | null | undefined, line: number): number => map?.[line] ?? line;
+
 /** Show the line a failure NAMES, in the code block above it — the same gesture (and the same pulse) a
  *  citation makes, because it is the same intent: show me the thing this is about. Lifted out of the python
  *  traceback so a JS failure, which reports exactly one line and has no traceback to render, lands
@@ -683,7 +702,7 @@ const jumpToLine = (line: number, isFail: boolean, from: Element) => {
     try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch { /* not every DOM has it */ }
 };
 
-function Traceback({ text }: { text: string }) {
+function Traceback({ text, map }: { text: string; map?: number[] | null }) {
     // SCOPED TO ITS OWN STEP, found by walking up from this element. A document-wide lookup finds the FIRST
     // In block on the page, so with two failing steps open both tracebacks jumped into the first one's code —
     // confidently, and at a line number that meant nothing there. Walking up needs no prop threaded through
@@ -703,6 +722,11 @@ function Traceback({ text }: { text: string }) {
             const m = /^(.*File ")(<python_exec>)(", line )(\d+)(.*)$/.exec(r0);
             if (!m) return <span class={`tbline${/File "<exec>"/.test(r) ? " dim" : ""}`} key={i}>{r0}{"\n"}</span>;
             const line = Number(m[4]);
+            // As DRAWN, for the same reason ExecError does it: the block above is reflowed, so the
+            // traceback's own number names a row that is not the one it means. The raw view keeps the
+            // traceback verbatim — this is a rendering of it, and remapping the number is the whole
+            // difference between a rendering that helps and one that misdirects.
+            const at = shownLine(map, line);
             return (
                 <span class={`tbline${i === deepest ? " tb-fail" : ""}`} key={i}>
                     {m[1]}{m[2]}{m[3]}
@@ -710,10 +734,11 @@ function Traceback({ text }: { text: string }) {
                         appears, which on something you are hovering to decide whether to click is long
                         enough to have moved on. */}
                     <span class="tt tb-line-wrap">
-                        <button class="tb-line" onClick={(e: MouseEvent) => jump(line, i === deepest, e.currentTarget as Element)}>{line}</button>
-                        <span class="tt-pop wrap" role="tooltip">{i === deepest
-                            ? `Line ${line} — where it failed. Click to show it in the code above.`
-                            : `Line ${line}. Click to show it in the code above.`}</span>
+                        <button class="tb-line" onClick={(e: MouseEvent) => jump(line, i === deepest, e.currentTarget as Element)}>{at}</button>
+                        <span class="tt-pop wrap" role="tooltip">{(i === deepest
+                            ? `Line ${at} — where it failed. Click to show it in the code above.`
+                            : `Line ${at}. Click to show it in the code above.`)
+                            + (at !== line ? ` The model wrote it as line ${line}; the code is reflowed for reading here.` : "")}</span>
                     </span>
                     {m[5]}{"\n"}
                 </span>
@@ -773,7 +798,7 @@ function PyOutSection({ label, cls, children, cite, open = true, foldInFocus }: 
 }
 // `python_exec`'s Out slot: captured stdout, then one of a returned image / a minted
 // @pt·@box token / the raw value / a Python traceback.
-function PythonOutRender({ d, marks, live, ranMs, ranSince }: { d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number }) {
+function PythonOutRender({ d, marks, live, ranMs, ranSince, lineMap }: { d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number; lineMap?: number[] | null }) {
     return (
         <div class="r-python r-py-out">
             {/* Only the captured OUTPUT scrolls (and hosts the find bar) — the returned value/table/image sit
@@ -792,7 +817,7 @@ function PythonOutRender({ d, marks, live, ranMs, ranSince }: { d: Extract<Rende
             </PyOutSection> : null}
             {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
-            {d.error ? <PyOutSection label="error" cls="r-py-err" cite="out"><OutputCell><Traceback text={d.error} /></OutputCell></PyOutSection> : null}
+            {d.error ? <PyOutSection label="error" cls="r-py-err" cite="out"><OutputCell><Traceback text={d.error} map={lineMap} /></OutputCell></PyOutSection> : null}
             {d.df && !d.error ? <PyOutSection label="value (DataFrame)" cls="r-py-val" cite="out"><PyDfTable columns={d.df.columns} rows={d.df.rows} /></PyOutSection> : null}
             {/* A sympy return auto-flagged `latex` → typeset the value (display mode), not a raw code block. */}
             {d.latex && d.value != null && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value (LaTeX)" cls="r-py-val" cite="out"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} /></PyOutSection> : null}
@@ -844,22 +869,28 @@ function CodeRender({ d, failLine, ctx }: { d: Extract<RenderDescriptor, { type:
  *  JS gives us one line and no call path (an evaluated script's stack is mostly the wrapper), so there is
  *  nothing to render as a traceback; the number is marked in place, in the message text the model also
  *  received. No line → the message verbatim, which is what it always was. */
-function ExecError({ text, line }: { text: string; line?: number }) {
+function ExecError({ text, line, map }: { text: string; line?: number; map?: number[] | null }) {
     const m = line != null ? /^([\s\S]*)\(line (\d+)\)([\s\S]*)$/.exec(text) : null;
     if (!m) return <Code text={text} lang="text" />;
+    // THE NUMBER SHOWN IS THE ROW ABOVE. The model was told its own line, and that is what the raw view (and
+    // its context) keeps — but the block beside this one is REFLOWED, so repeating the model's number here
+    // points the reader at a line that is not the one that failed. The remap belongs to the human-facing
+    // render and nowhere else; the tooltip says both numbers so the two views cannot look like a
+    // contradiction.
+    const at = shownLine(map, line!);
     return (
         <pre class="code tb"><code class="hljs"><span class="tbline tb-fail">
             {m[1]}(line{" "}
             <span class="tt tb-line-wrap">
-                <button class="tb-line" onClick={(e: MouseEvent) => jumpToLine(line!, true, e.currentTarget as Element)}>{m[2]}</button>
-                <span class="tt-pop wrap" role="tooltip">Line {m[2]} — where it failed. Click to show it in the code above.</span>
+                <button class="tb-line" onClick={(e: MouseEvent) => jumpToLine(line!, true, e.currentTarget as Element)}>{at}</button>
+                <span class="tt-pop wrap" role="tooltip">Line {at} — where it failed. Click to show it in the code above.{at !== line ? ` The model wrote it as line ${line}; the code is reflowed for reading here.` : ""}</span>
             </span>
             ){m[3]}
         </span></code></pre>
     );
 }
 
-function ExecOutRender({ d, marks, live, ranMs, ranSince }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number }) {
+function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number; lineMap?: number[] | null }) {
     return (
         <div class="r-python r-py-out">
             {/* "console" for exec, but a REMOTE tool's streamed frames are not a console — the section is the
@@ -871,7 +902,7 @@ function ExecOutRender({ d, marks, live, ranMs, ranSince }: { d: Extract<RenderD
                 <RanFor live={live} ms={ranMs} since={ranSince} />
             </PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
-            {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell><ExecError text={d.error} line={d.errorLine} /></OutputCell></PyOutSection> : null}
+            {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell><ExecError text={d.error} line={d.errorLine} map={lineMap} /></OutputCell></PyOutSection> : null}
             {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
             {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} /> : null}
         </div>
@@ -900,7 +931,10 @@ function LookRender({ d }: { d: Extract<RenderDescriptor, { type: "look" }> }) {
     );
 }
 
-export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null; ranMs?: number; ranSince?: number; ctx?: CodeCtx }) {
+/** `lineMap` is the IN block's reflow map, handed to the OUT block so a failure can name the row the
+ *  reader is actually looking at. The two are separate descriptors that cannot see each other; only the
+ *  step holds both, so it is the step that passes this across. */
+export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, lineMap }: { d: RenderDescriptor; marks?: [number, number][]; live?: boolean; failLine?: number | null; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null }) {
     switch (d.type) {
         case "image": {
             // If the label references an @pt/@box (e.g. look's `element "@pt:…"`), hovering the shot
@@ -951,7 +985,7 @@ function FetchLadder({ attempts, resolvedBy }: { attempts: import("../contract")
                         <div>
                             <span class="r-action-verb">{d.verb}</span>{" "}
                             {d.input ? <><b class="r-action-input">“{truncate(d.input, 120)}”</b>{" "}</> : null}
-                            <span class="r-action-target" title="right-click to open or copy"
+                            <span class="r-action-target" {...cursorTipOn("Right-click to open this or copy it.")}
                                 onContextMenu={e => openCtxMenu(e, [
                                     { label: "Open in new tab", run: () => { try { window.open(target, "_blank", "noopener"); } catch { /* popup blocked */ } } },
                                     { label: "Copy URL", run: () => { try { void navigator.clipboard?.writeText(target); } catch { /* no clipboard */ } } },
@@ -978,8 +1012,8 @@ function FetchLadder({ attempts, resolvedBy }: { attempts: import("../contract")
             return <Code text={pretty(d)} lang="json" />;
         case "locate": return <LocateRender d={d} />;
         case "python-in": return <PythonInRender d={d} live={live} failLine={failLine} ctx={ctx} />;
-        case "python-out": return <PythonOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} />;
-        case "exec-out": return <ExecOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} />;
+        case "python-out": return <PythonOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} lineMap={lineMap} />;
+        case "exec-out": return <ExecOutRender d={d} marks={marks} live={live} ranMs={ranMs} ranSince={ranSince} lineMap={lineMap} />;
         case "look": return <LookRender d={d} />;
         default: return <Code text={pretty(d)} lang="json" />;   // unknown type → dump it
     }

@@ -1059,14 +1059,22 @@ byte-for-byte. `tests/e2e/line-map.spec.mjs` is the only thing that runs the who
 raising, the real worker returning, the real renderer mapping — because the demo asserts nothing and so
 cannot fail.
 
-**A traceback is rendered, not rewritten.** Each `File "<python_exec>", line N` becomes a link that maps
-through that line map and scrolls to the line, pulsing it the same green a cited step gets; the DEEPEST user
+**A traceback is rendered, not rewritten — but the NUMBER SHOWN is the row on screen.** Each
+`File "<python_exec>", line N` becomes a link that maps through that line map and scrolls to the line,
+pulsing it the same green a cited step gets; the DEEPEST user
 frame is marked in the CODE (a traceback gives you a number, and the number is only useful once you have
 found the line it names), with the "shown reflowed" caveat added ONLY when the formatter actually moved that
 line — an unconditional caveat is noise that undermines the times it is true. A `<exec>` frame is the
 prelude's own call site: dimmed, never dropped, because the raw view has to stay recoverable. Pointing at a
 line turns the gutter on for that block regardless of the preference — you cannot mark a line in a block with
-no lines.
+no lines. **The displayed number is REMAPPED, and only in the render**: the code beside a traceback is
+reflowed, so printing the number CPython produced sends the reader to a line that is not the one that
+failed — the exact failure the line map exists to prevent, reintroduced by the view. So the frame shows the
+row it now sits on and its tooltip names both (only when it actually moved), while the raw view keeps the
+traceback verbatim and the model keeps the number it was given. The map is derived ONCE — `inLineMap` in
+render-panel.tsx, handed from the In block ACROSS to the Out by the step, since the two are separate
+descriptors that cannot see each other and three copies of that arithmetic would be three chances to
+disagree about which line a failure was on.
 
 **JS reports its line too (`src/exec-trace.ts`).** `exec` returned `e.message` and dropped the stack, so a JS
 failure said WHAT and never WHERE — half the answer, for the reader and for the model about to retry it.
@@ -1133,6 +1141,35 @@ code block is for. Python gets **explain** + **▶ bench**; JS gets **explain** 
   handover. It sends the REFLOWED source deliberately: `py-format` never changes a token, so that is the
   code that ran and it is the code you pressed the button next to. `lsGet`/`lsSet` live in `store.ts`, not
   `vram.tsx`, because render-panel cannot import vram (vram imports RenderPanel — a cycle).
+
+**The RAW view of either slot is an `OutputCell`.** Capped, scrollable, and findable with Ctrl+F — because
+raw is the view you go to in order to SEARCH for a token (the one selector that differs between two calls,
+a key buried in a wide args object) and the one with no structure of its own to cap it: a call carrying a
+base64 image or a wide table otherwise stretches the step to any height. The RENDERED views are not wrapped
+here — an Out's renderer puts its own sections in cells, and a rendered In is already a code block. The
+composition question that raises is whether the JSON tree inside can hide text from the find, and it cannot:
+`RawArgs` passes `allOpen`, which makes `JsonNode` non-collapsible at EVERY depth, so nothing can be folded
+away from a search. That is load-bearing rather than incidental — a find reporting "No results" over data
+that is visibly right there reads as the find being broken — so it has its own test.
+
+**RULE — use the PANEL'S tooltip, not the browser's `title`.** `cursorTipOn(text)` (ui-kit.tsx) is the
+default for anything explanatory; a native `title` needs an argument for itself. Three reasons, all of them
+things a reader hits rather than notices: the native one waits about a second, which on something you are
+hovering to decide whether to CLICK is long enough to have given up; it renders as an OS artefact rather than
+as part of the panel, and cannot show a pointer as code or wrap a sentence sensibly; and on a wide target —
+a code line, a table cell, a whole row — it appears wherever the pointer is while an anchored tip can sit
+half a panel away from what summoned it. `cursorTipOn` follows the cursor and is read into the one shared
+floating layer (`CursorTipLayer`), which is also what makes its prose unselectable, so copying a code block
+never picks up the explanation of it.
+
+  **The exception is an accessible NAME.** A `title` on an icon-only control is what a screen reader and a
+  keyboard user get, and `cursorTip` is pointer-only — so those keep a name (prefer `aria-label`) and gain
+  the custom tip for the pointer. The split is: naming a control → `aria-label` (+ a tip); explaining
+  anything → the custom tip. When the prose must also be readable with no pointer at all, put a `.tt-pop`
+  child in the DOM beside it, the way a marked code line does.
+
+  Not yet swept: `settings.tsx`, `hud-card.tsx`, `card-composer.tsx` and `resource-chart.tsx` still hold
+  native `title`s. New code follows the rule; those are a follow-up, not a licence.
 
 **One disclosure, everywhere something opens (`Disclosure`, ui-kit.tsx).** The panel had three of these
 written three different ways — the model list's fold, the agent's system prompt and tool definitions, the

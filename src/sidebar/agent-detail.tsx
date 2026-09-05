@@ -15,11 +15,11 @@ import { sessionProfile } from "./model";
 import { IconChevron, IconWarn, IconCopy, IconCheck } from "./icons";
 import {
     Code, CopyBtn, SheetChip, Hash, Stamp, ClickableImg, Dot, Disclosure,
-    decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText,
+    decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn,
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { deepestUserLine } from "../py-format";
-import { RenderPanel, OutputCell, SeenSplit, RanFor, type CodeCtx } from "./render-panel";
+import { RenderPanel, OutputCell, SeenSplit, RanFor, inLineMap, type CodeCtx } from "./render-panel";
 import { ReplyBubble } from "./reply";
 import { CodeExplain, codeOf } from "./summaries";
 import { groupTurns } from "./debug-reducer";
@@ -33,15 +33,17 @@ import type { AgentTurnGroup } from "./debug-reducer";
 const slotOf = (label: string): "in" | "out" | undefined =>
     label === "In" ? "in" : label === "Out" ? "out" : undefined;
 
-export function IoBlock({ label, tip, preview, render, raw, marks, reserve, failLine, live, ranMs, ranSince, ctx }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; marks?: [number, number][]; reserve?: boolean; failLine?: number | null; live?: boolean; ranMs?: number; ranSince?: number; ctx?: CodeCtx }) {
+export function IoBlock({ label, tip, preview, render, raw, marks, reserve, failLine, live, ranMs, ranSince, ctx, lineMap }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; marks?: [number, number][]; reserve?: boolean; failLine?: number | null; live?: boolean; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null }) {
     const [showRaw, setShowRaw] = useState(false);   // rendered by default when a descriptor targets this block
-    // The capped/scrollable/findable cell is for tool OUTPUT — a fetch_url page, a big sampleText dump. The In
-    // block is the CALL (args / the code being run): short, and it already renders in its own code block, so
-    // wrapping it there only added chrome (and a stray horizontal scrollbar) for nothing.
-    const cell = (body: ComponentChildren) => label === "Out" ? <OutputCell>{body}</OutputCell> : <>{body}</>;
+    // The capped, scrollable, FINDABLE cell wraps the RAW view of either slot — which is the view you go to
+    // in order to search for a token, and the one with no structure of its own to cap it. It is also where an
+    // In block gets big: a call carrying a base64 image or a wide table stretches the step to any height,
+    // exactly the case the cap exists for. The RENDERED views are not wrapped here — an Out's renderer puts
+    // its own sections in cells, and a rendered In is already a code block with its own chrome.
+    const cell = (body: ComponentChildren) => <OutputCell>{body}</OutputCell>;
     return (
         <details class="io" open>
-            <summary class="io-label" title={tip}>{label}: <span class="io-preview">{preview}</span></summary>
+            <summary class="io-label" {...(tip ? cursorTipOn(tip) : {})}>{label}: <span class="io-preview">{preview}</span></summary>
             <div class="io-body">
                 {/* The toggle is also rendered (DISABLED) while output is still streaming: the descriptor only
                     arrives when the step settles, and letting the row appear then pushed everything down — the
@@ -52,7 +54,7 @@ export function IoBlock({ label, tip, preview, render, raw, marks, reserve, fail
                             <span class="tt"><button class={showRaw ? "" : "on"} disabled={!render} onClick={() => setShowRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">{render ? "A debug visualisation for you — not shown to the model." : "Available once this step finishes."}</span></span>
                             <span class="tt"><button class={showRaw ? "on" : ""} disabled={!render} onClick={() => setShowRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">{render ? "Exactly what the model sent/received. All it knows." : "Available once this step finishes."}</span></span>
                         </div>
-                        {render && !showRaw ? <RenderPanel d={render} marks={marks} failLine={failLine} live={live} ranMs={ranMs} ranSince={ranSince} ctx={ctx} />
+                        {render && !showRaw ? <RenderPanel d={render} marks={marks} failLine={failLine} live={live} ranMs={ranMs} ranSince={ranSince} ctx={ctx} lineMap={lineMap} />
                             /* RAW is shared by every tool and has no renderer-specific structure, so it
                                carries the DEFAULT anchor for the slot. A rendered view may declare a finer
                                one (python-in's code, python-out's value) and wins by being the visible
@@ -283,6 +285,10 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const failLine = outRender && outRender.type === "python-out" && outRender.error
         ? deepestUserLine(outRender.error)
         : outRender && outRender.type === "exec-out" ? outRender.errorLine ?? null : null;
+    // …and the In block's reflow map, handed ACROSS to the Out block. A failure reports a line of the model's
+    // source, but the reader is looking at reflowed code — so the rendered error names the row on screen
+    // while the raw view keeps the number the model was given. Only the step can pass this across.
+    const inMap = inLineMap(inRender);
     // Design A: a background-hosted call blocked on the human gate. Render approve/deny here — the
     // decision is made in this (extension-origin) iframe, unforgeable by the page. Needs the run hash +
     // the step seq to correlate; without them (a page-loop run) fall back to the plain pending view.
@@ -338,7 +344,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     : <span class="tool-name">{st.tool}</span>}
                 {st.approval ? <ApprovalBadge approval={st.approval} /> : null}
                 {st.elements ? <span class="tt el-count">{st.elements} el<span class="tt-pop wrap" role="tooltip">DOM nodes returned (reach them in the console via onStep).</span></span> : null}
-                {issues ? <span class="arg-warn" title={issues.join("; ")}><IconWarn />{issues.length}</span> : null}
+                {issues ? <span class="arg-warn" {...cursorTipOn(issues.join("; "))}><IconWarn />{issues.length}</span> : null}
                 {!open ? <span class="astep-preview">{awaiting ? <span class="dim">needs approval</span> : st.pending ? (st.streamOutput ? <span class="astep-livepreview">{collapsedPreview(st.streamOutput).text}</span> : <span class="dim">running…</span>) : collapsedPreview(st.result || "").text}</span> : null}
             </button>
             {open
@@ -361,7 +367,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                         /* HOW LONG IT RAN. `toolMs` is the tool's own wall clock, not the step's — a human at
                            an approval gate is the step's time and none of the machine's work. Live, it ticks
                            from when the step started, which is the difference between "slow" and "stuck". */
-                        live={!!st.pending} ranMs={st.toolMs} ranSince={st.ts}
+                        live={!!st.pending} ranMs={st.toolMs} ranSince={st.ts} lineMap={inMap}
                         preview={st.pending ? (st.streamOutput ? inlineText(st.streamOutput) : "running…") : inlineText(st.result || "")} render={outRender}
                         raw={st.pending
                             ? (st.streamOutput != null

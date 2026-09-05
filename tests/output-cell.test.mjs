@@ -179,12 +179,22 @@ test("timestamp gutter: EVERY timestamped row is hoverable, with ms precision an
     assert.equal(gutters.length, 3, "one gutter cell per line");
     // Row 2 repeats row 1's time, so its LABEL is blank — but it must still be hoverable.
     assert.equal(gutters[1].textContent, "", "a repeated time isn't reprinted");
+    // The panel's own tooltip, not a native `title` (see the tooltip RULE in AGENTS.md) — so the text is
+    // read off the shared signal the layer draws from. This test renders the component alone, with no app
+    // around it, so there IS no layer to query: the signal is the component's actual output here.
+    const { cursorTip } = await import("../src/sidebar/ui-kit.tsx");
+    const tipOf = async (el) => {
+        cursorTip.value = null;
+        el.dispatchEvent(new doc.defaultView.PointerEvent("pointermove", { bubbles: true, clientX: 20, clientY: 30 }));
+        await tick();
+        return cursorTip.value?.text ?? "";
+    };
     for (const g of gutters) {
-        assert.match(g.getAttribute("title") || "", /\d\d:\d\d:\d\d\.\d\d\d/, "every row hovers to a millisecond-precise time");
+        assert.match(await tipOf(g), /\d\d:\d\d:\d\d\.\d\d\d/, "every row hovers to a millisecond-precise time");
         assert.match(g.className, /hoverable/, "…and is marked as hoverable");
     }
-    assert.match(gutters[2].getAttribute("title"), /\+1\.20s since the previous line/, "the third line reports the gap");
-    assert.doesNotMatch(gutters[0].getAttribute("title"), /since the previous line/, "the first line has nothing to compare to");
+    assert.match(await tipOf(gutters[2]), /\+1\.20s since the previous line/, "the third line reports the gap");
+    assert.doesNotMatch(await tipOf(gutters[0]), /since the previous line/, "the first line has nothing to compare to");
 });
 
 /* ---------------- the Settings-controlled knobs, and find ownership ---------------- */

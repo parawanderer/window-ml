@@ -45,6 +45,15 @@ const openSettings = async (w, tab) => {
     }
 };
 
+
+// The panel's tooltip is not an attribute — it follows the cursor and is read into one shared layer (see
+// the tooltip RULE in AGENTS.md), so a test hovers for it instead of reading `title`.
+const hoverTip = async (w, el) => {
+    el.dispatchEvent(new w.window.PointerEvent("pointermove", { bubbles: true, clientX: 40, clientY: 60 }));
+    await w.flush();
+    return w.shadow.querySelector(".cursor-tip")?.textContent ?? "";
+};
+
 test("sidebar mounts and shows the empty state", async () => {
     const w = await loadSidebarWorld();
     assert.ok(w.shadow, "shadow root mounted");
@@ -2691,8 +2700,9 @@ test("python bench: a cell that cannot be serialised says so, and says what it w
     assert.ok(cell, "the unrenderable cell is marked, not left blank or coerced");
     assert.match(cell.textContent, /unrenderable/);
     // The TYPE is most of the answer to "why is my column empty".
-    assert.match(cell.getAttribute("title"), /could not be serialised/i);
-    assert.match(cell.getAttribute("title"), /the model received the value itself/i,
+    const tip = await hoverTip(w, cell);
+    assert.match(tip, /could not be serialised/i);
+    assert.match(tip, /the model received the value itself/i,
         "…and it says the failure is in the PREVIEW, not in the run");
     assert.doesNotMatch(w.shadow.querySelector(".bench-out .r-py-val").textContent, /\[object Object\]/);
 });
@@ -2745,8 +2755,9 @@ test("python bench: a cell the SANDBOX marked names its Python type, and blames 
     assert.equal(marks[0].textContent, "unrenderable Widget", "the PYTHON type, carried across");
     // The cause differs from the browser-side one and so does the explanation: naming the wrong cause sends
     // the reader looking in the wrong half of the system.
-    assert.match(marks[0].getAttribute("title"), /would show as an empty object/i);
-    assert.doesNotMatch(marks[0].getAttribute("title"), /circular/i);
+    const tip = await hoverTip(w, marks[0]);
+    assert.match(tip, /would show as an empty object/i);
+    assert.doesNotMatch(tip, /circular/i);
     assert.match(w.shadow.querySelector(".bench-out .r-df-table").textContent, /"q1"/,
         "the dict cell is untouched — the marker is only for what would otherwise be LOST");
 });
@@ -5446,10 +5457,18 @@ test("tool output cell: python_exec AND exec both render into the shared capped/
     for (const cls of [".r-py-stdout", ".r-py-val"]) {
         assert.equal(w.shadow.querySelectorAll(`${cls} .r-outcell`).length, 2, `both tools' ${cls} is a cell`);
     }
-    // …and the SAME component wraps a descriptor-less tool's plain OUT, so a big fetch_url page is
-    // scrollable + findable too. (The IN block is the call — short, already a code block — so it gets no cell.)
-    assert.equal(w.shadow.querySelectorAll(".r-outcell").length, outCells.length + 1,
-        "the descriptor-less tool's Out reuses the same cell — and nothing wraps the In");
+    // …and the SAME component wraps the RAW view of either slot — a descriptor-less tool's plain Out, and
+    // the raw In, which is the view you go to in order to SEARCH for a token and the one with no structure
+    // of its own to cap it. A call carrying a base64 image or a wide table stretches the step to any height
+    // otherwise, which is the case the cap exists for. The RENDERED In is not wrapped: it is already a code
+    // block with its own chrome.
+    const rawIns = [...w.shadow.querySelectorAll(".astep.tool .io")]
+        .filter((io) => io.querySelector(".io-label")?.textContent.startsWith("In"));
+    assert.ok(rawIns.length >= 3, "every step has an In block");
+    assert.equal(w.shadow.querySelectorAll("[data-cite='in'] .r-outcell").length, rawIns.length,
+        "each In's RAW view is a cell — findable and capped like an Out");
+    // The rendered In stays uncelled — a code block already caps and scrolls itself.
+    assert.equal(w.shadow.querySelectorAll(".r-py-in .r-outcell").length, 0, "the rendered In is not double-wrapped");
     for (const cell of outCells) {
         const scroll = cell.querySelector(".r-outscroll");
         assert.ok(scroll, "the cell scrolls its overflow");
@@ -5493,7 +5512,7 @@ test("live output: the doomed tail is marked AS IT STREAMS, at the call's own ra
     const lbl = w.shadow.querySelector(".r-unseen-lbl.live");
     assert.ok(lbl, "the streaming view marks where the model's cut will fall");
     assert.match(lbl.textContent, /cutoff/i, "…labelled as the model's cutoff, not a past-tense 'was clipped'");
-    assert.match(lbl.getAttribute("title") || "", /NOT be part of the result sent to the model/i, "with a hover explainer");
+    assert.match(await hoverTip(w, lbl), /NOT be part of the result sent to the model/i, "with a hover explainer");
     const tail = w.shadow.querySelector(".r-unseen");
     assert.ok(tail && tail.textContent.trim().length >= 100, "exactly the text past the RAISED 600-char cap is marked");
 });
@@ -5514,7 +5533,7 @@ test("streamed timestamps survive the DONE and time the settled output", async (
     const stamps = [...w.shadow.querySelectorAll(".r-ts")].map(e => e.textContent).filter(Boolean);
     assert.ok(stamps.length >= 2, "the settled output still shows the executor's timestamps");
     assert.notEqual(stamps[0], stamps[1], "and a later line shows its own (changed) time");
-    assert.match(w.shadow.querySelector(".r-ts[title]").getAttribute("title"), /\d\d:\d\d:\d\d\.\d\d\d/, "hover carries millisecond precision");
+    assert.match(await hoverTip(w, w.shadow.querySelector(".r-ts.hoverable")), /\d\d:\d\d:\d\d\.\d\d\d/, "hover carries millisecond precision");
 });
 
 // Settings copy must stay attached to the control it describes: inserting a new toggle between a select and
@@ -7808,7 +7827,9 @@ test("python: the failing line is marked in the code, mapped through the reflow"
     const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
     await w.dispatch(agentStart("pyfail", "crunch"));
     await w.dispatch(agentStep("pyfail", 1, {
-        seq: 1, tool: "python_exec", arguments: { code }, result: "Python error",
+        // The result IS the traceback — that is what the model received, and the raw view has to be able to
+        // give it back verbatim once the render starts showing different numbers.
+        seq: 1, tool: "python_exec", arguments: { code }, result: err,
         renderIn: { type: "python-in", mode: "script", code },
         renderOut: { type: "python-out", error: err },
     }));
@@ -7832,7 +7853,131 @@ test("python: the failing line is marked in the code, mapped through the reflow"
     // The traceback's own line numbers are links, and they inherit its colour rather than introducing a
     // third one — a blue number inside red error text reads as a different KIND of number.
     const links = [...w.shadow.querySelectorAll(".tb-line")];
-    assert.deepEqual(links.map((b) => b.textContent), ["5", "3"]);
+    // THE NUMBERS SHOWN ARE THE ROWS ABOVE, not the ones CPython printed. The code beside this is reflowed,
+    // so repeating the traceback's own number sends the reader to a line that is not the one that failed —
+    // which is the entire failure mode this whole subsystem exists to prevent, reintroduced by the render.
+    // Line 3 did not move, so it reads 3; the call site on line 5 did, so it reads where it now sits.
+    // Read the expected rows off the DRAWN code rather than recomputing the map: the invariant is that the
+    // traceback and the block agree, and comparing the render against itself is what actually says so.
+    const rowOf = (needle) => [...w.shadow.querySelectorAll(".cline")]
+        .find((el) => el.textContent.includes(needle))?.getAttribute("data-line");
+    const callSite = rowOf("total(rows)"), failed = rowOf("frame['nope']");
+    assert.deepEqual(links.map((b) => b.textContent), [callSite, failed]);
+    assert.notEqual(callSite, "5", "…and the test would prove nothing if the reflow had not moved it");
+    // A moved number's tooltip says BOTH, so the two views cannot read as a contradiction.
+    assert.match(links[0].parentElement.querySelector(".tt-pop").textContent, /model wrote it as line 5/);
+    assert.doesNotMatch(links[1].parentElement.querySelector(".tt-pop").textContent, /model wrote it as/,
+        "…and the line that did not move says nothing, since an unconditional caveat is noise");
+
+    // The remap belongs to the RENDER and nowhere else. The raw view is the model-facing text verbatim, so
+    // the numbers CPython actually produced stay recoverable there (the raw-view rule).
+    const rawBtn = [...w.shadow.querySelectorAll(".rr-toggle button")].filter((b) => b.textContent === "raw");
+    rawBtn[rawBtn.length - 1].click();
+    await w.tick();
+    const rawTxt = w.shadow.querySelector(".astep [data-cite='out']").textContent;
+    assert.match(rawTxt, /line 5, in _user/, "the raw view keeps the number the model was given");
+    assert.match(rawTxt, /line 3, in total/);
+});
+
+// THE JS TWIN of the remap. `exec` has no traceback to render — an evaluated script's stack is almost
+// entirely the wrapper — so it reports one line, and the same rule applies to it: the number shown is the
+// row the reader is looking at, while the model keeps the number it was given.
+test("exec: the rendered error names the row on SCREEN, and raw keeps the model's line", async () => {
+    // One dense line the beautifier breaks into many, so the model's line 1 is not row 1 of what is drawn.
+    const js = "const rows=[{a:1},{a:2},{a:3}];\nreturn rows.map(r=>r.b.toFixed(1));";
+    const msg = "Cannot read properties of undefined (reading 'toFixed') (line 2)";
+    const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
+    await w.dispatch(agentStart("jsfail", "crunch"));
+    await w.dispatch(agentStep("jsfail", 1, {
+        seq: 1, tool: "exec", arguments: { js }, result: `Error: ${msg}`,
+        renderIn: { type: "code", text: js, lang: "javascript", format: true },
+        renderOut: { type: "exec-out", error: msg, errorLine: 2 },
+    }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+
+    const link = w.shadow.querySelector(".r-py-err .tb-line");
+    assert.ok(link, "the failure's line is a control, not just text");
+    const drawn = [...w.shadow.querySelectorAll(".cline")]
+        .find((el) => el.textContent.includes("toFixed"))?.getAttribute("data-line");
+    assert.notEqual(drawn, "2", "the beautifier moved it — otherwise this test proves nothing");
+    assert.equal(link.textContent, drawn, "the rendered error names the row the reader is looking at");
+    assert.match(link.parentElement.querySelector(".tt-pop").textContent, /model wrote it as line 2/);
+
+    // …and the model-facing text is unchanged, recoverable in raw.
+    const rawBtn = [...w.shadow.querySelectorAll(".rr-toggle button")].filter((b) => b.textContent === "raw");
+    rawBtn[rawBtn.length - 1].click(); await w.tick();
+    assert.match(w.shadow.querySelector(".astep [data-cite='out']").textContent, /\(line 2\)/,
+        "the model was told its OWN line, and that is what raw shows");
+});
+
+// A step's RAW In is where you go to search for a token — a selector buried in a wide args object, the one
+// key that differs between two calls — and it is the view with no structure of its own to cap it. So it
+// gets the same cell an Out does: capped, scrollable, and findable with Ctrl+F.
+test("the raw In is a findable cell, and the JSON tree inside it is what gets searched", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rawfind", "look at args"));
+    await w.dispatch(agentStep("rawfind", 1, {
+        seq: 1, tool: "click", arguments: { selector: "#checkout-submit-button", index: 0, verify: true },
+        result: "clicked",
+    }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+
+    const inBlock = [...w.shadow.querySelectorAll(".io")]
+        .find((io) => io.querySelector(".io-label")?.textContent.startsWith("In"));
+    const cell = inBlock.querySelector(".r-outcell");
+    assert.ok(cell, "the raw In renders through the shared cell");
+    // The JSON TREE is inside it — that composition is the point of the change, since the tree is what you
+    // are searching. It is expanded by default (`allOpen`), so a find is not looking at collapsed nodes.
+    assert.ok(cell.querySelector(".jt-args"), "…with the JSON tree inside, not instead of it");
+    assert.match(cell.textContent, /checkout-submit-button/);
+
+    // Ctrl+F inside the cell opens its find bar, and the tree's text is searchable.
+    cell.querySelector(".r-outscroll").dispatchEvent(
+        new w.window.KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true }));
+    await w.tick();
+    const q = cell.querySelector(".r-find-q");
+    assert.ok(q, "the find bar opens on the raw In, the same as on an Out");
+    q.value = "checkout"; q.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.flush();
+    assert.match(cell.querySelector(".r-find-n")?.textContent ?? "", /1 of 1/,
+        "it finds the selector in the tree — one match, not 'No results'");
+});
+
+// THE COMPOSITION QUESTION the cell raises: a JSON tree that could collapse would hide text from the find,
+// and a search reporting "No results" over data that is right there reads as the find being broken. It
+// cannot happen, and this is why: the raw In passes `allOpen`, which makes every node non-collapsible at
+// EVERY depth (`collapsible = !allOpen`), so there is nothing to hide. Pinned, because the day someone
+// makes this tree collapsible for good reasons, the find silently starts lying.
+test("the raw In's JSON tree cannot collapse at any depth, so nothing hides from the find", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("deep", "nested args"));
+    await w.dispatch(agentStep("deep", 1, {
+        seq: 1, tool: "python_exec", result: "ok",
+        arguments: { tables: { sales: { source: "#grid", opts: { header: { row: 2, tag: "buried-marker" } } } } },
+    }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+
+    const cell = [...w.shadow.querySelectorAll(".io")]
+        .find((io) => io.querySelector(".io-label")?.textContent.startsWith("In"))
+        .querySelector(".r-outcell");
+    // Four levels deep, and every level is drawn — no chevron, no click target, nothing to fold away.
+    assert.match(cell.textContent, /buried-marker/, "the deepest value is rendered, not behind a fold");
+    assert.equal(cell.querySelectorAll(".jt-branch .tri").length, 0, "no node offers to collapse");
+    assert.equal(cell.querySelectorAll(".jt-clickable").length, 0, "…and none is clickable");
+    assert.equal(cell.querySelectorAll(".jt-preview").length, 0,
+        "no node is showing a COLLAPSED preview instead of its contents");
+
+    // So a find reaches it. This is the assertion that would fail the day the tree becomes collapsible.
+    cell.querySelector(".r-outscroll").dispatchEvent(
+        new w.window.KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true }));
+    await w.tick();
+    const q = cell.querySelector(".r-find-q");
+    q.value = "buried-marker"; q.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.flush();
+    assert.match(cell.querySelector(".r-find-n").textContent, /1 of 1/, "the four-deep value is findable");
 });
 
 // TWO FAILING STEPS OPEN AT ONCE. A document-wide lookup finds the FIRST In block on the page, so both

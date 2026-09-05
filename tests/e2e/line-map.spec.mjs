@@ -179,7 +179,7 @@ const JS = [
     "return {total,missing:rows.map(r=>r.q3.toFixed(1))};",
 ].join("\n");
 
-test("a JS failure names the model's own line, and it clicks through the beautified code", async () => {
+test("a JS failure names the row on screen, tells the model its own line, and clicks through", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();
     try {
@@ -210,7 +210,7 @@ test("a JS failure names the model's own line, and it clicks through the beautif
         expect(err).toContain("toFixed");
         // Read off the CONTROL rather than the block's text: the tooltip lives in the DOM beside the number
         // (so it is readable without a pointer) and lands in the middle of `textContent`.
-        await expect(step.locator(".r-py-err .tb-line"), "the failure says WHERE, not only what").toHaveText("4");
+        await expect(step.locator(".r-py-err .tb-line"), "the failure says WHERE, not only what").toBeVisible();
 
         // 2. The MODEL was told too — it is retrying this code, and a line number is the difference between
         //    a targeted fix and a rewrite. The raw view is the model-facing result verbatim (the raw-view
@@ -219,11 +219,16 @@ test("a JS failure names the model's own line, and it clicks through the beautif
         await expect(step.locator(".io-body").last()).toContainText("(line 4)");
         await step.locator(".rr-toggle button", { hasText: "rendered" }).last().click();
 
-        // 3. It is a CONTROL, and it lands on the mapped line. Beautify split the model's one-line array
-        //    literal across many rows, so line 4 of the source is not row 4 of what is drawn — which is the
-        //    entire point of carrying a map rather than the number alone.
+        // 3. THE NUMBER SHOWN IS THE ROW ON SCREEN, not the one the model was given. Beautify split the
+        //    model's one-line array literal across many rows, so line 4 of the source is not row 4 of what
+        //    is drawn — and repeating the model's number in the render points the reader at a line that is
+        //    not the one that failed, which is the exact failure this whole subsystem exists to prevent.
         const map = JSON.parse(await step.locator("[data-cite='in']").getAttribute("data-py-map"));
         expect(map[4], "the failing line moved when the code was beautified").toBeGreaterThan(4);
+        await expect(step.locator(".r-py-err .tb-line"), "the render names the row above it")
+            .toHaveText(String(map[4]));
+        // The two views must not read as a contradiction, so the moved number says both.
+        await expect(step.locator(".r-py-err .tb-line-wrap .tt-pop")).toContainText("model wrote it as line 4");
         await step.locator(".r-py-err .tb-line").click();
         await expect(step.locator(".cline-pulse-fail")).toHaveCount(1);
         // Red, not green: the failing line is the one line green would be wrong on.
