@@ -79,7 +79,9 @@ let orbLeaveTimer = 0;
 // because the cursor happens to be sitting on it where it landed. A genuine leave+re-enter re-arms it, so a
 // deliberate hover still expands. (Set false in the drag cleanup; set true on a real pointerleave.)
 let orbHoverArmed = true;
+/** Pointer entered the orb — expand it, unless a drag is in progress or hover is disarmed. */
 export const orbEnter = () => { if (orbDragging || !orbHoverArmed) return; clearTimeout(orbLeaveTimer); orbHover.value = true; };
+/** Pointer left the orb — collapse it after a grace period, so crossing a gap does not close it. */
 export const orbLeave = (e: any) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     if (e.clientX > r.left && e.clientX < r.right && e.clientY > r.top && e.clientY < r.bottom) return;   // spurious (resize) — pointer still inside
@@ -87,6 +89,7 @@ export const orbLeave = (e: any) => {
     clearTimeout(orbLeaveTimer);
     orbLeaveTimer = window.setTimeout(() => { orbHover.value = false; }, 140);
 };
+/** Begin dragging the HUD card — it snaps to whichever corner you let go nearest. */
 export const startCardDrag = (e: any) => {
     if (e.button != null && e.button !== 0) return;                                          // left / touch only
     if ((e.target as HTMLElement).closest("button, input, textarea, a, .seg")) return;       // not on a control
@@ -145,6 +148,7 @@ export const startCardDrag = (e: any) => {
 // blur, nor does its pointerdown reach the shell's outside-click handler. So the NEXT pointerdown in the
 // card tells the shell to dismiss the menu. Single-armed so repeated right-clicks don't stack listeners.
 let menuDismissArmed = false;
+/** Close the card's menu on the next click outside it. */
 export function armMenuDismiss(): void {
     if (menuDismissArmed) return;
     menuDismissArmed = true;
@@ -211,6 +215,9 @@ export function CardTabs({ runs, selected }: { runs: Session[]; selected?: strin
     );
 }
 
+/** THE HUD CARD — the corner surface an off-mode run lives in: the composer, live progress, approval
+ *  gates and the completion card, over the page rather than in a panel. Reuses the sidebar's own
+ *  components, so what you read there is what you read here. */
 export function CardApp() {
     const r = rev.value;   // subscribe to session changes (retained via data-rev below)
     const composing = composerOpen.value;   // Spotlight bar open → the HUD morphs into the task input

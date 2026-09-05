@@ -580,6 +580,9 @@ function katexStyle(): string {
     return katexCss.replace(/url\((['"]?)fonts\//g, (_m, q: string) => `url(${q}${base}`);
 }
 
+/** A session as a self-contained light-themed HTML document — the PDF's source. Images inline (a print
+ *  doc has nowhere to put sidecars) and every dynamic string escaped, since it renders at the
+ *  extension's origin. */
 export function sessionToHtml(s: Session, docTitle: string): string {
     const { sink, done } = htmlSink();
     writeSession(s, sink);
@@ -650,6 +653,8 @@ function downloadBlob(name: string, blob: Blob): void {
 
 const baseName = (s: Session): string => `ml-${s.kind === "agent" ? "agent" : "chat"}-${s.hash}`;
 
+/** Download a session as Markdown — a bare `.md`, or a `.zip` with real PNG sidecars when it has
+ *  screenshots, because base64 in a text file is unreadable to a coding assistant and a `.png` is not. */
 export function exportSession(hash: string): void {
     const s = sessionMap.get(hash);
     if (!s) return;
@@ -686,6 +691,8 @@ export function exportSessionJson(hash: string): void {
 // clean up on `afterprint` (plus a long fallback) so a dismissed dialog can't
 // leak the frame either way.
 const PRINT_CLEANUP_MS = 120_000;
+/** Print a session to PDF. Routed through the BACKGROUND to a real tab, because `window.print()` is
+ *  suppressed for a frame inside docked DevTools. */
 export function printSession(hash: string): void {
     const s = sessionMap.get(hash);
     if (!s) return;

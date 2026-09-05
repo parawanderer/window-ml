@@ -1442,7 +1442,9 @@ The **docstrings are the index** (nothing is duplicated into a manifest that wou
 that an undocumented export is INVISIBLE and gets rebuilt — `--undocumented` makes that loud and exits
 non-zero. What you owe it: a new shared thing gets a first sentence saying what it is FOR in words someone
 would search, and an EXTRACTION says what it replaced, because that sentence is what stops the third copy.
-Playbook: `.claude/skills/components/SKILL.md`.
+A TRAILING `//` counts as the docstring for a one-line export, which is the house style here — teaching the
+scanner to read those fixed thirty of them with no churn, rather than having me move thirty comments above
+their declarations to satisfy an indexer. Playbook: `.claude/skills/components/SKILL.md`.
 
 **RULE — self-tools get a skill + an AGENTS.md mention, and you keep both current — WITHOUT asking.**
 Any time you (or any model working on this repo) build a TOOL FOR YOURSELF — a harness, wrapper, driver,

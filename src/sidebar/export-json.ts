@@ -328,6 +328,10 @@ function pageOf(s: Session): ExportPage | undefined {
     return compact<ExportPage>({ url: url || undefined, origin, title: s.pageTitle || undefined });
 }
 
+/** A session as the PUBLISHED machine-readable document — the one to DIFF two runs with, and the one a
+ *  Python or Go consumer generates models from (docs/spec/export.schema.json is normative). Carries
+ *  `session.events`: the resource panel's whole timeline, derived by the same `eventsFrom` the panel
+ *  uses, so a consumer never redoes arithmetic that is wrong in the same three places every time. */
 export function sessionToJson(s: Session, prov?: ExportProvenance | string): ExportDocument {
     const p: ExportProvenance = typeof prov === "string" ? { version: prov } : (prov || {});
     const isAgent = s.kind === "agent";

@@ -23,10 +23,19 @@ const onlyUndocumented = process.argv.includes("--undocumented");
 /** The first sentence of a doc comment, flattened to one line. A doc that opens with WHAT THE THING IS
  *  indexes well; one that opens with a war story does not, which is a nudge worth leaving in the output. */
 const firstSentence = (doc) => {
-    const flat = doc.replace(/\s*\n\s*\*?\s*/g, " ").replace(/^\/\*+\s*/, "").replace(/\s*\*+\/$/, "")
-        .replace(/^\/\/+\s*/gm, "").trim();
-    const stop = flat.search(/\.\s|\. *$/);
-    return (stop > 0 ? flat.slice(0, stop) : flat).trim();
+    // Strip each line's own comment marker BEFORE flattening. Doing it after leaves `//` embedded mid
+    // sentence for a multi-line `//` block, which reads as garbage in a one-line index.
+    const flat = doc.split("\n").map((l) => l.replace(/^\s*(?:\/\/+|\*+|\/\*+)\s?/, "").replace(/\s*\*+\/\s*$/, ""))
+        .join(" ").replace(/\s+/g, " ").trim();
+    // A sentence ends at a period followed by a CAPITAL or the end — not at any period-space, which cuts
+    // "wrap long code lines vs. horizontal scroll" into nonsense at the "vs.". Prose here is full of those
+    // (vs. / e.g. / i.e.), and a truncated first sentence is worse than a long one: the index is read as a
+    // description, and half a description misleads.
+    const stop = flat.search(/\.\s+(?=[A-Z])|\. *$/);
+    const one = (stop > 0 ? flat.slice(0, stop) : flat).trim();
+    // A cap, because this is ONE LINE per thing and a paragraph defeats that — a docstring whose first
+    // sentence runs past this is telling you it does not open with what the thing is.
+    return one.length > 150 ? `${one.slice(0, 149).trimEnd()}…` : one;
 };
 
 /** A JSDoc block or a run of `//` lines immediately above `line`, or "". */
@@ -55,8 +64,16 @@ for (const f of readdirSync(SRC).filter((f) => f.endsWith(".tsx") || f.endsWith(
         // component; the rest are helpers, which are worth indexing too (a hook is a reusable thing).
         const m = /^export (?:function|const) ([A-Za-z_][A-Za-z0-9_]*)\s*[=(]/.exec(l);
         if (!m) return;
-        const isComponent = /^[A-Z]/.test(m[1]);
-        add(m[1], isComponent ? "component" : "helper", file, i + 1, docAbove(lines, i));
+        // SCREAMING_CASE is a constant, not a component — worth telling apart so a search can be narrowed
+        // to the things you can actually reuse as UI (`| grep component`).
+        const kind = /^[A-Z0-9_]+$/.test(m[1]) ? "const" : /^[A-Z]/.test(m[1]) ? "component" : "helper";
+        // A TRAILING comment counts. It is the house style for a one-line export (`export const codeWrap =
+        // signal(true);   // wrap long code lines vs. horizontal scroll`), and ignoring it would have had
+        // me move thirty of them above their declaration to satisfy the indexer — churn for nothing, and
+        // worse to read. A block above still wins: it is the fuller description when both exist.
+        const trailing = /;?\s*\/\/\s*(.+)$/.exec(l);
+        add(m[1], kind, file, i + 1,
+            docAbove(lines, i) || (trailing ? `// ${trailing[1]}` : ""));
     });
 }
 

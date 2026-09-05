@@ -381,6 +381,8 @@ const REUSED_KIND: Record<string, { noun: string; nounN: string }> = {
     "fetch-url": { noun: "URL", nounN: "URLs" },
     sheet: { noun: "sheet", nounN: "sheets" },
 };
+/** WHY THIS RAN WITHOUT ASKING — the prior grants a call reused (a cached `ml.fetch` URL, an approved
+ *  sheet). Shown on the step, because an auto-run with no explanation reads as a gate that failed. */
 export function ReusedBlock({ reused }: { reused: ReusedGrant[] }) {
     // Summarise per-kind (e.g. "2 URLs · 1 sheet") — deterministic, no payload.
     const byKind = new Map<string, ReusedGrant[]>();

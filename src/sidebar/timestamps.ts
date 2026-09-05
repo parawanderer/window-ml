@@ -26,6 +26,7 @@ export function alignedMarks(marks: [number, number][] | undefined, text?: strin
     return marks[marks.length - 1][0] <= text.length ? marks : undefined;
 }
 
+/** `14:03:07` — a wall-clock time, no date. */
 export const hhmmss = (ts: number): string => new Date(ts).toTimeString().slice(0, 8);
 // Full precision for the hover — the gutter stays hh:mm:ss (narrow, scannable) but the underlying marks are
 // epoch MILLISECONDS, so the tooltip can show the exact instant and a meaningful gap.
@@ -37,9 +38,13 @@ export const hhmmss = (ts: number): string => new Date(ts).toTimeString().slice(
  *  a crosshair between two samples is interpolated. Event times, which come from real timings rather than the
  *  sample grid, are exact and are shown to the millisecond in their own tooltip. */
 export const MS_PRECISE = 40;   // ms per pixel below which the third decimal place is meaningful
+/** A time at the precision the ZOOM justifies: seconds when a pixel is a second, milliseconds when the
+ *  window is narrow enough for them to mean something. */
 export const clockAt = (ts: number, msPerPx: number): string =>
     msPerPx > 0 && msPerPx < MS_PRECISE ? hhmmssms(ts) : hhmmss(ts);
 
+/** `14:03:07.412` — for an event's own timings, which are exact (unlike the crosshair, which
+ *  interpolates between samples). */
 export const hhmmssms = (ts: number): string => `${hhmmss(ts)}.${String(new Date(ts).getMilliseconds()).padStart(3, "0")}`;
 // A timestamp's LOCAL hour bucket (date + hour), so "same hour" is exact across midnight and half-hour zones.
 const hourKey = (ts: number): string => { const d = new Date(ts); return `${d.toDateString()} ${d.getHours()}`; };
@@ -85,6 +90,8 @@ export function stopHourTick(): void {
 // across locales (and sorts), unlike "3/9" vs "9/3".
 const dayKey = (ts: number): string => new Date(ts).toDateString();
 const p2 = (n: number): string => String(n).padStart(2, "0");
+/** `2026-09-05` — the divider a run spanning midnight gets, so `00:00:01` under `23:59:58` cannot read
+ *  as one second later. */
 export const dayLabel = (ts: number): string => { const d = new Date(ts); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
 
 /** Line indices where the calendar DAY changes, → the new day's label. The gutter is time-only, so a run that

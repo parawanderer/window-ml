@@ -11,10 +11,12 @@ import { config, fontScale, codeWrap, codeLineNumbers, focusMode, BASE_FS } from
 let hljsStyleEl: HTMLStyleElement | null = null;   // holds the active Atom One theme
 const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
 
+/** The theme to draw in — the explicit choice, else the OS preference. */
 export const resolveTheme = (): "dark" | "light" => {
     const t = config.value.theme;
     return (t === "light" || t === "dark") ? t : (themeMedia.matches ? "dark" : "light");
 };
+/** Put the resolved theme on the root element, which is where every colour token is defined. */
 export const applyTheme = (): void => {
     const t = resolveTheme();
     document.documentElement.setAttribute("data-theme", t);

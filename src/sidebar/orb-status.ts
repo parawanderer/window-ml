@@ -60,6 +60,8 @@ export function startupPhase(run: Session, modelResident?: boolean): { icon: str
     return { icon: "⏳", label: "Waiting for the model…", short: "waiting" };
 }
 
+/** What the HUD orb should SAY a run is doing right now — the icon and the short label. Headless
+ *  progress: the whole status when there is no panel open to read. */
 export function activityFor(run: Session, modelResident?: boolean): { icon: string; label: string; short: string } {
     const cur = currentTurnSteps(run);
     // A tool actively RUNNING (pending) wins — that's the live op.

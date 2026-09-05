@@ -24,6 +24,9 @@ import {
     highlightToken, highlightEl, clearHighlight, tokenHover, pickedHover,
 } from "./ui-kit";
 
+/** A tool's returned DOM ELEMENTS, as a hoverable list. Each row carries the same stateless
+ *  `clickSelector` the model was handed, so hovering outlines the node on the page and "copy reference"
+ *  yields something that actually resolves. */
 export function RenderElements({ items }: { items: { path: string; text?: string; index?: number }[] }) {
     const single = items.length === 1;   // one element → the #0 badge is noise; just show the element
     return (
@@ -51,6 +54,8 @@ export function RenderElements({ items }: { items: { path: string; text?: string
         </div>
     );
 }
+/** A plain TABLE from a `table` render descriptor — the simple one. A DataFrame gets `PyDfTable`
+ *  instead, which is the spreadsheet-shaped view with sorting, resizing and an index gutter. */
 export function RenderTable({ columns, rows }: { columns: string[]; rows: (string | number | null)[][] }) {
     return (
         <div class="r-table-wrap">
@@ -139,6 +144,10 @@ const markedType = (v: unknown): string | null => {
     return rec && typeof rec === "object" && typeof rec[UNRENDERABLE] === "string" ? (rec[UNRENDERABLE] as string) : null;
 };
 
+/** ONE DATAFRAME CELL as text — or NULL when it has no honest representation, which the table draws as a
+ *  marker naming the type. `[object Object]` and a bare `{}` are both a wrong fact printed exactly where
+ *  the reader is looking for the right one. The CSV copy goes through this too, so what you paste cannot
+ *  disagree with what you saw. */
 export const dfCell = (v: unknown): string | null => {
     if (v == null) return "NaN";
     if (typeof v === "object") {
@@ -180,6 +189,10 @@ const csvField = (v: unknown): string => {
     const s = v == null ? "" : (dfCell(v) ?? "");
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
+/** A pandas DataFrame, drawn as JUPYTER draws one: numbered index gutter, sticky header, zebra rows,
+ *  right-aligned monospace numbers, NaN styling — plus click-to-sort, drag-to-resize, collapse and
+ *  copy-CSV. Zero-dep, no grid library. A cell with no JSON form renders as a marker naming its type
+ *  rather than as `[object Object]`. */
 export function PyDfTable({ columns, rows }: { columns: string[]; rows: (string | number | null)[][] }) {
     const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
     const [collapsed, setCollapsed] = useState(false);
@@ -545,6 +558,9 @@ export function TimedOutput({ text, marks }: { text: string; marks?: [number, nu
     return <div class={`code r-timed${short ? " short" : ""}`}>{rows}</div>;
 }
 
+/** Captured output with the tail the MODEL NEVER RECEIVED marked. A tool clips its model-facing result
+ *  to a context budget while the UI keeps far more, so without this you would read the surplus as "what
+ *  the model saw". Everything past `seen` renders dimmed under an explicit label. */
 export function SeenSplit({ text, seen, live, marks }: { text: string; seen?: number; live?: boolean; marks?: [number, number][] }) {
     if (seen == null || seen >= text.length) return <TimedOutput text={text} marks={marks} />;
     return (
@@ -868,6 +884,9 @@ export function RunningFor({ since }: { since?: number }) {
     return <span class="astep-elapsed"> ({fmtDur(ms)})</span>;
 }
 
+/** HOW LONG A SCRIPT RAN, under its output — ticking while it is in flight, settled once it lands. A
+ *  first `python_exec` splits its COLD START from the script, because one figure would charge the code
+ *  for the seconds spent fetching a runtime. */
 export function RanFor({ live, ms, since, remote }: { live?: boolean; ms?: number; since?: number; remote?: { durationMs: number; bootMs?: number } | null }) {
     const [now, setNow] = useState(() => Date.now());
     useEffect(() => {

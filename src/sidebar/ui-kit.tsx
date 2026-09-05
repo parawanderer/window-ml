@@ -19,6 +19,9 @@ export const DOT_TIP: Record<Status, string> = {
     ok: "Completed successfully.",
     err: "Failed — see the error in the turn.",
 };
+/** A status DOT — pending / ok / err — with the tooltip that says which. The one status indicator: a
+ *  session row, a step header and a model's residency all use it, so the three cannot drift into three
+ *  colours meaning the same thing. */
 export const Dot = ({ status }: { status: Status }) => (
     <span class="tt">
         <span class={`dot ${status}`} />
@@ -74,6 +77,10 @@ const escapeAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;
 export const displaySource = (text: string, lang?: string, format?: boolean, marks?: CodeMark[]): string =>
     format && !marks?.length && (lang === "javascript" || lang === "js") ? beautifyJs(text) : text;
 
+/** A CODE BLOCK — syntax-highlighted, optionally line-numbered, and the one place a line can be MARKED
+ *  (a failure), ANNOTATED (a margin note from `explain`), or pointed at from elsewhere (`lineIds` makes
+ *  each row addressable). Beautifies JS itself and hands back the line MAP through `onMap`, because
+ *  reformatting moves line numbers and a stack trace's whole content is a line number. */
 export const Code = ({ text, lang, format, marks, lineIds, markLine, markTitle, notes, onMap }: { text: string; lang?: string; format?: boolean; marks?: CodeMark[]; lineIds?: string; markLine?: number | null; markTitle?: string; notes?: Map<number, string>; onMap?: (map: number[] | null) => void }) => {
     const src = displaySource(text, lang, format, marks);
     // BEAUTIFYING MOVES LINE NUMBERS, and js-beautify hands back no map — so one is derived from the two
@@ -155,6 +162,7 @@ export function execCopy(text: string): Promise<void> {
         } catch (e) { reject(e); }
     });
 }
+/** Copy to the clipboard, tolerantly — see execCopy for why a rejection matters as much as a missing API. */
 export function copyText(text: string): Promise<void> {
     if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text).catch(() => execCopy(text));
     return execCopy(text);
@@ -172,8 +180,14 @@ export function useCopy(): { copied: boolean; copy: (text: string) => void } {
 // items (that's privileged DevTools-only), so we render our own popup at the cursor. Rendered once in
 // App; opened via openCtxMenu(e, items); dismissed on outside-click / Esc / blur / item-click.
 export interface CtxItem { label: string; run: () => void; }
+/** The open right-click menu, or null. One per surface; `ContextMenu` draws it. */
 export const ctxMenu = signal<{ x: number; y: number; items: CtxItem[] } | null>(null);
+/** Open the panel's own right-click menu at the pointer, suppressing the browser's — the useful actions
+ *  here are ours (copy a selector, copy a pointer) and the native menu offers none of them. */
 export const openCtxMenu = (e: MouseEvent, items: CtxItem[]): void => { e.preventDefault(); ctxMenu.value = { x: e.clientX, y: e.clientY, items }; };
+/** The panel's right-click MENU, mounted once per surface and driven by the `ctxMenu` signal. A menu
+ *  rather than the browser's: the useful actions here are ours (copy a `document.querySelector(…)` for an
+ *  element, copy a pointer) and the native one offers none of them. */
 export function ContextMenu() {
     const m = ctxMenu.value;
     useEffect(() => {
@@ -208,11 +222,14 @@ export const openLightbox = (src: string) => window.parent.postMessage({ __mlLig
 export const highlightEl = (selector: string) => window.parent.postMessage({ __mlHighlight: { selector } }, "*");
 // A canvas @pt/@box token — the shell resolves it (via injected) to a point marker / box outline.
 export const highlightToken = (token: string) => window.parent.postMessage({ __mlHighlight: { token } }, "*");
+/** Stop outlining anything on the page — the pointer left the thing that was pointing at it. */
 export const clearHighlight = () => window.parent.postMessage({ __mlHighlight: null }, "*");
 // The APPROVAL-card highlight: a pulsing GREEN spotlight (kind "approve"), distinct from the blue hover
 // box, so the pending target is unmistakable. The shell replies with the target's on-page position
 // (e.g. "bottom-left") → highlightPos, which the card shows so you know where to look.
 export const highlightApprove = (ref: { selector?: string; token?: string }) => window.parent.postMessage({ __mlHighlight: { ...ref, kind: "approve" } }, "*");
+/** Where the currently highlighted element sits on screen ("bottom-left"), so an approval card can say
+ *  WHERE the thing it is about is without you hunting for the outline. */
 export const highlightPos = signal<string>("");
 // Hover handlers for a locate `picked` string, which is EITHER an @pt/@box token OR "… → selector" —
 // so the same overlay works in both point mode and element mode.
@@ -270,7 +287,9 @@ export async function decideGate(st: AgentStep, hash: string, seq: number, ok: b
 // decision on click lets PendingNote drop the step from "blocked" immediately. (ToolStep keeps its
 // own local `decided` for its buttons; this is the run-level mirror.) Keys are unique per run
 // (random hash) + monotonic seq, so it never collides; growth is one entry per approval.
-/** A DISCLOSURE that slides. The panel had three of these written three different ways, all of them a pill
+/** THE DISCLOSURE — one fold, everywhere something opens. There were three, written three ways, and all
+ *  three were a pill button that injected a box into the layout on click: that reads as content appearing
+ *  rather than a section opening, and shoves whatever is below it. Slides. The panel had three of these written three different ways, all of them a pill
  *  button that injected a box into the layout on click — which reads as something appearing rather than as a
  *  section opening, gives no hint that the thing can be closed again, and jumps whatever is below it.
  *
@@ -367,8 +386,14 @@ export function CursorTipLayer() {
         dangerouslySetInnerHTML={{ __html: mdInline(t.text ?? "") }} />;
 }
 
+/** Gates you have already answered, by step key — so a decided step stays decided across the re-render
+ *  the decision itself causes. */
 export const decidedSteps = new Set<string>();
+/** One step's identity across the panel: `<run hash>:<seq>`. `step` is the loop's counter and several
+ *  records share it; `seq` addresses one row. */
 export const stepKey = (hash: string, seq: number) => `${hash}:${seq}`;
+// An IMAGE that opens in the lightbox — every screenshot the panel draws (a `look`, a locate's marked crop,
+// a python figure) goes through this, so click-to-enlarge means the same thing everywhere.
 // No tooltip here on purpose: `cursor: zoom-in` is the standard affordance for
 // "click to enlarge", and a pop anchored under a full-width screenshot (locate
 // renders stack several) would land far from the pointer and just add noise.
@@ -436,6 +461,8 @@ export const TAG_TIP: Record<string, string> = {
     session: "Session-local — lives in this tab only, gone on reload.",
     saved: "Saved — persisted to storage; resumable by hash across reloads and tabs.",
 };
+/** A session's KIND badge — `session` / `saved` — with the tooltip explaining what that means for its
+ *  lifetime. */
 export const TagBadge = ({ tag }: { tag: string }) => (
     <span class="tt">
         <span class={`tag ${tag}`}>{tag}</span>
@@ -466,9 +493,12 @@ export function CopyModel({ model }: { model: string }) {
 
 // Grey one-line preview for a collapsed In/Out: minified args, or newline-collapsed output.
 export const inlineJson = (v: unknown): string => truncate(pretty(v).replace(/\s+/g, " "), 64);
+/** Flatten text to ONE line for a collapsed preview — newlines collapsed, truncated. */
 export const inlineText = (s: string): string => truncate(s.replace(/\s+/g, " ").trim(), 72);
 
 const sheetTitleCache = new Map<string, string | null>();   // id → title (fetched once per session)
+/** A Google Sheet reference as a friendly CHIP — the spreadsheet's title rather than its id, so an
+ *  approval card says WHICH sheet is about to be read. */
 export function SheetChip({ id, label }: { id: string; label?: string }) {
     // With a label (post-run: the run already fetched the sheet), use it. Without (the pre-run approval
     // chip), lazily HEAD-fetch just the TITLE so the USER sees which sheet — the model never gets it.

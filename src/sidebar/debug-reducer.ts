@@ -38,6 +38,9 @@ function drainOrphans(hash: string): void {
     for (const oev of q) onDebug(oev);
 }
 
+/** THE REDUCER: one `__mlDebug` event → the session model the whole panel reads. Must CONVERGE whatever
+ *  the order — a cross-page run's replay and its live fan arrive interleaved — so it patches by `seq`
+ *  rather than appending, and never recreates or re-seals a session it has already seen. */
 export function onDebug(ev: MlDebugEvent): void {
     // --- ml.agent runs (own session kind) ---
     if (ev.kind === "agent") {
@@ -259,6 +262,7 @@ function cleanTitle(raw: string): string {
     return truncate(line.replace(/^["'`*]+|["'`*.]+$/g, "").trim(), 60);
 }
 
+/** Ask the utility model for a short session title, once per session, best-effort. */
 export function genTitle(hash: string, prompt: string): void {
     const messages = [
         { role: "system", content: "You write terse 3-6 word titles for a request. Reply with ONLY the title — no quotes, no trailing punctuation, no preamble." },
@@ -281,7 +285,9 @@ export function genTitle(hash: string, prompt: string): void {
 // with the UTILITY model (cached). The user's own prompt is the instant fallback until/unless a summary lands.
 export const blockSummaries = new Map<string, string>();   // `${hash}:${blockIndex}` → the one-line summary
 const blockSummaryTried = new Set<string>();
+/** One turn-block's identity within a run — `<hash>:<index>`. */
 export const blockKey = (hash: string, i: number): string => `${hash}:${i}`;
+/** A one-line gloss of what a whole turn did, via the utility model — the folded label on a turn block. */
 export function ensureBlockSummary(hash: string, i: number, prompt: string, result: string): void {
     if (!config.value.utilityModel.trim()) return;   // no utility model → the prompt fallback simply stays
     const key = blockKey(hash, i);
@@ -362,6 +368,8 @@ export function maybeGenerateTitles(): void {
 // `localStep` is the PER-TURN step shown in the pill — maxSteps is a per-turn budget, so a follow-up run
 // counts 1/N again, not 18/20. (Falls back to `step` for a pre-localStep event.)
 export interface AgentTurnGroup { step: number; localStep: number; thought?: string; reasoning?: string | null; tools: AgentStep[]; }
+/** Split a run's steps into TURNS — one model call and the tool calls it decided on all share a `step`.
+ *  `steps.length` over-counts turns, which is why the count comes from here and not from the array. */
 export function groupTurns(steps: AgentStep[]): AgentTurnGroup[] {
     const byStep = new Map<number, AgentTurnGroup>();
     const order: number[] = [];

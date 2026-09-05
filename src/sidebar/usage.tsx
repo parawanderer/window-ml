@@ -72,6 +72,8 @@ export function SubcallChip({ s }: { s: Session }) {
     );
 }
 
+/** HOW FULL THE CONTEXT IS, and what this session has spent — the gauge beside the composer. Reads the
+ *  model's own window when it is known, so the bar means tokens rather than a guess. */
 export function UsageBar({ s }: { s: Session }) {
     const occupancy = sessionOccupancy(s);
     if (occupancy == null) return null;   // nothing to show until the server reports counts

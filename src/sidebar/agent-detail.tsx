@@ -33,6 +33,10 @@ import type { AgentTurnGroup } from "./debug-reducer";
 const slotOf = (label: string): "in" | "out" | undefined =>
     label === "In" ? "in" : label === "Out" ? "out" : undefined;
 
+/** ONE HALF OF A STEP — the In (what the model sent) or the Out (what it got back), each with a
+ *  rendered⇄raw toggle. The raw view is the model-facing text VERBATIM and is never optional: that is
+ *  the raw-view rule, and this is where it is enforced. Both views carry the slot's `data-cite` anchor,
+ *  so a citation lands on the half it named. */
 export function IoBlock({ label, tip, preview, render, raw, marks, reserve, failLine, live, ranMs, ranSince, ctx, lineMap, remoteMs, failed }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; marks?: [number, number][]; reserve?: boolean; failLine?: number | null; live?: boolean; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null; failed?: boolean }) {
     const [showRaw, setShowRaw] = useState(false);   // rendered by default when a descriptor targets this block
     // The capped, scrollable, FINDABLE cell wraps the RAW view of either slot — which is the view you go to
@@ -75,6 +79,7 @@ export function IoBlock({ label, tip, preview, render, raw, marks, reserve, fail
 }
 
 
+/** The `step 3/20` counter on a step header. */
 export const StepPill = ({ step, max }: { step: number; max?: number }) =>
     <span class="step-pill">step {step}{max ? `/${max}` : ""}</span>;
 
@@ -122,6 +127,8 @@ export function liveCutoff(st: AgentStep): number | undefined {
     return resolveOutputCap(st.tool, a.maxChars, a.maxCharsReason).cap;
 }
 
+/** Did this tool call FAIL, read off the model-facing result text. Biased toward "failed": a false
+ *  positive withholds a citation token, a false negative would cite an ERROR as an answer. */
 export const toolFailed = (result?: string): boolean => !!result && /^(Error:|Denied)/.test(result);
 
 // One tool call: collapsed by default. Expanded, a descriptor renders by default
@@ -140,6 +147,8 @@ export const APPROVAL = {
     skipped: { label: "skipped", tip: "No prompt needed — the target didn't resolve (no element / stale @pt / bad selector), so the action could only fail. It never ran." },
     cancelled: { label: "cancelled", tip: "You cancelled the run while this call was awaiting approval — it never ran." },
 } as const;
+/** WHY a gated call ran — auto-approved read-only, sandboxed, you clicked, you denied. The provenance
+ *  badge, in the colour that says which; a step's left border matches it. */
 export const ApprovalBadge = ({ approval }: { approval: keyof typeof APPROVAL }) => (
     <span class={`tt appr-badge appr-${approval}`}>
         <span class={`appr ${approval === "denied" ? "no" : (approval === "skipped" || approval === "cancelled") ? "skip" : "yes"}`}>{APPROVAL[approval].label}</span>
@@ -203,7 +212,10 @@ export function OutputRaiseNote({ tool, args }: { tool?: string; args?: Record<s
 export const GRANT_KIND: Record<string, { noun: string; nounN: string }> = {
     "fetch-url": { noun: "URL", nounN: "URLs" },
 };
+/** The URLs one persisted grant covers — what "remember this" actually authorised. */
 export function grantUrlsOf(g: PersistGrant): string[] { return g.kind === "fetch-url" ? [...new Set(g.urls)] : []; }
+/** Would approving this ALSO grant something for the rest of the session? The difference between a
+ *  one-shot yes and a standing one, which the button cannot show by itself. */
 export function hasPersistGrants(grants?: PersistGrant[]): boolean { return !!grants?.some(g => grantUrlsOf(g).length > 0); }
 
 // The collapsed "Keep" grant card shown above the approval buttons — a deterministic per-kind SUMMARY of
@@ -212,6 +224,9 @@ export function hasPersistGrants(grants?: PersistGrant[]): boolean { return !!gr
 // Shared by the sidebar step and the HUD card. (The "Keep" button does approve + persist.)
 // Deliberate two-key combo for Keep (⌘K on mac, Ctrl+K elsewhere) — NOT Enter-adjacent, on purpose.
 export const KEEP_HINT = (typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent || "")) ? "⌘K" : "Ctrl K";
+/** What approving this call also GRANTS for the rest of the session — a host you will not be asked
+ *  about again. Shown before you decide, because a one-shot approval and a session grant are different
+ *  decisions and the button looks the same. */
 export function GrantCard({ grants }: { grants: PersistGrant[] }) {
     const byKind = new Map<string, number>();
     for (const g of grants) { const n = grantUrlsOf(g).length; if (n) byKind.set(g.kind, (byKind.get(g.kind) || 0) + n); }
@@ -263,6 +278,10 @@ function TokenChip({ token }: { token: string }) {
     );
 }
 
+/** ONE TOOL CALL in a run — the header (name, status, approval badge, live preview), the approval gate
+ *  when it is waiting on you, and both I/O halves when it is open. The step is where the two render
+ *  descriptors meet, so it is also what passes the failing line and the reflow map from the Out to the
+ *  In: neither renderer can see the other. */
 export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const [expanded, setExpanded] = useState(false);
     const [decided, setDecided] = useState(false);   // hide the controls the instant we click (before the DONE lands)
@@ -479,6 +498,10 @@ export function JtKey({ name, desc, unknown }: { name: string; desc?: string; un
     if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip"><TipText md={desc} /></span></span>;
     return <span class="jt-key">{name}:</span>;
 }
+/** A JSON TREE — the raw args, a tool's parameter schema. Collapsible by default; `allOpen` makes it
+ *  non-collapsible at EVERY depth, which is what the raw In view passes so nothing can be folded away
+ *  from a Ctrl+F. Keys carry their schema `description` as a tooltip, and one not in the schema is
+ *  flagged as a likely hallucinated argument. */
 export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean }) {
     const branch = !!v && typeof v === "object";
     const [open, setOpen] = useState(allOpen || (defaultOpen ?? depth < 1));   // allOpen → expanded at EVERY depth (the raw In view)
@@ -547,10 +570,16 @@ export function ToolDefCard({ t }: { t: DebugAgentConfig["tools"][number] }) {
         </> : null}
     </div>;
 }
+/** The agent's full TOOL DEFINITIONS — name, badges, description, and a tree of the parameter schema
+ *  the model actually sees. Shared by a run's "agent options" block and the Settings server-tool
+ *  browser, so a remote tool and a local one are read the same way rather than in two dialects. */
 export function ToolDefsView({ tools }: { tools: DebugAgentConfig["tools"] }) {
     return <div class="tooldefs">{tools.map((t, i) => <ToolDefCard key={i} t={t} />)}</div>;
 }
 
+/** WHAT THIS RUN WAS GIVEN — the system prompt, the toolset, maxSteps, vision, hints, streaming, and
+ *  every option that shapes behaviour. The first thing to read when a run did something surprising:
+ *  usually it was configured to. */
 export function AgentOptionsBlock({ s }: { s: Session }) {
     const c = s.agentConfig;
     const [open, setOpen] = useState(false);
@@ -686,6 +715,8 @@ export function RunStatsBar({ s }: { s: Session }) {
     );
 }
 
+/** A whole agent run, as a transcript: the task, each turn's thinking and tool steps, and the answer.
+ *  A multi-turn session reads as a chat log, with the follow-ups interleaved where they arrived. */
 export function AgentRunView({ s }: { s: Session }) {
     // Skip an empty step group — one carrying only a usage sample (final-answer token counts), no
     // thought/reasoning/tool. KEEP a reasoning-only turn (the final-answer turn shows its thinking here).

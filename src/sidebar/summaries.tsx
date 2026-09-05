@@ -16,6 +16,8 @@ export const utilitySummariesOn = () => config.value.autoTitles && !!config.valu
 // every quarter and finds the top rep" ABOVE the actual code (which still shows, as the consent
 // surface). Keyed per step; opt-in on a utility model, best-effort (the code alone suffices without).
 export const codeSummaries = new Map<string, string>();
+/** Steps we have already asked the utility model to gloss — one attempt each, success or not, so a
+ *  refusal is not retried on every render. */
 export const codeSummaryTried = new Set<string>();
 // The actual fetch — needs only a utility model (used directly by the on-demand "Explain" button in the
 // Show-work trace, which the user explicitly clicked, so it isn't gated on the auto-summarise toggle).
@@ -134,6 +136,9 @@ export function fetchUtilityLine(messages: { role: string; content: string }[], 
 // too), else a name-based verb for built-ins, else nothing (→ utility-model description).
 export const CODE_LANG: Record<string, string> = { exec: "javascript", python_exec: "python" };
 export interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; submit?: boolean; crossOrigin?: string; offMachine?: string; link?: boolean; }
+/** WHAT THIS CALL WILL DO, for the approval card — deterministic, from the tool's own `action` render
+ *  rather than from a model's description of itself. Null when the tool supplies none, which is when the
+ *  utility model is asked to paraphrase instead. */
 export function intentFor(st: AgentStep): Intent | null {
     // Whether a `type` will ALSO press Enter — a materially bigger action (it submits the form/search), so the
     // approval must call it out. Read from the raw args (the ground truth), regardless of the render path.

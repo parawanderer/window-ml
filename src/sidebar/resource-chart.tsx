@@ -1396,6 +1396,9 @@ export function ScopeSwitch() {
     );
 }
 
+/** THE CHART itself: one track per memory pool on a shared segmented axis, the scrub strip above and the
+ *  event lane below. Drawing only — placement, packing, bands and windows are the pure functions in
+ *  resource-model.ts, which is what makes the picture testable without a browser. */
 export function ResourceTracks({ samples, capacity, hidden, layout, events = [] }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null; events?: ResourceEvent[] }) {
     // Capacity is fetched once per open and arrives AFTER the first ps poll, so the earliest samples carry
     // none — see the note on `filled` below.

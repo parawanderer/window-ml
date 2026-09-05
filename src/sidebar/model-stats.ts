@@ -183,6 +183,10 @@ export function runBlocksOf(s: UsageSource): { from: number; until: number; step
     return blocks;
 }
 
+/** THE EVENT TIMELINE — what happened, when, derived from what sessions already record. Spans run
+ *  BACKWARDS from a finish stamp (the timestamp we hold is the end), a tool step is ONE event with
+ *  PHASES rather than three, and a model load is its own event because "slow" and "not there yet" are
+ *  different answers. Pass `now` for in-flight work; omit it for a durable document. */
 export function eventsFrom(sessions: readonly UsageSource[], now?: number): ResourceEvent[] {
     const out: ResourceEvent[] = [];
     // A reader's own model calls. Emitted with NO cost and NO parent: they are not part of any step's

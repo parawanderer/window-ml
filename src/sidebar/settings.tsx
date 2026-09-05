@@ -814,6 +814,9 @@ function useVisionProbe(model: string): boolean | null {
     return sees;
 }
 
+/** THE SETTINGS VIEW — the SUPERSET of the toolbar popup: every user-editable config surfaces here, and
+ *  a new flag MUST appear here even if it never reaches the popup (the popup is a curated subset of the
+ *  common knobs; inverting that is the rule this exists to hold). */
 export function Settings() {
     const c = config.value;
     const tab = settingsTab.value;

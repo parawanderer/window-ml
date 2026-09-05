@@ -12,6 +12,9 @@ import { RenderPanel } from "./render-panel";
 import { intentFor, codeOf, ensureCodeSummary, ensureActionSummary, codeSummaries } from "./summaries";
 import { HostAccessNote, OutputRaiseNote, externalSheetGrant } from "./agent-detail";
 
+/** THE CONSENT SURFACE for a gated call — what the agent wants to do, said as an intent sentence with
+ *  the part that matters picked out, plus the actual code or arguments (you cannot approve what you
+ *  cannot see). The utility model glosses a code snippet in plain English above it, best-effort. */
 export function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: string }) {
     const rv = rev.value;   // subscribe: the utility-model gloss lands on a rev bump (this reads a signal →
                             // auto-memoized, so without this it wouldn't re-render for it). Retained via data-rev.

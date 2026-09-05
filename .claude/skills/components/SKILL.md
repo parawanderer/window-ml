@@ -51,11 +51,30 @@ person rebuilds it. `--undocumented` makes that loud and exits non-zero.
    That sentence is what stops the third copy.
 3. Keep this file and the AGENTS.md mention in sync with the script.
 
+## Writing a docstring the index can use
+
+The **first sentence is the whole entry**. Two failure modes, both of which read fine in the file and badly
+in the listing — and the listing is what someone searches before rebuilding your thing:
+
+- **Opening with a caveat instead of the subject.** `ClickableImg` began "No tooltip here on purpose: …",
+  which indexes as a note about tooltips on a component about images. Say what it IS, then why it is that way.
+- **Restating the name.** "A DISCLOSURE that slides" tells a searcher nothing they did not have from the
+  identifier. Say what it is FOR, and — if it replaced copies — say that, because that sentence is what
+  stops the third one.
+
+A trailing `//` on a one-line export counts, which is the house style here and needs no churn:
+
+```ts
+export const codeWrap = signal(true);   // wrap long code lines vs. horizontal scroll
+```
+
 ## Gotchas
 
 - It indexes `src/sidebar/` only. Page-world modules (`src/tools.ts`, `src/dom.ts`) are a different
   vocabulary and are not UI primitives.
 - A class with no comment is deliberately absent — listing every selector would bury the ones that mean
   something. If a rule deserves to be found, give it a sentence.
+- A first sentence past ~150 chars is truncated with an ellipsis. That is a nudge, not a limit: a docstring
+  whose first sentence runs that long is telling you it does not open with what the thing is.
 - The output is padded for a human's eye. That is fine here and NOT a violation of the no-padding rule,
   which is about strings a MODEL reads.

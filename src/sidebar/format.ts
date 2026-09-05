@@ -22,6 +22,7 @@ for (const [name, lang] of [
     ["bash", bash], ["xml", xml], ["css", cssLang], ["markdown", mdLang],
 ] as const) hljs.registerLanguage(name, lang);
 
+/** JSON, indented and capped — the raw view of anything structured. */
 export const pretty = (v: unknown, max = 6000): string => {
     let s: string;
     try { s = typeof v === "string" ? v : JSON.stringify(v, null, 2); } catch { s = String(v); }
@@ -35,9 +36,11 @@ export const shortStamp = (ts?: number): string => {
         return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
     return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 };
+/** A full date + time, for a hover where the short stamp is ambiguous. */
 export const fullStamp = (ts?: number): string =>
     new Date(ts || Date.now()).toLocaleString(undefined,
         { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+/** Cut to n characters with an ellipsis. */
 export const truncate = (s: string, n: number): string => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 // One-line preview for a collapsed assistant reply: first non-empty line,
 // truncated. `more` marks that content is hidden (so we show a trailing …).
@@ -47,6 +50,9 @@ export function collapsedPreview(s: string): { text: string; more: boolean } {
     const text = truncate(first, 100);
     return { text, more: text !== full };
 }
+/** Escape for HTML. Every dynamic string reaching a `dangerouslySetInnerHTML` passes through this or
+ *  through `markdown()`/`highlight()`, which escape too — a hostile tool result must never inject markup
+ *  into a surface rendered at the extension's origin. */
 export const escapeHtml = (s: string): string =>
     s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 
@@ -277,12 +283,14 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
 // citation caption, the Show-work block header, etc. — one place so an inline-math label never regresses.
 export const inlineMarkdown = (t: string): string => markdown(t || "", { math: true }).replace(/^<p>([\s\S]*)<\/p>\s*$/, "$1");
 
+/** The most recent user message in a neutral transcript — what a session is titled and previewed by. */
 export function lastUser(messages: NeutralMessage[]): string {
     for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].role === "user") { const c = messages[i].content; return typeof c === "string" ? c : pretty(c); }
     }
     return "";
 }
+/** One status for a whole session — pending if anything is still going, err if anything failed. */
 export const rollupStatus = (s: Session): Status =>
     s.turns.some(t => t.status === "pending") ? "pending" : s.turns.some(t => t.status === "err") ? "err" : "ok";
 

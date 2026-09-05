@@ -75,6 +75,9 @@ export function ElementPill({ ctx, onRemove }: { ctx: ElementContext; onRemove: 
     );
 }
 
+/** THE COMPOSER — where you send the next message into a session: the text box, pasted images, an
+ *  element you picked off the page, the model/vision toggles and the run controls. Sending INTO a run is
+ *  the one thing that needs a reverse channel, so the DevTools panel routes it through the background. */
 export function Composer({ s }: { s: Session }) {
     const r = rev.value;   // subscribe: `s.status` is mutated in place (same ref), so without a signal read this
                            // stateful child won't re-render when the run goes pending/idle → the Stop button.

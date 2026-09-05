@@ -176,6 +176,8 @@ export function EmbedRunView({ s }: { s: Session }) {
     );
 }
 
+/** ONE CHAT TURN — your message, the reply, its thinking disclosure, sources and token usage. The chat
+ *  counterpart to `ToolStep`: an `ml.chat()` session is a list of these. */
 export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
     return (
         <>
@@ -194,6 +196,9 @@ export function MessageTurn({ t, hash }: { t: Turn; hash?: string }) {
     );
 }
 
+/** WHICH MODEL PROFILE answered — `default` or `utility`. A session run on `extend: "utility"` has a
+ *  null client-side model, so without this the panel would show "default" for a reply the utility model
+ *  actually produced. */
 export const ProfileBadge = ({ profile }: { profile?: ExtendProfile | null }) =>
     profile !== null ? <span class="profile">{profile}</span> : null;
 
