@@ -780,9 +780,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* The environment panel: a popover under the header, not a row. It is read while you type, so it must not
    reflow what is underneath it; and it is bounded so a long package list scrolls instead of covering the
    whole bench. */
+/* THE ENVIRONMENT PANEL — a popover hanging under the header's button, not a row. In the flow it PUSHED the
+   editor down, which moves the code you opened it to compare against. Bounded so a long package list scrolls
+   inside it rather than covering the whole bench. */
 .bench-env {
-    position: absolute; top: 30px; left: 6px; z-index: 6; max-width: min(420px, calc(100% - 12px));
-    max-height: min(60vh, 320px); overflow: auto;
+    position: absolute; top: 28px; left: 6px; z-index: 6;
+    max-width: min(420px, calc(100% - 12px)); max-height: min(60vh, 320px); overflow: auto;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
     box-shadow: 0 10px 30px rgba(0,0,0,.32); padding: 8px 10px;
 }
@@ -2554,7 +2557,10 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* --- the bench's environment panel -----------------------------------------------------------------
    A panel, not a tooltip: this is read while writing, and it is about to become a thing you search and
    then act on. It opens UPWARD out of the bench's bar, so in drawer mode it does not push the editor. */
-.bench-env { position: relative; }
+/* (`.bench-env` itself — the popover box — is defined up with the bench layout, since where it opens is a
+   fact about the header it hangs from. There is no second rule for it here: there were two for a while, one
+   opening DOWNWARD from the header and this one opening UPWARD out of the old bottom bar, and the later of
+   them won — so the panel opened off the top of the drawer.) */
 .bench-env-btn {
     display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
     font: inherit; font-size: 0.82em; padding: 2px 7px; border-radius: 5px;
@@ -2562,14 +2568,15 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 }
 .bench-env-btn:hover { color: var(--fg); border-color: var(--fg-dim); }
 .bench-env-btn .tri { display: flex; transition: transform 0.15s ease; }
-.bench-env.open .bench-env-btn .tri { transform: rotate(90deg); }
+/* The button sits in the header and the panel hangs below it — they are siblings now, so the open state is
+   read off the BUTTON. The old selector reached down from `.bench-env`, which no longer contains it, and the
+   chevron simply stopped turning. */
+.bench-env-btn.on .tri { transform: rotate(90deg); }
 .bench-env-ver { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
-.bench-env-body {
-    position: absolute; bottom: calc(100% + 5px); left: 0; z-index: 6;
-    width: max(260px, 22vw); max-height: 46vh; overflow: auto;
-    padding: 7px 9px; border-radius: 7px;
-    background: var(--panel); border: 1px solid var(--border); box-shadow: 0 6px 20px rgba(0,0,0,.3);
-}
+/* Plain content now: the BOX is `.bench-env` around it, which is what hangs off the header. This used to
+   carry the positioning itself, from when the button lived in a bar at the bottom and the panel had to open
+   upward out of it. */
+.bench-env-body { min-width: 240px; }
 .bench-env-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 0.86em; color: var(--fg-dim); }
 .bench-env-q {
     flex: 1 1 90px; min-width: 90px; font: inherit; font-size: 1em; padding: 2px 6px;

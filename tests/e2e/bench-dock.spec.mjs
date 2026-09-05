@@ -355,3 +355,41 @@ test("the drawer's grab handle is centred, and nothing interactive sits under it
             .not.toContain(geo.underTag);
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+// THE ENVIRONMENT PANEL OPENS DOWNWARD, UNDER ITS BUTTON. There were two `.bench-env` rules for a while —
+// one from when the button lived in a bar at the BOTTOM, anchoring the panel with `bottom: calc(100% + 5px)`
+// so it opened upward out of that bar — and the later one won. With the button now in the header at the TOP,
+// the panel opened off the top of the drawer. A duplicate selector is invisible in review and decided by
+// source order, so this pins the OUTCOME rather than the rule.
+test("the environment panel opens below its button, on screen, with the chevron turned", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        const btn = frame.locator(".bench-env-btn");
+        await expect(btn).toBeVisible();
+        await btn.click();
+        await expect(frame.locator(".bench-env-body")).toBeVisible({ timeout: 60000 });
+
+        const geo = await frame.evaluate(() => {
+            const b = document.querySelector(".bench-env-btn").getBoundingClientRect();
+            const p = document.querySelector(".bench-env").getBoundingClientRect();
+            const tri = document.querySelector(".bench-env-btn .tri");
+            return { belowButton: p.top >= b.top, onScreen: p.top >= 0 && p.left >= 0,
+                     within: p.bottom <= window.innerHeight + 1,
+                     turned: getComputedStyle(tri).transform };
+        });
+        expect(geo.belowButton, "the panel hangs UNDER the button, not above it").toBe(true);
+        expect(geo.onScreen, "…and is not off the top or left of the frame").toBe(true);
+        expect(geo.within, "…nor hanging out of the bottom").toBe(true);
+        // The chevron says the disclosure is open. Its selector used to reach DOWN from `.bench-env`, which
+        // no longer contains the button — so it silently stopped turning.
+        expect(geo.turned, "the chevron turns when it is open").not.toBe("none");
+
+        // It does not push the editor: opening it must not move the code you opened it to compare against.
+        const before = await frame.locator(".bench-code").boundingBox();
+        await btn.click();
+        await expect(frame.locator(".bench-env-body")).toHaveCount(0);
+        const after = await frame.locator(".bench-code").boundingBox();
+        expect(Math.abs(after.y - before.y), "the editor stays put whether the panel is open or shut").toBeLessThanOrEqual(1);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
