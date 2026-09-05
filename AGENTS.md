@@ -1440,7 +1440,13 @@ which is why the index covers the stylesheet too.
 
 The **docstrings are the index** (nothing is duplicated into a manifest that would go stale), so the cost is
 that an undocumented export is INVISIBLE and gets rebuilt — `--undocumented` makes that loud and exits
-non-zero. What you owe it: a new shared thing gets a first sentence saying what it is FOR in words someone
+non-zero. **Both halves are ENFORCED**, in the pre-commit hook and in CI's `tools` job: every exported
+sidebar thing needs a docstring, and every CSS class a change ADDS under a new family needs a comment. CSS is
+a ratchet rather than a rule because 323 of the stylesheet's 557 classes have none, and a check that ships
+red is one people learn to scroll past — so it reads the diff against the merge base and asks only about what
+you are adding. A member of a documented block passes on its ancestor (`.r-diff-head` inherits `.r-diff`),
+because the failure being prevented is a NEW family under a name nobody would grep — a second pointer chip
+called something else — not a paragraph per modifier. What you owe it: a new shared thing gets a first sentence saying what it is FOR in words someone
 would search, and an EXTRACTION says what it replaced, because that sentence is what stops the third copy.
 A TRAILING `//` counts as the docstring for a one-line export, which is the house style here — teaching the
 scanner to read those fixed thirty of them with no churn, rather than having me move thirty comments above

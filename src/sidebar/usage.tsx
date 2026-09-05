@@ -29,6 +29,9 @@ export function usageSamples(s: Session): TokenUsage[] {
     return all.sort((a, b) => (a.ts - b.ts) || (a.i - b.i)).map((x) => x.u);
 }
 
+/** HOW FULL THE CONTEXT IS RIGHT NOW — the latest sample's prompt+completion, which is what the composer's
+ *  gauge fills against. The LATEST, not a sum: every turn re-sends the whole history, so summing would
+ *  count the same tokens once per turn and race past the window while the model is nowhere near it. */
 export function sessionOccupancy(s: Session): number | null {
     const usages = usageSamples(s);
     if (!usages.length) return null;

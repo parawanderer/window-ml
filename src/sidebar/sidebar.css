@@ -2141,12 +2141,16 @@ html[data-surface="card"] .appr-btn.no:hover {
 .cline.cline-fail .lno { color: var(--err); font-weight: 600; }
 /* The SAME green flash a cited step gets — it is the same gesture, "show me the thing this is about". */
 @keyframes clinePulse { 0% { background: color-mix(in srgb, var(--ok) 40%, transparent); } 100% { background: transparent; } }
+/* The green flash a cited line gets when a citation or a traceback frame jumps to it — the confirmation
+   that the click landed where it said. Its own class, not a colour on .cline, so a line can be marked and
+   pulsed at once. */
 .cline-pulse { animation: clinePulse 1.4s ease-out forwards; }
 /* RED for the line that FAILED. Green says "here is the thing you asked for", which on the failing line is
    the one colour it is not — flashing over the red mark already there and saying the opposite of it. It
    settles back to the mark rather than to nothing, because the mark outlives the click. */
 @keyframes clinePulseFail { 0% { background: color-mix(in srgb, var(--err) 45%, transparent); }
                           100% { background: color-mix(in srgb, var(--err) 13%, transparent); } }
+/* The same flash in the failure colour, for the line a traceback names. */
 .cline-pulse-fail { animation: clinePulseFail 1.4s ease-out forwards; }
 @media (prefers-reduced-motion: reduce) {
     .cline-pulse { animation: none; background: color-mix(in srgb, var(--ok) 20%, transparent); }
@@ -2286,9 +2290,16 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* Server-tool curation: a bundle, then its functions. Indented under their bundle so "which server is this
    from" is answered by position rather than by repeating the prefix on every row. */
 .srv-curate { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 0; }
+/* One SERVER-SIDE TOOL BUNDLE in the settings browser: a box per bundle, its functions listed inside. The
+   backend groups tools this way and two bundles can both expose `search`, so the grouping is load-bearing
+   rather than decorative. */
 .srv-bundle { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; background: var(--panel); }
+/* The bundle's own row — its name and id, above the functions it holds. */
 .srv-bundle-head { display: flex; align-items: center; gap: 8px; }
+/* The bundle's id, which is what `ml.agent({serverTools})` is given. */
 .srv-bundle-name { font-weight: 600; }
+/* ONE FUNCTION inside a bundle — indented under it, because this is the entry a run would actually be
+   handed (named `<bundle>__<fn>`), not the bundle. */
 .srv-fn { margin-left: 10px; gap: 6px; }
 .srv-fn code { color: var(--fg); }
 .srv-fn .hint { min-width: 0; overflow-wrap: anywhere; }
@@ -2311,12 +2322,18 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* An `ml.embed()` session: a list of CALLS, not a conversation. One row per call — what went in, what came
    back, how long it took — so a request for vectors never reads as something somebody said. */
 .embed-run { display: flex; flex-direction: column; gap: 4px; }
+/* A REMOTE TOOL CALL as one line: what went out, an arrow, what came back, and how long it took. Compact
+   because it appears in a list of them; the full arguments live in the step's own In block. */
 .embed-call { display: flex; align-items: baseline; gap: 8px; padding: 5px 8px;
     border: 1px solid var(--border); border-radius: 6px; background: var(--panel); font-size: .92em; }
 .embed-call.err { border-color: color-mix(in srgb, var(--err) 45%, transparent); }
+/* The arguments that left the machine, monospaced — the half a reader checks first. */
 .embed-in { color: var(--fg); font-family: var(--mono, ui-monospace, monospace); }
+/* The direction mark between the call and its result. Faint: it is punctuation, not a reading. */
 .embed-arrow { color: var(--fg-faint); }
+/* What came back. Wraps anywhere, since a remote result has no line structure we control. */
 .embed-out { color: var(--fg-dim); overflow-wrap: anywhere; }
+/* How long the far end said it took. Tabular figures so a column of these stays aligned. */
 .embed-ms { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
 
 /* An embed session in the list. Same shape as the agent badge — it answers the same question, "what IS this"
@@ -2327,12 +2344,16 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    Quiet until you go looking. A toolbar that competes with the code for attention is the opposite of
    what a code block is for, so it sits at half opacity and comes up on hover or keyboard focus. */
 .code-block { position: relative; }
+/* THE TOOLBAR ON A RENDERED CODE BLOCK — explain / bench / copy. Absolutely positioned in the block's own
+   corner and QUIET (a third opacity until the block is hovered), because a toolbar competing with the code
+   for attention is the opposite of what a code block is for. */
 .code-tools {
     position: absolute; top: 3px; right: 6px; z-index: 3;
     display: flex; align-items: center; gap: 4px;
     opacity: 0.35; transition: opacity 0.15s ease;
 }
 .code-block:hover .code-tools, .code-tools:focus-within { opacity: 1; }
+/* ONE BUTTON in that toolbar. Sized off the code's own font so it never towers over the line it sits on. */
 .code-tool {
     font: inherit; font-size: 0.82em; line-height: 1;
     padding: 2px 6px; border-radius: 5px; cursor: pointer;
@@ -2341,6 +2362,8 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .code-tool:hover:not(:disabled) { color: var(--fg); border-color: var(--fg-dim); }
 .code-tool:disabled { opacity: 0.5; cursor: default; }
 .code-tool.on { color: var(--kind); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+/* The transient confirmation a toolbar button leaves behind ('copied'), in place of a toast — the answer
+   belongs where the button is, and it goes away on its own. */
 .code-tools-flash { font-size: 0.78em; color: var(--ok); }
 
 /* A margin note: its own row under the line it is about, so it survives a narrow panel and a
@@ -2387,9 +2410,16 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .r-diff-claim { padding: 4px 8px; font-size: 0.9em; color: var(--fg-dim); background: var(--panel); border-top: 1px solid var(--border); }
 .r-diff-claim-tag { font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-faint); margin-right: 4px; }
 .r-diff-body { margin: 0; border-top: 1px solid var(--border); border-radius: 0; }
+/* ONE ROW OF A DIFF — the gutter's two line numbers, the +/- sign, then the text. A flex row so the
+   numbers stay put when the text wraps, which is what lets a diff row, a margin note and a failure mark
+   all name the same line and be read straight down. */
 .dline { display: flex; align-items: flex-start; }
+/* An added line: the new side only, so the colour says which side you are reading. */
 .dline-add { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+/* A removed line. */
 .dline-del { background: color-mix(in srgb, var(--err) 13%, transparent); }
+/* The elision between hunks — 'N lines skipped'. Never used for ONE line, which costs more to say than
+   to show and leaves the reader wondering what was hidden. */
 .dline-gap { color: var(--fg-faint); font-style: italic; }
 /* The gutter: OLD line, NEW line, then the sign. `user-select: none` on all three, so copying a diff copies
    the code and not a column of numbers — the same rule the timestamp gutter follows. */
@@ -2405,6 +2435,8 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .dsign { flex: 0 0 auto; width: 1.1em; margin-right: 0.7em; text-align: center; user-select: none; opacity: 0.8; }
 .dline-add .dsign { color: var(--ok); }
 .dline-del .dsign { color: var(--err); }
+/* The code itself in a diff row, beside the gutter. Inherits the block's wrap setting so a diff and the
+   code under it break lines the same way. */
 .dtext { flex: 1 1 auto; min-width: 0; white-space: inherit; }
 
 /* A collapsed running step's elapsed time. Dimmer than the word beside it: "running" is the fact, the

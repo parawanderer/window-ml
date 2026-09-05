@@ -232,7 +232,8 @@ export const benchH = signal(280);   // px — the drawer's dragged height
  *  run, when the sandbox is already warm — and CACHED across sessions, since it is a property of the
  *  wheels this build bundles rather than of this session. */
 export interface BenchEnvInfo { python: string; pyodide: string; packages: { name: string; version?: string }[] }
-export const BENCH_ENV_KEY = "ml_bench_env";
+export const BENCH_ENV_KEY = "ml_bench_env";   // storage.local: the sandbox's versions + packages, once learned
+/** What the bench's Pyodide sandbox IS, once anything has asked it — null until then, never guessed. */
 export const benchEnv = signal<BenchEnvInfo | null>(null);
 /** Record what the sandbox reported, and remember it for next time. */
 export function noteBenchEnv(env: BenchEnvInfo) {

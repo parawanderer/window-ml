@@ -78,3 +78,22 @@ export const codeWrap = signal(true);   // wrap long code lines vs. horizontal s
   whose first sentence runs that long is telling you it does not open with what the thing is.
 - The output is padded for a human's eye. That is fine here and NOT a violation of the no-padding rule,
   which is about strings a MODEL reads.
+
+## It is enforced
+
+Both halves run in the pre-commit hook and in CI's `tools` job, so this is not advice:
+
+```bash
+node scripts/components.mjs --undocumented        # every exported sidebar thing needs a docstring
+node scripts/components.mjs --new-css [base-ref]  # every CSS class you ADD under a new family needs a comment
+```
+
+**CSS is a ratchet, not a rule.** 323 of the stylesheet's 557 classes have no comment. Demanding all of them
+would ship a red check, and a red check is one people learn to scroll past — so `--new-css` diffs against the
+merge base and asks only about what your change adds. A member of a documented block passes on its ancestor
+(`.r-diff-head` inherits `.r-diff`); what it catches is a NEW FAMILY under a name nobody would grep, which is
+exactly how the duplicate pointer chip got in.
+
+If the base ref is missing (a shallow clone, a fork), it SKIPS rather than failing — a check that blocks a
+commit because it could not find a baseline teaches people to pass `--no-verify`, after which it enforces
+nothing at all.

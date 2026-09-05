@@ -3,7 +3,9 @@
 //
 //   node scripts/components.mjs                  # everything
 //   node scripts/components.mjs | grep -i pill   # …by CONCEPT, which is the point
-//   node scripts/components.mjs --undocumented   # what is missing a docstring (exit 1 if any)
+//   node scripts/components.mjs --undocumented   # exported things missing a docstring (exit 1 if any)
+//   node scripts/components.mjs --new-css [ref]  # CSS classes THIS BRANCH ADDS that have no comment
+//   node scripts/components.mjs --new-css [ref] --staged   # …the same, but of what is STAGED (the hook)
 //
 // WHY IT EXISTS. The failure it addresses is not "I searched and could not find it" — it is "I did not
 // think to look." In one session this repo grew a CSS copy of an existing pointer chip, a FOURTH drag
@@ -13,12 +15,19 @@
 //
 // The docstrings ARE the index: nothing is duplicated into a manifest that would go stale. The cost of
 // that is that an undocumented export is invisible, which `--undocumented` exists to make loud.
+//
+// CSS IS A RATCHET, NOT A RULE. 323 of the stylesheet's 557 classes have no comment, and a check that
+// ships red is one people learn to scroll past — so `--new-css` asks only about classes a change ADDS,
+// read from the diff. That matches what the index is actually for: the failure is someone REBUILDING a
+// primitive that already exists, which is a fact about what is being written now, not about the backlog.
+// No baseline file, because a checked-in list of 323 names is a thing that rots and gets rubber-stamped.
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const SRC = path.join(ROOT, "src", "sidebar");
 const onlyUndocumented = process.argv.includes("--undocumented");
+const newCssAt = process.argv.indexOf("--new-css");
 
 /** The first sentence of a doc comment, flattened to one line. A doc that opens with WHAT THE THING IS
  *  indexes well; one that opens with a war story does not, which is a nudge worth leaving in the output. */
@@ -96,6 +105,77 @@ css.forEach((l, i) => {
     const doc = css.slice(j, i).join("\n").replace(/\/\*+|\*+\//g, "");
     add(m[1], "css", cssFile, i + 1, doc);
 });
+
+// --- the CSS ratchet ------------------------------------------------------------------------------------
+// Every class the stylesheet declares, and whether it carries a comment — computed over the WHOLE file so a
+// class this branch adds beside an existing documented one is judged on its own comment, not its neighbour's.
+function cssClassDocs() {
+    const doc = new Map();
+    css.forEach((l, i) => {
+        const m = /^(\.[a-z][a-z0-9-]*)(?:[,\s{:])/.exec(l);
+        if (!m) return;
+        // A class declared in several places is documented if ANY of them explains it — the others are
+        // usually a modifier or a media-query override, which do not each need their own paragraph.
+        const has = css[i - 1]?.trim().endsWith("*/") || false;
+        doc.set(m[1], (doc.get(m[1]) || false) || has);
+    });
+    return doc;
+}
+
+/** Does some SHORTER form of this class already carry an explanation? `.r-diff-head` is a part of `.r-diff`,
+ *  and a rule that demanded its own paragraph would flag forty-nine members of nine documented blocks — which
+ *  is the shape of check people route around, and it is not what the index is for either. The failure it
+ *  exists to catch is a NEW FAMILY under a name nobody would grep: a second pointer chip called something
+ *  else. That has no documented ancestor by definition, so this lets the parts through and keeps the
+ *  families. */
+function documentedAncestor(cls, docs) {
+    const parts = cls.slice(1).split("-");
+    for (let n = parts.length - 1; n >= 1; n--) {
+        if (docs.get("." + parts.slice(0, n).join("-"))) return true;
+    }
+    return false;
+}
+
+if (newCssAt >= 0) {
+    const { execFileSync } = await import("node:child_process");
+    const base = process.argv[newCssAt + 1] && !process.argv[newCssAt + 1].startsWith("--")
+        ? process.argv[newCssAt + 1] : "origin/main";
+    // `--staged` compares the base to the INDEX, which is the only thing a pre-commit hook may ask about:
+    // `base...HEAD` diffs COMMITS, so the hook passed cleanly with an undocumented class staged — it was
+    // checking the state before the change it was called to check. CI wants the commit range; the hook
+    // wants what is about to become one, and they are not the same diff.
+    // (The COMMENTS are still read from the file on disk rather than the index. In the normal case those
+    // agree; when they do not, CI is the backstop, and reading blobs out of the index to be exact here
+    // would be more machinery than the gap deserves.)
+    const staged = process.argv.includes("--staged");
+    const range = staged ? ["diff", "--cached", "--unified=0", base] : ["diff", "--unified=0", `${base}...HEAD`];
+    let diff;
+    try {
+        diff = execFileSync("git", [...range, "--", "src/sidebar/sidebar.css"],
+            { cwd: ROOT, encoding: "utf8" });
+    } catch {
+        // No such ref (a shallow clone, a fork with no origin/main). SKIP rather than fail: a ratchet that
+        // blocks a build because it could not find a baseline teaches people to pass --no-verify, and then
+        // it is not enforcing anything at all.
+        console.log(`components: cannot diff against ${base} — skipping the CSS ratchet.`);
+        process.exit(0);
+    }
+    const docs = cssClassDocs();
+    const added = new Set();
+    for (const line of diff.split("\n")) {
+        if (!line.startsWith("+") || line.startsWith("+++")) continue;
+        const m = /^\+(\.[a-z][a-z0-9-]*)(?:[,\s{:])/.exec(line);
+        if (m && docs.get(m[1]) === false && !documentedAncestor(m[1], docs)) added.add(m[1]);
+    }
+    if (added.size) {
+        for (const c of added) console.log(`${c}  — NO COMMENT (added on this branch)`);
+        console.error(`\n${added.size} new CSS class(es) with nothing to search on. Say what it is FOR in a`
+            + ` comment above it — that sentence is what stops the next person building a second one.`);
+        process.exit(1);
+    }
+    console.log(`components: every CSS class added since ${base} is documented.`);
+    process.exit(0);
+}
 
 const undocumented = rows.filter((r) => !r.doc);
 if (onlyUndocumented) {
