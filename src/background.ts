@@ -1261,7 +1261,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 if (fromSurface) pyStreamTabs.set(streamId, null);
                 else if (sender.tab?.id != null) pyStreamTabs.set(streamId, sender.tab.id);
             }
-            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(message.payload?.env ? { env: true } : {}) };
+            // NO WATCHDOG is a WORKBENCH-ONLY favour, gated at the same choke point and on the same
+            // unforgeable discriminator as the stream routing above: `sender.url` is set by Chrome, so only
+            // one of OUR OWN surfaces can ask. A page-invoked tool keeps the 15s cap whatever it sends — a
+            // run that never ends holds the single Pyodide instance against every later call, with nobody
+            // watching it; in the bench a person chose it, is sitting in front of it, and can close the panel.
+            const noTimeout = !!message.payload?.noTimeout
+                && (sender.url || "").startsWith(chrome.runtime.getURL(""));
+            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(message.payload?.env ? { env: true } : {}) };
             const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
             attempt()
                 .catch((err) => {

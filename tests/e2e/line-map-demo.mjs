@@ -29,7 +29,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
-import { launchExtension, configureExtension, waitForMl, openRunInSidebar } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, openRunInSidebar, narrate, narrateDone } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), "artifacts", "line-map-demo");
@@ -113,6 +113,7 @@ const main = async () => {
         await page.goto(`${fake.url}/api/version`);
         await waitForMl(page);
 
+        await narrate(page, "Four steps: a reflow, a traceback, a printed failure, and the JS twin", { sub: "the run is starting" });
         log("starting the run …");
         await page.evaluate(() => {
             window.ml.agent("crunch the table, then trip over a missing column", {
@@ -141,6 +142,7 @@ const main = async () => {
         if (!(await dense.locator(".r-py-in").count())) await dense.locator(".astep-head").click().catch(() => {});
         await sleep(700);
         const shown = await dense.locator(".r-py-in .code").first().textContent().catch(() => "");
+        await narrate(page, "1 — the code is REFLOWED for reading", { sub: "toggle rendered ⇄ raw: the same tokens, one of them unbroken" });
         log("\n--- step 1, as RENDERED (reflowed for reading) ---\n" + shown.trim());
         await dense.locator(".rr-toggle button", { hasText: "raw" }).first().click().catch(() => {});
         await sleep(500);
@@ -176,6 +178,7 @@ const main = async () => {
         await sleep(700);
         const links = failing.locator(".tb-line");
         const n = await links.count();
+        await narrate(page, "2 — a traceback whose line numbers RESOLVE", { sub: "click a frame and the line it names lights up in the reflowed code above" });
         log(`\n--- the traceback has ${n} clickable user frames; the deepest is marked as the failure ---`);
         if (n) {
             await links.last().click();
@@ -190,6 +193,7 @@ const main = async () => {
         if (!(await printer.locator(".code.tb").count())) await printer.locator(".astep-head").click().catch(() => {});
         await sleep(800);
         const stdout = await printer.locator(".r-py-stdout").textContent().catch(() => "");
+        await narrate(page, "3 — it printed its way to the failure", { sub: "stdout is kept, not discarded, and shares the Out with the traceback" });
         log("\n--- step 3: what it printed BEFORE it failed (kept, not discarded) ---\n" + (stdout || "(none)").trim());
         const failedAt = await printer.locator(".cline-fail").textContent().catch(() => "");
         log("\n--- step 3: the line marked as the failure ---\n" + (failedAt || "(none)").trim());
@@ -204,6 +208,7 @@ const main = async () => {
             if (!(await js.locator(".code").count())) await js.locator(".astep-head").click().catch(() => {});
             await sleep(800);
             const jsShown = await js.locator(".r-code, .code").first().textContent().catch(() => "");
+            await narrate(page, "4 — the JS twin: beautified, and its map DERIVED", { sub: "js-beautify hands back no map, so it is recovered from the two texts" });
             log("\n--- step 4: dense JS, beautified for reading (same tokens) ---\n" + (jsShown || "").trim().slice(0, 420));
             const mapped = await js.locator("[data-py-map]").getAttribute("data-py-map").catch(() => null);
             log("\n--- step 4: the derived line map (original → shown) ---\n" + (mapped || "(none — nothing moved)"));
@@ -227,6 +232,10 @@ const main = async () => {
         }
 
         log(`\nscreenshots → ${ART}`);
+        // The banner marks the run as still DRIVING on every beat, so the last thing it must do is say the
+        // pointer and keyboard are yours again — otherwise a finished demo and a paused one look identical
+        // and you either wait for nothing or click into the middle of a beat.
+        await narrateDone(page);
         if (HOLD) { log("\nholding the browser open — close the window or Ctrl+C to exit"); await new Promise(() => {}); }
     } finally {
         if (!HOLD) { await ext.context.close(); await fake.stop(); }

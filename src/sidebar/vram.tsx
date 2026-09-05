@@ -12,11 +12,11 @@ import {
 } from "./store";
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
-import { IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevron, IconExpand, IconClose, IconPlay, IconSendToModel } from "./icons";
+import { IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevron, IconExpand, IconClose, IconPlay, IconSendToModel, IconTimer } from "./icons";
 import { Disclosure, cursorTipOn, TipText } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { hhmmss } from "./timestamps";
-import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, type BenchRun } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, type BenchRun } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
@@ -271,7 +271,7 @@ const pushMachine = (e: ResourceEvent): void => {
 /** One edge frame → what the lane draws. Returns nothing for the frames that are not events in their own
  *  right (`sample`, `heartbeat`, `hello`) and for a `load.complete` with no start to close, which is what a
  *  reconnect mid-load looks like — half a span is worse than none, since its left edge would be invented. */
-export function machineEventFrom(frame: { kind: string; model?: string; reason?: string; duration_ms?: number; weights_ms?: number; context_ms?: number; size_vram?: number }, at: number): ResourceEvent | null {
+export function machineEventFrom(frame: { kind: string; model?: string; reason?: string; duration_ms?: number; weights_ms?: number; context_ms?: number; size_vram?: number; size_total?: number }, at: number): ResourceEvent | null {
     // CANONICALISED ONCE, here at the boundary, so nothing downstream has to know that the same model has two
     // spellings on one server: the stream says `registry.ollama.ai/library/gemma4:31b`, `/api/ps` says
     // `gemma4:31b`. Matching them late — at the colour, at the legend, at the off-box check — means every new
@@ -314,6 +314,11 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
                 // (~0.69 GiB per card) — that is agreement, not drift, and must not be reconciled away.
                 ...(open.weightsBytes != null ? { weightsBytes: open.weightsBytes } : {}),
                 ...(frame.size_vram != null ? { loadBytes: frame.size_vram } : {}),
+                // THE WHOLE MODEL, against what reached the device. Equal when it fit; when it did not,
+                // llama-server re-fit against the memory actually free and ran the remainder on the CPU —
+                // which succeeds and is merely slow, with no error anywhere. This difference is the only
+                // signal that happened.
+                ...(frame.size_total != null ? { totalBytes: frame.size_total } : {}),
                 // "Resident at 4s, usable at 10s" — the two halves are weights and context, and the divider
                 // only exists when the server actually reported it.
                 ...(w && w > open.t && w < at
@@ -1740,7 +1745,7 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
         try { chrome.runtime.onMessage.addListener(onChunk); streaming = true; } catch { /* no live channel */ }
         const stop = () => { if (streaming) try { chrome.runtime.onMessage.removeListener(onChunk); } catch { /* torn down */ } };
                 try {
-            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", requestId, payload: { code, hardened: mode === "readonly", image: null, tables: null, stream: streaming } },
+            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", requestId, payload: { code, hardened: mode === "readonly", image: null, tables: null, stream: streaming, ...(benchTimeout.value ? {} : { noTimeout: true }) } },
                 (resp: any) => {
                     stop();
                     // The background wraps the offscreen result: { data: PyResult } | { error }.
@@ -1840,6 +1845,21 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                 </label>
                 {/* The one ACTION in the row, so it is filled and coloured where everything else is a quiet
                     outline. Its tooltip carries the shortcut, which is where the bottom bar's hint went. */}
+                {/* THE WATCHDOG, as a state you can see rather than a surprise you hit. A run is killed at 15s
+                    and the message says to simplify the script — which is right advice for the model's tool,
+                    where nobody is watching and a stuck run holds the one Pyodide instance against every
+                    later call, and wrong here, where you deliberately wrote something slow and are sitting in
+                    front of it. Struck through when off, because a slash reads as "disabled" with no colour
+                    and no label. Only the bench can ask; the background refuses the flag from a page. */}
+                <button class={`tt bench-timer${benchTimeout.value ? "" : " off"}`}
+                    aria-pressed={!benchTimeout.value}
+                    aria-label={benchTimeout.value ? "Stop runs after 15 seconds" : "Let runs go as long as they need"}
+                    onClick={() => { benchTimeout.value = !benchTimeout.value; lsSet("ml_bench_timeout", benchTimeout.value ? "on" : "off"); }}>
+                    <IconTimer off={!benchTimeout.value} />
+                    <span class="tt-pop wrap left" role="tooltip"><TipText md={benchTimeout.value
+                        ? "A run is stopped after **15s**. Click to let it run as long as it needs — for a script you know is slow. The model's own `python_exec` keeps the limit either way."
+                        : "**No time limit** on runs here. A script that never finishes holds the sandbox until you close the bench, so put it back when you are done. The model's own `python_exec` is unaffected."} /></span>
+                </button>
                 <button class="tt bench-play" disabled={running || !code.trim()} onClick={run} aria-label="Run">
                     {running ? <span class="bench-play-spin" aria-hidden="true" /> : <IconPlay />}
                     <span class="tt-pop wrap left" role="tooltip"><TipText md={running

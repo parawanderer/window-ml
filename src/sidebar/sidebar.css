@@ -830,6 +830,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
     box-shadow: 0 10px 30px rgba(0,0,0,.32); padding: 8px 10px;
 }
+/* The run watchdog's toggle. Quiet like the rest of the row; OFF is the state worth noticing, so that is the
+   one that takes a colour — a struck-through clock in the warning hue, which is what "this run has no limit"
+   deserves and what an unstruck grey one does not. */
+.bench-timer { display: inline-flex; align-items: center; padding: 2px; border: 0; background: none;
+               color: var(--fg-faint); cursor: pointer; border-radius: 5px; }
+.bench-timer:hover { color: var(--fg-dim); background: var(--panel-2); }
+.bench-timer.off { color: var(--warn, #f59e0b); }
 .bench-info { color: var(--fg-faint); cursor: help; font-size: 1.05em; margin-right: 2px; }
 .bench-info:hover { color: var(--fg-dim); }
 /* No `resize` of its own: the DIVIDER owns that gesture. Three resize grips in one drawer — its edge, the
@@ -1477,15 +1484,25 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 .r-unseen { opacity: .55; border-left: 2px dashed var(--border); padding-left: 6px; }
 /* Timestamp gutter on streamed output: when each line was PRODUCED (the executor's clock). Never selectable,
    so copying the output copies only the output. */
-.r-timed { display: block; }
+/* THE GUTTER'S RULE IS DRAWN BY THE CONTAINER, not by each row, so it can outlive the last line. As a
+   per-row border it stopped exactly where the output did — which is right in a transcript, where the block is
+   as tall as its content, and wrong in the bench, where the block FILLS a pane you sized yourself and the
+   column simply ended in mid-air with empty space under it. One absolutely-positioned line spans whatever
+   height the container has, so both cases are the same rule and neither needs to know about the other.
+   `--r-ts-w` is the gutter's width, and the line sits inside its right edge (border-box). */
+.r-timed { display: block; position: relative; --r-ts-w: 56px; }
+.r-timed.short { --r-ts-w: 38px; }      /* mm:ss — the hour is the current one, shown on hover */
+.r-timed::after { content: ""; position: absolute; top: 0; bottom: 0; left: calc(var(--r-ts-w) - 1px);
+                  width: 1px; background: var(--border); pointer-events: none; }
 .r-ts-row { display: flex; gap: 8px; white-space: pre; }
-.r-timed.short .r-ts { width: 38px; }   /* mm:ss — the hour is the current one, shown on hover */
-.r-ts { flex: 0 0 auto; width: 56px; text-align: right; color: var(--fg-faint); opacity: .8;
+/* One stamp: when THIS line was produced, right-aligned in a fixed column so the times read as a column and
+   the output has a straight edge to start from. The rule beside it is `.r-timed::after`, above. */
+.r-ts { flex: 0 0 auto; width: var(--r-ts-w); text-align: right; color: var(--fg-faint); opacity: .8;
         font-variant-numeric: tabular-nums; user-select: none; -webkit-user-select: none;
-        /* A barely-visible rule between the stamps and the output, like a line-number gutter's: it gives the
-           eye a fixed edge, so leading whitespace in the output is measurable at a glance instead of floating
-           against a blank column. Padding, not margin, so the border sits flush against the 8px row gap. */
-        border-right: 1px solid var(--border); padding-right: 7px; opacity: .8; }
+        /* The rule gives the eye a fixed edge, so leading whitespace in the output is measurable at a glance
+           instead of floating against a blank column. Padding, not margin, so it sits flush against the 8px
+           row gap. */
+        padding-right: 7px; opacity: .8; }
 /* The whole gutter column is hoverable (exact time + gap since the previous line), including rows whose
    label is elided as a repeat — so hovering anywhere down the left edge answers "when was this line?". */
 .r-ts.hoverable { cursor: help; }

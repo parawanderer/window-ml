@@ -672,6 +672,42 @@ test("the environment panel opens below its button, on screen, with the chevron 
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+// THE TIMESTAMP GUTTER'S RULE RUNS TO THE BOTTOM OF THE PANE, not to the last line. As a per-row border it
+// stopped where the output did — right in a transcript, where the block is as tall as its content, and wrong
+// here, where the block fills a pane you sized yourself and the column ended in mid-air over empty space.
+test("the produced-at gutter's rule reaches the bottom of a filled pane", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        // A TALL drawer and a SHORT output: the gap between the last line and the bottom is the whole point,
+        // so there has to be one. In a pane the output fills, this assertion passes either way.
+        await frame.evaluate(() => { document.querySelector(".bench-drawer").style.height = "520px"; });
+        await runInBench(frame, "print('one')\nprint('two')");
+        await expect(frame.locator(".bench-outbody .r-timed")).toBeVisible();
+
+        const g = await frame.locator(".bench-outbody .r-timed").evaluate((el) => {
+            const box = el.getBoundingClientRect();
+            const rows = [...el.querySelectorAll(".r-ts-row")];
+            const last = rows.at(-1)?.getBoundingClientRect();
+            const rule = getComputedStyle(el, "::after");
+            return { h: box.height, lastBottom: last ? last.bottom - box.top : 0, rows: rows.length,
+                     ruleTop: rule.top, ruleBottom: rule.bottom, ruleW: rule.width };
+        });
+        expect(g.rows, "there is output to stamp").toBeGreaterThan(1);
+        // The premise: the container really is taller than its text, or this test proves nothing.
+        expect(g.h - g.lastBottom, "the pane is taller than the output in it").toBeGreaterThan(40);
+        // The rule is the CONTAINER'S, pinned to both its edges — so it is as tall as the pane whatever the
+        // rows do. A per-row border cannot express that, which is why it moved.
+        expect(g.ruleTop).toBe("0px");
+        expect(g.ruleBottom).toBe("0px");
+        expect(parseFloat(g.ruleW)).toBeGreaterThan(0);
+        // And no row draws its own, or the two would show as a doubled line wherever they disagreed.
+        const rowBorder = await frame.locator(".bench-outbody .r-ts").first()
+            .evaluate((el) => getComputedStyle(el).borderRightWidth);
+        expect(parseFloat(rowBorder), "the rows no longer draw it").toBe(0);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
 // CHANGING THE BENCH'S SHAPE MUST NOT COST YOU YOUR WORK IN IT. The drawer and the full page are two
 // different mount sites, so `⤢` unmounts one bench and mounts the other — and every piece of working state
 // was component state, which meant the switch quietly threw away the script you had typed, the result you
@@ -719,5 +755,39 @@ test("full page has no view padding and no drag pill", async () => {
         ]);
         expect(Math.abs(bench.x - view.x), "no left inset").toBeLessThan(2);
         expect(Math.abs((bench.x + bench.width) - (view.x + view.width)), "no right inset").toBeLessThan(2);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE RUN WATCHDOG, as a state you can see rather than a surprise you hit. A run is killed at 15s with advice
+// to simplify the script — right for the model's tool, where nobody is watching and a stuck run holds the one
+// Pyodide instance against every later call, and wrong in the bench, where you deliberately wrote something
+// slow and are sitting in front of it.
+test("the bench can turn the 15s run limit off, and only the bench can", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        const btn = frame.locator(".bench-timer");
+        await expect(btn, "the limit is ON by default — a runaway run is the worse default").toHaveAttribute("aria-pressed", "false");
+        await expect(frame.locator(".bench-timer.off")).toHaveCount(0);
+
+        // The RUN carries it. Read off the request the bench actually sends, not off the button: the button
+        // agreeing with itself proves nothing about what the sandbox is told.
+        await ext.sw.evaluate(() => {
+            globalThis.__pyPayloads = [];
+            const orig = chrome.runtime.onMessage;   // the handler is already installed; watch the payloads
+        });
+        await btn.click();
+        await expect(btn).toHaveAttribute("aria-pressed", "true");
+        await expect(frame.locator(".bench-timer.off"), "…and says so with a struck-through clock").toHaveCount(1);
+
+        // It survives a remount, like the rest of the bench's state — a preference you set for a long script
+        // that resets when you dock the panel is one you set twice.
+        await frame.locator('[aria-label="Expand the Python bench"]').click();
+        await expect(frame.locator(".bench-full")).toBeVisible({ timeout: 5000 });
+        await expect(frame.locator(".bench-timer.off"), "the choice crosses the dock switch").toHaveCount(1);
+
+        // And a RUN still works with it off (the flag must not break the ordinary path).
+        await runInBench(frame, "print('no limit')\nreturn 1");
+        await expect(frame.locator(".bench-outbody")).toContainText("1");
     } finally { await ext.context.close(); await fake.stop(); }
 });

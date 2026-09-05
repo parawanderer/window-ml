@@ -1897,6 +1897,81 @@ test("resource panel: dragging the event lane shows the selection box, and a tin
     }
 });
 
+// SCROLLING BACK TO LIVE KEEPS THE WIDTH YOU HAD. Following-with-a-width is not a special case of a pinned
+// range — it IS `resWindowS`, the quantity Settings names — so arriving at the tail must adopt the window on
+// screen rather than whatever that setting last held. The drag was fixed for this; the WHEEL had its own
+// copy of the rule that only nulled the zoom, so a window you had carefully narrowed sprang back to five
+// minutes the moment you scrolled it home.
+test("resource panel: scrolling a NARROW window back to live keeps it narrow", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        // A window that is a FRACTION of the session, or there is nothing to pin: a 5-minute window over a
+        // 15-second session covers the whole strip, clamps at the tail, and can never be dragged off it.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 6 }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-scrub").count(), { timeout: 30000 }).toBe(1);
+        await sleep(16000);   // …so the session outgrows it several times over
+
+        const winW = () => frame.locator(".rc-scrub-win").evaluate((e) => parseFloat(e.style.width));
+        const live = () => frame.locator(".rc-scrub-live").textContent();
+        const track = await frame.locator(".rc-scrub-track").boundingBox();
+        const y = track.y + track.height / 2;
+
+        const drag = async (fromX, toX) => {
+            await page.mouse.move(fromX, y);
+            await page.mouse.down();
+            await page.mouse.move(toX, y, { steps: 8 });
+            await page.mouse.up();
+            await sleep(700);
+        };
+        // PIN IT AWAY FROM THE TAIL FIRST, and this ordering is the whole test. Narrowing a window that is
+        // still AT the tail is read as "you resized while following", which writes the new width to
+        // `resWindowS` — so rejoining live afterwards restores it and the bug cannot show. Pinned, the
+        // setting keeps its old wide value, and the only thing that can carry the narrow width home is the
+        // rejoin rule itself.
+        const box0 = await frame.locator(".rc-scrub-win").boundingBox();
+        await drag(box0.x + box0.width / 2, track.x + track.width * 0.35);
+        await expect.poll(live, { timeout: 10000 }).toMatch(/⏸/);
+        expect(await ext.sw.evaluate(() => new Promise((r) =>
+            chrome.storage.local.get({ ml_res_window: 0 }, (d) => r(d.ml_res_window)))),
+        "the setting is still the one we seeded — nothing has taught it otherwise").toBe(6);
+
+        // …now narrow it, pinned.
+        const box1 = await frame.locator(".rc-scrub-win").boundingBox();
+        await drag(box1.x + 2, box1.x + box1.width * 0.55);
+        const narrow = await winW();
+        expect(narrow, "it is narrower than the strip").toBeLessThan(80);
+
+        // …then SCROLL it home rather than dragging, which is the path that had its own rule.
+        for (let i = 0; i < 25; i++) {
+            await frame.locator(".rc-scrub-track").evaluate((el) => {
+                const r = el.getBoundingClientRect();
+                el.dispatchEvent(new WheelEvent("wheel", { deltaX: 120, bubbles: true, cancelable: true,
+                    clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+            });
+            await sleep(40);
+            if (/▶/.test((await live()) ?? "")) break;
+        }
+        await expect.poll(live, { timeout: 5000 }).toMatch(/▶\s*live/);
+        // THE POINT: it followed at the width it had, not at the width the setting remembered.
+        const after = await winW();
+        expect(after, `it sprang back to the stored window (${narrow}% → ${after}%)`).toBeLessThan(narrow * 1.4);
+        // …and the width is remembered as the preference, the same quantity Settings names. POLLED, because
+        // the write is deliberately deferred to the end of the gesture — a wheel fires dozens of times and
+        // storing on each one would be dozens of writes for one scroll.
+        await expect.poll(() => ext.sw.evaluate(() => new Promise((r) =>
+            chrome.storage.local.get({ ml_res_window: 0 }, (d) => r(d.ml_res_window)))),
+        { timeout: 5000 }).toBeLessThan(6);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
 // PINCH TO ZOOM, the other way to reach the same window. A trackpad pinch arrives as a `wheel` carrying
 // `ctrlKey` — the platform's own convention, which is also why it has to be swallowed: left alone, the
 // browser zooms the whole panel instead. Playwright's `mouse.wheel` cannot set the flag, so the event is

@@ -8,12 +8,15 @@
 //   node scripts/test.mjs panel ext      # more than one genre
 //   node scripts/test.mjs --list         # what the genres hold
 //   node scripts/test.mjs --timings      # per-file durations, slowest first
+//   node scripts/test.mjs --jobs 1       # one file at a time, for when a failure might be interference
 //
 // GENRES ARE EXPLICIT, and `core` is DERIVED — everything no other genre claims. That direction matters:
 // a new test file lands in `core` and runs by default rather than falling out of every bucket and being
 // silently skipped, which is the failure mode a hand-kept list of ALL the genres would have. The cost is
 // that a new SLOW file lands in `core` and makes it less fast, which `--timings` is for.
 import { readdirSync } from "node:fs";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,7 +66,20 @@ if (args.includes("--list")) {
     process.exit(0);
 }
 
-const NODE_ARGS = ["--import", "tsx", "--test", "--test-concurrency=1"];
+// HOW MANY FILES AT ONCE. `node --test` already gives each file its own process, so the only thing that was
+// stopping them overlapping was this being pinned to 1 — and the suite is dominated by three files
+// (sidebar 53s, background 22s, cdp-stream 20s of 130s), so overlapping them takes the wall clock down to
+// roughly the slowest one.
+//
+// NOT unbounded, and not `cores`: about ten files here drive real timers (a debounce, an easing, "stays
+// quiet for the first half second"), and those are exactly the assertions that go wrong when every core is
+// busy. Leaving headroom is the difference between a suite that is fast and one that is fast and flaky.
+// `--jobs 1` puts it back to serial, which is what you want when a failure might be interference.
+const CORES = (() => { try { return require("node:os").cpus().length; } catch { return 4; } })();
+const jobsArg = process.argv.find((a) => a.startsWith("--jobs"));
+const JOBS = Math.max(1, Number(jobsArg?.split("=")[1] ?? process.argv[process.argv.indexOf("--jobs") + 1])
+    || Math.min(8, Math.max(1, CORES - 2)));
+const NODE_ARGS = ["--import", "tsx", "--test", `--test-concurrency=${JOBS}`];
 
 if (args.includes("--timings")) {
     // One process per file, so the numbers are per file. Costs a node start each (~0.3s), which is why this
@@ -81,7 +97,7 @@ if (args.includes("--timings")) {
     process.exit(0);
 }
 
-const names = args.filter((a) => !a.startsWith("-"));
+const names = args.filter((a) => !a.startsWith("-") && !/^\d+$/.test(a));   // a bare number is --jobs' value
 for (const n of names) {
     if (!GENRES[n]) {
         console.error(`scripts/test.mjs: no genre "${n}". Known: ${Object.keys(GENRES).join(", ")} (or no argument for all).`);
@@ -91,6 +107,6 @@ for (const n of names) {
 const files = names.length
     ? [...new Set(names.flatMap((n) => GENRES[n].files))].sort()
     : ALL;
-console.log(`${names.length ? names.join(" + ") : "all"} — ${files.length} file(s)\n`);
+console.log(`${names.length ? names.join(" + ") : "all"} — ${files.length} file(s), ${JOBS} at a time\n`);
 spawn(process.execPath, [...NODE_ARGS, ...files.map((f) => `tests/${f}`)],
     { cwd: ROOT, stdio: "inherit" }).on("exit", (c) => process.exit(c ?? 1));

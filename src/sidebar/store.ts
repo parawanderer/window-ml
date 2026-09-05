@@ -280,6 +280,12 @@ export interface BenchRun { ok: boolean; value?: unknown; stdout: string; error?
 export const benchCode = signal<string>(lsGet(BENCH_CODE_KEY) ?? "import numpy as np\nreturn int(np.arange(10).sum())");
 /** Which sandbox the bench runs in: `readonly` (hardened, no network) or `full`. Mirrors `python_exec`'s. */
 export const benchMode = signal<"readonly" | "full">(lsGet("ml_bench_mode") === "full" ? "full" : "readonly");
+/** Does the workbench enforce the 15s run watchdog? ON by default — a runaway script otherwise holds the one
+ *  Pyodide instance until the panel is closed. Turned off from the bench header for a script you KNOW is
+ *  long; the model's own `python_exec` keeps the cap regardless, and the background only honours the flag
+ *  from one of our own surfaces. */
+export const benchTimeout = signal<boolean>(lsGet("ml_bench_timeout") !== "off");
+
 /** Is a bench script in flight right now — what the header's ▶ spinner and the disabled Run button read. */
 export const benchRunning = signal(false);
 /** What the bench's last run returned, and what its output pane is drawing. */

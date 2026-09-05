@@ -5792,11 +5792,18 @@ test("streamed output: a rule separates the timestamp gutter from the text", asy
     // The stamps are right-aligned in a fixed column; without an edge, leading whitespace in the output has
     // nothing to be measured against. Same device as a line-number gutter's rule.
     const css = await import("node:fs").then((fs) => fs.readFileSync("src/sidebar/sidebar.css", "utf8"));
-    // The standalone `.r-ts` rule — not `.r-timed.short .r-ts`, which merely narrows the column.
-    const rule = /\n\.r-ts \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    // DRAWN BY THE CONTAINER, not by each row: as a per-row border it stopped at the last line, which is
+    // right in a transcript and wrong in the bench, where the block fills a pane you sized yourself and the
+    // column ended in mid-air. Pinned to both edges, so it is as tall as whatever it is inside.
+    const rule = /\n\.r-timed::after \{([^}]*)\}/.exec(css)?.[1] ?? "";
     assert.ok(rule, "the gutter rule exists");
-    assert.match(rule, /border-right:\s*1px solid var\(--border\)/, "a hairline between stamps and output");
-    assert.match(rule, /padding-right/, "spaced by padding so the rule sits inside the row gap");
+    assert.match(rule, /position:\s*absolute/, "positioned, so it can span the container rather than a row");
+    assert.match(rule, /top:\s*0/, "…pinned to the top");
+    assert.match(rule, /bottom:\s*0/, "…and the bottom, which is what makes it outlive the last line");
+    const row = /\n\.r-ts \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    assert.ok(row, "the gutter column still exists");
+    assert.doesNotMatch(row, /border-right/, "and the rows no longer draw their own — two would double up");
+    assert.match(row, /padding-right/, "spaced by padding so the rule sits inside the row gap");
 });
 
 // Mixed-size GPUs are normal (a 4090 beside a 3060), so an overlay must not assume one shared denominator.

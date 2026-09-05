@@ -164,6 +164,20 @@ export const IconSendToModel = () => (
     </svg>
 );
 
+/** THE RUN WATCHDOG — a clock, struck through when it is off. Two states in one glyph rather than two
+ *  icons: the slash is the universal "this is disabled" mark (the same one a muted speaker or a hidden eye
+ *  uses), so which state you are looking at needs no colour and no label. */
+export const IconTimer = ({ off = false }: { off?: boolean } = {}) => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="13" r="7.5" />
+        <path d="M12 9.5V13l2.5 1.5" />
+        <path d="M9.5 2.5h5" />
+        {/* The strike is drawn OVER the dial, and slightly proud of it at both ends, so it reads as a mark
+            across the icon rather than as another hand on the clock. */}
+        {off ? <path d="M3.6 3.6 20.4 20.4" /> : null}
+    </svg>
+);
+
 /** RUN — an OUTLINE triangle, the shape every IDE uses for it (PyCharm's is the reference). A solid green
  *  block was the first attempt and read as a call-to-action button dropped into a row of quiet icons; the
  *  colour belongs on the GLYPH, which says "run" without shouting over the four controls beside it. Same

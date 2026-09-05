@@ -15,7 +15,7 @@ import {
     placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, TAIL_SLACK_MS,
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
-    OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
+    OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
@@ -775,17 +775,21 @@ function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; ru
  * always done this on release; the wheel paths did not, so scrolling to the end looked like rejoining live
  * and then drifted away from it.
  */
-function applyScrub(next: { from: number; to: number }, ex: { to: number }): void {
-    zoomRange.value = next.to >= ex.to - TAIL_SLACK_MS ? null : next;
-}
+
 
 /** Persisting `resWindowS` on every frame of a continuous gesture would write to storage dozens of times for
  *  one pinch, so the value is applied live and only the WRITE is deferred to the end of the gesture. */
 let windowWrite: ReturnType<typeof setTimeout> | null = null;
 
 /**
- * Settle a gesture that changed the window's WIDTH — the same rule the strip's drag applies on release, so a
- * pinch and a drag cannot disagree about what "at the tail" means.
+ * Settle ANY gesture that moved or resized the window — the one place the "did this rejoin live" rule lives,
+ * so a wheel, a pinch and a drag cannot disagree about what "at the tail" means.
+ *
+ * The wheel paths used to have their own version of it, which nulled the zoom and nothing else — so scrolling
+ * a NARROW window back to the tail rejoined live at whatever `resWindowS` last held, and a window you had
+ * carefully narrowed sprang back to five minutes on arrival. The drag had been fixed for exactly that and
+ * this was the same bug surviving in the gesture beside it, which is the argument for there being one
+ * function rather than two.
  *
  * Following with a width is not a special case of a pinned range: it IS `resWindowS`, the quantity Settings
  * names. So zooming while live changes how much history is drawn and STAYS live, rather than pinning the
@@ -891,7 +895,7 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
                     }
                     const by = wheelScrubFraction(ev.deltaX, ev.deltaY, ev.deltaMode, b.width);
                     if (!by) return;
-                    applyScrub(scrubNudge({ from: ex.from, to: ex.to }, win, by), ex);
+                    settleScrub(scrubNudge({ from: ex.from, to: ex.to }, win, by), ex);
                     ev.preventDefault();
                     ev.stopPropagation();
                 }}
@@ -1106,6 +1110,10 @@ function EventTip({ scope }: { scope: string }) {
         kind === "weights" ? (e.weightsBytes ?? null)
         : kind === "context" ? (e.loadBytes != null && e.weightsBytes != null ? e.loadBytes - e.weightsBytes : null)
         : null;
+    // HOW MUCH DID NOT FIT. Null unless the server reported both figures AND they differ by enough to be a
+    // real spill rather than the byte or two of bookkeeping that separates two independently-taken readings.
+    const spilled = e.totalBytes != null && e.loadBytes != null && e.totalBytes - e.loadBytes > SPILL_FLOOR
+        ? e.totalBytes - e.loadBytes : null;
     const first = phases[0];
     // A TOTAL record over the phase kinds, not a chain ending in a default. The chain shipped `weights` and
     // `context` — the two halves of a model load — as the word "tool", because an unknown kind fell through
@@ -1231,6 +1239,15 @@ function EventTip({ scope }: { scope: string }) {
             {/* An OPEN span has no end yet, so every duration in this tooltip is "so far". Said once, plainly,
                 because the alternative is a reader taking a number that is still growing as a measurement. */}
             {e.open ? <div class="rc-tip-note">still running — these durations are so far, not final</div> : null}
+            {/* A DEGRADED LOAD, and the only place the fact exists. When the prediction was too low,
+                llama-server re-fits against the memory actually free and runs the remainder on the CPU: the
+                load SUCCEEDS, nothing errors, and the model is simply slow from then on. The difference
+                between what the whole model is and what reached the device is the only signal, so it is
+                stated in words rather than left as two numbers to subtract. */}
+            {spilled != null
+                ? <div class="rc-tip-note warn">{formatBytes(spilled)} of this model did not fit — it is
+                    running on the CPU, which is why it will be slow. No error is raised for this.</div>
+                : null}
             {/* ONE rule opens the footer, and the PROSE comes first inside it. The notes explain the block —
                 "the model wasn't resident", "continues past what was measured" — and they were sitting under
                 the timestamp, which read as a caption on the clock rather than on the thing. The timestamp is
@@ -1655,7 +1672,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
         }
         const by = wheelScrubFraction(e.deltaX, e.deltaY, e.deltaMode, box.width);
         if (!by) return;
-        applyScrub(scrubNudge({ from: ex.from, to: ex.to }, w, by), ex);
+        settleScrub(scrubNudge({ from: ex.from, to: ex.to }, w, by), ex);
         e.preventDefault();
         e.stopPropagation();
     };

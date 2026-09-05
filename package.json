@@ -9,7 +9,7 @@
     "gen-build-info": "node scripts/gen-build-info.mjs",
     "typecheck": "npm run gen-api-docs && npm run gen-build-info && tsc --noEmit && tsc --noEmit -p tsconfig.tests.json",
     "pretest": "npm run build",
-    "test": "node --import tsx --test --test-concurrency=1 tests/*.test.js tests/*.test.mjs",
+    "test": "node scripts/test.mjs",
     "test:core": "node scripts/test.mjs core",
     "test:panel": "node scripts/test.mjs panel",
     "test:ext": "node scripts/test.mjs ext",

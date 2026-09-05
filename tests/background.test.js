@@ -3526,3 +3526,37 @@ test("protobuf stream: OFF by default — the header is not sent unless asked fo
     await settle();
     assert.equal(accept, undefined);
 });
+
+// ---------------------------------------------------------------------------------------------------------
+// THE PYTHON RUN WATCHDOG is a WORKBENCH-ONLY favour. A run is killed at 15s; a person who deliberately wrote
+// something slow and is sitting in front of it can turn that off, and nobody else can — a page-invoked tool
+// with no limit holds the one Pyodide instance against every later call, with nobody watching it.
+
+test("SECURITY (PYTHON_EXEC): a PAGE cannot turn off the run watchdog", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    await bg.send(
+        { type: "PYTHON_EXEC", payload: { code: "while True: pass", noTimeout: true } },
+        { tab: { id: 9, id2: 9 }, url: "https://evil.example/attack" });   // a page: its own url, not ours
+    const run = bg.pyRuns.find(m => m.type === "PY_RUN");
+    assert.ok(run, "the run still goes (readonly python is safe for any caller)");
+    assert.ok(!run.noTimeout, "…but the flag is dropped — an endless run from a page wedges the sandbox");
+});
+
+test("PYTHON_EXEC: one of OUR OWN surfaces may, and the discriminator is the sender's url", async () => {
+    // `sender.url` is set by Chrome and a page cannot forge it — the same unforgeable discriminator the live
+    // stdout routing uses. It matters that it is the URL rather than `sender.tab`: the overlay bench is an
+    // extension iframe INSIDE a tab, so it HAS a tab, and keying on that would refuse the one caller allowed.
+    const bg = loadBackground({ config: baseConfig() });
+    await bg.send(
+        { type: "PYTHON_EXEC", payload: { code: "slow()", noTimeout: true } },
+        { tab: { id: 9 }, url: "chrome-extension://test/sidebar.html" });
+    const run = bg.pyRuns.find(m => m.type === "PY_RUN");
+    assert.equal(run?.noTimeout, true);
+});
+
+test("PYTHON_EXEC: the watchdog is on unless asked otherwise", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    await bg.send({ type: "PYTHON_EXEC", payload: { code: "1+1" } }, { url: "chrome-extension://test/sidebar.html" });
+    const run = bg.pyRuns.find(m => m.type === "PY_RUN");
+    assert.ok(run && !run.noTimeout, "absent, not false — the offscreen doc treats missing as capped");
+});

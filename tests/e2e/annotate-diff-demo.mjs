@@ -27,7 +27,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
-import { launchExtension, configureExtension, waitForMl, openRunInSidebar } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, openRunInSidebar, narrate, narrateDone } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), "artifacts", "annotate-diff-demo");
@@ -120,6 +120,7 @@ const main = async () => {
         await page.goto(`${fake.url}/api/version`);
         await waitForMl(page);
 
+        await narrate(page, "Two python steps, one revising the other", { sub: "the run is starting — nothing to see yet" });
         log("starting the run …");
         await page.evaluate(() => {
             window.ml.agent("total the quarters, then try to add the full year", {
@@ -143,6 +144,7 @@ const main = async () => {
 
         // 1 — the first call, annotated. Nothing else is going on in this block, so it is the clean look at
         // what an annotation IS: a note per line, in the margin, with the source untouched beside it.
+        await narrate(page, "1 — explain: notes in the MARGIN", { sub: "the source keeps every line and its numbers; nothing is inserted into it" });
         const one = steps.nth(0);
         if (!(await one.locator(".r-py-in").count())) await one.locator(".astep-head").click().catch(() => {});
         await sleep(600);
@@ -160,6 +162,7 @@ const main = async () => {
 
         // 2 — THE COMPOSITION. A retry that also failed: diff on top, failure marked in the code, notes in
         // the margin. Three mechanisms in one column.
+        await narrate(page, "2 — a retry: diff, failure mark and notes on ONE block", { sub: "watch the diff show the rename the model's own claim left out" });
         const two = steps.nth(1);
         if (!(await two.locator(".r-py-in").count())) await two.locator(".astep-head").click().catch(() => {});
         await sleep(600);
@@ -184,6 +187,7 @@ const main = async () => {
 
         // 3 — the notes are a TOGGLE, not a one-way door: the button becomes show/hide once they land, and
         // hiding them does not throw the call away.
+        await narrate(page, "3 — the notes toggle", { sub: "hiding them does not throw the model's answer away — it is asked once" });
         await two.locator(".code-tool", { hasText: "notes" }).first().click();
         await sleep(500);
         log(`\n--- notes hidden: ${await two.locator(".lnote").count()} drawn, and the utility model was still asked only ${asked}x ---`);
@@ -192,6 +196,9 @@ const main = async () => {
         log(`--- and back: ${await two.locator(".lnote").count()} drawn, from the same call ---`);
         await frame.page().screenshot({ path: path.join(ART, "4-toggled-back.png") });
 
+        await narrate(page, null);   // the last screenshot shows the product, not the narration
+        await frame.page().screenshot({ path: path.join(ART, "4-toggled-back.png") });
+        await narrateDone(page);
         log(`\nscreenshots → ${ART}`);
         if (HOLD) { log("\nholding the browser open — close the window or Ctrl+C to exit"); await new Promise(() => {}); }
     } finally {

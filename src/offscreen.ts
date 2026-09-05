@@ -53,11 +53,17 @@ function ensureWorker(): Worker {
     return w;
 }
 
-function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean): Promise<PyResult> {
+/**
+ * @param noTimeout Run WITHOUT the watchdog. Only the workbench asks for this, and only the background lets
+ *   it through (see the PYTHON_EXEC handler): a page-invoked tool keeps the cap, because a run that never
+ *   ends there wedges the single Pyodide instance for every later call with nobody watching. In the bench a
+ *   person is sitting in front of it, chose this, and can close the panel.
+ */
+function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean): Promise<PyResult> {
     const w = ensureWorker();
     const id = nextId++;
     return new Promise((resolve) => {
-        const timer = setTimeout(() => {
+        const timer = noTimeout ? (0 as unknown as ReturnType<typeof setTimeout>) : setTimeout(() => {
             const entry = pending.get(id);
             if (!entry) return;   // already resolved
             pending.delete(id);
@@ -73,7 +79,7 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     if (msg?.type !== "PY_RUN") return;
     // The worker serializes runs internally (single Pyodide instance + harden/unharden swap),
     // so we can forward straight through — no need to chain here.
-    runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, msg.stream, msg.streamId, msg.env)
+    runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, msg.stream, msg.streamId, msg.env, msg.noTimeout)
         .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
     return true;   // keep the channel open for the async result
 });

@@ -285,6 +285,9 @@ export const OTHER_BAND_LABEL = "unattributed";
  *  display phantom third-party usage. */
 export const DRIVER_OVERHEAD_FLOOR = 1024 ** 3;
 export const DRIVER_BAND_LABEL = "driver overhead";
+/** Below this, a difference between the whole model and what reached the device is bookkeeping rather than a
+ *  spill — the two figures are taken independently, so they are not expected to agree to the byte. */
+export const SPILL_FLOOR = 8 * 1024 * 1024;
 export const OTHER_BAND_NOTE =
     "In use but not accounted for by a model's reported buffers — mostly each loaded model's CUDA context "
     + "(0.7-1.8 GiB per model, which no buffer line reports), plus anything else on the card.";
@@ -1401,6 +1404,11 @@ export interface ResourceEvent {
      *  Do not reconcile the two to zero. */
     loadBytes?: number;
     weightsBytes?: number;
+    /** The WHOLE model, against `loadBytes` which is what reached the DEVICE. They are equal when it fit and
+     *  differ when it did not: llama-server re-fits against the memory actually free, so an under-predicted
+     *  load does not fail — it quietly runs the remainder on the CPU and is merely slow. There is no error
+     *  and no other signal, so this difference is the only way to know a load was degraded. */
+    totalBytes?: number;
     /** This span has NOT FINISHED: `until` is where it had reached when the snapshot was taken, not where it
      *  ended. Only ever set by an `eventsFrom` given a `now` — a surface drawing live. It exists so the UI can
      *  say "still going" rather than drawing a bar whose right edge looks like a measured end. */
