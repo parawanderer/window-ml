@@ -134,3 +134,20 @@ export const IconClose = () => (
         <path d="M6 6l12 12M18 6L6 18" />
     </svg>
 );
+
+// The token readout's two directions. A single ↕ said "tokens" and left which-way-is-which to the words
+// beside it; two arrows say it at a glance, which is the whole job of a figure you read in passing. SVGs
+// rather than the ↓/↑ glyphs for the reason IconWarn gives: a text arrow sizes off the font and sits off
+// the baseline next to a number set in tabular figures.
+/** Arrow down — tokens going IN to the model (the prompt). */
+export const IconIn = () => (
+    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 3v9M4.5 8.5 8 12l3.5-3.5" />
+    </svg>
+);
+/** Arrow up — tokens coming OUT of the model (what it generated). */
+export const IconOut = () => (
+    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 13V4M4.5 7.5 8 4l3.5 3.5" />
+    </svg>
+);

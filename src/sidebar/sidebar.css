@@ -1239,9 +1239,11 @@ details.io[open] > summary .io-preview { display: none; }
    Reuses `.tt` for the provenance tooltip; overrides its inline-flex so the bar can right-align full width. */
 /* Sits in the composer footer, at the opposite end from the context gauge — so no padding or justification
    of its own: the footer is the row. */
-.run-stats { display: flex; align-items: center; gap: 12px; font-size: 11px; color: var(--fg-faint); font-variant-numeric: tabular-nums; cursor: default; }
-.run-stats .rstat { white-space: nowrap; }
-.run-stats .rstat-ic { opacity: .7; margin-right: 3px; }
+.run-stats { display: flex; align-items: center; gap: 9px; font-size: 11px; color: var(--fg-faint); font-variant-numeric: tabular-nums; cursor: default; }
+.run-stats .rstat { white-space: nowrap; display: inline-flex; align-items: center; }
+/* An inline-flex row, so the SVG centres on the digits rather than sitting on the text baseline — which is
+   what makes a glyph arrow look dropped beside tabular figures. `line-height: 0` keeps it from adding a row. */
+.run-stats .rstat-ic { opacity: .7; margin-right: 3px; display: inline-flex; align-items: center; line-height: 0; }
 .run-stats .rstat-tps { color: var(--fg-dim); }
 
 /* ---------------------------------- FOCUS MODE ----------------------------------

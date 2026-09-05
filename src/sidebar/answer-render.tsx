@@ -11,7 +11,8 @@ import { cardShowWorkHash, revealSeq } from "./store";
 import { pretty, markdown, inlineMarkdown } from "./format";
 import { IconChevron, IconEye, IconCheck } from "./icons";
 import { ClickableImg, Code, SheetChip } from "./ui-kit";
-import { RenderPanel, PyDfTable } from "./render-panel";
+import { RenderPanel, PyDfTable, CodeRender } from "./render-panel";
+import type { CodeCtx } from "./render-panel";
 
 // Scroll the transcript to the step that minted a @tool token + pulse it green — the provenance click. In the
 // HUD it first EXPANDS "Show work" (the step row is otherwise not rendered); in a MULTI-TASK run the step also
@@ -167,12 +168,18 @@ export const aliasOf = (run: Session) => (name: string): boolean => (run.steps |
 // A FOCUSED, answer-appropriate render of a cited slot: the CODE for :in, the table/image/value for :out — NOT
 // the full tool-step In/Out render (which carries debug chrome, e.g. python's input table). Reuses RenderPanel
 // ONLY for pure data (image/table/elements), so the tool-step rendering is untouched (the constraint).
-function tokenRender(d: RenderDescriptor | undefined, rawText: string): { node: ComponentChildren; block: boolean } {
+// `ctx` gives an embedded code block the SAME affordances the step's own block has (explain, and the bench on
+// the panel). A citation is a different PLACE to show the code, not a different KIND of thing — and the split
+// by surface stays where it already lives, inside CodeTools: the HUD card is a reading surface with no
+// navigation of its own, so it keeps explain and drops the bench.
+function tokenRender(d: RenderDescriptor | undefined, rawText: string, ctx?: CodeCtx): { node: ComponentChildren; block: boolean } {
     switch (d?.type) {
         case "image": case "table": case "elements": return { node: <RenderPanel d={d} />, block: true };
         case "look": return { node: <ClickableImg src={d.image} alt={d.label || "look"} />, block: true };
-        case "code": return { node: <Code text={d.text} lang={d.lang} format={d.format} />, block: true };
-        case "python-in": return { node: <Code text={d.code} lang="python" />, block: true };   // just the code, not the input table
+        case "code": return { node: <CodeRender d={d} ctx={ctx} />, block: true };
+        // Just the code, not the input table — but rendered through CodeRender so it is explainable and
+        // benchable, which is the commonest thing a model cites and the one you most want to poke at.
+        case "python-in": return { node: <CodeRender d={{ type: "code", text: d.code, lang: "python" }} ctx={ctx} />, block: true };
         case "python-out":
             // Use the SAME rich DataFrame renderer the python step shows (index gutter / sort / resize /
             // copy-CSV / hide), not the bare RenderTable — a cited/auto-appended df should read identically
@@ -259,7 +266,7 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
                 // mid-sentence stays INLINE (`\(…\)`). Use inlineMarkdown so the lone wrapping <p> is STRIPPED —
                 // that block-level <p> was forcing an inline formula onto its own line (the "inline is broken" bug).
                 ? { node: <span dangerouslySetInnerHTML={{ __html: inlineMarkdown(standalone ? `\\[${rawText}\\]` : `\\(${rawText}\\)`) }} />, block: !!standalone }
-                : tokenRender(d, rawText);
+                : tokenRender(d, rawText, step.seq != null ? { hash: run.hash, seq: step.seq, result: step.result } : undefined);
     const tip = (label && !block ? `${label} · ` : "") + provenance;   // inline → prepend the label to the tooltip
     return <span class={`tok-ref ${block ? "tok-block" : "tok-inline"}`} role="button" tabIndex={0}
         onClick={onEmbedClick} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>

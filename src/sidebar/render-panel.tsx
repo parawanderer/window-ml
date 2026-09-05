@@ -982,7 +982,13 @@ function PythonOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }:
 /** A `code` In block — `exec`'s beautified JS, and anything else that renders as source. It publishes the
  *  same `data-cite` anchor and `data-py-map` the Python one does, so a stack trace beside it maps and jumps
  *  identically: the mapping is a property of SHOWING REFORMATTED CODE, not of the language. */
-function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDescriptor, { type: "code" }>; failLine?: number | null; ctx?: CodeCtx; failed?: boolean }) {
+/** A CODE BLOCK WITH ITS AFFORDANCES — the highlighted source plus `CodeTools` (explain / bench / copy), the
+ *  retry diff when the call revises another, and a failing line marked and mapped through the reflow.
+ *
+ *  Exported so the ANSWER's embedded citations draw code the same way a step does: `![the code](@tool:…:in)`
+ *  used to render a bare `Code`, so the same block was explainable in one surface and inert in the other,
+ *  purely because of where it was cited. Pass `ctx` to get the tools; without it this is just the block. */
+export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDescriptor, { type: "code" }>; failLine?: number | null; ctx?: CodeCtx; failed?: boolean }) {
     const rv = rev.value;   // subscribe: a landed annotation repaints the block (retained via data-rev below)
     const [map, setMap] = useState<number[] | null>(null);
     const shownFail = failLine != null ? (map?.[failLine] ?? failLine) : null;

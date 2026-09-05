@@ -12,7 +12,7 @@ import { config, surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTo
 import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
-import { IconChevron, IconWarn, IconCopy, IconCheck } from "./icons";
+import { IconChevron, IconWarn, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
 import {
     Code, CopyBtn, SheetChip, Hash, Stamp, ClickableImg, Dot, Disclosure,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
@@ -708,7 +708,12 @@ export function RunStatsBar({ s }: { s: Session }) {
     if (!showTok && !showTps) return null;
     return (
         <div class="run-stats tt" role="status" aria-label="run token stats">
-            {showTok ? <span class="rstat"><span class="rstat-ic" aria-hidden="true">↕</span>{rs.inTokens.toLocaleString()} in · {rs.outTokens.toLocaleString()} out</span> : null}
+            {/* Two figures, each with its own direction. One ↕ for the pair meant the arrow said "tokens"
+                and the WORDS carried the direction — which is backwards for something read in passing. */}
+            {showTok ? <>
+                <span class="rstat"><span class="rstat-ic" aria-hidden="true"><IconIn /></span>{rs.inTokens.toLocaleString()} in</span>
+                <span class="rstat"><span class="rstat-ic" aria-hidden="true"><IconOut /></span>{rs.outTokens.toLocaleString()} out</span>
+            </> : null}
             {showTps ? <span class="rstat rstat-tps">{tps}</span> : null}
             <span class="tt-pop left" role="tooltip">{runStatsProvenance(rs)}</span>
         </div>

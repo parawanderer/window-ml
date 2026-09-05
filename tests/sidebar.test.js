@@ -5388,7 +5388,14 @@ test("DevTools run-stats bar: cumulative in/out tokens summed across calls (defa
     await openRun(w);
     const bar = w.shadow.querySelector(".run-stats");
     assert.ok(bar, "the run-stats bar renders");
-    assert.match(bar.textContent, /240 in · 50 out/, "cumulative in/out summed across both calls");
+    // Two figures now, each with its own arrow: one shared ↕ made the arrow mean "tokens" and left the
+    // direction to the words, which is backwards for a readout you take in at a glance.
+    assert.match(bar.textContent, /240 in/, "cumulative IN summed across both calls");
+    assert.match(bar.textContent, /50 out/, "…and cumulative OUT");
+    const stats = [...bar.querySelectorAll(".rstat")].filter((e) => !e.classList.contains("rstat-tps"));
+    assert.equal(stats.length, 2, "in and out are separate figures");
+    assert.equal(stats[0].querySelectorAll("svg").length, 1, "each carries its own direction arrow");
+    assert.equal(stats[1].querySelectorAll("svg").length, 1);
     assert.doesNotMatch(bar.textContent, /tok\/s/, "tok/s is OFF by default");
 });
 
@@ -8383,4 +8390,52 @@ test("embed: a click on the render's OWN controls does not jump to the source st
     cell.dispatchEvent(new w.window.MouseEvent("click", { bubbles: true }));
     await w.tick();
     assert.ok(jumps > 0, "clicking the render itself still goes to the step that produced it");
+});
+
+// A CITATION IS A DIFFERENT PLACE TO SHOW CODE, NOT A DIFFERENT KIND OF THING. An embedded
+// `![the code](@tool:…:in)` rendered a bare `Code`, so the same block was explainable at its step and inert
+// three lines further down in the answer, purely because of where it was cited. Both go through CodeRender
+// now, which is also what keeps the surface split in ONE place (CodeTools) rather than two.
+test("embed: a cited code block carries the same affordances the step's own block has", async () => {
+    const w = await loadSidebarWorld({ config: { utilityModel: "small:1b" } });
+    await w.dispatch(agentStart("ce", "compute"));
+    await w.dispatch(agentStep("ce", 1, { seq: 1, tool: "python_exec", token: "cc11dd2", result: "42",
+        arguments: { code: "q = [1, 2]\nreturn sum(q)" },
+        renderIn: { type: "python-in", mode: "script", code: "q = [1, 2]\nreturn sum(q)" } }));
+    await w.dispatch(agentResult("ce", "Here it is:\n\n![the code](@tool:cc11dd2:in)", 1));
+    await openRun(w);
+    const embed = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(embed, "the embed renders");
+    assert.ok(embed.querySelector(".code-block"), "…as a real code block, not a bare pre");
+    const tools = embed.querySelector(".code-tools");
+    assert.ok(tools, "…with its toolbar");
+    const labels = [...tools.querySelectorAll("button")].map((b) => (b.getAttribute("aria-label") || b.textContent || "").toLowerCase());
+    assert.ok(labels.some((l) => /explain/.test(l)), "explain is offered on the panel");
+    assert.ok(labels.some((l) => /bench/.test(l)), "…and so is the bench, which the panel can navigate to");
+});
+
+test("embed: on the HUD card the cited block keeps explain and drops the bench", async () => {
+    // The card is a reading surface with no navigation of its own: sending someone to the bench from a
+    // corner card either does nothing or replaces what they were reading. Understanding the code is exactly
+    // what the card IS for, so explain stays. Asserted here because the embed reaches CodeTools by a
+    // different route from a step's own block and could have bypassed the split entirely.
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" }, config: { utilityModel: "small:1b" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("ch", "compute", "m"));
+    await w.dispatch(agentStep("ch", 1, { seq: 1, tool: "python_exec", token: "cc11dd3", result: "42",
+        arguments: { code: "return 42" },
+        renderIn: { type: "python-in", mode: "script", code: "return 42" } }));
+    await w.dispatch(agentResult("ch", "Here:\n\n![the code](@tool:cc11dd3:in)", 1));
+    await w.flush();
+
+    // LOUD, not a shrug: a guard that returns early when the embed is missing is how this passes on the day
+    // the card stops rendering citations at all.
+    const embed = w.window.document.querySelector(".card-body .tok-ref");
+    assert.ok(embed, "the card renders the cited block");
+    const tools = embed.querySelector(".code-tools");
+    assert.ok(tools, "…with a toolbar");
+    const labels = [...tools.querySelectorAll("button")].map((b) => (b.getAttribute("aria-label") || b.textContent || "").toLowerCase());
+    assert.ok(labels.some((l) => /explain/.test(l)), "explain stays on the card");
+    assert.ok(!labels.some((l) => /bench/.test(l)), "the bench does NOT — the card cannot navigate there");
 });
