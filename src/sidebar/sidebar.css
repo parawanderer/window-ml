@@ -774,7 +774,18 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .empty { color: var(--fg-faint); padding: 16px 8px; text-align: center; }
 
 /* Python bench — a debug workbench that runs scripts against the model's sandbox. */
-.bench { display: flex; flex-direction: column; gap: 8px; }
+/* `position: relative` so the environment panel can float against this box rather than sit in the flow —
+   opening it used to PUSH the editor down, which moves the code you opened it to compare against. */
+.bench { position: relative; display: flex; flex-direction: column; gap: 8px; }
+/* The environment panel: a popover under the header, not a row. It is read while you type, so it must not
+   reflow what is underneath it; and it is bounded so a long package list scrolls instead of covering the
+   whole bench. */
+.bench-env {
+    position: absolute; top: 30px; left: 6px; z-index: 6; max-width: min(420px, calc(100% - 12px));
+    max-height: min(60vh, 320px); overflow: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.32); padding: 8px 10px;
+}
 .bench-info { color: var(--fg-faint); cursor: help; font-size: 1.05em; margin-right: 2px; }
 .bench-info:hover { color: var(--fg-dim); }
 .bench-code { width: 100%; min-height: 180px; resize: vertical; box-sizing: border-box;
@@ -1460,7 +1471,13 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 /* Raw In args tree: a corner copy button (a tree isn't drag-selectable like the old text block). Small
    left inset so the flush-left braces don't hug the block edge; right room so text never runs under copy. */
 .jt-args { position: relative; padding: 1px 22px 1px 2px; }
-.jt-args-copy { position: absolute; top: 0; right: 0; z-index: 1; }
+/* The copy control for an output cell's RAW view. On the cell, not inside it: it used to sit in the
+   scrolling element and slid away with the text — on a wide line, right off the edge. Same reasoning as the
+   find bar beside it, and it yields to the find bar when that is open, since only one of them can own the
+   corner and the one you just summoned wins. */
+.r-outcorner { position: absolute; top: 2px; right: 6px; z-index: 2; opacity: .5; transition: opacity .12s ease; }
+.r-outcell:hover .r-outcorner, .r-outcorner:focus-within { opacity: 1; }
+.r-outcell:has(.r-find) .r-outcorner { display: none; }
 
 .msg { border-radius: 7px; padding: 6px 9px; margin-bottom: 8px; border: 1px solid var(--border); }
 .msg.user { background: var(--user-bg); }
@@ -2463,30 +2480,37 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    a hand goes for a drawer. */
 .bench-top { position: relative; display: flex; align-items: center; gap: 6px; padding: 5px 4px 1px; flex: 0 0 auto;
     cursor: ns-resize; touch-action: none; background: var(--panel); }
-.bench-top > .hbtn { cursor: pointer; }
-/* The grab pill: centred on the ROW and sitting ON the top edge, where a hand goes for a drawer. A
-   pseudo-element rather than a flex child, because a child would be centred in whatever space the name and
-   the controls left over — which is off-centre whenever those two sides differ in width, and they always do. */
-.bench-top::after { content: ""; position: absolute; top: 3px; left: 50%; transform: translateX(-50%);
-    width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2); opacity: .55;
+/* The controls in the strip are CONTROLS, not part of the drag target. Without this they inherit the
+   resize cursor and read as somewhere to grab. */
+.bench-top > .hbtn, .bench-top > .bench-play, .bench-top .bench-env-btn,
+.bench-top .bench-mode, .bench-top .bench-mode select { cursor: pointer; }
+/* THE GRAB PILL, in the row's FREE SPACE. It was a pseudo-element centred on the row, which was right when
+   the row held only a name and two buttons and wrong the moment it gained a mode picker: the pill landed on
+   top of the select, so the visible handle opened a dropdown instead of dragging. Living inside the flex
+   spacer, it is centred in whatever room is actually left, and cannot overlap a control by construction. */
+.bench-gripbar { display: flex; align-items: center; justify-content: center; align-self: stretch; min-width: 20px; }
+.bench-grip-pill { width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2); opacity: .55;
     transition: width .12s ease, opacity .12s ease; pointer-events: none; }
-.bench-top:hover::after { width: 52px; opacity: 1; background: var(--panel-2-hover); }
+.bench-top:hover .bench-grip-pill { width: 52px; opacity: 1; background: var(--panel-2-hover); }
 .bench-title { font-size: 0.78em; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
     color: var(--fg-faint); white-space: nowrap; padding-left: 3px; }
-/* RUN. The one action in a row of quiet outlines, so it is filled and coloured — a green outline beside
-   four grey ones reads as another toggle. It replaces a Run button at the far BOTTOM of the panel, which
-   put the action as far from the script's name as the layout allowed and cost a whole row to do it. */
+/* RUN — the IDE shape: a green OUTLINE triangle on a transparent button, like PyCharm's. The first version
+   was a solid green block, which read as a call-to-action dropped into a row of quiet icons and pulled the
+   eye away from the code. The colour goes on the GLYPH instead: it still says "this is the action" without
+   outshouting the four controls beside it. It replaces a Run button at the far BOTTOM of the panel, which
+   put the action as far from the script's name as the layout allowed and spent a whole row doing it. */
 .bench-play {
     display: inline-flex; align-items: center; justify-content: center; line-height: 0;
-    padding: 4px 7px; margin-left: 2px; border-radius: 6px; cursor: pointer;
-    color: #fff; background: var(--ok); border: 1px solid color-mix(in srgb, var(--ok) 70%, #000);
+    padding: 3px; margin-left: 2px; border-radius: 5px; cursor: pointer;
+    color: var(--ok); background: transparent; border: none;
 }
-.bench-play:hover:not(:disabled) { filter: brightness(1.1); }
-.bench-play:disabled { opacity: .45; cursor: default; }
+.bench-play:hover:not(:disabled) { background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.bench-play:disabled { opacity: .4; cursor: default; }
 /* Running: the same box, with a spinner where the triangle was. Swapping the GLYPH rather than the button
    keeps the row from reflowing at the exact moment you are watching it. */
-.bench-play-spin { width: 13px; height: 13px; border-radius: 50%; border: 2px solid rgba(255,255,255,.45);
-    border-top-color: #fff; animation: bench-spin .7s linear infinite; }
+.bench-play-spin { width: 13px; height: 13px; border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--ok) 30%, transparent);
+    border-top-color: var(--ok); animation: bench-spin .7s linear infinite; }
 @keyframes bench-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .bench-play-spin { animation: none; } }
 /* The environment button, in the header beside the mode picker. `.on` while its body is open, so the row

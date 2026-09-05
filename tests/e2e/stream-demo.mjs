@@ -139,8 +139,13 @@ const main = async () => {
                 const seq = await st.getAttribute("data-astep-seq").catch(() => null);
                 if (seq == null || expanded.has(seq)) continue;
                 const cls = (await st.getAttribute("class").catch(() => "")) || "";
-                if (!cls.includes("open")) await st.locator(".astep-head").click({ timeout: 600 }).catch(() => {});
-                expanded.add(seq);
+                if (cls.includes("open")) { expanded.add(seq); continue; }
+                await st.locator(".astep-head").click({ timeout: 600 }).catch(() => {});
+                // Only count it as done once it ACTUALLY opened. Marking it regardless meant a click that
+                // landed while the step was still re-rendering was never retried, and that step stayed shut
+                // for the rest of the demo — which is why fetch_url's never opened.
+                const after = (await st.getAttribute("class").catch(() => "")) || "";
+                if (after.includes("open")) expanded.add(seq);
             }
         };
         const answered = async () => (await frame.locator(".msg.asst").filter({ hasText: "same output cell" }).count().catch(() => 0)) > 0;

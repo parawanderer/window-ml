@@ -38,7 +38,7 @@ const slotOf = (label: string): "in" | "out" | undefined =>
  *  rendered⇄raw toggle. The raw view is the model-facing text VERBATIM and is never optional: that is
  *  the raw-view rule, and this is where it is enforced. Both views carry the slot's `data-cite` anchor,
  *  so a citation lands on the half it named. */
-export function IoBlock({ label, tip, preview, render, raw, marks, reserve, failLine, live, ranMs, ranSince, ctx, lineMap, remoteMs, failed }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; marks?: [number, number][]; reserve?: boolean; failLine?: number | null; live?: boolean; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null; failed?: boolean }) {
+export function IoBlock({ label, tip, preview, render, raw, rawText, marks, reserve, failLine, live, ranMs, ranSince, ctx, lineMap, remoteMs, failed }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; rawText?: string; marks?: [number, number][]; reserve?: boolean; failLine?: number | null; live?: boolean; ranMs?: number; ranSince?: number; ctx?: CodeCtx; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null; failed?: boolean }) {
     const [showRaw, setShowRaw] = useState(false);   // rendered by default when a descriptor targets this block
     // The capped, scrollable, FINDABLE cell wraps the RAW view of either slot — which is the view you go to
     // in order to search for a token, and the one with no structure of its own to cap it. It is also where an
@@ -49,7 +49,8 @@ export function IoBlock({ label, tip, preview, render, raw, marks, reserve, fail
     // output. One setting called "line breaking" that reached only `.code` blocks meant turning it off left
     // the raw JSON, the console and every traceback wrapping anyway — the setting quietly meaning less than
     // it said. (A RENDERED view is not wrapped here at all: its renderer puts its own sections in cells.)
-    const cell = (body: ComponentChildren) => <OutputCell text>{body}</OutputCell>;
+    const cell = (body: ComponentChildren) => (
+        <OutputCell text corner={rawText ? <CopyBtn text={rawText} tip="copy raw" /> : undefined}>{body}</OutputCell>);
     return (
         <details class="io" open>
             <summary class="io-label" {...(tip ? cursorTipOn(tip) : {})}>{label}: <span class="io-preview">{preview}</span></summary>
@@ -391,7 +392,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                                the utility model to annotate ITSELF. Only the step holds both halves. */
                             ctx={hash && st.seq != null ? { hash, seq: st.seq, result: st.result } : undefined}
                             failed={stepFailed}
-                            raw={<RawArgs args={args || {}} schema={paramSchema} />} />
+                            raw={<RawArgs args={args || {}} schema={paramSchema} />} rawText={rawArgsText(args || {})} />
                         : null}
                     <IoBlock label="Out" tip="What the tool returned to the model." marks={st.streamMarks} reserve={!!st.pending && st.streamOutput != null}
                         /* HOW LONG IT RAN. `toolMs` is the tool's own wall clock, not the step's — a human at
@@ -404,7 +405,8 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                                 // LIVE tool output (ctx.stream — console.log / print) filling in Jupyter-style while it runs.
                                 ? <div class="astep-streaming"><SeenSplit text={st.streamOutput} seen={liveCutoff(st)} live marks={st.streamMarks} /></div>
                                 : <span class="dim">running…</span>)
-                            : (st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">(no output)</span>} />
+                            : (st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">(no output)</span>}
+                        rawText={st.pending ? undefined : (st.modelResult ?? st.result ?? "") || undefined} />
                     {st.feedback ? <FeedbackBlock fb={st.feedback} /> : null}
                     {/* The step's POINTER, when the run minted one — a first-class handle the model reads its
                         own outputs back through and can cite in an answer, which until now existed only in
@@ -551,9 +553,14 @@ export function RawArgs({ args, schema }: { args: unknown; schema?: JsonSchemaNo
     try { json = pretty(args ?? {}); } catch { ok = false; }   // circular / non-serialisable → use the fallback
     const tree = ok && !!args && typeof args === "object";
     return <div class="jt-args">
-        <span class="jt-args-copy"><CopyBtn text={ok ? json : String(args)} tip="copy JSON" /></span>
         {tree ? <JsonNode v={args} schema={schema} allOpen defaultOpen /> : <Code text={ok ? json : String(args)} lang="json" />}
     </div>;
+}
+
+/** The text `RawArgs` would copy — so the copy button can live on the CELL, outside the scrolling area,
+ *  while still offering exactly what the view below it shows. */
+export function rawArgsText(args: unknown): string {
+    try { return pretty(args ?? {}); } catch { return String(args); }
 }
 
 // The agent's full tool definitions — name, approval/vision badges, description, and a JSON tree of

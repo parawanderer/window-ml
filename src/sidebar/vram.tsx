@@ -1396,8 +1396,10 @@ export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: str
 export function BenchDrawer() {
     const onGrab = (e: PointerEvent) => {
         // The WHOLE strip drags, so the target is as generous as a drawer edge should be — except the
-        // controls sitting in it, where a drag would fight the click you meant.
-        if ((e.target as HTMLElement).closest("button")) return;
+        // CONTROLS sitting in it, where a drag would fight the click you meant. Every interactive kind, not
+        // just `button`: the row gained a <select> and a <label>, and `preventDefault` on a pointerdown over
+        // a select stops the menu from opening at all — the control looked dead rather than busy.
+        if ((e.target as HTMLElement).closest("button, select, input, textarea, label, a")) return;
         e.preventDefault();
         const grip = e.currentTarget as HTMLElement;
         try { grip.setPointerCapture(e.pointerId); } catch { /* older engines */ }
@@ -1489,6 +1491,27 @@ function BenchEnvButton() {
 function BenchEnv() {
     const [q, setQ] = useState("");
     const open = benchEnvOpen.value, err = benchEnvErr.value;
+    // A panel that opens over the editor has to close the way every other one does: click off it, or Escape.
+    // Without this it could only be dismissed by finding the button again — and since it covers the code you
+    // opened it to compare against, "click off it" is the FIRST thing anyone tries.
+    useEffect(() => {
+        if (!open) return;
+        const off = (e: Event) => {
+            const t = e.target as HTMLElement | null;
+            // Not a click INSIDE the panel (you are reading and filtering it), and not the button itself —
+            // that toggles, and closing here too would re-open it on the same press.
+            if (t?.closest?.(".bench-env, .bench-env-btn")) return;
+            benchEnvOpen.value = false;
+        };
+        const esc = (e: KeyboardEvent) => { if (e.key === "Escape") benchEnvOpen.value = false; };
+        // CAPTURE, so a control that stops propagation cannot leave the panel stranded open.
+        document.addEventListener("pointerdown", off, true);
+        document.addEventListener("keydown", esc, true);
+        return () => {
+            document.removeEventListener("pointerdown", off, true);
+            document.removeEventListener("keydown", esc, true);
+        };
+    }, [open]);
     const env = benchEnv.value;
     const hits = (env?.packages || []).filter((p) => p.name.toLowerCase().includes(q.trim().toLowerCase()));
     // Nothing at all when closed, rather than an empty wrapper: the button lives in the header now, so this
@@ -1591,14 +1614,18 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                         <option value="full">full (network)</option>
                     </select>
                 </label>
-                <span class="sp" />
+                {/* THE GRAB PILL, drawn in the row's free space rather than at its geometric centre. As a
+                    pseudo-element centred on the row it ended up ON TOP of the mode picker once the header
+                    filled up — the visible handle and the draggable area disagreeing, so pressing the handle
+                    opened a dropdown. Inside the spacer it is centred in whatever room is actually left. */}
+                <span class="sp bench-gripbar" aria-hidden="true"><i class="bench-grip-pill" /></span>
                 {/* The one ACTION in the row, so it is filled and coloured where everything else is a quiet
                     outline. Its tooltip carries the shortcut, which is where the bottom bar's hint went. */}
                 <button class="tt bench-play" disabled={running || !code.trim()} onClick={run} aria-label="Run">
                     {running ? <span class="bench-play-spin" aria-hidden="true" /> : <IconPlay />}
-                    <span class="tt-pop wrap left" role="tooltip">{running
+                    <span class="tt-pop wrap left" role="tooltip"><TipText md={running
                         ? "Running in the sandbox…"
-                        : "Run this script in the Pyodide sandbox. ⌘/Ctrl+↵ does the same, from anywhere in the bench."}</span>
+                        : "Run this script in the Pyodide sandbox. `⌘/Ctrl+↵` does the same, from anywhere in the bench."} /></span>
                 </button>
                 {shape}
             </div>

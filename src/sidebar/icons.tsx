@@ -152,11 +152,12 @@ export const IconOut = () => (
     </svg>
 );
 
-/** A filled play triangle — RUN, in the bench's corner. Filled rather than outlined: it is the one action
- *  button in that row and every other icon there is a stroke outline, so the fill is what makes it read as
- *  "do the thing" instead of "another control". */
+/** RUN — an OUTLINE triangle, the shape every IDE uses for it (PyCharm's is the reference). A solid green
+ *  block was the first attempt and read as a call-to-action button dropped into a row of quiet icons; the
+ *  colour belongs on the GLYPH, which says "run" without shouting over the four controls beside it. Same
+ *  stroke family and box as the rest of the row. */
 export const IconPlay = () => (
-    <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" stroke="none" aria-hidden="true">
-        <path d="M8 5.2a.9.9 0 0 1 1.37-.77l9.1 6.03a.9.9 0 0 1 0 1.5l-9.1 6.04A.9.9 0 0 1 8 17.3V5.2Z" />
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">
+        <path d="M8.5 5.6 18 12l-9.5 6.4V5.6Z" />
     </svg>
 );

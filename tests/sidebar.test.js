@@ -4127,7 +4127,7 @@ test("card corner menu: the request carries the run hash + live flag (for Copy i
     // With the menu open, the NEXT pointerdown inside the card asks the shell to dismiss it — the shell's
     // own outside-click handler can't see an in-iframe click (and the page window is already blurred).
     posted.length = 0;
-    w.window.dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true }));
+    w.window.dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true, composed: true }));
     await w.tick();
     assert.ok(posted.some(m => m.__mlSidebarCornerMenuDismiss), "an in-card click dismisses the open menu");
 });
@@ -4595,7 +4595,7 @@ test("raw In args: a key documented in the tool schema gets a hover tooltip; an 
     assert.match(bogus.querySelector(".tt-pop").textContent, /Not in this tool's parameter schema/, "…with a hallucinated-arg warning");
     const tips = [...w.shadow.querySelectorAll(".astep.tool .jt-key-doc .tt-pop")].map(n => n.textContent).join(" | ");
     assert.match(tips, /CSS selector or @pt/, "tooltip text is the schema description");
-    assert.ok(w.shadow.querySelector(".astep.tool .jt-args-copy"), "the tree carries a copy-JSON button (a tree isn't drag-selectable)");
+    assert.ok(w.shadow.querySelector(".astep.tool .r-outcorner"), "the raw view carries a copy button — on the CELL, so it does not scroll away with the text");
 });
 
 test("raw In args: malformed schema / non-object args never crash the panel (falls back safely)", async () => {
@@ -8476,4 +8476,55 @@ test("usage: occupancy is the LATEST sample by time, not whichever collection is
     await w.tick(); await w.flush();
     assert.match(w.shadow.querySelector(".usage-pct").textContent, /20%/,
         "the newest sample (200/1000), not the largest and not the first");
+});
+
+// The environment panel opens OVER the editor, so "click off it" is the first thing anyone tries to dismiss
+// it — and it did nothing: the only way out was finding the button again, behind the panel you were trying
+// to close.
+// (`composed: true` on the synthetic events: a real pointer event crosses the shadow boundary and a
+// hand-built one does not, so without it the document-level listener never sees the click and the test
+// would report the dismiss as broken when it works.)
+test("python bench: the environment panel closes on an outside click, and on Escape", async () => {
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: 1, stdout: "" }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    // `flush`, not `tick`: the dismiss is armed in an EFFECT, and Preact defers those — a click delivered
+    // before the listener exists finds nothing to close it, which reads as the feature not working.
+    const openIt = async () => { w.shadow.querySelector(".bench-env-btn").click(); await w.flush(); };
+
+    await openIt();
+    assert.ok(w.shadow.querySelector(".bench-env-body"), "the panel opens");
+
+    // A click INSIDE it must not close it — you are reading and filtering.
+    w.shadow.querySelector(".bench-env-body").dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true, composed: true }));
+    await w.flush();
+    assert.ok(w.shadow.querySelector(".bench-env-body"), "…and stays open while you use it");
+
+    // A click anywhere else closes it.
+    w.shadow.querySelector(".bench-code").dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true, composed: true }));
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".bench-env-body"), null, "clicking off it dismisses it");
+
+    // Escape does too.
+    await openIt();
+    assert.ok(w.shadow.querySelector(".bench-env-body"), "reopened");
+    w.window.document.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".bench-env-body"), null, "Escape dismisses it");
+});
+
+test("python bench: the BUTTON still toggles — the outside-click handler must not fight it", async () => {
+    // The trap: a capture-phase dismiss that also fires for the button would close the panel and let the
+    // button's own click reopen it, so it would look like the dismiss never worked. Or, if ordered the other
+    // way, the button would appear dead on the second press.
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: 1, stdout: "" }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const btn = () => w.shadow.querySelector(".bench-env-btn");
+    btn().dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true, composed: true }));
+    btn().click(); await w.tick();
+    assert.ok(w.shadow.querySelector(".bench-env-body"), "first press opens");
+    btn().dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true, composed: true }));
+    btn().click(); await w.tick();
+    assert.equal(w.shadow.querySelector(".bench-env-body"), null, "second press closes");
 });

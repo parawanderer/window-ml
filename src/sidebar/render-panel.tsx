@@ -680,7 +680,7 @@ function clearFindPaint(): void {
  *     it holds still so you can read, and resumes following the moment you return to the bottom.
  *  Deliberately children-based (not a section schema): each tool's sections legitimately differ (python has a
  *  DataFrame/LaTeX/image; exec has a console), while the CONTAINER behaviour is what's worth sharing. */
-export function OutputCell({ children, text }: { children: ComponentChildren; text?: boolean }) {
+export function OutputCell({ children, text, corner }: { children: ComponentChildren; text?: boolean; corner?: ComponentChildren }) {
     const box = useRef<HTMLDivElement>(null);
     const follow = useRef(true);                       // tail-follow armed? (parked at the bottom)
     const [dragH, setDragH] = useState<number | null>(null);   // a drag pins THIS cell; null → the configured cap
@@ -799,6 +799,11 @@ export function OutputCell({ children, text }: { children: ComponentChildren; te
                 to a rendered structure (a table, a JSON tree). Only those honour the wrap preference, because
                 only those have lines to leave unbroken; forcing `white-space: pre` on a table would be about
                 a different thing entirely. */}
+            {/* A CORNER CONTROL belongs to the CELL, not to its content — the copy button used to live inside
+                the scrolling element, so it slid away with the text and, on a wide line, off the edge
+                entirely. The find bar was already positioned out here for the same reason; anything you
+                reach for WHILE reading has to stay where you last saw it. */}
+            {corner ? <span class="r-outcorner">{corner}</span> : null}
             <div class={`r-outscroll${text ? " r-outtext" : ""}`} ref={box} tabIndex={0} onKeyDown={onKey} onScroll={onScroll}
                 style={cap > 0 ? { maxHeight: `${cap}px` } : undefined}>{children}</div>
             {overflows || dragH != null ? <div class="r-outgrip" role="separator" aria-label="Drag to resize this output" {...cursorTipOn("Drag to resize this output")} onPointerDown={onGrab} /> : null}

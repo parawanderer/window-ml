@@ -66,7 +66,10 @@ test("the drawer drags to resize, and remembers the height", async () => {
         const before = (await drawer.boundingBox()).height;
 
         // Dragging the grip UP grows it — the edge is where a hand goes for a drawer.
-        const grip = frame.locator(".bench-grip");
+        // Grab the PILL, not the row's midpoint. The header holds controls now, so its geometric centre is a
+        // <select> — aiming there stopped dragging entirely, and that is exactly the confusion the pill
+        // moving into the free space fixes.
+        const grip = frame.locator(".bench-grip-pill");
         const g = await grip.boundingBox();
         await page.mouse.move(g.x + g.width / 2, g.y + g.height / 2);
         await page.mouse.down();
