@@ -12,10 +12,10 @@ import {
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevron, IconExpand, IconClose } from "./icons";
-import { Disclosure } from "./ui-kit";
+import { Disclosure, cursorTipOn } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { hhmmss } from "./timestamps";
-import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, benchEnv, noteBenchEnv } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
@@ -1394,6 +1394,9 @@ export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: str
  *  full-page mode, which is the right shape for a long script and the wrong one for cross-referencing. */
 export function BenchDrawer() {
     const onGrab = (e: PointerEvent) => {
+        // The WHOLE strip drags, so the target is as generous as a drawer edge should be — except the
+        // controls sitting in it, where a drag would fight the click you meant.
+        if ((e.target as HTMLElement).closest("button")) return;
         e.preventDefault();
         const grip = e.currentTarget as HTMLElement;
         try { grip.setPointerCapture(e.pointerId); } catch { /* older engines */ }
@@ -1410,10 +1413,47 @@ export function BenchDrawer() {
     };
     return (
         <div class="bench-drawer" style={{ height: `${benchH.value}px` }}>
-            <div class="bench-grip" role="separator" aria-label="Drag to resize the Python bench" onPointerDown={onGrab} />
+            {/* ONE ROW, doing both jobs. A title row and a drag strip stacked would spend two rows on a
+                drawer whose whole point is the space below them — and the grip's own row was mostly empty
+                either side of the pill, which is exactly where a name and its controls belong. */}
+            <div class="bench-top bench-grip" role="separator" aria-label="Drag to resize the Python bench" onPointerDown={onGrab}>
+                <span class="bench-title">Python bench</span>
+                <BenchVer />
+                <span class="sp" />
+                <button class="tt hbtn" aria-label="Expand the Python bench" onClick={() => {
+                    benchDock.value = "full"; chrome.storage.local.set({ [BENCH_DOCK_KEY]: "full" });
+                    // Remember EXACTLY where we were, so "back" is a return and not a trip to the list.
+                    if (view.value.name === "list" || view.value.name === "detail") viewReturn.value = view.value;
+                    view.value = { name: "bench" };
+                }}><IconExpand /><span class="tt-pop left" role="tooltip">Open it full-page — better for a long script, worse for looking at a step while you work.</span></button>
+                <button class="tt hbtn" aria-label="Close the Python bench" onClick={() => {
+                    benchOpen.value = false; chrome.storage.local.set({ [BENCH_OPEN_KEY]: false });
+                }}><IconClose /><span class="tt-pop left" role="tooltip">Close it. Your script is kept.</span></button>
+            </div>
             <PythonBench />
         </div>
     );
+}
+
+/** The sandbox's Python version, beside the bench's name. ABSENT until we know it rather than guessed from
+ *  our own package manifest — the manifest says what we asked for, and this says what will import. Learned
+ *  on the first env read or the first run and cached, so it is missing only before the sandbox has ever
+ *  started. Clicking it is the same as opening the environment panel, which is where the rest of it is. */
+export function BenchVer() {
+    const env = benchEnv.value;
+    if (!env) return null;
+    return <span class="bench-ver" {...cursorTipOn(`Python ${env.python} on Pyodide ${env.pyodide}. Open **environment** for the packages.`)}>py {env.python}</span>;
+}
+
+/** Ask the sandbox what it is. Costs a Pyodide start when it is cold, so callers pick their moment:
+ *  the environment panel on open (you asked), or a bench run's completion (it is already warm). */
+function loadBenchEnv(onErr?: (m: string) => void) {
+    if (benchEnv.value) return;
+    chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code: "", hardened: true, env: true } }, (resp: any) => {
+        const r = resp?.data ?? resp;
+        if (r?.env) noteBenchEnv(r.env);
+        else onErr?.(r?.error || resp?.error || "The sandbox did not answer.");
+    });
 }
 
 /** WHAT THE SANDBOX IS — the Python and Pyodide versions and the packages you can import, read from the
@@ -1429,22 +1469,14 @@ export function BenchDrawer() {
  *  doing it on mount would make every glance at the bench cost a cold start. */
 function BenchEnv() {
     const [open, setOpen] = useState(false);
-    const [env, setEnv] = useState<{ python: string; pyodide: string; packages: { name: string; version?: string }[] } | null>(null);
     const [err, setErr] = useState("");
     const [q, setQ] = useState("");
-    const load = () => {
-        if (env || err) return;
-        chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code: "", hardened: true, env: true } }, (resp: any) => {
-            const r = resp?.data ?? resp;
-            if (r?.env) setEnv(r.env);
-            else setErr(r?.error || resp?.error || "The sandbox did not answer.");
-        });
-    };
+    const env = benchEnv.value;
     const hits = (env?.packages || []).filter((p) => p.name.toLowerCase().includes(q.trim().toLowerCase()));
     return (
         <div class={`bench-env${open ? " open" : ""}`}>
             <button class="bench-env-btn" aria-expanded={open}
-                onClick={() => { setOpen((v) => !v); load(); }}>
+                onClick={() => { setOpen((v) => !v); if (!err) loadBenchEnv(setErr); }}>
                 <span class="tri" aria-hidden="true"><IconChevron /></span>
                 environment{env ? <span class="bench-env-ver"> · Python {env.python}</span> : null}
             </button>
@@ -1496,6 +1528,9 @@ export function PythonBench() {
                     const r = resp?.data ?? (resp?.error ? { ok: false, stdout: "", error: resp.error } : null);
                     setResult(r || { ok: false, stdout: "", error: "No response from the sandbox." });
                     setRunning(false);
+                    // The sandbox is up NOW, so the version chip is free. Doing this on mount instead would
+                    // make every glance at the bench pay the cold start the env panel exists to defer.
+                    loadBenchEnv();
                 });
         } catch (e) { setResult({ ok: false, stdout: "", error: String(e) }); setRunning(false); }
     };
@@ -1525,20 +1560,6 @@ export function PythonBench() {
                 </label>
                 <span class="sp" />
                 <span class="bench-kbd dim">⌘/Ctrl+↵</span>
-                {/* THE SHAPE CONTROLS, in the bar that already exists rather than a title row of their own —
-                    a row spent on a word and two buttons is a row the editor does not get. Drawer only: in
-                    full-page mode they live in the app header, where the rest of that view's chrome is. */}
-                {benchDock.value === "drawer" && benchOpen.value ? <>
-                    <button class="tt hbtn" aria-label="Expand the Python bench" onClick={() => {
-                        benchDock.value = "full"; chrome.storage.local.set({ [BENCH_DOCK_KEY]: "full" });
-                        // Remember EXACTLY where we were, so "back" is a return and not a trip to the list.
-                        if (view.value.name === "list" || view.value.name === "detail") viewReturn.value = view.value;
-                        view.value = { name: "bench" };
-                    }}><IconExpand /><span class="tt-pop left" role="tooltip">Open it full-page — better for a long script, worse for looking at a step while you work.</span></button>
-                    <button class="tt hbtn" aria-label="Close the Python bench" onClick={() => {
-                        benchOpen.value = false; chrome.storage.local.set({ [BENCH_OPEN_KEY]: false });
-                    }}><IconClose /><span class="tt-pop left" role="tooltip">Close it. Your script is kept.</span></button>
-                </> : null}
                 <button class="bench-run" disabled={running || !code.trim()} onClick={run}>{running ? "running…" : "Run"}</button>
             </div>
             {outD

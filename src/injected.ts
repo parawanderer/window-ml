@@ -1039,6 +1039,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const deps: AgentLoopDeps = {
                 callModel: (messages) => this.step(messages as NeutralMessage[], { tools: toolDefs, model, think, signal }),
                 runTool: runToolDep,
+                // The pending step's pretty In. Page-side the tool object is right here, so this is
+                // `descriptorFor` over an EMPTY envelope — the tool's own render(input, args), and nothing
+                // that would need it to have run. Defensive: a throwing custom render must not stop a step.
+                renderFor: async (name, args) => {
+                    try { return descriptorFor(byName[name], {} as ToolRenderInput, args).in; }
+                    catch { return undefined; }
+                },
                 approve: async ({ tool, arguments: args }) => {
                     const d = normalizeApproval(await approve({ tool, arguments: args }), args);
                     // Remember every approved external sheet for the rest of this page session (keyed off the

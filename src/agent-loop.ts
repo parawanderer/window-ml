@@ -52,9 +52,9 @@ export interface AgentLoopDeps {
     // could. Reached before autoApprove/the gate for a requiresApproval tool.
     tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
     // PRE-RUN In render for the pending step (the tool's `render(input,args)` — exec's beautified JS,
-    // python's code cell), so a step you WATCH streaming shows a pretty In instead of raw JSON args from the
-    // moment it starts. Async because the background must ask the page to compute it. Used only for a
-    // streaming run (that's when a pending step is on screen long enough to matter). Optional.
+    // python's code cell), so a step shows a pretty In instead of raw JSON args from the moment it starts.
+    // Async because the BACKGROUND must ask the page to compute it; page-side it is a direct call. Optional —
+    // a host that cannot compute one leaves the pending row on its raw args, which is the old behaviour.
     renderFor?(name: string, args: Record<string, unknown>): Promise<RenderDescriptor | undefined>;
     // Doomed-action precheck (click/type): a side-effect-free target resolution → an ERROR STRING if the
     // action can only fail (no element / stale @pt / bad selector), else null/"" to proceed to the gate.
@@ -553,9 +553,13 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             let args = (call.arguments || {}) as Record<string, unknown>;
             const s = ++seq;
             lastToolMs = undefined; lastApproveMs = undefined; lastDispatchMs = undefined;   // this step's own measurements, never the previous step's
-            // On a STREAMING run the pending step is on screen while its output fills in, so give it a pretty
-            // In up front (the gated path already does this via approve; this covers auto-approved calls too).
-            const preIn = (opts.stream && deps.renderFor) ? await deps.renderFor(call.name, args).catch(() => undefined) : undefined;
+            // A PENDING step shows a pretty In from the moment it starts, not raw JSON args. This used to be
+            // gated on `stream`, on the reasoning that only a streaming run leaves the row on screen long
+            // enough to matter — which confused two different clocks. Streaming is about how the MODEL's
+            // output arrives; how long a TOOL sits pending is about the tool, and a python call pays a
+            // multi-second cold start before a line of it runs either way. So it is asked for whenever the
+            // host can answer (the gated path also does this via approve; this covers auto-approved calls).
+            const preIn = deps.renderFor ? await deps.renderFor(call.name, args).catch(() => undefined) : undefined;
             deps.emit?.({ step, seq: s, pending: true, tool: call.name, arguments: args, renderIn: preIn });   // in-flight START
             // Live tool-output fan for THIS call (opt-in `stream`): a delta emit carries only { step, seq,
             // streamOutput } so the reducer patches the pending row additively; the DONE below supersedes it.

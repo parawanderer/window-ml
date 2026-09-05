@@ -2625,9 +2625,13 @@ test("python bench: opens from the header, runs a script, and renders the sandbo
     w.shadow.querySelector(".bench-run").click();
     await w.tick();
     // The PYTHON_EXEC payload carried the code; default mode readonly → hardened.
-    assert.equal(w.pyCalls.length, 1);
-    assert.match(w.pyCalls[0].code, /print\('hi'\)/);
-    assert.equal(w.pyCalls[0].hardened, true, "readonly mode → hardened");
+    const runs = w.pyCalls.filter((c) => !c.env);
+    assert.equal(runs.length, 1, "ONE run — the env probe below is not a second execution of your script");
+    assert.match(runs[0].code, /print\('hi'\)/);
+    assert.equal(runs[0].hardened, true, "readonly mode → hardened");
+    // …and the run's completion is when the version chip is filled in: the sandbox is warm NOW, so learning
+    // what it is costs nothing, where doing it on mount would make every glance at the bench pay a cold start.
+    assert.ok(w.pyCalls.some((c) => c.env), "the env probe rides the run's completion");
     // The result renders through the python-out panel (stdout).
     const out = w.shadow.querySelector(".bench-out .r-py-out");
     assert.ok(out, "result renders in the python-out panel");
@@ -7743,11 +7747,22 @@ test("scrub strip: appears once the session outgrows the window, and the box fol
     for (let i = 0; i < 60 && !w.shadow.querySelector(".rc-scrub"); i++) {
         await w.flush(); await new Promise((r) => setTimeout(r, 200));
     }
-    const strip = w.shadow.querySelector(".rc-scrub");
+    let strip = w.shadow.querySelector(".rc-scrub");
     assert.ok(strip, "the strip appears once there is history the window doesn't cover");
     assert.ok(strip.querySelectorAll(".rc-scrub-run").length >= 1, "the session's runs are drawn as blocks");
+    // Wait until the box is a genuine BOX and not the whole strip. The strip appears the instant history
+    // exceeds the window, at which point the window still covers ~100% of it — and a grab at x=0 then lands
+    // on the window's own LEFT HANDLE, which means resize, not pan. This test passed for a while on that
+    // mix-up, because a resize dragged to the far left also produces `left: 0%`.
+    for (let i = 0; i < 60; i++) {
+        const st = w.shadow.querySelector(".rc-scrub-win")?.getAttribute("style") || "";
+        if (Number(/width:\s*([\d.]+)%/.exec(st)?.[1] ?? 100) < 50) break;
+        await w.flush(); await new Promise((r) => setTimeout(r, 200));
+    }
+    strip = w.shadow.querySelector(".rc-scrub");
     const boxBefore = strip.querySelector(".rc-scrub-win").getAttribute("style");
     assert.match(boxBefore, /left:\s*[\d.]+%/, "the window is a box on the strip");
+    assert.ok(Number(/width:\s*([\d.]+)%/.exec(boxBefore)[1]) < 50, "…a box, with strip either side of it to pan into");
     assert.ok(strip.querySelector(".rc-scrub-live").classList.contains("on"), "it starts pinned to live");
 
     // Dragging the box moves the window through the session — it scrolls, it does not zoom.
@@ -8331,4 +8346,41 @@ test("out footer: while the step is RUNNING it counts up instead", async () => {
     // that is quietly still growing.
     assert.match(foot.textContent, /[23](\.\d)?s/);
     assert.doesNotMatch(foot.textContent, /ran in/);
+});
+
+// An EMBED wraps a whole rendered output, and a DataFrame render brings its own controls — copy CSV, hide
+// table, a sortable column header. Clicking one bubbled to the embed's jump and yanked the reader up to the
+// source step, which is the opposite of the request: they were operating the table in front of them.
+test("embed: a click on the render's OWN controls does not jump to the source step", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("em", "totals"));
+    await w.dispatch(agentStep("em", 1, { seq: 1, tool: "python_exec", token: "aa11bb2", result: "table",
+        renderOut: { type: "python-out", df: { columns: ["rep", "total"], rows: [["Gia", 850], ["Kim", 810]] } } }));
+    await w.dispatch(agentResult("em", "Ranked:\n\n![rep totals](@tool:aa11bb2:out)", 1));
+    await openRun(w);
+    const embed = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(embed, "the embed renders");
+    assert.ok(embed.querySelector("table"), "…as the DataFrame render, with its own controls");
+
+    let jumps = 0;
+    for (const el of w.shadow.querySelectorAll("*")) el.scrollIntoView = () => { jumps++; };
+
+    const copy = [...embed.querySelectorAll("button")].find((b) => /copy csv/i.test(b.textContent || ""));
+    assert.ok(copy, "the DataFrame render offers copy CSV");
+    copy.dispatchEvent(new w.window.MouseEvent("click", { bubbles: true }));
+    await w.tick();
+    assert.equal(jumps, 0, "copy CSV operated the table and did NOT scroll to the source");
+
+    const th = embed.querySelector("th:not(.r-df-idx)");
+    assert.ok(th, "…and the columns are sortable headers");
+    th.dispatchEvent(new w.window.MouseEvent("click", { bubbles: true }));
+    await w.tick();
+    assert.equal(jumps, 0, "a sort header is a control too — a <th> with a handler, not a <button>");
+
+    // …and the INERT parts still jump, or the guard would have removed the feature rather than scoped it.
+    const cell = embed.querySelector("tbody td");
+    assert.ok(cell, "a body cell is inert");
+    cell.dispatchEvent(new w.window.MouseEvent("click", { bubbles: true }));
+    await w.tick();
+    assert.ok(jumps > 0, "clicking the render itself still goes to the step that produced it");
 });

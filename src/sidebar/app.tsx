@@ -11,6 +11,7 @@ import { DEFAULT_CONFIG } from "../contract";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, showLane, showModels, FOCUS_KEY, focusMode,
     benchOpen, benchDock, benchH, viewReturn, markReturn, openBench, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY,
+    benchEnv, BENCH_ENV_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
     vramOpen, sidebarOpen, backendError, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
@@ -20,7 +21,7 @@ import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge, EmbedRunView } from "./reply";
 import { AgentRunView } from "./agent-detail";
 import { Composer } from "./composer";
-import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, VramPanel, PythonBench, BenchDrawer, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
+import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, VramPanel, PythonBench, BenchDrawer, BenchVer, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
 import { CardApp, endActiveCardDrag } from "./hud-card";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
@@ -306,6 +307,9 @@ function App() {
                         {detailSession.kind === "agent" ? <AgentBadge /> : null}
                     </>
                     : <b>{inSettings ? "Settings" : inBench ? "Python bench" : `Sessions (${sessionMap.size})`}</b>}
+                {/* Same fact in both shapes: the bench is one thing, and which sandbox it is over does not
+                    depend on whether it is docked. */}
+                {inBench ? <BenchVer /> : null}
                 <span class="sp" />
                 {v.name === "detail" ? <Hash hash={v.hash} /> : null}
                 {v.name === "detail" ? <ExportMenu hash={v.hash} /> : null}
@@ -460,6 +464,9 @@ function mount(): void {
         benchOpen.value = !!d[BENCH_OPEN_KEY];
         benchDock.value = d[BENCH_DOCK_KEY] === "full" ? "full" : "drawer";
         if (typeof d[BENCH_H_KEY] === "number" && d[BENCH_H_KEY] > 0) benchH.value = d[BENCH_H_KEY];
+        // The sandbox's version is a property of the wheels this build ships, not of this session — so it is
+        // remembered rather than re-read, which would cost a Pyodide start on every panel open.
+        if (d[BENCH_ENV_KEY]?.python) benchEnv.value = d[BENCH_ENV_KEY];
     });
     applyTheme();
     applyCodePrefs();

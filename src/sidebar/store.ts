@@ -224,6 +224,21 @@ export const BENCH_H_KEY = "ml_bench_h";   // storage.local: the bench drawer's 
 export const benchOpen = signal(false);   // is the bench showing (as a drawer, or as the full-page view)?
 export const benchDock = signal<"drawer" | "full">("drawer");   // its SHAPE — a remembered preference, not re-chosen each time
 export const benchH = signal(280);   // px — the drawer's dragged height
+
+/** What the bench's sandbox IS — Python/Pyodide versions and the packages that actually installed.
+ *  A SIGNAL rather than component state because two surfaces name it (the drawer's header chip and the
+ *  environment panel) and reading it is not free: it STARTS Pyodide, which is the cold start the panel is
+ *  deliberately lazy about. So it is learned once — when you open the panel, or opportunistically after a
+ *  run, when the sandbox is already warm — and CACHED across sessions, since it is a property of the
+ *  wheels this build bundles rather than of this session. */
+export interface BenchEnvInfo { python: string; pyodide: string; packages: { name: string; version?: string }[] }
+export const BENCH_ENV_KEY = "ml_bench_env";
+export const benchEnv = signal<BenchEnvInfo | null>(null);
+/** Record what the sandbox reported, and remember it for next time. */
+export function noteBenchEnv(env: BenchEnvInfo) {
+    benchEnv.value = env;
+    try { chrome.storage.local.set({ [BENCH_ENV_KEY]: env }); } catch { /* no chrome in a bare render */ }
+}
 /** WHERE TO GO BACK TO. Settings, the server-tool list and the full-page bench all REPLACE the view, and
  *  `‹` sent you to the sessions list from every one of them — so glancing at a setting mid-run cost you the
  *  run you were reading and you had to find your way back in. One signal for all of them rather than one

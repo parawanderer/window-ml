@@ -80,12 +80,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    same affordance to look like three different things. A short CENTRED pill rather than a full-width bar:
    a bar spanning the edge reads as an inert scrollbar track. The hit area stays full width; only the pill
    is painted, and it GROWS on hover so the target announces itself before you press. */
-.vram-grip, .bench-grip { height: 7px; flex: 0 0 auto; cursor: ns-resize; touch-action: none;
+.vram-grip { height: 7px; flex: 0 0 auto; cursor: ns-resize; touch-action: none;
              display: flex; align-items: center; justify-content: center; background: var(--panel); }
 .vram-grip { position: sticky; bottom: 0; margin-top: auto; }
-.vram-grip::after, .bench-grip::after { content: ""; width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2);
+.vram-grip::after { content: ""; width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2);
                     opacity: .55; transition: width .12s ease, opacity .12s ease; }
-.vram-grip:hover::after, .bench-grip:hover::after { width: 52px; opacity: 1; background: var(--panel-2-hover); }
+.vram-grip:hover::after { width: 52px; opacity: 1; background: var(--panel-2-hover); }
 /* ONE ROW, always. The header gains and loses controls as you use the panel — the zoom chip appears when you
    scrub, the view picker only once capacity is known — and a row that reflows when one arrives shifts every
    surface below it, including the strip you are mid-drag on. So it never wraps, and the total (the longest
@@ -2411,8 +2411,27 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
     flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0;
     border-top: 1px solid var(--border); background: var(--bg);
 }
-/* The grab strip. Its own row above the header so the drag target is the edge — which is where a hand
-   goes for a drawer — rather than a handle hidden somewhere in the chrome. */
+/* ONE ROW does the drawer's naming AND its resizing. A title row and a grab strip stacked would cost two
+   rows out of a drawer whose entire value is the space under them, and the grip's own row was empty either
+   side of its pill — so the name lives in that space on the left and the shape controls on the right, with
+   the pill still centred and the whole strip still the drag target. The row IS the top edge, which is where
+   a hand goes for a drawer. */
+.bench-top { position: relative; display: flex; align-items: center; gap: 6px; padding: 5px 4px 1px; flex: 0 0 auto;
+    cursor: ns-resize; touch-action: none; background: var(--panel); }
+.bench-top > .hbtn { cursor: pointer; }
+/* The grab pill: centred on the ROW and sitting ON the top edge, where a hand goes for a drawer. A
+   pseudo-element rather than a flex child, because a child would be centred in whatever space the name and
+   the controls left over — which is off-centre whenever those two sides differ in width, and they always do. */
+.bench-top::after { content: ""; position: absolute; top: 3px; left: 50%; transform: translateX(-50%);
+    width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2); opacity: .55;
+    transition: width .12s ease, opacity .12s ease; pointer-events: none; }
+.bench-top:hover::after { width: 52px; opacity: 1; background: var(--panel-2-hover); }
+.bench-title { font-size: 0.78em; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--fg-faint); white-space: nowrap; padding-left: 3px; }
+/* The sandbox's python version. A CHIP, not prose: it is a fact about the machine you are typing at, read
+   at a glance and never scanned as a sentence. */
+.bench-ver { font: 0.72em/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--fg-dim); background: var(--panel-2); border-radius: 999px; padding: 3px 6px; white-space: nowrap; cursor: help; }
 
 .bench-drawer .bench { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .bench-drawer .bench-code { flex: 1 1 auto; min-height: 60px; }

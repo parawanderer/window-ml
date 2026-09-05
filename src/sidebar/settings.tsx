@@ -19,6 +19,17 @@ import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
 import { IconCheck } from "./icons";
 import { Disclosure } from "./ui-kit";
 
+/** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is
+ *  why the select needs to know which values it already has an option for. */
+const RESWIN_PRESETS = [60, 180, RESWIN_DEFAULT, 900, 1800, 0];
+/** A window length as a person would say it — for the option a drag creates, which has no preset name. */
+function fmtWindow(s: number): string {
+    if (!s) return "Everything kept";
+    if (s < 60) return `${s} seconds`;
+    const m = s / 60;
+    return `${Number.isInteger(m) ? m : m.toFixed(1)} minute${m === 1 ? "" : "s"}`;
+}
+
 // Update one config field: mirror it into the signal (live UI), optionally
 // persist to chrome.storage.sync (which the popup also reads → they sync).
 // String LISTS are config values too (the server-tool curation) — the signature took scalars only, so a
@@ -1081,6 +1092,11 @@ export function Settings() {
                         <option value="900">15 minutes</option>
                         <option value="1800">30 minutes</option>
                         <option value="0">Everything kept</option>
+                        {/* The chart's scrub strip edits this same quantity by dragging its left edge, which
+                            lands on values no preset names. Without a matching option the select renders
+                            BLANK — a control that shows nothing while the thing it controls is plainly set. */}
+                        {RESWIN_PRESETS.includes(resWindowS.value) ? null
+                            : <option value={String(resWindowS.value)}>{fmtWindow(resWindowS.value)} (dragged)</option>}
                     </select></label>
                 <div class="set-note">How much history the VRAM/RAM chart DRAWS. Samples are kept for the whole session either way — this only sets how far back the chart looks, because a long window squeezed into a narrow panel smears into an unreadable blur. Gaps stay gaps: while the panel is closed nothing is sampled, so the line breaks rather than being drawn across.</div>
                 <label class="set-field"><span>Model colours</span>
