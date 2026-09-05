@@ -1226,7 +1226,12 @@ remembered (hovering a step cannot light it, and it cannot enter `usageByModel`)
 clicking still goes to the step you asked about, and its tooltip says outright that you triggered it. Stored
 in `store.ts` `asides` (a Map by hash, session-scoped and in memory only — it describes this READING session,
 not the run's record) and merged in at the `eventsFrom` call site rather than written into the session the
-debug reducer builds.
+debug reducer builds. Its tooltip is the ONE place a span names its model, because an aside runs on the
+UTILITY model while every other span runs on the session's own — which the panel already says in three
+places. `tests/e2e/aside-lane.spec.mjs` covers the seam neither unit test can: the merge, and the class the
+lane paints. It also has to SEED A BOX (`setCapacity`/`setResident`) — with no samples the panel draws no
+tracks and no lane, and a lane that was never drawn cannot be missing a bar, so the first version of that
+test would have passed the day the feature broke.
 
 **A PYTHON COLD START is not the script.** The first `python_exec` of a session spends seconds fetching
 Pyodide and its wheels before a line runs, and one elapsed figure charges the script for time it never

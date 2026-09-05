@@ -1062,6 +1062,11 @@ function EventTip({ scope }: { scope: string }) {
                     a load looked identical, and neither said which it was. Phases are rows below now, all of
                     them, so the header is the identity and the rows are how the time split. */}
                 <span class="rc-tip-name">{e.label || e.model}</span>
+                {/* An ASIDE names its MODEL too, and only it does. Every other span's model is the session's
+                    own — the panel says it in three places already — but an aside runs on the UTILITY model,
+                    and "which model spent this" is most of what a reader wants from a bar they triggered
+                    themselves. Elsewhere it would be the same string repeated on every tooltip. */}
+                {e.kind === "aside" && e.model ? <span class="rc-tip-aside-model">{e.model}</span> : null}
                 <span class="rc-tip-size">{ms(dur)}</span></div>
             {/* WHICH SESSION this belongs to — only while the lane is showing every session. Scoped, every
                 block on screen is from the one you are reading, and the pill would repeat the same eight

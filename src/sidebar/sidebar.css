@@ -2414,3 +2414,6 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .bench-drawer .bench { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .bench-drawer .bench-code { flex: 1 1 auto; min-height: 60px; }
 .bench-drawer .bench-out { flex: 0 1 auto; min-height: 0; overflow: auto; }
+
+/* An aside's model, in its tooltip header. Quiet: the label is what it DID, this is what ran it. */
+.rc-tip-aside-model { font-size: 0.85em; color: var(--fg-faint); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
