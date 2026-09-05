@@ -2537,6 +2537,12 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
     background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
     padding: 0.55em 0.7em;
 }
+/* …EXCEPT while the step is still streaming. A pending Out has no descriptor yet, so it renders through the
+   RAW path and then switches to the rendered one when the result lands — and the box above indents it by
+   0.7em that the rendered view does not have, so the whole output JUMPED ~9px left the instant the step
+   finished. The padding is right for the raw view you deliberately toggle to; live output is not that, it is
+   the Out's own content arriving, and it has to sit where its finished form will sit. */
+.io-raw > .r-outcell:has(.astep-streaming) { padding-left: 0; padding-right: 0; border-color: transparent; background: transparent; }
 
 /* A pointer link inside model prose — a note, a retry's claim. Underlined like a link and coloured like one,
    but a BUTTON: it navigates within the panel rather than going anywhere, so it must not offer a context

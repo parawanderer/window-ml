@@ -268,6 +268,30 @@ const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approv
 
 // Returns AgentResult WITHOUT `hash` — this loop is identity-agnostic; the page-side ml.agent
 // caller stamps the run's hash onto the result (it owns runHash). See injected.ts's background path.
+/** How long a PRE-RUN In render may take before the step goes ahead without one. A pretty In is a nicety; a
+ *  step that never runs is not — and on the background path this is a round-trip to the PAGE, which on a
+ *  CSP-blocked page never answers at all, because injected.js was never allowed to load there. Unbounded,
+ *  that wedged the whole step before it even attempted the tool, turning a fast, actionable "this page blocks
+ *  the extension" into a run that simply stopped. (It only surfaced once the pre-render stopped being gated
+ *  on `stream` — the bound is what makes running it on every step safe.) */
+const PRE_RENDER_MS = 1500;
+
+/** Ask the host for the pending step's In render, but never let it hold the step up. */
+async function preRender(
+    fn: NonNullable<AgentLoopDeps["renderFor"]>,
+    name: string,
+    args: Record<string, unknown>,
+): Promise<RenderDescriptor | undefined> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            fn(name, args),
+            new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), PRE_RENDER_MS); }),
+        ]);
+    } catch { return undefined; }   // a host that throws is the same as one that cannot answer
+    finally { if (timer) clearTimeout(timer); }
+}
+
 export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: AgentLoopDeps): Promise<Omit<AgentResult, "hash">> {
     const { tools, signal } = opts;
     // maxSteps is read LIVE each iteration (not destructured) so a handle can raise the cap mid-run
@@ -559,7 +583,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // output arrives; how long a TOOL sits pending is about the tool, and a python call pays a
             // multi-second cold start before a line of it runs either way. So it is asked for whenever the
             // host can answer (the gated path also does this via approve; this covers auto-approved calls).
-            const preIn = deps.renderFor ? await deps.renderFor(call.name, args).catch(() => undefined) : undefined;
+            const preIn = deps.renderFor ? await preRender(deps.renderFor, call.name, args) : undefined;
             deps.emit?.({ step, seq: s, pending: true, tool: call.name, arguments: args, renderIn: preIn });   // in-flight START
             // Live tool-output fan for THIS call (opt-in `stream`): a delta emit carries only { step, seq,
             // streamOutput } so the reducer patches the pending row additively; the DONE below supersedes it.

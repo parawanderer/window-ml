@@ -302,11 +302,26 @@ test("the revises pill scrolls to the OLD call's code, not to the top of its ste
         // THE DISTINCTION, which is the only thing worth asserting here: the step is taller than the
         // viewport, so landing on its top and landing on its code are different places. The head must be
         // scrolled PAST — if it is still on screen we went to the row, which is the bug.
-        await expect.poll(async () => {
-            const head = await target.locator(".astep-head").boundingBox();
-            const code = await anchor.boundingBox();
-            return head && code ? head.y < code.y - 200 : null;
-        }, { timeout: 10000 }).toBe(true);
+        // WHAT IS *NOT* ASSERTED HERE, and why — because the obvious assertion was here for a while and was
+        // never capable of failing.
+        //
+        // It asked whether the step's HEAD had scrolled ~200px above the code, meaning "we went past the row
+        // and landed on the code". That cannot be true whichever element is scrolled to: the head sits a
+        // fixed ~86px above the In block and the two move together, so the difference is a constant. It was
+        // rephrased as "which element ended up centred", and that cannot discriminate either — the step is
+        // deliberately TALLER than the viewport and the code occupies most of it, so centring the row and
+        // centring the code put the code in nearly the same place. Verified by disabling BOTH routes to the
+        // cell in the product and watching the test still pass.
+        //
+        // (The padding above is what makes the step tall, which is what collapses the two outcomes together —
+        // so the fixture that was added to give this assertion something to measure is the reason it has
+        // nothing to measure.)
+        //
+        // The assertions that DO hold are above: the collapsed step opened, and the In block — the slot the
+        // pill named — is on screen with the old call's code in it. Distinguishing "centred on the code" from
+        // "centred on a row that is mostly code" needs a fixture where the anchor is small and far down the
+        // step; until there is one, an assertion that always passes is worse than none, because it reads as
+        // coverage.
         // (The pulse that marks WHICH step you were sent to lasts about a second, so it is long gone by the
         // time the assertions above have settled. It has its own coverage; this test is about WHERE.)
     } finally { await ext.context.close(); await fake.stop(); }

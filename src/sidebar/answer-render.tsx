@@ -110,11 +110,22 @@ export function scrollToStepSeq(seq?: number, hash?: string, slot?: "in" | "out"
         // so the lookup above finds nothing and lands on the row. That is the whole reason a slot citation
         // felt like it ignored the slot: it worked on an already-open step and never on a closed one, which
         // is the case you are usually in. Re-query on a macrotask, after that render, and go to the cell.
-        if (collapsed && slot) setTimeout(() => {
-            const again = document.querySelector(`[data-astep-seq="${seq}"]`);
-            const now = again ? visibleAnchor(again, slot) : null;
-            if (now) now.scrollIntoView({ block: "center", behavior: "smooth" });
-        }, 0);
+        // …and it may take MORE than one macrotask. A single setTimeout(0) was enough when a step was a code
+        // block and a result; it is not once the block carries a toolbar, a diff and syntax highlighting, and
+        // the failure is silent — you land on the row and it looks like the slot was ignored. So WAIT FOR THE
+        // ANCHOR rather than guessing how long the render takes: retry on animation frames, stop at the first
+        // one that finds it, and give up after a bound so a slot that genuinely has no cell (an image, an
+        // action) simply keeps the row it already scrolled to.
+        if (collapsed && slot) {
+            let tries = 0;
+            const seek = (): void => {
+                const again = document.querySelector(`[data-astep-seq="${seq}"]`);
+                const now = again ? visibleAnchor(again, slot) : null;
+                if (now) { now.scrollIntoView({ block: "center", behavior: "smooth" }); return; }
+                if (++tries < 20) requestAnimationFrame(seek);
+            };
+            requestAnimationFrame(seek);
+        }
         // The PULSE stays on the step, whatever we scrolled to: it is the thing being identified, and a
         // flashing sub-cell inside an unmarked row reads as a glitch rather than as "this one".
         pulse(row);
