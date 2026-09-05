@@ -106,9 +106,18 @@ export function poolColor(i: number, count: number): string {
 export const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;   // samples kept, and how often we ask — polling is gated on the panel being open, so gaps are real gaps
 // Session-long history, in a MODULE signal rather than component state: the old panel kept 45 samples in
 // useState and threw them away on every close, so "what happened during that run" was unanswerable the moment
-// you looked away. ~30 min at 2s is ~900 samples of a few numbers each — kilobytes. Session-only by choice:
-// it dies with the page, and gaps (the panel was closed, so nothing was polled) stay gaps.
-export const RESOURCE_HISTORY = 900;
+// you looked away. Session-only by choice: it dies with the page, and gaps (the panel was closed, so nothing
+// was polled) stay gaps.
+//
+// BOUNDED BY TIME AS WELL AS BY COUNT, because the sampling rate is no longer uniform. 900 was sized as
+// "~30 min at 2s"; a patched box now samples at 250ms while a load is in flight and around 16s when idle, so
+// one 60-second load costs 240 slots where a minute of idle costs four. A handful of loads would evict the
+// whole idle history and leave the chart with three minutes of wall time under a window set to thirty. The
+// count stays as the MEMORY ceiling; the horizon is what decides what is worth keeping, and it is set past
+// the longest window the chart offers so "Everything kept" still has everything it can draw.
+export const RESOURCE_HISTORY = 5000;
+/** How far back the sample history is kept, past the longest window the chart can be set to draw. */
+export const RESOURCE_RETENTION_MS = 45 * 60_000;
 // EVERY MEMORY SAMPLE this session took, per box. Session-only and dropped on a backend change: redrawing
 // one box's readings against another's ceiling looks like a measurement rather than a mistake.
 export const resourceHistory = signal<ResourceSample[]>([]);
@@ -458,7 +467,11 @@ export function applyLoaded(raw: LoadedModel[], at: number = Date.now()): void {
     const next = !last || at >= last.t
         ? [...prev, sample]                                    // the ordinary case: the newest reading
         : [...prev, sample].sort((a, b) => a.t - b.t);         // backfill landing behind what we already hold
-    resourceHistory.value = next.slice(-RESOURCE_HISTORY);
+    // Age out first, then cap: trimming by count alone lets a burst of load-rate samples push out history the
+    // chart is still being asked to draw.
+    const cutoff = (next.at(-1)?.t ?? 0) - RESOURCE_RETENTION_MS;
+    const kept = next.length > 1 && next[0].t < cutoff ? next.filter((x) => x.t >= cutoff) : next;
+    resourceHistory.value = kept.slice(-RESOURCE_HISTORY);
 }
 
 /** Ask what is RESIDENT (`/api/ps`) and fold it into the history. Read `state` before anything else on an

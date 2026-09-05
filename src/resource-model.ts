@@ -719,13 +719,14 @@ export function scrubTo(
  *  `edgePx` is converted to a fraction against the track's width so the handles are a constant, clickable
  *  size on screen rather than a constant slice of a window that may be 2% wide.
  *
- *  AND A VERY NARROW WINDOW IS ALL HANDLE. The handle used to be capped at a third of the window so that a
- *  narrow one kept a middle to pan by — which gets the trade backwards, because the two gestures are not
- *  equally recoverable. Pan a window you did not mean to and you drag it back. Fail to RESIZE one and there
- *  is no way to widen it at all: a window a few pixels across had handles of one or two, so every grab
- *  landed on the pan zone, and the only way out was resetting the zoom entirely. Below three handles' width
- *  the middle is given up and the nearer edge wins — panning something you can barely see is the gesture
- *  worth losing. */
+ *  THE CAP APPLIES INSIDE THE WINDOW ONLY. A handle is capped at a third of the window so a narrow one keeps
+ *  a middle to pan by — but the cap was applied to the OUTSIDE reach as well, which is what made a hairline
+ *  window impossible to widen: a few pixels across, its handles were one or two pixels on either side of it,
+ *  so every grab landed on the pan zone and the only way out was discarding the zoom.
+ *
+ *  Outside, the reach is always the full `edgePx`. Nothing is given up for it — the pan middle is exactly as
+ *  it was — and the narrower the window, the more the reach outside it is what you actually hit, which is
+ *  the right way round: a window too small to aim at is a window you want to make bigger. */
 export function scrubZone(
     extent: { windowFrom: number; windowTo: number },
     frac: number,
@@ -733,18 +734,11 @@ export function scrubZone(
     edgePx = 7,
 ): "from" | "to" | "pan" | "outside" {
     const { windowFrom: a, windowTo: b } = extent;
-    const px = trackPx > 0 ? edgePx / trackPx : 0;
-    // Too narrow to hold a pan zone AND two usable handles: spend the whole thing on resizing, so the window
-    // can always be got back. The grab region still extends a handle's width OUTSIDE it, or a hairline would
-    // be as hard to hit as it is to resize.
-    if (b - a < px * 3) {
-        if (frac < a - px || frac > b + px) return "outside";
-        return frac < (a + b) / 2 ? "from" : "to";
-    }
-    const edge = Math.min(px, (b - a) / 3);
-    if (frac < a - edge || frac > b + edge) return "outside";
-    if (frac <= a + edge) return "from";
-    if (frac >= b - edge) return "to";
+    const outer = trackPx > 0 ? edgePx / trackPx : 0;   // never capped: this is the reach OUTSIDE the window
+    const inner = Math.min(outer, (b - a) / 3);         // capped: the window must keep a middle to pan by
+    if (frac < a - outer || frac > b + outer) return "outside";
+    if (frac <= a + inner) return "from";
+    if (frac >= b - inner) return "to";
     return "pan";
 }
 

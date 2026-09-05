@@ -1118,27 +1118,26 @@ test("scrubZone: the edges resize, the middle pans, and outside is neither", () 
     assert.equal(M.scrubZone(roomy, 0.65, W), "pan");
 });
 
-// A WINDOW TOO NARROW TO HOLD BOTH IS ALL HANDLE. The two gestures are not equally recoverable: pan one you
-// did not mean to and you drag it back; fail to RESIZE one and it can only be widened by throwing the zoom
-// away. The handle used to be capped at a third of the window to preserve a middle, so a window a few pixels
-// across had handles of one or two and every grab landed on the pan zone — which is the exact position you
-// are in when widening is the only thing you want.
-test("scrubZone: a hairline window can always be widened, even at the cost of panning it", () => {
+// A HAIRLINE WINDOW CAN ALWAYS BE WIDENED. The handle is capped at a third of the window so a narrow one
+// keeps a middle to pan by — but the cap was applied to the reach OUTSIDE the window too, so a window a few
+// pixels across had handles of one or two pixels either side and every grab landed on the pan zone. The only
+// way to widen it again was discarding the zoom entirely, which is the position you are in precisely when
+// widening is the one thing you want.
+test("scrubZone: the handle's reach OUTSIDE the window is never capped by the window's own width", () => {
     const W = 400;   // 7px of handle ≈ 0.0175 of the track
-    // 0.006 of the track = 2.4px. Under three handles, so there is no middle.
+    // 0.006 of the track = 2.4px: narrower than a single handle.
     const hair = { windowFrom: 0.500, windowTo: 0.506 };
-    assert.notEqual(M.scrubZone(hair, 0.503, W), "pan", "the middle of a hairline resizes rather than pans");
-    assert.equal(M.scrubZone(hair, 0.5005, W), "from", "the near half takes the near edge");
-    assert.equal(M.scrubZone(hair, 0.5055, W), "to", "…and the far half the far one");
-    // The grab region still reaches a handle's width OUTSIDE it — a 2px target you must hit exactly is not a
-    // target, and this is the case where hitting it matters most.
-    assert.equal(M.scrubZone(hair, 0.49, W), "from");
-    assert.equal(M.scrubZone(hair, 0.515, W), "to");
-    assert.equal(M.scrubZone(hair, 0.40, W), "outside", "…but not the whole track");
+    assert.equal(M.scrubZone(hair, 0.49, W), "from", "reaching in from the left grabs the left edge");
+    assert.equal(M.scrubZone(hair, 0.515, W), "to", "…and from the right, the right one");
+    assert.equal(M.scrubZone(hair, 0.40, W), "outside", "…but the reach is a handle's width, not the track");
 
-    // The threshold is about PIXELS, not about the fraction: the same window on a much wider track has room
-    // for a middle again, and gets one.
-    assert.equal(M.scrubZone(hair, 0.503, 4000), "pan");
+    // NOTHING IS GIVEN UP FOR IT. The middle still pans, at every width — a narrow window you can no longer
+    // move is a different way to be stuck, and the two gestures both have to survive.
+    assert.equal(M.scrubZone(hair, 0.503, W), "pan");
+    assert.equal(M.scrubZone({ windowFrom: 0.50, windowTo: 0.80 }, 0.65, W), "pan");
+
+    // The reach is a constant number of PIXELS, so it shrinks as a fraction on a wider track.
+    assert.equal(M.scrubZone(hair, 0.49, 4000), "outside", "10px of a 4000px track is far outside");
 });
 
 test("scrubResize: one edge moves, the other stays exactly put", () => {
@@ -1433,4 +1432,20 @@ test("residencyFrom: a LOADING row carries no occupancy — it must not read as 
     assert.equal(M.residencyFrom(placeholder).vramBytes, 0,
         "the row genuinely says zero — so it is the CALLER that must not treat it as a residency");
     assert.equal(placeholder.state, "loading", "…and `state` is the only thing that distinguishes it");
+});
+
+// THE SAMPLING RATE IS NOT UNIFORM, so a history bounded only by COUNT is bounded by an amount of wall time
+// that varies with what the box was doing. A patched Ollama samples at 250ms while a load is in flight and
+// around 16s when idle — measured — so one 60-second load costs 240 slots where a minute of idle costs four.
+// Trimmed by count alone, a few loads evict the whole idle history and the chart is left with minutes of wall
+// time under a window set to thirty.
+test("sample retention: an age horizon, with the count as the memory ceiling", async () => {
+    const V = await import("../src/sidebar/vram.tsx").catch(() => null);
+    if (!V) return;   // the module pulls in preact; the constants are what matter here
+    assert.ok(V.RESOURCE_RETENTION_MS >= 30 * 60_000,
+        "the horizon must outlast the longest window the chart offers, or 'Everything kept' cannot draw it");
+    assert.ok(V.RESOURCE_HISTORY >= 900, "the count is a memory ceiling, not the thing deciding what is kept");
+    // The two together: at the load rate the ceiling must still cover a load without evicting the idle
+    // history around it. 250ms for a minute is 240 samples.
+    assert.ok(V.RESOURCE_HISTORY > 240 * 4, "several loads in a session must not exhaust the ring");
 });
