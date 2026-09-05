@@ -277,20 +277,28 @@ test("the event lane is collapsed on a fresh panel, and its header opens it", as
         // The body stays MOUNTED while closed — that is what there is to slide — so the question is its
         // height, not whether the rows exist. It takes no space at all, which is the point: the panel does
         // not jump when a run starts.
-        const bodyH = () => frame.locator(".disc").filter({ has: frame.locator(".rc-lane-filter") })
+        const bodyH = () => frame.locator(".disc").filter({ hasText: "events" }).first()
             .locator(".disc-body").evaluate((el) => el.getBoundingClientRect().height);
         expect(await bodyH(), "the lane takes no height while closed").toBeLessThan(2);
 
         await fold.click();
         await expect.poll(() => frame.locator(".rc-lane-row").count(), { timeout: 10000 }).toBeGreaterThan(0);
         expect(await fold.getAttribute("aria-expanded")).toBe("true");
-        await expect.poll(bodyH, { timeout: 5000 }).toBeGreaterThan(8);
-        // The filters are in the BODY, beside the lane they filter — not in the header, where they would be
-        // controls over something that is not drawn.
-        expect(await frame.locator(".rc-lane-chip").count(), "the filters apply to something now").toBeGreaterThan(0);
-        // Remembered, like the other panel sections.
+        // The filters arrive ON THE HEADER LINE, not in a body row of their own: the panel competes with the
+        // chart for height, and the counts were already there in words.
+        await expect.poll(() => frame.locator(".rc-lane-chip").count(), { timeout: 5000 }).toBeGreaterThan(0);
+        expect(await bodyH(), "and cost no row to do it").toBeLessThan(2);
+        const headBox = await fold.boundingBox();
+        const chipBox = await frame.locator(".rc-lane-chip").first().boundingBox();
+        expect(Math.abs((chipBox.y + chipBox.height / 2) - (headBox.y + headBox.height / 2)),
+            "the chips sit on the header's own line").toBeLessThan(6);
+        // …and the header STOPS saying it in words. The chips beside it carry the same counts in the same
+        // order, so leaving the summary up made the line recite itself.
+        expect(await fold.locator(".disc-note").count(), "the header does not repeat the chips").toBe(0);
+        // Remembered, like the other panel sections — as the FOLD, which is a different fact from whether the
+        // lane is drawn at all (`laneOn`).
         expect(await ext.sw.evaluate(() => new Promise((r) => chrome.storage.local.get("ml_res_sections", (d) => r(d.ml_res_sections)))))
-            .toMatchObject({ lane: true });
+            .toMatchObject({ laneOn: true, laneOpen: true });
 
         // And it closes again.
         await fold.click();
@@ -357,5 +365,37 @@ test("the lane draws a run above its steps, and the machine below both", async (
         expect(run, "the container is ABOVE the children it holds").toBeLessThan(tool);
         if (load != null) expect(load, "a load is below the run's own work, not above it").toBeGreaterThan(tool);
         if (serve != null) expect(serve, "and so is a serving span").toBeGreaterThan(tool);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+test("the track editor's checkbox takes the whole event section, header and all", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+        fake.setEvents(FRAMES);
+        const { frame } = await openPanel(fake, ext);
+        const head = frame.locator(".disc-head").filter({ hasText: "events" });
+        await expect(head).toBeVisible({ timeout: 20000 });
+
+        // The setting is the ENABLE, and the enable takes the header with it. It used to drive the same
+        // signal the chevron does, so unchecking it merely collapsed the section — the `events 1 runs · …`
+        // row stayed exactly where it was, which reads as a control that does nothing.
+        await frame.locator('[aria-label="Edit tracks"]').click();
+        const box = frame.locator(".rc-eopt").filter({ hasText: "event lane" }).locator("input");
+        await expect(box).toBeChecked();
+        await box.uncheck();
+        await expect(head, "the section goes, header included").toHaveCount(0);
+        // …and the fold it had is not forgotten, so turning it back on gives you the section you left.
+        expect(await ext.sw.evaluate(() => new Promise((r) => chrome.storage.local.get("ml_res_sections", (d) => r(d.ml_res_sections)))))
+            .toMatchObject({ laneOn: false, laneOpen: true });
+
+        await box.check();
+        await expect(head).toBeVisible();
+        await expect.poll(() => frame.locator(".rc-lane-row").count(), { timeout: 10000 }).toBeGreaterThan(0);
     } finally { await ext.context.close(); await fake.stop(); }
 });

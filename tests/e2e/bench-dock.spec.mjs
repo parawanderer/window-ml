@@ -529,6 +529,9 @@ test("the output fills its pane — text and a DataFrame alike — and the table
     const { fake, ext, frame } = await setup();
     try {
         await frame.locator('[aria-label="Python bench"]').click();
+        // A TALL drawer, or the assertions below mean nothing: in a short one a two-row table nearly fills
+        // the pane whether it stretches or not, so the test would pass with the behaviour reverted.
+        await frame.evaluate(() => { document.querySelector(".bench-drawer").style.height = "520px"; });
         await runInBench(frame, "print('a line')\nreturn 1");
         const fill = async (sel) => {
             const body = await frame.locator(".bench-outbody").boundingBox();
@@ -540,19 +543,21 @@ test("the output fills its pane — text and a DataFrame alike — and the table
         await runInBench(frame, "import pandas as pd\nprint('built it')\nreturn pd.DataFrame({'a': [1, 2], 'b': [3, 4]})");
         await expect(frame.locator(".bench-tab.on"), "a returned frame is a real table, not a JSON blob").toHaveText("value (DataFrame)");
         await expect(frame.locator(".bench-outbody .r-df-table")).toBeVisible();
-        expect(await fill(".bench-outbody .r-df"), "so does a table").toBeGreaterThan(0.8);
-        // Collapsing is for a LOG, where a wide table sits in a transcript you are reading past. Here the tab
-        // strip already decides what is on screen, so a "hide table" undoes the choice you just made with it.
-        await expect(frame.locator(".bench-outbody .r-df-btn", { hasText: /hide|show/ })).toHaveCount(0);
-        await expect(frame.locator(".bench-outbody .r-df-btn", { hasText: "copy CSV" }), "copy stays — that one does something").toHaveCount(1);
-        // …at the pane's BOTTOM RIGHT. Alone above the grid it was the least important thing in the pane
-        // sitting in the most prominent place, with a whole row to itself.
-        const copy = await frame.locator(".bench-outbody .r-df-btn", { hasText: "copy CSV" }).boundingBox();
+        // A GRID IS NOT TEXT: it keeps its NATURAL height and grows only as far as the pane. Stretched, a
+        // two-row frame drew its border around a screenful of nothing, which reads as a table that failed to
+        // load — where the same empty space below an unbordered grid reads as what it is.
+        const body = await frame.locator(".bench-outbody").boundingBox();
         const grid = await frame.locator(".bench-outbody .r-df-scroll").boundingBox();
-        const pane = await frame.locator(".bench-outbody").boundingBox();
-        expect(copy.y, "below the grid, not above it").toBeGreaterThan(grid.y + grid.height - 1);
-        expect(copy.y + copy.height, "…at the bottom of the pane").toBeGreaterThan(pane.y + pane.height - 40);
-        expect(copy.x + copy.width, "…and to the right").toBeGreaterThan(pane.x + pane.width - 60);
+        expect(grid.height, "a two-row frame does not stretch to fill the pane").toBeLessThan(body.height * 0.6);
+        expect(grid.y + grid.height, "…and stays inside it").toBeLessThanOrEqual(body.y + body.height + 1);
+
+        // NO BAR AT ALL here. `hide table` is meaningless where the tab strip already decides what is on
+        // screen, and `copy CSV` alone then owned a whole row directly above the grid — the least important
+        // thing in the pane in its most prominent place. Copying moved to the right-click.
+        await expect(frame.locator(".bench-outbody .r-df-btn")).toHaveCount(0);
+        await frame.locator(".bench-outbody .r-df-table").click({ button: "right" });
+        await expect(frame.locator(".ctx-menu"), "right-click offers it instead").toBeVisible();
+        await expect(frame.locator(".ctx-item")).toHaveText([/Copy as CSV/i]);
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
@@ -573,15 +578,16 @@ test("the bench streams stdout as the script runs, and the value supersedes it a
         await frame.locator(".bench-play").click();
 
         // MID-RUN: the first line is on screen while the script is still sleeping, and the run is visibly
-        // alive. If this only arrived at the end the assertion below would still pass, so the elapsed
-        // "running…" readout is what pins that this is genuinely mid-flight.
+        // alive. If this only arrived at the end the assertion below would still pass, so liveness is asserted
+        // separately — off the HEADER's spinner, which is where the bench says it is working (the pane carries
+        // no timing row of its own: a footer that arrived and left on every run is a row the layout jumps by).
         await expect(frame.locator(".bench-outbody")).toContainText("FIRST", { timeout: 8000 });
         await expect(frame.locator(".bench-outbody"), "…and the rest has not happened yet").not.toContainText("SECOND");
-        await expect(frame.locator(".bench-outpane .r-ranfor.live")).toBeVisible();
+        await expect(frame.locator(".bench-play-spin"), "and it says it is still running").toBeVisible();
 
         // SETTLED: the real result supersedes the live stdout, and the value is what you land on — the
         // streaming pass must not leave you pinned to stdout, since you never chose it.
-        await expect(frame.locator(".bench-outpane .r-ranfor.live")).toHaveCount(0, { timeout: 20000 });
+        await expect(frame.locator(".bench-play-spin")).toHaveCount(0, { timeout: 20000 });
         expect(await frame.locator(".bench-tab").allTextContents()).toEqual(["stdout", "value"]);
         await expect(frame.locator(".bench-tab.on"), "an auto-pick never sticks — only a click does").toHaveText("value");
         await expect(frame.locator(".bench-outbody")).toContainText("42");
@@ -663,5 +669,55 @@ test("the environment panel opens below its button, on screen, with the chevron 
         await expect(frame.locator(".bench-env-body")).toHaveCount(0);
         const after = await frame.locator(".bench-code").boundingBox();
         expect(Math.abs(after.y - before.y), "the editor stays put whether the panel is open or shut").toBeLessThanOrEqual(1);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// CHANGING THE BENCH'S SHAPE MUST NOT COST YOU YOUR WORK IN IT. The drawer and the full page are two
+// different mount sites, so `⤢` unmounts one bench and mounts the other — and every piece of working state
+// was component state, which meant the switch quietly threw away the script you had typed, the result you
+// were reading, and the tab you had picked. The dock is a question about the WINDOW; it had been answering a
+// question about the contents.
+test("the bench keeps its script and its last result across a dock switch", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await runInBench(frame, "print('kept across the switch')\nreturn {'n': 7}");
+        await expect(frame.locator(".bench-outbody")).toContainText("7");
+        // An EDIT after the run, unsaved by any button — the state most easily lost, and the one a person is
+        // most annoyed to lose.
+        await frame.locator(".bench-code").fill("print('kept across the switch')\nreturn {'n': 7}\n# an edit nobody pressed save on");
+
+        // …to full page.
+        await frame.locator('[aria-label="Expand the Python bench"]').click();
+        await expect(frame.locator(".bench-full")).toBeVisible({ timeout: 5000 });
+        await expect(frame.locator(".bench-code"), "the script survives").toHaveValue(/an edit nobody pressed save on/);
+        await expect(frame.locator(".bench-outbody"), "and so does the result").toContainText("7");
+        await expect(frame.locator(".bench-tab.on"), "and the tab you were on").toHaveText("value");
+
+        // …and back down.
+        await frame.locator('[aria-label="Dock the Python bench"]').click();
+        await expect(frame.locator(".bench-drawer")).toBeVisible({ timeout: 5000 });
+        await expect(frame.locator(".bench-code")).toHaveValue(/an edit nobody pressed save on/);
+        await expect(frame.locator(".bench-outbody")).toContainText("7");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// Full page is a WORKSPACE, not a document: it fills what it was given, and it carries no handle for a drawer
+// edge that is not there.
+test("full page has no view padding and no drag pill", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await expect(frame.locator(".bench-drawer .bench-grip-pill"), "the drawer HAS one — it can be dragged").toHaveCount(1);
+        await frame.locator('[aria-label="Expand the Python bench"]').click();
+        await expect(frame.locator(".bench-full")).toBeVisible({ timeout: 5000 });
+        expect(await frame.locator(".bench-grip-pill").count(), "nothing to drag, so no handle").toBe(0);
+        // The bench spans its view: no frame of panel ground around it.
+        const [view, bench] = await Promise.all([
+            frame.locator(".view-bench").boundingBox(),
+            frame.locator(".bench-full").boundingBox(),
+        ]);
+        expect(Math.abs(bench.x - view.x), "no left inset").toBeLessThan(2);
+        expect(Math.abs((bench.x + bench.width) - (view.x + view.width)), "no right inset").toBeLessThan(2);
     } finally { await ext.context.close(); await fake.stop(); }
 });

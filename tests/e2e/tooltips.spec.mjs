@@ -532,3 +532,78 @@ test("tooltips: dividers separate sections, names stay whole, and nothing is cli
         await fake.stop();
     }
 });
+
+// An INSTANT RULE is drawn inside the plot, so pointing at one is also pointing at the plot — and both the
+// event's tooltip and the plot's own memory reading fired, at the same point, stacked. The one you actually
+// pointed at was underneath the one you did not ask for.
+test("tooltips: a dashed event rule answers alone, not under the plot's own reading", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(BOX);
+        fake.setResident([resident("qwen3.8-flash-next:vision", 18 * GiB, 0)]);
+        // Per-device tracks: the Overview overlays everything into one plot, and the reading tip that used to
+        // stack on top of the event's is the per-pool one, so the shape being tested has to be on screen.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false, ml_res_layout: { presetId: "memory", tracks: [
+            { id: "dev-0", series: ["vram.0"], mode: "stack", heightPx: 96 },
+            { id: "dev-1", series: ["vram.1"], mode: "stack", heightPx: 96 },
+        ] } }));
+
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await page.goto(`${fake.url}/api/version`);
+        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
+        await page.evaluate(() => {
+            const root = document.getElementById("ml-sb-root").shadowRoot;
+            const panel = root.getElementById("ml-sb-host");
+            panel.style.width = "560px";
+            panel.classList.add("open");
+            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+        });
+        const frame = await (async () => {
+            for (let i = 0; i < 80; i++) {
+                const f = page.frames().find((fr) => /sidebar\.html/.test(fr.url()));
+                if (f) return f;
+                await sleep(100);
+            }
+            throw new Error("sidebar iframe never appeared");
+        })();
+        for (let i = 0; i < 5 && !(await frame.locator(".vram").count()); i++) {
+            await frame.locator('[aria-label="VRAM monitor"]').click();
+            await sleep(400);
+        }
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(4000);   // samples either side of the eviction, so the rule lands inside a run
+
+        // EVICT it — that is what draws the dashed rule.
+        fake.setResident([]);
+        fake.setCapacity(BOX);
+        await expect.poll(() => frame.locator(".rc-rule").count(), { timeout: 30000 }).toBeGreaterThan(0);
+        await sleep(2000);
+
+        const rule = frame.locator(".rc-rule").first();
+        const b = await rule.boundingBox();
+        // The rules are a few pixels wide, so approach and then land on the centre — a teleport onto a thin
+        // target can miss the pointerenter entirely.
+        await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2 + 30);
+        await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 4 });
+        await sleep(300);
+
+        const tips = await frame.locator(".rc-tip").evaluateAll((els) =>
+            els.map((e) => ({ cls: e.className, text: e.textContent.trim().slice(0, 40) })));
+        expect(tips.length, `hovering a rule showed ${tips.length} tooltips — ${tips.map((t) => t.cls).join(" | ")}`).toBe(1);
+        // …and it is the EVENT's, not the plot's. Suppressing the wrong one of the two would still read as
+        // "one tooltip" while answering a question nobody asked.
+        expect(tips[0].cls, "the tip is the event's own").toContain("rc-tip-event");
+
+        // Leaving the rule for the plot beside it gives the reading back — the suppression is about the
+        // pointer being on the event, not a tip that has been switched off.
+        await page.mouse.move(b.x + b.width / 2 + 40, b.y + b.height / 2, { steps: 4 });
+        await sleep(300);
+        expect(await frame.locator(".rc-tip-event").count(), "the event tip goes with the pointer").toBe(0);
+    } finally { await ext.close(); await fake.stop(); }
+});

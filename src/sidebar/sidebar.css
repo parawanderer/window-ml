@@ -240,7 +240,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* The drag selection, drawn in every track at once: the ranges only mean anything compared across pools. */
 /* What the lane draws, and what it leaves out. Each chip carries its count: a filter that makes you toggle
    blindly to find out what it hides is worse than none. */
-.rc-lane-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; margin: 3px 0 0; }
+/* The lane's kind filters. They ride the `events` DISCLOSURE HEADER (see LaneFilterBar) rather than sitting
+   in its body, so opening the lane does not spend a row on them — hence no top margin and no wrapping: this
+   is half of one line, and a wrap here would push the lane down by exactly the row that was removed. */
+.rc-lane-filter { display: flex; align-items: center; gap: 3px; overflow: hidden; }
 /* The scope switch: a two-segment control in the panel header. A SEGMENTED pair rather than one toggling
    label, because a toggle that reads "this session" has to be read twice — once for the text, once to work
    out whether that is the current state or the thing it will do. Both options visible, one lit, answers it
@@ -501,6 +504,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    `height: auto` cannot be transitioned at all. The child needs `min-height: 0` or a grid item refuses to
    shrink below its content and nothing moves. */
 .disc { display: flex; flex-direction: column; }
+/* The header LINE. Normally just the button; with an `aside` it is the button plus controls beside it, which
+   is how a section's own toggles share the header instead of costing a row of their own in a body. The button
+   then shrinks to its label so the rest of the line is the aside's, and its hover no longer spans the row. */
+.disc-headrow { display: contents; }
+.disc-headrow.has-aside { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.disc-headrow.has-aside > .disc-head { width: auto; flex: 0 0 auto; }
+.disc-headrow.has-aside > :not(.disc-head) { min-width: 0; flex: 1 1 auto; }
 .disc-head { display: flex; align-items: center; gap: 4px; width: 100%; padding: 2px 3px;
     background: none; border: 0; border-radius: 4px; cursor: pointer; color: var(--fg-dim);
     text-align: left; font: inherit; font-size: 0.86em; }
@@ -773,7 +783,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* THE BENCH IS THE ONE VIEW THAT DOES NOT SCROLL. It is a split with a draggable divider, so it has to be
    GIVEN the height — a `flex: 1` inside a scroller resolves to the content's own height, and a divider then
    has nothing to divide. Every other view is a document and keeps the scroller. */
-.view-bench { display: flex; overflow: hidden; }
+/* …and it takes NO PADDING. Every other view is a document, where a margin off the panel edge is what stops
+   the text running into the chrome; the bench is a workspace that should fill the space it was given, and the
+   inset drew a frame of panel ground around a header, an editor and an output pane that each already carry
+   their own edge — three nested boxes to say one thing. The drawer has never had it. */
+.view-bench { display: flex; overflow: hidden; padding: 0; }
 .view-bench > div { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .empty { color: var(--fg-faint); padding: 16px 8px; text-align: center; }
 
@@ -1390,6 +1404,11 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
    further in. Measured rather than guessed at: the `pre` was already 186px and the `code` 54px. */
 .r-outcell.fill > .r-outscroll > .code { display: flex; flex-direction: column; }
 .r-outcell.fill > .r-outscroll > .code > code { flex: 1 0 auto; }
+/* …and NO BORDER on it once it fills. A code block carries one because in a transcript it is a block among
+   paragraphs and needs an edge; here it IS the pane, so its border draws a second boundary a few pixels
+   inside the pane's own — a box in a box, which reads as the output being inset rather than as the surface
+   it is. The pane's edge is the edge. */
+.r-outcell.fill > .r-outscroll > .code { border: none; border-radius: 0; }
 /* Vertical only: the cell exists to CAP HEIGHT. Horizontal is the inner code block's job (it honours the
    wrap/scroll pref), so letting the cell scroll sideways too just produced a stray bar under short content. */
 .r-outscroll { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }

@@ -20,7 +20,7 @@ import {
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs } from "./vram";
-import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, showLane, showModels, SECTIONS_KEY, laneLitSeqs } from "./store";
+import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
@@ -46,7 +46,17 @@ const hoverAt = signal<{ x: number; y: number; w: number; surface: string; yFrac
  *  try to use it. A resize affordance you can only discover by failing to pan is not an affordance. */
 const scrubGrab = signal<"from" | "to" | "pan" | "outside" | null>(null);
 /** Read the cursor for a surface, or null when the pointer is somewhere else. */
-const cursorOn = (surface: string) => (hoverAt.value?.surface === surface ? hoverAt.value : null);
+const cursorAt = (surface: string) => (hoverAt.value?.surface === surface ? hoverAt.value : null);
+/** The cursor for a surface, for the tips that READ THE PLOT (the sample stamp, a band, the pool rows) —
+ *  null while an EVENT on that same surface is hovered, because then the event's own tip is the answer.
+ *
+ *  A dashed instant rule is drawn INSIDE the plot, so pointing at one is also pointing at the plot: both tips
+ *  fired, both are placed at the pointer, and they stacked — with the one you actually pointed at underneath
+ *  the memory reading you did not ask for. The same "only the surface the pointer is on renders a tip" rule
+ *  as everywhere else in this panel, applied to two things sharing ONE surface. `cursorAt` is the unguarded
+ *  read, and only EventTip wants it. */
+const cursorOn = (surface: string) =>
+    (eventHover.value?.scope === surface ? null : cursorAt(surface));
 /** Track a pointer against the viewport, tagged with the surface it is over. */
 const trackCursor = (surface: string) => (e: PointerEvent) => {
     // `yFrac` is the pointer's height within the PLOT (0 = top, 1 = bottom), which is the only thing that can
@@ -870,7 +880,7 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
                 inset by the live button, so drawing both in one space put every line beside the box it was
                 supposed to touch. Hence the measurement. And with the lane HIDDEN there is nothing at the
                 other end, so lines pointing into empty space are worse than none. */}
-            {geom && showLane.value ? (
+            {geom && laneEnabled.value && showLane.value ? (
                 <svg class="rc-zoomlink" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">
                     {/* S-curves, not straight diagonals: each arm leaves the window edge going straight DOWN
                         and arrives at the lane edge going straight down too. A straight line from a window
@@ -998,7 +1008,7 @@ function modelWhere(model: string): string {
 }
 
 function EventTip({ scope }: { scope: string }) {
-    const h = eventHover.value, at = cursorOn(scope);
+    const h = eventHover.value, at = cursorAt(scope);
     if (!h || !at || h.scope !== scope) return null;
     const e = h.p.event;
     const dur = (e.until ?? e.t) - e.t;
@@ -1368,18 +1378,25 @@ function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number
     };
     const open = showLane.value;
     // What is in there, on the header — the thing that makes the row worth opening. Counts only, no filter
-    // state: a filter is about what is DRAWN, and nothing is drawn while it is closed.
-    const summary = KINDS.filter((k) => counts[k.kind]).map((k) => `${counts[k.kind]} ${k.label}`).join(" · ");
+    // state: a filter is about what is DRAWN, and nothing is drawn while it is closed. And ONLY while it is
+    // closed: open, the chips directly below say the same counts in the same order, so the header was
+    // reciting the row under it.
+    const summary = open ? "" : KINDS.filter((k) => counts[k.kind]).map((k) => `${counts[k.kind]} ${k.label}`).join(" · ");
     const setOpen = (v: boolean) => {
         showLane.value = v;
-        try { chrome.storage.local.set({ [SECTIONS_KEY]: { lane: v, models: showModels.value } }); } catch { /* opaque origin */ }
+        try { chrome.storage.local.set({ [SECTIONS_KEY]: { laneOn: laneEnabled.value, laneOpen: v, models: showModels.value } }); } catch { /* opaque origin */ }
     };
     return (
         // The SAME disclosure the two sections directly below it use (`agent options`, `other models on the
         // box`), rather than a bespoke chevron in a box beside a row of chips — which read as unrelated
-        // chrome and gave no hint that the chips and the fold were the same control. Header: what it is, and
-        // how much of it there is. Body: the filters, beside the lane they filter.
-        <Disclosure label="events" note={summary} open={open} onToggle={setOpen}>
+        // chrome and gave no hint that the chips and the fold were the same control.
+        //
+        // ONE LINE, open or closed. The chips used to be the disclosure's BODY, so opening the lane spent a
+        // whole row on them — under a header that was already reciting the same counts in the same order, in
+        // a panel whose entire problem is vertical space. Closed, the header says what is in there (that is
+        // what makes it worth opening); open, the same counts BECOME the filters, in the same place. Nothing
+        // is repeated and nothing costs a row.
+        <Disclosure label="events" note={summary} open={open} onToggle={setOpen} aside={open ? (
             <div class="rc-lane-filter">
                 {KINDS.filter((k) => counts[k.kind]).map((k) => (
                     <button class={`rc-lane-chip${hidden.has(k.kind) ? " off" : ""}`} key={k.kind}
@@ -1391,7 +1408,7 @@ function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number
                     lane together. It is in the panel HEADER now (`ScopeSwitch`). */}
                 {shown < total ? <span class="rc-lane-count">{shown}/{total}</span> : null}
             </div>
-        </Disclosure>
+        ) : undefined} />
     );
 }
 
@@ -1521,9 +1538,11 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
             <ScrubStrip samples={samples} window={window_} events={stripEvents} />
             {/* And below that, sharing the tracks' x-axis: what happened, against what memory was doing. The
                 connector says the second is the first opened out — see ZoomLink. */}
-            {/* ALWAYS rendered: `showLane` collapses its ROWS, and its chip row is the control that brings
-                them back. Gating the component itself is what made the only way in a settings checkbox. */}
-            <EventLane samples={filled} events={shown} session={samples} />
+            {/* Drawn unless the track editor's "event lane" is off — `laneEnabled` is that switch and takes
+                the whole section with it, header included. `showLane` is only the fold: it collapses the ROWS
+                and leaves the chip row as the control that brings them back. One signal used to do both, so
+                unchecking the setting merely collapsed the section and left its header sitting there. */}
+            {laneEnabled.value ? <EventLane samples={filled} events={shown} session={samples} /> : null}
         </>
     );
 }

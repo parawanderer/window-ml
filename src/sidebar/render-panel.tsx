@@ -1110,7 +1110,7 @@ function PythonOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }:
  *  least advertises that something exists. So every section a result has gets a tab, an ERROR is marked and
  *  steals the selection, a chosen tab survives the next run when it still exists (or the loop would reset
  *  your view on every run), and a script that produced nothing SAYS so rather than showing an empty pane. */
-export function PyBenchOut({ d, running, since, marks }: { d: Extract<RenderDescriptor, { type: "python-out" }> | null; running?: boolean; since?: number; marks?: [number, number][] }) {
+export function PyBenchOut({ d, running, marks }: { d: Extract<RenderDescriptor, { type: "python-out" }> | null; running?: boolean; marks?: [number, number][] }) {
     const sections = d ? pyOutSections(d) : [];
     // ONLY A CLICK PINS A TAB. The distinction is load-bearing rather than fussy: while a script is running,
     // the only section that exists is the stdout streaming in, so an auto-selection would "stick" to stdout
@@ -1159,12 +1159,12 @@ export function PyBenchOut({ d, running, since, marks }: { d: Extract<RenderDesc
                                 <PyOutBody id={active.id} d={d} marks={marks} fill />
                             </>}
             </div>
-            {/* ONLY WHILE IT RUNS. The live clock is the pane saying it is still going, which is the one
-                moment that fact is worth a row; a settled "ran in 3.0s" is a number nobody came to the bench
-                to read, and it left the finished pane looking different from the one you had been watching
-                for the last ten seconds. (The log still reports it for a `python_exec` step, cold start
-                broken out, which is where that question actually gets asked.) */}
-            {running ? <RanFor live since={since} /> : null}
+            {/* NO TIMING ROW AT ALL. A settled "ran in 3.0s" is a number nobody came to the bench to read, and
+                it left the finished pane looking different from the one you had been watching; keeping only
+                the live clock was worse, because then the pane gained and lost a row on every run. Liveness
+                is already said where you are looking when you start a run — the ▶ in the header becomes a
+                spinner. (The log still reports the duration for a `python_exec` step, cold start broken out,
+                which is where that question actually gets asked.) */}
         </div>
     );
 }

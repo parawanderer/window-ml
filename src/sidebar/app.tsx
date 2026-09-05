@@ -9,7 +9,7 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { MlDebugEvent, MlConfig, ElementContext } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 import {
-    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, showLane, showModels, FOCUS_KEY, focusMode,
+    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, laneEnabled, showLane, showModels, FOCUS_KEY, focusMode,
     benchOpen, benchDock, benchH, benchSplit, viewReturn, markReturn, openBench, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY,
     benchEnv, BENCH_ENV_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
@@ -461,8 +461,12 @@ function mount(): void {
         // Absent means never set, which is BOTH shown — not both hidden, which is what reading a missing
         // object as falsy would give and would look like the panel had lost half of itself.
         if (d[SECTIONS_KEY] && typeof d[SECTIONS_KEY] === "object") {
-            showLane.value = d[SECTIONS_KEY].lane !== false;
-            showModels.value = d[SECTIONS_KEY].models !== false;
+            const sec = d[SECTIONS_KEY];
+            laneEnabled.value = sec.laneOn !== false;
+            // `lane` is the OLD single key, which meant "expanded". Read as the open state, never as the
+            // enable — a record written by collapsing the section must not come back as the lane switched off.
+            showLane.value = (sec.laneOpen ?? sec.lane) !== false;
+            showModels.value = sec.models !== false;
         }
         if (typeof d[VRAMH_KEY] === "number") vramH.value = d[VRAMH_KEY];
         showOutTimes.value = d[OUTTS_KEY] !== false;

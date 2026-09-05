@@ -299,10 +299,16 @@ export async function decideGate(st: AgentStep, hash: string, seq: number, ok: b
  *
  *  `onOpen` is for a section whose content has to be FETCHED (the server-tool list) — it fires on the
  *  opening edge only, so re-opening does not re-request, and the caller decides whether a refresh is offered
- *  separately. `note` is a short status that rides on the header, where a count or a "loading…" belongs. */
-export function Disclosure({ label, note, open: controlled, onOpen, onToggle, defaultOpen = false, children }: {
+ *  separately. `note` is a short status that rides on the header, where a count or a "loading…" belongs.
+ *
+ *  `aside` is the same idea for CONTROLS rather than text: it renders BESIDE the header button instead of
+ *  inside it, because a button cannot legally contain buttons. That is what lets a section's own toggles
+ *  (the event lane's kind filters) share the header line instead of costing a row of their own below it. */
+export function Disclosure({ label, note, aside, open: controlled, onOpen, onToggle, defaultOpen = false, children }: {
     label: ComponentChildren;
     note?: ComponentChildren;
+    /** Controls for the header LINE, drawn outside the header button (which may not nest buttons). */
+    aside?: ComponentChildren;
     /** Controlled open state. With `onToggle` the caller owns it entirely (the lane's is persisted). */
     open?: boolean;
     /** Fires on the OPENING edge only — for a section whose content has to be fetched. */
@@ -322,11 +328,14 @@ export function Disclosure({ label, note, open: controlled, onOpen, onToggle, de
     };
     return (
         <div class={`disc${open ? " open" : ""}`}>
-            <button class="disc-head" aria-expanded={open} onClick={toggle}>
-                <span class="tri" aria-hidden="true"><IconChevron /></span>
-                <span class="disc-label">{label}</span>
-                {note ? <span class="disc-note">{note}</span> : null}
-            </button>
+            <div class={`disc-headrow${aside ? " has-aside" : ""}`}>
+                <button class="disc-head" aria-expanded={open} onClick={toggle}>
+                    <span class="tri" aria-hidden="true"><IconChevron /></span>
+                    <span class="disc-label">{label}</span>
+                    {note ? <span class="disc-note">{note}</span> : null}
+                </button>
+                {aside}
+            </div>
             {/* The wrapper is ALWAYS rendered — there has to be something to slide, and a body that only
                 exists once open can only appear. Its content is still mounted while closed, so a fetch that
                 landed stays landed and reopening is instant. */}

@@ -140,7 +140,11 @@ export const laneScoped = signal(true);   // the panel is about THIS session (vs
  *  dims its own bars by lineage; this carries the same focus into the transcript, so hovering a block says
  *  which part of the log it is about. Seqs rather than event ids, because the log is keyed by step. */
 export const laneLitSeqs = signal<Set<number> | null>(null);
-export const SECTIONS_KEY = "ml_res_sections";   // storage.local: which resource-panel sections are open (lane / models)
+export const SECTIONS_KEY = "ml_res_sections";   // storage.local: which resource-panel sections the panel draws / has open
+/** Whether the panel draws the event section AT ALL — the track editor's "event lane" checkbox. Separate from
+ *  `showLane`, which is only whether that section is expanded: one signal did both, so unchecking the setting
+ *  merely collapsed the row it was meant to remove and the `events …` header stayed sitting there. */
+export const laneEnabled = signal(true);
 // COLLAPSED by default. The lane is CONTENT — what happened — and it competes with the chart for whatever
 // height the panel was dragged to; the scrub strip above it is NAVIGATION and stays, so the panel does not
 // jump in height the first time anything runs. Its chip row is always drawn and is the control.
@@ -256,6 +260,25 @@ export const markReturn = (): void => {
     if (v.name === "list" || v.name === "detail") viewReturn.value = v;
 };
 
+/** What a bench run came back with — the offscreen sandbox's result, plus the timings the worker measured. */
+export interface BenchRun { ok: boolean; value?: unknown; stdout: string; error?: string; bootMs?: number; runMs?: number; table?: { columns: string[]; rows: (string | number | null)[][] } }
+
+// THE BENCH'S WORKING STATE, HOISTED OUT OF THE COMPONENT. The drawer and the full page are two different
+// mount sites, so `⤢` unmounts one bench and mounts another — and as component state every one of these was
+// destroyed by the switch: your script, your last result, the output you were reading, even a run still in
+// flight. Signals survive it, so changing the SHAPE of the bench now changes only its shape. `code` and
+// `mode` are additionally mirrored to localStorage, which is what carries them across a reload.
+/** The script in the Python bench's editor — the workbench's own draft, not any step's code. */
+export const benchCode = signal<string>(lsGet(BENCH_CODE_KEY) ?? "import numpy as np\nreturn int(np.arange(10).sum())");
+/** Which sandbox the bench runs in: `readonly` (hardened, no network) or `full`. Mirrors `python_exec`'s. */
+export const benchMode = signal<"readonly" | "full">(lsGet("ml_bench_mode") === "full" ? "full" : "readonly");
+/** Is a bench script in flight right now — what the header's ▶ spinner and the disabled Run button read. */
+export const benchRunning = signal(false);
+/** What the bench's last run returned, and what its output pane is drawing. */
+export const benchResult = signal<BenchRun | null>(null);
+/** Streamed stdout and its produced-at marks — see the note at PythonBench's `run`. */
+export const benchLive = signal<{ text: string; marks: [number, number][] } | null>(null);
+
 /** OPEN THE BENCH, from anywhere — the toolbar button, a code block's ▶. One function because there were
  *  two and they disagreed: the code block's sent you straight to the full page, which is precisely the trip
  *  the drawer exists to stop (you press it FROM a step, to compare against that step). The dock is a
@@ -264,7 +287,9 @@ export const markReturn = (): void => {
  *  `code`, when given, becomes the bench's script — the bench reads that key on MOUNT, so writing it before
  *  opening is the handover. */
 export const openBench = (code?: string): void => {
-    if (code != null) lsSet(BENCH_CODE_KEY, code);
+    // The bench reads the SIGNAL now, not the key on mount — it is no longer remounted on every open — so a
+    // handed-over script has to be written to both: the signal for this session, the key for the next.
+    if (code != null) { lsSet(BENCH_CODE_KEY, code); benchCode.value = code; }
     if (benchDock.value === "full") {
         markReturn();
         benchOpen.value = true;

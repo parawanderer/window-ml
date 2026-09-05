@@ -1263,17 +1263,21 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
         const list = frame.locator('.rc-esections label', { hasText: "model list" }).locator("input");
         expect(await frame.locator(".rc-zoomlink").count(), "the connector is drawn while the lane is").toBe(1);
         await lane.uncheck();
-        // The lane's CONTAINER stays — it holds the chip row, which is the other way to bring the lane back
-        // and would otherwise be reachable only from this settings checkbox. What hides is the rows.
+        // THE WHOLE SECTION GOES, header included. The checkbox and the disclosure's chevron used to drive
+        // one signal between them, so unchecking merely collapsed the section and left its `events …` header
+        // sitting there — a setting that visibly does nothing. They are separate now: this is the ENABLE, the
+        // chevron is the fold, and the way back is the checkbox you just used.
         await expect.poll(() => frame.locator(".rc-lane-row").count()).toBe(0);
         expect(await frame.locator(".disc-head").filter({ hasText: "events" }).count(),
-            "…and the way back stays with it").toBe(1);
+            "…and nothing of it is left behind").toBe(0);
         expect(await frame.locator(".rc-track").count(), "the chart stays").toBeGreaterThan(0);
         // The connector joins the scrub window to the LANE, so with the lane hidden it points into empty
         // space — lines to nothing are worse than no lines.
         expect(await frame.locator(".rc-zoomlink").count(), "the connector goes with it").toBe(0);
         await list.uncheck();
         await expect.poll(() => frame.locator(".vram-row").count()).toBe(0);
+        // …and turning it back on restores the section AS IT WAS — open, because the fold it had was never
+        // touched by the switch.
         await lane.check();
         await expect.poll(() => frame.locator(".rc-lane-row").count()).toBeGreaterThan(0);
         await expect.poll(() => frame.locator(".rc-zoomlink").count(), { timeout: 5000 }).toBe(1);
@@ -1318,9 +1322,12 @@ test("resource panel: the scrubber resizes from its edges and pans from its midd
             await sleep(400);
         };
 
-        // Park it away from the tail first, so a resize is not immediately snapped back to live.
+        // Park it WELL away from the tail first. Not just "away": a drop within TAIL_SLACK_MS of the end is
+        // read as rejoining live, which is correct behaviour and a different gesture from the one under test
+        // — and on a session this short three seconds is a big slice of the strip, so the widen below has to
+        // land with room to spare or it measures the re-anchor to `now` instead of the resize.
         const w0 = await winAt();
-        await dragFromTo(pct(w0.left) + pct(w0.width) / 2, 40);
+        await dragFromTo(pct(w0.left) + pct(w0.width) / 2, 28);
         const before = await winAt();
         expect(pct(before.width), "a window narrower than the strip").toBeLessThan(60);
 
@@ -1335,9 +1342,16 @@ test("resource panel: the scrubber resizes from its edges and pans from its midd
         // "Held" is measured against the window's OWN width, not an absolute slice of the strip: how many
         // percent a pixel is worth depends on how long the session has grown, so a fixed tolerance is really
         // a bet on the machine's speed. A tenth of the window is the same claim either way.
-        const held = (w) => Math.max(2, pct(w) * 0.12);
+        //
+        // AND THE FLOOR IS A POLL, not zero. These are percentages of a session that KEEPS GROWING while the
+        // drag happens, so the untouched edge genuinely drifts a few percent between the two readings — a
+        // poll's worth of new samples stretches the denominator under it. The claim being made is "this edge
+        // did not move the way the other one did" (the dragged edge moves 20%+), which is the claim the
+        // gesture is about; "did not move at all" is not expressible in a coordinate system that is itself
+        // moving.
+        const held = (w) => Math.max(9, pct(w) * 0.12);
         const rightEdge = pct(before.left) + pct(before.width);
-        await dragFromTo(rightEdge, Math.min(92, rightEdge + 25));
+        await dragFromTo(rightEdge, Math.min(62, rightEdge + 20));
         const widened = await winAt();
         expect(pct(widened.width), "the window got wider").toBeGreaterThan(pct(before.width) + 5);
         expect(Math.abs(pct(widened.left) - pct(before.left)), "…and the far edge did not move")

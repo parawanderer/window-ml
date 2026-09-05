@@ -16,7 +16,7 @@ import { IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevron, IconEx
 import { Disclosure, cursorTipOn, TipText } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { hhmmss } from "./timestamps";
-import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, showLane, showModels, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, type BenchRun } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
@@ -950,22 +950,24 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
     const setTrack = (i: number, next: TrackDef) => editLayout(tracks.map((t, k) => (k === i ? next : t)));
     // Which SECTIONS the panel shows, beside which tracks it draws — the same question ("what is in this
     // panel"), so it belongs in the same place rather than as two more controls competing for the header.
-    const setSections = (lane: boolean, models: boolean) => {
-        showLane.value = lane; showModels.value = models;
-        try { chrome.storage.local.set({ [SECTIONS_KEY]: { lane, models } }); } catch { /* opaque origin */ }
+    const setSections = (laneOn: boolean, models: boolean) => {
+        laneEnabled.value = laneOn; showModels.value = models;
+        // The checkbox is the ENABLE, not the fold: turning the lane back on should give you the section you
+        // last had, so the open state is carried through untouched rather than reset to collapsed.
+        try { chrome.storage.local.set({ [SECTIONS_KEY]: { laneOn, laneOpen: showLane.value, models } }); } catch { /* opaque origin */ }
     };
     return (
         <div class="rc-editor">
             <div class="rc-erow rc-esections">
                 <span class="rc-esection-label">Show</span>
                 <label class="rc-eopt">
-                    <input type="checkbox" checked={showLane.value}
-                        onChange={() => setSections(!showLane.value, showModels.value)} />
+                    <input type="checkbox" checked={laneEnabled.value}
+                        onChange={() => setSections(!laneEnabled.value, showModels.value)} />
                     event lane
                 </label>
                 <label class="rc-eopt">
                     <input type="checkbox" checked={showModels.value}
-                        onChange={() => setSections(showLane.value, !showModels.value)} />
+                        onChange={() => setSections(laneEnabled.value, !showModels.value)} />
                     model list
                 </label>
             </div>
@@ -1354,7 +1356,11 @@ export function VramPanel() {
                 ? liveRows.map(m => (
                     <ModelRow key={m.model} m={m} hidden={hidden} latestSample={latestSample} evict={evict} />
                 ))
-                : !showModels.value ? null : <div class="vram-empty">Nothing loaded.</div>}
+                // "Nothing loaded" only when there is NOTHING — no evicted rows the chart is still drawing,
+                // no models out of scope. With either of those below it, it sat as a flat contradiction over
+                // a list of models: the panel saying it has nothing directly above two things it has.
+                : !showModels.value || goneRows.length || otherCount ? null
+                    : <div class="vram-empty">Nothing loaded.</div>}
             {/* NOT RESIDENT, AND FOLDED. These rows exist to name a colour the chart is still drawing — an
                 evicted model in the window it covers, or one that only ever ran off-box — which is a
                 REFERENCE you consult, not a list you read. Inline they pushed the models that ARE loaded
@@ -1566,11 +1572,14 @@ function BenchEnv() {
  *  snippet you try here behaves as it will in a run. Code-only (no page image or tables). Rendered
  *  inside `BenchDrawer` at the bottom, or full-page as its own view. */
 export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void; shape?: ComponentChildren } = {}) {
-    const [code, setCode] = useState(() => lsGet(BENCH_CODE_KEY) ?? "import numpy as np\nreturn int(np.arange(10).sum())");
-    const [mode, setMode] = useState<"readonly" | "full">(() => (lsGet("ml_bench_mode") === "full" ? "full" : "readonly"));
-    const [running, setRunning] = useState(false);
-    const [result, setResult] = useState<{ ok: boolean; value?: unknown; stdout: string; error?: string; bootMs?: number; runMs?: number } | null>(null);
-    const [startedAt, setStartedAt] = useState<number | undefined>(undefined);
+    // MODULE SIGNALS, not component state — see the note in store.ts. The drawer and the full page are two
+    // mount sites, so `⤢` destroys this component and builds the other one; as `useState` that threw away
+    // the script, the result you were reading and any run still in flight, which made changing the bench's
+    // SHAPE also a way to lose your work in it.
+    const code = benchCode.value, setCode = (v: string) => { benchCode.value = v; lsSet(BENCH_CODE_KEY, v); };
+    const mode = benchMode.value, setMode = (v: "readonly" | "full") => { benchMode.value = v; lsSet("ml_bench_mode", v); };
+    const running = benchRunning.value, setRunning = (v: boolean) => { benchRunning.value = v; };
+    const result = benchResult.value, setResult = (v: BenchRun | null) => { benchResult.value = v; };
     // LIVE stdout, and the produced-at marks that go with it — the same tee the model-invoked tool gets, just
     // painting a different widget. Accumulated here rather than in the pane, so a re-render cannot lose it.
     //
@@ -1579,14 +1588,17 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
     // moment you stopped watching — the same output, redrawn as something else. They are cleared only when
     // the NEXT run starts. If the settled text ever disagrees with what streamed, `alignedMarks` drops the
     // whole set rather than mis-indexing it.
-    const [live, setLive] = useState<{ text: string; marks: [number, number][] } | null>(null);
+    const live = benchLive.value;
+    const setLive = (f: { text: string; marks: [number, number][] } | null | ((p: { text: string; marks: [number, number][] } | null) => { text: string; marks: [number, number][] })) => {
+        benchLive.value = typeof f === "function" ? f(benchLive.value) : f;
+    };
     const taRef = useRef<HTMLTextAreaElement>(null);
     const run = () => {
         if (running || !code.trim()) return;
         const started = Date.now();
         // The id the SW keys this run's stdout by, and the id the listener below filters on.
         const requestId = `bench-${started.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-        setRunning(true); setResult(null); setLive(null); setStartedAt(started);
+        setRunning(true); setResult(null); setLive(null);
         // Each chunk carries the instant the WORKER produced it — Pyodide stamps it there, because anything
         // downstream would be measuring the message bus. `marks` is [offset in the accumulated text, epoch].
         const onChunk = (msg: { type?: string; requestId?: string; chunk?: string; ts?: number }) => {
@@ -1604,8 +1616,7 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
         let streaming = false;
         try { chrome.runtime.onMessage.addListener(onChunk); streaming = true; } catch { /* no live channel */ }
         const stop = () => { if (streaming) try { chrome.runtime.onMessage.removeListener(onChunk); } catch { /* torn down */ } };
-        lsSet(BENCH_CODE_KEY, code); lsSet("ml_bench_mode", mode);
-        try {
+                try {
             chrome.runtime.sendMessage({ type: "PYTHON_EXEC", requestId, payload: { code, hardened: mode === "readonly", image: null, tables: null, stream: streaming } },
                 (resp: any) => {
                     stop();
@@ -1694,7 +1705,10 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                     row's middle genuinely empty. It is `pointer-events: none` besides, so even where the two
                     do meet in a narrow panel the pill can never swallow a click meant for a control. */}
                 <span class="sp" />
-                <i class="bench-grip-pill" aria-hidden="true" />
+                {/* ONLY WHERE THERE IS SOMETHING TO DRAG. Full-page has no drawer edge, so the pill sat in
+                    the middle of the header as a handle for nothing — and it is the one control in the row
+                    that says "grab me", which makes an inert one worse than absent. */}
+                {drag ? <i class="bench-grip-pill" aria-hidden="true" /> : null}
                 <label class="bench-mode">mode
                     <select value={mode} onChange={e => setMode((e.target as HTMLSelectElement).value === "full" ? "full" : "readonly")}>
                         <option value="readonly">readonly (sandboxed)</option>
@@ -1741,7 +1755,7 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                     <div class="bench-div" role="separator" aria-label="Drag to resize the script against its output"
                         aria-orientation="horizontal" onPointerDown={onSplit}><i class="bench-div-pill" aria-hidden="true" /></div>
                     <div class="bench-pane" style={{ flexGrow: 1 - benchSplit.value }}>
-                        <PyBenchOut d={outD} running={running} since={startedAt} marks={live?.marks} />
+                        <PyBenchOut d={outD} running={running} marks={live?.marks} />
                     </div>
                 </> : null}
             </div>
