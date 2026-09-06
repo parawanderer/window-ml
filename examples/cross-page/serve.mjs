@@ -170,14 +170,39 @@ export function startPageServer({ port = 0, crossPort = 0, host = "127.0.0.1" } 
                         + `tryLoad();document.addEventListener('visibilitychange',tryLoad);setInterval(tryLoad,100);`
                         + `</script>`);
                 }
-                if (p === "/slow") {   // content STREAMS in over ~2.4s (a real SPA hydrating) — a fixed 1.2s settle would
-                    // truncate it mid-stream; the DOM-quiet wait keeps going until the stream stops, then snapshots.
+                if (p === "/slow") {   // content STREAMS in over ~1.8s AFTER load (a real SPA hydrating from an API) —
+                    // a fixed 1.2s settle truncates it mid-stream; the DOM-quiet wait keeps going until the
+                    // stream stops, then snapshots.
+                    //
+                    // DRIVEN BY THE NETWORK, NOT BY A TIMER, and that is the whole reliability of this fixture.
+                    // The rendered fetch opens the page in a BACKGROUND tab, where Chrome clamps `setInterval`
+                    // to a second or worse — so a 150ms tick became a >700ms gap, the quiet wait concluded the
+                    // page had settled, and the test failed intermittently under load while being perfectly
+                    // reliable in isolation. Network delivery is not throttled that way, so the mutations keep
+                    // coming at the pace the SERVER sets whatever the tab's timers are doing.
+                    //
+                    // Chunks are delimited by "|" rather than a newline: this script is a string inside a
+                    // template literal inside this file, and a "\n" in it lands in the page as a real line
+                    // break in the middle of a string literal.
                     res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
                     return res.end(`<!doctype html><meta charset=utf-8><title>slow</title><body><div id=app>EARLY-CONTENT</div>`
-                        + `<script>var n=0,iv=setInterval(function(){n++;var d=document.createElement('div');d.textContent='CHUNK-'+n;document.body.appendChild(d);`
-                        // Dense 150ms ticks (well under the 700ms quiet threshold, even load-stretched) for ~1.8s — past
-                        // the old fixed 1.2s window, so a fixed settle truncates it while the DOM-quiet wait captures it.
-                        + `if(n>=12){clearInterval(iv);var f=document.createElement('div');f.id='done';f.textContent='STREAM-DONE-3377 all chunks loaded';document.body.appendChild(f);}},150)</script>`);
+                        + `<script>fetch('/slow-chunks').then(function(r){var rd=r.body.getReader(),dec=new TextDecoder();`
+                        + `(function pump(){return rd.read().then(function(x){if(x.done)return;`
+                        + `dec.decode(x.value,{stream:true}).split('|').forEach(function(line){if(!line)return;`
+                        + `var d=document.createElement('div');if(line.indexOf('STREAM-DONE')===0){d.id='done';}`
+                        + `d.textContent=line;document.body.appendChild(d);});`
+                        + `return pump();});})();});<\/script>`);
+                }
+                if (p === "/slow-chunks") {   // the pacer for /slow: one chunk every ~150ms, then the marker.
+                    res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+                    let n = 0;
+                    const tick = () => {
+                        if (res.writableEnded) return;
+                        if (++n <= 12) { res.write(`CHUNK-${n}|`); setTimeout(tick, 150); return; }
+                        res.end("STREAM-DONE-3377 all chunks loaded|");
+                    };
+                    setTimeout(tick, 150);
+                    return;
                 }
                 if (p === "/lazy") {   // a widget that only loads when SCROLLED into view (IntersectionObserver, like GitHub's lazy fragments).
                     res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });

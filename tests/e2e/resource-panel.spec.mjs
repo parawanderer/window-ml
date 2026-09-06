@@ -1811,10 +1811,19 @@ test("resource panel: the width you drag is the width live keeps", async () => {
         await page.mouse.move(box3.x + box3.width / 2, y);
         await expect.poll(() => frame.locator(".rc-scrub-track").getAttribute("class"), { timeout: 5000 })
             .toContain("z-pan");
-        // PAST the right edge, not onto it: the window clamps at the end anyway, and aiming exactly at the
-        // last pixel leaves nothing for a slow runner's rounding to give away.
-        await dragFrom(box3.x + box3.width / 2, track.x + track.width + 20);
+        // INSIDE the track, at its last pixel. Aiming PAST it (which this did) puts the pointer over whatever
+        // sits beyond — the live button, then the panel's edge — and the handlers are registered on the
+        // sidebar iframe's own `window`, so a move that leaves the frame is a move the drag never sees: the
+        // gesture then ends wherever the last move INSIDE the frame left it, short of the tail, pinned. That
+        // costs nothing to avoid, because `scrubTo` CLAMPS: a centre at 99.7% of the extent parks the window
+        // against the end exactly as a centre past 100% would.
+        await dragFrom(box3.x + box3.width / 2, track.x + track.width - 1);
+        // Read the window IMMEDIATELY, before the poll below waits ten seconds. A window that arrived at the
+        // tail and then fell behind is a different bug from one that never got there, and once the poll has
+        // timed out the two look identical.
+        const landed = await frame.locator(".rc-scrub-win").evaluate((e) => e.style.cssText);
         if (!/▶/.test((await liveText()) ?? "")) {
+            console.log(`[rejoin] landed="${landed}"`);
             // One line naming the state, because this step has failed on CI while passing locally and the
             // symptom alone ("still paused") does not say which of the three things went wrong: the gesture
             // was read as a resize, the window never reached the tail, or it reached it and the button did

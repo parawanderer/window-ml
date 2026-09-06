@@ -226,13 +226,18 @@ async function renderAndCheck(path, marker) {
 
 // The DOM-quiet settle waits for the DOM to stop changing (a network-idle proxy) instead of a fixed delay — so
 // content that STREAMS in past the old ~1.2s window (an SPA hydrating) is captured, not truncated mid-stream.
-// Retried: the fixture's streaming rides background-tab setInterval, which Chrome can throttle under harness
-// load (>700ms gaps let the quiet wait bail early) — it's reliable in isolation, so a couple retries absorb it.
-test.describe(() => {
-    test.describe.configure({ retries: 2 });
-    (BACKEND ? test.skip : test)("fetch_url rendered: the DOM-quiet settle captures content that streams in after the old fixed delay", async () => {
-        expect(await renderAndCheck("/slow", "STREAM-DONE-3377")).toContain("MARKER-PRESENT");
-    });
+//
+// NO RETRIES, because the flake had a cause rather than a probability. The fixture used to stream from a
+// page `setInterval`, and the rendered fetch opens the page in a BACKGROUND tab, where Chrome clamps timers
+// to a second or worse — so a 150ms tick became a gap longer than the quiet threshold, the wait concluded the
+// page had settled, and the test failed under load while being perfectly reliable in isolation. It streams
+// from the NETWORK now (see `/slow-chunks`), which is not throttled that way; retries would only have hidden
+// the next thing that went wrong the same way.
+(BACKEND ? test.skip : test)("fetch_url rendered: the DOM-quiet settle captures content that streams in after the old fixed delay", async () => {
+    expect(await renderAndCheck("/slow", "STREAM-DONE-3377")).toContain("MARKER-PRESENT");
+    // The PREMISE: the marker has to arrive after the window a fixed settle would have used, or this passes
+    // for the wrong reason the day the fixture gets faster.
+    expect(await renderAndCheck("/slow", "CHUNK-12")).toContain("MARKER-PRESENT");
 });
 
 // The scroll pass trips a viewport-lazy widget (IntersectionObserver, like GitHub's lazy <include-fragment>) —
