@@ -1817,7 +1817,16 @@ test("resource panel: the width you drag is the width live keeps", async () => {
         // gesture then ends wherever the last move INSIDE the frame left it, short of the tail, pinned. That
         // costs nothing to avoid, because `scrubTo` CLAMPS: a centre at 99.7% of the extent parks the window
         // against the end exactly as a centre past 100% would.
+        // COUNT WHAT THE HANDLER WOULD SEE. The drag registers `pointermove` on the iframe's own `window` and
+        // gives up the moment one arrives with `buttons === 0`, so "the moves never landed" and "they landed
+        // and did nothing" are different failures that look identical from outside.
+        await frame.evaluate(() => {
+            window.__mv = [];
+            window.addEventListener("pointermove", (e) => window.__mv.push(e.buttons), true);
+        });
         await dragFrom(box3.x + box3.width / 2, track.x + track.width - 1);
+        const mv = await frame.evaluate(() => window.__mv || []);
+        console.log(`[rejoin] moves=${mv.length} buttons=${JSON.stringify(mv.slice(0, 6))}`);
         // Read the window IMMEDIATELY, before the poll below waits ten seconds. A window that arrived at the
         // tail and then fell behind is a different bug from one that never got there, and once the poll has
         // timed out the two look identical.

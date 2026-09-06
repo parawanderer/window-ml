@@ -842,8 +842,16 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
         // gesture MEANT is decided once, on release — a mid-drag decision would rejoin live the moment you
         // passed the tail and yank the box out from under you.
         let landed: { from: number; to: number } | null = null;
+        // A DRAG THAT HAS GONE QUIET IS OVER — but not before it has begun. `buttons === 0` on a move is the
+        // backstop for a `pointerup` that never arrived, and reading it on the FIRST move lets one event with
+        // an unset button field end the gesture before it starts: the window is then settled at wherever the
+        // pointerdown put it, which looks exactly like a drag that did nothing rather than like one that was
+        // cancelled. So it takes one move with the button confirmed down first; a release that genuinely
+        // happened before any move still arrives as `pointerup`, which is the real end and always was.
+        let held = false;
         const move = (ev: PointerEvent) => {
-            if (ev.buttons === 0 && ev.type === "pointermove") return up();
+            if (ev.buttons === 0 && ev.type === "pointermove") { if (held) return up(); return; }
+            held = true;
             landed = zone === "from" || zone === "to"
                 ? scrubResize(ex, start, zone, at(ev.clientX))
                 : scrubTo(ex, win, at(ev.clientX));
