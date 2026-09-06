@@ -1426,8 +1426,22 @@ is binary, and decoding it as UTF-8 corrupts it silently rather than throwing. T
 (`src/protostream.ts`) is ours because it is not in the schema: `fetch()` chunk boundaries have nothing to do
 with message boundaries, so the reader buffers and yields only whole frames, refuses a length prefix claiming
 the world, and treats **bytes still held at the end as a transport failure** rather than a short answer.
-`tests/e2e/proto-stream-live.mjs` is the debug probe against the real box — the only thing that puts the
-server's own bytes through it rather than frames this repo also wrote.
+`tests/e2e/proto-stream-live.mjs` is the debug probe against the real box, and
+**`tests/e2e/proto-live.spec.mjs`** the assertions — opt-in via `USE_ENV=1` and skipped entirely without it,
+because the backend is live and CI has neither it nor a GPU. They are the only things that put the SERVER'S
+OWN bytes through the built extension rather than frames this repo also wrote, and they cover the four cases
+that matter: a streamed reply really arrives as protobuf; a real TOOL CALL survives it (a tool the model
+cannot answer without, so the run cannot pass by answering from pre-training — and its ARGUMENT is asserted,
+which is what says the fragments were reassembled rather than merely that a call happened); the setting OFF
+sends no header at all; and a backend that will not serve it still works. That last one uses OpenWebUI's own
+chat route on the same box — a route that genuinely cannot answer protobuf, which is a better test of the
+fallback than any stub. The wire is observed by wrapping `fetch` in the SERVICE WORKER realm, because the
+decode is invisible downstream by design: a caller cannot tell which format delivered its tokens, so asking
+the caller would prove nothing.
+**Both streaming paths carry it**: `streamLLM` (`ml.chat`) and `streamAgentTurn` (the agent loop, where the
+saving actually lands, since a turn re-sends a large prompt and streams a long reply). They share one
+`handleChunk`, so the formats differ only in how a chunk is RECOVERED from the wire and cannot drift into
+different behaviour.
 
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,

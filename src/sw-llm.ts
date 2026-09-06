@@ -852,11 +852,14 @@ export async function streamAgentTurn(
         phases.push({ kind, atMs: Date.now() - _t0 });
         return true;
     };
-    const reader = (await send(body, true)).body!.getReader();
+    const res = await send(body, true);
+    const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
-    const handleLine = (line: string) => {
-        const chunk = format.streamChunk(line);
+    /** One parsed chunk, whatever carried it. SSE and protobuf differ only in how a chunk is RECOVERED from
+     *  the wire; everything after — the phase marks, the fragment accumulation, the throttled fan — is the
+     *  same work, and having it once is what stops the two formats drifting into different behaviour. */
+    const handleChunk = (chunk: ReturnType<typeof format.streamChunk>) => {
         if (!chunk) return;
         let changed = false, phaseChanged = false;
         if (chunk.delta) { content += chunk.delta; changed = true; phaseChanged = mark("answer") || phaseChanged; }
@@ -878,18 +881,53 @@ export async function streamAgentTurn(
         // or reasoning deltas at all, so a caller throttling on text alone would never hear that it started.
         if (changed || phaseChanged) onDelta({ reasoning, content, phases, phaseChanged });
     };
-    for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buffer.indexOf("\n")) >= 0) {
-            const line = buffer.slice(0, nl).trim();
-            buffer = buffer.slice(nl + 1);
-            if (line) handleLine(line);
+    const handleLine = (line: string) => handleChunk(format.streamChunk(line));
+    // THE SAME NEGOTIATION the one-shot stream does: we asked for protobuf where it costs nothing to ask, and
+    // the response says whether we got it. A tool call survives the format — the schema carries the fragments
+    // in the same shape OpenAI streams them (index, id, function.name, a piece of the argument string) — so
+    // the accumulation below is untouched by which wire delivered them.
+    if ((res.headers?.get?.("content-type") || "").includes("application/protobuf")) {
+        const frames = createFrameReader();
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            for (const bytes of frames.push(value)) {
+                const f = Frame.decode(bytes);
+                if (f.delta?.index) continue;                     // another choice — see consumeProto
+                if (f.delta) {
+                    handleChunk({
+                        delta: f.delta.content || "",
+                        reasoning: f.delta.reasoning || "",
+                        toolCall: !!f.delta.toolCalls?.length,
+                        toolCallDelta: f.delta.toolCalls?.length
+                            ? f.delta.toolCalls.map((t) => ({ index: t.index, id: t.id || undefined, type: t.type || "function",
+                                                              function: { name: t.function?.name || undefined, arguments: t.function?.arguments ?? "" } }))
+                            : null,
+                        sources: null, usage: null,
+                    });
+                }
+                if (f.end) {
+                    handleChunk({ delta: "", reasoning: "", toolCall: f.end.finishReason === "tool_calls", toolCallDelta: null, sources: null,
+                                  usage: normalizeUsage({ prompt_tokens: f.end.promptTokens, completion_tokens: f.end.completionTokens,
+                                                          total_tokens: (f.end.promptTokens || 0) + (f.end.completionTokens || 0) }) });
+                }
+            }
         }
+        if (frames.pending) throw new Error("protobuf stream ended mid-frame");
+    } else {
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let nl: number;
+            while ((nl = buffer.indexOf("\n")) >= 0) {
+                const line = buffer.slice(0, nl).trim();
+                buffer = buffer.slice(nl + 1);
+                if (line) handleLine(line);
+            }
+        }
+        if (buffer.trim()) handleLine(buffer.trim());
     }
-    if (buffer.trim()) handleLine(buffer.trim());
     // Reconstruct a non-streaming-shaped object so the SAME format.extractToolCalls normalizes it → {id,name,arguments}.
     let tool_calls: ToolCall[] = [];
     if (ollamaCalls) tool_calls = format.extractToolCalls({ message: { tool_calls: ollamaCalls } } as any);
