@@ -27,6 +27,13 @@ export interface Delta {
   content: string;
   reasoning: string;
   /**
+   * Which choice this belongs to, for a request that asked for more than one. Zero costs
+   * nothing to carry -- proto3 omits it -- and its absence would make several interleaved
+   * choices indistinguishable. ollama does not implement `n` today and every chunk it sends
+   * is index 0; this is here so that stops being load-bearing.
+   */
+  index: number;
+  /**
    * Present only on the chunks that carry them. A tool call arrives in pieces: the first
    * chunk for an index names the function, later ones append to arguments.
    */
@@ -162,7 +169,7 @@ export const Start: MessageFns<Start> = {
 };
 
 function createBaseDelta(): Delta {
-  return { content: "", reasoning: "", toolCalls: [], logprobs: [] };
+  return { content: "", reasoning: "", index: 0, toolCalls: [], logprobs: [] };
 }
 
 export const Delta: MessageFns<Delta> = {
@@ -193,6 +200,14 @@ export const Delta: MessageFns<Delta> = {
             }
 
             message.reasoning = reader.string();
+            continue;
+          }
+          case 5: {
+            if (tag !== 40) {
+              break;
+            }
+
+            message.index = reader.uint32();
             continue;
           }
           case 3: {
@@ -230,6 +245,7 @@ export const Delta: MessageFns<Delta> = {
     const message = createBaseDelta();
     message.content = object.content ?? "";
     message.reasoning = object.reasoning ?? "";
+    message.index = object.index ?? 0;
     message.toolCalls = object.toolCalls?.map((e) => ToolCall.fromPartial(e)) || [];
     message.logprobs = object.logprobs?.map((e) => Logprob.fromPartial(e)) || [];
     return message;

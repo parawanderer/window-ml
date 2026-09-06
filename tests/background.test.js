@@ -3512,6 +3512,25 @@ test("protobuf stream: a toolIds call keeps SSE — the schema has nowhere to pu
     assert.equal(accept, undefined, "no Accept: application/protobuf on a tool call");
 });
 
+test("protobuf stream: a delta for ANOTHER choice is ignored, as it is on the SSE path", async () => {
+    // `streamChunk` reads `choices[0]` and drops the rest, so the two formats have to agree — otherwise a
+    // response with `n > 1` interleaves several completions and this concatenates them into nonsense. ollama
+    // sends only index 0 today, which is precisely why the schema gained the field: so that fact stops being
+    // what holds this together.
+    const second = [...pbStr(1, "WRONG"), ...pbVar(5, 1)];   // Delta{content:"WRONG", index:1}
+    const other = pbFrame([0x12, second.length, ...second]);
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: true },
+        onFetch: () => binaryStreamResponse([[...pbDelta("right"), ...other, ...pbEnd("stop", 1, 1)]]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    const done = client.messages.find(m => m.type === "done");
+    assert.equal(done?.content, "right", "the other choice's tokens are not spliced in");
+    assert.deepEqual(client.messages.filter(m => m.type === "chunk").map(m => m.delta), ["right"]);
+});
+
 test("protobuf stream: OFF by default — the header is not sent unless asked for", async () => {
     let accept = "unset";
     const bg = loadBackground({

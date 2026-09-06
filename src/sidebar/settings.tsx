@@ -1239,6 +1239,15 @@ export function Settings() {
                         onChange={(e: any) => setField("protoStream", e.target.checked)} />
                     <Lbl tip={TIP.protoStream}>Stream replies as protobuf where the backend serves it</Lbl>
                 </label>
+                {/* A SETTING THAT SILENTLY DOES NOTHING is the thing this panel is not allowed to have, and
+                    this one can: the encoder lives on the ollama PASSTHROUGH route, and OpenWebUI's own
+                    `/api/chat/completions` re-encodes ollama's native stream as SSE — so on that URL the
+                    header is sent, the answer is SSE, and everything works exactly as before while the
+                    checkbox implies otherwise. Checked against the URL you configured rather than discovered
+                    at runtime, so it says so BEFORE you go looking for a difference. */}
+                {c.protoStream && !/\/ollama\/v\d+\/chat\/completions/.test(c.chatUrl || "") ? (
+                    <div class="set-warn">Your Server URL is <code>{(c.chatUrl || "").replace(/^https?:\/\/[^/]+/, "") || "(unset)"}</code>, which never serves protobuf — OpenWebUI re-encodes the model's stream as SSE there, so this will have no effect. The encoder is on the ollama passthrough, <code>/ollama/v1/chat/completions</code>. Pointing at it costs OpenWebUI's own features on that route (server-side tools, RAG and the source citations that come with them), which is the trade rather than a bug.</div>
+                ) : null}
                 </Section>
 
                 <Section id="shadow" title="Shadow DOM">

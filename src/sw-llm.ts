@@ -775,6 +775,12 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
         let usage: TokenUsage | null = null;
         const handle = (bytes: Uint8Array) => {
             const f = Frame.decode(bytes);
+            // ONE CHOICE, the same one the SSE path takes. `streamChunk` reads `choices[0]` and ignores the
+            // rest, so the two formats must agree: without this, a response with `n > 1` would interleave
+            // several completions and we would concatenate them into a single run of nonsense. ollama does
+            // not implement `n` today and every chunk it sends is index 0 — which is exactly why the field
+            // was added, so that stops being the thing holding this together.
+            if (f.delta && f.delta.index) return;
             if (f.delta) {
                 if (f.delta.content) { content += f.delta.content; onDelta(f.delta.content); }
                 if (f.delta.reasoning) reasoning += f.delta.reasoning;

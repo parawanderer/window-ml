@@ -8566,3 +8566,40 @@ test("python bench: the BUTTON still toggles — the outside-click handler must 
     btn().click(); await w.tick();
     assert.equal(w.shadow.querySelector(".bench-env-body"), null, "second press closes");
 });
+
+// A SETTING THAT SILENTLY DOES NOTHING is what this warning exists to prevent. The protobuf encoder lives on
+// the ollama PASSTHROUGH route; OpenWebUI's own `/api/chat/completions` re-encodes the model's stream as SSE,
+// so on that URL the header goes out, SSE comes back, everything works exactly as before — and the checkbox
+// implies otherwise. Measured on a real box: /api/chat/completions → text/event-stream,
+// /ollama/v1/chat/completions → application/protobuf; delimited=varint.
+test("settings: protobuf streaming SAYS when the configured URL can never serve it", async () => {
+    const onOwui = await loadSidebarWorld({
+        sync: { protoStream: true, chatUrl: "http://gpubox:3000/api/chat/completions" },
+    });
+    await openSettings(onOwui, "Advanced");
+    await onOwui.flush();
+    const warn = [...onOwui.shadow.querySelectorAll(".set-warn")].map((e) => e.textContent).join(" ");
+    assert.match(warn, /never serves protobuf/, "it says the URL cannot do it");
+    assert.match(warn, /\/ollama\/v1\/chat\/completions/, "…and names the one that can");
+    // …and the TRADE, because the answer is not simply "change the URL": that route is ollama's, so it has
+    // none of OpenWebUI's own features. A warning that only says "wrong URL" invites a change that quietly
+    // loses server-side tools.
+    assert.match(warn, /server-side tools|citations/i, "…and what pointing at it costs");
+
+    // On the route that DOES serve it, no warning — an unconditional caveat is noise that undermines the
+    // times it is true.
+    const onOllama = await loadSidebarWorld({
+        sync: { protoStream: true, chatUrl: "http://gpubox:3000/ollama/v1/chat/completions" },
+    });
+    await openSettings(onOllama, "Advanced");
+    await onOllama.flush();
+    assert.doesNotMatch([...onOllama.shadow.querySelectorAll(".set-warn")].map((e) => e.textContent).join(" "),
+        /never serves protobuf/);
+
+    // …and none at all while the feature is OFF, whatever the URL is.
+    const off = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:3000/api/chat/completions" } });
+    await openSettings(off, "Advanced");
+    await off.flush();
+    assert.doesNotMatch([...off.shadow.querySelectorAll(".set-warn")].map((e) => e.textContent).join(" "),
+        /never serves protobuf/);
+});

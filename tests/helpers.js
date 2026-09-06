@@ -492,6 +492,18 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     let psVram = vram;   // mutable so a test can change the resident set mid-run (setVram)
     const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
     const win = dom.window;
+    // TIME RUNS FAST IN HERE. The panel polls `/api/ps` on a 2-second interval and ticks its TTL countdowns
+    // every second, and a test that wants "the resident set changed" has no way to ask for a poll — it can
+    // only wait for one. So the sidebar tests were littered with `for (…25) { flush(); sleep(150) }` loops
+    // whose real cost was waiting out an interval, and the nine slowest were 26 seconds of the suite between
+    // them, all of it sleeping.
+    //
+    // Compressing INTERVALS (not timeouts) collapses that to nothing and changes no behaviour under test: an
+    // interval here is a poll or a clock tick, and both are things a test wants MORE of, sooner. Timeouts are
+    // left exactly alone, because those ARE behaviour — a debounce, an easing, "stays quiet for the first
+    // half second" — and speeding them up would make those assertions meaningless rather than fast.
+    const realSetInterval = win.setInterval;
+    win.setInterval = (fn, ms, ...rest) => realSetInterval.call(win, fn, Math.min(ms || 0, 120), ...rest);
     _sidebarWins.push(win);   // closed in an after() hook — the VRAM panel's setInterval keeps the event loop alive otherwise
     const syncStore = { debugMode: "overlay", theme: "auto", ...sync };
     // The event LANE is collapsed by default in the product. Most sidebar tests that touch it are about what
