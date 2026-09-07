@@ -1592,6 +1592,13 @@ test("snapFraction: lands exactly where sampleAtFraction reads, and inverts the 
     assert.equal(only.index, 0);
     assert.ok(only.frac > 0 && only.frac < 0.25, `a lone sample sits inside its own share (${only.frac})`);
 
+    // It names the ORIGINAL segment, so a caller mapping over `runs` can ask "is it in THIS one?". Filtering
+    // first and returning a position in the filtered list names the wrong segment on any window holding an
+    // empty one — and an empty run is ordinary, since a gap is a gap.
+    const withHole = [[], run(4, 0), [], run(3, 90000)];
+    assert.equal(M.snapFraction(withHole, 0.1).run, 1, "the first NON-EMPTY run is index 1, not 0");
+    assert.equal(M.snapFraction(withHole, 0.95).run, 3);
+
     // Nothing to snap to is null, never 0 — 0 is a real position and would park the dot at the left edge.
     assert.equal(M.snapFraction([], 0.5), null);
     assert.equal(M.snapFraction([[]], 0.5), null);

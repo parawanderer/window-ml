@@ -1107,8 +1107,12 @@ export function sampleAtFraction<T extends { t: number }>(runs: T[][], frac: num
  * Returns null when there is nothing to snap to. The axis is segmented and flex-weighted by sample COUNT, so
  * this must invert exactly that mapping rather than interpolating over time — see `timeAtFraction`.
  */
-export function snapFraction<T extends { t: number }>(runs: T[][], frac: number): { frac: number; index: number } | null {
-    const live = runs.filter((r) => r.length > 0);
+export function snapFraction<T extends { t: number }>(runs: T[][], frac: number): { frac: number; index: number; run: number } | null {
+    // The ORIGINAL indices, so a caller mapping over `runs` can ask "is the snapped sample in THIS segment?".
+    // Filtering first and returning a position in the filtered list would silently name the wrong segment on
+    // any window that contains an empty one.
+    const liveAt = runs.map((r, i) => [r, i] as const).filter(([r]) => r.length > 0);
+    const live = liveAt.map(([r]) => r);
     if (!live.length) return null;
     const weights = live.map((r) => Math.max(1, r.length));
     const total = weights.reduce((a, b) => a + b, 0);
@@ -1123,7 +1127,7 @@ export function snapFraction<T extends { t: number }>(runs: T[][], frac: number)
             // A one-sample segment occupies its whole share and has no interior to place a point in, so it
             // sits at the middle of that share rather than at an edge it does not own.
             const at = run.length === 1 ? 0.5 : index / (run.length - 1);
-            return { frac: acc + at * share, index };
+            return { frac: acc + at * share, index, run: liveAt[i][1] };
         }
         acc += share;
     }

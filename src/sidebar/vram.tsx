@@ -16,7 +16,7 @@ import { IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevron, IconEx
 import { Disclosure, cursorTipOn, TipText } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { hhmmss } from "./timestamps";
-import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, type BenchRun } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, type BenchRun } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
@@ -1079,6 +1079,22 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
                     <input type="checkbox" checked={showModels.value}
                         onChange={() => setSections(laneEnabled.value, !showModels.value)} />
                     model list
+                </label>
+            </div>
+            {/* HOW THE CHART BEHAVES UNDER THE POINTER, beside what it draws — the same question, answered in
+                the same place. It was in Settings → Appearance, which is a surface you have to LEAVE the chart
+                to reach, for a mode you flip while reading one datapoint. The lane and model-list toggles are
+                here for the same reason and are the precedent. (Not a `MlConfig` flag, so the
+                "every setting appears in DevTools Settings" rule does not reach it — this is a sidebar display
+                preference in storage.local, like the lane's height.) */}
+            <div class="rc-erow rc-esections">
+                <span class="rc-esection-label">Cursor</span>
+                <label class="tt rc-eopt">
+                    <input type="checkbox" checked={snapDot.value}
+                        onChange={() => { snapDot.value = !snapDot.value; try { chrome.storage.local.set({ [SNAPDOT_KEY]: snapDot.value }); } catch { /* opaque origin */ } }} />
+                    snap to datapoint
+                    <span class="tt-pop wrap" role="tooltip"><TipText
+                        md="Snap the crosshair to the nearest **sample** and mark it with a dot. The tooltip already reads a real datapoint — a value between two polls was never measured — so this makes the line agree with the number beside it. Useful for reading one reading; noise while scanning the shape." /></span>
                 </label>
             </div>
             {tracks.map((t, i) => (

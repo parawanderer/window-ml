@@ -197,9 +197,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* THE SNAPPED DATAPOINT — a dot on the crosshair where a real sample sits. Thicker than the line it rides,
    because the line says "here" and the dot says "here is a READING", which is the claim the tooltip beside it
    is making. Ringed in the panel's own colour so it stays visible over a band of any shade. */
-.rc-cross-dot { position: absolute; left: 50%; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px;
-                border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--panel);
-                pointer-events: none; }
+/* THE SNAPPED DATAPOINT, on each line it is a point of. In the plot's own viewBox, so it sits at the real
+   value rather than at a position computed twice. Ringed in the panel's colour so it stays legible over a
+   band of any shade, and `non-scaling-stroke` because the viewBox is stretched to the plot's aspect and an
+   unscaled ring would draw as an ellipse. */
+.rc-snapdot { position: absolute; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%;
+              background: var(--accent); box-shadow: 0 0 0 1.5px var(--panel); pointer-events: none; z-index: 4; }
 /* Snapped, the line itself is quieter: the DOT is the precise claim, and a full-strength rule beside it reads
    as two marks competing to say where you are. */
 .rc-cross.snapped { opacity: .7; }

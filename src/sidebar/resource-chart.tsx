@@ -45,6 +45,10 @@ const hoverAt = signal<{ x: number; y: number; w: number; surface: string; yFrac
 /** Which part of the scrub window the pointer is over, so the cursor can say a handle is there before you
  *  try to use it. A resize affordance you can only discover by failing to pan is not an affordance. */
 const scrubGrab = signal<"from" | "to" | "pan" | "outside" | null>(null);
+/** WHICH SAMPLE the crosshair snapped to — segment and index, so every track marks the SAME reading rather
+ *  than each recomputing it from a fraction and rounding differently at the edges. Null when snapping is off
+ *  or there is nothing to snap to. */
+const snapAt = signal<{ frac: number; index: number; run: number } | null>(null);
 /** Read the cursor for a surface, or null when the pointer is somewhere else. */
 const cursorAt = (surface: string) => (hoverAt.value?.surface === surface ? hoverAt.value : null);
 /** The cursor for a surface, for the tips that READ THE PLOT (the sample stamp, a band, the pool rows) —
@@ -112,7 +116,7 @@ const partFill = (model: string, key: keyof MemoryBreakdown): string => {
 };
 
 /** One device (or the host pool) as a stacked area over time. `frames` is one band list per sample. */
-function StackedArea({ frames, ceiling, hidden, scope }: { frames: Band[][]; ceiling: number; hidden: Set<string>; scope: string }) {
+function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null }: { frames: Band[][]; ceiling: number; hidden: Set<string>; scope: string; snapIndex?: number | null }) {
     const order = useMemo(() => bandOrder(frames), [frames]);
     const identity = useMemo(() => bandIdentity(frames), [frames]);
     if (frames.length < 2 || ceiling <= 0) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
@@ -201,11 +205,45 @@ function StackedArea({ frames, ceiling, hidden, scope }: { frames: Band[][]; cei
                 fill={partFill(model, part.key)} vector-effect="non-scaling-stroke" />;
         });
     })();
+    /**
+     * THE DATAPOINT, ON THE LINES IT IS A POINT OF.
+     *
+     * The dot used to ride at the POINTER's height on the argument that a stacked area has many values at one
+     * x and so no single y to choose. That was wrong twice over: the lines ARE there — they are the band
+     * boundaries the chart already draws — and a mark that tracks the cursor vertically is not a datapoint at
+     * all, it is the cursor with a circle on it. Marking every boundary is what "where does this sample sit"
+     * actually means in a stack, and it is exactly what `tops` already holds.
+     *
+     * The FREE band is excluded: its boundary is the ceiling, which is a constant and not a reading.
+     */
+    const dots = (() => {
+        if (snapIndex == null || snapIndex < 0 || snapIndex >= frames.length) return null;
+        const keys = order.filter((k) => k !== "free");
+        const seen = new Set<number>();
+        return keys.map((key) => {
+            const v = tops[key]?.[snapIndex];
+            if (v == null) return null;
+            const cy = y(v);
+            // Two boundaries at the same height are one line on screen, and two dots on it read as a
+            // rendering fault rather than as two bands that happen to meet.
+            const at = Math.round(cy * 10);
+            if (seen.has(at)) return null;
+            seen.add(at);
+            // HTML, not an SVG <circle>: the viewBox is stretched with `preserveAspectRatio="none"`, so a
+            // circle inside it draws as an ELLIPSE whose eccentricity depends on the plot's current size.
+            // Percentages of the same box put it in exactly the same place and keep it round.
+            return <i key={`d:${key}`} class="rc-snapdot" aria-hidden="true"
+                style={{ left: `${(x(snapIndex) / W) * 100}%`, top: `${(cy / H) * 100}%` }} />;
+        });
+    })();
     return (
-        <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-            {areas}
-            {split}
-        </svg>
+        <>
+            <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                {areas}
+                {split}
+            </svg>
+            {dots}
+        </>
     );
 }
 
@@ -258,10 +296,11 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
             <div class="rc-plot"
                 onPointerDown={startBrush(runs)}
                 onPointerMove={(e: PointerEvent) => { trackCursor(scope)(e); trackCrosshair(runs)(e); }}
-                onPointerLeave={() => { hoverAt.value = null; hoverModel.value = null; eventHover.value = null; crosshair.value = null; }}>
+                onPointerLeave={() => { hoverAt.value = null; hoverModel.value = null; eventHover.value = null; crosshair.value = null; snapAt.value = null; }}>
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
-                        <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} scope={scope} />
+                        <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} scope={scope}
+                            snapIndex={snapAt.value?.run === i ? snapAt.value.index : null} />
                         <InstantRules instants={instants} run={i} scope={scope} />
                         <HoverSpan run={i} scope="lane" />
                     </div>
@@ -617,7 +656,7 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
             <div class="rc-plot"
                 onPointerDown={startBrush(runs)}
                 onPointerMove={(e: PointerEvent) => { trackCursor("overlay")(e); trackCrosshair(runs)(e); }}
-                onPointerLeave={() => { hoverAt.value = null; leavePool(); crosshair.value = null; }}>
+                onPointerLeave={() => { hoverAt.value = null; leavePool(); crosshair.value = null; snapAt.value = null; }}>
                 <BrushOverlay />
                 <Crosshair />
                 <PoolsTip pools={pools.map((p, pi) => ({ ...p, color: poolColor(pi, pools.length) }))}
@@ -628,6 +667,17 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
                     <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                         <InstantRules instants={instants} run={ri} scope="overlay" />
                         <HoverSpan run={ri} scope="lane" />
+                        {/* ONE DOT PER LINE at the snapped sample — this view is literally lines, so it is the
+                            view where "snap to the line" means the most. Positioned HTML rather than an SVG
+                            circle for the same reason as the stacked one: the viewBox is stretched, so a
+                            circle inside it would draw as an ellipse. */}
+                        {snapAt.value?.run === ri && run.length ? pools.map((p, pi) => {
+                            const i = Math.min(run.length - 1, Math.max(0, snapAt.value!.index));
+                            const cx = run.length === 1 ? 50 : (i / (run.length - 1)) * 100;
+                            return <i key={`sd:${p.id}`} class="rc-snapdot" aria-hidden="true"
+                                style={{ left: `${cx}%`, top: `${(1 - frac(run[i], p)) * 100}%`,
+                                         background: poolColor(pi, pools.length) }} />;
+                        }) : null}
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {pools.map((p, pi) => {
                                 const pts = run.map((s, i) => `${((i / (run.length - 1)) * W).toFixed(1)},${(H - frac(s, p) * H).toFixed(1)}`).join(" ");
@@ -1054,13 +1104,9 @@ function Crosshair() {
     const flip = c.frac > 0.72;
     return (
         <div class={`rc-cross${c.snapped ? " snapped" : ""}`} style={{ left: `${c.frac * 100}%` }}>
-            {/* THE DATAPOINT ITSELF, thicker than the line it rides. The line says "here"; the dot says "here
-                is a READING", which is a different claim and the one the tooltip beside it is making.
-                It sits at the POINTER's height rather than mid-plot, so it reads as the cursor having snapped
-                to the sample — which is the gesture — instead of as a fixed mark that happens to be nearby.
-                A stacked area has many values at one x, so there is no single y to put it at anyway. */}
-            {c.snapped ? <i class="rc-cross-dot" aria-hidden="true"
-                style={{ top: `${(hoverAt.value?.yFrac ?? 0.5) * 100}%` }} /> : null}
+            {/* The DOTS are drawn inside each plot, on the band boundaries they are points of — see
+                StackedArea. Nothing here: a mark riding at the pointer's height is the cursor with a circle on
+                it, not a datapoint. */}
             {c.t != null ? <span class={`rc-cross-t${flip ? " flip" : ""}`}>{clockAt(c.t, c.msPerPx ?? Infinity)}</span> : null}
         </div>
     );
@@ -1076,6 +1122,7 @@ const trackCrosshair = (runs: ResourceSample[][]) => (e: PointerEvent) => {
     // a line drawn at the pointer instead disagrees with its own number by up to half a sample gap — seven
     // seconds of daylight at an idle cadence, and a gap that changes width as you move, which reads as drift.
     const snapped = snapDot.value ? snapFraction(runs, raw) : null;
+    snapAt.value = snapped;
     const frac = snapped ? snapped.frac : raw;
     // How much time ONE PIXEL is worth here, which is what decides whether milliseconds mean anything in the
     // label: zoomed into ten seconds they do, over five minutes of history they are noise.

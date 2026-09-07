@@ -2192,49 +2192,70 @@ test("resource panel: the crosshair snaps to a datapoint, and only when asked", 
             const cross = await frame.locator(".rc-cross").first().boundingBox().catch(() => null);
             return cross ? (cross.x + cross.width / 2 - plot.x) / plot.width : null;
         };
+        /** Every dot's position within the plot, as fractions. */
+        const dots = async () => frame.locator(".rc-snapdot").evaluateAll((els, p) => els.map((e) => {
+            const r = e.getBoundingClientRect();
+            return { x: (r.x + r.width / 2 - p.x) / p.width, y: (r.y + r.height / 2 - p.y) / p.height,
+                     w: Math.round(r.width), h: Math.round(r.height) };
+        }), plot);
 
-        // OFF by default: the line follows the pointer exactly, and there is no dot.
-        const free = await hoverAt(0.42);
-        expect(Math.abs(free - 0.42), "unsnapped, the line is where the pointer is").toBeLessThan(0.02);
-        expect(await frame.locator(".rc-cross-dot").count(), "and no dot until asked").toBe(0);
+        /** Sweep a short stretch and report how many DISTINCT positions the crosshair took. */
+        const distinct = async (from, to, n) => {
+            const seen = new Set();
+            for (let i = 0; i < n; i++) seen.add((await hoverAt(from + ((to - from) * i) / (n - 1))).toFixed(3));
+            return seen.size;
+        };
+
+        // OFF by default: the line follows the pointer exactly, so every position in a sweep is its own.
+        // Asserted as QUANTISATION rather than by comparing absolute positions, because the axis is LIVE —
+        // samples accumulate while the test hovers, so every snapped position shifts between probes and a
+        // test comparing them across several seconds is racing its own data. How many distinct places the
+        // line can be is stable under that; where they are is not.
+        const freeSpread = await distinct(0.40, 0.50, 6);
+        expect(freeSpread, "unsnapped, six positions are six positions").toBeGreaterThan(4);
+        expect(await frame.locator(".rc-snapdot").count(), "and no dot until asked").toBe(0);
 
         // Turned on through the CONTROL, not by writing storage behind the panel's back: the preference is
         // read at mount, so a poked key would leave the signal stale and the test would be asserting on a
         // path no user takes.
-        await frame.locator('[aria-label="Settings"]').click();
-        await frame.locator(".set-tab", { hasText: "Appearance" }).click();
-        await frame.locator(".set-check", { hasText: "Snap the crosshair" }).locator("input").check();
-        await frame.locator('[aria-label="Back"], .hbtn').first().click().catch(() => {});
+        //
+        // It lives in the PANEL'S OWN track editor, beside what the panel draws — not in Settings, which is a
+        // surface you have to leave the chart to reach for a mode you flip while reading one datapoint. The
+        // lane and model-list toggles are there for the same reason.
+        await frame.locator('[aria-label="Edit tracks"]').click();
+        await frame.locator(".rc-eopt", { hasText: "snap to datapoint" }).locator("input").check();
+        await frame.locator('[aria-label="Edit tracks"]').click();   // close it, or it covers the plot
         await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 10000 }).toBeGreaterThan(0);
         await expect.poll(async () => {
             await page.mouse.move(plot.x + plot.width * 0.42, plot.y + plot.height * 0.5);
             await sleep(120);
-            return frame.locator(".rc-cross-dot").count();
-        }, { timeout: 10000 }).toBe(1);
+            return frame.locator(".rc-snapdot").count();
+        }, { timeout: 10000 }).toBeGreaterThan(0);
 
-        // SNAPPED: the same sample is chosen across a spread of nearby positions, and the line lands on the
-        // SAME x each time — which is the whole point, and is what a line merely following the pointer can
-        // never do. Read off the geometry rather than a class, so a dot drawn in the wrong place fails.
-        const near = [];
-        for (const fx of [0.40, 0.42, 0.44]) near.push(await hoverAt(fx));
-        expect(Math.max(...near) - Math.min(...near), `three nearby hovers snapped to ${JSON.stringify(near)}`)
-            .toBeLessThan(0.01);
-        // …and it is a real position on the axis, not a corner it fell back to.
-        expect(near[0]).toBeGreaterThan(0.1);
-        expect(near[0]).toBeLessThan(0.9);
+        // SNAPPED: the same sweep collapses onto a handful of datapoints. That is the whole behaviour, and
+        // what a line merely following the pointer can never do.
+        const snapSpread = await distinct(0.40, 0.50, 6);
+        expect(snapSpread, `six positions snapped to ${snapSpread} places (unsnapped: ${freeSpread})`)
+            .toBeLessThan(3);
 
-        // Moving far enough picks a DIFFERENT sample, or it would be snapping to one point forever.
-        const far = await hoverAt(0.75);
-        expect(Math.abs(far - near[0]), "a different datapoint").toBeGreaterThan(0.05);
+        // THE DOT SITS ON A LINE, and does not follow the pointer. It rode at the cursor's height at first,
+        // on the argument that a stacked area has many values at one x and so no single y — which was wrong
+        // twice: the lines ARE there, and a mark tracking the cursor vertically is the cursor with a circle
+        // on it rather than a datapoint.
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.15);
+        await sleep(250);
+        const high = await dots();
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.85);
+        await sleep(250);
+        const low = await dots();
+        expect(high.length, "at least one line is marked").toBeGreaterThan(0);
+        expect(low.map((d) => d.y.toFixed(2)), "the SAME heights whatever the pointer's own is")
+            .toEqual(high.map((d) => d.y.toFixed(2)));
+        // …and it is ROUND. A <circle> inside a `preserveAspectRatio="none"` viewBox draws as an ellipse whose
+        // eccentricity depends on the plot's current size, which is why these are positioned HTML.
+        expect(Math.abs(high[0].w - high[0].h), `${high[0].w}x${high[0].h}`).toBeLessThanOrEqual(1);
+        // Every dot shares the snapped x — they are points of the SAME sample on different lines.
+        expect(Math.max(...high.map((d) => d.x)) - Math.min(...high.map((d) => d.x))).toBeLessThan(0.02);
 
-        // The dot rides at the POINTER's height, so it reads as the cursor having snapped rather than as a
-        // fixed mark that happens to be nearby.
-        const dotHigh = await (async () => {
-            await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.2);
-            await sleep(200);
-            const d = await frame.locator(".rc-cross-dot").boundingBox();
-            return (d.y + d.height / 2 - plot.y) / plot.height;
-        })();
-        expect(dotHigh, "it follows the pointer vertically").toBeLessThan(0.4);
     } finally { await ext.close(); await fake.stop(); }
 });
