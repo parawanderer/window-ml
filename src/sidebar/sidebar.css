@@ -190,6 +190,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-hit { pointer-events: stroke; }
 .rc-soft { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed var(--accent); opacity: .6; }
 /* A band names itself on hover, and its neighbours dim so one shape resolves out of a similar-coloured stack. */
+/* A MEMORY PART inside a hovered model's band — weights / context / vision encoder / overhead. Drawn OVER the
+   solid band, with a hairline in the panel's own colour between them so four stacked shares of one colour
+   read as four things rather than as a gradient. `pointer-events: none` so subdividing a band cannot steal
+   the hover that is subdividing it, which would flicker the decomposition on and off. */
+.rc-part { pointer-events: none; stroke: var(--panel); stroke-width: .5; stroke-opacity: .55; }
 .rc-band { cursor: help; transition: opacity .12s ease; }
 /* The hovered band outlines itself, so you can see WHICH one you are reading rather than inferring it from
    the neighbours having dimmed. `paint-order` keeps the stroke outside the fill so a thin band still shows it. */

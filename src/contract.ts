@@ -1659,7 +1659,9 @@ export interface InvocationInfo {
 
 /** One accelerator a resident model occupies, from `/api/ps` `gpus[]`. ABSENT entirely for a CPU-resident
  *  model — that is the server's contract for "on the CPU", not a missing field. */
-export interface LoadedModelGpu { id: string; runner: string; vramBytes: number }
+export interface LoadedModelGpu { id: string; runner: string; vramBytes: number;
+    /** This DEVICE's own memory split, raw from the server (see LoadedModel.memory). */
+    memory?: unknown }
 
 export interface LoadedModel {
     model: string;
@@ -1673,6 +1675,15 @@ export interface LoadedModel {
     gpus?: LoadedModelGpu[];
     contextLength: number | null;
     expiresAt: string | null;
+    /** WHAT the VRAM holds — weights / KV cache / compute / projector / … — carried RAW and parsed once by
+     *  `memorySplit`, which checks the server's sum-to-`size_vram` invariant in one place instead of at every
+     *  consumer. Needs a patched Ollama; absent means the server cannot split this figure, never that the
+     *  parts are zero. */
+    memory?: unknown;
+    /** The same shape for whatever did NOT fit on a GPU. Present only on a spill. */
+    memoryHost?: unknown;
+    /** The size of the files it loaded from — beside the split, never inside it: it is not resident memory. */
+    weightsOnDisk?: number;
     /** Whether this runner is SERVING a request right now, from its reference count. It is the only way to
      *  read `expiresAt` correctly: the deadline is rewritten when a request FINISHES, so during a generation
      *  it stands still while a countdown drawn against it keeps running down, and on a long enough one it

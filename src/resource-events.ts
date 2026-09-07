@@ -113,10 +113,16 @@ export function loadedFrom(rows: unknown[]): LoadedModel[] {
             // saying so — and that absence is preserved here rather than normalised to an empty array.
             ...(Array.isArray(m.gpus) ? { gpus: m.gpus.map((g: any) => ({
                 id: String(g.gpu_id ?? ""), runner: String(g.runner ?? ""), vramBytes: Number(g.size_vram) || 0,
+                ...(g.memory ? { memory: g.memory } : {}),
             })) } : {}),
             // The context window it was loaded with. Ollama preallocates KV cache for the FULL window, so
             // this explains a big share of size_vram. Older servers don't report it → null, and the UI hides it.
             contextLength: typeof m.context_length === "number" ? m.context_length : null,
+            // WHAT the VRAM holds, carried RAW and parsed once downstream (`residencyOf` → `memorySplit`),
+            // so the sum invariant is checked in one place rather than by each consumer that reads it.
+            ...(m.memory ? { memory: m.memory } : {}),
+            ...(m.memory_host ? { memoryHost: m.memory_host } : {}),
+            ...(typeof m.weights_on_disk === "number" ? { weightsOnDisk: m.weights_on_disk } : {}),
             // A LOADING entry carries its name and zeros for everything else, so its `expires_at` is Go's
             // zero time — a deadline in year 1, which renders as a countdown of minus two thousand years.
             expiresAt: (m.state === "loading" ? null : m.expires_at) || null,

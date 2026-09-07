@@ -1495,3 +1495,68 @@ test("scrubPinch: narrows and widens around the pointer, symmetrically", () => {
     assert.deepEqual(M.scrubPinch({ from: 5, to: 5 }, win, -20, 0.5), win);
     assert.deepEqual(M.scrubPinch(ex, { from: 10, to: 10 }, -20, 0.5), { from: 10, to: 10 });
 });
+
+// WHAT a model's VRAM is holding, not just how much of it there is. `size_vram` alone cannot tell a BIG
+// MODEL from a BIG CONTEXT — lots of weights with a small cache, and modest weights with an enormous one,
+// are the same number and call for opposite responses. Captured from a live load of `gemma4:e2b`.
+const REAL_PS = {
+    model: "gemma4:e2b", name: "gemma4:e2b", size: 4639812484, size_vram: 4639812484,
+    weights_on_disk: 7162394016,
+    memory: { weights: 1465426903, kv_cache: 836763648, compute: 1129588981, projector: 1208032952 },
+    gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: 4639812484,
+             memory: { weights: 1465426903, kv_cache: 836763648, compute: 1129588981, projector: 1208032952 } }],
+};
+
+test("memorySplit: the parts sum to the total EXACTLY, or it refuses", () => {
+    const m = M.memorySplit(REAL_PS.memory, REAL_PS.size_vram);
+    assert.ok(m, "the real capture parses");
+    // The server's own invariant, verified to the byte on every model it reports. A split that does not sum
+    // is a bug to report, never a remainder to invent — so a mismatch yields NOTHING rather than a fifth
+    // slice papering over the difference.
+    assert.equal(m.weights + m.kvCache + m.compute + m.recurrentState + m.output + m.projector + m.other,
+        REAL_PS.size_vram);
+    assert.equal(M.memorySplit({ ...REAL_PS.memory, compute: 999 }, REAL_PS.size_vram), null,
+        "one byte off and it is not a split of this total");
+
+    // A key is OMITTED when zero, so a missing one reads as zero rather than as absent data.
+    const text = M.memorySplit({ weights: 10, kv_cache: 5, compute: 5 }, 20);
+    assert.equal(text.projector, 0);
+    assert.equal(text.recurrentState, 0);
+
+    // ABSENT is not zero. The server omits the object when it cannot divide the figure (a loading row, an
+    // MLX runner), and an all-zero split beside a non-zero total would be a contradiction it never sends.
+    assert.equal(M.memorySplit(undefined, 100), null);
+    assert.equal(M.memorySplit(null, 100), null);
+    assert.equal(M.memorySplit({ weights: 0, kv_cache: 0, compute: 0 }, 0), null, "nothing to draw");
+});
+
+test("residencyFrom: carries the split, per device, with the disk size beside it", () => {
+    const r = M.residencyFrom(REAL_PS);
+    assert.equal(r.memory.weights, 1465426903);
+    assert.equal(r.perDeviceMemory["0"].projector, 1208032952, "each card's own split, not an average");
+    // DELIBERATELY beside `memory`, not inside it: the file is not resident memory and including it would
+    // break the sum. Here it is far LARGER than the resident weights, which is ordinary.
+    assert.equal(r.weightsOnDisk, 7162394016);
+    assert.equal(r.memoryHost, undefined, "no spill on this one");
+
+    // A server predating the change reports none of it, and that must read as "not reported".
+    const old = M.residencyFrom({ model: "x", size: 100, size_vram: 100, gpus: [{ gpu_id: "0", size_vram: 100 }] });
+    assert.equal(old.memory, undefined);
+    assert.equal(old.vramBytes, 100, "…while everything that was always there still works");
+});
+
+test("memoryParts / contextBytes: what a user can act on", () => {
+    const m = M.memorySplit(REAL_PS.memory, REAL_PS.size_vram);
+    const parts = M.memoryParts(m);
+    assert.deepEqual(parts.map((p) => p.key), ["weights", "kvCache", "projector", "compute"],
+        "stack order, and a zero part is dropped rather than drawn as an empty label");
+    assert.equal(parts.reduce((s, p) => s + p.bytes, 0), REAL_PS.size_vram, "still no remainder");
+
+    // `recurrent_state` answers the same question as a KV cache — some layers keep it INSTEAD of one — so
+    // the FIGURE adds them and the LABEL never conflates them.
+    const hybrid = M.memorySplit({ weights: 10, kv_cache: 5, compute: 1, recurrent_state: 4 }, 20);
+    assert.equal(M.contextBytes(hybrid), 9, "context is the cache AND the recurrent state");
+    const labels = M.memoryParts(hybrid).map((p) => p.label);
+    assert.ok(labels.some((l) => /recurrent/i.test(l)), "…and it is named as what it is");
+    assert.ok(!labels.some((l) => /recurrent/i.test(l) && /KV/i.test(l)), "never as a KV cache");
+});

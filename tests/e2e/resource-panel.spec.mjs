@@ -2080,3 +2080,71 @@ test("resource panel: pinching zooms the window — on the plot, the lane and th
         await fake.stop();
     }
 });
+
+// HOVERING A MODEL SUBDIVIDES ITS BAND IN PLACE. `size_vram` alone cannot tell a big MODEL from a big
+// CONTEXT — lots of weights with a small cache, and modest weights with an enormous one, are the same number
+// and want opposite responses — so the server splits it and the chart decomposes the area you are already
+// looking at, rather than opening a second picture of the same memory elsewhere.
+test("resource panel: hovering a model splits its band into what the memory is holding", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        // The real shape, from a live `gemma4:e2b`: the parts sum to `size_vram` to the byte, which is what
+        // lets the band subdivide with no remainder slice.
+        const MEM = { weights: 1465426903, kv_cache: 836763648, compute: 1129588981, projector: 1208032952 };
+        const VRAM = 4639812484;
+        fake.setResident([{
+            model: "gemma4:e2b", name: "gemma4:e2b", size: VRAM, size_vram: VRAM, context_length: 262144,
+            expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+            memory: MEM, weights_on_disk: 7162394016,
+            gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: VRAM, memory: MEM }],
+        }]);
+        await seedStacked(ext);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(2500);   // two samples, or a stacked AREA has nothing to span
+
+        // NOTHING until asked: the decomposition is a hover affordance, not a permanent extra four shapes in
+        // a chart whose whole problem is how much is already in it.
+        expect(await frame.locator(".rc-part").count(), "no parts before hovering").toBe(0);
+
+        await frame.locator(".rc-band").first().hover();
+        await expect.poll(() => frame.locator(".rc-part").count(), { timeout: 5000 }).toBe(4);
+        // The FOUR the capture has, in stack order, and no fifth — a remainder slice would mean the sum
+        // invariant had been papered over instead of trusted.
+        const classes = await frame.locator(".rc-part").evaluateAll((els) => els.map((e) => e.getAttribute("class")));
+        expect(classes.join(" ")).toContain("rc-part-weights");
+        expect(classes.join(" ")).toContain("rc-part-kvCache");
+        expect(classes.join(" ")).toContain("rc-part-projector");
+        expect(classes.join(" ")).toContain("rc-part-compute");
+        expect(classes.join(" "), "nothing the model does not have").not.toContain("rc-part-output");
+
+        // THE SHARES ARE THE BYTES. Measured off the drawn geometry rather than trusted from the source:
+        // the whole point is that the picture is the split, so a decomposition that draws four equal slices
+        // would look right and mean nothing.
+        const heights = await frame.locator(".rc-part").evaluateAll((els) => els.map((e) => {
+            const ys = e.getAttribute("points").split(" ").map((p) => parseFloat(p.split(",")[1]));
+            return Math.max(...ys) - Math.min(...ys);
+        }));
+        const total = heights.reduce((a, b) => a + b, 0);
+        const share = (i) => heights[i] / total;
+        expect(share(0)).toBeCloseTo(MEM.weights / VRAM, 1);
+        expect(share(1)).toBeCloseTo(MEM.kv_cache / VRAM, 1);
+
+        // …and the band it decomposes is still exactly as tall, because the parts sum to it.
+        const bandH = await frame.locator(".rc-band").first().evaluate((e) => {
+            const ys = e.getAttribute("points").split(" ").map((p) => parseFloat(p.split(",")[1]));
+            return Math.max(...ys) - Math.min(...ys);
+        });
+        expect(Math.abs(total - bandH), "no remainder — the split fills the band").toBeLessThan(1.5);
+
+        // It goes with the pointer.
+        await frame.locator(".vram-head").hover();
+        await expect.poll(() => frame.locator(".rc-part").count(), { timeout: 5000 }).toBe(0);
+    } finally { await ext.close(); await fake.stop(); }
+});

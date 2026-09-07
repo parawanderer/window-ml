@@ -15,7 +15,7 @@ import {
     placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, TAIL_SLACK_MS,
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
-    OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR,
+    OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR, MEMORY_PARTS, memoryParts, type MemoryBreakdown,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
@@ -98,6 +98,19 @@ const bandFill = (key: string, model: string | undefined): string => {
     return model ? colorFor(model) : "var(--fg-faint)";
 };
 
+/** A memory PART, in the model's own colour so the decomposition still reads as that model rather than as a
+ *  new set of things. The parts are told apart by WEIGHT, not by hue: weights keep the full colour (they are
+ *  the model), context is lighter, and the overhead a user cannot act on is lighter still. A hue per part
+ *  would put four unrelated colours inside one band and lose the identity the band exists to carry. */
+const PART_MIX: Record<keyof MemoryBreakdown, number> = {
+    weights: 100, kvCache: 62, recurrentState: 62, projector: 44, compute: 26, output: 18, other: 18,
+};
+const partFill = (model: string, key: keyof MemoryBreakdown): string => {
+    const c = colorFor(model);
+    const mix = PART_MIX[key];
+    return mix >= 100 ? c : `color-mix(in srgb, ${c} ${mix}%, transparent)`;
+};
+
 /** One device (or the host pool) as a stacked area over time. `frames` is one band list per sample. */
 function StackedArea({ frames, ceiling, hidden, scope }: { frames: Band[][]; ceiling: number; hidden: Set<string>; scope: string }) {
     const order = useMemo(() => bandOrder(frames), [frames]);
@@ -137,9 +150,61 @@ function StackedArea({ frames, ceiling, hidden, scope }: { frames: Band[][]; cei
             onPointerLeave={model ? () => { hoverModel.value = null; hoverAt.value = null; } : undefined}
             opacity={dim ? 0.18 : key === "other" ? 0.35 : 0.75} />;
     });
+
+    /**
+     * THE HOVERED MODEL'S BAND, SUBDIVIDED IN PLACE.
+     *
+     * `size_vram` alone cannot tell a big MODEL from a big CONTEXT — lots of weights with a small cache, and
+     * modest weights with an enormous one, are the same number and want opposite responses. The server splits
+     * it now, so hovering decomposes the area you are already looking at rather than opening a second picture
+     * of the same memory somewhere else. Which also shows the part a chart is uniquely good at: weights sit
+     * still while the cache steps with the context, and that is visible over TIME and nowhere in a total.
+     *
+     * Drawn OVER the solid band rather than instead of it, so a frame the server could not split (a loading
+     * row, an MLX runner, a sample from before the field existed) simply shows the band it always had — the
+     * parts collapse to zero height there instead of the whole decomposition vanishing or, worse, stretching
+     * a neighbouring frame's shares across a gap it never measured.
+     */
+    const split = (() => {
+        const model = hoverModel.value;
+        if (!model) return null;
+        const key = order.find((k) => identity[k] === model && k !== "free");
+        if (!key || hidden.has(model)) return null;
+        const ki = order.filter((k) => k !== "free").indexOf(key);
+        if (ki < 0) return null;
+        const belowKey = ki === 0 ? null : order.filter((k) => k !== "free")[ki - 1];
+        // The parts present in ANY frame, in stack order, so a slice does not appear and disappear as the
+        // window scrolls over the moment a projector was allocated.
+        const seen = new Set<keyof MemoryBreakdown>();
+        for (const bands of frames) {
+            const p = bands.find((b) => b.key === key)?.parts;
+            if (p) for (const q of memoryParts(p)) seen.add(q.key);
+        }
+        if (!seen.size) return null;
+        const keys = MEMORY_PARTS.filter((p) => seen.has(p.key));
+        const base = frames.map((_f, i) => (belowKey ? (tops[belowKey]?.[i] ?? 0) : 0));
+        // Cumulative sub-tops, one row per part.
+        const subTops = keys.map(() => new Array<number>(frames.length).fill(0));
+        frames.forEach((bands, i) => {
+            const p = bands.find((b) => b.key === key)?.parts;
+            let acc = base[i];
+            keys.forEach((part, pi) => {
+                if (p) acc += p[part.key];
+                subTops[pi][i] = acc;   // no parts → every sub-top is the base, so nothing is drawn here
+            });
+        });
+        return keys.map((part, pi) => {
+            const pts: string[] = [];
+            for (let i = 0; i < frames.length; i++) pts.push(`${x(i).toFixed(1)},${y(subTops[pi][i]).toFixed(1)}`);
+            for (let i = frames.length - 1; i >= 0; i--) pts.push(`${x(i).toFixed(1)},${y(pi === 0 ? base[i] : subTops[pi - 1][i]).toFixed(1)}`);
+            return <polygon key={`p:${part.key}`} points={pts.join(" ")} class={`rc-part rc-part-${part.key}`}
+                fill={partFill(model, part.key)} vector-effect="non-scaling-stroke" />;
+        });
+    })();
     return (
         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
             {areas}
+            {split}
         </svg>
     );
 }

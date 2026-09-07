@@ -154,6 +154,37 @@ export function parseInfo(raw: unknown): Capacity | null {
 
 /** One resident model at one instant. Bytes, not the rounded GB `LoadedModel` carries for display — the
  *  band arithmetic subtracts these from exact capacity figures, so rounding would accumulate visible error. */
+/** WHAT a model's VRAM is holding, in bytes — the server's own split, not ours.
+ *
+ *  `size_vram` alone cannot tell a BIG MODEL from a BIG CONTEXT: lots of weights with a small cache, and
+ *  modest weights with an enormous one, are the same number and call for opposite responses (a smaller quant
+ *  vs. less context). This is that distinction.
+ *
+ *  The parts SUM EXACTLY to `size_vram`, to the byte — which is what lets the chart subdivide a band with no
+ *  remainder slice. Where they do not, that is the server's bug to report and never ours to paper over, so
+ *  {@link memorySplit} refuses rather than inventing the difference. */
+export interface MemoryBreakdown {
+    /** Model tensors. Fixed once the model is chosen. */
+    weights: number;
+    /** Attention cache — grows with the context length, and the part a context setting moves. */
+    kvCache: number;
+    /** Scratch for the forward pass. */
+    compute: number;
+    /** Hybrid/SSM per-sequence state: some layers keep this INSTEAD of a KV cache, so there are literally no
+     *  keys or values in them. Reported apart because calling it "KV cache" would be wrong, but it answers
+     *  the same question — together with `kvCache` it is what the CONTEXT costs. Not small: 784 MB on a 27b. */
+    recurrentState: number;
+    /** Logits buffer. */
+    output: number;
+    /** A vision model's image encoder, and often the largest non-weights term (2.32 GB of a 5.46 GB model).
+     *  A WORST-CASE reservation — sized for the largest image the model accepts, not for what is held with
+     *  none loaded — so it reads large against what the user is actually doing. */
+    projector: number;
+    /** Allocation kinds the server did not recognise. Normally 0; a LARGE one means the breakdown has gone
+     *  stale against the engine, which is worth showing rather than hiding. */
+    other: number;
+}
+
 export interface ModelResidency {
     model: string;
     /** Total across all devices. */
@@ -164,7 +195,67 @@ export interface ModelResidency {
     perDevice: Record<string, number | null>;
     contextLength: number | null;
     expiresAt: number | null;
+    /** What the VRAM holds, summed across devices. ABSENT — never zeroed — when the server cannot split it
+     *  (a model still loading, a runner that reports one total without naming its parts). An all-zero split
+     *  beside a non-zero `size_vram` would be a contradiction, so treat missing as "not reported" and fall
+     *  back to the total alone. */
+    memory?: MemoryBreakdown;
+    /** deviceId → that device's own split, which is what makes a SPLIT model worth looking at: weights on
+     *  one card and cache on another is a placement, not a number. */
+    perDeviceMemory?: Record<string, MemoryBreakdown>;
+    /** The size of the files it was loaded from. Deliberately NOT part of `memory` — it is not resident
+     *  memory, and including it would break the sum. Against `memory.weights` it says what the load cost
+     *  over the file; they are close and never equal, in either direction. */
+    weightsOnDisk?: number;
+    /** What did NOT fit on a GPU, in the same shape. Present only on a SPILL — which is otherwise silent,
+     *  since the model loads, answers correctly and is merely slow. `size_total > size_vram` already says
+     *  how MUCH went to host memory; this says WHAT went, and 2 GB of spilled weights is a different problem
+     *  from 2 GB of spilled cache. */
+    memoryHost?: MemoryBreakdown;
 }
+
+/** Parse a server `memory` object, or null when it cannot be trusted as a split.
+ *
+ *  Refuses on two counts, both because a WRONG split is worse than none: an absent object (the server says it
+ *  cannot divide this figure — a loading row, an MLX runner), and one whose parts do not sum to the total it
+ *  is meant to divide. The second is the server's invariant, verified to the byte on every model it reports,
+ *  so a mismatch is a bug to report rather than a remainder to invent. */
+export function memorySplit(raw: unknown, total: number): MemoryBreakdown | null {
+    if (!raw || typeof raw !== "object") return null;
+    const m = raw as Record<string, unknown>;
+    const n = (k: string) => Number(m[k]) || 0;   // a key is OMITTED when zero, so missing IS zero here
+    const out: MemoryBreakdown = {
+        weights: n("weights"), kvCache: n("kv_cache"), compute: n("compute"),
+        recurrentState: n("recurrent_state"), output: n("output"),
+        projector: n("projector"), other: n("other"),
+    };
+    const sum = out.weights + out.kvCache + out.compute + out.recurrentState + out.output + out.projector + out.other;
+    if (!(sum > 0)) return null;
+    if (total > 0 && sum !== total) return null;
+    return out;
+}
+
+/** The parts in the order a stack draws them, largest concern first — weights and context are what a user can
+ *  act on, the rest is overhead they cannot. Zero parts are dropped, so a text-only model shows no projector
+ *  slice rather than an empty label. */
+export const MEMORY_PARTS: { key: keyof MemoryBreakdown; label: string }[] = [
+    { key: "weights", label: "weights" },
+    { key: "kvCache", label: "context (KV cache)" },
+    { key: "recurrentState", label: "context (recurrent state)" },
+    { key: "projector", label: "vision encoder" },
+    { key: "compute", label: "compute buffers" },
+    { key: "output", label: "logits" },
+    { key: "other", label: "unrecognised" },
+];
+
+/** The parts that are worth drawing, in stack order. */
+export function memoryParts(m: MemoryBreakdown): { key: keyof MemoryBreakdown; label: string; bytes: number }[] {
+    return MEMORY_PARTS.map((p) => ({ ...p, bytes: m[p.key] })).filter((p) => p.bytes > 0);
+}
+
+/** What the CONTEXT costs — the one figure that answers "would less context help?". `recurrent_state` is
+ *  added in because for this question it is the same thing as a KV cache; only the LABEL must not be. */
+export const contextBytes = (m: MemoryBreakdown): number => m.kvCache + m.recurrentState;
 
 /** One poll: what was resident at `t`. Capacity rides along because it can change (a card appears, another
  *  process frees memory) and because a sample read back from history must know the ceiling it was drawn against. */
@@ -203,6 +294,24 @@ export function residencyFrom(raw: unknown): ModelResidency {
         perDevice,
         contextLength: typeof m.context_length === "number" ? m.context_length : null,
         expiresAt: m.expires_at ? Date.parse(String(m.expires_at)) || null : null,
+        // WHAT the VRAM holds. Each device carries its own split summing to that device's own total, so a
+        // split model's cards are decomposed separately rather than sharing one average that describes
+        // neither. Absent stays absent — see `memorySplit`.
+        ...(() => {
+            const whole = memorySplit(m.memory, vram);
+            const per: Record<string, MemoryBreakdown> = {};
+            for (const g of gpus) {
+                const one = memorySplit(g.memory, Number(g.size_vram) || 0);
+                if (one) per[String(g.gpu_id ?? "")] = one;
+            }
+            const host = memorySplit(m.memory_host, 0);
+            return {
+                ...(whole ? { memory: whole } : {}),
+                ...(Object.keys(per).length ? { perDeviceMemory: per } : {}),
+                ...(typeof m.weights_on_disk === "number" ? { weightsOnDisk: m.weights_on_disk } : {}),
+                ...(host ? { memoryHost: host } : {}),
+            };
+        })(),
     };
 }
 
@@ -298,6 +407,11 @@ export interface Band {
     kind: BandKind;
     /** Set on a `model` band, so the chart can colour it with the model's own colour and hide it with the row. */
     model?: string;
+    /** What THIS band's bytes are holding, when the server reported it — so hovering a model can subdivide
+     *  its area in place rather than opening a separate picture of the same memory. Attached here, where the
+     *  device is known, because a split model's cards decompose differently and one average describes
+     *  neither. */
+    parts?: MemoryBreakdown;
 }
 
 /** How much of `device` this model holds, or null when the server couldn't attribute it. A single-device box
@@ -329,7 +443,11 @@ export function deviceBands(sample: ResourceSample, deviceId: string): Band[] {
         if (share == null) { unknown += m.vramBytes; continue; }
         if (share <= 0) continue;
         attributed += share;
-        bands.push({ key: `m:${m.model}`, label: m.model, bytes: share, kind: "model", model: m.model });
+        // THIS DEVICE'S split, never the model's total: on a split model the cards hold different things, and
+        // the whole-model figure would decompose a card's band into parts that are not on it.
+        const parts = m.perDeviceMemory?.[deviceId] ?? (count <= 1 ? m.memory : undefined);
+        bands.push({ key: `m:${m.model}`, label: m.model, bytes: share, kind: "model", model: m.model,
+            ...(parts ? { parts } : {}) });
     }
     if (unknown > 0) bands.push({ key: "unknown", label: "placement unknown", bytes: unknown, kind: "unknown" });
     // Everything in use that we cannot attribute to a model of ours. Clamped: `free` is sampled independently
@@ -374,7 +492,13 @@ export function hostBands(sample: ResourceSample): Band[] {
         const bytes = unified ? m.vramBytes + m.ramBytes : m.ramBytes;
         if (bytes <= 0) continue;
         attributed += bytes;
-        bands.push({ key: `m:${m.model}`, label: m.model, bytes, kind: "model", model: m.model });
+        // UNIFIED memory only: there the pool holds the whole model, so the model's own split describes this
+        // band exactly. On a discrete box this band is the SPILL, and the split we hold describes what is on
+        // the GPU — a different quantity, so it is left off rather than drawn against the wrong bytes.
+        // (`memoryHost` is the split OF the spill; surfacing it here is worth doing once the panel has a
+        // shape for it.)
+        bands.push({ key: `m:${m.model}`, label: m.model, bytes, kind: "model", model: m.model,
+            ...(unified && m.memory ? { parts: m.memory } : {}) });
     }
     const used = Math.max(0, host.totalBytes - host.freeBytes);
     bands.push({ key: "other", label: OTHER_BAND_LABEL, bytes: Math.max(0, used - attributed), kind: "other" });

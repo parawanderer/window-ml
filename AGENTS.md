@@ -888,6 +888,39 @@ display rather than an obvious bug:
   started. And read `state` before anything else on a ps entry — a `"loading"` one carries its name and
   ZEROS, including a Go zero-time `expires_at` that parses to a deadline in the year 1.
 
+**What a model's VRAM is HOLDING, not just how much (`memory` on `/api/ps`).** `size_vram` alone cannot tell
+a big MODEL from a big CONTEXT — lots of weights with a small cache, and modest weights with an enormous one,
+are the same number and want opposite responses (a smaller quant vs. less context). A patched Ollama splits
+it: `weights` / `kv_cache` / `compute` / `recurrent_state` / `output` / `projector` / `other`, per model AND
+per device, in bytes.
+- **The parts SUM TO `size_vram` EXACTLY**, to the byte, which is what lets a band be subdivided with no
+  remainder slice. `memorySplit` REFUSES a split that does not add up rather than inventing the difference —
+  a mismatch is the server's bug to report, and papering over it would hide exactly the thing worth seeing.
+- **Absent is not zero.** The object is omitted whenever the server cannot divide the figure (a `loading`
+  row, an MLX runner, any build predating it), so check that `memory` is PRESENT rather than that its fields
+  are non-zero, and fall back to the total alone.
+- **`recurrent_state` is context too.** Hybrid/SSM layers keep a per-sequence state INSTEAD of a KV cache —
+  there are literally no keys or values in them — so the FIGURE adds it to the cache (`contextBytes`) while
+  the LABEL never calls it one. Not small: 784 MB on a 27b.
+- **`projector` is a worst-case reservation** (sized for the largest image the model accepts, not for what is
+  held with none loaded), and often the largest non-weights term — 2.32 GB of a 5.46 GB model.
+- **`weights_on_disk` sits BESIDE the split, never inside it**: it is not resident memory and including it
+  would break the sum. Against `memory.weights` it says what the load cost over the file, in either
+  direction. **`memory_host`** is the same shape for what did NOT fit — present only on a spill, which is
+  otherwise silent since the model loads, answers and is merely slow.
+- **`estimate.breakdown` is NOT a total**: only `weights`/`kv_cache` are populated, it does not sum to
+  `estimate.predicted`, and it must never be drawn as a stacked bar. Compared field by field against
+  `load.complete` it is genuinely informative — on one 27b load the weights model was within 10% while the
+  cache estimate was 4x over, which is the half a single "predicted 26 GB, used 20 GB" cannot name.
+- **HOVERING A MODEL SUBDIVIDES ITS BAND IN PLACE** (`.rc-part`), rather than opening a second picture of the
+  same memory somewhere else — and it is the chart that earns it: weights sit still while the cache steps
+  with the context, which is visible over TIME and in no total. The split rides on the `Band` (attached in
+  `deviceBands`, where the device is known — a split model's cards hold different things and one average
+  describes neither), and is drawn OVER the solid band, so a frame the server could not split shows the band
+  it always had instead of the decomposition vanishing or stretching a neighbour's shares across a gap
+  nobody measured. Parts are told apart by WEIGHT of the model's own colour, not by hue: four hues inside one
+  band would lose the identity the band exists to carry.
+
 **The event lane (§4.5 of the spec).** Under the tracks, on the SAME segmented axis: what happened, against
 what memory was doing while it did. Nothing new is collected — `src/sidebar/model-stats.ts` derives it from what
 sessions already record. `usageByModel` is the per-model ledger (attributed to the model that RAN, with
