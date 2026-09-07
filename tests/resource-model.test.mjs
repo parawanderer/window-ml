@@ -1658,3 +1658,57 @@ test("a multi-card split carries no memory_host", () => {
     assert.equal(M.residencyFrom(SPLIT_PS).memoryHost, undefined);
     assert.equal(M.residencyFrom(SPLIT_PS).ramBytes, 0, "nothing on the host at all");
 });
+
+// A LOPSIDED SPLIT, which is where a proportional assumption would actually show. The captured `qwen3:235b`
+// is 73.3 GB against 71.0 GB — near enough to equal that pro-rating would have passed on it, and the reason
+// that capture alone is not sufficient evidence.
+//
+// The SHAPE here is measured (a forced 3:1 of `granite4.1:3b`: 31 layers against 10, and identical compute on
+// both); the byte values are RECONSTRUCTED from the MiB the report gives, so the per-card totals are derived
+// from the parts rather than quoted. That is the honest form for this test — what it checks is that we use
+// each card's own figures, not that the server's rounding is right, and the latter has its own capture above.
+const MiB = 1024 * 1024;
+const LOPSIDED = (() => {
+    const card = (id, weights, kv, compute) => {
+        const memory = { weights: weights * MiB, kv_cache: kv * MiB, compute: compute * MiB };
+        return { gpu_id: id, runner: "CUDA", size_vram: memory.weights + memory.kv_cache + memory.compute, memory };
+    };
+    const gpus = [card("0", 1380, 496, 115), card("1", 619, 144, 115)];
+    const total = gpus[0].size_vram + gpus[1].size_vram;
+    return {
+        name: "granite4.1:3b", model: "granite4.1:3b", size: total, size_vram: total,
+        memory: { weights: (1380 + 619) * MiB, kv_cache: (496 + 144) * MiB, compute: 230 * MiB },
+        gpus,
+    };
+})();
+
+test("an UNEQUAL split decomposes by each card's own figures, not by its share of the bytes", () => {
+    const r = M.residencyFrom(LOPSIDED);
+    const sum = (m) => m.weights + m.kvCache + m.compute + m.recurrentState + m.output + m.projector + m.other;
+    assert.equal(sum(r.perDeviceMemory["0"]), LOPSIDED.gpus[0].size_vram);
+    assert.equal(sum(r.perDeviceMemory["1"]), LOPSIDED.gpus[1].size_vram);
+
+    const cap = { devices: [{ id: "0", totalBytes: 8e9, freeBytes: 6e9 }, { id: "1", totalBytes: 8e9, freeBytes: 7e9 }], host: null };
+    const sample = { t: 1, models: [r], capacity: cap };
+    const b0 = M.deviceBands(sample, "0").find((b) => b.model);
+    const b1 = M.deviceBands(sample, "1").find((b) => b.model);
+
+    // Each band is that card's own total, and its parts fill exactly it — on BOTH cards, at 2.2:1.
+    assert.equal(b0.bytes, LOPSIDED.gpus[0].size_vram);
+    assert.equal(b1.bytes, LOPSIDED.gpus[1].size_vram);
+    assert.equal(sum(b0.parts), b0.bytes);
+    assert.equal(sum(b1.parts), b1.bytes);
+
+    // THE DISCRIMINATOR. A byte-ratio guess would put 69% of the model's compute on card 0; the truth is 50%,
+    // because compute is flat per device. The bigger the imbalance the wider that gap, which is why an even
+    // split cannot test this: at 50/50 the wrong answer and the right one coincide.
+    const ratio = b0.bytes / (b0.bytes + b1.bytes);
+    assert.ok(ratio > 0.65, `the fixture is genuinely lopsided (${(ratio * 100).toFixed(0)}% on card 0)`);
+    assert.equal(b0.parts.compute, b1.parts.compute, "…and compute is still identical across it");
+    assert.notEqual(Math.round(r.memory.compute * ratio), b0.parts.compute,
+        "a pro-rated compute would differ from the real one here, which it does not at an even split");
+
+    // The weights DO track the layer share, so the same test on weights alone would pass either way — which
+    // is the trap: two of the three buckets forgive a proportional guess.
+    assert.ok(b0.parts.weights > b1.parts.weights * 2, "weights follow the layers");
+});
