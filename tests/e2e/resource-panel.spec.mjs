@@ -1764,10 +1764,24 @@ test("resource panel: the width you drag is the width live keeps", async () => {
             chrome.storage.local.get({ ml_res_window: 0 }, (d) => r(d.ml_res_window))));
         // Fixed sleeps are not enough on a slow runner: this passed locally and failed in CI, where the
         // panel re-renders behind the drag. Each step settles by POLLING for the thing it changed.
+        /**
+         * ONE MOVE AT A TIME, each its own turn of the event loop.
+         *
+         * `mouse.move(x, y, { steps: 10 })` issues its ten moves back to back, and Chrome is free to COALESCE
+         * a burst of pending pointermoves into one. Locally the frame saw all ten; on CI it saw ONE, carrying
+         * an early position, so the window settled a third of the way along and the drag looked like it had
+         * done nothing at all — which is what this test failed on, invisibly, for four runs. A step with a
+         * pause after it cannot be merged with the next, and the pause is what makes that true rather than
+         * the number of steps.
+         */
         const dragFrom = async (fromX, toX) => {
             await page.mouse.move(fromX, y);
             await page.mouse.down();
-            await page.mouse.move(toX, y, { steps: 10 });
+            const STEPS = 8;
+            for (let i = 1; i <= STEPS; i++) {
+                await page.mouse.move(fromX + ((toX - fromX) * i) / STEPS, y);
+                await sleep(25);
+            }
             await page.mouse.up();
             await sleep(900);
         };
@@ -1825,8 +1839,12 @@ test("resource panel: the width you drag is the width live keeps", async () => {
             window.addEventListener("pointermove", (e) => window.__mv.push(e.buttons), true);
         });
         await dragFrom(box3.x + box3.width / 2, track.x + track.width - 1);
+        // THE DRAG MUST ACTUALLY TRAVERSE. Asserted rather than logged, because "the pan landed short" and
+        // "the pan never happened" are different failures that look identical from the button afterwards, and
+        // the second one is what coalescing produces.
         const mv = await frame.evaluate(() => window.__mv || []);
-        console.log(`[rejoin] moves=${mv.length} buttons=${JSON.stringify(mv.slice(0, 6))}`);
+        expect(mv.filter((b) => b === 1).length, `the frame saw ${mv.length} pointermoves: ${JSON.stringify(mv)}`)
+            .toBeGreaterThan(3);
         // Read the window IMMEDIATELY, before the poll below waits ten seconds. A window that arrived at the
         // tail and then fell behind is a different bug from one that never got there, and once the poll has
         // timed out the two look identical.

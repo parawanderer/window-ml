@@ -227,17 +227,20 @@ async function renderAndCheck(path, marker) {
 // The DOM-quiet settle waits for the DOM to stop changing (a network-idle proxy) instead of a fixed delay — so
 // content that STREAMS in past the old ~1.2s window (an SPA hydrating) is captured, not truncated mid-stream.
 //
-// NO RETRIES, because the flake had a cause rather than a probability. The fixture used to stream from a
-// page `setInterval`, and the rendered fetch opens the page in a BACKGROUND tab, where Chrome clamps timers
-// to a second or worse — so a 150ms tick became a gap longer than the quiet threshold, the wait concluded the
-// page had settled, and the test failed under load while being perfectly reliable in isolation. It streams
-// from the NETWORK now (see `/slow-chunks`), which is not throttled that way; retries would only have hidden
-// the next thing that went wrong the same way.
+// NO RETRIES, because the flake had a cause rather than a probability — twice, in the same shape both times.
+// What decides this test is the RATIO of the stream's gap to the settle's quiet threshold (700ms): a gap that
+// stretches past it reads as the page having finished. First the pacing lived in a page `setInterval`, and a
+// rendered fetch opens the page in a BACKGROUND tab where Chrome clamps timers to a second or worse — so the
+// tick became a gap longer than the threshold. Moving it to the NETWORK was right and did not change the
+// ratio: 150ms against 700ms is 4.7x, and on CI that `setTimeout` shares a process with Playwright, a browser
+// and the fake LLM. It is 30ms now, ~23x, at the same total length. Retries would have hidden both.
 (BACKEND ? test.skip : test)("fetch_url rendered: the DOM-quiet settle captures content that streams in after the old fixed delay", async () => {
     expect(await renderAndCheck("/slow", "STREAM-DONE-3377")).toContain("MARKER-PRESENT");
     // The PREMISE: the marker has to arrive after the window a fixed settle would have used, or this passes
     // for the wrong reason the day the fixture gets faster.
     expect(await renderAndCheck("/slow", "CHUNK-12")).toContain("MARKER-PRESENT");
+    // …and the LAST chunk before the marker, which is the one a settle that stopped a beat early would miss.
+    expect(await renderAndCheck("/slow", "CHUNK-60")).toContain("MARKER-PRESENT");
 });
 
 // The scroll pass trips a viewport-lazy widget (IntersectionObserver, like GitHub's lazy <include-fragment>) —

@@ -193,15 +193,26 @@ export function startPageServer({ port = 0, crossPort = 0, host = "127.0.0.1" } 
                         + `d.textContent=line;document.body.appendChild(d);});`
                         + `return pump();});})();});<\/script>`);
                 }
-                if (p === "/slow-chunks") {   // the pacer for /slow: one chunk every ~150ms, then the marker.
+                if (p === "/slow-chunks") {
+                    // THE PACER for /slow. What matters is not how long the stream takes but the RATIO of its
+                    // GAP to the settle's quiet threshold (RENDER_QUIET_MS, 700ms): a gap that stretches past
+                    // that reads as the page having finished, and the settle stops before the last chunk.
+                    //
+                    // It was 12 chunks at 150ms — 4.7x headroom — and it flaked on CI, where this `setTimeout`
+                    // shares a process with Playwright, a browser and the fake LLM, and a 150ms timer under
+                    // load is not 150ms. An earlier fix moved the pacing OUT of the browser (a background tab
+                    // clamps timers), which was right and did not change the ratio; this changes the ratio.
+                    // Same wall-clock length, five times as many chunks, a twelfth of the gap: ~35x headroom.
+                    // The LENGTH is load-bearing too — the marker has to land past the ~1.2s a fixed settle
+                    // would have waited, or the test passes for the wrong reason.
                     res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
                     let n = 0;
                     const tick = () => {
                         if (res.writableEnded) return;
-                        if (++n <= 12) { res.write(`CHUNK-${n}|`); setTimeout(tick, 150); return; }
+                        if (++n <= 60) { res.write(`CHUNK-${n}|`); setTimeout(tick, 30); return; }
                         res.end("STREAM-DONE-3377 all chunks loaded|");
                     };
-                    setTimeout(tick, 150);
+                    setTimeout(tick, 30);
                     return;
                 }
                 if (p === "/lazy") {   // a widget that only loads when SCROLLED into view (IntersectionObserver, like GitHub's lazy fragments).
