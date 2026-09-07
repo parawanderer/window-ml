@@ -912,6 +912,27 @@ per device, in bytes.
   `estimate.predicted`, and it must never be drawn as a stacked bar. Compared field by field against
   `load.complete` it is genuinely informative — on one 27b load the weights model was within 10% while the
   cache estimate was 4x over, which is the half a single "predicted 26 GB, used 20 GB" cannot name.
+- **A SPLIT MODEL DECOMPOSES PER CARD, and NOTHING is ever pro-rated.** `gpus[].memory` sums to that entry's
+  own `size_vram`, exactly, so each card's band subdivides with no remainder — pinned against a real capture
+  of `qwen3:235b` across two 96 GB cards rather than a fixture, because every synthetic one agrees with
+  itself. Weights and KV do track the layer share, so a proportional guess would be nearly right for them —
+  but **`compute` is FLAT PER DEVICE**: forced 3:1, one card held 31 layers to the other's 10 and both held
+  115 MiB of compute; on the real split the two figures are byte-identical. A chart dividing a whole-model
+  `compute` by a layer or byte ratio would be right about two buckets and quietly wrong about the third, more
+  so the more lopsided the split. So a multi-card model whose server reported only the whole-model figure
+  decomposes into NOTHING, which is the correct outcome and not a gap to fill.
+- **A SPLIT IS NOT A SPILL.** `memory_host` is populated only when something is on the HOST, so it is absent
+  on a multi-card split (`size_total == size_vram`). The two are different things and the panel treats them
+  so.
+- **`placement` — AVAILABLE, UNBUILT.** `/api/ps` and `load.complete` can carry which layers went where
+  (`{num_layers, devices:[{device, first_layer, last_layer, layers}], swa_layers}`), behind
+  `OLLAMA_LAYER_PLACEMENT=1` and absent by default, so treat it as optional exactly like `gpus[].memory`.
+  It wants its OWN visual rather than folding into the memory hover, and four things decide how: `device` is
+  the ENGINE's name (`"CUDA0"`), not the ollama `gpu_id`, and a mismatch is unknown rather than a guessed
+  mapping; `devices` is a list of RUNS, so `len(devices)` is not the number of cards; **layers are not a
+  proxy for memory and must not share a scale** — on an even split one card held MORE layers and LESS weight,
+  because the output layer is large and carries no KV; and `swa_layers` is a list rather than a count because
+  the pattern is irregular (`gemma2` alternates 1:1, `gemma4:31b` is 50 of 61).
 - **HOVERING A MODEL SUBDIVIDES ITS BAND IN PLACE** (`.rc-part`), rather than opening a second picture of the
   same memory somewhere else — and it is the chart that earns it: weights sit still while the cache steps
   with the context, which is visible over TIME and in no total. The split rides on the `Band` (attached in

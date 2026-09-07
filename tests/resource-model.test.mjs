@@ -1596,3 +1596,65 @@ test("snapFraction: lands exactly where sampleAtFraction reads, and inverts the 
     assert.equal(M.snapFraction([], 0.5), null);
     assert.equal(M.snapFraction([[]], 0.5), null);
 });
+
+// A GENUINELY SPLIT MODEL, captured from the box rather than constructed here: `qwen3:235b` (142 GB) across
+// two 96 GB cards. Every synthetic fixture agrees with itself, which is exactly what makes one useless for
+// the question "does the server's per-card split behave the way we assume".
+const SPLIT_PS = {
+    name: "qwen3:235b", model: "qwen3:235b", size: 144314759904, size_vram: 144314759904,
+    memory: { weights: 141798009732, kv_cache: 1577058304, compute: 939691868 },
+    gpus: [
+        { gpu_id: "0", runner: "CUDA", size_vram: 73320093450,
+          memory: { weights: 72044941148, kv_cache: 805306368, compute: 469845934 } },
+        { gpu_id: "1", runner: "CUDA", size_vram: 70994666454,
+          memory: { weights: 69753068584, kv_cache: 771751936, compute: 469845934 } },
+    ],
+};
+
+test("a split model decomposes PER CARD, and the sum holds on each one", () => {
+    const r = M.residencyFrom(SPLIT_PS);
+    const sum = (m) => m.weights + m.kvCache + m.compute + m.recurrentState + m.output + m.projector + m.other;
+    assert.equal(sum(r.memory), SPLIT_PS.size_vram, "the model's own split still sums to its total");
+    // The invariant that matters for drawing: each CARD's split fills that card's band with no remainder, so
+    // a band can be subdivided in place on either one.
+    assert.equal(sum(r.perDeviceMemory["0"]), SPLIT_PS.gpus[0].size_vram);
+    assert.equal(sum(r.perDeviceMemory["1"]), SPLIT_PS.gpus[1].size_vram);
+    // And the bands the chart actually draws carry that card's parts, never the model's total.
+    const cap = { devices: [{ id: "0", totalBytes: 103e9, freeBytes: 30e9 }, { id: "1", totalBytes: 103e9, freeBytes: 32e9 }], host: null };
+    const sample = { t: 1, models: [r], capacity: cap };
+    const b0 = M.deviceBands(sample, "0").find((b) => b.model === "qwen3:235b");
+    assert.equal(b0.parts.weights, 72044941148, "card 0 is decomposed by card 0's own figures");
+    assert.equal(sum(b0.parts), b0.bytes, "…and they fill exactly the band they are inside");
+});
+
+// THE TERM THAT WOULD HAVE PUNISHED PRO-RATING. Weights and KV track the layer share, so a proportional
+// guess is nearly right for them — but COMPUTE is a flat per-device cost. Forced 3:1 on `granite4.1:3b`,
+// CUDA0 held 31 layers to CUDA1's 10 and both held 115 MiB of compute; on the real split above the two
+// cards' figures are byte-identical. So a chart that divided a whole-model `compute` by a layer or byte
+// ratio would be right about two buckets and quietly wrong about the third, and more wrong the more lopsided
+// the split. Refusing to draw a split we were not given is what avoids that, and this is why.
+test("compute is FLAT per device — the reason nothing is ever pro-rated", () => {
+    const r = M.residencyFrom(SPLIT_PS);
+    assert.equal(r.perDeviceMemory["0"].compute, r.perDeviceMemory["1"].compute,
+        "identical compute on cards holding 72 GB and 70 GB of weights");
+    // A byte-ratio guess would have put ~51% of the model's compute on card 0. The real answer is 50.0%,
+    // which looks close here and diverges with the split: 3:1 by layers is still 1:1 by compute.
+    const byRatio = r.memory.compute * (SPLIT_PS.gpus[0].size_vram / SPLIT_PS.size_vram);
+    assert.notEqual(Math.round(byRatio), r.perDeviceMemory["0"].compute);
+
+    // WITHOUT a per-card split there is nothing to draw, and that is the correct outcome rather than a gap
+    // to fill: a multi-card model whose server reported only the whole-model figure decomposes into nothing.
+    const noPerCard = M.residencyFrom({ ...SPLIT_PS, gpus: SPLIT_PS.gpus.map(({ memory, ...g }) => g) });
+    assert.equal(noPerCard.perDeviceMemory, undefined);
+    const cap = { devices: [{ id: "0", totalBytes: 103e9, freeBytes: 30e9 }, { id: "1", totalBytes: 103e9, freeBytes: 32e9 }], host: null };
+    const band = M.deviceBands({ t: 1, models: [noPerCard], capacity: cap }, "0").find((b) => b.model);
+    assert.equal(band.parts, undefined, "no split beats a pro-rated one");
+    assert.equal(band.bytes, SPLIT_PS.gpus[0].size_vram, "…while the card's own TOTAL is still exact");
+});
+
+// A SPLIT IS NOT A SPILL. `memory_host` is populated only when something is on the HOST, so it is absent on a
+// multi-card split — which has `size_total == size_vram`. The panel treats the two as different things.
+test("a multi-card split carries no memory_host", () => {
+    assert.equal(M.residencyFrom(SPLIT_PS).memoryHost, undefined);
+    assert.equal(M.residencyFrom(SPLIT_PS).ramBytes, 0, "nothing on the host at all");
+});
