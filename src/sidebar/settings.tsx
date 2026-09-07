@@ -11,7 +11,7 @@ import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundin
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS, modelKinds, embedDims, view } from "./store";
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS, SNAPDOT_KEY, snapDot, modelKinds, embedDims, view } from "./store";
 import { VRAM_PALETTES, VRAM_PALETTE_KEY, vramPalette } from "./vram";
 import { truncate } from "./format";
 import { ToolDefsView } from "./agent-detail";   // the SAME viewer an agent run uses for its local toolset
@@ -244,6 +244,7 @@ const TIP = {
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked. The agent can likewise read its own setup without asking — ml.getModel/config/models/capabilities/ps/serverTools, the same non-secret values any page can read; every other ml method still prompts.",
     autoApprovePython: "Experimental. Run readonly-mode python_exec calls without an approval prompt. A readonly run is isolated by construction — the WASM sandbox has no DOM, no filesystem, and (in this mode) no network or JS/extension scope — so it's a pure function over the injected data and can't affect the page or exfiltrate. A `mode:'full'` call (which the agent must explicitly request to get network) ALWAYS asks. Code with hidden/bidi characters also still asks.",
     autoApproveSameOriginAuth: "Advanced, default OFF. Auto-approve a fetch that spends your session on the SAME origin you're already on — a fetch_url/ml.fetch with credentials:true (sends your cookies), or a rendered:true load in a normal (non-incognito) tab that inherits your login. OFF keeps you in charge: those always ask. This never touches cross-origin fetches (always ask) or the uncredentialed same-origin reads (already free — the page could fetch its own origin itself).",
+    snapDot: "Default OFF. Snap the resource chart's crosshair to the nearest SAMPLE and draw a dot there, rather than letting the line float wherever the pointer is. The tooltip already reads a real datapoint (a value between two polls was never measured), so unsnapped the mark and the number disagree by up to half a sample gap — seconds, at the event stream's idle cadence. A sidebar display preference in storage.local, like the font scale.",
     protoStream: "Default OFF. Ask for the streamed chat reply as varint-delimited PROTOBUF (Accept: application/protobuf) rather than OpenAI SSE, which re-sends the id/model/created/choices envelope for every token — measured here at 25x fewer bytes (7343 → 292). Purely opt-in and self-negotiating: a backend that doesn't serve it answers with the usual SSE, so nothing breaks. Tool calls and reasoning decode fine. Skipped for a call carrying toolIds, because OpenWebUI's source citations are emitted on a different route than protobuf is served over and would vanish silently. Saves BYTES, not time.",
     autoApproveSelfSource: "Default ON. Auto-approve an UNCREDENTIALED fetch_url/ml.fetch of the agent's OWN repo source — committed files (raw.githubusercontent.com) or structural/code API endpoints (api.github.com/repos/<owner>/<repo>/…), locked to this build's repoUrl — so it can read the code it's running to explain/debug itself. NEVER auto-approves user-generated PROSE endpoints (issues/pulls/comments/discussions/reviews/releases — a prompt-injection surface), a credentialed fetch, or a rendered load; those still ask. Public, read-only, uncredentialed → near-zero risk.",
     cdp: "Experimental. Use chrome.debugger (CDP) for two things a normal page context can't do: (1) CLICK surfaces a synthetic click can't reach — cross-origin iframes and declarative/native closed shadow roots; (2) run imperative `exec` on strict-CSP / Trusted-Types pages (GitHub, Google apps) where main-world eval is blocked. The debugger is exempt from the page's CSP/TT, so it's the only mechanism that works. The `debugger` permission is declared at install; this toggle gates USAGE (the API stays unused until it's on AND the model hits a reserved surface). Still gated by the per-action approval. Attaching flashes Chrome's \"is debugging this browser\" banner — only for these reserved actions, so the flash marks the risk. Off by default; while off, a reserved click / a blocked exec just reports an actionable error and the agent falls back to read-only / ml.fetch.",
@@ -1084,6 +1085,19 @@ export function Settings() {
                     back a chart draws and the other is which hues it draws in, and neither has anything to do
                     with a coordinate model. */}
                 <Section id="resourcepanel" title="Resource panel">
+                {/* WHERE THE READING ACTUALLY IS. The chart's tooltip has always named a real sample — a figure
+                    halfway between two polls was never observed, and presenting one as though it had been is
+                    the failure a memory panel must not have — but the crosshair was drawn wherever the pointer
+                    happened to be, so the mark and the number disagreed by up to half a sample gap. At the
+                    stream's idle cadence that is seconds of daylight. Off by default because it is a precision
+                    affordance for reading ONE datapoint, and a dot that jumps with every movement is noise
+                    when you are scanning the shape of the trace instead. */}
+                <div class="set-note">Snap the chart's crosshair to the nearest <b>datapoint</b> and mark it with a dot, instead of letting the line follow the pointer freely. The tooltip already reads the nearest real sample rather than a value between two polls, so this makes the line agree with the number it is showing you — useful when reading one reading, noise when scanning the shape. <b>Off by default.</b></div>
+                <label class="set-check">
+                    <input type="checkbox" checked={snapDot.value}
+                        onChange={(e: any) => { snapDot.value = e.target.checked; chrome.storage.local.set({ [SNAPDOT_KEY]: snapDot.value }); }} />
+                    <Lbl tip={TIP.snapDot}>Snap the crosshair to the nearest datapoint</Lbl>
+                </label>
                 <label class="set-field"><span>Chart window</span>
                     <select value={String(resWindowS.value)}
                         onChange={(e: any) => { resWindowS.value = Number(e.target.value); chrome.storage.local.set({ [RESWIN_KEY]: resWindowS.value }); }}>

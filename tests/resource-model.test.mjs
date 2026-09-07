@@ -1560,3 +1560,39 @@ test("memoryParts / contextBytes: what a user can act on", () => {
     assert.ok(labels.some((l) => /recurrent/i.test(l)), "…and it is named as what it is");
     assert.ok(!labels.some((l) => /recurrent/i.test(l) && /KV/i.test(l)), "never as a KV cache");
 });
+
+// SNAPPING THE CROSSHAIR to the datapoint it is already reading. The tooltip has always named a real
+// measurement — a figure halfway between two polls was never observed — but the line was drawn wherever the
+// pointer was, so the number and the mark disagreed by up to half a sample gap.
+test("snapFraction: lands exactly where sampleAtFraction reads, and inverts the segmented axis", () => {
+    const run = (n, t0) => Array.from({ length: n }, (_, i) => ({ t: t0 + i * 1000 }));
+
+    // ONE segment: sample i sits at i/(n-1) of the width, which is where a polyline puts it.
+    const one = [run(5, 0)];
+    for (const f of [0, 0.12, 0.26, 0.5, 0.74, 0.99, 1]) {
+        const snap = M.snapFraction(one, f);
+        assert.equal(one[0][snap.index], M.sampleAtFraction(one, f),
+            `f=${f}: the snap and the reading must be the SAME sample, or the mark contradicts the number`);
+        assert.ok(Math.abs(snap.frac - snap.index / 4) < 1e-9, `f=${f}: it sits where the polyline drew it`);
+    }
+
+    // TWO segments, flex-weighted by sample COUNT rather than by elapsed time — a gap is a gap, and the axis
+    // is not linear across it. The 8-sample run owns 8/10 of the width, the 2-sample run the rest.
+    const two = [run(8, 0), run(2, 600000)];
+    const inSecond = M.snapFraction(two, 0.95);
+    assert.equal(two[1][inSecond.index], M.sampleAtFraction(two, 0.95), "the second segment reads its own sample");
+    assert.ok(inSecond.frac > 0.8, "…and snaps inside that segment, not back across the gap");
+    const lastOfFirst = M.snapFraction(two, 0.79);
+    assert.equal(two[0][lastOfFirst.index], M.sampleAtFraction(two, 0.79));
+
+    // A ONE-SAMPLE segment has no interior, so it sits in the middle of the share it owns rather than at an
+    // edge it does not — an edge would put the dot on the boundary with the neighbouring run.
+    const lone = [run(1, 0), run(3, 60000)];
+    const only = M.snapFraction(lone, 0.05);
+    assert.equal(only.index, 0);
+    assert.ok(only.frac > 0 && only.frac < 0.25, `a lone sample sits inside its own share (${only.frac})`);
+
+    // Nothing to snap to is null, never 0 — 0 is a real position and would park the dot at the left edge.
+    assert.equal(M.snapFraction([], 0.5), null);
+    assert.equal(M.snapFraction([[]], 0.5), null);
+});

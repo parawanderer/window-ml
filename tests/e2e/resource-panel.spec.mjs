@@ -2166,3 +2166,75 @@ test("resource panel: hovering a model splits its band into what the memory is h
         await expect.poll(() => frame.locator(".rc-part").count(), { timeout: 5000 }).toBe(0);
     } finally { await ext.close(); await fake.stop(); }
 });
+
+// THE CROSSHAIR SNAPS TO THE DATAPOINT IT IS READING. The tooltip has always named a real sample — a figure
+// halfway between two polls was never observed — but the line was drawn wherever the pointer was, so the mark
+// and the number disagreed by up to half a sample gap. Off by default: it is a precision affordance for
+// reading ONE reading, and a dot that jumps with every movement is noise when scanning the trace's shape.
+test("resource panel: the crosshair snaps to a datapoint, and only when asked", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(9000);   // several samples, or "the nearest one" has nothing to choose between
+
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        const hoverAt = async (fx) => {
+            await page.mouse.move(plot.x + plot.width * fx, plot.y + plot.height * 0.5);
+            await sleep(200);
+            const cross = await frame.locator(".rc-cross").first().boundingBox().catch(() => null);
+            return cross ? (cross.x + cross.width / 2 - plot.x) / plot.width : null;
+        };
+
+        // OFF by default: the line follows the pointer exactly, and there is no dot.
+        const free = await hoverAt(0.42);
+        expect(Math.abs(free - 0.42), "unsnapped, the line is where the pointer is").toBeLessThan(0.02);
+        expect(await frame.locator(".rc-cross-dot").count(), "and no dot until asked").toBe(0);
+
+        // Turned on through the CONTROL, not by writing storage behind the panel's back: the preference is
+        // read at mount, so a poked key would leave the signal stale and the test would be asserting on a
+        // path no user takes.
+        await frame.locator('[aria-label="Settings"]').click();
+        await frame.locator(".set-tab", { hasText: "Appearance" }).click();
+        await frame.locator(".set-check", { hasText: "Snap the crosshair" }).locator("input").check();
+        await frame.locator('[aria-label="Back"], .hbtn').first().click().catch(() => {});
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 10000 }).toBeGreaterThan(0);
+        await expect.poll(async () => {
+            await page.mouse.move(plot.x + plot.width * 0.42, plot.y + plot.height * 0.5);
+            await sleep(120);
+            return frame.locator(".rc-cross-dot").count();
+        }, { timeout: 10000 }).toBe(1);
+
+        // SNAPPED: the same sample is chosen across a spread of nearby positions, and the line lands on the
+        // SAME x each time — which is the whole point, and is what a line merely following the pointer can
+        // never do. Read off the geometry rather than a class, so a dot drawn in the wrong place fails.
+        const near = [];
+        for (const fx of [0.40, 0.42, 0.44]) near.push(await hoverAt(fx));
+        expect(Math.max(...near) - Math.min(...near), `three nearby hovers snapped to ${JSON.stringify(near)}`)
+            .toBeLessThan(0.01);
+        // …and it is a real position on the axis, not a corner it fell back to.
+        expect(near[0]).toBeGreaterThan(0.1);
+        expect(near[0]).toBeLessThan(0.9);
+
+        // Moving far enough picks a DIFFERENT sample, or it would be snapping to one point forever.
+        const far = await hoverAt(0.75);
+        expect(Math.abs(far - near[0]), "a different datapoint").toBeGreaterThan(0.05);
+
+        // The dot rides at the POINTER's height, so it reads as the cursor having snapped rather than as a
+        // fixed mark that happens to be nearby.
+        const dotHigh = await (async () => {
+            await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.2);
+            await sleep(200);
+            const d = await frame.locator(".rc-cross-dot").boundingBox();
+            return (d.y + d.height / 2 - plot.y) / plot.height;
+        })();
+        expect(dotHigh, "it follows the pointer vertically").toBeLessThan(0.4);
+    } finally { await ext.close(); await fake.stop(); }
+});

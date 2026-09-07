@@ -149,6 +149,11 @@ export const laneEnabled = signal(true);
 // height the panel was dragged to; the scrub strip above it is NAVIGATION and stays, so the panel does not
 // jump in height the first time anything runs. Its chip row is always drawn and is the control.
 export const showLane = signal(false);
+export const SNAPDOT_KEY = "ml_res_snapdot";   // storage.local: snap the crosshair to the nearest datapoint
+/** Snap the chart's crosshair to the nearest SAMPLE and mark it with a dot, rather than letting the line
+ *  float wherever the pointer is. Off by default: it is a precision affordance for reading one datapoint,
+ *  and a dot that follows every movement is noise when you are scanning the shape of the trace instead. */
+export const snapDot = signal(false);
 export const LANEH_KEY = "ml_res_laneh";   // storage.local: the event lane's own height, in px
 /** How tall the event LANE is, independent of the panel. Its default is a cap rather than "as tall as it
  *  needs to be", which is the whole point: the lane re-packs as the window moves — a step entering the view
@@ -159,7 +164,7 @@ export const LANE_H_DEFAULT = 96;
 export const laneH = signal(LANE_H_DEFAULT);
 export const showModels = signal(true);   // draw the resource panel's model list (it competes with the chart for height)
 // The resource chart's CROSSHAIR — where the pointer is, shared so every track mirrors the same instant.
-export const crosshair = signal<{ frac: number; t: number | null; msPerPx?: number } | null>(null);
+export const crosshair = signal<{ frac: number; t: number | null; msPerPx?: number; snapped?: boolean } | null>(null);
 export const resWindowS = signal(RESWIN_DEFAULT);  // seconds of history the resource chart shows (Settings → Appearance)
 export const outMaxH = signal(OUTMAX_DEFAULT); // max height of a tool output cell (Settings → Appearance); 0 = uncapped
 export const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync

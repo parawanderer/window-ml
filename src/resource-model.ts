@@ -1094,6 +1094,42 @@ export function sampleAtFraction<T extends { t: number }>(runs: T[][], frac: num
     return run[Math.round(within * (run.length - 1))] ?? null;
 }
 
+/**
+ * WHERE THE NEAREST DATAPOINT SITS — the inverse of {@link sampleAtFraction}, so the crosshair can SNAP to
+ * the sample it is already reading instead of floating between two.
+ *
+ * The tooltip has always named a real measurement (a figure halfway between two polls was never observed),
+ * but the line was drawn wherever the pointer happened to be, so the number and the mark disagreed by up to
+ * half a sample gap. At a 15s idle cadence that is seven seconds of daylight between "here" and "the reading
+ * you are being shown" — and on an adaptive cadence the gap itself changes width as you move, which reads as
+ * the crosshair drifting.
+ *
+ * Returns null when there is nothing to snap to. The axis is segmented and flex-weighted by sample COUNT, so
+ * this must invert exactly that mapping rather than interpolating over time — see `timeAtFraction`.
+ */
+export function snapFraction<T extends { t: number }>(runs: T[][], frac: number): { frac: number; index: number } | null {
+    const live = runs.filter((r) => r.length > 0);
+    if (!live.length) return null;
+    const weights = live.map((r) => Math.max(1, r.length));
+    const total = weights.reduce((a, b) => a + b, 0);
+    const f = Math.min(1, Math.max(0, frac));
+    let acc = 0;
+    for (let i = 0; i < live.length; i++) {
+        const share = weights[i] / total;
+        if (f <= acc + share || i === live.length - 1) {
+            const run = live[i];
+            const within = share > 0 ? Math.min(1, Math.max(0, (f - acc) / share)) : 0;
+            const index = Math.round(within * (run.length - 1));
+            // A one-sample segment occupies its whole share and has no interior to place a point in, so it
+            // sits at the middle of that share rather than at an edge it does not own.
+            const at = run.length === 1 ? 0.5 : index / (run.length - 1);
+            return { frac: acc + at * share, index };
+        }
+        acc += share;
+    }
+    return null;
+}
+
 /** What the lane draws. Everything is shown by default; this is how a busy session is narrowed.
  *
  *  Two independent axes, because they answer different questions. SCOPE answers "whose events" — a browsing

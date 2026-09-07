@@ -12,7 +12,7 @@
 import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, TAIL_SLACK_MS,
+    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR, MEMORY_PARTS, memoryParts, type MemoryBreakdown,
@@ -20,7 +20,7 @@ import {
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs } from "./vram";
-import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT } from "./store";
+import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
@@ -1053,7 +1053,14 @@ function Crosshair() {
     // Past the middle the label would run off the right edge, so it hangs on the other side of the line.
     const flip = c.frac > 0.72;
     return (
-        <div class="rc-cross" style={{ left: `${c.frac * 100}%` }}>
+        <div class={`rc-cross${c.snapped ? " snapped" : ""}`} style={{ left: `${c.frac * 100}%` }}>
+            {/* THE DATAPOINT ITSELF, thicker than the line it rides. The line says "here"; the dot says "here
+                is a READING", which is a different claim and the one the tooltip beside it is making.
+                It sits at the POINTER's height rather than mid-plot, so it reads as the cursor having snapped
+                to the sample — which is the gesture — instead of as a fixed mark that happens to be nearby.
+                A stacked area has many values at one x, so there is no single y to put it at anyway. */}
+            {c.snapped ? <i class="rc-cross-dot" aria-hidden="true"
+                style={{ top: `${(hoverAt.value?.yFrac ?? 0.5) * 100}%` }} /> : null}
             {c.t != null ? <span class={`rc-cross-t${flip ? " flip" : ""}`}>{clockAt(c.t, c.msPerPx ?? Infinity)}</span> : null}
         </div>
     );
@@ -1064,12 +1071,19 @@ function Crosshair() {
  *  name the wrong instant. */
 const trackCrosshair = (runs: ResourceSample[][]) => (e: PointerEvent) => {
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const frac = Math.min(1, Math.max(0, (e.clientX - box.left) / Math.max(1, box.width)));
+    const raw = Math.min(1, Math.max(0, (e.clientX - box.left) / Math.max(1, box.width)));
+    // SNAPPED, when asked: the tooltip already reads a real SAMPLE rather than interpolating between two, so
+    // a line drawn at the pointer instead disagrees with its own number by up to half a sample gap — seven
+    // seconds of daylight at an idle cadence, and a gap that changes width as you move, which reads as drift.
+    const snapped = snapDot.value ? snapFraction(runs, raw) : null;
+    const frac = snapped ? snapped.frac : raw;
     // How much time ONE PIXEL is worth here, which is what decides whether milliseconds mean anything in the
     // label: zoomed into ten seconds they do, over five minutes of history they are noise.
     const first = runs[0]?.[0]?.t, last = runs.at(-1)?.at(-1)?.t;
     const msPerPx = first != null && last != null && box.width > 0 ? (last - first) / box.width : Infinity;
-    crosshair.value = { frac, t: timeAtFraction(runs, frac), msPerPx };
+    // The TIME comes from the unsnapped position when floating and from the snapped one when not, so the
+    // label always names the instant the line is actually drawn at.
+    crosshair.value = { frac, t: timeAtFraction(runs, frac), msPerPx, ...(snapped ? { snapped: true } : {}) };
 };
 
 /** The hovered EVENT's stretch, shaded on the plot above it. The lane and the chart share an axis and that
