@@ -933,6 +933,16 @@ per device, in bytes.
   proxy for memory and must not share a scale** — on an even split one card held MORE layers and LESS weight,
   because the output layer is large and carries no KV; and `swa_layers` is a list rather than a count because
   the pattern is irregular (`gemma2` alternates 1:1, `gemma4:31b` is 50 of 61).
+- **THE SNAP MARK IS DRAWN OVER THE CROSSHAIR, NOT UNDER IT** (`.rc-snapdot` z-index 6 against `.rc-cross`'s
+  5). The dot rides ON the line, and its legibility over a band of any shade comes entirely from a 1.5px ring
+  of the panel's own colour — so painted underneath, the line cut that ring and the mark read as a rendering
+  fault rather than as a reading. Pinned in PIXELS (`the crosshair does not cut the mark's ring`), because no
+  DOM assertion can see it: the elements, positions and computed styles are identical either way. The test
+  shoots the mark twice, once with the rule's own `background` made transparent, and asserts the ROWS the
+  mark occupies carry no difference — the line is interrupted by it. Row counts rather than sampled points,
+  since a 7px dot's rendered centre is not exactly where its box says. The bug's signature is worth knowing:
+  the FILL rows look untouched (a 55%-opacity accent line over an accent fill is invisible) and only the
+  ring rows differ, so the zero-run went 10 → 7.
 - **HOVERING A MODEL SUBDIVIDES ITS BAND IN PLACE** (`.rc-part`), rather than opening a second picture of the
   same memory somewhere else — and it is the chart that earns it: weights sit still while the cache steps
   with the context, which is visible over TIME and in no total. The split rides on the `Band` (attached in
@@ -1917,6 +1927,15 @@ rate includes the network; that whole matrix (openai/ollama x streamed/not) is p
   **`pushFrame(frame)`** / `streamSubscribers()`, and `tests/e2e/resource-stream.spec.mjs` is what drives
   them — the stream transport had NO e2e coverage before it, which is why every bug on this path was
   live-only. Not in CI: only a patched Ollama serves the route.
+- **`cursor-demo.mjs`** — a **narrated demo, not a test** of everything the pointer does on the resource
+  chart: `npm run build && node --import tsx tests/e2e/cursor-demo.mjs`. Ten beats — the free crosshair,
+  turning snap on in the panel's own track editor, a mark on every line, hovering one band to narrow it to
+  one, a selection that snaps, the zoom it leaves, an eviction rule making the line and marks stand down, Esc
+  hiding the tip, moving bringing it back, and the product alone. Every one of those came from watching the
+  chart go wrong rather than from a spec, which is why they are worth having in one place you can run.
+  Deterministic (a fake box, no model and no key); `HOLD=0` exits instead of holding the browser open, `PACE`
+  sets the beat. Screenshots land in `tests/e2e/artifacts/cursor-demo/`. The assertions are in
+  `resource-panel.spec.mjs`.
 - **`stream-demo.mjs`** — a **narrated demo, not a test** of LIVE tool-output streaming: `npm run build &&
   node --import tsx tests/e2e/stream-demo.mjs` opens a headful browser, slides the overlay open on a real
   (background-hosted) run, and drives a deliberately SLOW `exec` (paced `console.log`) and `python_exec`

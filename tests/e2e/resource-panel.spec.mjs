@@ -965,6 +965,15 @@ test("resource panel: drag selects a range, mirrored across every track, Esc lea
         // The range is the ~30% of the window that was dragged over, not the whole thing.
         expect(await chip.textContent()).toMatch(/\d+s|\dm/);
 
+        // ESC DISMISSES THE MOST TRANSIENT THING FIRST. The pointer is still on the plot here, so a cursor
+        // tooltip is sitting over the very trace the selection was made to look at — and "get out of the way"
+        // is what Esc means. So the first press hides the TIP and the zoom stands; the second leaves the zoom.
+        // Pinned rather than merely tolerated: the alternative order throws away a selection to dismiss a
+        // popup, which is the more destructive answer to the less specific gesture.
+        await page.keyboard.press("Escape");
+        await sleep(300);
+        expect(await frame.locator(".rc-tip").count(), "the tip goes first").toBe(0);
+        expect(await frame.locator(".vram-zoom").count(), "…and the selection stands").toBe(1);
         // Esc goes back to live — a zoom you cannot leave is a trap.
         await page.keyboard.press("Escape");
         await sleep(300);
@@ -1767,12 +1776,14 @@ test("resource panel: the width you drag is the width live keeps", async () => {
         /**
          * ONE MOVE AT A TIME, each its own turn of the event loop.
          *
-         * `mouse.move(x, y, { steps: 10 })` issues its ten moves back to back, and Chrome is free to COALESCE
-         * a burst of pending pointermoves into one. Locally the frame saw all ten; on CI it saw ONE, carrying
-         * an early position, so the window settled a third of the way along and the drag looked like it had
-         * done nothing at all — which is what this test failed on, invisibly, for four runs. A step with a
-         * pause after it cannot be merged with the next, and the pause is what makes that true rather than
-         * the number of steps.
+         * `mouse.move(x, y, { steps: 10 })` issues its ten moves back to back, and Chrome COALESCES pending
+         * pointermoves into one per RENDERING FRAME. Locally the frame saw all ten; on CI it saw one.
+         *
+         * The pause helps and does not fix it, which is worth stating plainly because the first version of
+         * this comment claimed otherwise: coalescing is paced by the renderer's frames, not by the injector,
+         * so on a loaded runner producing a few frames a second, eight moves 25ms apart still arrive as ONE
+         * — measured, `[0,1]`. Nothing driven from outside the browser can guarantee otherwise, which is why
+         * what this test ASSERTS about the gesture is where it ended up and not how many events carried it.
          */
         const dragFrom = async (fromX, toX) => {
             await page.mouse.move(fromX, y);
@@ -1831,20 +1842,32 @@ test("resource panel: the width you drag is the width live keeps", async () => {
         // gesture then ends wherever the last move INSIDE the frame left it, short of the tail, pinned. That
         // costs nothing to avoid, because `scrubTo` CLAMPS: a centre at 99.7% of the extent parks the window
         // against the end exactly as a centre past 100% would.
-        // COUNT WHAT THE HANDLER WOULD SEE. The drag registers `pointermove` on the iframe's own `window` and
+        // WHAT THE HANDLER ACTUALLY SAW. The drag registers `pointermove` on the iframe's own `window` and
         // gives up the moment one arrives with `buttons === 0`, so "the moves never landed" and "they landed
-        // and did nothing" are different failures that look identical from outside.
+        // and did nothing" are different failures that look identical from outside. The POSITION is recorded
+        // beside the button state because the count alone cannot tell them apart under coalescing.
         await frame.evaluate(() => {
             window.__mv = [];
-            window.addEventListener("pointermove", (e) => window.__mv.push(e.buttons), true);
+            window.addEventListener("pointermove", (e) => window.__mv.push([e.buttons, Math.round(e.clientX)]), true);
         });
         await dragFrom(box3.x + box3.width / 2, track.x + track.width - 1);
-        // THE DRAG MUST ACTUALLY TRAVERSE. Asserted rather than logged, because "the pan landed short" and
-        // "the pan never happened" are different failures that look identical from the button afterwards, and
-        // the second one is what coalescing produces.
+        // THE DRAG MUST ACTUALLY TRAVERSE — measured as WHERE IT GOT TO, not how many events carried it.
+        // Counting dispatches is not a property of the gesture: the browser is free to merge a burst into one
+        // event carrying the final position, which is a correct delivery of the same drag and is what CI does
+        // (8 spaced moves → 1 dispatch). A coalesced move still has to arrive at the destination, so the last
+        // held-button position is the claim, and it separates "landed short" from "never happened" exactly as
+        // the count was meant to.
+        //
+        // In the FRAME's own coordinates: the target above is a page position, `clientX` is not, and the
+        // sidebar is an iframe — so the two are an iframe offset apart.
         const mv = await frame.evaluate(() => window.__mv || []);
-        expect(mv.filter((b) => b === 1).length, `the frame saw ${mv.length} pointermoves: ${JSON.stringify(mv)}`)
-            .toBeGreaterThan(3);
+        const held = mv.filter(([b]) => b === 1);
+        const trackIn = await frame.locator(".rc-scrub-track").evaluate((e) => {
+            const r = e.getBoundingClientRect(); return { x: r.x, w: r.width };
+        });
+        expect(held.length, `no held-button move reached the frame: ${JSON.stringify(mv)}`).toBeGreaterThan(0);
+        expect(held.at(-1)[1], `the drag ended at ${held.at(-1)[1]}, short of the track's end ${trackIn.x + trackIn.w}: ${JSON.stringify(mv)}`)
+            .toBeGreaterThan(trackIn.x + trackIn.w - 4);
         // Read the window IMMEDIATELY, before the poll below waits ten seconds. A window that arrived at the
         // tail and then fell behind is a different bug from one that never got there, and once the poll has
         // timed out the two look identical.
@@ -2199,6 +2222,18 @@ test("resource panel: the crosshair snaps to a datapoint, and only when asked", 
                      w: Math.round(r.width), h: Math.round(r.height) };
         }), plot);
 
+        /**
+         * HOW MANY PROBES, and why it is not four or six.
+         *
+         * The bound this test asserts is "snapping halves the positions", and both sides of that scale
+         * differently: unsnapped, every probe is its own position, so the free count IS the probe count;
+         * snapped, the count is however many SAMPLES the swept stretch crosses, which is a property of the
+         * data and not of the sweep. So the margin comes from probing more densely than the samples sit —
+         * six probes over a tenth of a forty-sample window can legitimately land on four distinct samples,
+         * which is a correct snap failing a bound of three. Twelve probes over the same stretch still cross
+         * those four while raising the bound to six.
+         */
+        const PROBES = 12;
         /** Sweep a short stretch and report how many DISTINCT positions the crosshair took. */
         const distinct = async (from, to, n) => {
             const seen = new Set();
@@ -2211,8 +2246,8 @@ test("resource panel: the crosshair snaps to a datapoint, and only when asked", 
         // samples accumulate while the test hovers, so every snapped position shifts between probes and a
         // test comparing them across several seconds is racing its own data. How many distinct places the
         // line can be is stable under that; where they are is not.
-        const freeSpread = await distinct(0.40, 0.50, 6);
-        expect(freeSpread, "unsnapped, six positions are six positions").toBeGreaterThan(4);
+        const freeSpread = await distinct(0.40, 0.50, PROBES);
+        expect(freeSpread, `unsnapped, ${PROBES} positions are ${PROBES} positions`).toBeGreaterThan(PROBES - 3);
         expect(await frame.locator(".rc-snapdot").count(), "and no dot until asked").toBe(0);
 
         // Turned on through the CONTROL, not by writing storage behind the panel's back: the preference is
@@ -2238,28 +2273,42 @@ test("resource panel: the crosshair snaps to a datapoint, and only when asked", 
         // arrives (it must be — see the alignment check below), so a poll landing mid-sweep moves the same
         // sample slightly and adds a distinct value. Halving is the property that survives that: quantisation
         // collapses positions, and losing half of six to a live axis would still be a broken snap.
-        const snapSpread = await distinct(0.40, 0.50, 6);
-        expect(snapSpread, `six positions snapped to ${snapSpread} places (unsnapped: ${freeSpread})`)
+        const snapSpread = await distinct(0.40, 0.50, PROBES);
+        expect(snapSpread, `${PROBES} positions snapped to ${snapSpread} places (unsnapped: ${freeSpread})`)
             .toBeLessThanOrEqual(Math.ceil(freeSpread / 2));
 
         // THE DOT SITS ON A LINE, and does not follow the pointer. It rode at the cursor's height at first,
         // on the argument that a stacked area has many values at one x and so no single y — which was wrong
         // twice: the lines ARE there, and a mark tracking the cursor vertically is the cursor with a circle
         // on it rather than a datapoint.
-        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.15);
+        //
+        // PROBED WITHIN ONE FOCUS, not across the plot's whole height. Two far-apart heights each pick out a
+        // DIFFERENT thing to mark — a band in the stacked view, a pool's line here — so a mark that correctly
+        // stays put still reports two different heights, and the version of this that swept top to bottom was
+        // reading the focus feature and calling it a moving dot. Nudging inside one hit target is also the
+        // sharper probe: a dot that rode the cursor would move by exactly the nudge, and 4px is a difference
+        // this asserts to the pixel where 50px only ever showed up as "wrong".
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.5);
         await sleep(250);
-        const high = await dots();
-        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.85);
+        const anchor = (await dots())[0];
+        expect(anchor, "at least one line is marked").toBeTruthy();
+        // ONTO the mark itself, so a cursor-following dot and a datapoint agree here and can only be told
+        // apart by what the NEXT move does — which is the point.
+        const onDot = plot.y + anchor.y * plot.height;
+        await page.mouse.move(plot.x + plot.width * 0.5, onDot);
         await sleep(250);
-        const low = await dots();
-        expect(high.length, "at least one line is marked").toBeGreaterThan(0);
-        expect(low.map((d) => d.y.toFixed(2)), "the SAME heights whatever the pointer's own is")
-            .toEqual(high.map((d) => d.y.toFixed(2)));
+        const at0 = await dots();
+        await page.mouse.move(plot.x + plot.width * 0.5, onDot + 4);
+        await sleep(250);
+        const at4 = await dots();
+        expect(at4.length, "the same marks, four pixels lower").toBe(at0.length);
+        for (const [i, d] of at4.entries())
+            expect(Math.abs(d.y - at0[i].y) * plot.height, `mark ${i} moved with the pointer`).toBeLessThan(1);
         // …and it is ROUND. A <circle> inside a `preserveAspectRatio="none"` viewBox draws as an ellipse whose
         // eccentricity depends on the plot's current size, which is why these are positioned HTML.
-        expect(Math.abs(high[0].w - high[0].h), `${high[0].w}x${high[0].h}`).toBeLessThanOrEqual(1);
+        expect(Math.abs(at0[0].w - at0[0].h), `${at0[0].w}x${at0[0].h}`).toBeLessThanOrEqual(1);
         // Every dot shares the snapped x — they are points of the SAME sample on different lines.
-        expect(Math.max(...high.map((d) => d.x)) - Math.min(...high.map((d) => d.x))).toBeLessThan(0.02);
+        expect(Math.max(...at0.map((d) => d.x)) - Math.min(...at0.map((d) => d.x))).toBeLessThan(0.02);
 
         // ON THE LINE, TO THE PIXEL — against the crosshair and against the polyline's own point, because
         // "near enough" is what this looked like when it was 50px out. Two separate faults produced that:
@@ -2428,38 +2477,64 @@ test("resource panel: in snap mode the selection box lands on datapoints, not be
 
         const plot = await frame.locator(".rc-plot").first().boundingBox();
         const y = plot.y + plot.height * 0.5;
-        /** Where the mark lands for a given pointer position, as a fraction of the plot. */
-        const markAt = async (fx) => {
-            await page.mouse.move(plot.x + plot.width * fx, y);
-            await sleep(180);
-            const d = await frame.locator(".rc-snapdot").first().boundingBox();
-            return (d.x + d.width / 2 - plot.x) / plot.width;
+        /** The selection box and the snap mark, as fractions of the plot, read in ONE go. */
+        const edges = async () => {
+            const sel = await frame.locator(".rc-brush").first().boundingBox();
+            const dot = await frame.locator(".rc-snapdot").first().boundingBox();
+            return sel && dot ? {
+                left: (sel.x - plot.x) / plot.width,
+                right: (sel.x + sel.width - plot.x) / plot.width,
+                mark: (dot.x + dot.width / 2 - plot.x) / plot.width,
+            } : null;
         };
-        // The datapoints the two edges WILL snap to, read from the mark itself — so the assertion is against
-        // where the panel says the samples are, not against arithmetic repeated in the test.
-        const leftDot = await markAt(0.33);
-        const rightDot = await markAt(0.72);
-        expect(Math.abs(rightDot - leftDot), "the two edges are different datapoints").toBeGreaterThan(0.05);
 
-        // Drag between them, one move at a time — `{ steps: n }` is coalesced under load and the drag then
-        // never traverses (see `the width you drag is the width live keeps`).
+        /**
+         * THE MARK IS THE WITNESS, and it is read at the SAME INSTANT as the box.
+         *
+         * The first version of this measured where a datapoint sat, dragged, and compared the box against
+         * that — and the axis is LIVE. Samples arrive during the drag, every sample's fraction moves, and a
+         * correctly snapped edge then disagrees with a reading taken ten seconds earlier: it failed with the
+         * left edge at 0.333 against a datapoint recorded at 0.400, which is the test racing its own data
+         * rather than the panel putting the box in the wrong place.
+         *
+         * The claim does not need that reading. Snapping means the box and the mark answer "which sample is
+         * under the pointer" the same way — so comparing the two AT ONE MOMENT is the whole invariant, and
+         * it holds however far the axis has walked since the drag began.
+         */
         await page.mouse.move(plot.x + plot.width * 0.33, y);
         await page.mouse.down();
+        const seen = [];
         for (const fx of [0.45, 0.55, 0.65, 0.72]) {
             await page.mouse.move(plot.x + plot.width * fx, y);
-            await sleep(30);
+            await sleep(180);
+            const e = await edges();
+            expect(e, "a selection box is drawn while dragging").toBeTruthy();
+            expect(Math.abs(e.right - e.mark), `the box's leading edge ${e.right.toFixed(3)} is not on the mark ${e.mark.toFixed(3)}`)
+                .toBeLessThan(0.02);
+            seen.push({ ...e, fx });
         }
-        await sleep(150);
-        const sel = await frame.locator(".rc-brush").first().boundingBox();
         await page.mouse.up();
-        expect(sel, "a selection box is drawn while dragging").toBeTruthy();
 
-        // BOTH EDGES on the datapoints, not between them.
-        const l = (sel.x - plot.x) / plot.width, r = (sel.x + sel.width - plot.x) / plot.width;
-        expect(Math.abs(l - leftDot), `left edge ${l.toFixed(3)} vs datapoint ${leftDot.toFixed(3)}`)
-            .toBeLessThan(0.02);
-        expect(Math.abs(r - rightDot), `right edge ${r.toFixed(3)} vs datapoint ${rightDot.toFixed(3)}`)
-            .toBeLessThan(0.02);
+        // THE PREMISE: snapping has to be DOING something here, or an edge that merely followed the pointer
+        // would satisfy the check above just as well. At least one probe must have moved the edge visibly off
+        // the pointer — not all of them, since a pointer can land on a datapoint by luck.
+        const offPointer = seen.filter((e) => Math.abs(e.right - e.fx) > 0.01);
+        expect(offPointer.length, `every edge sat exactly under the pointer, so nothing was snapped: ${JSON.stringify(seen)}`)
+            .toBeGreaterThan(0);
+        // …and the trailing edge did not follow the pointer: it stays on the sample under the position the
+        // press landed on, while the leading edge travels the width of the drag.
+        //
+        // TOLERANCED IN SAMPLES, derived from this run's own data rather than written down. The anchor is a
+        // fixed SCREEN position and the axis walks under it, so which sample sits there genuinely changes as
+        // polls land — by up to one spacing, which is 0.1 of the plot on a ten-sample window and would fail
+        // any fixed tolerance tight enough to be worth asserting. The spacing is the smallest gap between the
+        // distinct places the leading edge stopped, which is exactly one sample apart by construction.
+        const stops = [...new Set(seen.map((e) => +e.right.toFixed(3)))].sort((a, b) => a - b);
+        const spacing = stops.length > 1 ? Math.min(...stops.slice(1).map((v, i) => v - stops[i])) : 0.1;
+        expect(Math.abs(seen.at(-1).left - seen[0].left), `the anchored edge moved with the pointer: ${JSON.stringify(seen)}`)
+            .toBeLessThan(spacing * 1.5);
+        expect(seen.at(-1).right - seen.at(-1).left, "…while the leading edge covered the drag")
+            .toBeGreaterThan(spacing);
     } finally { await ext.close(); await fake.stop(); }
 });
 
@@ -2527,5 +2602,110 @@ test("resource panel: Esc with no tip up still leaves the zoom", async () => {
         await sleep(300);
         await page.keyboard.press("Escape");
         await expect.poll(() => frame.locator(".vram-zoom").count(), { timeout: 5000 }).toBe(0);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// THE MARK IS DRAWN ON TOP OF THE LINE, and this is asserted in PIXELS because it is a pixel claim: the dot's
+// legibility over a band of any shade comes entirely from a 1.5px ring of the panel's own colour, and the
+// crosshair — one pixel of accent at 55% — was painted after it, cutting that ring at the top and bottom. It
+// is a two-character CSS difference (a z-index) that no DOM assertion can see: the elements, their positions
+// and their computed styles are all identical either way. Only the rendered image differs.
+test("resource panel: the crosshair does not cut the mark's ring", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_snapdot: true }));
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(6000);   // several samples, or there is nothing to snap between
+
+        // OVER A BAND, deliberately: the ring exists to keep the mark legible against a filled area, so the
+        // cut is worth seeing where the fill is. Hovering one band also narrows it to a single dot, which is
+        // the one this measures.
+        await frame.locator(".rc-band").first().hover();
+        await expect.poll(() => frame.locator(".rc-snapdot").count(), { timeout: 10000 }).toBe(1);
+        const dot = await frame.locator(".rc-snapdot").first().boundingBox();
+        expect(await frame.locator(".rc-cross").count(), "the line is drawn, or there is nothing to be cut BY")
+            .toBeGreaterThan(0);
+
+        /**
+         * WHAT THE LINE PAINTS, and where. Shot once with the rule drawn and once with it made transparent:
+         * every pixel that differs between the two IS the line, so no colour has to be named and no theme,
+         * accent or panel shade is baked in. Only its own `background` is dropped — the clock label is a
+         * CHILD of the rule, and hiding the whole element would remove that too and show up as a difference
+         * that has nothing to do with the line.
+         *
+         * Then the claim is about ROWS rather than points: painted UNDER the mark, the line is interrupted by
+         * it, so the rows the mark occupies contain no difference at all while the rows above and below do.
+         * Painted OVER it, every row differs. That needs no centre, no radius and no sub-pixel arithmetic —
+         * which is what the first version of this test needed, and it measured the wrong pixels because a
+         * 7px dot's rendered centre is not exactly where its box says.
+         *
+         * Decoded in the PAGE (a canvas over a data URL) rather than with a PNG library: this repo ships no
+         * decoder, and adding a dependency to read a 21x21 window is a worse trade than four lines of canvas.
+         */
+        const R = 10;                                   // a 21x21 window: taller than the mark (10px with its ring)
+        const clipAt = (b) => ({ x: Math.round(b.x + b.width / 2) - R, y: Math.round(b.y + b.height / 2) - R,
+            width: R * 2 + 1, height: R * 2 + 1 });
+        const rows = await (async () => {
+            // RETRIED, because the axis is LIVE: a poll landing between the two shots moves the mark, and
+            // every row would then differ for a reason that is not the one under test. Cheap to detect —
+            // the mark's own box is the witness — and cheaper to retry than to freeze the panel.
+            for (let attempt = 0; attempt < 5; attempt++) {
+                const before = await frame.locator(".rc-snapdot").first().boundingBox();
+                const clip = clipAt(before);
+                const withLine = (await page.screenshot({ clip })).toString("base64");
+                const tag = await frame.addStyleTag({ content: ".rc-cross { background: transparent !important; }" });
+                const noLine = (await page.screenshot({ clip })).toString("base64");
+                await tag.evaluate((e) => e.remove());
+                const after = await frame.locator(".rc-snapdot").first().boundingBox();
+                if (after.x !== before.x || after.y !== before.y) continue;   // it moved under us — shoot again
+                return await page.evaluate(async ({ a, b }) => {
+                    const load = async (b64) => {
+                        const img = new Image();
+                        await new Promise((ok, no) => { img.onload = ok; img.onerror = no; img.src = `data:image/png;base64,${b64}`; });
+                        const c = document.createElement("canvas");
+                        c.width = img.width; c.height = img.height;
+                        c.getContext("2d").drawImage(img, 0, 0);
+                        return { d: c.getContext("2d").getImageData(0, 0, c.width, c.height).data, w: c.width, h: c.height };
+                    };
+                    const A = await load(a), B = await load(b);
+                    // Per ROW, how many pixels the line is responsible for. A tolerance because the rule is
+                    // drawn at 55% opacity over whatever is behind it and a hair of that survives rounding.
+                    return Array.from({ length: A.h }, (_, y) => {
+                        let n = 0;
+                        for (let x = 0; x < A.w; x++) {
+                            const i = (y * A.w + x) * 4;
+                            if (Math.max(Math.abs(A.d[i] - B.d[i]), Math.abs(A.d[i + 1] - B.d[i + 1]), Math.abs(A.d[i + 2] - B.d[i + 2])) > 8) n++;
+                        }
+                        return n;
+                    });
+                }, { a: withLine, b: noLine });
+            }
+            return null;
+        })();
+        expect(rows, "the mark would not hold still long enough to shoot it twice").toBeTruthy();
+
+        // THE PREMISE: the line is actually drawn in this window, top and bottom. Without it a mark on a
+        // plot with no crosshair would pass this test while proving nothing.
+        expect(rows[0], `no line above the mark, so there is nothing to be cut BY: ${rows}`).toBeGreaterThan(0);
+        expect(rows.at(-1), `no line below the mark: ${rows}`).toBeGreaterThan(0);
+        // THE CLAIM: the mark interrupts it, for the mark's FULL HEIGHT — 7px of fill plus 1.5px of ring on
+        // each side, so ten rows of the window carry no difference at all.
+        //
+        // The run LENGTH is the assertion, not a fixed slice of rows, and the difference is the whole test.
+        // The bug's signature is that the fill rows still look untouched: a 55%-opacity accent line over an
+        // accent fill is a change too small to see, so only the RING rows differ — measured, the run went
+        // 10 → 7 with the fix reverted while the middle stayed identical. A test that sampled fixed rows
+        // would have passed or failed on where the mark happened to sit rather than on whether it was cut.
+        const run = rows.reduce((best, n) => (n === 0 ? { cur: best.cur + 1, max: Math.max(best.max, best.cur + 1) } : { cur: 0, max: best.max }), { cur: 0, max: 0 }).max;
+        expect(run, `the line is painted OVER the mark, cutting its ring — rows ${rows}`).toBeGreaterThanOrEqual(9);
     } finally { await ext.close(); await fake.stop(); }
 });

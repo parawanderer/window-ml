@@ -201,8 +201,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    value rather than at a position computed twice. Ringed in the panel's colour so it stays legible over a
    band of any shade, and `non-scaling-stroke` because the viewBox is stretched to the plot's aspect and an
    unscaled ring would draw as an ellipse. */
+/* ABOVE THE CROSSHAIR (z 5), not under it. The dot rides ON the line, so at z-index 4 the line drew through
+   it and cut the white ring at the top and bottom — the ring being exactly what keeps the dot legible over a
+   band of any shade, so the mark read as a rendering fault rather than as a reading. The line is the
+   BACKGROUND of this mark and has to be painted first. */
 .rc-snapdot { position: absolute; width: 7px; height: 7px; margin: -3.5px 0 0 -3.5px; border-radius: 50%;
-              background: var(--accent); box-shadow: 0 0 0 1.5px var(--panel); pointer-events: none; z-index: 4; }
+              background: var(--accent); box-shadow: 0 0 0 1.5px var(--panel); pointer-events: none; z-index: 6; }
 /* Snapped, the line itself is quieter: the DOT is the precise claim, and a full-strength rule beside it reads
    as two marks competing to say where you are. */
 .rc-cross.snapped { opacity: .7; }

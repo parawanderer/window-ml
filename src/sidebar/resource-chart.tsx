@@ -314,7 +314,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     // A run of ONE sample has no shape to draw — StackedArea needs two points — and giving it a 2px column
     // leaves a pale sliver where the band wash is missing, which reads as a rendering artifact rather than as
     // data. Undrawable runs are skipped; nothing is lost, because a lone point conveys no trend either.
-    const runs = useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]);
+    const runs = noteRuns(useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]));
     // Only the instants: a span is a duration and belongs in the lane, where its length can be read.
     const instants = useInstants(runs, events);
     // The DATAPOINT under the pointer, resolved through the same segmented geometry the crosshair uses, so
@@ -344,7 +344,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                         <HoverSpan run={i} scope="lane" />
                     </div>
                 ))}
-                <BrushOverlay />
+                <BrushOverlay runs={runs} />
                 <Crosshair runs={runs} />
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
                     title={soft.label} /> : null}
@@ -437,6 +437,12 @@ function BandTip({ bands, frame, history, ceiling, scope, at: hoverSample }: { b
                 <span class="rc-tip-name">{name}</span></div>
             {/* Bytes AND the share of this device — a model is "big" only relative to the card it is on. */}
             <div class="rc-tip-line"><span class="rc-tip-size">{formatBytes(band.bytes)} <span class="rc-tip-pct">({percentOf(band.bytes, ceiling)})</span></span></div>
+            {/* THE DENOMINATOR, dimmed and on its own row — the same line the pool tip carries, because the
+                percentage above is a share of THIS pool and a share with no denominator on screen is the one
+                figure a reader has to go and find. Dimmed because it is a CONSTANT: it does not change as
+                you move along the trace, so it is the number that should recede rather than be read first.
+                On the same line it competed with the reading for one glance. */}
+            <div class="rc-tip-line rc-tip-of">out of {formatBytes(ceiling)}</div>
             <SampleStamp at={hoverSample} />
             {/* NO "not resident now" HERE, and none on the consumer rows either. This tooltip reads a sample
                 from the PAST: it answers what was on this card at that instant, the stamp above says which
@@ -673,7 +679,7 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
     }).filter(Boolean) as { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }[];
     if (!pools.length) return null;
 
-    const runs = segments(samples, sampleGapMs()).filter((r) => r.length > 1);
+    const runs = noteRuns(segments(samples, sampleGapMs()).filter((r) => r.length > 1));
     const usedOf = (s: ResourceSample, p: typeof pools[number]) =>
         p.bandsOf(s).filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
     // Plotted as a FRACTION of each pool's own capacity. Absolute bytes on a shared axis would be a lie here:
@@ -702,7 +708,7 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
                 onPointerDown={startBrush(runs)}
                 onPointerMove={(e: PointerEvent) => { trackCursor("overlay")(e); trackCrosshair(runs)(e); }}
                 onPointerLeave={() => { hoverAt.value = null; leavePool(); crosshair.value = null; }}>
-                <BrushOverlay />
+                <BrushOverlay runs={runs} />
                 <Crosshair runs={runs} />
                 <PoolsTip pools={pools.map((p, pi) => ({ ...p, color: poolColor(pi, pools.length) }))}
                     latest={latest} at={hoveredSample(runs, "overlay")} fracOf={frac} usedOf={usedOf} />
@@ -1219,12 +1225,34 @@ function HoverSpan({ run, scope }: { run: number; scope: string }) {
 
 /** The selection, mirrored. Every track draws the same fractions, so a drag on ONE plot is visibly a drag on
  *  the whole chart — the ranges only mean anything compared across pools. */
-function BrushOverlay() {
+function BrushOverlay({ runs }: { runs?: ResourceSample[][] } = {}) {
     const b = brush.value;
     if (!b) return null;
-    const from = Math.min(b.from, b.to), to = Math.max(b.from, b.to);
+    // SNAPPED AT RENDER, from the RAW screen fractions the drag stored — the same rule, and for the same
+    // reason, as the mark (`snapUnder`). A fraction is a fact about the sample COUNT when it was taken, so an
+    // edge resolved once drifts off the dot it was dragged against the moment a poll lands: measured a whole
+    // sample apart (a box edge at 0.600 beside a mark at 0.500). Both now answer "which sample is under this
+    // screen position" from the same data at the same instant, which is the only way they cannot disagree.
+    const at = (f: number) => (snapDot.value && runs ? snapFraction(runs, f)?.frac ?? f : f);
+    const from = Math.min(at(b.from), at(b.to)), to = Math.max(at(b.from), at(b.to));
     return <div class="rc-brush" style={{ left: `${from * 100}%`, width: `${Math.max(0, to - from) * 100}%` }} />;
 }
+
+/**
+ * THE RUNS THE PLOTS ARE CURRENTLY DRAWN FROM.
+ *
+ * A drag outlives the render that started it: `onPointerDown={startBrush(runs)}` closes over the array from
+ * whichever render attached the handler, and every poll after that leaves it one sample staler. The mark
+ * re-resolves per render and the brush did not, which is exactly how they came to name different samples.
+ *
+ * A plain module-level ref rather than a signal, deliberately: it is written DURING render, and a signal
+ * written during render re-enters rendering. Nothing reads it to decide what to DRAW — only the pointer
+ * handlers, which run outside render and want the newest data there is.
+ */
+let liveRuns: ResourceSample[][] | null = null;
+/** Publish the runs a plot is about to draw, for the pointer handlers. Call it from a render, not an effect:
+ *  a drag begun in the same frame must not consult the previous one's data. */
+const noteRuns = (runs: ResourceSample[][]): ResourceSample[][] => (liveRuns = runs);
 
 /** Drag across a plot to select a time range (and release to apply it). The fractions are mapped back to TIME
  *  through the same segmented geometry events are placed with — the axis is not linear, so a range read off
@@ -1246,29 +1274,29 @@ const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
      * Resolved live rather than captured, like the crosshair: a drag can outlast a poll, and a fraction is a
      * fact about the sample count at the instant it was taken.
      */
-    const frac = (x: number) => {
-        const f = raw(x);
-        if (!snapDot.value) return f;
-        return snapFraction(runs, f)?.frac ?? f;
-    };
-    /** The INSTANT an edge means. Snapped, that is the sample's own stamp — not the axis position read back
-     *  through `timeAtFraction`, which would interpolate the very value the snap exists to avoid. */
+    /** The INSTANT an edge means, read from the FRESHEST runs there are — a drag can outlast several polls,
+     *  and the array this handler closed over stopped being current the moment the first one landed.
+     *  Snapped, it is the sample's own stamp, not the axis position read back through `timeAtFraction`,
+     *  which would interpolate the very value the snap exists to avoid. */
     const timeAt = (x: number) => {
+        const rs = liveRuns ?? runs;
         if (snapDot.value) {
-            const s = snapFraction(runs, raw(x));
-            const t = s ? runs[s.run]?.[s.index]?.t : null;
+            const s = snapFraction(rs, raw(x));
+            const t = s ? rs[s.run]?.[s.index]?.t : null;
             if (t != null) return t;
         }
-        return timeAtFraction(runs, raw(x));
+        return timeAtFraction(rs, raw(x));
     };
     const startX = e.clientX;
-    const start = frac(startX);
+    // RAW screen fractions, snapped where they are DRAWN (BrushOverlay) — see there. Storing the snapped
+    // value here is what made the box a claim about a sample count that had already changed.
+    const start = raw(startX);
     let moved = false;
     brush.value = { from: start, to: start };
     const move = (ev: PointerEvent) => {
         if (ev.buttons === 0) return up(ev);
         moved = true;
-        brush.value = { from: frac(startX), to: frac(ev.clientX) };
+        brush.value = { from: start, to: raw(ev.clientX) };
     };
     const up = (ev: PointerEvent) => {
         window.removeEventListener("pointermove", move);
@@ -1518,7 +1546,7 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
     const evKey = (filter.models || []).join("\u0000");
     const events = useMemo(() => filterEvents(all, filter), [all, filter.hash, filter.scope, filter.hidden, evKey]);
     const counts = useMemo(() => countByKind(all), [all]);
-    const runs = useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]);
+    const runs = noteRuns(useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]));
     const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
     // The window admits a poll's worth past the last sample, for the same reason placeEvents does.
     const placed = useMemo(() => placeEvents(runs, eventsIn(events, from, to + sampleGraceMs()), sampleGraceMs()),
@@ -1640,7 +1668,7 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                         like it had not: you released and the window jumped with no sign of what you had
                         chosen. Every surface on this axis draws the same fractions, which is the point of
                         the axis being shared. */}
-                    <BrushOverlay />
+                    <BrushOverlay runs={runs} />
                     {runs.map((run, i) => (
                         <div class="rc-lane-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                             {row.filter((p) => p.run === i).map((p, k) => {
