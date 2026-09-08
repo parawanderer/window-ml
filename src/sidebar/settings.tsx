@@ -6,8 +6,8 @@
 import { signal } from "@preact/signals";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LoadedModel, VisionSupport, LexicalMetric, ServerTool } from "../contract";
-import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows, generatesText, producesEmbeddings } from "../contract";
+import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LoadedModel, VisionSupport, LexicalMetric, ServerTool, ProtoMode } from "../contract";
+import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows, generatesText, producesEmbeddings, protoMode } from "../contract";
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
@@ -244,7 +244,7 @@ const TIP = {
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked. The agent can likewise read its own setup without asking — ml.getModel/config/models/capabilities/ps/serverTools, the same non-secret values any page can read; every other ml method still prompts.",
     autoApprovePython: "Experimental. Run readonly-mode python_exec calls without an approval prompt. A readonly run is isolated by construction — the WASM sandbox has no DOM, no filesystem, and (in this mode) no network or JS/extension scope — so it's a pure function over the injected data and can't affect the page or exfiltrate. A `mode:'full'` call (which the agent must explicitly request to get network) ALWAYS asks. Code with hidden/bidi characters also still asks.",
     autoApproveSameOriginAuth: "Advanced, default OFF. Auto-approve a fetch that spends your session on the SAME origin you're already on — a fetch_url/ml.fetch with credentials:true (sends your cookies), or a rendered:true load in a normal (non-incognito) tab that inherits your login. OFF keeps you in charge: those always ask. This never touches cross-origin fetches (always ask) or the uncredentialed same-origin reads (already free — the page could fetch its own origin itself).",
-    protoStream: "Default OFF. Ask for the streamed chat reply as varint-delimited PROTOBUF (Accept: application/protobuf) rather than OpenAI SSE, which re-sends the id/model/created/choices envelope for every token — measured here at 25x fewer bytes (7343 → 292). Purely opt-in and self-negotiating: a backend that doesn't serve it answers with the usual SSE, so nothing breaks. Tool calls and reasoning decode fine. Skipped for a call carrying toolIds, because OpenWebUI's source citations are emitted on a different route than protobuf is served over and would vanish silently. Saves BYTES, not time.",
+    protoStream: "Default AUTO. Ask for the streamed chat reply as varint-delimited PROTOBUF (Accept: application/protobuf) rather than OpenAI SSE, which re-sends the id/model/created/choices envelope for every token — measured here at 25x fewer bytes (7343 → 292). Self-negotiating, which is why asking by default is safe: the RESPONSE's content type picks the path, so a backend that doesn't serve it answers with the usual SSE and nothing breaks. ON sends the same request but REPORTS a reply that came back as SSE (once per URL, in the worker's console) — for when you believe your backend serves it; it never fails the call over it. OFF never sends the header. Tool calls and reasoning decode fine. Skipped for a call carrying toolIds, because OpenWebUI's source citations are emitted on a different route than protobuf is served over and would vanish silently. Saves BYTES, not time.",
     autoApproveSelfSource: "Default ON. Auto-approve an UNCREDENTIALED fetch_url/ml.fetch of the agent's OWN repo source — committed files (raw.githubusercontent.com) or structural/code API endpoints (api.github.com/repos/<owner>/<repo>/…), locked to this build's repoUrl — so it can read the code it's running to explain/debug itself. NEVER auto-approves user-generated PROSE endpoints (issues/pulls/comments/discussions/reviews/releases — a prompt-injection surface), a credentialed fetch, or a rendered load; those still ask. Public, read-only, uncredentialed → near-zero risk.",
     cdp: "Experimental. Use chrome.debugger (CDP) for two things a normal page context can't do: (1) CLICK surfaces a synthetic click can't reach — cross-origin iframes and declarative/native closed shadow roots; (2) run imperative `exec` on strict-CSP / Trusted-Types pages (GitHub, Google apps) where main-world eval is blocked. The debugger is exempt from the page's CSP/TT, so it's the only mechanism that works. The `debugger` permission is declared at install; this toggle gates USAGE (the API stays unused until it's on AND the model hits a reserved surface). Still gated by the per-action approval. Attaching flashes Chrome's \"is debugging this browser\" banner — only for these reserved actions, so the flash marks the risk. Off by default; while off, a reserved click / a blocked exec just reports an actionable error and the agent falls back to read-only / ml.fetch.",
     pierceClosedShadow: "Let the DOM tools reach inside CLOSED shadow roots too (normally selector-invisible). A tiny script captures each closed root as the page builds it — the tools then treat it like an open root (same `host >>> inner` syntax). Closed shadow DOM is encapsulation, not a security boundary, so this doesn't cross any origin. On by default: the capture script wraps attachShadow on every page regardless of this setting (capture only — page behaviour is unchanged), so this just gates whether the tools use it. Turn it off to keep the tools' selector reach limited to open roots. Declarative/native closed roots still can't be captured; the agent falls back to visual locate/@pt for those.",
@@ -1233,19 +1233,35 @@ export function Settings() {
                 </Section>
 
                 <Section id="protostream" title="Streaming wire format">
-                <div class="set-note">Ask for the streamed reply as <b>protobuf</b> instead of OpenAI's SSE. The SSE format re-sends the <code>id</code>, <code>model</code>, <code>created</code> and <code>choices[0].delta</code> wrapper <b>for every token</b> — about 224 bytes of envelope around 5 bytes of text; protobuf sends that once and a token costs a tag, a length and its own bytes. Measured here at <b>25x fewer bytes</b> (7343 → 292 on a short reply). It is one <code>Accept</code> header, so a backend that doesn't speak it (anything but a patched Ollama) answers with the SSE it always did and nothing changes. <b>Bytes, not speed</b> — worth it over a slow link and not otherwise, which is why it is <b>off by default</b>. Tool calls and reasoning ride it fine. <b>Server-side tools</b> (<code>toolIds</code>) always keep SSE: their <b>citations</b> travel on a different route that protobuf isn't served over, so they'd be lost without a word.</div>
-                <label class="set-check">
-                    <input type="checkbox" checked={c.protoStream}
-                        onChange={(e: any) => setField("protoStream", e.target.checked)} />
-                    <Lbl tip={TIP.protoStream}>Stream replies as protobuf where the backend serves it</Lbl>
+                <div class="set-note">Ask for the streamed reply as <b>protobuf</b> instead of OpenAI's SSE. The SSE format re-sends the <code>id</code>, <code>model</code>, <code>created</code> and <code>choices[0].delta</code> wrapper <b>for every token</b> — about 224 bytes of envelope around 5 bytes of text; protobuf sends that once and a token costs a tag, a length and its own bytes. Measured here at <b>25x fewer bytes</b> (7343 → 292 on a short reply). It is one <code>Accept</code> header and the <b>reply's</b> content type decides, so a backend that doesn't speak it (anything but a patched Ollama) answers with the SSE it always did and nothing changes. <b>Bytes, not speed</b> — worth it over a slow link, free everywhere else, which is why <b>Auto</b> is the default. Tool calls and reasoning ride it fine. <b>Server-side tools</b> (<code>toolIds</code>) always keep SSE: their <b>citations</b> travel on a different route that protobuf isn't served over, so they'd be lost without a word.</div>
+                {/* THREE STATES, not a checkbox, because "ask" and "insist" send the SAME request and differ
+                    only in what a miss MEANS. The answer's content type decides the format, so a backend
+                    that never serves it is silent by construction — right when you are merely hoping, wrong
+                    when you believe your box serves it and want to hear that it did not. */}
+                <label class="set-field"><Lbl tip={TIP.protoStream}>Wire format</Lbl>
+                    <select value={protoMode(c.protoStream)}
+                        onChange={(e: any) => setField("protoStream", e.target.value as ProtoMode)}>
+                        <option value="auto">Auto — ask, take what comes back</option>
+                        <option value="on">On — ask, and tell me when it isn't served</option>
+                        <option value="off">Off — always SSE</option>
+                    </select>
+                    <div class="set-hint">{protoMode(c.protoStream) === "on"
+                        ? "Every streamed reply still arrives — a wire format never costs you an answer — but one that came back as SSE is reported in the service worker's console instead of being absorbed."
+                        : protoMode(c.protoStream) === "auto"
+                            ? "The default. Asking costs one header and the miss is the fallback, so there is nothing here for a stock backend to go wrong with."
+                            : "The header is never sent."}</div>
                 </label>
                 {/* A SETTING THAT SILENTLY DOES NOTHING is the thing this panel is not allowed to have, and
                     this one can: the encoder lives on the ollama PASSTHROUGH route, and OpenWebUI's own
                     `/api/chat/completions` re-encodes ollama's native stream as SSE — so on that URL the
                     header is sent, the answer is SSE, and everything works exactly as before while the
-                    checkbox implies otherwise. Checked against the URL you configured rather than discovered
-                    at runtime, so it says so BEFORE you go looking for a difference. */}
-                {c.protoStream && !/\/ollama\/v\d+\/chat\/completions/.test(c.chatUrl || "") ? (
+                    setting implies otherwise. Checked against the URL you configured rather than discovered
+                    at runtime, so it says so BEFORE you go looking for a difference.
+
+                    ON ONLY. Under AUTO — the default — this same URL is not a mistake worth a warning: the
+                    header costs one line and the SSE answer is the expected other branch, so a caveat there
+                    would sit permanently under a preference nobody expressed. */}
+                {protoMode(c.protoStream) === "on" && !/\/ollama\/v\d+\/chat\/completions/.test(c.chatUrl || "") ? (
                     <div class="set-warn">Your Server URL is <code>{(c.chatUrl || "").replace(/^https?:\/\/[^/]+/, "") || "(unset)"}</code>, which never serves protobuf — OpenWebUI re-encodes the model's stream as SSE there, so this will have no effect. The encoder is on the ollama passthrough, <code>/ollama/v1/chat/completions</code>. Pointing at it costs OpenWebUI's own features on that route (server-side tools, RAG and the source citations that come with them), which is the trade rather than a bug.</div>
                 ) : null}
                 </Section>

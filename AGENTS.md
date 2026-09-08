@@ -1460,14 +1460,27 @@ export sinks) — not decoration: a stub twin is a valid 200 Markdown document t
 `.markdown`, else `.text`). Advertised in `exec`'s description only — it needs exec, which a run may not
 have — and otherwise discovered through `agent_api_docs`.
 
-**Protobuf chat streaming (`protoStream`, opt-in).** OpenAI's SSE re-sends `id`/`object`/`created`/`model`/
+**Protobuf chat streaming (`protoStream`, three states).** OpenAI's SSE re-sends `id`/`object`/`created`/`model`/
 `system_fingerprint` and the `choices[0].delta` wrapper for EVERY token — ~224 bytes of envelope around ~5 of
 text. A patched Ollama serves the same stream as varint-delimited protobuf instead: the invariant half arrives
 once in `Start`, a token costs a tag + a length + its bytes, and `End` replaces the finish chunk, the usage
 chunk AND `data: [DONE]`. Measured through the proxy on `gemma4:31b`: **7343 → 292 bytes, 25.1x**.
 **One `Accept: application/protobuf` header, sent hopefully and never sniffed** — the path is chosen from the
 RESPONSE's Content-Type, so a stock server, an older build or a proxy that drops the header answers with the
-SSE it always did and the miss IS the fallback (the same shape as the Markdown ladder's first rung). The
+SSE it always did and the miss IS the fallback (the same shape as the Markdown ladder's first rung).
+**THREE STATES, and `"auto"` is the DEFAULT** (`ProtoMode` in contract.ts; read every stored value through
+`protoMode()`, never raw — `chrome.storage.sync` keeps what it was given, so an existing profile still hands
+back the BOOLEAN this replaced, and `true` maps to `"auto"` because that user asked for the negotiation and
+not for a report about it). `"off"` never sends the header. `"auto"` sends it and takes whatever comes back,
+in silence — safe on every backend, which is why the default could move from off to on: asking costs one line
+and the miss is the fallback, so there was nothing for the old default to protect. `"on"` sends the identical
+request and REPORTS a reply that is not protobuf — once per URL per worker (`servedProto`), because the state
+is an assertion about your backend and a silent miss is exactly what you turned it on to hear about. It
+reports rather than throwing: a wire format must never cost you an answer, so the SSE path still runs and
+`"on"` buys visibility, not a hard failure. The settings warning about a URL that can never serve it (the
+OpenWebUI route) is gated on `"on"` for the same reason — under the default it would be a permanent caveat
+about a preference nobody expressed, which is the noise that teaches people to skip the times it means
+something. The
 decoder is **GENERATED** from the schema (`scripts/gen-proto.mjs` → `src/proto/chat.gen.ts`, checked in
 because CI has no protoc; `tests/proto.test.mjs` regenerates and diffs, skipping where protoc is absent). That
 is not tidiness: `tool_calls` and `logprobs` arrived upstream — field and encoder together, in one commit,

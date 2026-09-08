@@ -4,8 +4,8 @@
 // server-tool-mode handback probe. Also the model-list/server-tool/setModel/unload plumbing. Extracted from
 // background.ts verbatim; it depends only on the shared contract (types + DEFAULT_CONFIG/modelFilterAllows)
 // and chrome/fetch. All server JSON is genuinely opaque, so it's typed `any`; our own data uses the contract.
-import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, GenPhase } from "./contract";
-import { DEFAULT_CONFIG, modelFilterAllows, generatesText, producesEmbeddings } from "./contract";   // single source of truth (see contract.ts)
+import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, GenPhase, ProtoMode } from "./contract";
+import { DEFAULT_CONFIG, modelFilterAllows, generatesText, producesEmbeddings, protoMode } from "./contract";   // single source of truth (see contract.ts)
 import { loadedFrom } from "./resource-events";
 import { createFrameReader } from "./protostream";
 import { Frame } from "./proto/chat.gen";
@@ -462,8 +462,14 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
      *
      * Ollama-native is excluded because it is NDJSON with its own shape; this replaces the OpenAI SSE.
      */
-    const protoEligible = !!config.protoStream && (config.apiFormat || "openai") !== "ollama"
+    const proto = protoMode(config.protoStream);
+    const protoEligible = proto !== "off" && (config.apiFormat || "openai") !== "ollama"
         && !payload.toolIds?.length && !payload.schema;
+    // WHAT THE CONSUMER NEEDS TO KNOW: the mode this call actually went out under, or null when it never
+    // asked. `"on"` and `"auto"` send the identical request — they differ only in what a non-protobuf answer
+    // MEANS — so the distinction has to travel to the place that reads the Content-Type, and eligibility has
+    // to travel with it or an ineligible `toolIds` call would report a miss it never asked about.
+    const protoAsked: ProtoMode | null = protoEligible ? proto : null;
 
     // Model resolution, in priority order: an explicit model always wins; then
     // the extend:"utility" profile's utilityModel; then the OCR model (ml.read
@@ -642,7 +648,7 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
         }
     };
 
-    return { config, format, body, send, model };
+    return { config, format, body, send, model, protoAsked };
 }
 
 const HANDBACK_ERROR =
@@ -710,13 +716,35 @@ export async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): 
     return { content, sources: Array.isArray(data.sources) ? data.sources : [], model, reasoning: format.extractReasoning(data) || null, usage: withGenMs(normalizeUsage(data.usage || data), Date.now() - _t0) };
 }
 
+/** Did the response come back as protobuf — and, under `"on"`, say so when it did not.
+ *
+ * The negotiation is decided by the RESPONSE, so a miss is invisible by construction: the reply arrives, the
+ * caller cannot tell which wire delivered it, and a backend that quietly never serves it looks exactly like
+ * one that always does. That is the correct behaviour for `"auto"` (the miss IS the fallback, which is why
+ * it can be the default) and the wrong one for `"on"`, where the user has asserted their backend serves it.
+ *
+ * It reports rather than throws. A wire format must never cost you an answer: the SSE path below is right
+ * there and works, so failing the call would trade a saved envelope for a broken chat. ONCE PER URL per
+ * worker — the alternative is a line per streamed turn, which is how a warning stops being read.
+ */
+const protoMissed = new Set<string>();
+function servedProto(res: Response, asked: ProtoMode | null, url: string): boolean {
+    const ct = res.headers?.get?.("content-type") || "";
+    if (ct.includes("application/protobuf")) return true;
+    if (asked === "on" && !protoMissed.has(url)) {
+        protoMissed.add(url);
+        console.warn(`[window.ml] Streaming wire format is set to "on", but ${url} answered with ${ct || "no content-type"} rather than application/protobuf. The reply is being read as SSE, so nothing is lost except the bytes. Only a patched Ollama's passthrough (/ollama/v1/chat/completions) serves protobuf; set it to "auto" to stop asking about it.`);
+    }
+    return false;
+}
+
 // Streaming variant of fetchLLM: reads the SSE/NDJSON response and calls
 // onDelta(text) for each content chunk, returning the full concatenated text.
 // Text-only — no schema/raw/tools; toolIds is supported (streams each
 // server-side mode; a handed-back attempt streams no content, so nothing is
 // emitted to the caller before we retry the next mode).
 export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void, signal?: AbortSignal): Promise<{ content: string; sources: unknown[]; model: string; reasoning: string | null; usage: TokenUsage | null }> {
-    const { format, body, send, model } = await prepareRequest(payload, signal);
+    const { config, format, body, send, model, protoAsked } = await prepareRequest(payload, signal);
     const _t0 = Date.now();   // wall-clock of this streamed call → usage.genMs
 
     const consume = async (res: Response) => {
@@ -725,8 +753,7 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
         // SSE it always did — so the miss IS the fallback and the opt-in costs nothing when it is not there.
         // The same shape as the Markdown ladder's first rung, and for the same reason: one request, and its
         // failure is the old path rather than a wasted round trip.
-        if ((res.headers?.get?.("content-type") || "").includes("application/protobuf"))
-            return consumeProto(res);
+        if (servedProto(res, protoAsked, config.chatUrl)) return consumeProto(res);
         const reader = res.body!.getReader();
         const decoder = new TextDecoder();
         let buffer = "", content = "", reasoning = "", sawToolCall = false;
@@ -834,7 +861,7 @@ export async function streamAgentTurn(
     onDelta: (acc: { reasoning: string; content: string; phases: GenPhase[]; phaseChanged: boolean }) => void,
     signal?: AbortSignal,
 ): Promise<{ content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null }> {
-    const { format, body, send } = await prepareRequest(payload, signal);
+    const { config, format, body, send, protoAsked } = await prepareRequest(payload, signal);
     const _t0 = Date.now();   // wall-clock of this streamed agent-turn call → usage.genMs
     let content = "", reasoning = "";
     // OpenAI streams tool_calls as FRAGMENTS keyed by `index` (id + name + arguments-string pieces); Ollama
@@ -886,7 +913,7 @@ export async function streamAgentTurn(
     // the response says whether we got it. A tool call survives the format — the schema carries the fragments
     // in the same shape OpenAI streams them (index, id, function.name, a piece of the argument string) — so
     // the accumulation below is untouched by which wire delivered them.
-    if ((res.headers?.get?.("content-type") || "").includes("application/protobuf")) {
+    if (servedProto(res, protoAsked, config.chatUrl)) {
         const frames = createFrameReader();
         for (;;) {
             const { done, value } = await reader.read();

@@ -59,7 +59,7 @@ test("a real streamed reply comes back as protobuf, and its tokens are intact", 
     try {
         await configureExtension(ext.sw, {
             chatUrl: CHAT_URL, apiKey: env.OPENWEBUI_KEY || "", apiFormat: "openai",
-            model: MODEL, debugMode: "off", protoStream: true,
+            model: MODEL, debugMode: "off", protoStream: "auto",
         });
         await watchFetch(ext.sw);
         const page = await ext.context.newPage();
@@ -91,7 +91,7 @@ test("a real TOOL CALL survives the format — fragments reassembled off the wir
     try {
         await configureExtension(ext.sw, {
             chatUrl: CHAT_URL, apiKey: env.OPENWEBUI_KEY || "", apiFormat: "openai",
-            model: MODEL, debugMode: "off", protoStream: true,
+            model: MODEL, debugMode: "off", protoStream: "auto",
         });
         await watchFetch(ext.sw);
         const page = await ext.context.newPage();
@@ -144,7 +144,7 @@ test("turned OFF, the same call is plain SSE and nothing else changes", async ()
     try {
         await configureExtension(ext.sw, {
             chatUrl: CHAT_URL, apiKey: env.OPENWEBUI_KEY || "", apiFormat: "openai",
-            model: MODEL, debugMode: "off", protoStream: false,
+            model: MODEL, debugMode: "off", protoStream: "off",
         });
         await watchFetch(ext.sw);
         const page = await ext.context.newPage();
@@ -170,11 +170,16 @@ test("a backend that will not serve it still works — we ask, get SSE, and pars
     // never answer protobuf however politely we ask — which makes it the perfect real backend for this:
     // same box, same model, a route that genuinely will not do it. This is what protects anyone pointing the
     // extension at a stock Ollama or an older build.
+    //
+    // Under "on", the state that INSISTS, because it is the one where getting this wrong would be worst: a
+    // hard failure there would trade a saved envelope for a chat that does not work, against a route half
+    // the users of this extension are pointed at. "on" buys a report, never a refusal — asserted here
+    // against the real route rather than against a stub that agrees with us.
     const ext = await launchExtension();
     try {
         await configureExtension(ext.sw, {
             chatUrl: `${BASE}/api/chat/completions`, apiKey: env.OPENWEBUI_KEY || "", apiFormat: "openai",
-            model: MODEL, debugMode: "off", protoStream: true,
+            model: MODEL, debugMode: "off", protoStream: "on",
         });
         await watchFetch(ext.sw);
         const page = await ext.context.newPage();

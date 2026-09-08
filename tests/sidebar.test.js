@@ -8569,12 +8569,17 @@ test("python bench: the BUTTON still toggles — the outside-click handler must 
 
 // A SETTING THAT SILENTLY DOES NOTHING is what this warning exists to prevent. The protobuf encoder lives on
 // the ollama PASSTHROUGH route; OpenWebUI's own `/api/chat/completions` re-encodes the model's stream as SSE,
-// so on that URL the header goes out, SSE comes back, everything works exactly as before — and the checkbox
-// implies otherwise. Measured on a real box: /api/chat/completions → text/event-stream,
+// so on that URL the header goes out, SSE comes back, everything works exactly as before — and a control
+// saying "on" implies otherwise. Measured on a real box: /api/chat/completions → text/event-stream,
 // /ollama/v1/chat/completions → application/protobuf; delimited=varint.
+//
+// ON ONLY, which is what the third state buys. Under AUTO — the default, so this is most people most of the
+// time — the same URL is not a mistake to warn about: asking costs one header and the SSE answer is the
+// expected other branch. Warning there would put a permanent caveat under a setting nobody chose, which is
+// the noise that teaches people to skip the times it means something.
 test("settings: protobuf streaming SAYS when the configured URL can never serve it", async () => {
     const onOwui = await loadSidebarWorld({
-        sync: { protoStream: true, chatUrl: "http://gpubox:3000/api/chat/completions" },
+        sync: { protoStream: "on", chatUrl: "http://gpubox:3000/api/chat/completions" },
     });
     await openSettings(onOwui, "Advanced");
     await onOwui.flush();
@@ -8589,7 +8594,7 @@ test("settings: protobuf streaming SAYS when the configured URL can never serve 
     // On the route that DOES serve it, no warning — an unconditional caveat is noise that undermines the
     // times it is true.
     const onOllama = await loadSidebarWorld({
-        sync: { protoStream: true, chatUrl: "http://gpubox:3000/ollama/v1/chat/completions" },
+        sync: { protoStream: "on", chatUrl: "http://gpubox:3000/ollama/v1/chat/completions" },
     });
     await openSettings(onOllama, "Advanced");
     await onOllama.flush();
@@ -8597,9 +8602,37 @@ test("settings: protobuf streaming SAYS when the configured URL can never serve 
         /never serves protobuf/);
 
     // …and none at all while the feature is OFF, whatever the URL is.
-    const off = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:3000/api/chat/completions" } });
+    const off = await loadSidebarWorld({ sync: { protoStream: "off", chatUrl: "http://gpubox:3000/api/chat/completions" } });
     await openSettings(off, "Advanced");
     await off.flush();
     assert.doesNotMatch([...off.shadow.querySelectorAll(".set-warn")].map((e) => e.textContent).join(" "),
         /never serves protobuf/);
+
+    // …nor under AUTO, which is the DEFAULT — so a fresh profile on OpenWebUI's own route, the commonest
+    // setup there is, must not open Settings to a warning about a preference it never expressed.
+    const auto = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:3000/api/chat/completions" } });
+    await openSettings(auto, "Advanced");
+    await auto.flush();
+    assert.doesNotMatch([...auto.shadow.querySelectorAll(".set-warn")].map((e) => e.textContent).join(" "),
+        /never serves protobuf/);
+});
+
+test("settings: the wire format is a THREE-state control, defaulting to auto", async () => {
+    // A checkbox cannot express this: "ask" and "insist" send the identical request and differ only in what a
+    // miss MEANS, so the third state is the whole feature rather than a nicety.
+    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:3000/ollama/v1/chat/completions" } });
+    await openSettings(w, "Advanced");
+    await w.flush();
+    const sel = [...w.shadow.querySelectorAll("select")]
+        .find((e) => [...e.options].some((o) => o.value === "auto") && [...e.options].some((o) => o.value === "on"));
+    assert.ok(sel, "there is a wire-format picker");
+    assert.deepEqual([...sel.options].map((o) => o.value), ["auto", "on", "off"], "auto first: it is the default");
+    assert.equal(sel.value, "auto", "…and it is what an untouched profile shows");
+
+    // Choosing one WRITES the string, not a boolean — the storage key is read by the background on every
+    // streamed turn, so a control that wrote the old type would silently mean something else there.
+    sel.value = "on";
+    sel.dispatchEvent(new w.window.Event("change", { bubbles: true }));
+    await w.flush();
+    assert.equal(w.syncStore.protoStream, "on");
 });

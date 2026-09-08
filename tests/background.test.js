@@ -3400,7 +3400,7 @@ const pbStart = (id, model) => {
 test("protobuf stream: asks for it, decodes the deltas, and reports the usage from End", async () => {
     let accept = null;
     const bg = loadBackground({
-        config: { ...baseConfig(), protoStream: true },
+        config: { ...baseConfig(), protoStream: "auto" },
         onFetch: (call) => {
             accept = call.opts?.headers?.Accept ?? null;
             return binaryStreamResponse([
@@ -3428,7 +3428,7 @@ test("protobuf stream: a message split across two network reads still arrives wh
     // message boundaries, so a frame arrives in halves and a reader that assumes otherwise loses it.
     const wire = [...pbDelta("Hello"), ...pbEnd("stop", 1, 1)];
     const bg = loadBackground({
-        config: { ...baseConfig(), protoStream: true },
+        config: { ...baseConfig(), protoStream: "auto" },
         onFetch: () => binaryStreamResponse([wire.slice(0, 3), wire.slice(3, 4), wire.slice(4)]),
     });
     const client = bg.connect("LLM_STREAM");
@@ -3442,7 +3442,7 @@ test("protobuf stream: a stream CUT mid-frame is an error, not a short answer", 
     // caller cannot tell the difference — so held bytes at the end are a transport failure.
     const wire = [...pbDelta("Hel"), ...pbDelta("lo")];
     const bg = loadBackground({
-        config: { ...baseConfig(), protoStream: true },
+        config: { ...baseConfig(), protoStream: "auto" },
         onFetch: () => binaryStreamResponse([wire.slice(0, wire.length - 2)]),
     });
     const client = bg.connect("LLM_STREAM");
@@ -3456,7 +3456,7 @@ test("protobuf stream: a backend that answers SSE anyway is parsed as SSE", asyn
     // THE MISS IS THE FALLBACK. We ask hopefully; an older build, a proxy that drops the header, or a stock
     // server all answer with what they always did, and asking cost one header rather than a probe request.
     const bg = loadBackground({
-        config: { ...baseConfig(), protoStream: true },
+        config: { ...baseConfig(), protoStream: "auto" },
         onFetch: () => streamResponse([
             'data: {"choices":[{"delta":{"content":"plain"}}]}\n',
             "data: [DONE]\n"
@@ -3479,7 +3479,7 @@ test("protobuf stream: a TOOL CALL decodes out of a Delta, and the hand-back is 
     const d = [0x1a, tc.length, ...tc];
     const frame = pbFrame([0x12, d.length, ...d]);
     const bg = loadBackground({
-        config: { ...baseConfig(), protoStream: true },
+        config: { ...baseConfig(), protoStream: "auto" },
         onFetch: () => binaryStreamResponse([[...frame, ...pbEnd("tool_calls", 5, 1)]]),
     });
     const client = bg.connect("LLM_STREAM");
@@ -3500,7 +3500,7 @@ test("protobuf stream: a toolIds call keeps SSE — the schema has nowhere to pu
     // empty one is indistinguishable from "there were none".
     let accept = "unset";
     const bg = loadBackground({
-        config: { ...baseConfig(), protoStream: true },
+        config: { ...baseConfig(), protoStream: "auto" },
         onFetch: (call) => {
             accept = call.opts?.headers?.Accept ?? null;
             return streamResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n', "data: [DONE]\n"]);
@@ -3520,7 +3520,7 @@ test("protobuf stream: a delta for ANOTHER choice is ignored, as it is on the SS
     const second = [...pbStr(1, "WRONG"), ...pbVar(5, 1)];   // Delta{content:"WRONG", index:1}
     const other = pbFrame([0x12, second.length, ...second]);
     const bg = loadBackground({
-        config: { ...baseConfig(), protoStream: true },
+        config: { ...baseConfig(), protoStream: "auto" },
         onFetch: () => binaryStreamResponse([[...pbDelta("right"), ...other, ...pbEnd("stop", 1, 1)]]),
     });
     const client = bg.connect("LLM_STREAM");
@@ -3531,19 +3531,123 @@ test("protobuf stream: a delta for ANOTHER choice is ignored, as it is on the SS
     assert.deepEqual(client.messages.filter(m => m.type === "chunk").map(m => m.delta), ["right"]);
 });
 
-test("protobuf stream: OFF by default — the header is not sent unless asked for", async () => {
+// ---------------------------------------------------------------------------------------------------------
+// THE WIRE FORMAT HAS THREE STATES, and two of them send the identical request. What separates "auto" from
+// "on" is only what a reply that is NOT protobuf means — nothing about the bytes — so these tests are about
+// the three questions that distinguishes: was the header sent, did the reply still arrive, and was anything
+// said about it.
+
+/** Drive one streamed turn under `mode`, with the backend answering plain SSE. Returns what was asked for,
+ *  what came back, and anything the worker warned about — the three things the mode decides between. */
+async function streamUnder(mode, { answerProto = false, url } = {}) {
     let accept = "unset";
+    const warnings = [];
     const bg = loadBackground({
-        config: baseConfig(),
+        config: { ...baseConfig(), ...(url ? { chatUrl: url } : {}), ...(mode === undefined ? {} : { protoStream: mode }) },
+        onFetch: (call) => {
+            accept = call.opts?.headers?.Accept ?? null;
+            return answerProto
+                ? binaryStreamResponse([[...pbDelta("proto"), ...pbEnd("stop", 1, 1)]])
+                : streamResponse(['data: {"choices":[{"delta":{"content":"plain"}}]}\n', "data: [DONE]\n"]);
+        }
+    });
+    bg.context.console.warn = (...a) => warnings.push(a.join(" "));
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    return { accept, content: client.messages.find(m => m.type === "done")?.content, warnings, bg, client };
+}
+
+test("wire format: AUTO by default — it asks, with nobody having turned anything on", async () => {
+    // The default MOVED, from off to auto, and the reason is the negotiation's shape rather than a change of
+    // heart about protobuf: the header is one line, the answer's content type decides, and a backend that
+    // does not serve it answers exactly as it always did. There is nothing for a stock backend to go wrong
+    // with, so there was nothing for the old default to protect.
+    const { accept, content } = await streamUnder(undefined);
+    assert.equal(accept, "application/protobuf");
+    assert.equal(content, "plain", "…and the SSE it answered with is read as SSE");
+});
+
+test("wire format: OFF sends no header at all", async () => {
+    const { accept, content } = await streamUnder("off");
+    assert.equal(accept, undefined);
+    assert.equal(content, "plain");
+});
+
+test("wire format: AUTO absorbs a backend that will not serve it, in silence", async () => {
+    // THE MISS IS THE FALLBACK. An older build, a proxy that drops the header, or a stock server all answer
+    // with what they always did — and under `auto` that is not an event, it is the expected other branch.
+    const { accept, content, warnings } = await streamUnder("auto");
+    assert.equal(accept, "application/protobuf", "it still asks");
+    assert.equal(content, "plain", "and the reply arrives");
+    assert.deepEqual(warnings, [], "with nothing said about it");
+});
+
+test("wire format: ON still answers when protobuf is not served — but says so", async () => {
+    // A WIRE FORMAT MUST NEVER COST YOU AN ANSWER. `on` is an assertion about your backend, so a miss is
+    // worth reporting; it is not worth failing the call over, when the SSE path is right there and works.
+    // That is the whole difference between the two states, and it is the half that is easy to get wrong in
+    // the other direction — a hard failure would turn a saved envelope into a broken chat.
+    const { accept, content, warnings } = await streamUnder("on");
+    assert.equal(accept, "application/protobuf");
+    assert.equal(content, "plain", "the reply still arrives, over SSE");
+    assert.equal(warnings.length, 1, "and the miss is reported");
+    assert.match(warnings[0], /application\/protobuf/);
+    assert.match(warnings[0], /host/, "naming the URL that answered, since that is the thing to change");
+});
+
+test("wire format: ON says nothing when it IS served", async () => {
+    const { accept, content, warnings } = await streamUnder("on", { answerProto: true });
+    assert.equal(accept, "application/protobuf");
+    assert.equal(content, "proto");
+    assert.deepEqual(warnings, [], "a report only when the assertion was wrong");
+});
+
+test("wire format: ON reports a URL ONCE, not once per turn", async () => {
+    // A line per streamed turn is how a warning stops being read, and the condition cannot change within a
+    // worker's life: a backend that does not serve protobuf will not start mid-session.
+    const { bg, client, warnings } = await streamUnder("on");
+    for (let i = 0; i < 3; i++) {
+        const again = bg.connect("LLM_STREAM");
+        again.send({ payload: { messages: [{ role: "user", content: "again" }] } });
+        await settle();
+        assert.equal(again.messages.find(m => m.type === "done")?.content, "plain", "every later turn still works");
+    }
+    assert.equal(warnings.length, 1, `said once, not ${warnings.length} times`);
+    assert.ok(client.messages.length > 0);
+});
+
+test("wire format: the BOOLEAN this replaced still reads correctly", async () => {
+    // chrome.storage.sync keeps what it was given, so an existing profile hands back `true`/`false` long
+    // after the type changed. `true` becomes AUTO and not ON: that user asked for the negotiation, not for a
+    // report about it — and reading it as an unrecognised value would silently mean "off", which is the
+    // failure this mapping exists to prevent.
+    const on = await streamUnder(true);
+    assert.equal(on.accept, "application/protobuf");
+    assert.deepEqual(on.warnings, [], "`true` is AUTO, so a miss stays silent");
+    const off = await streamUnder(false);
+    assert.equal(off.accept, undefined);
+});
+
+test("wire format: a toolIds call is exempt under ON too — and reports nothing", async () => {
+    // The gate is about what the FORMAT can carry, so insisting cannot lift it. And a call that never asked
+    // must not report a miss: it would name a failure the user cannot act on, on the one route where the
+    // format is deliberately not used.
+    let accept = "unset";
+    const warnings = [];
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: "on" },
         onFetch: (call) => {
             accept = call.opts?.headers?.Accept ?? null;
             return streamResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n', "data: [DONE]\n"]);
         }
     });
+    bg.context.console.warn = (...a) => warnings.push(a.join(" "));
     const client = bg.connect("LLM_STREAM");
-    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }], toolIds: ["srv1"] } });
     await settle();
-    assert.equal(accept, undefined);
+    assert.equal(accept, undefined, "no header on a tool call");
+    assert.deepEqual(warnings, [], "and no report about a format it never asked for");
 });
 
 // ---------------------------------------------------------------------------------------------------------

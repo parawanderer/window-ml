@@ -29,6 +29,15 @@ export type DebugMode = "off" | "overlay" | "devtools";
  *  /api/show), "yes"/"no" = declared. Used for the default model, to enable NATIVE vision on a
  *  cloud/non-Ollama model the probe can't describe. */
 export type VisionSupport = "" | "yes" | "no";
+/** How hard to try for the protobuf chat stream. THREE states rather than a checkbox because "ask" and
+ *  "insist" are different intentions with the same request: the negotiation is one `Accept` header and the
+ *  answer's Content-Type decides, so a miss is silent by construction — which is right when you are merely
+ *  hoping and wrong when you believe your backend serves it and want to know that it did not.
+ *  - `"off"`  — never send the header.
+ *  - `"auto"` — send it, take whatever comes back, say nothing. Safe on every backend, hence the default.
+ *  - `"on"`   — send it and REPORT a reply that is not protobuf. The reply still arrives (over SSE): a wire
+ *    format must never cost you an answer, so "on" buys visibility, not a hard failure. */
+export type ProtoMode = "off" | "auto" | "on";
 
 /** The lexical metrics that can rank a near-miss on a pointer LABEL. Names here (shared config surface),
  *  implementations in label-match.ts. */
@@ -143,9 +152,10 @@ export interface MlConfig {
      *  always did, so this is a preference rather than a commitment. Measured at 25x fewer bytes for the same
      *  tokens (7343 → 292), because the envelope JSON repeats per token is sent once. Tool calls and
      *  reasoning ride it; a `toolIds` call does not, since OpenWebUI's citations are emitted on a route
-     *  protobuf is not served over. Off by default: it is only worth anything over a slow link, and the
-     *  backends that serve it are the exception. */
-    protoStream: boolean;
+     *  protobuf is not served over. `"auto"` by DEFAULT — asking costs one header and the miss is the
+     *  fallback, so there is nothing to protect a stock backend from. Read it through `protoMode()`, never
+     *  raw: storage may still hold the boolean this replaced. */
+    protoStream: ProtoMode;
     /** Hostnames the USER has trusted to supply their OWN ml.agent approval gate (a page's
      *  `approve` callback / the page-loop confirm). Empty by default: EVERY other origin's
      *  privileged tool calls route through the unforgeable background gate + trusted surface,
@@ -272,6 +282,22 @@ export interface DerefValue extends String {
 export function modelFilterAllows(model: string, filter: string): boolean {
     if (!filter || !filter.trim()) return true;
     try { return new RegExp(filter).test(model); } catch { return true; }
+}
+
+/** Read `config.protoStream` as a `ProtoMode`, whatever is actually stored. The setting shipped as a
+ *  BOOLEAN and `chrome.storage.sync` keeps what it was given, so a config read on an existing profile can
+ *  hand back `true`/`false` long after the type changed — mapped here rather than at each of the four call
+ *  sites, which is how one of them ends up treating `true` as an unrecognised value and silently meaning
+ *  "off". `true` becomes `"auto"` and not `"on"`: that user asked for the negotiation, not for a report
+ *  about it. Anything unrecognised (including a missing key, when a caller passes a config that was not
+ *  merged with the defaults) falls back to the DEFAULT rather than to off — the same fail-open shape as an
+ *  invalid `modelFilter`, and for the same reason: a garbled preference should not disable a feature whose
+ *  failure mode is a header nobody reads. Pure; shared by the background gate and the settings UI. */
+export function protoMode(v: unknown): ProtoMode {
+    if (v === "off" || v === "auto" || v === "on") return v;
+    if (v === true) return "auto";
+    if (v === false) return "off";
+    return "auto";
 }
 
 /** Build an `Accept-Language` header value from the browser's language list (navigator.languages), the way a
@@ -511,7 +537,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoApprovePython: true,
     autoApproveSameOriginAuth: false,   // Advanced, default off: a same-origin as-you fetch always asks
     autoApproveSelfSource: true,        // default on: an uncredentialed read of the agent's OWN repo source is free
-    protoStream: false,                 // opt-in: only a patched backend serves it, and it saves bytes not time
+    protoStream: "auto",                // ask every time: one header, and a backend that won't serve it answers as it always did
     pierceClosedShadow: true,
     cdp: false,
     pageApprovalDomains: [],
