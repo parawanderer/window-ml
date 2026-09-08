@@ -1785,13 +1785,28 @@ test("resource panel: the width you drag is the width live keeps", async () => {
          * — measured, `[0,1]`. Nothing driven from outside the browser can guarantee otherwise, which is why
          * what this test ASSERTS about the gesture is where it ended up and not how many events carried it.
          */
+        const winX = async () => (await frame.locator(".rc-scrub-win").boundingBox())?.x ?? null;
         const dragFrom = async (fromX, toX) => {
             await page.mouse.move(fromX, y);
             await page.mouse.down();
             const STEPS = 8;
             for (let i = 1; i <= STEPS; i++) {
+                const was = await winX();
                 await page.mouse.move(fromX + ((toX - fromX) * i) / STEPS, y);
-                await sleep(25);
+                // PACED BY WHAT THE PANEL DID, not by the clock. A fixed sleep assumes the move was
+                // DELIVERED, and on a loaded runner it is not: pointermoves are dispatched at the renderer's
+                // frame rate, and this drag arrived at the frame as one event carrying the FIRST step's
+                // position and then nothing at all — measured, `[[0,165],[1,190]]` for a drag that should
+                // have ended at 368. Waiting for the window to move is waiting for delivery, at whatever
+                // rate the machine can manage.
+                //
+                // A SHORT wait that is allowed to expire, not an assertion: a pan into the clamp at either
+                // end legitimately moves the window by nothing, so a step that changes nothing is a normal
+                // step and not a failure. What the gesture ACHIEVED is asserted after it, once.
+                for (let t = 0; t < 12; t++) {
+                    if (await winX() !== was) break;
+                    await sleep(50);
+                }
             }
             await page.mouse.up();
             await sleep(900);
@@ -1865,9 +1880,14 @@ test("resource panel: the width you drag is the width live keeps", async () => {
         const trackIn = await frame.locator(".rc-scrub-track").evaluate((e) => {
             const r = e.getBoundingClientRect(); return { x: r.x, w: r.width };
         });
-        expect(held.length, `no held-button move reached the frame: ${JSON.stringify(mv)}`).toBeGreaterThan(0);
-        expect(held.at(-1)[1], `the drag ended at ${held.at(-1)[1]}, short of the track's end ${trackIn.x + trackIn.w}: ${JSON.stringify(mv)}`)
-            .toBeGreaterThan(trackIn.x + trackIn.w - 4);
+        // DIAGNOSTIC, NOT AN ASSERTION — and that distinction is the lesson this test has taught three times.
+        // Where the moves got to is a fact about the BROWSER'S input delivery under load, not about the
+        // panel: asserting the dispatch count failed on CI, and asserting the last delivered position failed
+        // on CI, both while the feature worked. What this test is about is whether the window rejoins live at
+        // the width you dragged, so that is the only thing asserted — with the trace carried into ITS message,
+        // which is the whole reason the trace was collected.
+        const trace = `moves=${JSON.stringify(mv)} trackEnd=${Math.round(trackIn.x + trackIn.w)} `
+            + `lastHeld=${held.length ? held.at(-1)[1] : "none"}`;
         // Read the window IMMEDIATELY, before the poll below waits ten seconds. A window that arrived at the
         // tail and then fell behind is a different bug from one that never got there, and once the poll has
         // timed out the two look identical.
@@ -1884,10 +1904,10 @@ test("resource panel: the width you drag is the width live keeps", async () => {
                 + `win="${win}" ml_res_window=${stored} live="${await liveText()}"`);
         }
         await expect.poll(liveText, { timeout: 10000 }).toMatch(/▶\s*live/);
-        expect(await frame.locator(".vram-zoom").count()).toBe(0);
+        expect(await frame.locator(".vram-zoom").count(), `still zoomed after the pan — ${trace}`).toBe(0);
         const after = await winW();
-        expect(after, "it did NOT snap back to the wide window it left").toBeLessThan(wide * 0.9);
-        expect(Math.abs(after - narrow), "it kept the width on screen").toBeLessThan(15);
+        expect(after, `it snapped back to the wide window it left — ${trace}`).toBeLessThan(wide * 0.9);
+        expect(Math.abs(after - narrow), `it did not keep the width on screen — ${trace}`).toBeLessThan(15);
     } finally {
         await ext.context.close();
         await fake.stop();
