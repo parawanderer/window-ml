@@ -2462,3 +2462,70 @@ test("resource panel: in snap mode the selection box lands on datapoints, not be
             .toBeLessThan(0.02);
     } finally { await ext.close(); await fake.stop(); }
 });
+
+// ESC HIDES THE TOOLTIP so you can look at the chart. A cursor tip has to sit near the pointer to be
+// readable, which means it sits on top of the trace you paused over — so the one moment you want to study a
+// shape is the one moment something is covering it.
+test("resource panel: Esc hides the cursor tip, and moving brings it back", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_snapdot: true }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(5000);
+
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.5);
+        await expect.poll(() => frame.locator(".rc-tip").count(), { timeout: 8000 }).toBeGreaterThan(0);
+
+        await page.keyboard.press("Escape");
+        await expect.poll(() => frame.locator(".rc-tip").count(), { timeout: 4000 }).toBe(0);
+        // THE MARK STAYS. It is where you were looking, which is the thing being preserved — hiding it too
+        // would just be "leave the chart", and you would have to find your place again.
+        expect(await frame.locator(".rc-snapdot").count(), "the dots are still there").toBeGreaterThan(0);
+        expect(await frame.locator(".rc-cross").count()).toBeGreaterThan(0);
+
+        // MOVING is the ask for it back — not a second Esc. The gesture is "get out of the way for a second",
+        // not a mode you have to leave.
+        await page.mouse.move(plot.x + plot.width * 0.55, plot.y + plot.height * 0.5);
+        await expect.poll(() => frame.locator(".rc-tip").count(), { timeout: 4000 }).toBeGreaterThan(0);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// …and with NO tip showing, Esc still does what it always did.
+test("resource panel: Esc with no tip up still leaves the zoom", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(9000);
+
+        // Select a range, then take the pointer OFF the chart so no tip is showing.
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        const y = plot.y + plot.height * 0.5;
+        await page.mouse.move(plot.x + plot.width * 0.3, y);
+        await page.mouse.down();
+        for (const fx of [0.45, 0.6, 0.7]) { await page.mouse.move(plot.x + plot.width * fx, y); await sleep(30); }
+        await page.mouse.up();
+        await expect.poll(() => frame.locator(".vram-zoom").count(), { timeout: 8000 }).toBe(1);
+
+        await frame.locator(".vram-head").hover();
+        await sleep(300);
+        await page.keyboard.press("Escape");
+        await expect.poll(() => frame.locator(".vram-zoom").count(), { timeout: 5000 }).toBe(0);
+    } finally { await ext.close(); await fake.stop(); }
+});

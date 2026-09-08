@@ -23,7 +23,7 @@ export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, dropInferredLoads, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
 import { parseInfo, holdCapacity, memorySplit, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
-import { ResourceTracks, ScopeSwitch } from "./resource-chart";
+import { ResourceTracks, ScopeSwitch, muteTip } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
 /** Is this model resident right now? `undefined` when we have no `/api/ps` answer yet — the caller must not
@@ -1239,10 +1239,17 @@ export function VramPanel() {
         if (el.getBoundingClientRect().height < floor - 1) easeVramH(floor);
     };
     useEffect(correct);
-    // Esc leaves the zoom. Bound while the panel is open, on the document, because the pointer may be
-    // anywhere by the time you want out.
+    // Esc: hide the TOOLTIP if one is up, else leave the zoom. In that order because they are different
+    // kinds of thing — the tip is transient and in the way right now, the zoom is state you chose — and
+    // because a tip is showing precisely when the pointer is over the chart, which is when "get out of the
+    // way" is what Esc means. With no tip up the key still does what it always did. Bound while the panel is
+    // open, on the document, because the pointer may be anywhere by the time you want out.
     useEffect(() => {
-        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && zoomRange.value) zoomRange.value = null; };
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key !== "Escape") return;
+            if (muteTip()) return;
+            if (zoomRange.value) zoomRange.value = null;
+        };
         document.addEventListener("keydown", onKey);
         return () => document.removeEventListener("keydown", onKey);
     }, []);

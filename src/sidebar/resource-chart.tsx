@@ -61,8 +61,28 @@ const snapUnder = (runs: ResourceSample[][]) => {
     if (eventHover.value) return null;
     return snapFraction(runs, c.frac);
 };
+/**
+ * IS THE TOOLTIP MUTED? Esc hides it so you can LOOK at the chart, and the next pointer movement brings it
+ * back. A cursor tip has to sit near the pointer to be readable, which means it sits on top of the trace you
+ * paused over — so the one moment you want to study a shape is the one moment something is covering it.
+ *
+ * Deliberately not sticky: it clears on the next move rather than needing a second Esc, because the gesture
+ * is "get out of the way for a second", not a mode. Nothing else about the hover changes — the crosshair and
+ * its dots stay, since they mark WHERE you were looking and that is the thing being preserved.
+ */
+export const tipMuted = signal(false);
+
+/** Mute the cursor tip if one is showing, and say whether that happened — so the Esc handler can fall through
+ *  to leaving the zoom when there was nothing to hide. The decision lives HERE, beside the signals it reads,
+ *  rather than exporting the hover state so another module can ask the same question less well. */
+export function muteTip(): boolean {
+    if (!hoverAt.value || tipMuted.value) return false;
+    tipMuted.value = true;
+    return true;
+}
+
 /** Read the cursor for a surface, or null when the pointer is somewhere else. */
-const cursorAt = (surface: string) => (hoverAt.value?.surface === surface ? hoverAt.value : null);
+const cursorAt = (surface: string) => (tipMuted.value || hoverAt.value?.surface !== surface ? null : hoverAt.value);
 /** The cursor for a surface, for the tips that READ THE PLOT (the sample stamp, a band, the pool rows) —
  *  null while an EVENT on that same surface is hovered, because then the event's own tip is the answer.
  *
@@ -75,6 +95,7 @@ const cursorOn = (surface: string) =>
     (eventHover.value?.scope === surface ? null : cursorAt(surface));
 /** Track a pointer against the viewport, tagged with the surface it is over. */
 const trackCursor = (surface: string) => (e: PointerEvent) => {
+    tipMuted.value = false;   // moving is the ask for it back — see tipMuted
     // `yFrac` is the pointer's height within the PLOT (0 = top, 1 = bottom), which is the only thing that can
     // say which of several overlaid lines the pointer is nearest. Read off the plot element rather than the
     // event target: the hit targets are strokes inside it, so measuring against those would give the pointer's
