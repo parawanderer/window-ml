@@ -1212,24 +1212,54 @@ const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
     if (e.button !== 0) return;
     const el = (e.currentTarget as HTMLElement);
     const box = el.getBoundingClientRect();
-    const frac = (x: number) => Math.min(1, Math.max(0, (x - box.left) / Math.max(1, box.width)));
-    const start = frac(e.clientX);
+    const raw = (x: number) => Math.min(1, Math.max(0, (x - box.left) / Math.max(1, box.width)));
+    /**
+     * THE SELECTION SNAPS TOO, when snapping is on.
+     *
+     * A box drawn to free fractions beside a crosshair that lands on datapoints is the panel using two
+     * different rules for "where the pointer is" at once, and you can see it: the edges sit between the dots
+     * they were dragged against. It is also the more honest range — the edges are then real MEASUREMENTS
+     * rather than instants interpolated between two polls, which is the same reason the tooltip refuses to
+     * interpolate.
+     *
+     * Resolved live rather than captured, like the crosshair: a drag can outlast a poll, and a fraction is a
+     * fact about the sample count at the instant it was taken.
+     */
+    const frac = (x: number) => {
+        const f = raw(x);
+        if (!snapDot.value) return f;
+        return snapFraction(runs, f)?.frac ?? f;
+    };
+    /** The INSTANT an edge means. Snapped, that is the sample's own stamp — not the axis position read back
+     *  through `timeAtFraction`, which would interpolate the very value the snap exists to avoid. */
+    const timeAt = (x: number) => {
+        if (snapDot.value) {
+            const s = snapFraction(runs, raw(x));
+            const t = s ? runs[s.run]?.[s.index]?.t : null;
+            if (t != null) return t;
+        }
+        return timeAtFraction(runs, raw(x));
+    };
+    const startX = e.clientX;
+    const start = frac(startX);
     let moved = false;
     brush.value = { from: start, to: start };
     const move = (ev: PointerEvent) => {
         if (ev.buttons === 0) return up(ev);
         moved = true;
-        brush.value = { from: start, to: frac(ev.clientX) };
+        brush.value = { from: frac(startX), to: frac(ev.clientX) };
     };
     const up = (ev: PointerEvent) => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
-        const end = frac(ev.clientX);
         brush.value = null;
-        // A CLICK is not a selection: without this every click on the chart would zoom to an instant.
-        if (!moved || Math.abs(end - start) < 0.01) return;
-        const a = timeAtFraction(runs, Math.min(start, end)), b = timeAtFraction(runs, Math.max(start, end));
-        if (a == null || b == null) return;
+        // A CLICK is not a selection: without this every click on the chart would zoom to an instant. Measured
+        // on the RAW positions, because snapped they can collapse onto the same datapoint — which is a real
+        // drag across less than one sample, not a click, and the result guard below is what refuses it.
+        if (!moved || Math.abs(raw(ev.clientX) - raw(startX)) < 0.01) return;
+        const [ta, tb] = [timeAt(startX), timeAt(ev.clientX)];
+        if (ta == null || tb == null) return;
+        const a = Math.min(ta, tb), b = Math.max(ta, tb);
         // …and neither is a selection that rounds to nothing. The fraction guard above is about the GESTURE
         // (did the hand move); this is about the RESULT, and they are not the same test: the axis is
         // segmented, so a perfectly deliberate drag across a densely-sampled stretch can still resolve to a

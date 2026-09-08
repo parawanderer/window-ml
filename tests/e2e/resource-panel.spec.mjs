@@ -2407,3 +2407,58 @@ test("resource panel: the pool tooltip puts the ceiling on its own dimmer line",
         expect(c2).not.toBe(c1);
     } finally { await ext.close(); await fake.stop(); }
 });
+
+// THE SELECTION SNAPS TOO. A box drawn to free fractions beside a crosshair that lands on datapoints is the
+// panel using two different rules for "where the pointer is" at once — and you can see it, because the edges
+// sit between the dots they were dragged against.
+test("resource panel: in snap mode the selection box lands on datapoints, not between them", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_snapdot: true, ml_res_window: 300 }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(9000);   // several samples, so a drag spans more than one
+
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        const y = plot.y + plot.height * 0.5;
+        /** Where the mark lands for a given pointer position, as a fraction of the plot. */
+        const markAt = async (fx) => {
+            await page.mouse.move(plot.x + plot.width * fx, y);
+            await sleep(180);
+            const d = await frame.locator(".rc-snapdot").first().boundingBox();
+            return (d.x + d.width / 2 - plot.x) / plot.width;
+        };
+        // The datapoints the two edges WILL snap to, read from the mark itself — so the assertion is against
+        // where the panel says the samples are, not against arithmetic repeated in the test.
+        const leftDot = await markAt(0.33);
+        const rightDot = await markAt(0.72);
+        expect(Math.abs(rightDot - leftDot), "the two edges are different datapoints").toBeGreaterThan(0.05);
+
+        // Drag between them, one move at a time — `{ steps: n }` is coalesced under load and the drag then
+        // never traverses (see `the width you drag is the width live keeps`).
+        await page.mouse.move(plot.x + plot.width * 0.33, y);
+        await page.mouse.down();
+        for (const fx of [0.45, 0.55, 0.65, 0.72]) {
+            await page.mouse.move(plot.x + plot.width * fx, y);
+            await sleep(30);
+        }
+        await sleep(150);
+        const sel = await frame.locator(".rc-brush").first().boundingBox();
+        await page.mouse.up();
+        expect(sel, "a selection box is drawn while dragging").toBeTruthy();
+
+        // BOTH EDGES on the datapoints, not between them.
+        const l = (sel.x - plot.x) / plot.width, r = (sel.x + sel.width - plot.x) / plot.width;
+        expect(Math.abs(l - leftDot), `left edge ${l.toFixed(3)} vs datapoint ${leftDot.toFixed(3)}`)
+            .toBeLessThan(0.02);
+        expect(Math.abs(r - rightDot), `right edge ${r.toFixed(3)} vs datapoint ${rightDot.toFixed(3)}`)
+            .toBeLessThan(0.02);
+    } finally { await ext.close(); await fake.stop(); }
+});
