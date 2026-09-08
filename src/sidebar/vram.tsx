@@ -1179,11 +1179,15 @@ function RowTip({ sample }: { sample: ResourceSample | null }) {
             {/* Placement rides the NAME line. It is one short phrase and the tip has grown a cost line and a
                 residency line beneath it, so on its own row it read as a third fact of equal weight when it
                 is really part of identifying the thing: which model, and where it is. */}
+            {/* THE NAME OWNS ITS LINE. Placement is a sentence — "split: CUDA0 12.1 GiB · CUDA1 8.4 GiB · RAM
+                2.0 GiB" — and beside a model id that is already long it wrapped into a ragged column where
+                the name and the placement each looked like a fragment of the other. Below it they read as
+                what they are: a thing, then where it is. */}
             <div class="vram-rowtip-name">
                 <i class="rc-tip-dot" style={{ background: colorFor(name) }} />{name}
-                {where ? <span class={`vram-rowtip-where${isSplit(m) ? " vram-rowtip-split" : ""}`}>{isSplit(m) ? "split: " : "on "}{where}</span> : null}
                 {modelKindLabel(name) ? <span class="vram-rowtip-kind">{modelKindLabel(name)}</span> : null}
             </div>
+            {where ? <div class={`vram-rowtip-where${isSplit(m) ? " vram-rowtip-split" : ""}`}>{isSplit(m) ? "split: " : "on "}{where}</div> : null}
             <div class="vram-rowtip-dim">{formatBytes((m.vramBytes || 0) + (m.ramBytes || 0))} resident</div>
             {/* Residency answers "what is loaded"; this answers "and was it worth the VRAM". */}
             <CostFacts model={name} />

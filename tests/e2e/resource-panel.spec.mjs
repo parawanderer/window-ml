@@ -2266,15 +2266,35 @@ test("resource panel: the crosshair snaps to a datapoint, and only when asked", 
         // the crosshair stored a fraction computed at pointermove while the dots recomputed theirs at render,
         // so one poll's worth of new samples moved only one of them; and the 1px rule started AT its position
         // instead of straddling it, leaving a permanent half-pixel.
-        // AFTER A POLL LANDS. The stale-fraction fault is invisible until new data arrives — that is the
-        // whole mechanism — so measuring immediately after the hover passes with it reintroduced. Wait past a
-        // sample, WITHOUT moving the pointer, and the two positions must still agree.
+        // A PARKED POINTER KEEPS ITS MARK. The pointer is a position on SCREEN; which sample sits under it
+        // changes as the timeline advances, so resolving that once and holding it pins the mark to a sample
+        // that then walks left out from under a cursor that has not moved. Both this and the alignment below
+        // need a poll to have LANDED — the fault is invisible until new data arrives, which is why measuring
+        // straight after the hover passed with it reintroduced.
         const countSamples = () => frame.locator(".rc-plot").first().evaluate((el) => {
             const poly = el.querySelector(".rc-line") || el.querySelector("polygon");
             return (poly?.getAttribute("points") || "").trim().split(/\s+/).length;
         });
+        // Measured against a FRESH box: the panel grows as rows arrive, so a bounding box captured earlier
+        // puts these fractions outside the plot entirely and the numbers stop meaning anything.
+        const dotX = async () => {
+            const p = await frame.locator(".rc-plot").first().boundingBox();
+            const d = await frame.locator(".rc-snapdot").first().boundingBox();
+            return (d.x + d.width / 2 - p.x) / p.width;
+        };
         const before = await countSamples();
-        await expect.poll(countSamples, { timeout: 12000 }).toBeGreaterThan(before);
+        // One sample's width on the axis. Derived from the count rather than by probing two positions, since
+        // the count is what the spacing IS and probing costs two more hovers that would themselves race polls.
+        const gap = 1 / Math.max(1, before - 1);
+        const parkedX = await dotX();
+        // SEVERAL polls, not one. Re-snapping legitimately moves the mark by up to half a sample gap as the
+        // nearest sample changes under a stationary pointer — so after ONE poll the right behaviour and the
+        // wrong one are barely a gap apart. Pinned to a sample, the mark walks a further gap with EVERY poll
+        // and never comes back; re-derived, it stays put however many land.
+        await expect.poll(countSamples, { timeout: 20000 }).toBeGreaterThan(before + 2);
+        const afterX = await dotX();
+        expect(Math.abs(afterX - parkedX), `the mark slid from ${parkedX.toFixed(3)} to ${afterX.toFixed(3)}`)
+            .toBeLessThan(gap * 0.75);
 
         const align = await frame.evaluate(() => {
             const plotEl = document.querySelector(".rc-plot");
@@ -2297,5 +2317,93 @@ test("resource panel: the crosshair snaps to a datapoint, and only when asked", 
         expect(align.ddx, "…and on the datapoint's own x").toBeLessThan(0.6);
         expect(align.dy, "…and sits ON the line, not beside it").toBeLessThan(0.6);
 
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// THREE THINGS THE MARK MUST NOT DO, all reported from watching it rather than caught by a test — which is
+// what they have in common: each is about what the chart says when two marks are on screen at once, and no
+// assertion about a single one of them could have found any of them.
+test("resource panel: the snap mark yields, focuses, and says what it is out of", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_snapdot: true }));
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(6000);
+
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        // Over the plot's own background, low in the track where no band is drawn: an OVERVIEW, so every
+        // boundary is marked.
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.06);
+        await sleep(300);
+        const all = await frame.locator(".rc-snapdot").count();
+        expect(all, "over the background, every line is marked").toBeGreaterThan(1);
+
+        // HOVERING ONE BAND narrows it to that band. The panel has already dimmed the others to say "this
+        // one", and a full set of dots contradicts that by marking what it just faded.
+        await frame.locator(".rc-band").first().hover();
+        await sleep(300);
+        expect(await frame.locator(".rc-snapdot").count(), "focused, one mark").toBe(1);
+
+        // AN EVENT RULE OWNS THE POINTER. A dashed instant is its own vertical mark, naming an INSTANT where
+        // the crosshair names the nearest SAMPLE — never the same x — so together they read as one thing that
+        // cannot decide where it is.
+        fake.setResident([]);   // an eviction rules through the plot
+        await expect.poll(() => frame.locator(".rc-rule").count(), { timeout: 30000 }).toBeGreaterThan(0);
+        const rule = await frame.locator(".rc-rule").first().boundingBox();
+        await page.mouse.move(rule.x + rule.width / 2, rule.y + rule.height / 2 + 20);
+        await page.mouse.move(rule.x + rule.width / 2, rule.y + rule.height / 2, { steps: 3 });
+        await sleep(350);
+        expect(await frame.locator(".rc-snapdot").count(), "the dots stand down").toBe(0);
+        // EVERY track's line, not just this one — the crosshair is drawn per track off a shared signal, so
+        // one standing down while its siblings stayed would be the same contradiction one row lower.
+        expect(await frame.locator(".rc-cross").count(), "…and so does the line, on every track").toBe(0);
+
+        // …and both come back when the pointer leaves it, or "temporarily" would be a one-way door.
+        await page.mouse.move(plot.x + plot.width * 0.3, plot.y + plot.height * 0.06);
+        await sleep(350);
+        expect(await frame.locator(".rc-cross").count()).toBeGreaterThan(0);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// THE DENOMINATOR IS A CONSTANT, so it recedes. On one line the ceiling competes with the reading for the
+// same glance, and it is the one number in the tooltip that never changes as the pointer moves.
+test("resource panel: the pool tooltip puts the ceiling on its own dimmer line", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(4000);
+
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.5);
+        await expect.poll(() => frame.locator(".rc-tip-pool").count(), { timeout: 8000 }).toBe(1);
+
+        const first = await frame.locator(".rc-tip-pool .rc-tip-size").first().textContent();
+        expect(first, "the reading leads, with its share").toMatch(/in use \(\d+%\)/);
+        const of = await frame.locator(".rc-tip-of").textContent();
+        expect(of, "the ceiling is on its own line").toMatch(/^out of /);
+        // DIMMER, which is the whole point of moving it — same-coloured it would just be a second line.
+        const [c1, c2] = await frame.locator(".rc-tip-pool").evaluate((el) => [
+            getComputedStyle(el.querySelector(".rc-tip-size")).color,
+            getComputedStyle(el.querySelector(".rc-tip-of")).color,
+        ]);
+        expect(c2).not.toBe(c1);
     } finally { await ext.close(); await fake.stop(); }
 });

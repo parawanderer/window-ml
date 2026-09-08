@@ -207,7 +207,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    as two marks competing to say where you are. */
 .rc-cross.snapped { opacity: .7; }
 .rc-part { pointer-events: none; stroke: var(--panel); stroke-width: .5; stroke-opacity: .55; }
-.rc-band { cursor: help; transition: opacity .12s ease; }
+/* NO `cursor: help` here. Every band covers most of the plot, so a question-mark pointer was the
+   cursor state for the CHART rather than for a hint on it — and it reads as "click me for docs" on a
+   surface whose real gestures are drag, scroll and pinch. The plot sets its own crosshair; a band
+   inherits it, which is what says "read a position here". */
+.rc-band { transition: opacity .12s ease; }
 /* The hovered band outlines itself, so you can see WHICH one you are reading rather than inferring it from
    the neighbours having dimmed. `paint-order` keeps the stroke outside the fill so a thin band still shows it. */
 .rc-band.hot { stroke: var(--fg); stroke-width: 1.5; paint-order: stroke fill; }
@@ -244,6 +248,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip-dot-none { background: transparent; border: 1px solid var(--fg-faint); opacity: .55; }
 /* The pool tip is a small table, not a one-liner: how big, how much is used, and BY WHAT — the consumer list
    is repeated here so the answer is complete without looking away from the cursor. */
+/* The DENOMINATOR under the reading it belongs to. Dimmed and right-aligned with the figure above it: it is
+   the one number in the tooltip that does not change as the pointer moves, so it answers "of what" without
+   being read first. */
+.rc-tip-of { justify-content: flex-end; color: var(--fg-faint); font-size: 0.92em; margin-top: -2px; }
 .rc-tip-pool { flex-direction: column; align-items: stretch; gap: 1px; min-width: 150px; }
 .rc-tip-line { display: flex; justify-content: space-between; gap: 12px; }
 .rc-tip-line .rc-tip-name { font-weight: 600; }
@@ -337,7 +345,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
     background: var(--panel-2); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px;
              padding: 2px 7px; font-size: 0.8em; cursor: pointer; font-variant-numeric: tabular-nums; }
 .vram-zoom:hover { background: var(--panel-2-hover); }
-.rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: help; z-index: 3; }
+.rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: inherit; z-index: 3; }
 .rc-rule::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;
     background: repeating-linear-gradient(to bottom, var(--fg-dim) 0 3px, transparent 3px 6px); }
 /* The model's OWN colour when the event names one — a rule is an annotation on that model's trace, and
@@ -574,7 +582,8 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-rowtip-dim { color: var(--fg-faint); }
 /* A SPLIT model is the interesting case — it is slower than its total size suggests. */
 .vram-rowtip-split { color: var(--warn, #f59e0b); }
-.rc-hit { cursor: help; }
+/* Inherits the plot's crosshair — see .rc-band. */
+.rc-hit { cursor: inherit; }
 /* What makes up the hovered pool's line. Sits between the plot and the legend so it reads as an annotation of
    the line rather than a tooltip that covers it. */
 /* Height is RESERVED (it renders a hard space when idle), so hovering a line never shifts the legend or the
@@ -2414,6 +2423,8 @@ code .expanded:hover { background: color-mix(in srgb, var(--ok, #22c55e) 12%, tr
 
 /* Where a model is, beside its name rather than under it: it is part of identifying the thing, not a third
    fact of equal weight to the residency and cost lines below. Normal weight, so the name still leads. */
+/* Its own ROW under the name now, not a trailing clause on it: a placement is a sentence, and beside
+   a long model id the two wrapped into a column where each looked like a fragment of the other. */
 .vram-rowtip-where { font-weight: 400; color: var(--fg-dim); }
 
 /* While a lane block is hovered, everything in the transcript that is not part of its lineage recedes. The

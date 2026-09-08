@@ -164,7 +164,10 @@ export const LANE_H_DEFAULT = 96;
 export const laneH = signal(LANE_H_DEFAULT);
 export const showModels = signal(true);   // draw the resource panel's model list (it competes with the chart for height)
 // The resource chart's CROSSHAIR — where the pointer is, shared so every track mirrors the same instant.
-export const crosshair = signal<{ frac: number; t: number | null; msPerPx?: number; snapped?: boolean } | null>(null);
+/** Where the pointer is on the time axis, as a fraction — the RAW position, never a snapped one. Which
+ *  sample sits under it is derived at render (`snapUnder`), because the answer changes as the timeline
+ *  advances while the pointer stays put. */
+export const crosshair = signal<{ frac: number; t: number | null; msPerPx?: number } | null>(null);
 export const resWindowS = signal(RESWIN_DEFAULT);  // seconds of history the resource chart shows (Settings → Appearance)
 export const outMaxH = signal(OUTMAX_DEFAULT); // max height of a tool output cell (Settings → Appearance); 0 = uncapped
 export const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync

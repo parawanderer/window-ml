@@ -12,7 +12,7 @@
 import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, snapFraction, fractionOfSample, TAIL_SLACK_MS,
+    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR, MEMORY_PARTS, memoryParts, type MemoryBreakdown,
@@ -45,10 +45,22 @@ const hoverAt = signal<{ x: number; y: number; w: number; surface: string; yFrac
 /** Which part of the scrub window the pointer is over, so the cursor can say a handle is there before you
  *  try to use it. A resize affordance you can only discover by failing to pan is not an affordance. */
 const scrubGrab = signal<"from" | "to" | "pan" | "outside" | null>(null);
-/** WHICH SAMPLE the crosshair snapped to — segment and index, so every track marks the SAME reading rather
- *  than each recomputing it from a fraction and rounding differently at the edges. Null when snapping is off
- *  or there is nothing to snap to. */
-const snapAt = signal<{ frac: number; index: number; run: number } | null>(null);
+/** WHICH SAMPLE the pointer is over, resolved from the LIVE data every time it is asked.
+ *
+ *  Deliberately a function of the current `runs` rather than a stored answer. The pointer is a position on
+ *  screen; which sample sits under it changes as the timeline advances, so holding the resolution pins the
+ *  mark to a sample that then walks out from under the cursor. Cheap enough to call per render — it is a
+ *  weighted walk over the segment list. */
+const snapUnder = (runs: ResourceSample[][]) => {
+    const c = crosshair.value;
+    if (!snapDot.value || !c) return null;
+    // AN EVENT RULE OWNS THE POINTER while it is hovered. A dashed instant is a vertical mark of its own, a
+    // pixel or two from the crosshair and never on the same x — it names an INSTANT, the crosshair names the
+    // nearest SAMPLE — so drawn together they read as one thing that cannot decide where it is. The same rule
+    // the reading tooltips already follow (`cursorOn`), applied to the mark.
+    if (eventHover.value) return null;
+    return snapFraction(runs, c.frac);
+};
 /** Read the cursor for a surface, or null when the pointer is somewhere else. */
 const cursorAt = (surface: string) => (hoverAt.value?.surface === surface ? hoverAt.value : null);
 /** The cursor for a surface, for the tips that READ THE PLOT (the sample stamp, a band, the pool rows) —
@@ -218,7 +230,13 @@ function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null }: { fra
      */
     const dots = (() => {
         if (snapIndex == null || snapIndex < 0 || snapIndex >= frames.length) return null;
-        const keys = order.filter((k) => k !== "free");
+        // HOVERING ONE BAND narrows this to that band alone. Every boundary marked is an OVERVIEW — right
+        // when the pointer is on the plot's background and nothing is picked out — but once a band is
+        // hovered the panel has already dimmed its neighbours to say "this one", and a full set of dots
+        // contradicts that by marking the things it just faded.
+        const focus = hoverModel.value;
+        const keys = order.filter((k) => k !== "free")
+            .filter((k) => !focus || identity[k] === focus);
         const seen = new Set<number>();
         return keys.map((key) => {
             const v = tops[key]?.[snapIndex];
@@ -296,11 +314,11 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
             <div class="rc-plot"
                 onPointerDown={startBrush(runs)}
                 onPointerMove={(e: PointerEvent) => { trackCursor(scope)(e); trackCrosshair(runs)(e); }}
-                onPointerLeave={() => { hoverAt.value = null; hoverModel.value = null; eventHover.value = null; crosshair.value = null; snapAt.value = null; }}>
+                onPointerLeave={() => { hoverAt.value = null; hoverModel.value = null; eventHover.value = null; crosshair.value = null; }}>
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                         <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} scope={scope}
-                            snapIndex={snapAt.value?.run === i ? snapAt.value.index : null} />
+                            snapIndex={snapUnder(runs)?.run === i ? snapUnder(runs)!.index : null} />
                         <InstantRules instants={instants} run={i} scope={scope} />
                         <HoverSpan run={i} scope="lane" />
                     </div>
@@ -427,8 +445,14 @@ function PlotTip({ at, bands, ceiling, label, hidden, scope }: { at: ResourceSam
     const models = bands.filter((b) => b.kind === "model" && b.bytes > 0 && !(b.model && hidden.has(b.model)));
     return (
         <div class="rc-tip rc-tip-pool" role="tooltip" ref={ref} style={style}>
+            {/* THE FIGURE FIRST, THE DENOMINATOR UNDER IT. On one line the ceiling competes with the reading
+                for the same glance — and the ceiling is a CONSTANT, the one number in the tooltip that never
+                changes as you move along the trace, so it is the one that should recede. Dimmed and on its
+                own row it is still there to answer "of what", which is the question the panel exists to make
+                unavoidable, without being read first. */}
             <div class="rc-tip-line"><span class="rc-tip-name">{label}</span>
-                <span class="rc-tip-size">{formatShare(used, ceiling)}</span></div>
+                <span class="rc-tip-size">{formatBytes(used)} in use{percentOf(used, ceiling) ? ` (${percentOf(used, ceiling)})` : ""}</span></div>
+            <div class="rc-tip-line rc-tip-of">out of {formatBytes(ceiling)}</div>
             <SampleStamp at={at} />
             {/* Named, because "62% full" invites "of what" as the immediate next question, and the answer is
                 on the screen already but only in a list that shows the PRESENT. */}
@@ -656,7 +680,7 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
             <div class="rc-plot"
                 onPointerDown={startBrush(runs)}
                 onPointerMove={(e: PointerEvent) => { trackCursor("overlay")(e); trackCrosshair(runs)(e); }}
-                onPointerLeave={() => { hoverAt.value = null; leavePool(); crosshair.value = null; snapAt.value = null; }}>
+                onPointerLeave={() => { hoverAt.value = null; leavePool(); crosshair.value = null; }}>
                 <BrushOverlay />
                 <Crosshair runs={runs} />
                 <PoolsTip pools={pools.map((p, pi) => ({ ...p, color: poolColor(pi, pools.length) }))}
@@ -671,13 +695,18 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
                             view where "snap to the line" means the most. Positioned HTML rather than an SVG
                             circle for the same reason as the stacked one: the viewBox is stretched, so a
                             circle inside it would draw as an ellipse. */}
-                        {snapAt.value?.run === ri && run.length ? pools.map((p, pi) => {
-                            const i = Math.min(run.length - 1, Math.max(0, snapAt.value!.index));
-                            const cx = run.length === 1 ? 50 : (i / (run.length - 1)) * 100;
-                            return <i key={`sd:${p.id}`} class="rc-snapdot" aria-hidden="true"
-                                style={{ left: `${cx}%`, top: `${(1 - frac(run[i], p)) * 100}%`,
-                                         background: poolColor(pi, pools.length) }} />;
-                        }) : null}
+                        {snapUnder(runs)?.run === ri && run.length ? pools
+                            // COLOURED BEFORE FILTERING: `poolColor` is keyed by the pool's index among ALL
+                            // pools, so filtering first renumbers them and a focused pool takes the first
+                            // pool's colour.
+                            .map((p, pi) => ({ p, color: poolColor(pi, pools.length) }))
+                            .filter(({ p }) => !poolHover.value || poolHover.value.id === p.id)
+                            .map(({ p, color }) => {
+                                const i = Math.min(run.length - 1, Math.max(0, snapUnder(runs)!.index));
+                                const cx = run.length === 1 ? 50 : (i / (run.length - 1)) * 100;
+                                return <i key={`sd:${p.id}`} class="rc-snapdot" aria-hidden="true"
+                                    style={{ left: `${cx}%`, top: `${(1 - frac(run[i], p)) * 100}%`, background: color }} />;
+                            }) : null}
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {pools.map((p, pi) => {
                                 const pts = run.map((s, i) => `${((i / (run.length - 1)) * W).toFixed(1)},${(H - frac(s, p) * H).toFixed(1)}`).join(" ");
@@ -1100,20 +1129,26 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
 function Crosshair({ runs }: { runs?: ResourceSample[][] } = {}) {
     const c = crosshair.value;
     if (!c) return null;
+    if (eventHover.value) return null;   // the rule you are pointing at is the mark — see snapUnder
     // RECOMPUTED, never the stored fraction, whenever we are snapped to a known sample. The stored one is a
     // fact about the sample COUNT at the instant the pointer moved; one poll later the same sample sits at a
     // different fraction, and a line holding the old number drifts off the dots that were recomputed — by a
     // whole sample's width on a short history (measured at 0.601 against 0.500, one poll apart).
-    const snap = snapAt.value;
-    const frac = (runs && snap ? fractionOfSample(runs, snap.run, snap.index) : null) ?? c.frac;
+    const snap = runs ? snapUnder(runs) : null;
+    const frac = snap ? snap.frac : c.frac;
     // Past the middle the label would run off the right edge, so it hangs on the other side of the line.
     const flip = frac > 0.72;
     return (
-        <div class={`rc-cross${c.snapped ? " snapped" : ""}`} style={{ left: `${frac * 100}%` }}>
+        <div class={`rc-cross${snap ? " snapped" : ""}`} style={{ left: `${frac * 100}%` }}>
             {/* The DOTS are drawn inside each plot, on the band boundaries they are points of — see
                 StackedArea. Nothing here: a mark riding at the pointer's height is the cursor with a circle on
                 it, not a datapoint. */}
-            {c.t != null ? <span class={`rc-cross-t${flip ? " flip" : ""}`}>{clockAt(c.t, c.msPerPx ?? Infinity)}</span> : null}
+            {/* Snapped, the label names the SAMPLE's own instant rather than the interpolated one under the
+                pointer — the dot is on a measurement, so the clock beside it has to be that measurement's. */}
+            {(() => {
+                const t = snap && runs ? (runs[snap.run]?.[snap.index]?.t ?? c.t) : c.t;
+                return t != null ? <span class={`rc-cross-t${flip ? " flip" : ""}`}>{clockAt(t, c.msPerPx ?? Infinity)}</span> : null;
+            })()}
         </div>
     );
 }
@@ -1127,16 +1162,18 @@ const trackCrosshair = (runs: ResourceSample[][]) => (e: PointerEvent) => {
     // SNAPPED, when asked: the tooltip already reads a real SAMPLE rather than interpolating between two, so
     // a line drawn at the pointer instead disagrees with its own number by up to half a sample gap — seven
     // seconds of daylight at an idle cadence, and a gap that changes width as you move, which reads as drift.
-    const snapped = snapDot.value ? snapFraction(runs, raw) : null;
-    snapAt.value = snapped;
-    const frac = snapped ? snapped.frac : raw;
+    // THE RAW POINTER POSITION is what is stored. Snapping is derived at RENDER, never here, and the
+    // difference is the whole behaviour: with the pointer parked and the timeline advancing, "the sample I am
+    // pointing at" becomes a NEWER sample every poll. Resolving it once and holding the answer made the line
+    // and its dots slide left with the data they were pinned to, away from a cursor that had not moved.
+    const frac = raw;
     // How much time ONE PIXEL is worth here, which is what decides whether milliseconds mean anything in the
     // label: zoomed into ten seconds they do, over five minutes of history they are noise.
     const first = runs[0]?.[0]?.t, last = runs.at(-1)?.at(-1)?.t;
     const msPerPx = first != null && last != null && box.width > 0 ? (last - first) / box.width : Infinity;
     // The TIME comes from the unsnapped position when floating and from the snapped one when not, so the
     // label always names the instant the line is actually drawn at.
-    crosshair.value = { frac, t: timeAtFraction(runs, frac), msPerPx, ...(snapped ? { snapped: true } : {}) };
+    crosshair.value = { frac, t: timeAtFraction(runs, frac), msPerPx };
 };
 
 /** The hovered EVENT's stretch, shaded on the plot above it. The lane and the chart share an axis and that
