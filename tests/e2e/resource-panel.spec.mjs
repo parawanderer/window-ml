@@ -1808,6 +1808,28 @@ test("resource panel: the width you drag is the width live keeps", async () => {
                     await sleep(50);
                 }
             }
+            /**
+             * AND THE LAST POSITION IS INSISTED ON, because a step is allowed to go missing.
+             *
+             * With the pacing above, CI still delivered about two of the eight moves and the window stopped
+             * at 42% of a track it was dragged to the end of — a pan that landed short, which then reads as
+             * the panel refusing to rejoin live. Waiting longer does not help: the moves are not late.
+             *
+             * So the destination is re-sent until the window stops responding to it. The 1px alternation is
+             * not superstition — a move to the position the pointer is already at is not a new event, so a
+             * plain repeat would be dropped by the browser rather than delivered. It ends when a round
+             * changes nothing, which is both "it arrived" and "it is clamped at the end", and those want the
+             * same answer: stop pushing. On a machine that delivers the first eight this costs one round.
+             */
+            for (let t = 0; t < 6; t++) {
+                const was = await winX();
+                await page.mouse.move(toX - (t % 2), y);
+                for (let k = 0; k < 10; k++) {
+                    if (await winX() !== was) break;
+                    await sleep(50);
+                }
+                if (await winX() === was) break;
+            }
             await page.mouse.up();
             await sleep(900);
         };
