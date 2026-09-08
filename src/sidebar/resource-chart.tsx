@@ -12,7 +12,7 @@
 import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
+    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, snapFraction, fractionOfSample, TAIL_SLACK_MS,
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR, MEMORY_PARTS, memoryParts, type MemoryBreakdown,
@@ -306,7 +306,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                     </div>
                 ))}
                 <BrushOverlay />
-                <Crosshair />
+                <Crosshair runs={runs} />
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
                     title={soft.label} /> : null}
                 <BandTip bands={bands} frame={hoverSample ? bandsOf(hoverSample) : null}
@@ -658,7 +658,7 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
                 onPointerMove={(e: PointerEvent) => { trackCursor("overlay")(e); trackCrosshair(runs)(e); }}
                 onPointerLeave={() => { hoverAt.value = null; leavePool(); crosshair.value = null; snapAt.value = null; }}>
                 <BrushOverlay />
-                <Crosshair />
+                <Crosshair runs={runs} />
                 <PoolsTip pools={pools.map((p, pi) => ({ ...p, color: poolColor(pi, pools.length) }))}
                     latest={latest} at={hoveredSample(runs, "overlay")} fracOf={frac} usedOf={usedOf} />
                 {/* This view has rules of its own now, so it needs the tip that explains them. */}
@@ -1097,13 +1097,19 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
 /** The crosshair, mirrored into every track: a line where the pointer is, and the instant it names. Reading
  *  one pool against another at a given moment is the whole reason these are small multiples, and doing it by
  *  eye across three plots is exactly what a shared line removes. */
-function Crosshair() {
+function Crosshair({ runs }: { runs?: ResourceSample[][] } = {}) {
     const c = crosshair.value;
     if (!c) return null;
+    // RECOMPUTED, never the stored fraction, whenever we are snapped to a known sample. The stored one is a
+    // fact about the sample COUNT at the instant the pointer moved; one poll later the same sample sits at a
+    // different fraction, and a line holding the old number drifts off the dots that were recomputed — by a
+    // whole sample's width on a short history (measured at 0.601 against 0.500, one poll apart).
+    const snap = snapAt.value;
+    const frac = (runs && snap ? fractionOfSample(runs, snap.run, snap.index) : null) ?? c.frac;
     // Past the middle the label would run off the right edge, so it hangs on the other side of the line.
-    const flip = c.frac > 0.72;
+    const flip = frac > 0.72;
     return (
-        <div class={`rc-cross${c.snapped ? " snapped" : ""}`} style={{ left: `${c.frac * 100}%` }}>
+        <div class={`rc-cross${c.snapped ? " snapped" : ""}`} style={{ left: `${frac * 100}%` }}>
             {/* The DOTS are drawn inside each plot, on the band boundaries they are points of — see
                 StackedArea. Nothing here: a mark riding at the pointer's height is the cursor with a circle on
                 it, not a datapoint. */}

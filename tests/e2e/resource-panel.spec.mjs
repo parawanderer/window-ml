@@ -2234,9 +2234,13 @@ test("resource panel: the crosshair snaps to a datapoint, and only when asked", 
 
         // SNAPPED: the same sweep collapses onto a handful of datapoints. That is the whole behaviour, and
         // what a line merely following the pointer can never do.
+        // RELATIVE to the unsnapped sweep, not an absolute count. The snapped position is RECOMPUTED as data
+        // arrives (it must be — see the alignment check below), so a poll landing mid-sweep moves the same
+        // sample slightly and adds a distinct value. Halving is the property that survives that: quantisation
+        // collapses positions, and losing half of six to a live axis would still be a broken snap.
         const snapSpread = await distinct(0.40, 0.50, 6);
         expect(snapSpread, `six positions snapped to ${snapSpread} places (unsnapped: ${freeSpread})`)
-            .toBeLessThan(3);
+            .toBeLessThanOrEqual(Math.ceil(freeSpread / 2));
 
         // THE DOT SITS ON A LINE, and does not follow the pointer. It rode at the cursor's height at first,
         // on the argument that a stacked area has many values at one x and so no single y — which was wrong
@@ -2256,6 +2260,42 @@ test("resource panel: the crosshair snaps to a datapoint, and only when asked", 
         expect(Math.abs(high[0].w - high[0].h), `${high[0].w}x${high[0].h}`).toBeLessThanOrEqual(1);
         // Every dot shares the snapped x — they are points of the SAME sample on different lines.
         expect(Math.max(...high.map((d) => d.x)) - Math.min(...high.map((d) => d.x))).toBeLessThan(0.02);
+
+        // ON THE LINE, TO THE PIXEL — against the crosshair and against the polyline's own point, because
+        // "near enough" is what this looked like when it was 50px out. Two separate faults produced that:
+        // the crosshair stored a fraction computed at pointermove while the dots recomputed theirs at render,
+        // so one poll's worth of new samples moved only one of them; and the 1px rule started AT its position
+        // instead of straddling it, leaving a permanent half-pixel.
+        // AFTER A POLL LANDS. The stale-fraction fault is invisible until new data arrives — that is the
+        // whole mechanism — so measuring immediately after the hover passes with it reintroduced. Wait past a
+        // sample, WITHOUT moving the pointer, and the two positions must still agree.
+        const countSamples = () => frame.locator(".rc-plot").first().evaluate((el) => {
+            const poly = el.querySelector(".rc-line") || el.querySelector("polygon");
+            return (poly?.getAttribute("points") || "").trim().split(/\s+/).length;
+        });
+        const before = await countSamples();
+        await expect.poll(countSamples, { timeout: 12000 }).toBeGreaterThan(before);
+
+        const align = await frame.evaluate(() => {
+            const plotEl = document.querySelector(".rc-plot");
+            const cb = plotEl.querySelector(".rc-cross")?.getBoundingClientRect();
+            const d = plotEl.querySelector(".rc-snapdot")?.getBoundingClientRect();
+            const poly = plotEl.querySelector(".rc-line") || plotEl.querySelector("polygon");
+            if (!cb || !d || !poly) return null;
+            const vb = poly.ownerSVGElement.viewBox.baseVal, sb = poly.ownerSVGElement.getBoundingClientRect();
+            const pts = (poly.getAttribute("points") || "").trim().split(/\s+/).map((p) => {
+                const [x, y] = p.split(",").map(Number);
+                return { x: sb.x + (x / vb.width) * sb.width, y: sb.y + (y / vb.height) * sb.height };
+            });
+            const dot = { x: d.x + d.width / 2, y: d.y + d.height / 2 };
+            const near = pts.reduce((a, p) => (Math.abs(p.x - dot.x) < Math.abs(a.x - dot.x) ? p : a), pts[0]);
+            return { dx: Math.abs(dot.x - (cb.x + cb.width / 2)), dy: Math.abs(dot.y - near.y),
+                     ddx: Math.abs(dot.x - near.x) };
+        });
+        expect(align, "the plot draws a line to compare against").toBeTruthy();
+        expect(align.dx, "the dot is centred on the crosshair").toBeLessThan(0.6);
+        expect(align.ddx, "…and on the datapoint's own x").toBeLessThan(0.6);
+        expect(align.dy, "…and sits ON the line, not beside it").toBeLessThan(0.6);
 
     } finally { await ext.close(); await fake.stop(); }
 });

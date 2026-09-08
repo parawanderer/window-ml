@@ -1134,6 +1134,34 @@ export function snapFraction<T extends { t: number }>(runs: T[][], frac: number)
     return null;
 }
 
+/**
+ * WHERE A KNOWN SAMPLE SITS, as a fraction of the whole plot — `snapFraction` without the search.
+ *
+ * The point of having it apart is that a snapped position must be RECOMPUTED as data arrives, never stored.
+ * A fraction captured when the pointer moved is a fact about the sample count at that instant; one poll later
+ * the same sample is at a different fraction, and a crosshair holding the old number drifts off the datapoint
+ * it is naming — by a whole sample's width on a short history, which is where this was found (0.601 against
+ * 0.500: index 3 of 6 samples against index 3 of 7, one poll apart).
+ */
+export function fractionOfSample<T extends { t: number }>(runs: T[][], runIndex: number, index: number): number | null {
+    const liveAt = runs.map((r, i) => [r, i] as const).filter(([r]) => r.length > 0);
+    if (!liveAt.length) return null;
+    const weights = liveAt.map(([r]) => Math.max(1, r.length));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let acc = 0;
+    for (let k = 0; k < liveAt.length; k++) {
+        const [run, orig] = liveAt[k];
+        const share = weights[k] / total;
+        if (orig === runIndex) {
+            const i = Math.min(run.length - 1, Math.max(0, index));
+            const at = run.length === 1 ? 0.5 : i / (run.length - 1);
+            return acc + at * share;
+        }
+        acc += share;
+    }
+    return null;   // that segment is gone — the window scrolled past it
+}
+
 /** What the lane draws. Everything is shown by default; this is how a busy session is narrowed.
  *
  *  Two independent axes, because they answer different questions. SCOPE answers "whose events" — a browsing

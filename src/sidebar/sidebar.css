@@ -309,7 +309,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
                  background: var(--panel-2); border: 1px solid var(--border); border-radius: 3px; }
 .rc-scrub-live.on { color: var(--ok, #22c55e); border-color: color-mix(in srgb, var(--ok, #22c55e) 45%, transparent); cursor: default; }
 /* The crosshair: one line, drawn in every track at the same fraction, with the instant it names. */
-.rc-cross { position: absolute; top: 0; bottom: 0; width: 1px; z-index: 5; pointer-events: none;
+/* The 1px rule STRADDLES its position rather than starting at it: `left` places the element's edge, so
+   without this the line's centre sits half a pixel right of the instant it names — and half a pixel to
+   the right of the snap dots, which are centred on theirs. */
+.rc-cross { margin-left: -0.5px; position: absolute; top: 0; bottom: 0; width: 1px; z-index: 5; pointer-events: none;
             background: var(--accent); opacity: .55; }
 .rc-cross-t { position: absolute; top: -1px; left: 3px; padding: 0 3px; font-size: 0.72em; line-height: 1.4;
               color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 3px;
