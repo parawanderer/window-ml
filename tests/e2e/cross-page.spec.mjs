@@ -198,6 +198,13 @@ test("smoke: the extension loads and window.ml runs a one-shot agent @real-ok", 
     await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
     const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
     expect(String(gate.tool)).toBe("fetch_url");
+    // DENY IT, rather than walking away from a live gate. A pending approval outlives the page that raised
+    // it — it lives in the worker — so leaving one here parks a run in every test that follows, and the ones
+    // that reach for "the pending gate" or count calls then pick up a stranger's. That is not hypothetical:
+    // it broke the render-settle test into looking like a captured page with no content, and the only reason
+    // it had not broken this file sooner is that a neighbouring test's own indexing bug happened to resolve
+    // this gate by accident. Denying is also what the test MEANT — it asserts that a cross-origin fetch asks.
+    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, false), gate.key);
     await page.close();
     await configureExtension(ext.sw, { debugMode: "off" });
 });
@@ -211,14 +218,29 @@ async function renderAndCheck(path, marker) {
     const page = await ext.context.newPage();
     await page.goto(site.url + "/");
     await waitForMl(page);
-    const before = fake.calls().length;
+    // OUR CALLS, FOUND BY A TAG WE PUT IN THE TASK — never by index.
+    //
+    // This read `calls()[before + 1]` and it was wrong in a way that took the whole stream fixture down with
+    // it: the test before this one deliberately parks a run at an approval gate and closes its page without
+    // resolving it, so that run emits a call LATER, into the same fake, between our `before` and our own
+    // first request. The count still reached two and the body read back was the OTHER run's — a request
+    // about `read cross-origin json` with none of this page's content in it, which reads exactly like the
+    // rendered fetch having captured nothing. Isolated, the test passed; in the file, it failed for a reason
+    // that had nothing to do with what it was testing.
+    const tag = `r${Math.random().toString(16).slice(2, 8)}`;
+    const mine = () => fake.calls().filter((c) => JSON.stringify(c?.messages || []).includes(tag));
     fake.setScript([{ tool: "fetch_url", args: { url: site.url + path, rendered: true, credentials: true } }, { content: "ok" }]);
-    await page.evaluate(() => { window.ml.agent("render it", { env: false, approvalRouting: "external" }); return true; });
-    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
-    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    await page.evaluate((t) => { window.ml.agent(`render it ${t}`, { env: false, approvalRouting: "external" }); return true; }, tag);
+    // …AND THE GATE IS FOUND BY ITS ARGUMENTS, for the same reason. The run parked by the previous test is
+    // still pending in the worker, so "exactly one gate is listed" is satisfied by ITS gate before ours even
+    // arrives — we would then resolve a stranger's approval and sit here while our own run stayed blocked.
+    const gateFor = async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list()))
+        .find((g) => JSON.stringify(g.arguments || {}).includes(path) && String(g.tool) === "fetch_url");
+    await expect.poll(async () => !!(await gateFor()), { timeout: 15000 }).toBe(true);
+    const gate = await gateFor();
     await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
-    await expect.poll(() => fake.calls().length - before, { timeout: 30000 }).toBe(2);
-    const body = fake.calls()[before + 1];   // the final-answer call — its messages carry the fetch tool result
+    await expect.poll(() => mine().length, { timeout: 30000 }).toBe(2);
+    const body = mine().at(-1);   // the final-answer call — its messages carry the fetch tool result
     await page.close();
     await configureExtension(ext.sw, { debugMode: "off" });
     return JSON.stringify(body?.messages || []).includes(marker) ? "MARKER-PRESENT" : "MARKER-ABSENT";
@@ -351,8 +373,14 @@ test("approval: resolving a gate clears the approve/deny box on other surfaces i
     await expect.poll(() => steps.some((s) => s.awaitingApproval), { timeout: 12000 }).toBe(true);
     const gateSeq = steps.find((s) => s.awaitingApproval).seq;
     // Resolve from the channel (a different surface than the page). One press -> every surface clears.
-    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 5000 }).toBeGreaterThan(0);
-    await ext.sw.evaluate(() => { const [g] = globalThis.__mlApprovals.list(); return globalThis.__mlApprovals.resolve(g.key, true); });
+    // OUR gate, by the tool it is for — not `list()[0]`. Gates live in the WORKER and outlive the page that
+    // raised them, so the first one listed can belong to a run some earlier test left parked.
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list().filter((g) => String(g.tool) === "exec"))).length,
+        { timeout: 5000 }).toBeGreaterThan(0);
+    await ext.sw.evaluate(() => {
+        const [g] = globalThis.__mlApprovals.list().filter((x) => String(x.tool) === "exec");
+        return globalThis.__mlApprovals.resolve(g.key, true);
+    });
     // The page surface gets a DECIDED patch for that step (awaiting cleared, approval set, NO result yet) -
     // proving it clears BEFORE the tool's DONE (which carries the result).
     await expect.poll(() => steps.some((s) => s.seq === gateSeq && !s.awaitingApproval && s.approval === "user" && !s.hasResult), { timeout: 5000 }).toBe(true);

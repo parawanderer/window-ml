@@ -194,25 +194,33 @@ export function startPageServer({ port = 0, crossPort = 0, host = "127.0.0.1" } 
                         + `return pump();});})();});<\/script>`);
                 }
                 if (p === "/slow-chunks") {
-                    // THE PACER for /slow. What matters is not how long the stream takes but the RATIO of its
-                    // GAP to the settle's quiet threshold (RENDER_QUIET_MS, 700ms): a gap that stretches past
-                    // that reads as the page having finished, and the settle stops before the last chunk.
+                    // THE PACER for /slow, and it has TWO deadlines to sit between, which is the thing that
+                    // took three attempts to see. Its GAP must stay well under the settle's quiet threshold
+                    // (RENDER_QUIET_MS, 700ms) or a pause reads as the page having finished; and its TOTAL
+                    // must stay well under the settle's cap (RENDER_SETTLE_MAX_MS, 7s) or the snapshot is
+                    // taken mid-stream. Both were tuned by changing the chunk count, which moves them in
+                    // OPPOSITE directions: 12 chunks at 150ms flaked on the gap, and the 60 at 30ms that
+                    // fixed it then failed on the total, because sixty CHAINED relative timers accumulate
+                    // sixty overshoots — on a runner sharing a core with Playwright, a browser and the fake
+                    // LLM, a 30ms timer is not 30ms, and 60 of them are not 1.8s.
                     //
-                    // It was 12 chunks at 150ms — 4.7x headroom — and it flaked on CI, where this `setTimeout`
-                    // shares a process with Playwright, a browser and the fake LLM, and a 150ms timer under
-                    // load is not 150ms. An earlier fix moved the pacing OUT of the browser (a background tab
-                    // clamps timers), which was right and did not change the ratio; this changes the ratio.
-                    // Same wall-clock length, five times as many chunks, a twelfth of the gap: ~35x headroom.
-                    // The LENGTH is load-bearing too — the marker has to land past the ~1.2s a fixed settle
-                    // would have waited, or the test passes for the wrong reason.
+                    // So the schedule is ABSOLUTE rather than chained: chunk n is due at t0 + n*GAP, a late
+                    // wake-up writes every chunk that has come due, and the next timer is set against the
+                    // clock rather than as a delay from now. Overshoot then costs one gap instead of
+                    // compounding, so the stream ends at ~1.8s under any load — while no chunk can arrive
+                    // EARLY, which is what keeps the premise (the marker lands past the ~1.2s a fixed settle
+                    // would have waited) true rather than incidentally true.
                     res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+                    const CHUNKS = 60, GAP = 30, t0 = Date.now();
                     let n = 0;
                     const tick = () => {
                         if (res.writableEnded) return;
-                        if (++n <= 60) { res.write(`CHUNK-${n}|`); setTimeout(tick, 30); return; }
-                        res.end("STREAM-DONE-3377 all chunks loaded|");
+                        const due = Math.min(CHUNKS, Math.floor((Date.now() - t0) / GAP));
+                        while (n < due) res.write(`CHUNK-${++n}|`);
+                        if (n >= CHUNKS) { res.end("STREAM-DONE-3377 all chunks loaded|"); return; }
+                        setTimeout(tick, Math.max(5, t0 + (n + 1) * GAP - Date.now()));
                     };
-                    setTimeout(tick, 30);
+                    setTimeout(tick, GAP);
                     return;
                 }
                 if (p === "/lazy") {   // a widget that only loads when SCROLLED into view (IntersectionObserver, like GitHub's lazy fragments).
