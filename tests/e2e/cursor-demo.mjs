@@ -200,7 +200,7 @@ const main = async () => {
 
         // 6 — an event rule owns the pointer.
         await narrate(page, "An eviction rules through the plot", { sub: "watch what the crosshair does when you point at it" });
-        fake.setResident([resident("qwen3.8-flash-next:vision", 7 * GiB, 1)]);
+        fake.setResident([resident("qwen3.8-flash-next:vision", sum(QWEN_MEM), 1, QWEN_MEM)]);
         fake.setCapacity(boxOf(IDLE, IDLE - 7 * GiB));
         for (let i = 0; i < 40 && !(await frame.locator(".rc-rule").count()); i++) await sleep(500);
         await sleep(1500);
@@ -225,6 +225,25 @@ const main = async () => {
         await narrate(page, "Move, and it is back", { sub: "not a mode you have to leave" });
         await page.mouse.move(p.x + p.width * 0.5, p.y + p.height * 0.45);
         await sleep(PACE); await shot("9-back.png");
+
+        // 11 — switching a model off, and the keys walking past it.
+        await narrate(page, "Switch a model off and the keys walk past it",
+            { sub: "it is out of the stack and the totals, so there is no shape left to point at" });
+        await frame.locator(".disc-head", { hasText: "not resident" }).first().click().catch(() => {});
+        await sleep(600);
+        await frame.locator(".vram-row .vram-dot").first().click().catch(() => {});
+        await sleep(PACE); await shot("11-switched-off.png");
+        await frame.locator(".vram-row .vram-dot").first().click().catch(() => {});
+        await sleep(700);
+
+        // 12 — dropping a track from its own header.
+        await narrate(page, "And a track can go from its own header",
+            { sub: "which pools you want is a decision you make while reading — the view becomes Custom" });
+        p = await plot();
+        await page.mouse.move(p.x + p.width * 0.5, p.y - 12);
+        await sleep(400);
+        await frame.locator(".rc-track .rc-hide").nth(1).click().catch(() => {});
+        await sleep(PACE); await shot("12-track-dropped.png");
 
         await narrate(page, null);
         await sleep(600); await shot("10-final.png");

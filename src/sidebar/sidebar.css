@@ -2813,3 +2813,20 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* A card the drilled-into model is not on: nothing to decompose, so its ordinary stack recedes rather than
    sitting there looking like part of the answer. */
 .rc-track.away .rc-plot { opacity: .35; }
+/* DROP A TRACK, from the track itself — which pools you want on screen is a decision made WHILE reading, and
+   it lived only behind the gear. Quiet until the track is hovered, but it always HOLDS ITS SPACE: the header
+   gains and loses controls as the panel is used, and a row that reflows when one arrives shifts every surface
+   below it. */
+.rc-hide { opacity: 0; transition: opacity .12s ease; background: none; border: 0; cursor: pointer;
+           color: var(--fg-dim); font-size: 0.9em; line-height: 1; padding: 1px 3px; margin-right: 1px;
+           border-radius: 3px; position: relative; }
+.rc-track:hover .rc-hide, .rc-hide:focus-visible { opacity: .75; }
+.rc-hide:hover { opacity: 1; color: var(--fg); background: var(--hover, rgba(127,127,127,.15)); }
+/* The last track keeps the space and loses the control: a panel with no tracks is not a layout, and a button
+   that refuses when pressed is worse than one that is visibly unavailable. */
+.rc-hide.none { visibility: hidden; }
+/* A STRETCH THE SERVER COULD NOT SPLIT, inside the drilled-in view. The model's total is known and its
+   composition is not, so it is drawn at its real height — dropping it to zero would say it was not resident —
+   but flat, faint and dashed along the top, because reading it as any one part is the mistake it exists to
+   avoid. */
+.rc-part-unsplit { stroke: var(--fg-faint); stroke-width: 1; stroke-dasharray: 3 3; opacity: .5; }

@@ -977,6 +977,30 @@ per device, in bytes.
   `gpu_id`); a card whose name is not in the list shows nothing rather than being handed the entry at its
   ordinal. `devices` is a list of RUNS, so entries are summed by name and `devices.length` is never a card
   count. `swa_layers` is counted for THIS card, since the pattern is irregular.
+- **"OFF-BOX" IS A CLAIM THAT NEEDS EVIDENCE, and the window is not it.** The label says a model was NEVER
+  resident here, and it was decided from the models drawn in the CURRENT window — while the scrub gesture
+  WRITES that window (`resWindowS`; the zoom chip is what it reports). So narrowing to 42s pushed a model
+  evicted a minute ago out of the ghost list, the lane went on naming it, and its row came back as "never
+  resident here" about a model the panel had just watched load and evict. A window is a question about what
+  to DRAW; whether something was ever here is answered over the whole history (`everResident`), and anything
+  the lane still names that WAS resident gets an "evicted" row rather than falling through to off-box.
+- **SWITCHING A MODEL OFF SWITCHES IT OFF EVERYWHERE THE PANEL DRAWS IT.** The colour dot took it out of the
+  stack and the totals and left its LANE blocks standing — most visibly on an off-box model, whose only
+  presence IS the lane, so its row offered a control that could not remove the one thing it drew. `timeline()`
+  filters on `hiddenModels`, ghost rows get a working dot, and the keyboard's list skips hidden models because
+  there is no shape left to point at.
+- **A TRACK CAN BE DROPPED FROM ITS OWN HEADER** (`HideTrack` → `editLayout`, so the view becomes Custom and
+  the layout is remembered). Not offered on the last one — a panel with no tracks is not a layout — but it
+  keeps its SPACE, because a header that reflows when a control appears shifts every surface below it. Its
+  tooltip has to say that NOTHING IS UNLOADED: the same glyph on a model row is *Evict from VRAM*. **A
+  `.tt-pop` only works inside an element carrying the `tt` class** — the floating layer finds triggers by it —
+  so without that class the explanation is display:none markup nobody can ever see, which is how this one
+  shipped mute.
+- **A FRAME THE SERVER COULD NOT SPLIT IS NOT AN EMPTY ONE.** In the drilled-in view, stacking nothing for a
+  frame with no `memory` drops the area to ZERO, which says the model was not resident — it was; what is
+  unknown is the composition. Those stretches draw at the model's real height, flat and dashed
+  (`.rc-part-unsplit`), so the trace stays continuous and only the SUBDIVISION goes missing. A frame with no
+  band at all really is zero, and that is the difference the two cases are told apart by.
 - **THE SNAP MARK IS DRAWN OVER THE CROSSHAIR, NOT UNDER IT** (`.rc-snapdot` z-index 6 against `.rc-cross`'s
   5). The dot rides ON the line, and its legibility over a band of any shade comes entirely from a 1.5px ring
   of the panel's own colour — so painted underneath, the line cut that ring and the mark read as a rendering

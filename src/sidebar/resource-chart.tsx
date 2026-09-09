@@ -19,7 +19,7 @@ import {
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
-import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, focusDepth, releaseFocus } from "./vram";
+import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, focusDepth, releaseFocus, layout, editLayout } from "./vram";
 import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
@@ -184,13 +184,39 @@ function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = 
         const keys = MEMORY_PARTS.filter((k) => seen.has(k.key));
         if (!keys.length) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
         const tops = keys.map(() => new Array<number>(frames.length).fill(0));
+        /**
+         * A FRAME THE SERVER COULD NOT SPLIT IS NOT AN EMPTY ONE.
+         *
+         * `memory` is omitted whenever the server cannot divide the figure — a loading row, an MLX runner, a
+         * build predating the field — and stacking nothing for those frames drops the area to ZERO, which
+         * says the model was not resident. It was: we know its total, we do not know its composition, and
+         * those are different absences. Drawn as an undifferentiated area at its real height instead, so the
+         * trace stays continuous and only the SUBDIVISION goes missing where it is missing.
+         *
+         * Told apart from a frame where the model is genuinely absent by whether a BAND exists at all — no
+         * band means it is not on this card at that instant, which really is zero.
+         */
+        const unsplit = new Array<number>(frames.length).fill(0);
         frames.forEach((bands, i) => {
-            const p = bands.find((b) => b.model === deep.model)?.parts;
+            const b = bands.find((x2) => x2.model === deep.model);
+            const p = b?.parts;
             let acc = 0;
             keys.forEach((part, pi) => { if (p) acc += p[part.key]; tops[pi][i] = acc; });
+            unsplit[i] = !p && b ? b.bytes : 0;
         });
+        const anyUnsplit = unsplit.some((v) => v > 0);
         return (
             <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                {anyUnsplit ? (() => {
+                    // ONE shape for the whole stretch, at the model's own height, in its own colour but
+                    // deliberately flat and faint with a dashed top: it must not read as a part, because
+                    // which part it is is precisely what is not known.
+                    const pts: string[] = [];
+                    for (let i = 0; i < frames.length; i++) pts.push(`${x(i).toFixed(1)},${dy(unsplit[i]).toFixed(1)}`);
+                    for (let i = frames.length - 1; i >= 0; i--) pts.push(`${x(i).toFixed(1)},${dy(0).toFixed(1)}`);
+                    return <polygon key="d:unsplit" points={pts.join(" ")} class="rc-part rc-part-unsplit"
+                        fill={partFill(deep.model, "other")} vector-effect="non-scaling-stroke" />;
+                })() : null}
                 {keys.map((part, pi) => {
                     const pts: string[] = [];
                     for (let i = 0; i < frames.length; i++) pts.push(`${x(i).toFixed(1)},${dy(tops[pi][i]).toFixed(1)}`);
@@ -356,10 +382,45 @@ export interface DeviceViewProps {
     hidden: Set<string>;
     /** Instants to rule through this plot (evictions). Spans live in the lane below, not here. */
     events?: ResourceEvent[];
+    /** Drop this track from the layout. Absent when there is only one left — an empty chart is not a layout,
+     *  and a control that refuses on click is worse than one that is not offered. */
+    onHide?: () => void;
+}
+
+/**
+ * DROP THIS TRACK, from the track itself.
+ *
+ * Which pools you want on screen is a decision you make WHILE reading — a card you are not interested in is
+ * costing height the ones you are could use — and it lived only behind the gear, which means leaving the
+ * chart to change what the chart shows. This is the same operation the editor's remove is (`editLayout`,
+ * which flips the picker to Custom and remembers the layout), put where the decision is made.
+ *
+ * ✕ MATCHES THE EDITOR'S OWN VOCABULARY for this action, not the model rows' — where the same glyph means
+ * EVICT FROM VRAM, which unloads the model from the card. Same shape, wildly different consequence, so the
+ * tip says plainly that this only changes what is drawn, and how to get it back.
+ *
+ * It holds its space when idle rather than appearing on hover: the header gains and loses controls as you use
+ * the panel, and a row that reflows when one arrives shifts every surface below it — which is how a drag on
+ * the scrub strip once started landing 12px off.
+ */
+function HideTrack({ onHide, label }: { onHide?: () => void; label: string }) {
+    return (
+        // `tt` IS WHAT MAKES THE TOOLTIP EXIST. The floating layer finds a trigger by that class and reads its
+        // `.tt-pop`; without it the markup is inert — display:none and nothing to clone it — so the button
+        // carried an explanation nobody could ever see. And `left`, because this sits at the panel's far edge
+        // and the default right-anchored pop opens off the side of it.
+        <button class={`tt rc-hide${onHide ? "" : " none"}`} aria-label={`Hide the ${label} track`}
+            disabled={!onHide} onClick={onHide}>
+            ✕
+            {onHide ? <span class="tt-pop wrap left" role="tooltip">Stop drawing <b>{label}</b> here. It only
+                changes the chart — nothing is unloaded and no memory is freed — and the view becomes
+                <b> Custom</b>; add the track back under the gear.</span> : null}
+        </button>
+    );
 }
 
 /** One track: a header carrying the denominator, then the stacked history, gaps left as gaps. */
-export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden, events = [] }: DeviceViewProps) {
+export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden, events = [], onHide }: DeviceViewProps) {
     const scope = `track:${label}`;   // one track per pool, so the label identifies the surface
     const latest = samples.at(-1);
     const bands = latest ? bandsOf(latest) : [];
@@ -409,6 +470,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     return (
         <div class={`rc-track${deepModel ? " deep" : ""}${deepModel && !deep ? " away" : ""}`}>
             <div class="rc-head">
+                <HideTrack onHide={onHide} label={label} />
                 <span class="rc-name">{label}</span>
                 <span class="sp" />
                 {/* A RESCALED AXIS HAS TO SAY SO. Drilled in, this track stops being "how full is this pool"
@@ -453,7 +515,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                     title={soft.label} /> : null}
                 <BandTip bands={bands} frame={hoverSample ? bandsOf(hoverSample) : null}
                     history={samples.map(bandsOf)} samples={samples} ceiling={ceiling} scope={scope} label={label}
-                    at={hoverSample} />
+                    hidden={hidden} at={hoverSample} />
                 {/* Hovering the plot ANYWHERE, not just a model's band, answers the question this track's
                     header answers for the present: how full was this pool, then. Without it the free area
                     and the space above the stack were the only parts of the chart that said nothing. */}
@@ -638,7 +700,7 @@ function LayerRows({ placement, device }: { placement: LayerPlacement; device: s
 /** What the hovered band is, shown over the plot. Deliberately the SAME facts as the legend row (ModelFacts),
  *  because a band and its row describe one model — an SVG <title> could carry none of it: no colour, no live
  *  TTL, no badge, and a half-second delay before it appears. */
-function BandTip({ bands, frame, history, samples, ceiling, scope, label, at: hoverSample }: { bands: Band[]; frame: Band[] | null; history: Band[][]; samples: ResourceSample[]; ceiling: number; scope: string; label?: string; at: ResourceSample | null }) {
+function BandTip({ bands, frame, history, samples, ceiling, scope, label, hidden, at: hoverSample }: { bands: Band[]; frame: Band[] | null; history: Band[][]; samples: ResourceSample[]; ceiling: number; scope: string; label?: string; hidden: Set<string>; at: ResourceSample | null }) {
     const name = hoverModel.value;
     // ANCHORED TO THE TRACK, not to the cursor, whenever the keyboard owns the focus. Two reasons, and the
     // second is the one that forces it: a reader who is not moving the mouse does not want an answer that
@@ -647,6 +709,9 @@ function BandTip({ bands, frame, history, samples, ceiling, scope, label, at: ho
     const kb = kbFocus.value?.model ? kbFocus.value : null;
     const at = cursorOn(scope);
     if (!name || (!kb && !at)) return null;
+    // NOTHING TO DESCRIBE once a model is switched off: it is out of the stack and out of the totals, so a
+    // tip naming it would be a reading of a shape that is not on the chart.
+    if (hidden.has(name)) return null;
     // READ THE DATAPOINT UNDER THE CURSOR, not the newest one. The chart is a history, so the shape being
     // hovered is a measurement from some earlier instant — often of a model that has since evicted, and
     // almost always of a different figure than the model holds now. Answering with the current value would
@@ -939,6 +1004,10 @@ function deviceCeilingNote(dev: { runner: string; unified: boolean; physicalByte
  *  renders one line per series, each against its own ceiling, because several pools have no shared total —
  *  which is exactly what `stackRefusal` refuses and why the Overview preset overlays. */
 function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[] }) {
+    // NOT OFFERED ON THE LAST ONE. A panel with no tracks is not a layout you can get back from by the same
+    // gesture, and a button that refuses when pressed is worse than one that is visibly unavailable.
+    const all = layout.value ?? [];
+    const onHide = all.length > 1 ? () => editLayout(all.filter((t) => t.id !== def.id)) : undefined;
     const cap = latest.capacity!;
     const deviceOf = (id: string) => cap.devices.find((d) => d.id === id.replace(/^vram\./, ""));
     const first = def.series[0] ?? "";
@@ -956,23 +1025,23 @@ function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDe
             const note = first === "mem" && cap.devices[0]
                 ? deviceCeilingNote(cap.devices[0])
                 : "Total system memory. Models here are running on the CPU, or are the spilled part of a model too large for the accelerator.";
-            return <DeviceView label={label} samples={samples} bandsOf={hostBands}
+            return <DeviceView label={label} onHide={onHide} samples={samples} bandsOf={hostBands}
                 ceiling={c?.hardBytes ?? cap.host.totalBytes} ceilingNote={note}
                 soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
         }
         const d = deviceOf(first);
         if (!d) return null;
         const c = ceilingsFor(latest, d.id);
-        return <DeviceView label={d.name} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
+        return <DeviceView label={d.name} onHide={onHide} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
             ceiling={c?.displayBytes ?? d.totalBytes} ceilingNote={deviceCeilingNote(d)}
             soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
     }
-    return <OverlayView def={def} samples={samples} latest={latest} hidden={hidden} events={events} />;
+    return <OverlayView def={def} onHide={onHide} samples={samples} latest={latest} hidden={hidden} events={events} />;
 }
 
 /** Several series in ONE track, drawn as independent lines rather than a stack: their sum is not a quantity
  *  anything is measured against (a model can only use one card's capacity), so the chart must not draw one. */
-function OverlayView({ def, samples, latest, hidden, events = [] }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[] }) {
+function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[]; onHide?: () => void }) {
     const cap = latest.capacity!;
     // Each series is a POOL: a card, or the host. Including the host matters — a CPU-resident model holds no
     // VRAM, so a cards-only overlay makes it vanish from the chart entirely while it sits in the legend below.
@@ -1007,6 +1076,7 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
     return (
         <div class="rc-track">
             <div class="rc-head">
+                <HideTrack onHide={onHide} label={pools.map((p) => p.name).join(" · ")} />
                 <span class="rc-name">{pools.map((p) => p.name).join(" · ")}</span>
                 <span class="sp" />
                 <span class="rc-total tt">

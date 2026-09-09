@@ -3048,3 +3048,302 @@ test("resource panel: the keys are advertised on a hover, and work from one", as
         expect(await frame.locator(".rc-tip-part:not(.rc-tip-lrow)").count(), "the parts are drawn").toBe(3);
     } finally { await ext.close(); await fake.stop(); }
 });
+
+// WHICH POOLS ARE ON SCREEN is a decision you make WHILE reading — a card you are not interested in is
+// costing height the ones you are could use — and it lived only behind the gear, which means leaving the
+// chart to change what the chart shows.
+test("resource panel: a track can be dropped from its own header", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await seedStacked(ext);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 25000 }).toBe(3);
+        const names = async () => frame.locator(".rc-track .rc-name").allTextContents();
+        expect(await names()).toEqual(["CUDA0", "CUDA1", "System RAM"]);
+
+        // IT SAYS WHAT IT WILL DO, before you press it. The explanation was there and INERT: the floating
+        // layer finds a trigger by its `tt` class and reads the `.tt-pop` inside, so without that class the
+        // markup is display:none with nothing to clone it — a tooltip nobody could ever see. And what it says
+        // matters here more than most: the same glyph on a MODEL row evicts from VRAM, so this one has to be
+        // explicit that nothing is unloaded.
+        await frame.locator(".rc-track", { hasText: "CUDA1" }).first().locator(".rc-hide").hover();
+        await expect.poll(() => frame.locator(".tt-layer").textContent().catch(() => ""), { timeout: 5000 })
+            .toMatch(/Stop drawing/);
+        const tip = await frame.locator(".tt-layer").textContent();
+        expect(tip, "it names the track").toMatch(/CUDA1/);
+        expect(tip, "…and says what it does NOT do").toMatch(/nothing is unloaded/);
+        expect(tip, "…and where the layout ends up").toMatch(/Custom/);
+
+        // Dropping the middle one leaves the others in place…
+        await frame.locator(".rc-track", { hasText: "CUDA1" }).first().locator(".rc-hide").click();
+        await expect.poll(names, { timeout: 5000 }).toEqual(["CUDA0", "System RAM"]);
+        // …and the view is CUSTOM, because the layout is no longer the preset it started as. Saying so is the
+        // point: the picker would otherwise name a preset that does not describe what is drawn.
+        await expect.poll(() => frame.locator("select.rc-preset").inputValue(), { timeout: 5000 }).toBe("custom");
+        expect(await frame.locator("select.rc-preset option[value=custom]").count(),
+            "…and Custom is offered as a destination, not only fallen into").toBe(1);
+        // It PERSISTS, like every other layout edit — this is the same operation the editor's remove is, not
+        // a per-session visibility toggle.
+        const saved = await ext.sw.evaluate(() => chrome.storage.local.get("ml_res_layout"));
+        expect(saved.ml_res_layout.presetId).toBe("custom");
+        expect(saved.ml_res_layout.tracks.length).toBe(2);
+
+        // NOT OFFERED ON THE LAST ONE: a panel with no tracks is not a layout, and a control that refuses
+        // when pressed is worse than one that is visibly unavailable. It keeps its SPACE, though, or the
+        // header reflows and shifts every surface below it.
+        await frame.locator(".rc-track", { hasText: "System RAM" }).first().locator(".rc-hide").click();
+        await expect.poll(names, { timeout: 5000 }).toEqual(["CUDA0"]);
+        const last = frame.locator(".rc-track .rc-hide").first();
+        await expect(last).toBeDisabled();
+        expect(await last.evaluate((e) => getComputedStyle(e).visibility), "hidden, not gone").toBe("hidden");
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// TWO TOOLTIPS FOR ONE POINTER is the thing this panel is not allowed to do, and a model row had it: its
+// cursor tip FOLLOWS the pointer, so moving onto a control that has an anchored tooltip of its own left the
+// two on top of each other — the answer you did not ask for covering the one you did.
+test("resource panel: a row control's own tooltip stands the row tip down", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".vram-row").count(), { timeout: 25000 }).toBeGreaterThan(0);
+
+        // Over the row's NAME: the cursor tip is the answer, and it is the only one.
+        const row = frame.locator(".vram-row").first();
+        await row.locator(".vram-name").hover();
+        await sleep(300);
+        await expect.poll(() => frame.locator(".vram-rowtip").count(), { timeout: 5000 }).toBe(1);
+
+        // Onto the EVICT control, which carries its own anchored tooltip. That one is the answer now — it
+        // describes a destructive action, so it must not be the one that gets covered.
+        const x = frame.locator(".vram-row .vram-x").first();
+        await x.hover();
+        await sleep(300);
+        expect(await frame.locator(".vram-rowtip").count(), "the row tip stands down").toBe(0);
+        // ON THE `.tt-layer`, not the `.tt-pop`: the source node never renders — it is read and cloned into
+        // the one floating layer on hover, which is what stops its prose being selected along with the row.
+        await expect.poll(() => frame.locator(".tt-layer").textContent().catch(() => ""), { timeout: 5000 })
+            .toMatch(/Evict from VRAM/);
+
+        // …and the same for the colour dot, which is a control too (it hides the model from the totals).
+        await row.locator(".vram-dot").hover();
+        await sleep(300);
+        expect(await frame.locator(".vram-rowtip").count(), "…and under the dot").toBe(0);
+
+        // BACK TO THE ROW and the tip returns: standing down is for as long as you are on the control, not a
+        // one-way door.
+        await row.locator(".vram-name").hover();
+        await sleep(300);
+        await expect.poll(() => frame.locator(".vram-rowtip").count(), { timeout: 5000 }).toBe(1);
+        expect(page).toBeTruthy();
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// A MODEL THAT WAS HERE AND LEFT IS "EVICTED", NEVER "OFF-BOX". The two rows look alike and say opposite
+// things: off-box claims the model was NEVER resident here (a cloud model, or one gone before the panel
+// opened), which about a model you just watched load and evict is simply false — and it is the row's whole
+// job to explain a colour the chart is still drawing.
+test("resource panel: an evicted model is not called off-box", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE - 7 * GiB));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.8:27b", 7 * GiB, 1)]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".vram-row:not(.ghost)").count(), { timeout: 25000 }).toBe(2);
+        await sleep(4000);   // several samples, so the history genuinely holds them
+
+        // Both leave. The chart still draws them across the window they were loaded in.
+        fake.setResident([]);
+        await expect.poll(() => frame.locator(".vram-row:not(.ghost)").count(), { timeout: 20000 }).toBe(0);
+        await sleep(1500);
+
+        /** The kind badge on each ghost row, without the tooltip prose that sits inside it. */
+        const kinds = async () => {
+            await frame.locator(".disc-head", { hasText: "not resident" }).first().click().catch(() => {});
+            await sleep(400);
+            return frame.locator(".vram-row.ghost .vram-embed").evaluateAll(
+                (els) => els.map((e) => (e.firstChild?.textContent ?? "").trim()));
+        };
+        expect(await kinds(), "evicted, while the window still covers them").toEqual(["evicted", "evicted"]);
+
+        // NOW NARROW THE WINDOW PAST THEM — BY DRAGGING, because that is the path that writes `resWindowS`
+        // (the scrub gesture IS what the zoom chip reports, and poking the storage key does not reach the
+        // signal, which is read at mount: a first version of this narrowed it that way and passed with the
+        // fix reverted, proving nothing).
+        //
+        // The ghost list is cut to that window deliberately — it explains colours that are DRAWN. The
+        // "off-box" claim was cut to it too, and that is a different question: a model this panel watched
+        // load and evict is not one that was never here, however little of it is still on screen.
+        const track = await frame.locator(".rc-scrub-track").boundingBox();
+        const win = await frame.locator(".rc-scrub-win").boundingBox();
+        const y = track.y + track.height / 2;
+        await page.mouse.move(win.x + 1, y);
+        await page.mouse.down();
+        for (let i = 1; i <= 8; i++) {
+            await page.mouse.move(win.x + 1 + ((track.x + track.width - 3 - win.x) * i) / 8, y);
+            await sleep(60);
+        }
+        await page.mouse.up();
+        await sleep(2500);
+        // The window really did shrink, or the assertion below is about nothing.
+        const after = await frame.locator(".rc-scrub-win").boundingBox();
+        expect(after.width, `the window did not narrow: ${win.width} -> ${after.width}`).toBeLessThan(win.width / 2);
+        expect(await kinds(), "…and STILL evicted once the window has moved past them").toEqual(["evicted", "evicted"]);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// A FRAME THE SERVER COULD NOT SPLIT IS NOT AN EMPTY ONE. `memory` is omitted whenever it cannot divide the
+// figure, and stacking nothing for those frames drops the drilled-in area to ZERO — which says the model was
+// not resident. It was: what is unknown is the composition, not the presence.
+test("resource panel: a stretch with no split is drawn at its real height, not as nothing", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const MEM = { weights: 12 * GiB, kv_cache: 4 * GiB, compute: 2 * GiB };
+        const V = 18 * GiB;
+        const withSplit = {
+            model: "gemma4:31b", name: "gemma4:31b", size: V, size_vram: V, context_length: 262144,
+            expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+            memory: MEM, gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: V, memory: MEM }],
+        };
+        fake.setCapacity(box(IDLE - V, IDLE));
+        fake.setResident([withSplit]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(4000);
+
+        // THE SAME MODEL, still resident, with the server no longer able to split it — an MLX runner, or a
+        // build that predates the field. Its total is unchanged.
+        fake.setResident([{ ...withSplit, memory: undefined, gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: V }] }]);
+        await sleep(4000);
+
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.06);
+        await sleep(300);
+        await page.keyboard.press("ArrowDown");
+        await sleep(250);
+        await page.keyboard.press("ArrowRight");
+        await sleep(500);
+
+        // The parts are still there for the stretch that HAD them…
+        expect(await frame.locator(".rc-part:not(.rc-part-unsplit)").count(), "the split stretch keeps its parts")
+            .toBeGreaterThan(0);
+        // …and the rest is one undifferentiated shape at the model's real height, rather than a hole.
+        const un = frame.locator(".rc-part-unsplit").first();
+        await expect(un).toHaveCount(1);
+        const h = await un.evaluate((e) => e.getBoundingClientRect().height);
+        expect(h, "drawn at a real height, not collapsed to zero").toBeGreaterThan(4);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// SWITCHING A MODEL OFF takes it out of the stack, the totals and every earlier frame — so there is no shape
+// left for the keyboard to point AT, and latching onto it names something that is not drawn.
+test("resource panel: a model switched off is skipped by the keys", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE - 7 * GiB));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.8:27b", 7 * GiB, 1)]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".vram-row:not(.ghost)").count(), { timeout: 25000 }).toBe(2);
+        await sleep(3000);
+
+        const focused = async () => {
+            const n = await frame.locator(".rc-tip-model .rc-tip-name").allTextContents();
+            return n.length ? n[0] : null;
+        };
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.06);
+        await sleep(300);
+
+        // Both are reachable to begin with.
+        await page.keyboard.press("ArrowDown"); await sleep(250);
+        expect(await focused()).toBe("gemma4:31b");
+        await page.keyboard.press("ArrowDown"); await sleep(250);
+        expect(await focused()).toBe("qwen3.8:27b");
+        await page.keyboard.press("Escape"); await page.keyboard.press("Escape"); await sleep(250);
+
+        // Switch the first one off by its colour dot — the same control that takes it out of the totals.
+        await frame.locator(".vram-row", { hasText: "gemma4:31b" }).first().locator(".vram-dot").click();
+        await sleep(600);
+
+        // …and the keys walk straight past it.
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.06);
+        await sleep(250);
+        await page.keyboard.press("ArrowDown"); await sleep(300);
+        expect(await focused(), "the switched-off model is not a place the keys can land").toBe("qwen3.8:27b");
+        await page.keyboard.press("ArrowDown"); await sleep(300);
+        expect(await focused(), "…and the list wraps back to the overview past it").toBeNull();
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// A ROW THAT IS DRAWN NEEDS A WORKING SWITCH. A ghost's only presence may be the LANE, and its dot was inert
+// there — a control on a row that IS on screen, which could not remove the one thing it drew.
+test("resource panel: a ghost row's dot switches it off everywhere", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await seedStacked(ext);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".vram-row:not(.ghost)").count(), { timeout: 25000 }).toBe(1);
+        await sleep(3000);
+        fake.setResident([]);
+        await expect.poll(() => frame.locator(".vram-row:not(.ghost)").count(), { timeout: 20000 }).toBe(0);
+        await sleep(1200);
+
+        await frame.locator(".disc-head", { hasText: "not resident" }).first().click();
+        await sleep(400);
+        const dot = frame.locator(".vram-row.ghost .vram-dot").first();
+        await expect(dot).toHaveCount(1);
+        const lit = await frame.locator(".rc-ev, .rc-rule").count();
+        expect(lit, "it is drawn somewhere — a lane block or a rule").toBeGreaterThan(0);
+
+        // Switching it off removes what it draws, and says so.
+        await dot.click();
+        await sleep(700);
+        await expect(dot).toHaveClass(/off/);
+        expect(await frame.locator(".rc-ev, .rc-rule").count(), "…and its marks go with it").toBeLessThan(lit);
+
+        // …and back on again: the row is the control, so it must not be a one-way door.
+        await dot.click();
+        await sleep(700);
+        await expect.poll(() => frame.locator(".rc-ev, .rc-rule").count(), { timeout: 5000 }).toBe(lit);
+    } finally { await ext.close(); await fake.stop(); }
+});

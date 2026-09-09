@@ -719,7 +719,13 @@ export function timeline(): ResourceEvent[] {
         : residencyEvents(resourceHistory.value, fromSessions);
     // Both sources describe a LOAD, and with the stream carrying they describe the SAME loads — so the one we
     // inferred from `load_duration` is dropped where the server reported it (see dropInferredLoads).
-    return [...dropInferredLoads(fromSessions, machine), ...machine].sort((a, b) => a.t - b.t);
+    // A MODEL SWITCHED OFF IS SWITCHED OFF EVERYWHERE THE PANEL DRAWS IT. The dot took it out of the stack
+    // and the totals and left its lane blocks standing — which is most visible on an off-box model, whose
+    // only presence IS the lane: its row offered a control that could not remove the one thing it drew. The
+    // row itself stays, because the row is what you turn it back on with.
+    const off = hiddenModels.value;
+    const all = [...dropInferredLoads(fromSessions, machine), ...machine].sort((a, b) => a.t - b.t);
+    return off.size ? all.filter((e) => !e.model || !off.has(e.model)) : all;
 }
 
 /** The session the lane scopes to when scoping is on: whichever one is open. Null in the list view, where
@@ -760,6 +766,7 @@ export function sessionModels(hash: string): readonly string[] | undefined {
  *  ONE component for what were three near-identical copies (in-scope evicted, in-scope off-box, and the same
  *  two again inside the out-of-scope disclosure) — the third copy is what made it worth extracting. */
 function GhostRow({ name, kind }: { name: string; kind: "off" | "ghost" | "unseen" | "loading" }) {
+    const off = hiddenModels.value.has(name);
     const label = kind === "off" ? "off-box" : kind === "unseen" ? "not seen" : kind === "loading" ? "loading" : "evicted";
     const why = kind === "off"
         ? "Never resident here — a cloud model, or one already gone before the panel opened. It is drawn in the lane because it RAN; this row is what says whose colour that is."
@@ -772,7 +779,14 @@ function GhostRow({ name, kind }: { name: string; kind: "off" | "ghost" | "unsee
         <div class={`vram-row ghost${hoverModel.value === name ? " hot" : ""}`}
             onPointerEnter={() => (hoverModel.value = name)}
             onPointerLeave={() => (hoverModel.value = null)}>
-            <i class="vram-dot ghost-dot" style={{ background: colorFor(name) }} />
+            {/* A REAL CONTROL, like the resident rows'. These models are drawn — a ghost across the history it
+                was loaded in, an off-box one in the lane — so "switch it off" has something to do here, and
+                an inert dot on a row that IS on the chart is a control that silently does nothing. */}
+            <button class={`vram-dot ghost-dot${off ? " off" : ""}`}
+                style={{ background: off ? "var(--fg-faint)" : colorFor(name) }}
+                title={off ? "Show on the chart" : "Hide from the chart"} onClick={() => toggleHidden(name)}
+                onPointerEnter={() => (rowTipSuppressed.value = true)}
+                onPointerLeave={() => (rowTipSuppressed.value = false)} />
             <span class="vram-name">{name}</span>
             <span class="tt vram-embed">{label}
                 <span class="tt-pop left above" role="tooltip">{why}</span>
@@ -789,13 +803,23 @@ function ModelRow({ m, hidden, latestSample, evict }: { m: LoadedModel; hidden: 
             onPointerEnter={() => (hoverModel.value = m.model)}
             onPointerMove={(e: PointerEvent) => (rowTipAt.value = { x: e.clientX, y: e.clientY })}
             onPointerLeave={() => { hoverModel.value = null; rowTipAt.value = null; rowTipSuppressed.value = false; }}>
+            {/* THE ROW'S CURSOR TIP STANDS DOWN under anything with a tooltip of its OWN — the same rule
+                `ModelFacts` follows for its badges (`yieldTip`), applied to the two controls that were
+                missing it. Without it the row tip follows the pointer onto the control and sits on top of the
+                anchored one, so the answer you asked for is covered by the answer you did not.
+                `title` here rather than a `.tt-pop`: this is an icon-only control, so the accessible NAME is
+                what a screen reader and a keyboard user get. */}
             <button class="vram-dot" style={{ background: off ? "var(--fg-faint)" : colorFor(m.model) }}
-                title={off ? "Show in totals" : "Hide from totals"} onClick={() => toggleHidden(m.model)} />
+                title={off ? "Show in totals" : "Hide from totals"} onClick={() => toggleHidden(m.model)}
+                onPointerEnter={() => (rowTipSuppressed.value = true)}
+                onPointerLeave={() => (rowTipSuppressed.value = false)} />
             <span class="vram-name">{m.model}</span>
             <ModelFacts m={m} />
             <span class="sp" />
             <span class="vram-gb">{m.vramBytes ? formatBytes(m.vramBytes) : m.sizeBytes ? `${formatBytes(m.sizeBytes)} (CPU)` : "?"}</span>
-            <button class="tt vram-x" aria-label="Evict from VRAM" onClick={() => evict(m.model)}>✕<span class="tt-pop" role="tooltip">Evict from VRAM</span></button>
+            <button class="tt vram-x" aria-label="Evict from VRAM" onClick={() => evict(m.model)}
+                onPointerEnter={() => (rowTipSuppressed.value = true)}
+                onPointerLeave={() => (rowTipSuppressed.value = false)}>✕<span class="tt-pop" role="tooltip">Evict from VRAM</span></button>
         </div>
     );
 }
@@ -1045,6 +1069,9 @@ export const noteFocusOrder = (names: string[]): void => { focusOrder = names; }
 export function stepFocus(dir: number): void {
     const list: (string | null)[] = [null, ...focusOrder];
     const cur = kbFocus.value ? kbFocus.value.model : hoverModel.value;
+    // A CURRENT POSITION THAT IS NO LONGER IN THE LIST starts from the overview rather than from wherever
+    // index -1 happens to land: a model can leave the list under you — switched off, or evicted out of the
+    // window — and stepping "one on" from something that is not there is not a move anyone asked for.
     const at = list.indexOf(cur ?? null);
     const next = list[((at < 0 ? 0 : at) + dir + list.length) % list.length];
     // DEPTH SURVIVES the move, except onto the overview, which has none to survive into.
@@ -1447,14 +1474,36 @@ export function VramPanel() {
     // evicted five minutes ago is still drawn in its own colour across the history, and with no row for it
     // that colour has nothing to explain it. Ghost rows carry the name and the colour, nothing else — there
     // is no size, no TTL and nothing to evict.
+    const live = new Set((loaded || []).map((m) => m.model));
+    /**
+     * EVERY MODEL THIS SESSION HAS SEEN RESIDENT, over the WHOLE history rather than the drawn window.
+     *
+     * It is the evidence "off-box" needs, and reading it from the window instead was wrong in a way the panel
+     * itself contradicted: the scrub gesture WRITES `resWindowS` (that is what the zoom chip is), so
+     * narrowing to 42 seconds pushed a model evicted a minute ago out of the ghost list, the lane went on
+     * naming it, and its row came back as "off-box — never resident here" about a model you had just watched
+     * load and evict. A window is a question about what to DRAW; whether something was ever here is not.
+     */
+    const everResident = (() => {
+        const seen = new Set<string>();
+        for (const s of resourceHistory.value) {
+            for (const m of s.models) if (m.vramBytes > 0 || m.ramBytes > 0) seen.add(m.model);
+        }
+        return seen;
+    })();
     const ghosts = (() => {
-        const live = new Set((loaded || []).map((m) => m.model));
         const secs = resWindowS.value;
         const cutoff = secs ? Date.now() - secs * 1000 : 0;
         const seen = new Set<string>();
         for (const s of resourceHistory.value) {
             if (s.t < cutoff) continue;
             for (const m of s.models) if (!live.has(m.model) && (m.vramBytes > 0 || m.ramBytes > 0)) seen.add(m.model);
+        }
+        // …AND ANYTHING THE LANE STILL NAMES that was resident earlier. It is drawn — the lane is not cut to
+        // the chart's window — so it needs a row to say whose colour that is, and the only honest label for a
+        // model that was here and left is "evicted".
+        for (const e of timeline()) {
+            if (e.model && !live.has(e.model) && everResident.has(e.model)) seen.add(e.model);
         }
         return [...seen].sort();
     })();
@@ -1472,7 +1521,9 @@ export function VramPanel() {
     // worth fixing — a label that is wrong and then quietly right teaches you to distrust the panel.
     const residencyKnown = !psError.value;
     const offBox = (() => {
-        const known = new Set([...(loaded || []).map((m) => m.model), ...ghosts]);
+        // `everResident` is in here because the CLAIM is "never resident HERE", and the ghost list alone
+        // cannot support it — it is cut to the drawn window, which is a question about what to draw.
+        const known = new Set([...(loaded || []).map((m) => m.model), ...ghosts, ...everResident]);
         const loadingNow = new Set([...loadingModels.value, ...psLoading.value]);
         const out = new Set<string>();
         for (const e of timeline()) if (e.model && !known.has(e.model)) out.add(e.model);
@@ -1511,7 +1562,12 @@ export function VramPanel() {
     // resident set and not the models in the samples: the rows ARE the chart's legend, so stepping onto a
     // name the reader cannot see would highlight a band with nothing under it to explain the colour. The
     // folded "others" are deliberately absent for the same reason — they are not on screen.
-    noteFocusOrder([...liveRows.map((m) => m.model), ...goneRows.map((o) => o.name)]);
+    // HIDDEN MODELS ARE NOT IN IT. Switching a model off (its colour dot) takes it out of the stack, out of
+    // the totals and out of every earlier frame — so there is no shape left for a focus to point AT, and the
+    // key would latch onto a name whose band is not drawn. It is still listed as a row, because the row IS
+    // the control you turn it back on with.
+    noteFocusOrder([...liveRows.map((m) => m.model), ...goneRows.map((o) => o.name)]
+        .filter((n) => !hiddenModels.value.has(n)));
 
     // Recompute every point's visible-total each render, so toggling redraws the
     // full line retroactively (not just going forward).
