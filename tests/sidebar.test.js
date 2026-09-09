@@ -4231,6 +4231,30 @@ test("card composer: backend unreachable → a NEW run is BLOCKED with an inline
     assert.ok(doc.querySelector(".card-cmp-input"), "the composer stays open so it can send once the box is back");
 });
 
+// THE RUN-STATS BAR IS CUMULATIVE SPEND, across every turn of a session — unlike the gauge beside it, which
+// is the LATEST call's occupancy on purpose (each call re-sends the whole history, so summing occupancy would
+// count the same prefix once per turn). Reported as stopping at the first turn's figures on a follow-up.
+test("run stats: a follow-up turn's spend is added, not replaced", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "overlay" }, models: ["m"] });
+    await w.dispatch(agentStart("agf", "do a thing", "m"));
+    await w.dispatch(agentStep("agf", 0, { thought: "one", usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120 } }));
+    await w.dispatch(agentResult("agf", "done", 1));
+    // …then a FOLLOW-UP on the same session, which is a second turn with its own steps and its own spend.
+    await w.dispatch(agentStep("agf", 0, { thought: "two", usage: { promptTokens: 400, completionTokens: 60, totalTokens: 460 } }));
+    await w.dispatch(agentResult("agf", "done again", 2));
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector(".row").click();
+    await w.tick(); await w.flush();
+
+    const bar = w.shadow.querySelector(".run-stats");
+    assert.ok(bar, "the bar renders");
+    const txt = bar.textContent.replace(/\s+/g, " ");
+    // BOTH turns are billed: 100+400 in, 20+60 out. Showing the latest call's figures would read 400/60 —
+    // which is what the gauge shows, and the whole reason these are two different readings.
+    assert.match(txt, /500 in/, `cumulative prompt spend: ${txt}`);
+    assert.match(txt, /80 out/, `cumulative completion spend: ${txt}`);
+});
+
 // AN EMBEDDING MODEL CANNOT ANSWER A TASK, and this picker chooses who answers one. Listed, it sits between
 // two models that would have worked and costs a round trip to be told so — which is exactly what happened
 // with `embeddinggemma:300m` on a box that has several gemma builds.
