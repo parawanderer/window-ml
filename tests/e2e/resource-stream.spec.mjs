@@ -132,6 +132,20 @@ test("a frame that arrives while you watch lands without a poll", async () => {
         await expect.poll(() => frame.locator(".rc-rule-evict").count(), { timeout: 15000 }).toBeGreaterThan(before);
         const evicted = await frame.locator(".rc-rule-evict").last().getAttribute("data-model");
         expect(evicted, "canonicalised on the way in, like every other frame").toBe("gemma4:e2b");
+
+        // AND THE RULE SAYS WHERE IT CAME FROM. The note was hardcoded per kind, so it told you "nothing
+        // reports an eviction, so this is the sample where it stopped being resident" about an eviction the
+        // server had just reported WITH ITS REASON — false on precisely the setup the stream exists for, and
+        // it hid the one thing polling can never recover: whether the model was pushed out to make room or
+        // simply timed out idle.
+        await frame.locator(".rc-rule-evict").last().hover();
+        await expect.poll(() => frame.locator(".rc-tip-event .rc-tip-note").textContent().catch(() => ""),
+            { timeout: 8000 }).toMatch(/server reported/);
+        const note = await frame.locator(".rc-tip-event .rc-tip-note").textContent();
+        expect(note, `the reason the server gave is the point of it: ${note}`).toMatch(/oom-retry/);
+        expect(note, "…and it must not claim nothing reported it").not.toMatch(/nothing reports/);
+        // The model's name is not repeated — it is already the line above, and the width belongs to the reason.
+        expect(note.trim().startsWith("gemma4:e2b"), `the name is not repeated: ${note}`).toBe(false);
     } finally { await ext.context.close(); await fake.stop(); }
 });
 

@@ -1762,3 +1762,31 @@ test("placementFrom: the device name is carried through, never mapped", () => {
     const p = M.placementFrom({ num_layers: 2, devices: [{ device: "ROCm1", first_layer: 0, last_layer: 1, layers: 2 }] });
     assert.equal(p.devices[0].device, "ROCm1");
 });
+
+// THE WHOLE BOX ON ONE AXIS. Summing capacities into one denominator is the panel's oldest refusal — free
+// memory is not fungible — so the pools are laid END TO END instead: each owns a band the height of its own
+// capacity and fills it from its own floor, and the walls between them are what make that visible.
+test("boxAxis: pools are laid end to end, and the total is real", () => {
+    const a = M.boxAxis([{ id: "vram.0", ceiling: 96 }, { id: "vram.1", ceiling: 96 }, { id: "ram", ceiling: 128 }]);
+    assert.equal(a.total, 320, "the axis total is the sum of real capacities");
+    assert.deepEqual(a.bands.map((b) => [b.base, b.ceiling]), [[0, 96], [96, 96], [192, 128]]);
+    // Each band starts where the previous one ended — the walls are the boundaries, and nothing crosses them.
+    for (let i = 1; i < a.bands.length; i++) {
+        assert.equal(a.bands[i].base, a.bands[i - 1].base + a.bands[i - 1].ceiling);
+    }
+});
+
+test("boxAxis: hiding a pool shrinks the axis rather than leaving a hole", () => {
+    // Which is what makes "just my two cards" a VIEW rather than arithmetic the reader has to do.
+    const a = M.boxAxis([{ id: "vram.0", ceiling: 96 }, { id: "vram.1", ceiling: 96 }]);
+    assert.equal(a.total, 192);
+    assert.deepEqual(a.bands.map((b) => b.base), [0, 96]);
+});
+
+test("boxAxis: a pool with no capacity takes no band", () => {
+    // A device whose total is unknown (the box has never answered /api/info) would otherwise take a
+    // zero-height band and shift every wall above it by nothing, which is a band that cannot be pointed at.
+    const a = M.boxAxis([{ id: "vram.0", ceiling: 96 }, { id: "unknown", ceiling: 0 }, { id: "ram", ceiling: 128 }]);
+    assert.deepEqual(a.bands.map((b) => b.id), ["vram.0", "ram"]);
+    assert.equal(a.total, 224);
+});

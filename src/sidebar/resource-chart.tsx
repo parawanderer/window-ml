@@ -12,14 +12,14 @@
 import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
+    boxAxis, chartWindow, placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
-import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, focusDepth, releaseFocus, layout, editLayout } from "./vram";
+import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
 import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
@@ -100,6 +100,8 @@ const trackCursor = (surface: string) => (e: PointerEvent) => {
     // sliding under a still cursor as samples arrive, which raises `pointerenter` with nobody having touched
     // anything — and it is a real move that ends it. See releaseFocus.
     releaseFocus(e.target);
+    releasePool(e.target);
+    readingOverlay = surface === "overlay";
     // `yFrac` is the pointer's height within the PLOT (0 = top, 1 = bottom), which is the only thing that can
     // say which of several overlaid lines the pointer is nearest. Read off the plot element rather than the
     // event target: the hit targets are strokes inside it, so measuring against those would give the pointer's
@@ -499,7 +501,19 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
             <div class="rc-plot"
                 onPointerDown={startBrush(runs)}
                 onPointerMove={(e: PointerEvent) => { trackCursor(scope)(e); trackCrosshair(runs)(e); }}
-                onPointerLeave={() => { hoverAt.value = null; hoverModel.value = null; eventHover.value = null; crosshair.value = null; }}>
+                onPointerLeave={() => {
+                    // THE KEYBOARD OWNS THE READING, and the pointer leaving the plot is not a decision to
+                    // stop reading. Clearing the focus here threw away the whole reading whenever the surface
+                    // moved out from under a still cursor — which THIS MODE CAUSES: drilling in collapses the
+                    // cards the model is not on, so the track the pointer was over shrinks, fires a leave,
+                    // and the chart stayed drilled in (that comes from `kbFocus`) while its tooltip lost its
+                    // subject. The crosshair stays too: it is the instant being read, the keys are gated on
+                    // it, and a reading anchored to a moment does not stop being anchored because the mouse
+                    // wandered. Only a real move (`releaseFocus`) or Escape ends it.
+                    hoverAt.value = null;                     // the cursor-following tips do go
+                    if (kbFocus.value) return;
+                    hoverModel.value = null; eventHover.value = null; crosshair.value = null;
+                }}>
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                         <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} scope={scope}
@@ -971,6 +985,11 @@ function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf }: {
                     </div>
                 );
             })}
+            {/* AT THE BOTTOM, where the other view puts it — a hint that moves between views is one more
+                thing to find. ONLY ↑↓: there is no depth here to descend into, since a pool has no memory
+                breakdown of its own (the decomposition is per MODEL), and naming a key that silently does
+                nothing is worse than naming none. */}
+            {rows.length > 1 ? <div class="rc-tip-row rc-tip-keys"><span><kbd>↑↓</kbd> pick a line</span></div> : null}
         </div>
     );
 }
@@ -982,6 +1001,42 @@ function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf }: {
  *  every resident model, so they are the legend: rows not on this pool grey out, and a tooltip on the plot
  *  names the device. That reuses what is on screen instead of injecting a row that pushes the layout around
  *  under the cursor. */
+type PoolRef = { id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] };
+/**
+ * THE LINES THE KEYS STEP THROUGH, published from the render that draws them — the key handler runs outside
+ * render, and "which pools are on screen" is a fact about what was just drawn. A plain ref for the same
+ * reason `liveRuns` is one: written DURING render, and a signal written during render re-enters rendering.
+ */
+let poolRefs: PoolRef[] = [];
+/** Publish the lines the arrow keys step through — call it from the render that DRAWS them. */
+export const notePools = (pools: PoolRef[]): void => { poolRefs = pools; };
+/** Is the reading currently in the overlaid view? Decides which list the arrow keys step through. */
+export const readingIsOverlay = (): boolean => readingOverlay;
+/**
+ * WHICH VIEW THE READING IS IN, so one key can mean "the thing this view draws" in both. Recorded from the
+ * pointer's own surface rather than from the layout, because a layout may hold tracks of both kinds and the
+ * answer is about where the reader is pointing. It OUTLIVES a pointerleave deliberately: the keyboard keeps
+ * reading after the pointer wanders off, and it has to keep reading the same view.
+ */
+let readingOverlay = false;
+/** Cycle the focused LINE in the overlaid view, wrapping through "nothing picked out" at index 0. Hidden
+ *  pools are skipped: switching a line off takes it off the chart, so there is nothing left to point at. */
+export function stepPool(dir: number): void {
+    const shown = poolRefs.filter((p) => !hiddenPools.value.has(p.id));
+    const list: (PoolRef | null)[] = [null, ...shown];
+    const cur = kbPool.value ? kbPool.value.id : poolHover.value?.id ?? null;
+    const at = list.findIndex((p) => (p?.id ?? null) === (cur ?? null));
+    const next = list[((at < 0 ? 0 : at) + dir + list.length) % list.length];
+    kbPool.value = { id: next?.id ?? null };
+    if (next) enterPool(next); else leavePool();
+}
+/** Hand the LINE focus back to the pointer, on a real move and nothing else — the twin of `releaseFocus`. */
+function releasePool(target: EventTarget | null): void {
+    if (!kbPool.value) return;
+    kbPool.value = null;
+    if (!(target as Element | null)?.closest?.(".rc-hit")) leavePool();
+}
+
 function enterPool(p: { id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] }): void {
     hoverPool.value = p.id;
     // The pool itself, not a reading of it — every figure is derived from the sample under the cursor at
@@ -1043,7 +1098,133 @@ function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDe
             ceiling={c?.displayBytes ?? d.totalBytes} ceilingNote={deviceCeilingNote(d)}
             soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
     }
+    if (def.mode === "total") {
+        return <BoxView def={def} onHide={onHide} samples={samples} latest={latest} hidden={hidden} events={events} />;
+    }
     return <OverlayView def={def} onHide={onHide} samples={samples} latest={latest} hidden={hidden} events={events} />;
+}
+
+/**
+ * THE WHOLE BOX ON ONE AXIS — every pool laid END TO END, each filling its own band from its own floor.
+ *
+ * The question it answers is "how much of this machine is in use", which the per-pool tracks cannot: they
+ * give every pool the same height whatever its size, so a 12 GiB card and a 96 GiB one look alike and the
+ * box's shape is invisible. Here a pool's height IS its share of the machine.
+ *
+ * What it must never do is imply the memory is FUNGIBLE. Adding the capacities into one denominator would —
+ * 40 GiB free as 20+20 cannot hold a 30 GiB model — so the pools are concatenated rather than summed, and
+ * the WALLS between them are drawn. The axis total is then a true total of capacity and every fill is a real
+ * reading against a real ceiling. The header says what is HELD and never what is free, which is the one
+ * sentence the walls exist to deny.
+ */
+function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[]; onHide?: () => void }) {
+    const cap = latest.capacity!;
+    const scope = `total:${def.id}`;
+    const all = def.series.map((id) => {
+        if (id === "ram" || id === "mem") {
+            const c = id === "mem" ? ceilingsFor(latest, cap.devices[0]?.id ?? "") : null;
+            return { id, name: id === "mem" ? `${cap.devices[0]?.name ?? "Memory"}` : "System RAM",
+                ceiling: c?.hardBytes ?? cap.host.totalBytes, bandsOf: hostBands };
+        }
+        const d = cap.devices.find((x) => x.id === id.replace(/^vram\./, ""));
+        if (!d) return null;
+        const c = ceilingsFor(latest, d.id);
+        return { id, name: d.name, ceiling: c?.displayBytes ?? d.totalBytes,
+            bandsOf: (sm: ResourceSample) => deviceBands(sm, d.id) };
+    }).filter(Boolean) as { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }[];
+    // A pool switched off leaves the axis entirely rather than sitting there empty: shrinking the total is
+    // what makes "just my two cards" a view rather than arithmetic the reader has to do.
+    const pools = all.filter((p) => !hiddenPools.value.has(p.id));
+    if (!pools.length) return null;
+    const axis = boxAxis(pools);
+    if (!axis.total) return null;
+    const usedOf = (sm: ResourceSample, p: typeof pools[number]) =>
+        p.bandsOf(sm).filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
+    const runs = noteRuns(segments(samples, sampleGapMs()).filter((r) => r.length > 1));
+    const instants = useInstants(runs, events);
+    const held = pools.reduce((n, p) => n + usedOf(latest, p), 0);
+    return (
+        <div class="rc-track">
+            <div class="rc-head">
+                <HideTrack onHide={onHide} label={pools.map((p) => p.name).join(" · ")} />
+                <span class="rc-name">{pools.map((p) => p.name).join(" · ")}</span>
+                <span class="sp" />
+                {/* HELD, never FREE. Those bytes are genuinely held, so the figure is true; the difference
+                    between it and the total is NOT available to a model, which is the claim the walls deny
+                    and the one a "free" figure would make in passing. */}
+                <span class="rc-total tt">
+                    {formatBytes(held)} of {formatBytes(axis.total)} held
+                    <span class="tt-pop wrap" role="tooltip">Every pool on one axis, laid end to end rather than added together — each band is one pool's own capacity, filled from its own floor. The total is real, but the space above a fill belongs to THAT pool only: a model can use one pool's room, never the sum. Switch a pool off in the legend to take it out of the axis.</span>
+                </span>
+            </div>
+            <div class="rc-plot"
+                onPointerDown={startBrush(runs)}
+                onPointerMove={(e: PointerEvent) => { trackCursor(scope)(e); trackCrosshair(runs)(e); }}
+                onPointerLeave={() => {
+                    hoverAt.value = null;
+                    if (kbFocus.value || kbPool.value) return;
+                    crosshair.value = null;
+                }}>
+                <BrushOverlay runs={runs} />
+                <Crosshair runs={runs} />
+                <EventTip scope={scope} />
+                {runs.map((run, ri) => (
+                    <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
+                        <InstantRules instants={instants} run={ri} scope={scope} />
+                        <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                            {axis.bands.map((b, bi) => {
+                                const p = pools.find((x) => x.id === b.id)!;
+                                const y = (v: number) => H - (v / axis.total) * H;
+                                const pts: string[] = [];
+                                run.forEach((sm, i) => {
+                                    const x = run.length === 1 ? W / 2 : (i / (run.length - 1)) * W;
+                                    pts.push(`${x.toFixed(1)},${y(b.base + Math.min(b.ceiling, usedOf(sm, p))).toFixed(1)}`);
+                                });
+                                for (let i = run.length - 1; i >= 0; i--) {
+                                    const x = run.length === 1 ? W / 2 : (i / (run.length - 1)) * W;
+                                    pts.push(`${x.toFixed(1)},${y(b.base).toFixed(1)}`);
+                                }
+                                return <polygon key={b.id} points={pts.join(" ")} class="rc-boxfill"
+                                    fill={poolColor(bi, axis.bands.length)} vector-effect="non-scaling-stroke" />;
+                            })}
+                        </svg>
+                        {/* THE WALLS. Drawn per segment so they sit inside the same clipped box the fills do,
+                            and they are the whole reason this axis is honest: without them a reader sees one
+                            column and infers one pool. */}
+                        {axis.bands.slice(1).map((b) => (
+                            <i key={`w:${b.id}`} class="rc-boxwall" aria-hidden="true"
+                                style={{ bottom: `${(b.base / axis.total) * 100}%` }} />
+                        ))}
+                    </div>
+                ))}
+            </div>
+            {/* One key per pool, carrying what it holds OF ITS OWN capacity — the per-pool reading the axis
+                deliberately refuses to compute for you. Clicking one takes it off the axis.
+                THE SAME KEY THE OVERLAID VIEW USES, down to the element: `.rc-key` is styled for a SPAN with
+                `role="button"`, so a native <button> here picked up the browser's own chrome and the two
+                legends stopped looking like the same control. Reused rather than restyled — a second key that
+                merely resembles the first is how the pointer chip got cloned. */}
+            <div class="rc-legend">
+                {all.map((p, i) => {
+                    const off = hiddenPools.value.has(p.id);
+                    const idx = axis.bands.findIndex((b) => b.id === p.id);
+                    const color = poolColor(idx < 0 ? i : idx, Math.max(1, axis.bands.length));
+                    return (
+                        <span class={`rc-key${off ? " off" : ""}${hoverPool.value && hoverPool.value !== p.id ? " away" : ""}`}
+                            key={p.id} role="button" tabIndex={0} aria-pressed={!off}
+                            title={off ? `Show ${p.name}` : `Hide ${p.name}`}
+                            onClick={() => togglePool(p.id)}
+                            onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); togglePool(p.id); } }}
+                            onPointerEnter={() => enterPool({ ...p, color })}
+                            onPointerLeave={() => leavePool()}>
+                            <i class="rc-swatch" style={{ background: off ? "var(--fg-faint)" : color }} />
+                            {p.name} {off ? "off" : formatShare(usedOf(latest, p), p.ceiling, "/")}
+                        </span>
+                    );
+                })}
+            </div>
+        </div>
+    );
 }
 
 /** Several series in ONE track, drawn as independent lines rather than a stack: their sum is not a quantity
@@ -1064,6 +1245,10 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
         return { id, name: d.name, ceiling: c?.displayBytes ?? d.totalBytes, bandsOf: (s: ResourceSample) => deviceBands(s, d.id) };
     }).filter(Boolean) as { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }[];
     if (!pools.length) return null;
+    // WHAT THE ARROW KEYS STEP THROUGH HERE. Published with the colours the lines are actually drawn in, so a
+    // keyboard focus lights the same key the pointer would — `poolColor` is keyed by index among ALL pools,
+    // so colouring after any filtering renumbers them.
+    notePools(pools.map((p, pi) => ({ ...p, color: poolColor(pi, pools.length) })));
 
     const runs = noteRuns(segments(samples, sampleGapMs()).filter((r) => r.length > 1));
     const usedOf = (s: ResourceSample, p: typeof pools[number]) =>
@@ -1094,7 +1279,11 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
             <div class="rc-plot"
                 onPointerDown={startBrush(runs)}
                 onPointerMove={(e: PointerEvent) => { trackCursor("overlay")(e); trackCrosshair(runs)(e); }}
-                onPointerLeave={() => { hoverAt.value = null; leavePool(); crosshair.value = null; }}>
+                onPointerLeave={() => {
+                    hoverAt.value = null;                     // …and the same on the overlaid view
+                    if (kbFocus.value || kbPool.value) return;
+                    leavePool(); crosshair.value = null;
+                }}>
                 <BrushOverlay runs={runs} />
                 <Crosshair runs={runs} />
                 <PoolsTip pools={pools.map((p, pi) => ({ ...p, color: poolColor(pi, pools.length) }))}
@@ -1201,6 +1390,14 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
  *  to arrive is not the model working, so it must not look like a solid block of its time — but it IS that
  *  model's wait, so the colour stays. (A plain model-coloured bar is what the inline colouring made of it,
  *  which is exactly the confusion the stripes exist to prevent.) */
+/** The server's own words for an edge, with the model's name taken off the front — the name is already the
+ *  line above, and repeating it costs the width the REASON needs (`evicted (made room)` against
+ *  `unloaded (idle)`, which is the whole difference between the two things polling reads as one). */
+function serverSaid(label: string, model?: string): string {
+    const rest = model && label.startsWith(model) ? label.slice(model.length).trim() : label;
+    return rest ? `the server reported this — ${rest}` : "reported by the server";
+}
+
 /** A phase's swatch, matching its stripe in the bar exactly — so the tooltip's sections and the block's parts
  *  are visibly the same three things, rather than a list you have to map onto a picture yourself. */
 // THREE STRIPE PATTERNS THAT DIFFER IN DIRECTION, NOT IN WEIGHT. A load, its weights half and its context
@@ -1803,10 +2000,19 @@ function EventTip({ scope }: { scope: string }) {
                 {/* WHEN, not how long: that is the only quantity a moment has. */}
                 <span class="rc-tip-size">{hhmmssms(e.t)}</span>
             </div>
-            <div class="rc-tip-note">{e.kind === "evict"
-                ? "left memory here — nothing reports an eviction, so this is the sample where it stopped being resident"
-                : e.kind === "load" ? "appeared here — loaded by something else, or while the panel was closed"
-                : e.label}</div>
+            {/* WHAT THIS EDGE IS, said differently depending on where it CAME FROM.
+                An inferred one is read off `/api/ps` by noticing a model was there and then was not, and the
+                note says so. A REPORTED one came from the server's own event stream, which knows things
+                polling cannot — above all whether an eviction MADE ROOM or was an idle expiry — so it says
+                what the server said. Hardcoding the inference note for both claimed "nothing reports an
+                eviction" about an edge the server had just reported, on exactly the setup the stream exists
+                for, and hid the reason it had gone to the trouble of sending. */}
+            <div class="rc-tip-note">{e.via === "server"
+                ? serverSaid(e.label, e.model)
+                : e.kind === "evict"
+                    ? "left memory here — nothing reports an eviction, so this is the sample where it stopped being resident"
+                    : e.kind === "load" ? "appeared here — loaded by something else, or while the panel was closed"
+                        : e.label}</div>
         </div>
     );
     return (
@@ -2248,15 +2454,9 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     const scopedWindow = useMemo(
         () => (laneScoped.value ? sessionWindow(events, scopedHash(), Date.now()) : null),
         [laneScoped.value, scopedHash(), events.length, samples.length]);
-    const window_ = useMemo(() => {
-        const z = zoomRange.value;
-        if (z) return z;
-        if (scopedWindow) return scopedWindow;
-        const secs = resWindowS.value;
-        if (!secs) return null;                    // "everything" — no window to draw
-        const now = Date.now();
-        return { from: now - secs * 1000, to: now };
-    }, [resWindowS.value, zoomRange.value, samples.length, scopedWindow]);
+    const window_ = useMemo(
+        () => chartWindow(zoomRange.value, scopedWindow, resWindowS.value, Date.now()),
+        [resWindowS.value, zoomRange.value, samples.length, scopedWindow]);
     // The samples in the window, plus the nearest either side when the window is too narrow to draw itself —
     // see `windowSamples`. Zooming inside one long event used to leave fewer than two samples and an empty
     // chart, which reads as the panel having broken rather than as a window between two polls.

@@ -945,6 +945,13 @@ per device, in bytes.
   root. The keys answer only while the pointer is on the chart (`crosshair` is set), and `preventDefault` is
   called only when one was used, so the panel never eats scrolling it had no use for. **Esc unwinds one rung
   at a time** — tip, then keyboard focus, then zoom.
+- **THE SAME KEY STEPS THROUGH WHAT THE VIEW DRAWS.** Overview draws pool LINES, the stacked view draws model
+  bands, so `↑↓` cycles pools there (`kbPool`/`stepPool`, its own signal — the two views focus genuinely
+  different kinds of thing, and unifying them would be a wrapper over two two-element enums). Leaving the keys
+  live in one view and dead in the other was the worse option: the same key then meant "change what I am
+  reading" or "scroll the page" depending on where the pointer happened to be. **Nothing else is copied
+  over** — a pool has no memory breakdown of its own, so `←→` do nothing there and the hint on that tip offers
+  only the pair it can honour.
 - **A KEYBOARD FOCUS HOLDS UNTIL THE POINTER MOVES** (`releaseFocus`, called from the plot's `pointermove`
   and nothing else). A band sliding under a parked cursor as samples arrive raises `pointerenter` with nobody
   having touched anything, so honouring that would let an arriving poll overwrite a selection the keys just
@@ -977,6 +984,15 @@ per device, in bytes.
   `gpu_id`); a card whose name is not in the list shows nothing rather than being handed the entry at its
   ordinal. `devices` is a list of RUNS, so entries are summed by name and `devices.length` is never a card
   count. `swa_layers` is counted for THIS card, since the pattern is irregular.
+- **AN EDGE SAYS WHERE IT CAME FROM** (`ResourceEvent.via`). A load or an eviction reaches the lane two ways:
+  INFERRED by diffing `/api/ps` (a model was there and then was not — which is the most polling can say, since
+  for most of a load there is no runner object at all and an eviction that made room is indistinguishable from
+  an idle expiry), or REPORTED by the server's event stream, which knows both. The instant tooltip was
+  hardcoded per KIND, so it told you "nothing reports an eviction, so this is the sample where it stopped
+  being resident" about an edge the server had just reported WITH ITS REASON — false on precisely the setup
+  the stream exists for, and it hid the one thing polling can never recover. A reported edge now says what
+  the server said (`serverSaid`, with the model's name stripped off the front, because the name is the line
+  above and the width belongs to the reason).
 - **"OFF-BOX" IS A CLAIM THAT NEEDS EVIDENCE, and the window is not it.** The label says a model was NEVER
   resident here, and it was decided from the models drawn in the CURRENT window — while the scrub gesture
   WRITES that window (`resWindowS`; the zoom chip is what it reports). So narrowing to 42s pushed a model
@@ -989,6 +1005,23 @@ per device, in bytes.
   presence IS the lane, so its row offered a control that could not remove the one thing it drew. `timeline()`
   filters on `hiddenModels`, ghost rows get a working dot, and the keyboard's list skips hidden models because
   there is no shape left to point at.
+- **A THIRD MODE, `total`: THE WHOLE BOX ON ONE AXIS** (`boxAxis`, `BoxView`). Summing pools' CAPACITY into
+  one denominator is the panel's oldest refusal — 40 GiB free as 20+20 cannot hold a 30 GiB model — but the
+  question behind it is real, and it only lies when the pools are MIXED. So they are laid END TO END up the
+  axis: each owns a band the height of its own capacity and fills it from its own floor, with the WALLS drawn
+  between them. The axis total is then a true total, every fill is a real reading against a real ceiling, and
+  non-fungibility is visible rather than something the reader has to know. It also makes the box's SHAPE
+  visible, which the per-pool tracks cannot — they give every pool the same height whatever its size. The
+  header says what is HELD and never what is FREE, which is the one sentence the walls exist to deny; hiding
+  a pool shrinks the axis rather than leaving a hole. Offered only where there is more than one pool.
+- **THE STACKING RULE JUDGES THE MODE, not only the series.** `stackRefusal` guarded the series CHECKBOXES —
+  it stopped you adding a series that would make an unstackable track — and left the mode select unguarded, so
+  a three-pool Overview track could simply be switched to "stack". `TrackView`'s stack branch reads
+  `def.series[0]` and ignores the rest, so two series were silently dropped; when that card happened to be
+  empty it read as the panel rendering nothing at all. The option is disabled now, with the refusal as its
+  tooltip. A SAVED layout carrying one was already refused at restore (`restoreLayout` → `presetRefusal`),
+  which is what makes the editor guard sufficient — and is why a renderer-side fallback written for this was
+  DEAD CODE and removed: its test passed without it, because that path was doing the work.
 - **A TRACK CAN BE DROPPED FROM ITS OWN HEADER** (`HideTrack` → `editLayout`, so the view becomes Custom and
   the layout is remembered). Not offered on the last one — a panel with no tracks is not a layout — but it
   keeps its SPACE, because a header that reflows when a control appears shifts every surface below it. Its

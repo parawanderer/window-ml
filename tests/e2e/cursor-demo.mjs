@@ -139,6 +139,8 @@ const main = async () => {
         for (const fx of [0.4, 0.5, 0.6, 0.68]) { await page.mouse.move(p.x + p.width * fx, y); await sleep(220); }
         await sleep(900); await shot("5-select.png");
         await page.mouse.up();
+        await narrate(page, "Scrubbed back, the header says WHICH instant it is reading",
+            { sub: "it reads the drawn window's edge — the same sample the tracks do — and the rows stay live" });
         await sleep(PACE); await shot("6-zoomed.png");
         await frame.locator(".vram-zoom").click().catch(() => {});   // back to live
         await sleep(900);
@@ -147,7 +149,10 @@ const main = async () => {
         await narrate(page, "↑↓ picks a model — the pointer never moves",
             { sub: "x asks WHEN and y asks WHAT: this gives the second question its own input" });
         p = await plot();
-        await page.mouse.move(p.x + p.width * 0.55, p.y + p.height * 0.06);
+        // HALFWAY DOWN THE FIRST TRACK, deliberately: the model these keys walk to lives on the OTHER card,
+        // and drilling in collapses this one — so the plot is pulled out from under a still cursor. Parked
+        // near the top the pointer stays inside even the collapsed strip and the case never arises.
+        await page.mouse.move(p.x + p.width * 0.55, p.y + p.height * 0.5);
         await sleep(700);
         await page.keyboard.press("ArrowDown");
         await sleep(PACE); await shot("5b-kb-first.png");
@@ -235,6 +240,37 @@ const main = async () => {
         await sleep(PACE); await shot("11-switched-off.png");
         await frame.locator(".vram-row .vram-dot").first().click().catch(() => {});
         await sleep(700);
+
+        // 11b — the OVERLAID view: the same key, stepping the thing THIS view draws.
+        await narrate(page, "Overview draws lines, so ↑↓ steps lines",
+            { sub: "the same question — what am I reading — asked of what this view actually draws" });
+        await frame.locator("select.rc-preset").selectOption("overview").catch(() => {});
+        await sleep(1500);
+        p = await plot();
+        await page.mouse.move(p.x + p.width * 0.5, p.y + p.height * 0.5);
+        await sleep(600);
+        for (let i = 0; i < 3; i++) { await page.keyboard.press("ArrowDown"); await sleep(700); }
+        await sleep(PACE); await shot("11b-overview-keys.png");
+
+        // 11c — and the mode this track cannot honour is refused rather than offered.
+        await narrate(page, "…and 'stack' is refused where it has no meaning",
+            { sub: "several pools have no combined total — it used to be pickable, and drew one card alone" });
+        await frame.locator('[aria-label="Edit tracks"]').click();
+        await sleep(900);
+        await frame.locator(".rc-emode").first().hover().catch(() => {});
+        await sleep(PACE); await shot("11c-stack-refused.png");
+
+        // 11d — the whole box on one axis.
+        await narrate(page, "…and 'total' lays every pool END TO END",
+            { sub: "the axis total is real, the walls say the space above a fill belongs to that pool only" });
+        await frame.locator(".rc-emode").first().selectOption("total").catch(() => {});
+        await sleep(1200);
+        await frame.locator('[aria-label="Edit tracks"]').click();   // close it, or it covers the chart
+        await sleep(900);
+        await shot("11d-total.png");
+        await sleep(PACE);
+        await page.keyboard.press("Escape"); await page.keyboard.press("Escape");
+        await sleep(400);
 
         // 12 — dropping a track from its own header.
         await narrate(page, "And a track can go from its own header",

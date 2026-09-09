@@ -592,9 +592,40 @@ export function seriesCatalog(sample: ResourceSample): SeriesDef[] {
 export interface TrackDef {
     id: string;
     series: string[];
-    /** `stack` sums the series against one ceiling; `overlay` draws them independently, each on its own scale. */
-    mode: "stack" | "overlay";
+    /** `stack` sums the series against one ceiling; `overlay` draws them independently, each on its own scale;
+     *  `total` lays them END TO END up one axis — see {@link boxAxis}. */
+    mode: "stack" | "overlay" | "total";
     heightPx: number;
+}
+
+/**
+ * THE WHOLE BOX ON ONE AXIS, without pretending its memory is fungible.
+ *
+ * Summing several pools' CAPACITY into one denominator is the panel's oldest refusal (`stackRefusal`): 40 GiB
+ * free as 20+20 cannot hold a 30 GiB model, so a combined "free" figure invites exactly the judgement it
+ * cannot support. But the question behind it is real — how much of this machine is in use — and the answer
+ * only lies when the pools are MIXED.
+ *
+ * So they are laid END TO END up the axis instead of added together: each pool owns a band whose height is
+ * its own capacity, and fills that band from its own floor. The axis total is then a true total of capacity,
+ * every fill is a real reading against a real ceiling, and the WALLS between the bands are drawn — so
+ * non-fungibility is visible rather than something the reader has to know.
+ *
+ * It also makes the box's SHAPE visible, which the per-pool tracks cannot: those give every pool the same
+ * height whatever its size, so a 12 GiB laptop card and a 96 GiB card look alike. Here a pool's height IS its
+ * share of the machine.
+ *
+ * Hiding a pool removes its band and shrinks the axis, which is what makes "just my two cards" a view rather
+ * than a calculation.
+ */
+export function boxAxis(pools: { id: string; ceiling: number }[]): { total: number; bands: { id: string; base: number; ceiling: number }[] } {
+    let base = 0;
+    const bands = pools.filter((p) => p.ceiling > 0).map((p) => {
+        const at = base;
+        base += p.ceiling;
+        return { id: p.id, base: at, ceiling: p.ceiling };
+    });
+    return { total: base, bands };
 }
 
 /** Why these series cannot share a STACKED axis, or null when they can. Stacking asserts the parts sum to a
@@ -800,13 +831,13 @@ export function residencyEvents(samples: ResourceSample[], knownLoads: ResourceE
         const before = new Set(samples[i - 1].models.map((m) => m.model));
         const after = new Set(samples[i].models.map((m) => m.model));
         const t = samples[i].t;
-        for (const m of before) if (!after.has(m)) out.push({ t, kind: "evict", label: `${m} evicted`, model: m });
+        for (const m of before) if (!after.has(m)) out.push({ t, kind: "evict", label: `${m} evicted`, model: m, via: "poll" });
         for (const m of after) {
             if (before.has(m)) continue;
             // Within a poll of a load span for the same model → that span already tells the story.
             const covered = knownLoads.some((e) => e.model === m && e.kind === "load" &&
                 t >= e.t - MAX_SAMPLE_GAP_MS && t <= (e.until ?? e.t) + MAX_SAMPLE_GAP_MS);
-            if (!covered) out.push({ t, kind: "load", label: `${m} appeared`, model: m });
+            if (!covered) out.push({ t, kind: "load", label: `${m} appeared`, model: m, via: "poll" });
         }
     }
     return out;
@@ -944,6 +975,25 @@ export function clampWindow(win: { from: number; to: number }, minMs = MIN_SCOPE
     if (span >= minMs) return win;
     const mid = win.from + span / 2, half = minMs / 2;
     return { from: mid - half, to: mid + half };
+}
+
+/**
+ * THE STRETCH THE CHART DRAWS, in priority order: an explicit zoom, then a scoped session's own extent, then
+ * the rolling window. A zoom REPLACES the rolling one — you asked for a stretch, so the panel stops sliding
+ * away from it.
+ *
+ * Pure and shared, because the HEADER has to describe the same instant the tracks do. It used to read the
+ * live resident set whatever the window was, so scrubbing back put two different moments side by side with
+ * nothing saying so: "6.53 GiB in use" above a track whose own edge read 19.95 GiB unattributed, which reads
+ * as arithmetic going wrong rather than as two clocks. Deriving the window twice would have been the same bug
+ * waiting to come back.
+ */
+export function chartWindow(zoom: { from: number; to: number } | null, scoped: { from: number; to: number } | null,
+    secs: number, now: number): { from: number; to: number } | null {
+    if (zoom) return zoom;
+    if (scoped) return scoped;
+    if (!secs) return null;                        // "everything" — no window to draw
+    return { from: now - secs * 1000, to: now };
 }
 
 /** THE SAMPLES A WINDOW SHOULD DRAW — the ones inside it, PLUS the nearest on each side.
@@ -1564,6 +1614,19 @@ export interface ResourceEvent {
      *  reason. */
     kind: "run" | "session" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note" | "serve" | "aside";
     label: string;
+    /**
+     * WHERE THIS EDGE CAME FROM, for the kinds a box can produce two ways.
+     *
+     * `"poll"` is INFERRED by diffing `/api/ps` — it says a model was there and then was not, which is the
+     * most that can be read off polls: they cannot see a load happening (for most of one there is no runner
+     * object at all), and they cannot tell an eviction that made room from an idle expiry. `"server"` is the
+     * event stream's own edge, which knows both.
+     *
+     * The distinction has to travel because the panel SAYS which it is: a note reading "nothing reports an
+     * eviction" is honest about an inference and false about an edge the server reported, on the very setup
+     * the stream exists for. Absent on the kinds that are neither (a run, a generation).
+     */
+    via?: "poll" | "server";
     model?: string;
     /** This event's own id, and the event that SPAWNED it. A delegated sub-call — a vision reader, an
      *  embedding — never happens on its own: it belongs to a step, which belongs to a run. Hovering one can

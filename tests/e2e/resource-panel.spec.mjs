@@ -3379,3 +3379,376 @@ test("resource panel: a ghost row's dot switches it off everywhere", async () =>
         await expect.poll(() => frame.locator(".rc-ev, .rc-rule").count(), { timeout: 5000 }).toBe(lit);
     } finally { await ext.close(); await fake.stop(); }
 });
+
+// THE POINTER LEAVING THE PLOT IS NOT A DECISION TO STOP READING — and this mode makes it happen without
+// anyone touching the mouse: drilling in collapses the cards the model is NOT on, so the track the pointer
+// was over shrinks away, fires a `pointerleave`, and the handler threw away the focus. The chart stayed
+// drilled in (that comes from the keyboard) while its tooltip lost its subject.
+test("resource panel: drilling into a model on ANOTHER card keeps its tooltip", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const A = { weights: 12 * GiB, kv_cache: 4 * GiB, compute: 2 * GiB };
+        const B = { weights: 4 * GiB, kv_cache: 2 * GiB, compute: 1 * GiB };
+        const va = 18 * GiB, vb = 7 * GiB;
+        fake.setCapacity(box(IDLE - va, IDLE - vb));
+        fake.setResident([
+            { model: "gemma4:31b", name: "gemma4:31b", size: va, size_vram: va, context_length: 262144,
+              expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+              memory: A, gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: va, memory: A }] },
+            { model: "qwen3.8:27b", name: "qwen3.8:27b", size: vb, size_vram: vb, context_length: 262144,
+              expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+              memory: B, gpus: [{ gpu_id: "1", runner: "CUDA", size_vram: vb, memory: B }] },
+        ]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(4000);
+
+        // THE POINTER PARKS ON THE FIRST CARD'S TRACK and never moves again — HALFWAY DOWN IT, which is what
+        // makes this the real case: drilling in collapses that track to a strip, so the plot is pulled out
+        // from under a still cursor and fires a leave. Parked near the TOP the pointer stays inside even the
+        // collapsed strip, no leave fires, and the test passes with the bug present (it did).
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.5);
+        await sleep(300);
+
+        // Cycle to the model that lives on the OTHER card — its tip appears on the track that holds it.
+        await page.keyboard.press("ArrowDown"); await sleep(250);
+        await page.keyboard.press("ArrowDown"); await sleep(300);
+        expect(await frame.locator(".rc-tip-model .rc-tip-name").allTextContents()).toEqual(["qwen3.8:27b"]);
+
+        // …and RIGHT keeps it. This is where the track under the pointer collapses.
+        await page.keyboard.press("ArrowRight");
+        await sleep(500);
+        expect(await frame.locator(".rc-tip-model").count(), "the tooltip survives the drill-down").toBe(1);
+        const tip = (await frame.locator(".rc-tip-model").first().textContent()).replace(/\s+/g, " ");
+        expect(tip, `it still names the model: ${tip}`).toMatch(/qwen3\.8:27b/);
+        expect(tip, "…and answers what it is holding, which is what was asked for").toMatch(/holding/);
+        expect(await frame.locator(".rc-tip-part:not(.rc-tip-lrow)").count(), "with its parts").toBe(3);
+        // The chart went with it — the mode and its tooltip are one reading, not two states that can differ.
+        expect(await frame.locator(".rc-track.deep").count(), "and the chart is in the same mode").toBeGreaterThan(0);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// TWO CLOCKS IN ONE PANEL. A track's header and legend read the last sample of the DRAWN window; the panel's
+// own total read the LIVE resident set whatever the window was. Scrubbed back they sat one above the other
+// describing different moments with nothing saying so, which reads as arithmetic going wrong.
+test("resource panel: scrubbed back, the header reads the instant the tracks do", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".vram-row:not(.ghost)").count(), { timeout: 25000 }).toBe(1);
+        await sleep(4000);
+
+        const headline = async () => (await frame.locator(".vram-head").first().textContent()).replace(/\s+/g, " ");
+        expect(await headline(), "18 GiB is resident and the panel is live").toMatch(/18\.00 GiB in use/);
+        expect(await frame.locator(".vram-at").count(), "…and nothing to say about WHEN, because it is now").toBe(0);
+
+        // THE MODEL LEAVES — and the card's free memory comes back with it. Both, because with only the
+        // resident set cleared the DEVICES still report 18 GiB held, and the header falls back to what they
+        // say (which is the honest answer during a load, and here would just be the old figure by a second
+        // route rather than the live one this test is contrasting against).
+        fake.setResident([]);
+        fake.setCapacity(box(IDLE, IDLE));
+        // Whatever it settles on, it is no longer the model's figure — asserted as that rather than as an
+        // exact number, since what a box with nothing resident reports is the driver's own overhead and not
+        // this test's business.
+        await expect.poll(headline, { timeout: 20000 }).not.toMatch(/18\.00 GiB in use/);
+        await sleep(2500);
+
+        // NOW SCRUB BACK over the stretch where it was resident, by dragging the window's right edge left —
+        // the panel stops following and draws a range that ENDS in the past.
+        const track = await frame.locator(".rc-scrub-track").boundingBox();
+        const win = await frame.locator(".rc-scrub-win").boundingBox();
+        const y = track.y + track.height / 2;
+        await page.mouse.move(win.x + win.width - 1, y);
+        await page.mouse.down();
+        for (let i = 1; i <= 8; i++) {
+            await page.mouse.move(win.x + win.width - 1 - ((win.width * 0.7) * i) / 8, y);
+            await sleep(60);
+        }
+        await page.mouse.up();
+        await sleep(1500);
+        await expect.poll(() => frame.locator(".rc-scrub-live").textContent(), { timeout: 8000 }).toMatch(/⏸/);
+
+        // The header now describes the window's own edge — the same instant the tracks below it do — and SAYS
+        // which instant that is, because a figure from a moment you scrubbed to is only honest if it names it.
+        await expect.poll(() => frame.locator(".vram-at").count(), { timeout: 8000 }).toBe(1);
+        const stamp = (await frame.locator(".vram-at").textContent()).trim();
+        expect(stamp, `it names the instant: ${stamp}`).toMatch(/^at \d{2}:\d{2}:\d{2}/);
+        // …and the figure is that instant's, not the present's: the model was resident then and is not now.
+        expect(await headline(), "the reading is from the drawn edge").toMatch(/18\.00 GiB in use/);
+
+        // IT READS AS ONE LINE WITH THE FIGURE. The row is centre-aligned — it holds buttons and selects,
+        // which baseline-aligning would drag around — and centring only yields a shared baseline when the
+        // boxes are the same SIZE. At 1em against the figure's 0.92em it sat visibly off, in what looked like
+        // a different font. Lighter and fainter is what makes it recede; a different size just looked broken.
+        const metrics = await frame.locator(".vram-head").first().evaluate((el) => {
+            const at = el.querySelector(".vram-at"), tot = el.querySelector(".vram-total");
+            const a = at.getBoundingClientRect(), t = tot.getBoundingClientRect();
+            const cs = getComputedStyle(at), ct = getComputedStyle(tot);
+            return { size: cs.fontSize, totalSize: ct.fontSize, colour: cs.color, totalColour: ct.color,
+                dTop: Math.abs(a.top - t.top), h: a.height, lines: at.getClientRects().length };
+        });
+        expect(metrics.size, "the same type as the figure it stamps").toBe(metrics.totalSize);
+        expect(metrics.colour, "…but dimmer, which is what makes it recede").not.toBe(metrics.totalColour);
+        expect(metrics.dTop, `not on the same line: ${JSON.stringify(metrics)}`).toBeLessThan(2);
+        // …and never broken across two, which a clock cannot survive.
+        expect(metrics.lines, "one line").toBe(1);
+
+        // BACK TO LIVE and the stamp goes with it — there is nothing to say when the edge IS the present.
+        await frame.locator(".rc-scrub-live").click();
+        await sleep(1200);
+        await expect.poll(() => frame.locator(".vram-at").count(), { timeout: 8000 }).toBe(0);
+        expect(await headline(), "…and the figure is the present's again").not.toMatch(/18\.00 GiB in use/);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// EVERY OPTION THE PANEL OFFERS HAS TO DRAW SOMETHING. A view or a mode you can pick and that renders an
+// empty box is indistinguishable from the panel breaking — and the controls multiply (a preset per layout, a
+// mode per track), so the combination nobody tried is the one that ships blank.
+test("resource panel: every view and every track mode draws something for the same data", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE - 7 * GiB));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.8:27b", 7 * GiB, 1)]);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(5000);   // several samples, so every mode has a shape it COULD draw
+
+        /** Any actual geometry on screen — a filled band, a pool line — not merely an <svg> element. */
+        const shapes = () => frame.locator(".rc-area polygon, .rc-area polyline").evaluateAll(
+            (els) => els.filter((e) => (e.getAttribute("points") || "").trim().length > 0).length);
+
+        const views = await frame.locator("select.rc-preset option").evaluateAll(
+            (els) => els.map((e) => ({ value: e.value, label: e.textContent })));
+        expect(views.length, "there are views to check").toBeGreaterThan(1);
+
+        for (const v of views) {
+            await frame.locator("select.rc-preset").selectOption(v.value);
+            await sleep(900);
+            expect(await shapes(), `the "${v.label}" view draws nothing`).toBeGreaterThan(0);
+
+            // …and every MODE of every track in it. The mode control is per track and independent of the
+            // view, so this is where the untried combination lives.
+            const tracks = await frame.locator(".rc-emode").count().catch(() => 0);
+            if (!tracks) {
+                await frame.locator('[aria-label="Edit tracks"]').click();
+                await sleep(500);
+            }
+            const modes = await frame.locator(".rc-emode").count();
+            for (let i = 0; i < modes; i++) {
+                const sel = frame.locator(".rc-emode").nth(i);
+                for (const m of ["stack", "overlay"]) {
+                    // A MODE THE RULE REFUSES IS NOT OFFERED. Stacking several pools has no meaningful total
+                    // — a model can only use one card's capacity — and the guard used to cover only the
+                    // series checkboxes, so the mode itself could be switched to it. Skipped rather than
+                    // asserted-on here: what it must never be is SELECTABLE and empty.
+                    if (await sel.locator(`option[value=${m}]`).isDisabled()) continue;
+                    await sel.selectOption(m);
+                    await sleep(800);
+                    expect(await shapes(), `"${v.label}", track ${i} in "${m}" mode draws nothing`).toBeGreaterThan(0);
+                    // …and it drew every series it was given, rather than the first one alone.
+                    const drew = await frame.locator(".rc-track").count();
+                    expect(drew, `"${v.label}" lost a track in "${m}" mode`).toBeGreaterThan(0);
+                }
+            }
+            await frame.locator('[aria-label="Edit tracks"]').click().catch(() => {});
+            await sleep(400);
+        }
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// STACKING SEVERAL POOLS HAS NO MEANINGFUL TOTAL — a model can only use one card's capacity — and the rule
+// that says so guarded the series checkboxes while leaving the MODE unguarded. So a three-pool Overview track
+// could simply be switched to "stack", the renderer drew its FIRST series alone, and two were silently
+// dropped. On a card that happened to be empty, that reads as the panel rendering nothing at all.
+test("resource panel: a track that cannot be stacked will not offer it, and never drops series", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        // The shape that produced it: nothing on the FIRST card, the model on the second. Stacking then drew
+        // an all-but-empty card 0 and dropped the pool that had something in it.
+        fake.setCapacity(box(IDLE, IDLE - 7 * GiB));
+        fake.setResident([resident("qwen3.8:27b", 7 * GiB, 1)]);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(4000);
+
+        // Overview: one track carrying every pool, overlaid.
+        await frame.locator("select.rc-preset").selectOption("overview");
+        await sleep(900);
+        await frame.locator('[aria-label="Edit tracks"]').click();
+        await sleep(500);
+        const sel = frame.locator(".rc-emode").first();
+        await expect(sel).toHaveValue("overlay");
+
+        // THE OPTION IS REFUSED, with the reason — not merely absent, which teaches nothing.
+        await expect(sel.locator("option[value=stack]")).toBeDisabled();
+        await sel.hover();
+        await expect.poll(() => frame.locator(".tt-layer").textContent().catch(() => ""), { timeout: 5000 })
+            .toMatch(/no meaningful total|double-count|different pools/);
+
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// …AND A LAYOUT THAT ALREADY HAS ONE — saved before the guard existed, or written straight to storage — is
+// REFUSED AT RESTORE (`restoreLayout` → `presetRefusal`) and the default preset is drawn instead. Worth
+// pinning because it is what makes the editor guard sufficient rather than merely tidy: with both, there is
+// no route by which an unstackable track reaches the renderer, which would silently draw its first series
+// alone. A first version of this test asserted a fallback inside the renderer and passed without it — this
+// path was doing the work.
+test("resource panel: a saved unstackable track is refused, and the box is drawn whole", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE, IDLE - 7 * GiB));
+        fake.setResident([resident("qwen3.8:27b", 7 * GiB, 1)]);
+        // Seeded BEFORE the panel opens, which is the only way a layout is really restored — poking the key
+        // mid-session changes storage and nothing else.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_layout: { presetId: "custom", tracks: [
+            { id: "overview", series: ["vram.0", "vram.1", "ram"], mode: "stack", heightPx: 96 },
+        ] } }));
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(3000);
+
+        // The saved layout is not what is drawn — it could not be, and the panel says so by showing a preset.
+        await expect.poll(() => frame.locator("select.rc-preset").inputValue(), { timeout: 8000 }).not.toBe("custom");
+        // AND NOTHING WAS LOST: every pool the saved track named is still on screen somewhere.
+        const heads = (await frame.locator(".rc-track .rc-name").allTextContents()).join(" ");
+        for (const pool of ["CUDA0", "CUDA1", "System RAM"]) {
+            expect(heads, `${pool} vanished with the refused layout: ${heads}`).toContain(pool);
+        }
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// THE SAME KEY, THE THING THIS VIEW DRAWS. Overview draws pool LINES rather than model bands, so `↑↓` steps
+// through pools there — leaving it working in one view and dead in the other meant the same key was "change
+// what I am reading" or "scroll the page" depending on where the pointer happened to be. Nothing else is
+// copied over: a pool has no memory breakdown of its own, so there is no depth to descend into.
+test("resource panel: in Overview the keys pick a line, and there is no depth to go into", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE - 7 * GiB));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.8:27b", 7 * GiB, 1)]);
+        const { page, frame } = await openPanel(fake, ext);
+        await frame.locator("select.rc-preset").selectOption("overview");
+        await expect.poll(() => frame.locator(".rc-hit").count(), { timeout: 25000 }).toBeGreaterThan(1);
+        await sleep(4000);
+
+        // THE POINTER PARKS on the plot and never moves again — the whole point, since the alternative here
+        // is hitting a 1.5px line through a 10px target.
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.5);
+        await sleep(400);
+
+        /** Which line the tip is picking out, by the row it marks. */
+        const picked = async () => frame.locator(".rc-tip-pools .rc-tip-poolrow.near .rc-tip-label")
+            .first().textContent().catch(() => null);
+        await expect.poll(() => frame.locator(".rc-tip-pools").count(), { timeout: 8000 }).toBe(1);
+        // THE TIP ADVERTISES THE KEY, because nobody presses one they have not been told about.
+        expect(await frame.locator(".rc-tip-pools .rc-tip-keys").count(), "the tip says the keys exist").toBe(1);
+        expect(await frame.locator(".rc-tip-pools .rc-tip-keys").textContent()).toMatch(/pick a line/);
+
+        // Stepping walks the pools, and the crosshair does not move: the INSTANT is the pointer's, the LINE
+        // is the keyboard's.
+        const crossAt = (await frame.locator(".rc-cross").first().boundingBox()).x;
+        const seen = [];
+        for (let i = 0; i < 3; i++) {
+            await page.keyboard.press("ArrowDown");
+            await sleep(300);
+            seen.push((await picked())?.trim() ?? null);
+        }
+        expect(new Set(seen.filter(Boolean)).size, `the keys walk the lines: ${JSON.stringify(seen)}`).toBeGreaterThan(1);
+        const line = await frame.locator(".rc-cross").first().boundingBox();
+        expect(Math.abs(line.x - crossAt), "the instant held still while the reading walked").toBeLessThan(2);
+
+        // AND NO DEPTH. A pool has no breakdown of its own — that is per model — so right does nothing here
+        // rather than half-entering a mode this view cannot show.
+        const before = await picked();
+        await page.keyboard.press("ArrowRight");
+        await sleep(350);
+        expect(await picked(), "right is not a gesture in this view").toBe(before);
+        expect(await frame.locator(".rc-tip-part").count(), "…and nothing was decomposed").toBe(0);
+        expect(await frame.locator(".rc-track.deep").count(), "…nor did the chart change mode").toBe(0);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// THE WHOLE BOX ON ONE AXIS, without claiming its memory is fungible. Summing capacities into one
+// denominator is the panel's oldest refusal — 40 GiB free as 20+20 cannot hold a 30 GiB model — so the pools
+// are laid END TO END, each filling a band the height of its own capacity, with the walls between them drawn.
+test("resource panel: the total view lays every pool end to end, with walls", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE - 7 * GiB));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.8:27b", 7 * GiB, 1)]);
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_layout: { presetId: "custom", tracks: [
+            { id: "box", series: ["vram.0", "vram.1", "ram"], mode: "total", heightPx: 120 },
+        ] } }));
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-boxfill").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(3000);
+
+        // A BAND PER POOL, and a WALL between each pair — without them a reader sees one column and infers
+        // one pool, which is the fungibility claim this view exists to avoid making.
+        await expect.poll(() => frame.locator(".rc-boxwall").count(), { timeout: 8000 }).toBe(2);
+
+        // THE HEADER SAYS HELD, NEVER FREE. Those bytes are genuinely held, so the figure is true; the space
+        // above them is not available to a model, which is what a "free" figure would quietly claim.
+        const head = (await frame.locator(".rc-track .rc-total").first().textContent()).replace(/\s+/g, " ");
+        expect(head, `the header does not say what is held: ${head}`).toMatch(/held/);
+        expect(head, "…and never offers a free figure").not.toMatch(/free/i);
+        // The axis total is the SUM of the real capacities — 95.59 + 95.59 + 121.2 GiB.
+        expect(head, `the axis total is not the box's: ${head}`).toMatch(/312|313/);
+
+        // THE POOLS ARE PROPORTIONAL TO THEIR CAPACITY, which is the thing the per-pool tracks cannot show:
+        // they give every pool the same height whatever its size. RAM is the biggest here, so its band is.
+        const walls = await frame.locator(".rc-boxwall").evaluateAll((els) => els.map((e) => e.style.bottom));
+        expect(walls.length, `walls at: ${walls}`).toBe(2);
+
+        // SWITCHING A POOL OFF SHRINKS THE AXIS rather than leaving a hole — that is what makes "just my two
+        // cards" a view rather than arithmetic the reader has to do.
+        await frame.locator(".rc-legend .rc-key", { hasText: "System RAM" }).first().click();
+        await sleep(900);
+        await expect.poll(() => frame.locator(".rc-boxwall").count(), { timeout: 8000 }).toBe(1);
+        const head2 = (await frame.locator(".rc-track .rc-total").first().textContent()).replace(/\s+/g, " ");
+        expect(head2, `the axis did not shrink: ${head2}`).toMatch(/191|192/);
+    } finally { await ext.close(); await fake.stop(); }
+});

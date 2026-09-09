@@ -22,8 +22,8 @@ import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_H
 export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, dropInferredLoads, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, memorySplit, placementFrom, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
-import { ResourceTracks, ScopeSwitch, muteTip } from "./resource-chart";
+import { parseInfo, holdCapacity, memorySplit, placementFrom, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
+import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
 /** Is this model resident right now? `undefined` when we have no `/api/ps` answer yet — the caller must not
@@ -321,7 +321,7 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
                 ? at - frame.context_ms
                 : open.weightsAt;
             return {
-                t: open.t, until: at, kind: "load", label: `loading ${model}`, model,
+                t: open.t, until: at, kind: "load", label: `loading ${model}`, model, via: "server" as const,
                 // What the two halves each moved, when the server reported it. `size_vram` on the closing
                 // edge is the WHOLE load; the weights' own figure came on the boundary edge, so the context
                 // is the difference. They differ from the device's own step by the CUDA context floor
@@ -358,9 +358,9 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
         // EVICT and UNLOAD are different answers and the server draws the distinction: one made room for
         // something, the other simply expired. Inferring them by diffing polls could never tell them apart.
         case "evict":
-            return model ? { t: at, kind: "evict", label: `${model} evicted${frame.reason ? ` (${frame.reason})` : ""}`, model } : null;
+            return model ? { t: at, kind: "evict", label: `${model} evicted${frame.reason ? ` (${frame.reason})` : ""}`, model, via: "server" as const } : null;
         case "unload":
-            return model ? { t: at, kind: "evict", label: `${model} unloaded (idle)`, model } : null;
+            return model ? { t: at, kind: "evict", label: `${model} unloaded (idle)`, model, via: "server" as const } : null;
         default:
             return null;
     }
@@ -1039,6 +1039,21 @@ export const hoverModel = signal<string | null>(null);
  * made with the keys.
  */
 export const kbFocus = signal<{ model: string | null; depth: number } | null>(null);
+/**
+ * THE SAME AXIS, IN THE OVERLAID VIEW — which LINE you are reading.
+ *
+ * Overview draws pools rather than models, so the noun differs; the question the key answers does not. Its
+ * own signal rather than a shared "focusable", because the two views focus genuinely different kinds of
+ * thing and unifying them would be a wrapper over two two-element enums.
+ *
+ * DEPTH DOES NOT EXIST HERE, and left/right deliberately do nothing: a pool has no memory breakdown of its
+ * own — the decomposition is per MODEL — so there is nothing to descend into, and the hint on that view
+ * offers only the one pair of keys it can honour.
+ *
+ * `{ id: null }` is "nothing picked out", the row the list wraps through; a bare `null` means the POINTER
+ * owns the focus, exactly as it does for {@link kbFocus}.
+ */
+export const kbPool = signal<{ id: string | null } | null>(null);
 /** How deep the keyboard can go: 0 = the model, 1 = what its memory is holding. */
 export const MAX_FOCUS_DEPTH = 1;
 /** The focused model's depth, or 0 whenever the pointer owns the focus — the hover has no depth of its own. */
@@ -1212,11 +1227,30 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
                         whose whole problem is vertical space — and the two belong together anyway: "stack
                         these series" is one sentence. */}
                     <div class="rc-erow">
-                        <select class="rc-emode" aria-label="Track mode" value={t.mode}
-                            onChange={(e) => setTrack(i, { ...t, mode: (e.target as HTMLSelectElement).value as TrackDef["mode"] })}>
-                            <option value="stack">stack</option>
-                            <option value="overlay">overlay</option>
-                        </select>
+                        {/* THE MODE IS JUDGED BY THE SAME RULE THE SERIES ARE. The refusal guarded only the
+                            checkboxes — it stopped you ADDING a series that would make an unstackable track —
+                            and left the mode itself unguarded, so a multi-pool track could simply be switched
+                            to "stack". Nothing warned, and the renderer drew its FIRST series alone: two
+                            series silently dropped, and when that card happened to be empty the panel looked
+                            broken rather than wrong. */}
+                        {(() => {
+                            const defs = t.series.map((id) => cat.find((c) => c.id === id)!).filter(Boolean);
+                            const refusal = stackRefusal(defs, sample.capacity);
+                            return (
+                                <span class={refusal ? "tt" : undefined}>
+                                    <select class="rc-emode" aria-label="Track mode" value={t.mode}
+                                        onChange={(e) => setTrack(i, { ...t, mode: (e.target as HTMLSelectElement).value as TrackDef["mode"] })}>
+                                        <option value="stack" disabled={!!refusal}>stack</option>
+                                        <option value="overlay">overlay</option>
+                                        {/* THE WHOLE BOX ON ONE AXIS. Offered only where there is more than
+                                            one pool to lay end to end — on a single pool it would be the
+                                            stacked view with the models taken out, which is strictly less. */}
+                                        {t.series.length > 1 ? <option value="total">total</option> : null}
+                                    </select>
+                                    {refusal ? <span class="tt-pop wrap left" role="tooltip">{refusal}</span> : null}
+                                </span>
+                            );
+                        })()}
                         <div class="rc-eseries">
                         {cat.filter(sd => !sd.model).map(sd => {
                             const on = t.series.includes(sd.id);
@@ -1371,10 +1405,18 @@ export function VramPanel() {
             if (e.altKey || e.ctrlKey || e.metaKey) return;
             if (!crosshair.value) return;                       // the pointer is not on the chart
             if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                stepFocus(e.key === "ArrowDown" ? 1 : -1);
+                // THE SAME KEY, THE THING THIS VIEW DRAWS. Overview draws pool LINES and the stacked view
+                // draws model bands, so the noun differs while the question the key answers does not. Leaving
+                // it working in one view and dead in the other was the worse option: the same key would mean
+                // "change what I am reading" or "scroll the page" depending on where the pointer happened to
+                // be.
+                if (readingIsOverlay()) stepPool(e.key === "ArrowDown" ? 1 : -1);
+                else stepFocus(e.key === "ArrowDown" ? 1 : -1);
                 e.preventDefault();
             } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-                if (stepDepth(e.key === "ArrowRight" ? 1 : -1)) e.preventDefault();
+                // NO DEPTH IN THE OVERLAID VIEW — a pool has no breakdown of its own, the decomposition is
+                // per model — so these are left to the page there rather than swallowed doing nothing.
+                if (!readingIsOverlay() && stepDepth(e.key === "ArrowRight" ? 1 : -1)) e.preventDefault();
             }
         };
         document.addEventListener("keydown", onKey);
@@ -1462,12 +1504,38 @@ export function VramPanel() {
         grip.addEventListener("pointercancel", up);
     };
 
-    // Total is the CURRENT visible resident set — read it straight from `loaded`,
-    // not the sparkline history (which lags a render and resets to 0 on reopen).
-    const total = loaded ? loaded.reduce((s, m) => s + (hidden.has(m.model) ? 0 : (m.vramBytes ?? 0)), 0) : 0;
-    // What the DEVICES say is in use, independent of whether anything claims it. Only consulted when
-    // attribution comes back empty — see the header.
-    const boxUsed = (capacity.value?.devices ?? []).reduce((s, d) => s + Math.max(0, d.totalBytes - d.freeBytes), 0);
+    /**
+     * THE INSTANT THE TRACKS ARE DESCRIBING, whenever that is not the present.
+     *
+     * A track's header and legend read the last sample of the DRAWN WINDOW; this one read the live resident
+     * set whatever the window was. Scrubbed back, the two sat one above the other describing different
+     * moments with nothing saying so — "6.53 GiB in use" over a track whose own edge read 19.95 GiB
+     * unattributed, which reads as arithmetic going wrong rather than as two clocks.
+     *
+     * The window comes from the SAME pure function the chart uses (`chartWindow`), because deriving it twice
+     * is how the two would drift apart again. Null when the window's edge IS the newest sample — following
+     * live, there is nothing to say and nothing changes.
+     *
+     * The model ROWS stay live deliberately. Their content is only meaningful for the present: a countdown
+     * to a keep-alive deadline, a busy flag, and an evict button — and a button that acts on now, drawn
+     * inside a row describing two minutes ago, acts on a different world than the one it is sitting in.
+     */
+    const drawnEdge = (() => {
+        const scoped = laneScoped.value ? sessionWindow(timeline(), scopedHash(), Date.now()) : null;
+        const inWin = windowSamples(resourceHistory.value, chartWindow(zoomRange.value, scoped, resWindowS.value, Date.now()));
+        const last = inWin.at(-1) ?? null;
+        return last && last !== resourceHistory.value.at(-1) ? last : null;
+    })();
+    // Total is the resident set at the instant being DRAWN — the live one whenever that is the present, which
+    // is the ordinary case. Read from `loaded` rather than the sparkline history there, which lags a render
+    // and resets to 0 on reopen.
+    const total = drawnEdge
+        ? drawnEdge.models.reduce((s, m) => s + (hidden.has(m.model) ? 0 : m.vramBytes), 0)
+        : loaded ? loaded.reduce((s, m) => s + (hidden.has(m.model) ? 0 : (m.vramBytes ?? 0)), 0) : 0;
+    // What the DEVICES said was in use, independent of whether anything claimed it — from the same instant,
+    // so the fallback cannot answer from a different moment than the figure it stands in for.
+    const boxUsed = ((drawnEdge?.capacity ?? capacity.value)?.devices ?? [])
+        .reduce((s, d) => s + Math.max(0, d.totalBytes - d.freeBytes), 0);
     // Stable order so rows don't reshuffle as models load/evict.
     const rows = loaded ? [...loaded].sort((a, b) => a.model.localeCompare(b.model)) : [];
     // The rows ARE the chart's legend, so they have to cover the WINDOW, not just this instant: a model that
@@ -1593,6 +1661,14 @@ export function VramPanel() {
                         <span class="tt-pop wrap" role="tooltip">The box reports this much memory in use, and nothing is attributed to a model yet — which is what a load looks like from outside: Ollama has no runner object until it finishes, so /api/ps cannot name what is holding it.</span>
                     </span>
                 )}
+                {/* WHEN, whenever it is not now. A figure describing a moment you scrubbed to is not wrong,
+                    but a figure that does not say which moment it describes is.
+                    AFTER the figure, not before it: in front, the total slid sideways every time you scrubbed
+                    or rejoined live — and the total is the thing the eye comes to this row for, so it is the
+                    thing that should not move. */}
+                {drawnEdge ? <span class="vram-at tt">at {hhmmss(drawnEdge.t)}
+                    <span class="tt-pop wrap left" role="tooltip">The panel is showing a stretch of history rather than following live, so this figure is the reading at the right-hand edge of what is drawn — the same instant the tracks below describe. The model rows stay live: their countdowns and controls act on now.</span>
+                </span> : null}
                 <span class="sp" />
                 {/* What the drag selected, and the way out of it. Esc does the same — a zoom you can't leave is
                     a trap, and the panel otherwise keeps showing a stretch that scrolled into the past.

@@ -2839,3 +2839,26 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    one thing height is short of in this view. The last one keeps them, so the stack reads as ending with what
    applies to all of it. */
 .rc-tip-kb.dup .rc-tip-when, .rc-tip-kb.dup .rc-tip-keys { display: none; }
+/* WHEN the header's figure is from, whenever that is not now. A reading of a moment you scrubbed to is not
+   wrong; a reading that does not say which moment it describes is — it sat above tracks reading a different
+   instant and looked like arithmetic going wrong rather than two clocks. */
+.vram-at { color: var(--fg-faint); font-variant-numeric: tabular-nums; margin-left: 6px; position: relative;
+           /* THE SAME TYPE AS THE FIGURE IT STAMPS, so the two read as one line. The row is centre-aligned
+              (it holds buttons and selects, which baseline-aligning would drag around), and centring only
+              produces a shared baseline when the boxes are the same size — at 1em against the total's 0.92em
+              it sat visibly off it, in what looked like a different font. Lighter and fainter is what makes
+              it recede; a different SIZE just made it look misaligned. */
+           font-size: 0.92em;
+           /* One line, always. A clock broken across two lines is not a clock, and this row never wraps — the
+              TOTAL is the item that gives up width when the panel is narrow (it stays legible ellipsised;
+              "at" over "11:08:35" does not). */
+           white-space: nowrap; flex: 0 0 auto; }
+/* THE WHOLE BOX ON ONE AXIS: each pool's fill, in its own band. Flat and solid — this view is about how much
+   is held, not about which model holds it, which the per-pool tracks already say. */
+.rc-boxfill { opacity: .72; }
+/* A WALL between two pools' bands, and the reason this axis is honest: the space above a fill belongs to that
+   pool only. Without them a reader sees one column and infers one pool — which is the fungibility claim the
+   whole view exists to avoid making. Solid, unlike an event rule's dash, because it is a property of the
+   axis rather than something that happened. */
+.rc-boxwall { position: absolute; left: 0; right: 0; height: 1px; background: var(--fg-faint);
+              opacity: .55; pointer-events: none; z-index: 3; }
