@@ -2918,6 +2918,19 @@ test("resource panel: drilling into a split model answers on both cards, per car
         expect(heres.length, `both tips say what share is here: ${heres}`).toBe(2);
         expect(heres[0]).not.toBe(heres[1]);
 
+        // THEY DO NOT SIT ON EACH OTHER, and their ORDER still says which track each belongs to. A drilled-in
+        // tip is taller than the ~110px track it is anchored to, so the second one landed on the first; they
+        // are tiled down a column now, pushed only as far as the one above requires. Putting them on
+        // alternating SIDES also stopped them colliding, and was worse: which side a tip sat on then said
+        // nothing about which card it was for, which is the whole reason they are anchored per track.
+        const boxes = await tips.evaluateAll((els) => els.map((e) => {
+            const r = e.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left };
+        }));
+        expect(boxes[0].top, "top to bottom, in track order").toBeLessThan(boxes[1].top);
+        expect(boxes[0].bottom, "and never overlapping").toBeLessThanOrEqual(boxes[1].top);
+        expect(Math.abs(boxes[0].left - boxes[1].left), "…on the same side, since tiling is what keeps them apart")
+            .toBeLessThan(2);
+
         // LAYERS, in their OWN section with their own units — never a bar beside the memory ones, because
         // layers are not a proxy for memory. Matched by the ENGINE's device name, and a card whose name is
         // not in the list shows nothing rather than being handed the entry at its ordinal.
@@ -2983,5 +2996,55 @@ test("resource panel: an unnamed part is a signal, and no split says so", async 
         // …and CALLED OUT rather than sitting quietly as one more slice, because what it means is that the
         // breakdown is stale relative to the engine — not that the memory is unaccounted for.
         expect(await frame.locator(".rc-tip-warn").count(), "a part the server could not name is flagged").toBe(1);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// THE KEYS HAVE TO BE DISCOVERABLE FROM THE MOUSE, which is how everybody arrives. The hint was gated on the
+// keyboard already driving — so it was shown exclusively to readers who had found it, the one group that did
+// not need telling. And the seam has to WORK: pressing right while pointing at a band means "this one, in
+// detail", which did nothing while the tip sat there naming the key.
+test("resource panel: the keys are advertised on a hover, and work from one", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const MEM = { weights: 12 * GiB, kv_cache: 4 * GiB, compute: 2 * GiB };
+        const V = 18 * GiB;
+        fake.setCapacity(box(IDLE - V, IDLE));
+        fake.setResident([{
+            model: "gemma4:31b", name: "gemma4:31b", size: V, size_vram: V, context_length: 262144,
+            expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+            memory: MEM, gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: V, memory: MEM }],
+        }]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(4000);
+
+        // POINTING AT THE PLOT, nothing picked out: the overview tip says how to pick something.
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.06);
+        await sleep(350);
+        const pool = (await frame.locator(".rc-tip-pool").first().textContent()).replace(/\s+/g, " ");
+        expect(pool, `the overview tip does not mention the keys: ${pool}`).toMatch(/pick a model/);
+
+        // POINTING AT A BAND — no key pressed yet — already names both directions.
+        await frame.locator(".rc-band").first().hover();
+        await sleep(350);
+        const band = (await frame.locator(".rc-tip-model").first().textContent()).replace(/\s+/g, " ");
+        expect(band, `a hovered band does not mention the keys: ${band}`).toMatch(/models & overview/);
+        expect(band, "…including the way in").toMatch(/details/);
+
+        // AND THE KEY WORKS FROM THERE. This is the seam: arriving by pointer and arriving by keyboard have
+        // to behave the same, or the hint above is advertising something that silently does nothing.
+        await page.keyboard.press("ArrowRight");
+        await sleep(350);
+        const deep = (await frame.locator(".rc-tip-model").first().textContent()).replace(/\s+/g, " ");
+        expect(deep, `right did nothing from a hover: ${deep}`).toMatch(/holding/);
+        expect(deep, "…and offers the way back out").toMatch(/back/);
+        expect(await frame.locator(".rc-tip-part:not(.rc-tip-lrow)").count(), "the parts are drawn").toBe(3);
     } finally { await ext.close(); await fake.stop(); }
 });

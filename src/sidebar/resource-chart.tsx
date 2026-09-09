@@ -356,14 +356,10 @@ export interface DeviceViewProps {
     hidden: Set<string>;
     /** Instants to rule through this plot (evictions). Spans live in the lane below, not here. */
     events?: ResourceEvent[];
-    /** Which track this is, top to bottom. Only used to alternate which side a keyboard-anchored tip sits on:
-     *  a split model shows one per track, and a tip taller than its own track would otherwise land on top of
-     *  its neighbour's. */
-    index?: number;
 }
 
 /** One track: a header carrying the denominator, then the stacked history, gaps left as gaps. */
-export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden, events = [], index = 0 }: DeviceViewProps) {
+export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden, events = [] }: DeviceViewProps) {
     const scope = `track:${label}`;   // one track per pool, so the label identifies the surface
     const latest = samples.at(-1);
     const bands = latest ? bandsOf(latest) : [];
@@ -457,7 +453,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                     title={soft.label} /> : null}
                 <BandTip bands={bands} frame={hoverSample ? bandsOf(hoverSample) : null}
                     history={samples.map(bandsOf)} samples={samples} ceiling={ceiling} scope={scope} label={label}
-                    index={index} at={hoverSample} />
+                    at={hoverSample} />
                 {/* Hovering the plot ANYWHERE, not just a model's band, answers the question this track's
                     header answers for the present: how full was this pool, then. Without it the free area
                     and the space above the stack were the only parts of the chart that said nothing. */}
@@ -569,6 +565,42 @@ function HoldingRows({ model, parts }: { model: string; parts: MemoryBreakdown }
 }
 
 /**
+ * KEEP THE KEYBOARD TIPS FROM SITTING ON EACH OTHER — by TILING them, not by dodging.
+ *
+ * Each of these is anchored to the track whose reading it is, which is what makes a split model's two answers
+ * legible as belonging to two cards. But a drilled-in tip is taller than the ~110px track it belongs to, so
+ * the second one landed on the first. The first fix put them on alternating SIDES, which stopped them
+ * colliding with each other and did nothing about the plot underneath — and it broke the correspondence,
+ * since which side a tip sat on then said nothing about which track it was for.
+ *
+ * So they are laid out in a column instead: each one wants to start at its own track's top, and is pushed
+ * down only as far as the one above it requires. ORDER IS PRESERVED, which is what carries the meaning — the
+ * top tip is the top track's — and a track with no tip leaves a real gap, because the next tip's preferred
+ * position is still its own track's top and nothing pushed it up.
+ *
+ * ONLY WHEN THEY WOULD ACTUALLY OVERLAP. A single tip, or two far enough apart, is not moved at all, so the
+ * common case keeps the exact alignment with its track that makes it readable.
+ *
+ * Done imperatively after layout because it is a measurement: how tall a tip is depends on how many parts the
+ * server reported, which nothing knows until it is drawn. Idempotent — it resets each transform before
+ * measuring — so every tip may safely run it.
+ */
+const KB_TIP_GAP = 6;
+function tileKbTips(root: Document | null): void {
+    if (!root) return;
+    // DOM ORDER IS TRACK ORDER: the tips are rendered inside their tracks, top to bottom.
+    const els = Array.from(root.querySelectorAll(".rc-tip-kb")) as HTMLElement[];
+    let prevBottom = -Infinity;
+    for (const el of els) {
+        el.style.transform = "";                       // measure where it WANTS to be
+        const r = el.getBoundingClientRect();
+        const dy = r.top < prevBottom + KB_TIP_GAP ? prevBottom + KB_TIP_GAP - r.top : 0;
+        if (dy) el.style.transform = `translateY(${dy}px)`;
+        prevBottom = r.bottom + dy;
+    }
+}
+
+/**
  * WHICH LAYERS THIS CARD IS HOLDING.
  *
  * Its OWN section with its OWN units, never a bar beside the memory ones: layers are NOT a proxy for memory
@@ -606,7 +638,7 @@ function LayerRows({ placement, device }: { placement: LayerPlacement; device: s
 /** What the hovered band is, shown over the plot. Deliberately the SAME facts as the legend row (ModelFacts),
  *  because a band and its row describe one model — an SVG <title> could carry none of it: no colour, no live
  *  TTL, no badge, and a half-second delay before it appears. */
-function BandTip({ bands, frame, history, samples, ceiling, scope, label, index = 0, at: hoverSample }: { bands: Band[]; frame: Band[] | null; history: Band[][]; samples: ResourceSample[]; ceiling: number; scope: string; label?: string; index?: number; at: ResourceSample | null }) {
+function BandTip({ bands, frame, history, samples, ceiling, scope, label, at: hoverSample }: { bands: Band[]; frame: Band[] | null; history: Band[][]; samples: ResourceSample[]; ceiling: number; scope: string; label?: string; at: ResourceSample | null }) {
     const name = hoverModel.value;
     // ANCHORED TO THE TRACK, not to the cursor, whenever the keyboard owns the focus. Two reasons, and the
     // second is the one that forces it: a reader who is not moving the mouse does not want an answer that
@@ -646,13 +678,17 @@ function BandTip({ bands, frame, history, samples, ceiling, scope, label, index 
     // Several — a split model puts one on every card — must not stack, and they are only ~110px of track
     // apart while a drilled-in tip is taller than that, so they alternate instead. Measured before it was
     // fixed: the first tip's last row sat underneath the second tip's header.
-    // Away from the mark rather than over it: the crosshair is what the reading belongs to.
-    const away = (crosshair.value?.frac ?? 0) < 0.5;
-    const many = (across?.cards ?? 1) > 1;
-    const side = (many && index % 2 === 1 ? !away : away) ? " right" : " left";
+    // Away from the mark rather than over it: the crosshair is what the reading belongs to. ALL of them on
+    // the same side — several tips are kept apart by tiling them down the column (see tileKbTips), which
+    // preserves the correspondence with the tracks that alternating sides destroyed.
+    const side = (crosshair.value?.frac ?? 0) < 0.5 ? " right" : " left";
     // Follows the cursor, offset up-left so it never sits under the pointer (which would flicker as the
     // pointer enters the tip itself) and clamped inside the plot so it can't run off the narrow panel.
     const { ref, style } = useTipPlacement(kb ? null : at);
+    // AFTER EVERY RENDER, because what decides the layout is how TALL these turned out — which depends on how
+    // many parts the server reported and is not knowable until they are drawn. Every tip runs it and the pass
+    // is idempotent, so no coordinator has to know how many there are.
+    useLayoutEffect(() => { tileKbTips(ref.current?.ownerDocument ?? null); });
     return (
         // A STACK, not a row: name, then the figure, then the badges. On one line the name and the figure set
         // the tip's width and every shorter line left a slab of empty space beside it.
@@ -712,14 +748,19 @@ function BandTip({ bands, frame, history, samples, ceiling, scope, label, index 
             {!deep ? <CostFacts model={name} /> : null}
             {/* WHAT THE KEYS DO, and only while the keys are what is driving. A hint under a tip the pointer
                 summoned would advertise a mode at the one moment the reader is already in another one. */}
-            {/* WHAT THE KEYS REACH, said accurately. "another model" was wrong: the list wraps through the
-                OVERVIEW at index 0, so ↑↓ also takes you back to reading the pool rather than a model — a
-                hint that names only half of what a key does is worse than none, because the reader stops
-                pressing it before finding the rest. */}
-            {kb ? <div class="rc-tip-line rc-tip-keys">
+            {/* WHENEVER A TIP IS UP, not only once the keys are already driving. Gating it on the keyboard
+                showed the affordance exclusively to readers who had discovered it — the one group that did
+                not need telling — so nobody arrived at it from the mouse, which is how everybody arrives.
+                The keys work from a hover exactly as they do from a keyboard focus (see stepDepth), so the
+                hint is true in both.
+
+                And it names EVERYTHING the key reaches: "another model" was wrong, because the list wraps
+                through the OVERVIEW, and a reader told half of what a key does stops pressing before finding
+                the rest. */}
+            <div class="rc-tip-line rc-tip-keys">
                 <span><kbd>↑↓</kbd> models &amp; overview</span>
                 <span>{deep ? <><kbd>←</kbd> back</> : <><kbd>→</kbd> details</>}</span>
-            </div> : null}
+            </div>
         </div>
     );
 }
@@ -761,6 +802,10 @@ function PlotTip({ at, bands, ceiling, label, hidden, scope }: { at: ResourceSam
                         ? `loading ${at.loading.join(", ")} — not attributed yet`
                         : "in use, not attributed to a model"}</div>
                     : <div class="rc-tip-line rc-tip-dim">nothing resident</div>}
+            {/* THE WAY IN. This is the tip you get by pointing anywhere on the plot, so it is where a reader
+                who does not know the keys exist is standing — and the models it just listed are exactly what
+                the key steps through. */}
+            {models.length ? <div class="rc-tip-line rc-tip-keys"><span><kbd>↑↓</kbd> pick a model</span></div> : null}
         </div>
     );
 }
@@ -893,7 +938,7 @@ function deviceCeilingNote(dev: { runner: string; unified: boolean; physicalByte
  *  `ram`/`mem` the host pool's. STACK renders the bands (the parts do sum to that pool's occupancy); OVERLAY
  *  renders one line per series, each against its own ceiling, because several pools have no shared total —
  *  which is exactly what `stackRefusal` refuses and why the Overview preset overlays. */
-function TrackView({ def, samples, latest, hidden, events = [], index = 0 }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[]; index?: number }) {
+function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[] }) {
     const cap = latest.capacity!;
     const deviceOf = (id: string) => cap.devices.find((d) => d.id === id.replace(/^vram\./, ""));
     const first = def.series[0] ?? "";
@@ -911,14 +956,14 @@ function TrackView({ def, samples, latest, hidden, events = [], index = 0 }: { d
             const note = first === "mem" && cap.devices[0]
                 ? deviceCeilingNote(cap.devices[0])
                 : "Total system memory. Models here are running on the CPU, or are the spilled part of a model too large for the accelerator.";
-            return <DeviceView label={label} index={index} samples={samples} bandsOf={hostBands}
+            return <DeviceView label={label} samples={samples} bandsOf={hostBands}
                 ceiling={c?.hardBytes ?? cap.host.totalBytes} ceilingNote={note}
                 soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
         }
         const d = deviceOf(first);
         if (!d) return null;
         const c = ceilingsFor(latest, d.id);
-        return <DeviceView label={d.name} index={index} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
+        return <DeviceView label={d.name} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
             ceiling={c?.displayBytes ?? d.totalBytes} ceilingNote={deviceCeilingNote(d)}
             soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
     }
@@ -2212,7 +2257,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     return (
         <>
             <div class="rc" onWheel={wheelScrub}>
-                {tracks.map((t, i) => <TrackView key={t.id} def={t} index={i} samples={filled} latest={latest} hidden={hidden} events={shown} />)}
+                {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} events={shown} />)}
             </div>
             {/* Directly under the tracks: where this window sits in the whole session. It sits ABOVE the lane
                 rather than below it because the lane RE-PACKS as the window moves — a step entering the view

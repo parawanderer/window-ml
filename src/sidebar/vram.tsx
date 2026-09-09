@@ -1051,10 +1051,18 @@ export function stepFocus(dir: number): void {
     kbFocus.value = { model: next, depth: next ? (kbFocus.value?.depth ?? 0) : 0 };
     hoverModel.value = next;
 }
-/** Step the focus deeper (+1) or back out (-1). Refuses at both ends rather than wrapping: a no-op boundary
- *  is how a tree says you are at the root, where wrapping would silently jump you somewhere else. */
+/**
+ * Step the focus deeper (+1) or back out (-1). Refuses at both ends rather than wrapping: a no-op boundary is
+ * how a tree says you are at the root, where wrapping would silently jump you somewhere else.
+ *
+ * IT ADOPTS WHAT THE POINTER IS ON. Pressing right while hovering a band means "this one, in detail", and
+ * requiring a keyboard focus to exist first made that do nothing — while the tip sat there naming the key.
+ * A hint that advertises a key which silently does nothing is worse than no hint, and this is the seam
+ * between the two ways of reading the chart: pointing at a thing and pressing the key should be the same as
+ * having arrived at it with the keys.
+ */
 export function stepDepth(dir: number): boolean {
-    const cur = kbFocus.value;
+    const cur = kbFocus.value ?? (hoverModel.value ? { model: hoverModel.value, depth: 0 } : null);
     if (!cur?.model) return false;            // the overview has nothing to open
     const depth = Math.min(MAX_FOCUS_DEPTH, Math.max(0, cur.depth + dir));
     if (depth === cur.depth) return false;
