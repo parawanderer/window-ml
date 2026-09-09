@@ -4231,6 +4231,45 @@ test("card composer: backend unreachable → a NEW run is BLOCKED with an inline
     assert.ok(doc.querySelector(".card-cmp-input"), "the composer stays open so it can send once the box is back");
 });
 
+// AN EMBEDDING MODEL CANNOT ANSWER A TASK, and this picker chooses who answers one. Listed, it sits between
+// two models that would have worked and costs a round trip to be told so — which is exactly what happened
+// with `embeddinggemma:300m` on a box that has several gemma builds.
+test("commander: the model picker offers chat models only", async () => {
+    const w = await loadSidebarWorld({
+        sync: { debugMode: "off", model: "llama3" },
+        models: ["llama3", "embeddinggemma:300m", "mystery-model", "gpt-4o"],
+        ollamaModels: ["llama3", "embeddinggemma:300m", "mystery-model"],
+        listModels: () => ({
+            data: ["llama3", "embeddinggemma:300m", "mystery-model", "gpt-4o"],
+            ollamaModels: ["llama3", "embeddinggemma:300m", "mystery-model"],
+            // What /api/show says each one can do. `mystery-model` is UNCLASSIFIABLE — an old server, or a
+            // model the probe could not describe — and a cloud id has no entry at all.
+            kinds: {
+                "llama3": ["completion", "tools"],
+                "embeddinggemma:300m": ["embedding"],
+                "mystery-model": null,
+            },
+        }),
+    });
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.raw({ __mlSidebarComposer: "open" });
+    await w.flush();
+    const doc = w.window.document;
+    doc.querySelector(".cmp-model-btn").click();
+    await w.tick();
+    await w.flush();
+
+    const rows = [...doc.querySelectorAll(".cmp-model-row")].map((r) => r.textContent);
+    const has = (m) => rows.some((r) => r.includes(m));
+    assert.ok(has("llama3"), `a chat model is listed: ${rows}`);
+    assert.ok(!has("embeddinggemma:300m"), `an embedding model is NOT: ${rows}`);
+    // FAILS OPEN on anything it cannot classify: dropping a model that works is worse than listing one that
+    // does not, so only an AFFIRMATIVE "this embeds" removes a row. A cloud id has no capabilities at all and
+    // must survive that.
+    assert.ok(has("mystery-model"), `an unclassifiable model stays: ${rows}`);
+    assert.ok(has("gpt-4o"), `a cloud model stays: ${rows}`);
+});
+
 test("card composer: the model picker overrides the run's model, and a cloud pick adds a per-call vision toggle", async () => {
     const w = await loadSidebarWorld({
         sync: { debugMode: "off", model: "llama3" },
