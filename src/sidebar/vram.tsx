@@ -8,7 +8,7 @@ import { signal } from "@preact/signals";
 import type { ComponentChildren } from "preact";
 import {
     config, models, ollamaIds, modelKinds, loadedModels, psError, vramOpen, backendError, rev, sessionMap,
-    sidebarOpen, view,
+    sidebarOpen, view, crosshair,
 } from "./store";
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
@@ -22,7 +22,7 @@ import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_H
 export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, dropInferredLoads, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, memorySplit, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
+import { parseInfo, holdCapacity, memorySplit, placementFrom, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks, ScopeSwitch, muteTip } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -58,6 +58,7 @@ export function residencyOf(m: LoadedModel): ModelResidency {
         ...(Object.keys(per).length ? { perDeviceMemory: per } : {}),
         ...(typeof m.weightsOnDisk === "number" ? { weightsOnDisk: m.weightsOnDisk } : {}),
         ...(host ? { memoryHost: host } : {}),
+        ...((() => { const pl = placementFrom(m.placement); return pl ? { placement: pl } : {}; })()),
     };
 }
 import { RenderPanel, PyBenchOut } from "./render-panel";
@@ -988,6 +989,79 @@ export const rowTipSuppressed = signal(false);
  *  because the chart and the rows are different components either side of the panel. */
 export const hoverModel = signal<string | null>(null);
 
+/**
+ * READING THE CHART FROM THE KEYBOARD — which band, and how deep.
+ *
+ * The chart jams two questions onto one pointer: x asks WHEN, y asks WHAT AM I READING. You cannot move one
+ * without disturbing the other, and the y targets are hostile — a 10px hit stroke on a pool line, a band that
+ * may be three pixels tall. So the second question moves to its own input, and the two axes of the data get
+ * the two axes of the arrow keys:
+ *
+ *   UP / DOWN     — along the LIST: the models drawn at this instant, wrapping through "everything" at 0.
+ *   LEFT / RIGHT  — along the DEPTH: summary → what that model's memory is holding.
+ *
+ * That is the tree convention (and ARIA's `tree` keyboard model), and separating the axes is what stops one
+ * key meaning "next sibling" at the top level and "descend" once you are on a model — a key whose meaning
+ * depends on where you are reads as a mode you cannot predict. It also buys a property the single-axis
+ * version could not have: DEPTH PERSISTS ACROSS UP/DOWN, so drilled into one model you can step to the next
+ * and stay drilled in, which is the actual task ("what are these two cards each holding").
+ *
+ * `model: null` is the overview — the row nothing is picked out on. Depth is 0 there and cannot be anything
+ * else: an overview has no single model to decompose, so RIGHT refuses rather than inventing one.
+ *
+ * NON-NULL MEANS THE KEYBOARD OWNS THE FOCUS, and it holds until the pointer actually MOVES (a pointermove,
+ * not a boundary event a re-layout raised under a parked pointer) or Escape. Without that rule a band sliding
+ * under a still cursor as samples arrive would fire `pointerenter` and silently steal a selection the reader
+ * made with the keys.
+ */
+export const kbFocus = signal<{ model: string | null; depth: number } | null>(null);
+/** How deep the keyboard can go: 0 = the model, 1 = what its memory is holding. */
+export const MAX_FOCUS_DEPTH = 1;
+/** The focused model's depth, or 0 whenever the pointer owns the focus — the hover has no depth of its own. */
+export const focusDepth = (): number => kbFocus.value?.depth ?? 0;
+/**
+ * Hand the focus back to the pointer. Called from the plot's own `pointermove`, which is the one event that
+ * means the reader actually moved — and from nothing else, so a re-layout cannot do it.
+ *
+ * `hoverModel` is cleared only when the pointer is NOT over a band: the keyboard may have focused a model the
+ * pointer was never on, and no `pointerleave` will ever arrive for a band that was never entered.
+ */
+export function releaseFocus(target: EventTarget | null): void {
+    if (!kbFocus.value) return;
+    kbFocus.value = null;
+    const el = target as Element | null;
+    if (!el?.closest?.(".rc-band")) hoverModel.value = null;
+}
+/**
+ * The models the keys step through, in the order the panel LISTS them — published from the render that draws
+ * those rows, because the key handler runs outside render and "which models are on screen" is a fact about
+ * what was just drawn. A plain ref rather than a signal for the same reason `liveRuns` is one: it is written
+ * during render, and a signal written during render re-enters rendering.
+ */
+let focusOrder: string[] = [];
+/** Publish the models the arrow keys step through — call it from the render that DRAWS those rows. */
+export const noteFocusOrder = (names: string[]): void => { focusOrder = names; };
+/** Step the focus along the list, wrapping. `dir` is +1 for DOWN (further down the list) and -1 for UP. */
+export function stepFocus(dir: number): void {
+    const list: (string | null)[] = [null, ...focusOrder];
+    const cur = kbFocus.value ? kbFocus.value.model : hoverModel.value;
+    const at = list.indexOf(cur ?? null);
+    const next = list[((at < 0 ? 0 : at) + dir + list.length) % list.length];
+    // DEPTH SURVIVES the move, except onto the overview, which has none to survive into.
+    kbFocus.value = { model: next, depth: next ? (kbFocus.value?.depth ?? 0) : 0 };
+    hoverModel.value = next;
+}
+/** Step the focus deeper (+1) or back out (-1). Refuses at both ends rather than wrapping: a no-op boundary
+ *  is how a tree says you are at the root, where wrapping would silently jump you somewhere else. */
+export function stepDepth(dir: number): boolean {
+    const cur = kbFocus.value;
+    if (!cur?.model) return false;            // the overview has nothing to open
+    const depth = Math.min(MAX_FOCUS_DEPTH, Math.max(0, cur.depth + dir));
+    if (depth === cur.depth) return false;
+    kbFocus.value = { ...cur, depth };
+    return true;
+}
+
 // The chosen VIEW. A preset is a named starting point for a layout, and editing one is the same operation on
 // the same state (`TrackDef[]`) — so there is no "am I in preset mode or edit mode" to get wrong. `layout`
 // null means "use the default preset for this box", which is also the fallback when a saved layout doesn't
@@ -1239,16 +1313,34 @@ export function VramPanel() {
         if (el.getBoundingClientRect().height < floor - 1) easeVramH(floor);
     };
     useEffect(correct);
-    // Esc: hide the TOOLTIP if one is up, else leave the zoom. In that order because they are different
-    // kinds of thing — the tip is transient and in the way right now, the zoom is state you chose — and
-    // because a tip is showing precisely when the pointer is over the chart, which is when "get out of the
-    // way" is what Esc means. With no tip up the key still does what it always did. Bound while the panel is
-    // open, on the document, because the pointer may be anywhere by the time you want out.
+    // THE CHART'S KEYBOARD. Bound while the panel is open, on the document, because the pointer may be
+    // anywhere by the time you want any of this.
+    //
+    // Esc unwinds ONE RUNG AT A TIME, most transient first: the tooltip, then a keyboard focus, then the
+    // zoom. They are different kinds of thing — the tip is in the way right now, the focus is a reading you
+    // are taking, the zoom is state you chose — and dismissing a popup should never be what throws away a
+    // selection two rungs below it.
+    //
+    // The arrows only answer while the pointer is ON the chart (`crosshair` is set by the plot's own
+    // pointermove and cleared when it leaves), because the whole point is reading the instant you are already
+    // pointing at without moving off it. Elsewhere they stay the page's arrows, and `preventDefault` is
+    // called ONLY when a key was actually used — the panel must not eat scrolling it had no use for.
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
-            if (e.key !== "Escape") return;
-            if (muteTip()) return;
-            if (zoomRange.value) zoomRange.value = null;
+            if (e.key === "Escape") {
+                if (muteTip()) return;
+                if (kbFocus.value) { kbFocus.value = null; hoverModel.value = null; return; }
+                if (zoomRange.value) zoomRange.value = null;
+                return;
+            }
+            if (e.altKey || e.ctrlKey || e.metaKey) return;
+            if (!crosshair.value) return;                       // the pointer is not on the chart
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+                stepFocus(e.key === "ArrowDown" ? 1 : -1);
+                e.preventDefault();
+            } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                if (stepDepth(e.key === "ArrowRight" ? 1 : -1)) e.preventDefault();
+            }
         };
         document.addEventListener("keydown", onKey);
         return () => document.removeEventListener("keydown", onKey);
@@ -1407,6 +1499,11 @@ export function VramPanel() {
     const liveRows = rows.filter((m) => isMine(m.model));
     const goneRows = [...offBox.filter((o) => isMine(o.name)),
                       ...ghosts.filter(isMine).map((n) => ({ kind: "ghost" as const, name: n }))];
+    // WHAT THE ARROW KEYS STEP THROUGH — exactly the rows on screen, in the order they are drawn. Not the
+    // resident set and not the models in the samples: the rows ARE the chart's legend, so stepping onto a
+    // name the reader cannot see would highlight a band with nothing under it to explain the colour. The
+    // folded "others" are deliberately absent for the same reason — they are not on screen.
+    noteFocusOrder([...liveRows.map((m) => m.model), ...goneRows.map((o) => o.name)]);
 
     // Recompute every point's visible-total each render, so toggling redraws the
     // full line retroactively (not just going forward).

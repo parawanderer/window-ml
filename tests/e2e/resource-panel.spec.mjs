@@ -2751,3 +2751,237 @@ test("resource panel: the crosshair does not cut the mark's ring", async () => {
         expect(run, `the line is painted OVER the mark, cutting its ring — rows ${rows}`).toBeGreaterThanOrEqual(9);
     } finally { await ext.close(); await fake.stop(); }
 });
+
+// READING THE CHART FROM THE KEYBOARD. The chart asks two questions of one pointer — x is WHEN, y is WHAT AM
+// I READING — so changing one disturbs the other, and the y targets are a 10px hit stroke or a band three
+// pixels tall. The arrows give the second question its own input, on the two axes the data actually has: a
+// LIST (the models drawn at this instant) and a DEPTH (what one model's memory is holding).
+test("resource panel: the arrow keys pick a model without moving the pointer", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE - 7 * GiB));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.8:27b", 7 * GiB, 1)]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(5000);
+
+        /** Whichever model the panel is currently picking out, read from the tip's own name. */
+        const focused = async () => {
+            const n = await frame.locator(".rc-tip-model .rc-tip-name").allTextContents();
+            return n.length ? n : null;
+        };
+        // The pointer PARKS on the plot's background — low, where no band is drawn — and never moves again.
+        // That is the whole feature: the instant stays put while the reading walks.
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.06);
+        await sleep(300);
+        expect(await focused(), "the overview, to begin with").toBeNull();
+        const at = { x: plot.x + plot.width * 0.5, y: plot.y + plot.height * 0.06 };
+        const crossAt = (await frame.locator(".rc-cross").first().boundingBox()).x;
+
+        // DOWN steps into the list, in the order the panel LISTS the models — the rows under the chart are
+        // its legend, so stepping onto a name that is not on screen would light a band with nothing to
+        // explain the colour.
+        await page.keyboard.press("ArrowDown");
+        await sleep(250);
+        expect(await focused(), "the first row").toEqual(["gemma4:31b"]);
+        await page.keyboard.press("ArrowDown");
+        await sleep(250);
+        expect(await focused(), "the next one").toEqual(["qwen3.8:27b"]);
+        // …and WRAPS back through the overview, which is index 0 rather than a fourth state to discover.
+        await page.keyboard.press("ArrowDown");
+        await sleep(250);
+        expect(await focused(), "round to the overview").toBeNull();
+        // UP is the same list backwards.
+        await page.keyboard.press("ArrowUp");
+        await sleep(250);
+        expect(await focused(), "up goes back the other way").toEqual(["qwen3.8:27b"]);
+
+        // THE INSTANT NEVER MOVED. Asserted rather than assumed: if the pointer had shifted, everything above
+        // could be the ordinary hover doing the work. The crosshair IS where the pointer is, so its position
+        // holding still across four keypresses is the claim — and it is the property the feature exists for,
+        // since the reading walks while the moment you are reading stays put.
+        const line = await frame.locator(".rc-cross").first().boundingBox();
+        expect(Math.abs(line.x - crossAt), `the crosshair moved from ${crossAt} to ${line.x}`).toBeLessThan(2);
+
+        // MOVING HANDS IT BACK. A keyboard reading holds against a band sliding under a parked cursor as
+        // samples arrive — which raises pointerenter with nobody having touched anything — but a real move
+        // ends it, because the pointer is what the reader just used.
+        await page.mouse.move(at.x + 40, at.y);
+        await sleep(300);
+        expect(await focused(), "the pointer is over the background, so nothing is picked out").toBeNull();
+
+        // ESCAPE UNWINDS ONE RUNG AT A TIME: the tip first, then the keyboard focus, then the zoom. Here
+        // there is a focus and no zoom, so the second press leaves the reading and the panel stays put.
+        await page.keyboard.press("ArrowDown");
+        await sleep(250);
+        expect(await focused()).toEqual(["gemma4:31b"]);
+        await page.keyboard.press("Escape");   // hides the tip
+        await sleep(200);
+        await page.keyboard.press("Escape");   // …then drops the focus
+        await sleep(250);
+        expect(await frame.locator(".rc-band.hot").count(), "nothing is picked out any more").toBe(0);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// A SPLIT MODEL ANSWERS ON EVERY CARD IT IS ON. Pinned against a REAL capture — `granite4.1:3b` forced 3:1
+// across two cards — because every synthetic split agrees with itself, and the one term that discriminates
+// here is the one a fixture invented from a ratio would get wrong.
+const SPLIT_LO = { weights: 1447034880, kv_cache: 520093696, compute: 120586240 };   // CUDA0, 31 layers
+const SPLIT_HI = { weights: 649068544, kv_cache: 150994944, compute: 120586240 };    // CUDA1, 10 layers
+const sum = (m) => Object.values(m).reduce((a, b) => a + b, 0);
+
+test("resource panel: drilling into a split model answers on both cards, per card", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const v0 = sum(SPLIT_LO), v1 = sum(SPLIT_HI);
+        fake.setCapacity(box(IDLE - v0, IDLE - v1));
+        fake.setResident([{
+            model: "granite4.1:3b", name: "granite4.1:3b", size: v0 + v1, size_vram: v0 + v1,
+            context_length: 262144, expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+            memory: { weights: SPLIT_LO.weights + SPLIT_HI.weights, kv_cache: SPLIT_LO.kv_cache + SPLIT_HI.kv_cache,
+                compute: SPLIT_LO.compute + SPLIT_HI.compute },
+            gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: v0, memory: SPLIT_LO },
+                   { gpu_id: "1", runner: "CUDA", size_vram: v1, memory: SPLIT_HI }],
+            // OPT-IN ON THE SERVER (`OLLAMA_LAYER_PLACEMENT=1`) and absent by default, so its presence here
+            // is the point: 31 layers against 10, which is the 3:1 the memory figures were forced to.
+            placement: {
+                num_layers: 41,
+                devices: [{ device: "CUDA0", first_layer: 0, last_layer: 30, layers: 31 },
+                          { device: "CUDA1", first_layer: 31, last_layer: 40, layers: 10 }],
+                swa_layers: [1, 3, 5, 7],
+            },
+        }]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(4000);
+
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.06);
+        await sleep(300);
+        await page.keyboard.press("ArrowDown");    // pick the model
+        await sleep(250);
+        // ON EVERY CARD IT IS ON, from the moment it is picked. A keyboard focus names a MODEL rather than a
+        // position, and this one is on two cards — so "where is it" already has two answers, and showing one
+        // would be picking a card for the reader without saying so. (A POINTER hover still answers only on
+        // the track under it: there the question was asked at a place.)
+        const tips = frame.locator(".rc-tip-model");
+        await expect.poll(() => tips.count(), { timeout: 5000 }).toBe(2);
+
+        // RIGHT digs in — and the cards hold DIFFERENT things, so each tip decomposes its own.
+        await page.keyboard.press("ArrowRight");
+        await sleep(400);
+        await expect.poll(() => frame.locator(".rc-tip-part:not(.rc-tip-lrow)").count(), { timeout: 5000 }).toBe(6);
+        const text = (await tips.allTextContents()).map((t) => t.replace(/\s+/g, " "));
+        // Each names its own card, so two tips with different figures are not two answers to one question.
+        expect(text.some((t) => /on CUDA0/.test(t)), `no card named: ${text}`).toBe(true);
+        expect(text.some((t) => /on CUDA1/.test(t)), `no card named: ${text}`).toBe(true);
+
+        /** One tip's parts, as { label: bytesText }. */
+        const partsOf = async (i) => Object.fromEntries(await tips.nth(i).locator(".rc-tip-part:not(.rc-tip-lrow)").evaluateAll(
+            (els) => els.map((e) => [e.querySelector(".rc-tip-plabel")?.textContent,
+                e.querySelector(".rc-tip-pbytes")?.textContent])));
+        const [a, b] = [await partsOf(0), await partsOf(1)];
+
+        // THE WEIGHTS DIFFER, because the cards hold 31 layers and 10 — a per-card reading, not a share of
+        // one total.
+        expect(a.weights, `${JSON.stringify(a)}`).not.toBe(b.weights);
+        // …AND THE COMPUTE IS IDENTICAL, which is the whole reason nothing here is pro-rated. Three times the
+        // layers, byte-identical compute buffers: a chart dividing a whole-model figure by a layer or byte
+        // ratio would be right about two of these three and quietly wrong about the third, more so the more
+        // lopsided the split.
+        expect(a["compute buffers"], "compute is FLAT per device").toBe(b["compute buffers"]);
+        expect(a.weights).not.toBe(a["compute buffers"]);   // …and they are not equal by accident of formatting
+
+        // THE HINT NAMES EVERYTHING THE KEY REACHES. "another model" was wrong: the list wraps through the
+        // OVERVIEW, so a reader told only about models stops pressing before finding their way back to it.
+        expect(text[0], `the hint under-sells the keys: ${text[0]}`).toMatch(/models & overview/);
+        // HOW BIG THE MODEL IS — on BOTH tips, not just the one the pointer happens to be near. Neither
+        // card's figure can answer it, and 1.94 GiB beside 878 MiB under two identical denominators invites
+        // the reader to take either one for the model.
+        for (const [i, t] of text.entries()) expect(t, `tip ${i} names no whole-model total: ${t}`).toMatch(/across 2 cards/);
+        // …and the SHARE each card holds, which is the relationship between the per-card figure and the whole
+        // rather than a third number to reconcile. 3:1 by design, so the two must not read the same.
+        const heres = await tips.locator(".rc-tip-here").allTextContents();
+        expect(heres.length, `both tips say what share is here: ${heres}`).toBe(2);
+        expect(heres[0]).not.toBe(heres[1]);
+
+        // LAYERS, in their OWN section with their own units — never a bar beside the memory ones, because
+        // layers are not a proxy for memory. Matched by the ENGINE's device name, and a card whose name is
+        // not in the list shows nothing rather than being handed the entry at its ordinal.
+        expect(text[0], `CUDA0's layers: ${text[0]}`).toMatch(/layers.*31 of 41.*#0.30/);
+        expect(text[1], `CUDA1's layers: ${text[1]}`).toMatch(/layers.*10 of 41.*#31.40/);
+        // …and the sliding-window layers COUNTED FOR THIS CARD. All four of them are in CUDA0's range, so a
+        // tip repeating the model's total would put four on both cards.
+        expect(text[0]).toMatch(/4 sliding-window/);
+        expect(text[1], "none of them landed here").not.toMatch(/sliding-window/);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// TWO HONEST ABSENCES, which are most of what this view has to get right: a part the server could not name,
+// and a server that could not split the figure at all.
+test("resource panel: an unnamed part is a signal, and no split says so", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        // `other` is the catch-all for buffer kinds the server did not recognise, so a LARGE one means its
+        // breakdown is behind the engine it is reporting on — the one part whose size is itself the message.
+        const MEM = { weights: 8 * GiB, kv_cache: 2 * GiB, compute: 512 * 1024 * 1024, other: 1536 * 1024 * 1024 };
+        const V = 8 * GiB + 2 * GiB + 512 * 1024 * 1024 + 1536 * 1024 * 1024;
+        fake.setCapacity(box(IDLE - V, IDLE - 3 * GiB));
+        fake.setResident([
+            { model: "odd:7b", name: "odd:7b", size: V, size_vram: V, context_length: 8192,
+              expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+              memory: MEM, gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: V, memory: MEM }] },
+            // …and one the server would not split at all (an MLX runner, a build predating the field).
+            resident("mystery:3b", 3 * GiB, 1),
+        ]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(4000);
+
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.06);
+        await sleep(300);
+        await page.keyboard.press("ArrowDown");
+        await sleep(250);
+        await page.keyboard.press("ArrowRight");
+        await sleep(400);
+        // The rows are listed alphabetically, so the first step lands on the model the server would NOT
+        // split. ABSENT IS NOT ZERO: an empty decomposition would read as "it is holding nothing", which is a
+        // claim the server never made.
+        const first = (await frame.locator(".rc-tip-model").first().textContent()).replace(/\s+/g, " ");
+        expect(first, `expected the unsplit model: ${first}`).toMatch(/mystery:3b/);
+        expect(first, "it says the server did not report it").toMatch(/did not report what this is holding/);
+        expect(await frame.locator(".rc-tip-part:not(.rc-tip-lrow)").count(), "and draws no parts").toBe(0);
+        // …and no LAYERS section either, since `placement` is opt-in on the server and absent by default.
+        expect(first, "no layers were reported").not.toMatch(/layers/);
+
+        // THE NEXT MODEL reported a part it could not name.
+        await page.keyboard.press("ArrowDown");
+        await sleep(400);
+        const second = (await frame.locator(".rc-tip-model").first().textContent()).replace(/\s+/g, " ");
+        expect(second, `expected the model with the unnamed part: ${second}`).toMatch(/odd:7b/);
+        expect(second, "the part is listed").toMatch(/unrecognised/);
+        // …and CALLED OUT rather than sitting quietly as one more slice, because what it means is that the
+        // breakdown is stale relative to the engine — not that the memory is unaccounted for.
+        expect(await frame.locator(".rc-tip-warn").count(), "a part the server could not name is flagged").toBe(1);
+    } finally { await ext.close(); await fake.stop(); }
+});

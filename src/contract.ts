@@ -1710,6 +1710,9 @@ export interface LoadedModel {
     memoryHost?: unknown;
     /** The size of the files it loaded from — beside the split, never inside it: it is not resident memory. */
     weightsOnDisk?: number;
+    /** WHICH LAYERS went where, raw from the server and parsed once by `placementFrom`. Opt-in on the server
+     *  (`OLLAMA_LAYER_PLACEMENT=1`), so absent is the normal case and means "not reported". */
+    placement?: unknown;
     /** Whether this runner is SERVING a request right now, from its reference count. It is the only way to
      *  read `expiresAt` correctly: the deadline is rewritten when a request FINISHES, so during a generation
      *  it stands still while a countdown drawn against it keeps running down, and on a long enough one it

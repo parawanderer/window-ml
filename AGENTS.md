@@ -933,6 +933,50 @@ per device, in bytes.
   proxy for memory and must not share a scale** — on an even split one card held MORE layers and LESS weight,
   because the output layer is large and carries no KV; and `swa_layers` is a list rather than a count because
   the pattern is irregular (`gemma2` alternates 1:1, `gemma4:31b` is 50 of 61).
+- **THE ARROW KEYS READ THE CHART, on the two axes the data actually has** (`kbFocus` in vram.tsx). The chart
+  asks two questions of one pointer — x is WHEN, y is WHAT AM I READING — so changing one disturbs the other,
+  and the y targets are a 10px hit stroke or a band three pixels tall. UP/DOWN steps along the LIST (the
+  models the panel lists, wrapping through the overview at index 0); LEFT/RIGHT along the DEPTH (summary →
+  what that model's memory is holding). That is the tree convention and ARIA's `tree` model, and separating
+  the axes is what stops one key meaning "next sibling" at the top level and "descend" once you are on a
+  model. Two consequences are load-bearing: **depth PERSISTS across up/down**, so you can step between models
+  and stay drilled in (which is the actual task — "what are these two cards each holding"); and **LEFT at
+  depth 0 does nothing** rather than wrapping, because a no-op boundary is how a tree says you are at the
+  root. The keys answer only while the pointer is on the chart (`crosshair` is set), and `preventDefault` is
+  called only when one was used, so the panel never eats scrolling it had no use for. **Esc unwinds one rung
+  at a time** — tip, then keyboard focus, then zoom.
+- **A KEYBOARD FOCUS HOLDS UNTIL THE POINTER MOVES** (`releaseFocus`, called from the plot's `pointermove`
+  and nothing else). A band sliding under a parked cursor as samples arrive raises `pointerenter` with nobody
+  having touched anything, so honouring that would let an arriving poll overwrite a selection the keys just
+  made. The tip is then **anchored to its TRACK** rather than to the cursor: a reader who is not moving the
+  mouse does not want an answer that moves, and a split model shows one tip per card, which under one cursor
+  would be two tooltips on the same few pixels. They alternate sides when there are several, because a
+  drilled-in tip is taller than the ~110px track it belongs to.
+- **DRILLED IN, THE AXIS IS SCALED TO THE MODEL — and to the SAME height on every card it is on.** A model is
+  often a few percent of a card, so its decomposition draws into three pixels; here the band lifts to the
+  baseline and everything else drops away. Scaling each track to its OWN contents would draw a card holding
+  1,991 MiB and one holding 878 MiB at the same height — the pro-rating mistake in a different costume, in
+  the one view built to show that the cards hold different things. The shared ceiling is computed
+  independently and identically by every track from the samples they all share, so there is no cross-track
+  state to get out of step. **The header says so** (`full height …`): a chart that changes what its height
+  means without announcing it is a confidently wrong picture.
+- **A SPLIT MODEL ANSWERS ON EVERY CARD IT IS ON**, each tip decomposing its own, and **both carry the whole
+  model's size** — the per-card figure answers "how much of this card" and cannot answer "how big is this
+  thing", and 1.94 GiB beside 878 MiB under two identical denominators invites the reader to take either one
+  for the model. The whole-model figure is read the SAME WAY THE BAND IS (falling back to the last frame that
+  held it): reading it from the hovered sample alone meant the tip drew a band from one instant and looked
+  for its size at another, found nothing, and silently printed nothing.
+- **`other` IS A SIGNAL, NOT A SLICE.** It is what the server could not name, so a large one means the
+  breakdown is behind the engine it is reporting on — the one part whose SIZE is the message. Flagged beside
+  the row, and only above 1%, since a rounding crumb is not news.
+- **`placement` — BUILT, and still opt-in on the server** (`OLLAMA_LAYER_PLACEMENT=1`, absent by default).
+  `placementFrom` parses it; the drilled-in tip draws it as its OWN section with its OWN units, never a bar
+  beside the memory ones — layers are not a proxy for memory (on an even split one card held MORE layers and
+  LESS weight, because the output layer is large and carries no KV), so drawn on a shared scale the two would
+  disagree, correctly, and read as a bug. Matched on the ENGINE's device name (`"CUDA0"`, not the ollama
+  `gpu_id`); a card whose name is not in the list shows nothing rather than being handed the entry at its
+  ordinal. `devices` is a list of RUNS, so entries are summed by name and `devices.length` is never a card
+  count. `swa_layers` is counted for THIS card, since the pattern is irregular.
 - **THE SNAP MARK IS DRAWN OVER THE CROSSHAIR, NOT UNDER IT** (`.rc-snapdot` z-index 6 against `.rc-cross`'s
   5). The dot rides ON the line, and its legibility over a band of any shade comes entirely from a 1.5px ring
   of the panel's own colour — so painted underneath, the line cut that ring and the mark read as a rendering
@@ -1948,7 +1992,8 @@ rate includes the network; that whole matrix (openai/ollama x streamed/not) is p
   chart go wrong rather than from a spec, which is why they are worth having in one place you can run.
   Deterministic (a fake box, no model and no key); `HOLD=0` exits instead of holding the browser open, `PACE`
   sets the beat. Screenshots land in `tests/e2e/artifacts/cursor-demo/`. The assertions are in
-  `resource-panel.spec.mjs`.
+  `resource-panel.spec.mjs`. It also walks the KEYBOARD reading — ↑↓ picking a model without the pointer
+  moving, → drilling into what its memory is holding, and a real 3:1 split answering on both cards at once.
 - **`stream-demo.mjs`** — a **narrated demo, not a test** of LIVE tool-output streaming: `npm run build &&
   node --import tsx tests/e2e/stream-demo.mjs` opens a headful browser, slides the overlay open on a real
   (background-hosted) run, and drives a deliberately SLOW `exec` (paced `console.log`) and `python_exec`

@@ -123,6 +123,10 @@ export function loadedFrom(rows: unknown[]): LoadedModel[] {
             ...(m.memory ? { memory: m.memory } : {}),
             ...(m.memory_host ? { memoryHost: m.memory_host } : {}),
             ...(typeof m.weights_on_disk === "number" ? { weightsOnDisk: m.weights_on_disk } : {}),
+            // WHICH LAYERS WENT WHERE, raw and parsed once downstream like `memory`. Opt-in on the server
+            // (`OLLAMA_LAYER_PLACEMENT=1`) and absent by default, so this is another "missing means not
+            // reported", never "no layers".
+            ...(m.placement ? { placement: m.placement } : {}),
             // A LOADING entry carries its name and zeros for everything else, so its `expires_at` is Go's
             // zero time — a deadline in year 1, which renders as a countdown of minus two thousand years.
             expiresAt: (m.state === "loading" ? null : m.expires_at) || null,

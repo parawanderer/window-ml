@@ -1719,3 +1719,46 @@ test("an UNEQUAL split decomposes by each card's own figures, not by its share o
     // is the trap: two of the three buckets forgive a proportional guess.
     assert.ok(b0.parts.weights > b1.parts.weights * 2, "weights follow the layers");
 });
+
+// LAYER PLACEMENT is opt-in on the server (`OLLAMA_LAYER_PLACEMENT=1`) and absent by default, so the parse
+// has to answer "not reported" far more often than it answers with a value.
+test("placementFrom: absent, unusable and real", () => {
+    assert.equal(M.placementFrom(undefined), null, "absent is not zero");
+    assert.equal(M.placementFrom(null), null);
+    assert.equal(M.placementFrom({ num_layers: 95 }), null, "a total with no devices says nothing");
+    assert.equal(M.placementFrom({ devices: [{ device: "CUDA0", layers: 4 }] }), null, "…and devices with no total");
+    // A device entry carrying no layers is dropped rather than drawn as an empty run.
+    assert.equal(M.placementFrom({ num_layers: 95, devices: [{ device: "CUDA0", layers: 0 }] }), null);
+
+    const p = M.placementFrom({
+        num_layers: 95,
+        devices: [{ device: "CUDA0", first_layer: 0, last_layer: 47, layers: 48 },
+                  { device: "CUDA1", first_layer: 48, last_layer: 94, layers: 47 }],
+        swa_layers: [1, 3, 5],
+    });
+    assert.equal(p.numLayers, 95);
+    assert.deepEqual(p.devices.map((d) => d.device), ["CUDA0", "CUDA1"]);
+    assert.equal(p.devices[1].firstLayer, 48);
+    assert.deepEqual(p.swaLayers, [1, 3, 5]);
+});
+
+// `devices` IS A LIST OF RUNS, not one entry per card — it is built by scanning consecutive layers, so a
+// non-contiguous assignment appears as several entries rather than as a span that never existed. A consumer
+// that read `devices.length` as a card count would be wrong here, which is why the panel sums by NAME.
+test("placementFrom: several runs on one device stay several runs", () => {
+    const p = M.placementFrom({
+        num_layers: 12,
+        devices: [{ device: "CUDA0", first_layer: 0, last_layer: 3, layers: 4 },
+                  { device: "CUDA1", first_layer: 4, last_layer: 7, layers: 4 },
+                  { device: "CUDA0", first_layer: 8, last_layer: 11, layers: 4 }],
+    });
+    assert.equal(p.devices.length, 3, "three runs, two cards");
+    assert.equal(p.devices.filter((d) => d.device === "CUDA0").reduce((n, d) => n + d.layers, 0), 8);
+});
+
+// THE ENGINE'S NAME, NOT THE OLLAMA gpu_id. They are different fields and a filtered-device host can make
+// them disagree, so nothing is reconciled here — the string is carried through as given.
+test("placementFrom: the device name is carried through, never mapped", () => {
+    const p = M.placementFrom({ num_layers: 2, devices: [{ device: "ROCm1", first_layer: 0, last_layer: 1, layers: 2 }] });
+    assert.equal(p.devices[0].device, "ROCm1");
+});

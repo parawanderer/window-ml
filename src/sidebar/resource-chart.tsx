@@ -15,11 +15,11 @@ import {
     placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
-    OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR, MEMORY_PARTS, memoryParts, type MemoryBreakdown,
+    OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
-import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs } from "./vram";
+import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, focusDepth, releaseFocus } from "./vram";
 import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
@@ -96,6 +96,10 @@ const cursorOn = (surface: string) =>
 /** Track a pointer against the viewport, tagged with the surface it is over. */
 const trackCursor = (surface: string) => (e: PointerEvent) => {
     tipMuted.value = false;   // moving is the ask for it back — see tipMuted
+    // MOVING HANDS THE FOCUS BACK. A keyboard selection holds against everything else — including a band
+    // sliding under a still cursor as samples arrive, which raises `pointerenter` with nobody having touched
+    // anything — and it is a real move that ends it. See releaseFocus.
+    releaseFocus(e.target);
     // `yFrac` is the pointer's height within the PLOT (0 = top, 1 = bottom), which is the only thing that can
     // say which of several overlaid lines the pointer is nearest. Read off the plot element rather than the
     // event target: the hit targets are strokes inside it, so measuring against those would give the pointer's
@@ -149,12 +153,54 @@ const partFill = (model: string, key: keyof MemoryBreakdown): string => {
 };
 
 /** One device (or the host pool) as a stacked area over time. `frames` is one band list per sample. */
-function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null }: { frames: Band[][]; ceiling: number; hidden: Set<string>; scope: string; snapIndex?: number | null }) {
+function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = null }: { frames: Band[][]; ceiling: number; hidden: Set<string>; scope: string; snapIndex?: number | null; deep?: { model: string; ceiling: number } | null }) {
     const order = useMemo(() => bandOrder(frames), [frames]);
     const identity = useMemo(() => bandIdentity(frames), [frames]);
     if (frames.length < 2 || ceiling <= 0) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
     const x = (i: number) => (i / (frames.length - 1)) * W;
     const y = (v: number) => H - Math.min(1, v / ceiling) * H;
+    /**
+     * DRILLED IN: ONE MODEL, FROM THE BASELINE, ON A SHARED SCALE.
+     *
+     * A model is usually a few percent of a card — 6.8% in the case that prompted this — so its decomposition
+     * is drawn into three pixels and the parts are a rumour. Here the track stops being "how full is this
+     * pool" and becomes "what is this model holding, over time, on this card": the band lifts to the baseline
+     * and everything else drops away, which is also the reading a CHART is uniquely good at, since weights
+     * sit still while the cache steps with the context.
+     *
+     * THE SCALE IS SHARED ACROSS THE CARDS, and that is the part that must not be got wrong. Scaling each
+     * track to its own contents would draw a card holding 1,991 MiB and one holding 878 MiB at the SAME
+     * height — the pro-rating mistake in a different costume, in the one mode built to show that the cards
+     * hold different amounts. `deep.ceiling` is the largest of them over the window, computed identically by
+     * every track from the samples they all share, so no cross-track plumbing can get it out of step.
+     */
+    if (deep) {
+        const dy = (v: number) => H - (v / Math.max(1, deep.ceiling)) * H;
+        const seen = new Set<keyof MemoryBreakdown>();
+        for (const bands of frames) {
+            const p = bands.find((b) => b.model === deep.model)?.parts;
+            if (p) for (const q of memoryParts(p)) seen.add(q.key);
+        }
+        const keys = MEMORY_PARTS.filter((k) => seen.has(k.key));
+        if (!keys.length) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
+        const tops = keys.map(() => new Array<number>(frames.length).fill(0));
+        frames.forEach((bands, i) => {
+            const p = bands.find((b) => b.model === deep.model)?.parts;
+            let acc = 0;
+            keys.forEach((part, pi) => { if (p) acc += p[part.key]; tops[pi][i] = acc; });
+        });
+        return (
+            <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                {keys.map((part, pi) => {
+                    const pts: string[] = [];
+                    for (let i = 0; i < frames.length; i++) pts.push(`${x(i).toFixed(1)},${dy(tops[pi][i]).toFixed(1)}`);
+                    for (let i = frames.length - 1; i >= 0; i--) pts.push(`${x(i).toFixed(1)},${dy(pi === 0 ? 0 : tops[pi - 1][i]).toFixed(1)}`);
+                    return <polygon key={`d:${part.key}`} points={pts.join(" ")} class={`rc-part rc-part-${part.key}`}
+                        fill={partFill(deep.model, part.key)} vector-effect="non-scaling-stroke" />;
+                })}
+            </svg>
+        );
+    }
 
     // Cumulative tops per key, so each band is drawn between its own top and the one below it.
     const tops: Record<string, number[]> = {};
@@ -183,8 +229,16 @@ function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null }: { fra
         const hot = !!model && hoverModel.value === model;
         return <polygon key={key} points={pts.join(" ")} fill={bandFill(key, model)}
             class={model ? `rc-band${hot ? " hot" : ""}` : undefined} vector-effect="non-scaling-stroke"
-            onPointerEnter={model ? (e: PointerEvent) => { hoverModel.value = model; trackCursor(scope)(e); } : undefined}
-            onPointerLeave={model ? () => { hoverModel.value = null; hoverAt.value = null; } : undefined}
+            onPointerEnter={model ? (e: PointerEvent) => {
+                // THE KEYBOARD OWNS THE FOCUS while it has one. This fires without the reader touching
+                // anything whenever a band moves under a parked pointer, so honouring it here would let an
+                // arriving sample overwrite a selection the keys had just made. `trackCursor` still runs —
+                // the tip has to follow the cursor either way — and it is what releases the focus, on a real
+                // move rather than on a boundary event.
+                if (!kbFocus.value) hoverModel.value = model;
+                trackCursor(scope)(e);
+            } : undefined}
+            onPointerLeave={model ? () => { if (!kbFocus.value) { hoverModel.value = null; hoverAt.value = null; } } : undefined}
             opacity={dim ? 0.18 : key === "other" ? 0.35 : 0.75} />;
     });
 
@@ -302,10 +356,14 @@ export interface DeviceViewProps {
     hidden: Set<string>;
     /** Instants to rule through this plot (evictions). Spans live in the lane below, not here. */
     events?: ResourceEvent[];
+    /** Which track this is, top to bottom. Only used to alternate which side a keyboard-anchored tip sits on:
+     *  a split model shows one per track, and a tip taller than its own track would otherwise land on top of
+     *  its neighbour's. */
+    index?: number;
 }
 
 /** One track: a header carrying the denominator, then the stacked history, gaps left as gaps. */
-export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden, events = [] }: DeviceViewProps) {
+export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden, events = [], index = 0 }: DeviceViewProps) {
     const scope = `track:${label}`;   // one track per pool, so the label identifies the surface
     const latest = samples.at(-1);
     const bands = latest ? bandsOf(latest) : [];
@@ -320,17 +378,65 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     // The DATAPOINT under the pointer, resolved through the same segmented geometry the crosshair uses, so
     // the tooltip's figures and the instant the crosshair names are the same sample and cannot drift apart.
     const hoverSample = hoveredSample(runs, scope);
+    /**
+     * DRILLED IN, on this track. Two facts have to line up: the model has to BE on this card (a split holds
+     * different amounts on each, and a card it is not on has nothing to decompose), and the scale has to be
+     * the same on every card it IS on.
+     *
+     * Both come out of `samples`, which every track already has in full — so the shared ceiling is computed
+     * independently and identically by each of them rather than passed down from a parent that would have to
+     * know about all the tracks. There is no cross-track state to get out of step, which is the failure the
+     * one-scale rule exists to prevent in the first place.
+     */
+    // READ UNCONDITIONALLY, AT THE TOP, AND KEEP THE VALUE. A signal read buried in a helper or behind a
+    // condition does not reliably subscribe the component to it once the bundle is minified — the panel's
+    // oldest rendering gotcha. It showed here as ONE track entering the drilled-in mode while its siblings
+    // kept drawing the summary: they had subscribed to `hoverModel` (which the previous keypress also wrote)
+    // and not to this, so the depth change reached exactly one of them.
+    const kbNow = kbFocus.value;
+    const deepModel = kbNow && kbNow.depth > 0 ? kbNow.model : null;
+    const deep = (() => {
+        if (!deepModel || hidden.has(deepModel)) return null;
+        let mine = 0, most = 0;
+        for (const s of samples) {
+            const r = s.models.find((x) => x.model === deepModel);
+            if (!r) continue;
+            for (const v of Object.values(r.perDevice)) most = Math.max(most, v ?? 0);
+        }
+        for (const b of bands) if (b.model === deepModel) mine = Math.max(mine, b.bytes);
+        for (const s of samples) {
+            const bs = bandsOf(s).find((b) => b.model === deepModel);
+            if (bs) mine = Math.max(mine, bs.bytes);
+        }
+        return mine > 0 && most > 0 ? { model: deepModel, ceiling: most } : null;
+    })();
     return (
-        <div class="rc-track">
+        <div class={`rc-track${deepModel ? " deep" : ""}${deepModel && !deep ? " away" : ""}`}>
             <div class="rc-head">
                 <span class="rc-name">{label}</span>
                 <span class="sp" />
-                <span class="rc-total tt">
-                    {formatShare(used, ceiling, "/")}
-                    {/* RIGHT-anchored (the default): this figure sits at the panel's right edge, so a
-                        left-anchored pop extends rightward and is clipped. `wrap` because it is prose. */}
-                    <span class="tt-pop wrap" role="tooltip">{ceilingNote}</span>
-                </span>
+                {/* A RESCALED AXIS HAS TO SAY SO. Drilled in, this track stops being "how full is this pool"
+                    and becomes "what is this model holding here" — the band is lifted to the baseline and
+                    everything else dropped, so the same shape now means something completely different.
+                    Reporting the pool's occupancy over it would be a confidently wrong picture, and a chart
+                    that quietly changes what its height means is the worst kind. */}
+                {deep ? (
+                    <span class="rc-total tt rc-scaled">
+                        full height {formatBytes(deep.ceiling)}
+                        <span class="tt-pop wrap" role="tooltip">Scaled to {deep.model}, not to this pool — and to the SAME height on every card it is on, so a card holding less of it draws shorter. Scaling each card to its own contents would draw them the same size, which is the one thing this view exists to disprove.</span>
+                    </span>
+                ) : deepModel ? (
+                    // A card the model is not on has nothing to decompose, and saying so beats leaving its
+                    // ordinary stack up as though it were part of the answer.
+                    <span class="rc-total rc-scaled">not on this card</span>
+                ) : (
+                    <span class="rc-total tt">
+                        {formatShare(used, ceiling, "/")}
+                        {/* RIGHT-anchored (the default): this figure sits at the panel's right edge, so a
+                            left-anchored pop extends rightward and is clipped. `wrap` because it is prose. */}
+                        <span class="tt-pop wrap" role="tooltip">{ceilingNote}</span>
+                    </span>
+                )}
             </div>
             <div class="rc-plot"
                 onPointerDown={startBrush(runs)}
@@ -339,6 +445,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                         <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} scope={scope}
+                            deep={deep}
                             snapIndex={snapUnder(runs)?.run === i ? snapUnder(runs)!.index : null} />
                         <InstantRules instants={instants} run={i} scope={scope} />
                         <HoverSpan run={i} scope="lane" />
@@ -349,7 +456,8 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
                     title={soft.label} /> : null}
                 <BandTip bands={bands} frame={hoverSample ? bandsOf(hoverSample) : null}
-                    history={samples.map(bandsOf)} ceiling={ceiling} scope={scope} at={hoverSample} />
+                    history={samples.map(bandsOf)} samples={samples} ceiling={ceiling} scope={scope} label={label}
+                    index={index} at={hoverSample} />
                 {/* Hovering the plot ANYWHERE, not just a model's band, answers the question this track's
                     header answers for the present: how full was this pool, then. Without it the free area
                     and the space above the stack were the only parts of the chart that said nothing. */}
@@ -384,7 +492,14 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
  *  the crosshair is drawn at, which is the drift you get from measuring the pointer twice. */
 function hoveredSample(runs: ResourceSample[][], scope: string): ResourceSample | null {
     const c = crosshair.value;
-    if (!c || !cursorOn(scope)) return null;
+    if (!c) return null;
+    // EVERY TRACK RESOLVES ONE WHEN THE KEYBOARD HAS THE FOCUS. Normally only the surface the pointer is on
+    // reads a datapoint — a tooltip per track under one cursor is four answers to a question asked once. But
+    // a keyboard focus is not asked at a position: it names a MODEL, and a model split across cards is on
+    // several tracks at once, each holding different things (compute is flat per device, so one card's
+    // breakdown genuinely does not describe the other). Reading only the pointed-at track would show one
+    // half of a split and silently omit the rest.
+    if (!kbFocus.value?.model && !cursorOn(scope)) return null;
     return sampleAtFraction(runs, c.frac);
 }
 
@@ -408,13 +523,98 @@ function SampleStamp({ at }: { at: ResourceSample | null }) {
     );
 }
 
+/**
+ * WHAT THIS MODEL'S MEMORY IS HOLDING, on THIS card.
+ *
+ * `size_vram` alone cannot tell a big MODEL from a big CONTEXT — lots of weights with a small cache, and
+ * modest weights with an enormous one, are the same number and want opposite responses (a smaller quant, or
+ * less context). This is the answer, and it is drawn as ROWS rather than as a second chart because the chart
+ * is already showing it: the swatches are the exact fills the band is subdivided with, so the tip and the
+ * plot are one picture rather than two pictures of the same memory.
+ *
+ * PER CARD, and that is not a detail. `gpus[].memory` sums to that entry's own `size_vram` exactly, so each
+ * card's figures are MEASUREMENTS — while a whole-model split divided by a layer or byte ratio would be
+ * right about weights and cache and quietly wrong about `compute`, which is FLAT PER DEVICE (measured: 31
+ * layers against 10, and both cards holding 115 MiB of it).
+ *
+ * NO TOTAL ROW. The parts sum to `size_vram` to the byte, and that figure is already two lines above — a
+ * total would print the same number twice, and the panel refuses a split that does not add up rather than
+ * padding one with a remainder.
+ */
+function HoldingRows({ model, parts }: { model: string; parts: MemoryBreakdown }) {
+    const rows = memoryParts(parts);
+    const total = rows.reduce((n, r) => n + r.bytes, 0);
+    if (!rows.length || total <= 0) return null;
+    return (
+        <>
+            <div class="rc-tip-line rc-tip-sec">holding</div>
+            {rows.map((r) => (
+                <div class={`rc-tip-line rc-tip-part${r.key === "other" ? " odd" : ""}`} key={r.key}>
+                    <i class="rc-tip-dot" style={{ background: partFill(model, r.key) }} />
+                    <span class="rc-tip-plabel">{r.label}</span>
+                    <span class="rc-tip-pbytes">{formatBytes(r.bytes)}</span>
+                    <span class="rc-tip-ppct">{percentOf(r.bytes, total)}</span>
+                </div>
+            ))}
+            {/* `other` IS THE SIGNAL, not a slice. It is what the server could not name, so it means the
+                breakdown is behind the engine — the one part whose SIZE is the message. Called out rather
+                than left to sit quietly in the list, and only when it is big enough to matter: a rounding
+                crumb under a percent is not news. */}
+            {parts.other > 0 && parts.other / total >= 0.01 ? (
+                <div class="rc-tip-line rc-tip-dim rc-tip-warn">the server could not name this part — its
+                    breakdown is behind the engine it is reporting on</div>
+            ) : null}
+        </>
+    );
+}
+
+/**
+ * WHICH LAYERS THIS CARD IS HOLDING.
+ *
+ * Its OWN section with its OWN units, never a bar beside the memory ones: layers are NOT a proxy for memory
+ * and must not share a scale. On an even split of `granite4.1:3b` one card held MORE layers and LESS weight —
+ * the output layer is large and carries no KV — so a layers bar and a memory bar drawn together would
+ * disagree, correctly, and read as a bug.
+ *
+ * MATCHED BY NAME, and unmatched means UNKNOWN. `device` is the ENGINE's name (`"CUDA0"`), not the ollama
+ * `gpu_id`; they are different fields and a filtered-device host can make them disagree, so a card whose name
+ * is not in the list simply shows nothing rather than being handed the entry that happens to sit at its
+ * ordinal. `devices` is a list of RUNS rather than one entry per card, so they are summed.
+ */
+function LayerRows({ placement, device }: { placement: LayerPlacement; device: string }) {
+    const mine = placement.devices.filter((d) => d.device === device);
+    if (!mine.length) return null;
+    const held = mine.reduce((n, d) => n + d.layers, 0);
+    const span = mine.map((d) => `#${d.firstLayer}\u2013${d.lastLayer}`).join(", ");
+    const swa = placement.swaLayers.filter((n) => mine.some((d) => n >= d.firstLayer && n <= d.lastLayer)).length;
+    return (
+        <>
+            <div class="rc-tip-line rc-tip-sec">layers</div>
+            {/* Its OWN class, sharing the parts' layout but not their identity: a layer count is not a
+                memory part, and anything counting the parts must not pick this up as a seventh one. */}
+            <div class="rc-tip-line rc-tip-part rc-tip-lrow">
+                <span class="rc-tip-plabel">{held} of {placement.numLayers}</span>
+                <span class="rc-tip-pbytes">{span}</span>
+            </div>
+            {/* A LIST, not a count, upstream — the pattern is irregular (gemma2 alternates 1:1, gemma4:31b is
+                50 of 61), so this counts the ones that landed on THIS card rather than repeating a total. */}
+            {swa ? <div class="rc-tip-line rc-tip-dim">{swa} sliding-window</div> : null}
+        </>
+    );
+}
+
 /** What the hovered band is, shown over the plot. Deliberately the SAME facts as the legend row (ModelFacts),
  *  because a band and its row describe one model — an SVG <title> could carry none of it: no colour, no live
  *  TTL, no badge, and a half-second delay before it appears. */
-function BandTip({ bands, frame, history, ceiling, scope, at: hoverSample }: { bands: Band[]; frame: Band[] | null; history: Band[][]; ceiling: number; scope: string; at: ResourceSample | null }) {
+function BandTip({ bands, frame, history, samples, ceiling, scope, label, index = 0, at: hoverSample }: { bands: Band[]; frame: Band[] | null; history: Band[][]; samples: ResourceSample[]; ceiling: number; scope: string; label?: string; index?: number; at: ResourceSample | null }) {
     const name = hoverModel.value;
+    // ANCHORED TO THE TRACK, not to the cursor, whenever the keyboard owns the focus. Two reasons, and the
+    // second is the one that forces it: a reader who is not moving the mouse does not want an answer that
+    // moves; and a split model shows a tip on EVERY card it is on, which under one cursor would be two
+    // tooltips stacked on the same few pixels.
+    const kb = kbFocus.value?.model ? kbFocus.value : null;
     const at = cursorOn(scope);
-    if (!name || !at) return null;
+    if (!name || (!kb && !at)) return null;
     // READ THE DATAPOINT UNDER THE CURSOR, not the newest one. The chart is a history, so the shape being
     // hovered is a measurement from some earlier instant — often of a model that has since evicted, and
     // almost always of a different figure than the model holds now. Answering with the current value would
@@ -426,15 +626,43 @@ function BandTip({ bands, frame, history, ceiling, scope, at: hoverSample }: { b
         ?? [...history].reverse().flatMap((f) => f.filter((b) => b.model === name && b.bytes > 0)).at(0);
     if (!band) return null;   // hovering a model that isn't on THIS device — its own track shows the tip
     const m = (loadedModels.value || []).find((x) => x.model === name);
+    const deep = !!kb && focusDepth() > 0;
+    /**
+     * THE WHOLE MODEL, found the SAME WAY ITS BAND IS.
+     *
+     * `perDevice` names every card it is on, so the card count is measured rather than inferred from how many
+     * tracks happen to be drawn. But it has to be read from the same instant the band came from: the band
+     * lookup already falls back to the last frame that held this model (the pointer is often parked on a
+     * stretch from before it loaded), and reading the TOTAL from the hovered sample alone meant the tip drew
+     * a band from one instant and looked for its size at another — found nothing, and silently printed
+     * nothing. A split model's tips then named no total at all, which is the one figure a per-card reading
+     * cannot supply.
+     */
+    const resAt = (sm: ResourceSample | null) => sm?.models.find((x) => x.model === name);
+    let res = resAt(hoverSample);
+    for (let i = samples.length - 1; i >= 0 && !res; i--) res = resAt(samples[i]);
+    const across = res ? { bytes: res.vramBytes, cards: Object.values(res.perDevice).filter((v) => (v ?? 0) > 0).length } : null;
+    // WHICH SIDE. One tip goes wherever the crosshair is not, which is all that matters when there is one.
+    // Several — a split model puts one on every card — must not stack, and they are only ~110px of track
+    // apart while a drilled-in tip is taller than that, so they alternate instead. Measured before it was
+    // fixed: the first tip's last row sat underneath the second tip's header.
+    // Away from the mark rather than over it: the crosshair is what the reading belongs to.
+    const away = (crosshair.value?.frac ?? 0) < 0.5;
+    const many = (across?.cards ?? 1) > 1;
+    const side = (many && index % 2 === 1 ? !away : away) ? " right" : " left";
     // Follows the cursor, offset up-left so it never sits under the pointer (which would flicker as the
     // pointer enters the tip itself) and clamped inside the plot so it can't run off the narrow panel.
-    const { ref, style } = useTipPlacement(at);
+    const { ref, style } = useTipPlacement(kb ? null : at);
     return (
         // A STACK, not a row: name, then the figure, then the badges. On one line the name and the figure set
         // the tip's width and every shorter line left a slab of empty space beside it.
-        <div class="rc-tip rc-tip-model" role="tooltip" ref={ref} style={style}>
+        <div class={`rc-tip rc-tip-model${kb ? ` rc-tip-kb${side}` : ""}`} role="tooltip" ref={ref} style={style}>
             <div class="rc-tip-line"><i class="rc-tip-dot" style={{ background: colorFor(name) }} />
-                <span class="rc-tip-name">{name}</span></div>
+                <span class="rc-tip-name">{name}</span>
+                {/* WHICH CARD, once you are reading one card's contents. A split model shows one of these per
+                    track and their figures differ on purpose, so a tip that did not name its own device
+                    would be two unlabelled answers to the same question. */}
+                {deep && label ? <span class="rc-tip-of rc-tip-onwhat">on {label}</span> : null}</div>
             {/* Bytes AND the share of this device — a model is "big" only relative to the card it is on. */}
             <div class="rc-tip-line"><span class="rc-tip-size">{formatBytes(band.bytes)} <span class="rc-tip-pct">({percentOf(band.bytes, ceiling)})</span></span></div>
             {/* THE DENOMINATOR, dimmed and on its own row — the same line the pool tip carries, because the
@@ -442,7 +670,34 @@ function BandTip({ bands, frame, history, ceiling, scope, at: hoverSample }: { b
                 figure a reader has to go and find. Dimmed because it is a CONSTANT: it does not change as
                 you move along the trace, so it is the number that should recede rather than be read first.
                 On the same line it competed with the reading for one glance. */}
-            <div class="rc-tip-line rc-tip-of">out of {formatBytes(ceiling)}</div>
+            {/* The CARD's denominator, and only while the card is the subject. Drilled in it is not — the
+                question became "what is this model holding", the rows below answer it as shares of the model,
+                and a second denominator in the same tip is one the reader has to work out is unused. Dropping
+                it also buys back a line, which is the difference between a tip that fits inside its track and
+                one that covers the shape it is describing. */}
+            {!deep ? <div class="rc-tip-line rc-tip-of">out of {formatBytes(ceiling)}</div> : null}
+            {/* HOW BIG THE MODEL IS, when this card holds only part of it — the per-card figure above cannot
+                answer that, and on a split it is the first thing you want. Only when it IS split: on one card
+                the card's figure IS the total, and printing it twice is the same noise as a total row under
+                the parts. Read from the SAMPLE rather than from what is resident now, so the whole tip stays
+                a reading of one instant. */}
+            {/* HOW BIG THE MODEL IS, on EVERY card's tip. A split model's per-card figure answers "how much of
+                this card" and cannot answer "how big is this thing" — and 1.94 GiB beside 878 MiB, each under
+                its own denominator, invites the reader to take either one for the model. So both tips carry
+                the whole, and say what share of it this card is holding, which is the relationship between
+                the two numbers rather than a third number to reconcile. Only when it IS split: on one card
+                the card's figure IS the total, and printing it twice is the noise a total row would be. */}
+            {across && across.cards > 1
+                ? <div class="rc-tip-line rc-tip-of">{formatBytes(across.bytes)} across {across.cards} cards
+                    <span class="rc-tip-here">{percentOf(band.bytes, across.bytes)} here</span></div>
+                : null}
+            {deep && band.parts ? <HoldingRows model={name} parts={band.parts} /> : null}
+            {deep && res?.placement && label ? <LayerRows placement={res.placement} device={label} /> : null}
+            {deep && !band.parts
+                // ABSENT IS NOT ZERO. A loading row, an MLX runner, or a build predating the field reports no
+                // split at all — and an empty decomposition would read as "it is holding nothing".
+                ? <div class="rc-tip-line rc-tip-dim">the server did not report what this is holding</div>
+                : null}
             <SampleStamp at={hoverSample} />
             {/* NO "not resident now" HERE, and none on the consumer rows either. This tooltip reads a sample
                 from the PAST: it answers what was on this card at that instant, the stamp above says which
@@ -453,8 +708,18 @@ function BandTip({ bands, frame, history, ceiling, scope, at: hoverSample }: { b
             {/* Badges and cost each break onto their OWN line. On one line the tip grew past the panel and was
                 clipped at the window edge — and the figure that matters (how much, what share) is the part
                 that got cut. */}
-            {m ? <div class="rc-tip-facts"><ModelFacts m={m} tips={false} /></div> : null}
-            <CostFacts model={name} />
+            {m && !deep ? <div class="rc-tip-facts"><ModelFacts m={m} tips={false} /></div> : null}
+            {!deep ? <CostFacts model={name} /> : null}
+            {/* WHAT THE KEYS DO, and only while the keys are what is driving. A hint under a tip the pointer
+                summoned would advertise a mode at the one moment the reader is already in another one. */}
+            {/* WHAT THE KEYS REACH, said accurately. "another model" was wrong: the list wraps through the
+                OVERVIEW at index 0, so ↑↓ also takes you back to reading the pool rather than a model — a
+                hint that names only half of what a key does is worse than none, because the reader stops
+                pressing it before finding the rest. */}
+            {kb ? <div class="rc-tip-line rc-tip-keys">
+                <span><kbd>↑↓</kbd> models &amp; overview</span>
+                <span>{deep ? <><kbd>←</kbd> back</> : <><kbd>→</kbd> details</>}</span>
+            </div> : null}
         </div>
     );
 }
@@ -628,7 +893,7 @@ function deviceCeilingNote(dev: { runner: string; unified: boolean; physicalByte
  *  `ram`/`mem` the host pool's. STACK renders the bands (the parts do sum to that pool's occupancy); OVERLAY
  *  renders one line per series, each against its own ceiling, because several pools have no shared total —
  *  which is exactly what `stackRefusal` refuses and why the Overview preset overlays. */
-function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[] }) {
+function TrackView({ def, samples, latest, hidden, events = [], index = 0 }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[]; index?: number }) {
     const cap = latest.capacity!;
     const deviceOf = (id: string) => cap.devices.find((d) => d.id === id.replace(/^vram\./, ""));
     const first = def.series[0] ?? "";
@@ -646,14 +911,14 @@ function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDe
             const note = first === "mem" && cap.devices[0]
                 ? deviceCeilingNote(cap.devices[0])
                 : "Total system memory. Models here are running on the CPU, or are the spilled part of a model too large for the accelerator.";
-            return <DeviceView label={label} samples={samples} bandsOf={hostBands}
+            return <DeviceView label={label} index={index} samples={samples} bandsOf={hostBands}
                 ceiling={c?.hardBytes ?? cap.host.totalBytes} ceilingNote={note}
                 soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
         }
         const d = deviceOf(first);
         if (!d) return null;
         const c = ceilingsFor(latest, d.id);
-        return <DeviceView label={d.name} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
+        return <DeviceView label={d.name} index={index} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
             ceiling={c?.displayBytes ?? d.totalBytes} ceilingNote={deviceCeilingNote(d)}
             soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
     }
@@ -1947,7 +2212,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     return (
         <>
             <div class="rc" onWheel={wheelScrub}>
-                {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} events={shown} />)}
+                {tracks.map((t, i) => <TrackView key={t.id} def={t} index={i} samples={filled} latest={latest} hidden={hidden} events={shown} />)}
             </div>
             {/* Directly under the tracks: where this window sits in the whole session. It sits ABOVE the lane
                 rather than below it because the lane RE-PACKS as the window moves — a step entering the view

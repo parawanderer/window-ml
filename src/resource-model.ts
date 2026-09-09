@@ -212,6 +212,45 @@ export interface ModelResidency {
      *  how MUCH went to host memory; this says WHAT went, and 2 GB of spilled weights is a different problem
      *  from 2 GB of spilled cache. */
     memoryHost?: MemoryBreakdown;
+    /** WHICH LAYERS WENT WHERE, when the server was started with `OLLAMA_LAYER_PLACEMENT=1`. Absent by
+     *  default, exactly like `gpus[].memory` — the engine states the assignment only at a verbosity that also
+     *  emits about a line per tensor, so it is opt-in. Treat missing as "not reported" and draw without it. */
+    placement?: LayerPlacement;
+}
+
+/** Which layers a model put on which device. */
+export interface LayerPlacement {
+    /** The model's total, so a per-device count means something. */
+    numLayers: number;
+    /** One entry per contiguous RUN of layers — usually one per card, but built by scanning consecutive
+     *  layers, so a non-contiguous assignment appears as several entries rather than as a span that never
+     *  existed. `devices.length` is therefore NOT the number of cards. */
+    devices: { device: string; firstLayer: number; lastLayer: number; layers: number }[];
+    /** WHICH layers use sliding-window attention, from the engine's own `hparams.is_swa`. A list rather than
+     *  a count because the pattern is irregular — gemma2 alternates 1:1, gemma4:31b is 50 of 61. Empty for
+     *  architectures with none. */
+    swaLayers: number[];
+}
+
+/** Parse a server `placement` object, or null when it is absent or unusable.
+ *
+ *  `device` is the ENGINE's name (`"CUDA0"`), NOT the ollama `gpu_id` — they are different fields and a
+ *  filtered-device host can make them disagree, so a consumer matches on the name it was given and treats a
+ *  mismatch as unknown rather than guessing a mapping. Nothing here is reconciled against `gpus[]`. */
+export function placementFrom(raw: unknown): LayerPlacement | null {
+    if (!raw || typeof raw !== "object") return null;
+    const p = raw as Record<string, unknown>;
+    const num = Number(p.num_layers) || 0;
+    const list = Array.isArray(p.devices) ? p.devices as Record<string, unknown>[] : [];
+    const devices = list.map((d) => ({
+        device: String(d.device ?? ""),
+        firstLayer: Number(d.first_layer) || 0,
+        lastLayer: Number(d.last_layer) || 0,
+        layers: Number(d.layers) || 0,
+    })).filter((d) => d.device && d.layers > 0);
+    if (!num || !devices.length) return null;
+    const swa = Array.isArray(p.swa_layers) ? (p.swa_layers as unknown[]).map(Number).filter((n) => Number.isFinite(n)) : [];
+    return { numLayers: num, devices, swaLayers: swa };
 }
 
 /** Parse a server `memory` object, or null when it cannot be trusted as a split.
@@ -310,6 +349,7 @@ export function residencyFrom(raw: unknown): ModelResidency {
                 ...(Object.keys(per).length ? { perDeviceMemory: per } : {}),
                 ...(typeof m.weights_on_disk === "number" ? { weightsOnDisk: m.weights_on_disk } : {}),
                 ...(host ? { memoryHost: host } : {}),
+                ...((() => { const pl = placementFrom(m.placement); return pl ? { placement: pl } : {}; })()),
             };
         })(),
     };

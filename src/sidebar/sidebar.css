@@ -2773,3 +2773,43 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    worse than an absent one, because you cannot tell it from a bug. */
 .bench-env-soon { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--border);
                   font-size: 0.82em; font-style: italic; color: var(--fg-faint); }
+
+/* A KEYBOARD-READ TIP IS ANCHORED TO ITS TRACK, not to the cursor. The reader is not moving the mouse, so an
+   answer that follows it has nothing to follow — and a model split across cards shows one of these on EVERY
+   track it is on, which under a single cursor would be two tooltips stacked on the same few pixels. Absolute
+   inside .rc-plot (which is positioned), so each one belongs to the track whose reading it is. */
+.rc-tip.rc-tip-kb { position: absolute; top: 3px; bottom: auto; }
+.rc-tip.rc-tip-kb.right { right: 3px; left: auto; }
+.rc-tip.rc-tip-kb.left { left: 3px; right: auto; }
+/* A SECTION HEAD inside a tooltip: the tip is a stack of readings and a drilled-in one has two groups of
+   them, so each group says what it is rather than running the rows together. */
+.rc-tip-sec { color: var(--fg-faint); font-size: 0.86em; letter-spacing: .06em; text-transform: uppercase;
+              margin-top: 2px; }
+/* One memory part: its swatch (the exact fill the band is subdivided with, so the tip and the plot are one
+   picture), what it is, how much, and what share of the model that is on this card. */
+.rc-tip-part { display: flex; align-items: center; gap: 5px; align-self: stretch; }
+.rc-tip-plabel { flex: 1 1 auto; white-space: nowrap; }
+.rc-tip-pbytes { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rc-tip-ppct { color: var(--fg-faint); font-variant-numeric: tabular-nums; min-width: 3.2em; text-align: right; }
+/* The part the server could not name. Its SIZE is the message — it means the breakdown is behind the engine
+   — so it is marked rather than left to read as one more slice. */
+.rc-tip-part.odd .rc-tip-plabel { font-style: italic; }
+.rc-tip-warn { color: var(--warn, #d97706); }
+/* Which card this reading is of, beside the model's name — a split model shows one tip per track. */
+.rc-tip-onwhat { margin-left: auto; }
+/* The keys, under a tip the KEYBOARD is driving (never under one the pointer summoned). */
+.rc-tip-keys { display: flex; gap: 10px; align-self: stretch; justify-content: space-between;
+               color: var(--fg-faint); font-size: 0.88em; border-top: 1px solid var(--border);
+               padding-top: 3px; margin-top: 2px; }
+.rc-tip-keys kbd { font: inherit; padding: 0 3px; border: 1px solid var(--border); border-radius: 3px;
+                   background: var(--bg); }
+/* What share of the WHOLE model this card is holding — the relationship between the two figures above it,
+   rather than a third number for the reader to reconcile. */
+.rc-tip-here { margin-left: auto; padding-left: 8px; }
+/* The track figure while the axis is scaled to ONE MODEL rather than to the pool. Marked, because the same
+   shape now means something completely different and a chart that changes what its height means without
+   saying so is the worst kind. */
+.rc-scaled { color: var(--accent); font-variant-numeric: tabular-nums; }
+/* A card the drilled-into model is not on: nothing to decompose, so its ordinary stack recedes rather than
+   sitting there looking like part of the answer. */
+.rc-track.away .rc-plot { opacity: .35; }
