@@ -2496,6 +2496,22 @@ test("resource panel: the pool tooltip puts the ceiling on its own dimmer line",
             getComputedStyle(el.querySelector(".rc-tip-of")).color,
         ]);
         expect(c2).not.toBe(c1);
+
+        // AND THE SAME ON A MODEL'S OWN TIP. Its percentage is a share of THIS pool, and a share with no
+        // denominator on screen is the one figure a reader has to go and find — so the band tip carries the
+        // line too, dimmed for the same reason: the ceiling is the one number in the tooltip that does not
+        // change as the pointer moves along the trace, so it is the one that should recede.
+        await frame.locator(".rc-band").first().hover();
+        await expect.poll(() => frame.locator(".rc-tip-model").count(), { timeout: 8000 }).toBe(1);
+        const band = frame.locator(".rc-tip-model");
+        expect(await band.locator(".rc-tip-size").first().textContent(), "the reading leads").toMatch(/\(\d+%\)/);
+        expect(await band.locator(".rc-tip-of").first().textContent(), "…with what it is OF beneath it")
+            .toMatch(/^out of /);
+        const [m1, m2] = await band.evaluate((el) => [
+            getComputedStyle(el.querySelector(".rc-tip-size")).color,
+            getComputedStyle(el.querySelector(".rc-tip-of")).color,
+        ]);
+        expect(m2, "dimmer than the figure above it").not.toBe(m1);
     } finally { await ext.close(); await fake.stop(); }
 });
 
@@ -2930,6 +2946,22 @@ test("resource panel: drilling into a split model answers on both cards, per car
         expect(boxes[0].bottom, "and never overlapping").toBeLessThanOrEqual(boxes[1].top);
         expect(Math.abs(boxes[0].left - boxes[1].left), "…on the same side, since tiling is what keeps them apart")
             .toBeLessThan(2);
+        // THE SHARED LINES ARE SAID ONCE, at the bottom of the stack. The instant being read and the keys
+        // that move the reading are facts about the READING, not about a card, so repeating them per card is
+        // the same two lines twice in the one view where height is what everything competes for — and it is
+        // the difference between a tip beside the trace it describes and a tip on top of it.
+        // COUNTED AS SHOWN, not as present: the trimmed lines are still in the DOM (they are hidden by class,
+        // which is what keeps the tiler's measurement and the markup in one place), and `count()` would
+        // happily report two of something nobody can see.
+        const shown = async (sel) => tips.locator(sel).evaluateAll(
+            (els) => els.filter((e) => getComputedStyle(e).display !== "none").length);
+        expect(await shown(".rc-tip-keys"), "one set of key hints, not one per card").toBe(1);
+        expect(await shown(".rc-tip-when"), "…and one timestamp").toBe(1);
+        expect(await tips.nth(1).locator(".rc-tip-keys").evaluateAll(
+            (els) => els.some((e) => getComputedStyle(e).display !== "none")),
+            "on the LAST one, so the stack ends with what applies to all of it").toBe(true);
+        // …but everything that IS about the card is on both.
+        expect(await tips.locator(".rc-tip-sec").count(), "each still has its own sections").toBeGreaterThan(2);
 
         // LAYERS, in their OWN section with their own units — never a bar beside the memory ones, because
         // layers are not a proxy for memory. Matched by the ENGINE's device name, and a card whose name is

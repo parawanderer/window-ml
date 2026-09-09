@@ -652,6 +652,13 @@ function tileKbTips(root: Document | null): void {
     if (!root) return;
     // DOM ORDER IS TRACK ORDER: the tips are rendered inside their tracks, top to bottom.
     const els = Array.from(root.querySelectorAll(".rc-tip-kb")) as HTMLElement[];
+    // SAID ONCE, AT THE BOTTOM. The instant being read and the keys that move the reading are facts about the
+    // READING, not about a card — so a split model repeating both on every tip is the same two lines two or
+    // three times, in the one view where height is what everything is competing for. Trimming them is what
+    // takes a stack of tips from taller than its tracks to shorter, which is the difference between a tip
+    // beside the trace it describes and a tip on top of it. Marked before measuring, or the layout below
+    // would be computed from heights that are about to change.
+    els.forEach((el, i) => el.classList.toggle("dup", i < els.length - 1));
     let prevBottom = -Infinity;
     for (const el of els) {
         el.style.transform = "";                       // measure where it WANTS to be

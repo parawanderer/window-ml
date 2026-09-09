@@ -2811,8 +2811,12 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    saying so is the worst kind. */
 .rc-scaled { color: var(--accent); font-variant-numeric: tabular-nums; }
 /* A card the drilled-into model is not on: nothing to decompose, so its ordinary stack recedes rather than
-   sitting there looking like part of the answer. */
-.rc-track.away .rc-plot { opacity: .35; }
+   sitting there looking like part of the answer — and GIVES ITS HEIGHT to the cards that do hold it, which is
+   what stops a drilled-in tip from covering the very trace it describes. The tracks flex, so the space the
+   collapsed ones release goes straight to the ones still drawing something. Its header stays, so the row
+   still says which card it is and that the model is not on it. */
+.rc-track.away .rc-plot { opacity: .35; flex: 0 0 auto; height: 16px; min-height: 16px; }
+.rc-track.away .rc-legend { display: none; }
 /* DROP A TRACK, from the track itself — which pools you want on screen is a decision made WHILE reading, and
    it lived only behind the gear. Quiet until the track is hovered, but it always HOLDS ITS SPACE: the header
    gains and loses controls as the panel is used, and a row that reflows when one arrives shifts every surface
@@ -2830,3 +2834,8 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    but flat, faint and dashed along the top, because reading it as any one part is the mistake it exists to
    avoid. */
 .rc-part-unsplit { stroke: var(--fg-faint); stroke-width: 1; stroke-dasharray: 3 3; opacity: .5; }
+/* Every keyboard tip but the LAST drops the two lines that are not about its own card — the instant being
+   read and the keys that move the reading are the same on all of them, and repeating them per card is the
+   one thing height is short of in this view. The last one keeps them, so the stack reads as ending with what
+   applies to all of it. */
+.rc-tip-kb.dup .rc-tip-when, .rc-tip-kb.dup .rc-tip-keys { display: none; }
