@@ -8497,9 +8497,12 @@ test("out footer: with no console it goes after the last section instead", async
 
 test("out footer: while the step is RUNNING it counts up instead", async () => {
     const w = await loadSidebarWorld();
+    // The step started 2.5s ago, and the footer's job is to show time since THAT — not since the panel
+    // opened, and not a settled figure.
+    const startedAt = Date.now() - 2500;
     await w.dispatch(agentStart("ran3", "compute"));
     await w.dispatch(agentStep("ran3", 1, {
-        seq: 1, tool: "python_exec", pending: true, ts: Date.now() - 2500,
+        seq: 1, tool: "python_exec", pending: true, ts: startedAt,
         arguments: { code: "time.sleep(9)" }, streamOutput: "working\n",
         renderOut: { type: "python-out", stdout: "working\n" },
     }));
@@ -8512,10 +8515,21 @@ test("out footer: while the step is RUNNING it counts up instead", async () => {
     assert.ok(foot, "a running step has one too — that is the case it matters most for");
     assert.match(foot.textContent, /running…/, "it says it has not finished");
     assert.ok(foot.classList.contains("live"));
-    // ~2.5s in, and NOT a final "ran in": a settled figure on a step still going would be a measurement
-    // that is quietly still growing.
-    assert.match(foot.textContent, /[23](\.\d)?s/);
+    // NOT a final "ran in": a settled figure on a step still going would be a measurement that is quietly
+    // still growing.
     assert.doesNotMatch(foot.textContent, /ran in/);
+
+    // AGAINST THE SAME CLOCK THE STAMP CAME FROM, not against a literal. This asserted the digit was a 2 or
+    // a 3, which made it a measurement of how fast the TEST RUNNER is: everything between the stamp and the
+    // render — building the world, two dispatches, two clicks, two ticks — is counted too, so a loaded CI
+    // box read 4.1s and failed. Node 26 tripped it in CI while 22 and 24 passed, which is the shape of a
+    // machine-speed assertion rather than a product one.
+    const shown = Number(/([\d.]+)\s*s/.exec(foot.textContent)?.[1]);
+    const elapsed = (Date.now() - startedAt) / 1000;
+    assert.ok(Number.isFinite(shown), `the footer shows a figure — got ${JSON.stringify(foot.textContent)}`);
+    assert.ok(shown >= 2.4, `counted from the STEP's start, not from when the panel opened (${shown}s)`);
+    assert.ok(Math.abs(shown - elapsed) < 1.5,
+        `and it is that clock's elapsed time, whatever the machine's speed (showed ${shown}s, actual ${elapsed.toFixed(1)}s)`);
 });
 
 // An EMBED wraps a whole rendered output, and a DataFrame render brings its own controls — copy CSV, hide
