@@ -795,3 +795,45 @@ test("the bench can turn the 15s run limit off, and only the bench can", async (
         await expect(frame.locator(".bench-outbody")).toContainText("1");
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+test("the bench's output takes no resize grip — the divider is the resize", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await runInBench(frame, "for i in range(300):\n    print('line', i)");
+        const scroll = frame.locator(".bench-outbody .r-outscroll");
+        // The precondition, asserted rather than assumed: the grip is drawn only on OVERFLOW, so a pane that
+        // happened to fit would pass this test with the grip still wired up.
+        expect(await scroll.evaluate((el) => el.scrollHeight - el.clientHeight), "the output overflows its pane")
+            .toBeGreaterThan(100);
+        // In the LOG an overflowing cell does grow a grip (output-scroll.spec.mjs pins that); in the bench the pane
+        // is the cap and the divider already resizes it, so a second gesture for the same edge is withheld.
+        await expect(frame.locator(".bench-outpane .r-outgrip")).toHaveCount(0);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+test("the bench's timestamps toggle hides the gutter, and remembers it", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        // Nothing printed → no times → no toggle: one that visibly changed nothing would read as broken.
+        await runInBench(frame, "return 1");
+        await expect(frame.locator(".bench-times")).toHaveCount(0);
+
+        await runInBench(frame, "for i in range(5):\n    print('tick', i)");
+        const toggle = frame.locator(".bench-times");
+        await expect(toggle).toHaveAttribute("aria-pressed", "true");
+        // The precondition: the gutter really is drawn, or hiding it proves nothing.
+        expect(await frame.locator(".bench-outbody .r-ts").count(), "streamed lines carry a produced-at gutter").toBeGreaterThan(0);
+
+        await toggle.click();
+        await expect(toggle).toHaveAttribute("aria-pressed", "false");
+        await expect(frame.locator(".bench-outbody .r-ts")).toHaveCount(0);
+        await expect(frame.locator(".bench-outbody"), "the output itself stays").toContainText("tick 4");
+        // Remembered: the bench reads this key when it loads.
+        expect(await frame.evaluate(() => localStorage.getItem("ml_bench_times"))).toBe("off");
+
+        await toggle.click();
+        await expect(frame.locator(".bench-outbody .r-ts").first()).toBeVisible();
+    } finally { await ext.context.close(); await fake.stop(); }
+});

@@ -2208,7 +2208,10 @@ function BenchEnvButton() {
         <button class={`bench-env-btn${open ? " on" : ""}`} aria-expanded={open}
             onClick={() => { benchEnvOpen.value = !open; if (!benchEnvErr.value) loadBenchEnv((m) => (benchEnvErr.value = m)); }}>
             <span class="tri" aria-hidden="true"><IconChevron /></span>
-            environment{env ? <span class="bench-env-ver"> · {env.python}</span> : null}
+            {/* ONE element for the whole label, because an ellipsis needs one: as separate flex items the name
+                and the version wrapped onto two lines when the header got tight, and the button grew a
+                second row. */}
+            <span class="bench-env-label">environment{env ? <span class="bench-env-ver"> · {env.python}</span> : null}</span>
         </button>
     );
 }
