@@ -2432,3 +2432,17 @@ test("loadEdges: a server-split load rules its two steps through the plot, with 
     assert.match(M.loadEdges({ ...load, weightsBytes: undefined, loadBytes: undefined })[1].label, /allocated — ready to serve$/);
     void GiB;
 });
+
+test("placeEvents on an ADAPTIVE cadence: an event lands where the band it belongs to is drawn, and round-trips", () => {
+    // The stream samples every 250 ms during a load and every 15 s idle. Bands are drawn by sample INDEX, so the
+    // 15 s idle stretch is ONE interval wide while the load's second is four. An unload at 8 s sits a third of
+    // the way into that idle interval — between samples 3 and 4 — which is 87% across the run as drawn. Placed
+    // linearly in time it went to 51%: the right time, over a band that was still resident.
+    const run = [{ t: 0 }, { t: 250 }, { t: 500 }, { t: 750 }, { t: 15_750 }];
+    const [p] = M.placeEvents([run], [{ t: 8000, kind: "evict", label: "unloaded" }]);
+    assert.ok(Math.abs(p.from - (3 + 7250 / 15000) / 4) < 1e-12, `placed at ${p.from}`);
+    // The EXACT inverse of the crosshair's reading: a rule placed at a fraction reads back as its own time.
+    assert.ok(Math.abs(M.timeAtFraction([run], p.from) - 8000) < 1e-9);
+    // And a sample's own time lands exactly on that sample's drawn position.
+    assert.equal(M.placeEvents([run], [{ t: 750, kind: "note", label: "x" }])[0].from, 3 / 4);
+});

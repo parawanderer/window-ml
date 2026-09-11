@@ -2137,11 +2137,24 @@ export function placeEvents(runs: { t: number }[][], events: ResourceEvent[], gr
         let idx = spans.findIndex((r) => e.t >= r.from && e.t <= r.to);
         if (idx < 0) idx = spans.findIndex((r) => end >= r.from && e.t <= r.to);
         if (idx < 0) continue;   // entirely inside a gap (or outside every run): nothing measured, nothing drawn
-        const r = spans[idx];
-        // Width is the run's own span, NOT the graced one: the grace decides membership, and using it as a
-        // denominator would squash every bar toward the left by however long the poll happens to be.
-        const width = (runs[idx].at(-1)?.t ?? 0) - r.from;
-        const at = (t: number) => (width > 0 ? Math.min(1, Math.max(0, (t - r.from) / width)) : 0);
+        // PLACED ON THE SAME AXIS THE BANDS ARE DRAWN ON — which, within a run, is the sample INDEX, not time:
+        // a polyline puts sample i at i/(n-1) of the width. The stream's cadence is adaptive (250 ms during a
+        // load, 1 s while working, 15 s idle), so a time-linear placement put every event at the right TIME and
+        // the wrong PLACE — an unload ruled over a band that was still resident, and drifting against it as the
+        // window slid, since which samples the window held changed the error. Interpolating between the two
+        // samples either side makes this the exact inverse of `timeAtFraction`, which made the same move for
+        // the crosshair and was never carried over here. The run's own last sample bounds it; the grace only
+        // decides membership, and a time past the last sample sits at the right edge.
+        const r = spans[idx], run = runs[idx];
+        const at = (t: number): number => {
+            const n = run.length;
+            if (n < 2 || t <= run[0].t) return 0;
+            if (t >= run[n - 1].t) return 1;
+            let lo = 0, hi = n - 1;                              // run[lo].t <= t < run[hi].t
+            while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (run[mid].t <= t) lo = mid; else hi = mid; }
+            const gap = run[hi].t - run[lo].t;
+            return (lo + (gap > 0 ? (t - run[lo].t) / gap : 0)) / (n - 1);
+        };
         out.push({ event: e, run: idx, from: at(e.t), to: at(Math.min(end, r.to)), clipped: end > r.to });
     }
     return out;
