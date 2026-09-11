@@ -350,11 +350,23 @@ function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = 
             const at = Math.round(cy * 10);
             if (seen.has(at)) return null;
             seen.add(at);
+            // THE MARK CARRIES THE MODEL'S COLOUR, the way the overlaid view's marks carry their pool's. A
+            // model's colour is its identity across the whole panel — the band, the row, its blocks in the
+            // lane — so a mark sitting ON that band in the panel's accent said "a reading" where every other
+            // surface says "this model", and with several boundaries marked at once there was nothing to tell
+            // them apart. Read from `identity`, which is what `bandFill` colours the band from, so the mark
+            // and the thing it is marking cannot disagree.
+            //
+            // A boundary with NO model keeps the accent rather than taking `bandFill`'s grey: driver overhead
+            // and the unattributed residual are drawn in `--fg-faint`, and a faint grey mark on a faint grey
+            // band is a mark you cannot find. Blue there is not a fallback, it is "a reading, of nothing named".
+            const model = identity[key];
             // HTML, not an SVG <circle>: the viewBox is stretched with `preserveAspectRatio="none"`, so a
             // circle inside it draws as an ELLIPSE whose eccentricity depends on the plot's current size.
             // Percentages of the same box put it in exactly the same place and keep it round.
             return <i key={`d:${key}`} class="rc-snapdot" aria-hidden="true"
-                style={{ left: `${(x(snapIndex) / W) * 100}%`, top: `${(cy / H) * 100}%` }} />;
+                style={{ left: `${(x(snapIndex) / W) * 100}%`, top: `${(cy / H) * 100}%`,
+                         ...(model ? { background: colorFor(model) } : {}) }} />;
         });
     })();
     return (

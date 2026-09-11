@@ -3885,3 +3885,48 @@ test("resource panel: the cache says how full it is, and idle is not the same as
         await expect.poll(() => chip("busy:1b", ".vram-kv"), { timeout: 15000 }).toBe("<1%");
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+// THE MARK CARRIES THE MODEL'S COLOUR. A model's colour is its identity across the whole panel — the band,
+// the row, its blocks in the lane, its ticks on the strip — and the mark sitting ON that band was drawn in
+// the panel's accent, which says "a reading" where every other surface says "this model". The overlaid view
+// already colours its marks by pool, so the two views disagreed about what a mark means.
+test("resource panel: a mark on a model's band is drawn in that model's colour", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_snapdot: true }));
+        await seedStacked(ext);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(6000);   // several samples, or there is nothing to snap between
+
+        // Hovering one band narrows the marks to that band's own boundary, which is the one this is about.
+        await frame.locator(".rc-band").first().hover();
+        await expect.poll(() => frame.locator(".rc-snapdot").count(), { timeout: 10000 }).toBe(1);
+
+        // THE MARK AND THE THING IT MARKS MUST NOT DISAGREE, so this compares the mark against the BAND's own
+        // resolved fill rather than against a colour named here — the palette is a preference and a literal
+        // would pin the test to whichever one happened to be set.
+        const bandFill = await frame.locator(".rc-band").first().evaluate((e) => getComputedStyle(e).fill);
+        const dotBg = await frame.locator(".rc-snapdot").first().evaluate((e) => getComputedStyle(e).backgroundColor);
+        expect(dotBg, "the mark is drawn in the band's own colour").toBe(bandFill);
+
+        // …and it is NOT the panel accent, which is what it used to be. Without this the assertion above
+        // would still pass on a palette whose first colour happened to be the accent.
+        const accent = await frame.locator(".rc-snapdot").first().evaluate((e) => {
+            const probe = document.createElement("i");
+            probe.style.backgroundColor = getComputedStyle(e).getPropertyValue("--accent").trim();
+            document.body.appendChild(probe);
+            const v = getComputedStyle(probe).backgroundColor;
+            probe.remove();
+            return v;
+        });
+        expect(dotBg, "a model's mark is no longer the generic accent").not.toBe(accent);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
