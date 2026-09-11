@@ -13,14 +13,15 @@
  * Screenshots land in tests/e2e/artifacts/bench-editor-demo/.
  */
 import { mkdirSync } from "node:fs";
-import { configureExtension, launchExtension } from "./harness.mjs";
+import { configureExtension, launchExtension, narrate, narrateDone } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PACE = Number(process.env.PACE ?? 55);
 const HOLD = process.env.HOLD !== "0";
 const OUT = new URL("./artifacts/bench-editor-demo/", import.meta.url).pathname;
-const say = (s) => console.log(`\n▶ ${s}`);
+/** One beat: on screen for whoever is watching (the repo's demo rule), and in the terminal for the log. */
+const beat = async (page, text, sub) => { console.log(`\n▶ ${text}`); await narrate(page, text, sub ? { sub } : undefined); };
 
 mkdirSync(OUT, { recursive: true });
 
@@ -38,7 +39,7 @@ try {
     await page.goto(`${fake.url}/api/version`);
     await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
 
-    say("Opening the sidebar at half width");
+    await beat(page, "Opening the sidebar at half width");
     await page.evaluate(() => {
         const root = document.getElementById("ml-sb-root").shadowRoot;
         const host = root.getElementById("ml-sb-host");
@@ -53,13 +54,13 @@ try {
     }
     if (!frame) throw new Error("sidebar iframe never appeared");
 
-    say("Switching to the Python bench");
+    await beat(page, "Switching to the Python bench");
     // dispatchEvent, not click(): the button's tooltip span covers its centre.
     await frame.locator('button[aria-label="Python bench"]').dispatchEvent("click");
     await frame.locator(".bench").waitFor({ timeout: 10000 });
     await shot(page, "1-textarea-first");
 
-    say("CodeMirror arrives and takes over — same field, now highlighted");
+    await beat(page, "CodeMirror arrives and takes over — same field, now highlighted");
     await frame.locator(".ced-cm .cm-editor").waitFor({ timeout: 15000 });
     await sleep(500);
     await shot(page, "2-highlighted");
@@ -72,7 +73,7 @@ try {
     await content.press(selectAll);
     await content.press("Backspace");
 
-    say("Typing Python — keywords, strings and builtins colour as they land");
+    await beat(page, "Typing Python — keywords, strings and builtins colour as they land");
     for (const line of [
         "import numpy as np",
         "",
@@ -84,7 +85,7 @@ try {
     }
     await shot(page, "3-typed");
 
-    say("Autocomplete: a prefix opens the popup, and it filters as you type");
+    await beat(page, "Autocomplete: a prefix opens the popup, and it filters as you type");
     await content.pressSequentially("pri", { delay: PACE * 2 });
     await sleep(700);
     const options = await frame.locator(".cm-tooltip-autocomplete li").allTextContents();
@@ -95,7 +96,7 @@ try {
     await content.press("Backspace");
     await content.press("Backspace");
 
-    say("Cmd/Ctrl+Enter runs it in the real sandbox (Pyodide's first load is slow)");
+    await beat(page, "Cmd/Ctrl+Enter runs it in the real sandbox (Pyodide's first load is slow)");
     await content.pressSequentially("return int(grid.sum())", { delay: PACE });
     await content.press("Control+Enter");
     await frame.locator(".bench-outpane").waitFor({ timeout: 30000 });
@@ -106,6 +107,9 @@ try {
     }
     await shot(page, "5-result");
 
+    // Flip the banner to "yours" BEFORE holding: a watcher who cannot tell a finished demo from a paused one
+    // either waits for nothing or clicks into the middle of a beat.
+    await narrateDone(page, "Demo finished — the editor is yours to type in");
     if (HOLD) {
         console.log("\nHolding the window open — close it or press Ctrl+C to exit.");
         await new Promise((resolve) => { page.on("close", resolve); ext.context.on("close", resolve); });

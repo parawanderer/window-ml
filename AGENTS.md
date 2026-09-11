@@ -2073,7 +2073,9 @@ thing. The parts:
   headless SHELL, a stripped binary with no extension support at all. `channel: "chromium"` runs the FULL
   browser in `--headless=new`, where the worker registers in ~0.5s and the whole suite passes. This
   matters beyond tidiness: a headful window grabs focus and the mouse on every launch, and the suite
-  launches one per spec. Pass `headful: true` (the narrated demos do) or set `E2E_HEADFUL=1` for a look. **A run is started exactly like a console call:** `page.evaluate(() =>
+  launches one per spec. Pass `headful: true` (the narrated demos do) or set `E2E_HEADFUL=1` for a look.
+  **`E2E_DIST=<dir>`** runs specs against a bundle built elsewhere (`node build.mjs --outdir <dir>`) — use it
+  whenever `dist/` is loaded in a window someone is using, rather than rebuilding underneath them. **A run is started exactly like a console call:** `page.evaluate(() =>
   window.ml.agent(task, opts))` — Playwright's `page.evaluate` runs in the page **main world**,
   where `injected.js` defines `window.ml`, so no test-only hooks; the same front door a human
   uses. The result structured-clones back to Node.
