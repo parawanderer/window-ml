@@ -803,8 +803,18 @@ export function presetsFor(sample: ResourceSample): Preset[] {
         // The HOST pool is included: a CPU-resident model holds no VRAM, so a cards-only overview would make
         // it vanish from the chart while it still sits in the legend below — the same flaw that took Placement
         // out of the default slot.
-        tracks: ([{ ...track("overview", [...devices.map((d) => `vram.${d.id}`), "ram"]),
-                    mode: (devices.length > 1 ? "overlay" : "stack") as TrackDef["mode"] }] as TrackDef[]).filter(nonEmpty),
+        // THE MODE IS DECIDED BY HOW MANY POOLS THE TRACK ENDED UP WITH, not by how many CARDS the box has.
+        // Asking about cards got the one-card machine wrong — the commonest machine there is: one GPU plus
+        // host RAM is still TWO pools, so the default preset proposed a stack of a card and the host, which
+        // `stackRefusal` refuses ("their sum isn't a real quantity"). The panel's own default offered a
+        // layout the panel then told you off for.
+        //
+        // It has to be read off the track AFTER `track()` has filtered the series to what this machine
+        // actually has, or the count is of series we hoped for rather than series we got.
+        tracks: ((): TrackDef[] => {
+            const t = track("overview", [...devices.map((d) => `vram.${d.id}`), "ram"]);
+            return [{ ...t, mode: (t.series.length > 1 ? "overlay" : "stack") as TrackDef["mode"] }].filter(nonEmpty);
+        })(),
     };
     const withRam: Preset = {
         id: "memory", label: "GPU + RAM", description: "A track per pool, with the models stacked in each.",

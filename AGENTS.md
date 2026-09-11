@@ -1737,6 +1737,31 @@ it per format: `params.think` (openai) vs a top-level `think` (ollama native).
 
 ## Conventions
 
+**RULE — when one rule VALIDATES another's output, enumerate the inputs; do not sample them.** The resource
+panel GENERATES layouts (`presetsFor`) and JUDGES them (`stackRefusal`), and the invariant is that a preset
+may never propose a layout the rule then rejects. There is a drift guard for exactly that, and it shipped a
+broken DEFAULT anyway, because it ran two machine shapes: a two-card box and a unified Mac. One discrete card
+plus host RAM — the commonest machine there is — was assumed to be a weaker case of two cards. It is not: the
+generator branched on `devices.length` while the rule judges POOLS, and those two quantities agree everywhere
+except at one card, where a GPU plus the host is still two pools. The default preset proposed a stack the
+panel then refused, on most people's hardware.
+
+The general shape, which is worth recognising before it happens again:
+
+- **A guard over generated output is only as good as the SHAPES of input it runs**, and "fewer of them" is a
+  different shape, not a smaller one. Enumerate the kinds; do not pick two and assume monotonicity.
+- **Watch for a PROXY quantity in the branch.** `devices.length` standing in for "how many pools" is the bug
+  in one line — it was right on every box anyone had tested and wrong on the one they had not. When a
+  decision is about X, branch on X, and if X is only available after a filter, read it after the filter.
+- **The DEFAULT deserves its own assertion.** It is what a user meets without choosing anything, so it is the
+  one worst to get wrong and the easiest to leave untested among a list.
+
+**`tests/fixtures/boxes.mjs` holds the shapes** — one per kind of machine people actually have (two-card
+CUDA, two-card ROCm, a four-card prosumer rig, a one-card laptop that has to spill, an eight-card lab node at
+nine pools, and a unified Mac) — and it is SHARED with `resource-demo.mjs`, because a guard and a demo
+disagreeing about what a box looks like is the same drift in another costume. Anything that routes on box
+shape gets run against all of them.
+
 **RULE — before you build a UI primitive, check whether it exists: `node scripts/components.mjs`.** One
 grep-able line per sidebar component, hook and documented CSS class — `NAME kind file:line — first sentence
 of its docstring` — so you search by CONCEPT (`grep -i pill`), which is the only way this works: nobody

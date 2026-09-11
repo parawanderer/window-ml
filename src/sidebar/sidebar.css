@@ -342,12 +342,20 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
     border-left: 1px solid color-mix(in srgb, var(--model, var(--accent)) 55%, transparent);
     border-right: 1px solid color-mix(in srgb, var(--model, var(--accent)) 55%, transparent); }
 .rc-plot { cursor: crosshair; }
-/* The way out of a zoom, beside the view picker. */
+/* The way out of a zoom, beside the view picker. TWO STATES in one control, because they are the same
+   affordance — "you are not looking at the default; click to go back" — and they can never both be true.
+   `.pinned` is a range you selected; `.resized` is a rolling window narrowed away from the width the
+   picker names. The modifier exists so the two are distinguishable rather than one class quietly meaning
+   two things: read as "a range is pinned", which is what every test using it meant, the merged version
+   reported a pin that was not there. Outlined rather than filled for `.resized`: you are still FOLLOWING
+   live there, and the solid accent is what says "you have stopped". */
 /* The label is a DURATION that changes as you scrub — "7s" one moment, "1m 28s" the next — so without a
    floor and tabular figures the chip resizes under the cursor and shoves its neighbours along the row. */
 .vram-zoom { min-width: 5.5em; text-align: center; font-variant-numeric: tabular-nums; margin-right: 6px;
     background: var(--panel-2); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px;
              padding: 2px 7px; font-size: 0.8em; cursor: pointer; font-variant-numeric: tabular-nums; }
+.vram-zoom.resized { border-style: dashed; border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+    color: var(--fg-dim); }
 .vram-zoom:hover { background: var(--panel-2-hover); }
 .rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: inherit; z-index: 3; }
 .rc-rule::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;

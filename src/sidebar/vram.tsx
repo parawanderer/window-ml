@@ -1793,10 +1793,24 @@ export function VramPanel() {
                     a trap, and the panel otherwise keeps showing a stretch that scrolled into the past.
                     LEFT of the view picker: it appears and disappears as you scrub, so anything after it in
                     the row would slide sideways every time a range is taken or dropped. */}
-                {zoomRange.value ? (
-                    <button class="tt vram-zoom" onClick={() => (zoomRange.value = null)}>
-                        {zoomSpan(zoomRange.value)} ✕
-                        <span class="tt-pop wrap" role="tooltip">Showing the range you selected instead of the rolling window. Click, or press Esc, to go back to live.</span>
+                {/* A RESIZED WINDOW IS ALSO A DEPARTURE FROM THE DEFAULT, so it gets the same way back. This
+                    was gated on `zoomRange` alone — a PINNED range — so narrowing the window while still
+                    following live left no control saying you had, and no way to undo it but to guess the
+                    original number and drag back to it. Both states are "you are not looking at the default",
+                    and the difference between them is what the ✕ restores: a pin drops back to the rolling
+                    window, a resize goes back to the width the picker names. The label is formatted by the
+                    same `zoomSpan` either way, so the two cannot read as different kinds of thing. */}
+                {zoomRange.value || resWindowS.value !== resWindowPref.value ? (
+                    <button class={`tt vram-zoom ${zoomRange.value ? "pinned" : "resized"}`} onClick={() => {
+                        if (zoomRange.value) { zoomRange.value = null; return; }
+                        resWindowS.value = resWindowPref.value;
+                        try { chrome.storage.local.set({ [RESWIN_KEY]: resWindowPref.value }); } catch { /* opaque origin */ }
+                    }}>
+                        {zoomRange.value ? zoomSpan(zoomRange.value)
+                            : resWindowS.value === 0 ? "all" : zoomSpan({ from: 0, to: resWindowS.value * 1000 })} ✕
+                        <span class="tt-pop wrap" role="tooltip">{zoomRange.value
+                            ? <>Showing the range you selected instead of the rolling window. Click, or press Esc, to go back to live.</>
+                            : <>The window has been resized away from the default. Click to go back to it — the default is the one the chart's own settings name, behind the gear.</>}</span>
                     </button>
                 ) : null}
                 {/* BEFORE the view picker: what the panel is ABOUT comes before how it is drawn. Not gated on

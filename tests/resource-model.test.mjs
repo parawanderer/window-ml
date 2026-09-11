@@ -5,6 +5,9 @@
 import { test, describe } from "node:test";
 import assert from "node:assert";
 const M = await import("../src/resource-model.ts");
+// The machine shapes, shared with resource-demo.mjs — one copy, so a guard and a demo cannot disagree
+// about what a box looks like.
+import { BOXES } from "./fixtures/boxes.mjs";
 
 const GB = 1e9;
 // Live gpubox: 2x ~102 GB CUDA cards, 130 GB system. Both cards idle here (~0.59 GB held by something else).
@@ -14,6 +17,17 @@ const CUDA_INFO = {
         supported_gpus: [
             { gpu_id: "0", name: "CUDA0", total_memory: 101972967424, free_memory: 101386813440, compute: "12.0", driver: "13.2", runner: "CUDA" },
             { gpu_id: "1", name: "CUDA1", total_memory: 101972967424, free_memory: 101386813440, compute: "12.0", driver: "13.2", runner: "CUDA" },
+        ],
+    },
+};
+// ONE DISCRETE CARD PLUS HOST RAM — the commonest machine there is, and the shape the drift guard was blind
+// to. It is not a narrower version of the two-card box: the cards question and the pools question give
+// different answers here (one card, two pools), which is exactly where the Overview preset went wrong.
+const ONE_CARD_INFO = {
+    compute: {
+        system_compute: { cpu_cores: 16, total_memory: 68719476736, free_memory: 40000000000, free_swap: 0 },
+        supported_gpus: [
+            { gpu_id: "0", name: "CUDA0", total_memory: 25757220864, free_memory: 25000000000, compute: "8.9", driver: "13.2", runner: "CUDA" },
         ],
     },
 };
@@ -368,16 +382,90 @@ test("ceilings: without physical_memory, fall back honestly rather than synthesi
 
 // A preset PROPOSES a layout and stackRefusal JUDGES it, so the two must agree — otherwise the panel offers a
 // view the user can pick and be told off for. This caught exactly that: Overview stacked several cards.
-test("DRIFT GUARD: every generated preset is valid under the stacking rule", () => {
-    for (const info of [CUDA_INFO, METAL_INFO]) {
+test("DRIFT GUARD: every generated preset is valid under the stacking rule, on every shape of box", () => {
+    // ONE PER KIND OF MACHINE PEOPLE ACTUALLY HAVE, not one per number of cards — that assumption is what let
+    // a real bug ship. The guard covered two cards and a unified Mac, and Overview chose its mode from how
+    // many DEVICES there were; one card plus host RAM is one device and TWO POOLS, so on the commonest
+    // machine there is, the panel's own default proposed a stack the rule refuses. "Fewer cards" was taken
+    // for the easy case rather than a different one.
+    //
+    // The shapes are shared with resource-demo.mjs (tests/fixtures/boxes.mjs) so there is one copy: a guard
+    // and a demo disagreeing about what a machine looks like is the same drift in a second costume.
+    for (const [name, shape] of Object.entries(BOXES)) {
+        const info = { compute: {
+            system_compute: { cpu_cores: 16, total_memory: shape.hostTotal, free_memory: Math.round(shape.hostTotal / 2) },
+            supported_gpus: shape.devices.map((d) => ({ ...d, free_memory: d.total_memory - shape.idleHeld })),
+        } };
         const sample = { t: 1, models: [], capacity: M.parseInfo(info) };
         const presets = M.presetsFor(sample);
-        assert.ok(presets.length > 0);
+        assert.ok(presets.length > 0, `${name}: no preset at all`);
         for (const p of presets) {
             assert.equal(M.presetRefusal(p, sample), null,
-                `preset "${p.id}" proposes a layout the rule refuses on ${info === CUDA_INFO ? "2 cards" : "Metal"}`);
+                `${name}: preset "${p.id}" proposes a layout the rule refuses`);
+            assert.ok(p.tracks.length > 0, `${name}: preset "${p.id}" has no tracks`);
+            for (const t of p.tracks) assert.ok(t.series.length > 0, `${name}: "${p.id}" has an empty track`);
         }
+        // The DEFAULT is the first, and it is the one a user meets without choosing anything — so its
+        // validity is the one that matters most and the one that was broken.
+        assert.equal(M.presetRefusal(presets[0], sample), null, `${name}: the DEFAULT preset is refused`);
     }
+});
+
+test("presets follow the SHAPE of the box, not its vendor or its card count", () => {
+    const presetsOn = (name) => {
+        const shape = BOXES[name];
+        const info = { compute: {
+            system_compute: { cpu_cores: 16, total_memory: shape.hostTotal, free_memory: Math.round(shape.hostTotal / 2) },
+            supported_gpus: shape.devices.map((d) => ({ ...d, free_memory: d.total_memory - shape.idleHeld })),
+        } };
+        const sample = { t: 1, models: [], capacity: M.parseInfo(info) };
+        return { presets: M.presetsFor(sample), sample };
+    };
+
+    // A MAC IS ONE POOL, so there is one preset and nothing to lay end to end — "Whole box" there would be
+    // the same picture under a name promising something else.
+    const mac = presetsOn("metal");
+    assert.deepEqual(mac.presets.map((p) => p.id), ["memory"]);
+    assert.deepEqual(mac.presets[0].tracks[0].series, ["mem"]);
+    assert.equal(mac.presets[0].tracks[0].mode, "stack", "one pool IS stackable — it is its own total");
+
+    // THE LAPTOP: one discrete card and host RAM. One device, two pools — the case the guard was blind to.
+    const laptop = presetsOn("laptop");
+    assert.equal(laptop.presets.find((p) => p.id === "overview").tracks[0].mode, "overlay",
+        "a card and the host have no shared capacity, however few cards there are");
+
+    // EIGHT CARDS plus the host is nine pools — past the curated palette, and still just as overlaid. The
+    // rule does not change with the count, which is the point of deriving it from pools.
+    const lab = presetsOn("lab");
+    const labOverview = lab.presets.find((p) => p.id === "overview");
+    assert.equal(labOverview.tracks[0].series.length, 9, "eight cards and the host");
+    assert.equal(labOverview.tracks[0].mode, "overlay");
+    assert.equal(lab.presets.find((p) => p.id === "memory").tracks.length, 9, "a track per pool, all nine");
+
+    // AMD differs from NVIDIA in the ceiling note's vendor tool, NOT in the layout — so the presets are the
+    // same shape as the two-card CUDA box, and a test that expected otherwise would be encoding a difference
+    // that does not exist.
+    assert.deepEqual(presetsOn("amd").presets.map((p) => p.id), presetsOn("cuda").presets.map((p) => p.id));
+    // …and the prosumer rig: four cards, same rule again.
+    assert.equal(presetsOn("rig").presets.find((p) => p.id === "memory").tracks.length, 5);
+});
+
+test("presets: ONE card plus host RAM is still two pools, so Overview overlays", () => {
+    const sample = { t: 1, models: [], capacity: M.parseInfo(ONE_CARD_INFO) };
+    const overview = M.presetsFor(sample).find((p) => p.id === "overview");
+    assert.deepEqual(overview.tracks[0].series, ["vram.0", "ram"]);
+    assert.equal(overview.tracks[0].mode, "overlay",
+        "a card and the host have no shared capacity to stack into — the count that matters is POOLS, not cards");
+    // The mode is read off the track AFTER the catalog filter, so it counts the series the machine actually
+    // has rather than the ones the preset hoped for.
+    assert.equal(M.presetRefusal(overview, sample), null);
+
+    // …and a single-POOL machine still stacks, which is what the ternary was reaching for and got right only
+    // by accident on the Mac.
+    const mac = { t: 1, models: [], capacity: M.parseInfo(METAL_INFO) };
+    const only = M.presetsFor(mac)[0];
+    assert.deepEqual(only.tracks[0].series, ["mem"]);
+    assert.equal(only.tracks[0].mode, "stack");
 });
 
 test("presets: several cards are OVERLAID, never stacked into a total that isn't real", () => {

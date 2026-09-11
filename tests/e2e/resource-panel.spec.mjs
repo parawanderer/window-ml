@@ -875,7 +875,7 @@ test("resource panel: the event lane draws phased blocks, dims by lineage, and c
         await page.mouse.down();
         await page.mouse.move(plotBox.x + plotBox.width * 0.98, midY, { steps: 6 });
         await page.mouse.up();
-        await expect(frame.locator(".vram-zoom")).toBeVisible();
+        await expect(frame.locator(".vram-zoom.pinned")).toBeVisible();
         await sleep(500);
 
         // Hovering the delegated reader lights its lineage and drops the rest back.
@@ -960,7 +960,7 @@ test("resource panel: drag selects a range, mirrored across every track, Esc lea
         // Released: the brush is gone and the panel is showing the selected stretch instead of the rolling
         // window, with a way out.
         expect(await frame.locator(".rc-brush").count()).toBe(0);
-        const chip = frame.locator(".vram-zoom");
+        const chip = frame.locator(".vram-zoom.pinned");
         await expect(chip).toBeVisible();
         // The range is the ~30% of the window that was dragged over, not the whole thing.
         expect(await chip.textContent()).toMatch(/\d+s|\dm/);
@@ -973,16 +973,16 @@ test("resource panel: drag selects a range, mirrored across every track, Esc lea
         await page.keyboard.press("Escape");
         await sleep(300);
         expect(await frame.locator(".rc-tip").count(), "the tip goes first").toBe(0);
-        expect(await frame.locator(".vram-zoom").count(), "…and the selection stands").toBe(1);
+        expect(await frame.locator(".vram-zoom.pinned").count(), "…and the selection stands").toBe(1);
         // Esc goes back to live — a zoom you cannot leave is a trap.
         await page.keyboard.press("Escape");
         await sleep(300);
-        expect(await frame.locator(".vram-zoom").count()).toBe(0);
+        expect(await frame.locator(".vram-zoom.pinned").count()).toBe(0);
 
         // And a plain CLICK is not a selection: without that guard every click on the chart zooms to an instant.
         await page.mouse.click(plot.x + plot.width * 0.5, y);
         await sleep(300);
-        expect(await frame.locator(".vram-zoom").count()).toBe(0);
+        expect(await frame.locator(".vram-zoom.pinned").count()).toBe(0);
     } finally {
         await ext.close();
         await fake.stop();
@@ -1156,7 +1156,7 @@ test("resource panel: scrubbing back unpins live, and the live button returns", 
 
         // It stopped following: the button now offers the way back, and the panel says it is holding a range.
         await expect(live).toHaveText(/⏸/);
-        await expect(frame.locator(".vram-zoom")).toBeVisible();
+        await expect(frame.locator(".vram-zoom.pinned")).toBeVisible();
         expect(await frame.locator(".rc-scrub-win").evaluate((e) => e.style.left)).not.toBe(before);
         // The chart is showing that earlier stretch, not the newest samples.
         const shown = await frame.locator(".rc-seg").count();
@@ -1166,7 +1166,7 @@ test("resource panel: scrubbing back unpins live, and the live button returns", 
         await live.click();
         await sleep(600);
         await expect(live).toHaveText(/▶\s*live/);
-        expect(await frame.locator(".vram-zoom").count()).toBe(0);
+        expect(await frame.locator(".vram-zoom.pinned").count()).toBe(0);
     } finally {
         await ext.close();
         await fake.stop();
@@ -1242,9 +1242,9 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
             .toBeLessThan(40);
 
         // ---- double-click scopes the window to that block ----
-        expect(await frame.locator(".vram-zoom").count(), "nothing scoped yet").toBe(0);
+        expect(await frame.locator(".vram-zoom.pinned").count(), "nothing scoped yet").toBe(0);
         await frame.locator(".rc-ev-tool").first().dblclick();
-        await expect(frame.locator(".vram-zoom")).toBeVisible();
+        await expect(frame.locator(".vram-zoom.pinned")).toBeVisible();
         // The window is necessarily WIDER than a short block (it needs samples in it to draw at all), so the
         // block says which one you landed on rather than leaving the answer as "somewhere in here".
         await expect.poll(() => frame.locator(".rc-ev.pulse").count(), { timeout: 5000 }).toBeGreaterThan(0);
@@ -1253,10 +1253,10 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
         await expect.poll(() => frame.locator(".rc-zoomlink path").count(), { timeout: 5000 }).toBe(2);
         // It scoped to the BLOCK, not to some default window: a single step is seconds, and the chip names
         // the span it framed.
-        const span = await frame.locator(".vram-zoom").innerText();
+        const span = await frame.locator(".vram-zoom.pinned").innerText();
         expect(span, `chip read "${span}"`).toMatch(/^\d+s/);
-        await frame.locator(".vram-zoom").click();
-        await expect.poll(() => frame.locator(".vram-zoom").count()).toBe(0);
+        await frame.locator(".vram-zoom.pinned").click();
+        await expect.poll(() => frame.locator(".vram-zoom.pinned").count()).toBe(0);
 
         // ---- a run block is drawn as a container, not as the heaviest work in the lane ----
         // HEIGHT is what says so: the top row is always a run wrapper, so a half-height bar reads as the span
@@ -1633,25 +1633,25 @@ test("resource panel: scrolling the window to the end sticks to live, and stays 
         await page.mouse.down();
         await page.mouse.move(track.x + 2, y, { steps: 8 });
         await page.mouse.up();
-        await expect(frame.locator(".vram-zoom")).toBeVisible();
+        await expect(frame.locator(".vram-zoom.pinned")).toBeVisible();
         await expect(frame.locator(".rc-scrub-live")).toHaveText(/⏸\s*live/);
 
         // Now WHEEL forward to the end. Several notches, because one is a fraction of the window's width.
         const plot = await frame.locator(".rc-plot").first().boundingBox();
         for (let i = 0; i < 25; i++) {
-            if (!(await frame.locator(".vram-zoom").count())) break;
+            if (!(await frame.locator(".vram-zoom.pinned").count())) break;
             await page.mouse.move(plot.x + plot.width / 2, plot.y + plot.height / 2);
             await page.mouse.wheel(0, 200);
             await sleep(120);
         }
         // Reaching the end IS rejoining live: no pinned range left behind.
-        await expect.poll(() => frame.locator(".vram-zoom").count(), { timeout: 5000 }).toBe(0);
+        await expect.poll(() => frame.locator(".vram-zoom.pinned").count(), { timeout: 5000 }).toBe(0);
         await expect(frame.locator(".rc-scrub-live")).toHaveText(/▶\s*live/);
 
         // …and it STAYS live as new samples arrive. This is the half that failed: a window pinned at the tail
         // reads as live for one moment and then falls behind, because nothing moves it forward.
         await sleep(6000);
-        expect(await frame.locator(".vram-zoom").count(), "still following, not pinned at where the end was").toBe(0);
+        expect(await frame.locator(".vram-zoom.pinned").count(), "still following, not pinned at where the end was").toBe(0);
         await expect(frame.locator(".rc-scrub-live")).toHaveText(/▶\s*live/);
     } finally {
         await ext.close();
@@ -1962,7 +1962,7 @@ test("resource panel: the width you drag is the width live keeps", async () => {
                 + `win="${win}" ml_res_window=${stored} live="${await liveText()}"`);
         }
         await expect.poll(liveText, { timeout: 10000 }).toMatch(/▶\s*live/);
-        expect(await frame.locator(".vram-zoom").count(), `still zoomed after the pan — ${trace}`).toBe(0);
+        expect(await frame.locator(".vram-zoom.pinned").count(), `still zoomed after the pan — ${trace}`).toBe(0);
         const after = await winW();
         expect(after, `it snapped back to the wide window it left — ${trace}`).toBeLessThan(wide * 0.9);
         expect(Math.abs(after - narrow), `it did not keep the width on screen — ${trace}`).toBeLessThan(15);
@@ -2024,7 +2024,7 @@ test("resource panel: dragging the event lane shows the selection box, and a tin
         await sleep(600);
 
         // …and it applied: the panel is holding a chosen range now.
-        await expect(frame.locator(".vram-zoom")).toBeVisible({ timeout: 5000 });
+        await expect(frame.locator(".vram-zoom.pinned")).toBeVisible({ timeout: 5000 });
         // The chart still DRAWS. A window narrower than the poll interval used to leave fewer than two
         // samples and an empty box, which is what "the panel breaks" looked like.
         expect(await frame.locator(".rc-plot").count(), "the plot survives the zoom").toBeGreaterThan(0);
@@ -2708,12 +2708,12 @@ test("resource panel: Esc with no tip up still leaves the zoom", async () => {
         await page.mouse.down();
         for (const fx of [0.45, 0.6, 0.7]) { await page.mouse.move(plot.x + plot.width * fx, y); await sleep(30); }
         await page.mouse.up();
-        await expect.poll(() => frame.locator(".vram-zoom").count(), { timeout: 8000 }).toBe(1);
+        await expect.poll(() => frame.locator(".vram-zoom.pinned").count(), { timeout: 8000 }).toBe(1);
 
         await frame.locator(".vram-head").hover();
         await sleep(300);
         await page.keyboard.press("Escape");
-        await expect.poll(() => frame.locator(".vram-zoom").count(), { timeout: 5000 }).toBe(0);
+        await expect.poll(() => frame.locator(".vram-zoom.pinned").count(), { timeout: 5000 }).toBe(0);
     } finally { await ext.close(); await fake.stop(); }
 });
 
@@ -3996,5 +3996,49 @@ test("resource panel: a model's band steps, and the device's own bands do not", 
             expect(stepsIn(await plain.first().getAttribute("points")),
                 "a device band's own edge is still a line").toBe(0);
         }
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE WAY BACK FROM A RESIZED WINDOW, produced by a real gesture — which is the half of this a jsdom test
+// cannot make. The rule and the reset are asserted there; what is only true in a browser is that a pinch
+// actually lands on the quantity the chip watches. The bug was precisely "I resized it and nothing appeared",
+// so the resize has to be a gesture rather than a seeded value.
+test("resource panel: resizing the window offers a way back to the default", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        // At the default, so the chip's absence at the start means something.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 300, ml_res_window_pref: 300 }));
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(3000);
+
+        await expect(frame.locator(".vram-zoom.resized")).toHaveCount(0, { timeout: 5000 });
+
+        /** A trackpad pinch: a wheel carrying ctrlKey, at a point inside the plot. */
+        const pinch = (dy) => frame.locator(".rc-plot").first().evaluate((el, d) => {
+            const r = el.getBoundingClientRect();
+            el.dispatchEvent(new WheelEvent("wheel", { deltaY: d, ctrlKey: true, bubbles: true, cancelable: true,
+                clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+        }, dy);
+
+        // NARROW IT — still following live, which is the case that had no way back.
+        for (let i = 0; i < 3; i++) { await pinch(-60); await sleep(150); }
+        await expect.poll(() => frame.locator(".vram-zoom.resized").count(), { timeout: 8000 }).toBe(1);
+        // Still LIVE: this is not a pinned range, which is the distinction the old gate collapsed.
+        await expect.poll(() => frame.locator(".rc-scrub-live").textContent(), { timeout: 5000 }).toMatch(/live/);
+
+        // …and the way back actually goes back, to the width the picker names rather than a number baked in.
+        await frame.locator(".vram-zoom.resized").click();
+        await expect.poll(() => frame.locator(".vram-zoom.resized").count(), { timeout: 8000 }).toBe(0);
+        const restored = await ext.sw.evaluate(() => new Promise((r) =>
+            chrome.storage.local.get({ ml_res_window: 0 }, (d) => r(d.ml_res_window))));
+        expect(restored, "back at the default the picker names").toBe(300);
     } finally { await ext.context.close(); await fake.stop(); }
 });

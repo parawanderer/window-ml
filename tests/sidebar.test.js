@@ -6088,6 +6088,46 @@ test("the chart's own settings live in the chart, and the window picker shows a 
     assert.doesNotMatch(settings, /Chart window/, "and it is no longer in two places disagreeing");
 });
 
+// A RESIZED WINDOW IS A DEPARTURE FROM THE DEFAULT, so it needs the same way back a pinned range has. The
+// chip was gated on a PIN alone, so narrowing the window while still following live left no control saying
+// you had and no way to undo it short of guessing the original number and dragging back to it.
+test("the zoom chip offers a way back from a resized window, not only from a pinned range", async () => {
+    const w = await loadSidebarWorld({
+        vram: [], info: INFO_MIXED,
+        local: { ml_res_window: 56, ml_res_window_pref: 300 },   // as a scrub drag leaves it
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    const chip = () => w.shadow.querySelector(".vram-zoom.resized");
+    assert.ok(chip(), "the window is not the default, so the way back is offered");
+    assert.match(chip().textContent, /56s/, "and it says what the window currently is");
+
+    // THE ✕ RESTORES THE DEFAULT — the width the picker names, not some hardcoded number, which is the whole
+    // reason the preference is a separate quantity.
+    chip().click();
+    await w.flush();
+    assert.equal(chip(), null, "back at the default, there is nothing to go back FROM");
+    const { resWindowS } = await import("../src/sidebar/store.ts");
+    assert.equal(resWindowS.value, 300);
+});
+
+test("the zoom chip stays away when the window IS the default", async () => {
+    // The other half, and the one that keeps it from becoming furniture: a control permanently present says
+    // nothing, and this row is deliberately short — it never wraps and gives up width first.
+    const w = await loadSidebarWorld({
+        vram: [], info: INFO_MIXED,
+        local: { ml_res_window: 300, ml_res_window_pref: 300 },
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".vram-zoom.resized"), null);
+});
+
 // A saved PRESET is re-derived, not replayed: storing its tracks pins the preset as it was the day it was
 // picked. Overview later gained the host pool, and a layout saved before that kept drawing a cards-only chart
 // with a CPU-resident model missing from it entirely.
@@ -7186,6 +7226,14 @@ test("ceiling note: names the right tool per vendor, and none for a runner we do
             vram: [{ model: "big", vramGB: 8, vramBytes: 8 * 1024 ** 3, sizeBytes: 8 * 1024 ** 3,
                      gpus: [{ id: "0", runner: gpu.runner, vramBytes: 8 * 1024 ** 3 }], expiresAt: null }],
             info: box(gpu),
+            // THE PER-POOL VIEW, because a ceiling note is a statement about ONE pool's capacity and that is
+            // the view that has one. It used to arrive via Overview, which on a one-card box was a stack of
+            // the card and the host — a layout `stackRefusal` refuses, and a bug this test was silently
+            // depending on. Overview overlays there now, and an overlaid track's header explains the overlay
+            // rather than naming a ceiling.
+            local: { ml_res_layout: { presetId: "memory", tracks: [
+                { id: "dev-0", series: ["vram.0"], mode: "stack", heightPx: 96 },
+            ] } },
         });
         await w.raw({ __mlSidebarOpen: true });
         w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
@@ -7943,7 +7991,7 @@ test("scrub strip: is there from the first samples, and narrows as the session o
     assert.notEqual(boxAfter, boxBefore, "the box moved to where it was dragged");
     assert.match(boxAfter, /left:\s*0%/, "…to the start of the session");
     // And the panel is holding an explicit range now rather than the rolling window.
-    assert.ok(w.shadow.querySelector(".vram-zoom"), "the window became a range you chose");
+    assert.ok(w.shadow.querySelector(".vram-zoom.pinned"), "the window became a range you chose");
     w.window.dispatchEvent(new w.window.MouseEvent("pointerup", { bubbles: true, clientX: 0, clientY: 0 }));
 });
 
