@@ -861,6 +861,15 @@ display rather than an obvious bug:
 - **A device decomposes into three bands, never two**: attributed per model, the residual, then free. The
   residual is named by MAGNITUDE — under ~1 GiB it is ollama's own driver context (an idle card holds ~0.55
   GiB), above it something genuinely else is there. Calling it "other processes" invents a process.
+- **Once the driver NAMES the processes, the residual is split by them instead** (`processes` +
+  `processes_scope` on `/api/info`, `processBands`): each runner's overhead (its process minus its model's
+  share of the card, 444 vs 633 MiB on one box, so never a constant) stacked directly on its model in a wash
+  of its colour, a loading runner drawn whole as its load (which `pendingAllocation` then reads directly),
+  ollama's helpers as one band, and any other listed process as a named tenant. **Read `processes_scope`
+  before trusting an empty list**: under `"pid_namespace"` (any container) another container's process is
+  not listed at all while its memory is still out of `free`, so the unlisted remainder is "outside ollama's
+  view" and never "overhead". Every residual key must be in `bandOrder`, or its band silently drops out of
+  the stack.
 - **Unified memory (Metal) is one pool**: `runner` is the discriminator, occupancy comes from the HOST (a
   Mac's device reported itself 11.84/11.84 GiB free while the system was 12.6 GiB deep in the same silicon),
   and a GPU-resident model is attributed in FULL there (`size == size_vram`, so attributing only the spill
@@ -1923,6 +1932,20 @@ the caller would prove nothing.
 saving actually lands, since a turn re-sends a large prompt and streams a long reply). They share one
 `handleChunk`, so the formats differ only in how a chunk is RECOVERED from the wire and cannot drift into
 different behaviour.
+
+**The live token count is the ENGINE's (`withLiveCount` in sw-llm.ts).** It was chars/4 over the streamed
+reasoning and content, which is not merely approximate: it FROZE for as long as a model took to write a tool
+call, because argument fragments carry neither. `streamAgentTurn` now asks for the running count on every
+chunk — `stream_options: {include_usage, continuous_usage_stats}` on the OpenAI route (vLLM's name and shape,
+so it works there too), `stream_metrics: true` on ollama's native one, `Delta.completion_tokens` (field 6) on
+protobuf — and carries it as `tokens` on `agent-stream` → `liveStream.tokens` → the orb, which shows it
+unrounded and without the `~` an estimate gets. Three facts about it: it is a RUNNING TOTAL, never summed; it
+includes thinking tokens and the end-of-sequence token that produces no text, so it can exceed what the text
+shows; and a new count is news on its own, so a chunk carrying only an argument fragment still fans a delta.
+**A strict backend may refuse the unfamiliar key** with a 400, so a refusal is retried once without it and
+the URL remembered for the worker's life (`refusesLiveCount`) — a wire nicety must never cost an answer. A
+stock server that ignores it simply sends no count, and the estimate stands in. `streamLLM` (`ml.chat`) does
+not ask: nothing there reads a live count, and on SSE every chunk would carry the usage object for nothing.
 
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,

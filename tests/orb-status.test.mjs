@@ -47,16 +47,28 @@ test("activityFor: scopes to the CURRENT turn — a prior turn's tool doesn't le
 
 // ---- STREAMING: live token count + live reply prose ----
 
-test("liveTokensFor: counts the streamed buffer (reasoning + content); null with no live stream", () => {
+test("liveTokensFor: estimates from the streamed buffer (reasoning + content); null with no live stream", () => {
     assert.equal(liveTokensFor(run()), null);   // non-streaming → no count
-    assert.equal(liveTokensFor(run({ liveStream: { step: 1, reasoning: "x".repeat(4800) } })), 1200);   // ~4 chars/token
-    assert.equal(liveTokensFor(run({ liveStream: { step: 1, reasoning: "ab", content: "cd" } })), 1);
+    assert.deepEqual(liveTokensFor(run({ liveStream: { step: 1, reasoning: "x".repeat(4800) } })), { n: 1200, exact: false });   // ~4 chars/token
+    assert.deepEqual(liveTokensFor(run({ liveStream: { step: 1, reasoning: "ab", content: "cd" } })), { n: 1, exact: false });
 });
 
-test("fmtTokens: quantized so a per-delta count doesn't jitter (≥1k → ~X.Xk; below → nearest 10)", () => {
+// THE FROZEN COUNTER. A turn writing a tool call streams argument fragments and no text, so a count built from
+// the text stood still for as long as the call took to write. The engine's own running count keeps moving.
+test("liveTokensFor: the engine's count wins over the estimate, and keeps climbing through a tool call", () => {
+    const writingCall = (tokens) => run({ liveStream: { step: 1, reasoning: "x".repeat(400), tokens } });
+    assert.deepEqual(liveTokensFor(writingCall(180)), { n: 180, exact: true });
+    assert.deepEqual(liveTokensFor(writingCall(260)), { n: 260, exact: true }, "the text did not move; the count did");
+    // No count sent (a stock server, or it refused the ask): the estimate, as before.
+    assert.deepEqual(liveTokensFor(writingCall(undefined)), { n: 100, exact: false });
+});
+
+test("fmtTokens: an estimate is quantized and marked (≥1k → ~X.Xk; below → nearest 10); an exact count is shown as counted", () => {
     assert.equal(fmtTokens(1200), "~1.2k tok");
     assert.equal(fmtTokens(843), "~840 tok");
     assert.equal(fmtTokens(12), "~10 tok");
+    assert.equal(fmtTokens(843, true), "843 tok");
+    assert.equal(fmtTokens(1234, true), "1.2k tok");
 });
 
 test("orbStatus (streaming reasoning): the thinking phase carries a LIVE token count and auto-expands", () => {

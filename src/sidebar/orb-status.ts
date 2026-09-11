@@ -95,19 +95,25 @@ export function liveProseFor(run: Session): string | null {
     return t ? (stripFormatting(t) || null) : null;
 }
 
-// Rough token estimate from the live stream buffer's accumulated characters (~4 chars/token). Streaming
-// only — a non-streaming run has no liveStream, so no live count (it can't know mid-generation). Null when
-// nothing has streamed yet.
-export function liveTokensFor(run: Session): number | null {
+// The live token count. The ENGINE's own running count when the server sends one (`tokens`): exact, and it
+// keeps climbing while the model writes a tool call's arguments — which the text estimate cannot see, so the
+// estimate FROZE for exactly as long as a call took to write. Otherwise a rough estimate from the streamed
+// characters (~4 chars/token). Streaming only — a non-streaming run has no liveStream. Null when nothing has
+// streamed yet.
+export function liveTokensFor(run: Session): { n: number; exact: boolean } | null {
     const ls = run.liveStream;
     if (!ls) return null;
+    if (ls.tokens != null && ls.tokens > 0) return { n: ls.tokens, exact: true };
     const chars = (ls.content?.length || 0) + (ls.reasoning?.length || 0);
     if (!chars) return null;
-    return Math.round(chars / 4);
+    return { n: Math.round(chars / 4), exact: false };
 }
 
-// Quantized so a per-90ms delta doesn't jitter the digits: ≥1k → "~1.2k tok"; below → nearest 10, "~840 tok".
-export function fmtTokens(n: number): string {
+// An estimate is quantized so a per-90ms delta doesn't jitter the digits and marked `~`: ≥1k → "~1.2k tok";
+// below → nearest 10, "~840 tok". An exact count is shown as counted — rounding a true figure to look like
+// a guess would throw away the one thing that makes it worth asking for.
+export function fmtTokens(n: number, exact = false): string {
+    if (exact) return n >= 1000 ? `${(n / 1000).toFixed(1)}k tok` : `${n} tok`;
     return n >= 1000 ? `~${(n / 1000).toFixed(1)}k tok` : `~${Math.round(n / 10) * 10} tok`;
 }
 
@@ -143,7 +149,7 @@ export const STALL_MS = 4000;
  *  streaming, or an elapsed heartbeat once it's gone quiet. `now` is injected so the heartbeat is testable. */
 export function orbStatus(run: Session, now: number = Date.now(), modelResident?: boolean): OrbStatus {
     const tokens = liveTokensFor(run);
-    const tokSuffix = tokens != null ? ` (${fmtTokens(tokens)})` : "";
+    const tokSuffix = tokens != null ? ` (${fmtTokens(tokens.n, tokens.exact)})` : "";
 
     // (1) The model is emitting REPLY prose (not hidden reasoning) — its in-between/final output. Stream it
     //     live as the caption; that live typing is itself the liveness signal, so pair it with the count.

@@ -139,3 +139,13 @@ test("End.cached_tokens: `optional`, so a cold prefill's 0 survives the wire and
     assert.equal(End.decode(Uint8Array.from([0x20, 0x10])).cachedTokens, 16);
     assert.equal(End.decode(new Uint8Array()).cachedTokens, undefined, "absent is not reported");
 });
+
+test("Delta.completion_tokens: the engine's running count, `optional` so a 0 is a count and absent is 'not asked'", async () => {
+    // Field 6, varint (tag 0x30). Present only when the request set stream_options.continuous_usage_stats.
+    const { Delta } = await import("../src/proto/chat.gen.ts");
+    assert.equal(Delta.decode(Uint8Array.from([0x30, 0x00])).completionTokens, 0, "a real 0 survives");
+    // Beside content ("hi", field 1): the count rides the same frame as the text it counts.
+    const d = Delta.decode(Uint8Array.from([0x0a, 0x02, 0x68, 0x69, 0x30, 0x0b]));
+    assert.deepEqual([d.content, d.completionTokens], ["hi", 11]);
+    assert.equal(Delta.decode(Uint8Array.from([0x0a, 0x02, 0x68, 0x69])).completionTokens, undefined, "absent: the request did not ask");
+});

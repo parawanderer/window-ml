@@ -192,7 +192,7 @@ export function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-stream") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        s.liveStream = { step: ev.step, localStep: ev.localStep, reasoning: ev.reasoning, content: ev.content };
+        s.liveStream = { step: ev.step, localStep: ev.localStep, reasoning: ev.reasoning, content: ev.content, ...(ev.tokens != null ? { tokens: ev.tokens } : {}) };
         s.status = "pending"; s.ended = false; s.lastTs = ev.ts; rev.value++;
         return;
     }

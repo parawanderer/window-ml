@@ -1962,7 +1962,10 @@ export interface DebugAgentConfig {
 /** Live model output DURING a step, before the turn resolves — only when the run opted into `stream:true`.
  *  Carries the ACCUMULATED-so-far reasoning/content (the UI REPLACES, not appends, so a dropped/duplicated
  *  event still converges). Lets a long "thinking" phase show its text live instead of a frozen token count. */
-export interface DebugAgentStream extends DebugBase { kind: "agent-stream"; step: number; localStep?: number; reasoning?: string; content?: string; }
+export interface DebugAgentStream extends DebugBase { kind: "agent-stream"; step: number; localStep?: number; reasoning?: string; content?: string;
+    /** The ENGINE's running count of tokens generated so far this call — thinking, answer and a tool call's
+     *  arguments alike. Absent when the server does not send one (then a surface estimates from the text). */
+    tokens?: number; }
 /** A model call is UNDERWAY. Emitted the instant the turn's request goes out, and again whenever the
  *  generation changes phase, so a surface can draw the call while it is happening instead of back-dating a
  *  finished block over memory it already drew.

@@ -828,14 +828,20 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         // too, so the loop still gets its authoritative { content, tool_calls } at the end.
                         const rawStep = (opts?.step as number) || 0, step = stepBase + rawStep;
                         let last = 0;
-                        const flush = (acc: { reasoning: string; content: string }): void => {
+                        let tokens: number | undefined;
+                        const flush = (acc: { reasoning: string; content: string; tokens?: number }): void => {
                             if (abortCtl.signal.aborted) return;
                             last = Date.now();
+                            if (acc.tokens != null) tokens = acc.tokens;
                             fanEvent({ kind: "agent-stream", id: runId, ts: last, save: false, session: { hash: runId, turn: step }, step, localStep: rawStep,
-                                ...(acc.reasoning ? { reasoning: acc.reasoning } : {}), ...(acc.content ? { content: acc.content } : {}) });
+                                ...(acc.reasoning ? { reasoning: acc.reasoning } : {}), ...(acc.content ? { content: acc.content } : {}),
+                                ...(tokens != null ? { tokens } : {}) });
                         };
                         const r = await streamAgentTurn({ messages, tools: toolDefs, model: p.model, think: p.think },
                             (acc) => {
+                                // Kept even when this delta is throttled away, so the next one out — or the final
+                                // flush — carries the newest count rather than the last one that happened to fan.
+                                if (acc.tokens != null) tokens = acc.tokens;
                                 // A phase CHANGE goes out immediately and unthrottled — there are a handful per
                                 // turn, and it is the edge the live bar draws its divider at. Text deltas stay
                                 // throttled; they are continuous.

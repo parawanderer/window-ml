@@ -2639,13 +2639,17 @@ test("resource panel: in snap mode the selection box lands on datapoints, not be
         //
         // TOLERANCED IN SAMPLES, derived from this run's own data rather than written down. The anchor is a
         // fixed SCREEN position and the axis walks under it, so which sample sits there genuinely changes as
-        // polls land — by up to one spacing, which is 0.1 of the plot on a ten-sample window and would fail
-        // any fixed tolerance tight enough to be worth asserting. The spacing is the smallest gap between the
-        // distinct places the leading edge stopped, which is exactly one sample apart by construction.
+        // polls land — by up to one gap between samples, which would fail any fixed tolerance tight enough to be
+        // worth asserting. The axis is LINEAR IN TIME and polls are not evenly spaced, so the gaps differ: the
+        // bound is the WIDEST gap between the places the leading edge stopped (the smallest one undercounted
+        // it and failed on CI at 0.156 against a 0.104 gap, with the pointer 0.39 away). Capped at half the
+        // pointer's travel, so an anchor that followed the pointer still fails however sparse the samples.
         const stops = [...new Set(seen.map((e) => +e.right.toFixed(3)))].sort((a, b) => a - b);
-        const spacing = stops.length > 1 ? Math.min(...stops.slice(1).map((v, i) => v - stops[i])) : 0.1;
+        const gaps = stops.slice(1).map((v, i) => v - stops[i]);
+        const spacing = gaps.length ? Math.min(...gaps) : 0.1;
+        const travel = seen.at(-1).fx - 0.33;
         expect(Math.abs(seen.at(-1).left - seen[0].left), `the anchored edge moved with the pointer: ${JSON.stringify(seen)}`)
-            .toBeLessThan(spacing * 1.5);
+            .toBeLessThan(Math.min((gaps.length ? Math.max(...gaps) : 0.1) * 1.5, travel / 2));
         expect(seen.at(-1).right - seen.at(-1).left, "…while the leading edge covered the drag")
             .toBeGreaterThan(spacing);
     } finally { await ext.close(); await fake.stop(); }
@@ -2715,6 +2719,56 @@ test("resource panel: Esc with no tip up still leaves the zoom", async () => {
         await sleep(300);
         await page.keyboard.press("Escape");
         await expect.poll(() => frame.locator(".vram-zoom.pinned").count(), { timeout: 5000 }).toBe(0);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// THE RESIDUAL, NAMED BY PROCESS (`processes` + `processes_scope` on a patched /api/info). The arithmetic is
+// pinned against real captures in resource-model.test.mjs; what only the drawn panel shows is that every new
+// band is IN THE STACK — `bandOrder` has to name each key or a band silently drops out of the drawing — with a
+// runner's overhead directly on its own model, and the legend and the tip naming what the driver cannot see.
+test("resource panel: the residual is named process by process when the driver lists them", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const TOTAL = 101972967424, MODEL = 18 * GiB, RUNNER = MODEL + 0.6 * GiB, TENANT = 3 * GiB, UNSEEN = 2.5 * GiB;
+        const info = box(TOTAL - RUNNER - TENANT - UNSEEN, TOTAL - 589824);
+        const [c0, c1] = info.compute.supported_gpus;
+        Object.assign(c0, { processes_scope: "pid_namespace", processes: [
+            { pid: 317, used_memory: RUNNER, name: "llama-server", runner: { model: "gemma4:31b" } },
+            { pid: 990, used_memory: TENANT, name: "python3" },
+        ] });
+        c1.processes_scope = "pid_namespace";
+        fake.setCapacity(info);
+        fake.setResident([resident("gemma4:31b", MODEL, 0)]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+
+        const track = frame.locator(".rc-track").first();
+        const legend = track.locator(".rc-legend");
+        await expect.poll(async () => (await legend.textContent()) || "", { timeout: 25000 }).toMatch(/gemma4:31b overhead 614\.4 MiB/);
+        const text = await legend.textContent();
+        expect(text).toMatch(/python3 \(pid 990\) 3\.00 GiB/);
+        expect(text).toMatch(/outside ollama's view 2\.50 GiB/);
+        expect(text, "the size rule no longer guesses once processes are named").not.toMatch(/unattributed|driver overhead/);
+
+        // IN THE STACK, and the overhead sits directly on the model it belongs to, tinted with its colour.
+        await expect.poll(() => track.locator(".rc-area polygon").count(), { timeout: 10000 }).toBeGreaterThanOrEqual(4);
+        const fills = await track.locator(".rc-area").first().locator("polygon").evaluateAll((ps) => ps.map((p) => ({ band: p.classList.contains("rc-band"), fill: p.getAttribute("fill") })));
+        const at = fills.findIndex((f) => f.band);
+        expect(at, `the model's band is drawn: ${JSON.stringify(fills)}`).toBeGreaterThanOrEqual(0);
+        expect(fills[at + 1].fill, "its runner's overhead is the next band up, in a wash of its colour").toMatch(/^color-mix\(in srgb, .+ 30%/);
+        expect(fills.length, "model, overhead, tenant and the unseen remainder are all drawn").toBeGreaterThanOrEqual(4);
+
+        // Pointing at the plot away from the model names them at that instant too.
+        const plot = await track.locator(".rc-plot").boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.6, plot.y + 4);
+        const tip = frame.locator(".rc-tip-pool");
+        await expect(tip).toBeVisible({ timeout: 5000 });
+        expect(await tip.textContent()).toMatch(/python3 \(pid 990\).*outside ollama's view/);
     } finally { await ext.close(); await fake.stop(); }
 });
 
