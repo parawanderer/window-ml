@@ -659,13 +659,25 @@ function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown): Recor
     const cachedFetch = (ml as Record<string, unknown>)["_fetchCached"];
     if (typeof cachedFetch === "function") {
         out.fetch = (url: unknown, opts?: unknown): unknown => {
-            // `{ fresh: true }` skips the cache; `{ credentials: true }` fetches AS THE USER — both are egress
-            // that ALWAYS needs approval, so they can't run in the read-only (no-approval) dialect.
-            if (opts && typeof opts === "object" && ((opts as { fresh?: unknown }).fresh || (opts as { credentials?: unknown }).credentials))
-                throw new Denied("fetch({ fresh | credentials }) is a live/authenticated fetch — it needs approval");
-            const r = (cachedFetch as (u: unknown) => unknown).call(ml, url);
-            if (r === undefined) throw new Denied(`fetch(${JSON.stringify(String(url))}) isn't cached — approve it once, then re-reads are free`);
-            reused?.push(String(url));   // a cache HIT = this survey re-read a URL you already approved (transparency)
+            // The MODE is part of the question, so it is handed to the host rather than dropped: the cache holds
+            // only default-mode results, and a `rendered` or `format: "html"` read answered from it would be a
+            // different document under the name of the one asked for. Handed over as a fresh copy of the four
+            // fields the host reads, never the script's own object.
+            const o = opts && typeof opts === "object" ? opts as Record<string, unknown> : {};
+            const mode = { fresh: !!o.fresh, credentials: !!o.credentials, rendered: !!o.rendered, format: o.format === "html" ? "html" as const : "markdown" as const };
+            // `fresh` skips the cache by definition: always egress, so never here.
+            if (mode.fresh) throw new Denied("fetch({ fresh }) is a live fetch — it needs approval");
+            let r = (cachedFetch as (u: unknown, m: typeof mode) => unknown).call(ml, url, mode);
+            // Defence in depth, kept HERE rather than trusted to the host: a non-default mode is only ever
+            // answered by a LIVE read of the page you are on (nothing else in those modes is cached), so any
+            // other answer to one is a host bug handing back the wrong document — refused, not served.
+            if (r !== undefined && (mode.credentials || mode.rendered) && !(r as { live?: unknown })?.live) r = undefined;
+            if (r === undefined) throw new Denied(mode.credentials
+                ? "fetch({ credentials }) is an authenticated fetch — it needs approval"
+                : `fetch(${JSON.stringify(String(url))}) isn't cached in this mode — approve it once, then re-reads are free`);
+            // A cache HIT = this survey re-read a URL you already approved (transparency). A LIVE read of the page
+            // you are on reused no grant, so it is not reported as one.
+            if (!(r as { live?: unknown }).live) reused?.push(String(url));
             return r;
         };
     }

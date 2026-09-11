@@ -87,20 +87,23 @@ export const navTarget = (url: string, currentHref: string, opts: { allowCrossOr
     return { dest: dest.href, crossOrigin };
 };
 
-/** Whether a fetch of `url` is a request for THE PAGE THE CALL WAS MADE FROM, over a scheme the background
- *  will not fetch (`file:`, today). That one case is answered from the live document instead of refused.
+/** Whether `url` names THE PAGE THE CALL WAS MADE FROM. Every fetch of it is free — the page already holds
+ *  it, can `fetch()` its own URL with its own cookies, and a read-only `exec` gets its `outerHTML` for nothing
+ *  — so no mode of it is an escalation worth a prompt.
  *
- *  Why only that case: `ml.fetch` is http(s)-only because a `file:` read could be ANY file on this machine
- *  (`~/.ssh`, a `.env` with the API key in it) and a hostile page can reach the handler. The page you are
- *  standing on is different — its DOM is already readable (a read-only `exec` gets `outerHTML` for free), so
- *  answering from it grants nothing new. An http(s) page is deliberately NOT included: fetching its URL
- *  returns what the SERVER sends, which is a different document from the live DOM, and a caller asking for
- *  one should not silently receive the other. The fragment is ignored (it never reaches a server and names no
- *  other document); the query is not (a different query is a different URL). */
-export const isLocalCurrentPage = (url: string, currentHref: string): boolean => {
+ *  What it changes beyond the prompt is one mode only: `rendered + credentials` ("this URL, its JS run, in my
+ *  session") IS the DOM already in front of the caller, so it is answered from there (see `liveDocumentFetch`)
+ *  rather than by loading the page a second time in a tab, which re-runs its scripts and their side effects.
+ *  Every other mode is a different document — the server's bytes, or a fresh sessionless load — and still
+ *  goes to the network. Over `file:` those cannot be read at all (Chrome's fetch has no file scheme), which is
+ *  why that refusal names the one mode that works.
+ *
+ *  The fragment is ignored (it never reaches a server and names no other document); the query is not (a
+ *  different query is a different URL). Only http(s) and file: pages count. */
+export const isCurrentPage = (url: string, currentHref: string): boolean => {
     let here: URL, want: URL;
     try { here = new URL(currentHref); want = new URL(url, currentHref); } catch { return false; }
-    if (here.protocol !== "file:" || want.protocol !== "file:") return false;
+    if (!/^(https?|file):$/.test(here.protocol)) return false;
     here.hash = ""; want.hash = "";
     return here.href === want.href;
 };

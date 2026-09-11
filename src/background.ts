@@ -6,7 +6,7 @@ import type { NeutralMessage, ToolCall, TokenUsage, StartRunPayload, SetApproval
 import { modelFilterAllows, bgRunResumable, pushReplay, UI_OUT_CAP } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
-import { externalSheetIds, googleSheetId, clipOut, isLocalCurrentPage } from "./dom";
+import { externalSheetIds, googleSheetId, clipOut, isCurrentPage } from "./dom";
 import { TokenStore, type DerefRead } from "./token-pipe";   // per-session `@tool:` pointer store for background-hosted runs   // track approved external sheets across a run + the choke-point grants
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -248,13 +248,19 @@ const delegateSend = (tabId: number, msg: unknown): Promise<any> =>
 // The navigation SENSOR: a committed MAIN-frame navigation on a tab that hosts a live run means its document
 // (and registered toolset) is going away → engage the barrier so the next delegated tool waits for re-adopt.
 // Sub-frame navigations (frameId != 0) don't replace the run's document, so they're ignored.
+/** Each tab's current main-frame URL, as navigation reports it — so a background-hosted run can tell a fetch
+ *  of the page it is ON from a fetch of the page it STARTED on (see `fetchIsCurrentPage`). History-API
+ *  changes count too: an SPA moves between URLs without committing a navigation. */
+const tabPageUrl = new Map<number, string>();
 if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     chrome.webNavigation.onCommitted.addListener((d) => {
+        if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url);
         if (d.frameId === 0 && activeRuns.has(d.tabId)) navBarrier.noteNavigating(d.tabId);
     });
+    chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url); });
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseDebugger(tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseDebugger(tabId); });
 }
 
 // ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
@@ -1151,11 +1157,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // An UNCREDENTIALED fetch to an origin the run is at / has been consented to (relative, or in
                 // consentedOrigins — seeded with the start origin) is FREE: the page can already fetch its own
                 // origin, so it's no escalation. Used by the auto-approve (no prompt), like a same-origin navigate.
+                // The page the run's tab is on NOW (not where it started — a run navigates). Only skips a prompt:
+                // the FETCH_URL handler still judges an as-you read against the sender's real frame URL, so a
+                // stale entry here can at worst ask for nothing or be refused there, never grant a read.
+                fetchIsCurrentPage: (url: string): boolean => {
+                    const here = tabPageUrl.get(tabId) ?? p.pageUrl;
+                    return !!here && isCurrentPage(url, here);
+                },
                 fetchSameOrigin: (url: string): boolean => {
-                    // The start page's OWN file:// URL: the tool reads it from the live DOM page-side (see
-                    // isLocalCurrentPage), so there is nothing to consent to. Any other file:// URL still gates,
-                    // and FETCH_URL refuses it regardless.
-                    if (p.pageUrl && isLocalCurrentPage(url, p.pageUrl)) return true;
                     try {
                         if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return true;   // relative → the page's own origin
                         return consentedOrigins.has(new URL(url.startsWith("//") ? "https:" + url : url).origin);
@@ -1405,14 +1414,18 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             let scheme = "";
             try { scheme = new URL(url).protocol; } catch { sendResponse({ error: `Refused: "${url}" is not a valid URL.` }); return; }
             if (scheme !== "http:" && scheme !== "https:") {
-                // A local file is refused because it could be ANY file on the machine. The one file:// read that
-                // works is the page the call came from, answered page-side from its live DOM and never reaching
-                // here — so a refusal of a file: URL is always a DIFFERENT file, and saying which one works is
-                // what stops the model retrying the same thing.
+                // A local file is refused because it could be ANY file on the machine — and Chrome's fetch has no
+                // file scheme anyway. The one file:// read that works is a session render of the page the call
+                // came from, answered page-side from its live DOM and never reaching here. So a file: URL here is
+                // either another file, or this page in a mode that would need its BYTES; the refusal says which,
+                // and names the mode that works, so the model does not retry the same thing.
                 const from = sender.url ?? sender.tab?.url ?? "";   // the frame's URL, else its tab's
-                sendResponse({ error: scheme === "file:"
-                    ? `Refused: ml.fetch cannot read local files ("${url}"). The only file:// URL it reads is the page you are on, from its live DOM${from.startsWith("file:") ? ` — that is ${from.replace(/#.*$/, "")}` : ""}.`
-                    : `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").` });
+                const own = from.startsWith("file:") && isCurrentPage(url, from);
+                sendResponse({ error: scheme !== "file:"
+                    ? `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").`
+                    : own
+                    ? `Refused: "${url}" is the page you are on, but a local file's bytes cannot be fetched. Use rendered: true with credentials: true to get its live DOM.`
+                    : `Refused: ml.fetch cannot read local files ("${url}"). The only one it reads is the page you are on${from.startsWith("file:") ? ` (${from.replace(/#.*$/, "")})` : ""}, with rendered: true and credentials: true.` });
                 return;
             }
             const tabId = sender.tab?.id;
@@ -1430,7 +1443,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // origin always needs the grant; execOpen/consent never authorize the credentialed path.
             if (credentials) {
                 const sameOriginAuthOk = !!cfg.autoApproveSameOriginAuth && sameOriginAsSender;
-                if (untrusted && !sameOriginAuthOk && !takeCredFetch(tabId, url)) {
+                // THE SENDER'S OWN PAGE, as a raw GET: the page can already `fetch(location.href, {credentials:
+                // "include"})` itself, so it gains nothing here. Judged against the sender's REAL frame URL — the
+                // loop's auto-approve only skipped a prompt. A RENDER of it is not included: that would open a
+                // second tab of the page (re-running its scripts), which the page side never asks for — it
+                // answers a session render of itself from its live DOM.
+                const ownPage = !rendered && !!sender.url && isCurrentPage(url, sender.url);
+                if (untrusted && !sameOriginAuthOk && !ownPage && !takeCredFetch(tabId, url)) {
                     sendResponse({ error: `Refused: an as-you fetch of "${url}" wasn't approved. A fetch AS THE USER (${rendered ? "rendered in your session" : "cookies"}) must be approved per-URL via the fetch_url tool; it can't run inline in exec or reuse a prior grant.` });
                     return;
                 }

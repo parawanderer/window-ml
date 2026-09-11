@@ -471,9 +471,10 @@ export interface FetchResult {
     negotiation?: FetchNegotiation;
     rendered?: boolean;       // the body is the SETTLED DOM after the page's JS ran in a background tab (rendered
                               // mode), not the raw HTTP response — so client-rendered/SPA content is present
-    /** The body is the LIVE DOM of the page the call was made from, serialized — no request was made. Only for
-     *  that page's own URL over `file:`, which cannot be fetched (a local read could be any file on the
-     *  machine). It includes whatever scripts changed since load, so it is not the file's bytes on disk. */
+    /** The body is the LIVE DOM of the page the call was made from, serialized — no request was made. This is
+     *  how `rendered + credentials` ("its JS run, in my session") is answered for the page you are ON: that
+     *  is the DOM already in front of you, so it is read rather than loaded a second time. It includes whatever
+     *  changed since load and overlays are not stripped. Also the only way to read a local `file:` page. */
     live?: boolean;
     /** A SAFELIST of NON-SENSITIVE response headers — the ONLY headers ever exposed. Auth-bearing headers
      *  (Cookie, Set-Cookie, Authorization, WWW-Authenticate, CSRF/API-key headers, …) are STRUCTURALLY excluded
@@ -2257,7 +2258,7 @@ export interface MlApi {
     /** Internal: CACHE-ONLY read of a prior `ml.fetch(url)` result (or undefined on a miss). The read-only
      *  `exec` dialect binds its `ml.fetch` to this, so re-reading an already-fetched URL is free (no egress).
      *  Not part of the stable public API. */
-    _fetchCached(url: string): FetchResult | undefined;
+    _fetchCached(url: string, mode?: { credentials?: boolean; rendered?: boolean; format?: string }): FetchResult | undefined;
     config(): Promise<MlPublicConfig>;
     setModel(model: string): Promise<string>;
     ps(): Promise<LoadedModel[]>;

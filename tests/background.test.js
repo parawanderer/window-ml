@@ -2333,17 +2333,36 @@ test("SECURITY (FETCH_URL): an untrusted page with NO consent is refused — loc
     // A non-http(s) scheme is refused outright (a page can't turn this into a file:// / data: read).
     const f = await bg.send({ type: "FETCH_URL", payload: { url: "file:///etc/passwd" } }, { tab: { id: 9, url: "https://evil.example/" } });
     assert.match(f.error, /cannot read local files/i, "file:// refused");
-    assert.doesNotMatch(f.error, /that is/, "a web page is not told about a local page it is not on");
-    // A LOCAL page is refused too, even for ITS OWN URL: that read is answered page-side from the live DOM and
-    // never reaches here, so the background serves no file:// URL at all. The refusal names the one read that
-    // does work, so the model stops retrying the same thing.
-    for (const url of ["file:///Users/me/.ssh/id_ed25519", "file:///Users/me/page.html"]) {
-        const l = await bg.send({ type: "FETCH_URL", payload: { url } }, { tab: { id: 9, url: "file:///Users/me/page.html#top" } });
-        assert.match(l.error, /cannot read local files.*the page you are on.*that is file:\/\/\/Users\/me\/page\.html\./i, `${url} refused, naming the page`);
-    }
+    assert.doesNotMatch(f.error, /\(file:/, "a web page is not told about a local page it is not on");
+    // A LOCAL page is refused too — for another file, and for ITS OWN URL in any mode that needs the file's
+    // BYTES (Chrome's fetch has no file scheme). A session render of itself is answered page-side from the live
+    // DOM and never reaches here, so each refusal names that mode, and the model stops retrying the same thing.
+    const local = { tab: { id: 9, url: "file:///Users/me/page.html#top" } };
+    const other = await bg.send({ type: "FETCH_URL", payload: { url: "file:///Users/me/.ssh/id_ed25519" } }, local);
+    assert.match(other.error, /cannot read local files.*the page you are on \(file:\/\/\/Users\/me\/page\.html\), with rendered: true and credentials: true/i);
+    const own = await bg.send({ type: "FETCH_URL", payload: { url: "file:///Users/me/page.html" } }, local);
+    assert.match(own.error, /is the page you are on, but a local file's bytes cannot be fetched\. Use rendered: true with credentials: true/i);
     assert.equal(fetched, false, "and still no request for any of them");
     const c = await bg.send({ type: "FETCH_URL", payload: { url: "chrome://settings" } }, { tab: { id: 9, url: "https://evil.example/" } });
     assert.ok(/only http\(s\)/i.test(c.error), "chrome:// refused");
+});
+
+test("SECURITY (FETCH_URL): an as-you GET of the sender's OWN page needs no grant; its render and the rest of the origin still do", async () => {
+    // The page can already `fetch(location.href, { credentials: "include" })` itself, so an as-you GET of that
+    // exact URL grants it nothing. Judged against the sender's REAL frame URL — the loop's auto-approve only
+    // skipped the prompt. A render is NOT included (a second tab re-running the page's scripts; the page side
+    // answers its own session render from the live DOM), and neither is any OTHER page on the same origin.
+    const urls = [];
+    const bg = loadBackground({ config: baseConfig(), onFetch: (call) => { urls.push(call.url); return fetchResponse("<p>me</p>", { contentType: "text/html", url: call.url }); } });
+    const sender = { tab: { id: 9, url: "https://site.example/inbox?id=3" }, url: "https://site.example/inbox?id=3#top" };
+    const mine = await bg.send({ type: "FETCH_URL", payload: { url: "https://site.example/inbox?id=3", credentials: true, format: "html" } }, sender);
+    assert.ok(!mine.error, `own page fetched as-you with no grant (${mine.error})`);
+    assert.deepEqual(urls, ["https://site.example/inbox?id=3"]);
+    const sibling = await bg.send({ type: "FETCH_URL", payload: { url: "https://site.example/inbox?id=4", credentials: true } }, sender);
+    assert.match(sibling.error, /wasn't approved/, "another page on the same origin still needs a grant");
+    const render = await bg.send({ type: "FETCH_URL", payload: { url: "https://site.example/inbox?id=3", credentials: true, rendered: true } }, sender);
+    assert.match(render.error, /wasn't approved/, "a session RENDER of it still needs a grant here");
+    assert.equal(urls.length, 1, "neither refused call reached the network");
 });
 
 test("SECURITY (FETCH_URL): self-source is enforced BACKGROUND-side — own-repo SOURCE is free from an untrusted page; an issue / non-self / rendered / flag-off still gate", async () => {

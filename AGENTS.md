@@ -2468,14 +2468,24 @@ OpenWebUI fork is not needed for the capacity work.
   CDNs) — a known limitation, not a bug. The popup's **Permissions → "Enable
   Google Sheets access"** requests just the Google origins at runtime
   (`chrome.permissions.request`), a narrower grant than "On all sites".
-- **`ml.fetch` / `fetch_url` never read a local file.** The background refuses every non-http(s) URL: a
-  `file:` read could be any file on the machine (`~/.ssh`, a `.env` holding the API key), and a hostile page
-  reaches that handler directly. The ONE exception is answered page-side and never reaches the background:
-  on a `file://` page, that page's own URL (`isLocalCurrentPage`, dom.ts) returns the LIVE DOM serialized,
-  marked `live: true`. That grants nothing, because a read-only `exec` already gets `outerHTML` for free, and
-  it is what a model on a local page reaching for "fetch this page and grep it" needs. An http(s) page's own
-  URL is deliberately NOT included: the server's bytes and the live DOM are different documents. The
-  refusal for any other `file:` URL names the page that does work, so the model stops retrying.
+- **The page you are ON is free in every fetch mode; a local file is never read** (`isCurrentPage`, dom.ts).
+  - Every `fetch_url` mode aimed at the current page (fragment ignored, query not) auto-approves, AS-YOU
+    INCLUDED, on both loop paths: the page already holds it and can `fetch(location.href, {credentials:
+    "include"})` itself. The credentials rule is about the REST of the origin. At the choke point, an as-you GET
+    passes without a grant only when it is the SENDER's own frame URL — the loop's check only skips a prompt.
+  - **`rendered + credentials` of the current page is its LIVE DOM** (`live: true`), read rather than loaded a
+    second time in a session tab (which re-runs the page's scripts and their side effects). It is the ONLY mode
+    answered that way: a plain or `format: "html"` fetch promises the server's or file's BYTES, and a
+    sessionless `rendered` load is a fresh page — handing either the live DOM would be a different document
+    under the name of the one asked for. Overlays are not stripped (that works by deleting nodes, which on the
+    live page would edit the user's page).
+  - `ml.fetch` holds the rule, so `fetch_url` (which calls it) and `ml.fetch` in `exec` cannot disagree. The
+    read-only dialect hands `_fetchCached` the MODE (a sanitized copy) instead of dropping it, and serves a
+    non-default mode only as a live read — it had been answering `rendered`/`format: "html"` from the
+    default-mode cache.
+  - The background refuses every non-http(s) URL: a `file:` read could be any file on the machine (`~/.ssh`, a
+    `.env` holding the API key), a hostile page reaches that handler directly, and Chrome's fetch has no file
+    scheme anyway. On a `file://` page the refusal names `rendered + credentials` as the one mode that works.
 - **A privileged/credentialed background fetch MUST validate its target host —
   the client-side approval gate does NOT protect it.** The agent approval lives
   in `injected.ts`, but raw messages (`FETCH_SHEET`, …) are reachable by any page

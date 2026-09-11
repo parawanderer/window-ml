@@ -2234,40 +2234,58 @@ test("cached ml.fetch: fetch_url prompts + caches once, then a readonly exec re-
     assert.deepEqual(execStep.reused, [{ kind: "fetch-url", detail: url }], "the reused cached URL is reported on the step");
 });
 
-test("ml.fetch: the local page's OWN file:// URL is read from the live DOM, never fetched and never cached", { timeout: 5000 }, async () => {
-    // A model on a local page reached for "fetch this page and grep it" and hit the background's http(s)-only
-    // refusal with no way forward. The page's DOM is already readable, so its own URL answers from there.
+test("ml.fetch: a SESSION RENDER of the page you are on is its live DOM — and only that mode is", { timeout: 5000 }, async () => {
+    // `rendered + credentials` asks for "this URL, its JS run, in my session", which for the page the call came
+    // from is the DOM already in front of it. Every other mode names a different document (the bytes on disk, or
+    // a fresh sessionless load) and must NOT be answered with this one.
     const url = "file:///Users/me/report.html";
     const world = loadDomWorld(`<h1>Quarterly</h1><p id="n">41</p>`, { url });
-    const r = await world.ml.fetch(`${url}#totals`);   // the fragment names no other document
+    const both = { rendered: true, credentials: true };
+    const r = await world.ml.fetch(`${url}#totals`, both);   // the fragment names no other document
     assert.equal(r.live, true, "marked as a live read, not a fetch");
+    assert.equal(r.rendered, true, "it IS a rendered DOM, which is what was asked for");
     assert.equal(r.url, url);
     assert.match(r.text, /^<!DOCTYPE html>\n<html>/, "the doctype survives serialization");
-    assert.match(r.text, /<p id="n">41<\/p>/, ".text is the raw markup — what a grep wants");
+    assert.match(r.text, /<p id="n">41<\/p>/, ".text is the markup — what a grep wants");
     assert.match(r.markdown, /# Quarterly/, ".markdown is attached like any HTML fetch");
 
-    // LIVE means live: a script's change shows up on the next read, where a cached copy would answer with
-    // the page as it was.
+    // LIVE means live: a change shows up on the next read, where a cached copy would answer with the page as
+    // it was.
     world.document.getElementById("n").textContent = "42";
-    assert.match((await world.ml.fetch(url)).text, /<p id="n">42<\/p>/, "reflects the DOM now, not at first read");
-    // The read-only dialect's cache-only reader answers it too — the same bytes `outerHTML` already gives
-    // that dialect for free, so it must not cost an approval.
-    assert.equal(world.ml._fetchCached(url).live, true);
-    assert.equal(world.ml._fetchCached("file:///Users/me/other.html"), undefined, "a DIFFERENT local file is not the page");
+    assert.match((await world.ml.fetch(url, both)).text, /<p id="n">42<\/p>/, "reflects the DOM now, not at first read");
+
+    // The other modes go to the BACKGROUND (which refuses a file: URL, naming the mode that works) rather than
+    // being handed the live DOM under the name of the bytes. Observed as the relay message they post.
+    const posted = [];
+    world.window.addEventListener("message", (e) => { if (e.data?.type === "FETCH_URL_REQUEST") posted.push(e.data.payload); });
+    for (const opts of [{}, { format: "html" }, { credentials: true }, { rendered: true }]) void world.ml.fetch(url, opts);
+    await new Promise((res) => setTimeout(res, 20));
+    assert.equal(posted.length, 4, `every non-session-render mode went to the background (${JSON.stringify(posted)})`);
+
+    // The read-only dialect's cache reader follows the SAME rule, mode and all.
+    assert.equal(world.ml._fetchCached(url, both).live, true);
+    assert.equal(world.ml._fetchCached(url), undefined, "a plain read of the page is its bytes, not its DOM");
+    assert.equal(world.ml._fetchCached(url, { rendered: true }), undefined, "a sessionless render is a fresh page");
+    assert.equal(world.ml._fetchCached("file:///Users/me/other.html", both), undefined, "a DIFFERENT local file is not the page");
 
     // The tool says what it did: "HTTP 200" would claim a request that never happened.
-    const out = await world.ml.fetchTool().run({ url, format: "html" });
+    const out = await world.ml.fetchTool().run({ url, format: "html", ...both });
     const text = typeof out === "string" ? out : out.content;
-    assert.match(text, /^Read file:\/\/\/Users\/me\/report\.html from the LIVE page/);
+    assert.match(text, /^Read file:\/\/\/Users\/me\/report\.html as rendered in your session: it is the page you are on/);
+    assert.match(text, /not the file's bytes on disk/);
     assert.doesNotMatch(text, /HTTP 200/);
+    assert.match(text, /<p id="n">42<\/p>/, 'format "html" hands over the markup');
 });
 
-test("ml.fetch: an http(s) page's own URL is NOT answered from the DOM", () => {
-    // Fetching an http page returns what the SERVER sends — a different document from the live DOM — so a
-    // caller asking for one must not silently receive the other.
-    const url = "https://x.test/page";
+test("ml.fetch: on an http(s) page too, a session render of itself is read, not re-loaded in a tab", { timeout: 5000 }, async () => {
+    // Loading the page you are on a second time in a session tab re-runs its scripts (and their side effects)
+    // to produce what is already in front of you.
+    const url = "https://x.test/page?q=1";
     const world = loadDomWorld(`<p>hi</p>`, { url });
-    assert.equal(world.ml._fetchCached(url), undefined);
+    const r = await world.ml.fetch(`${url}#frag`, { rendered: true, credentials: true });
+    assert.equal(r.live, true);
+    assert.equal(world.ml._fetchCached("https://x.test/page?q=2", { rendered: true, credentials: true }), undefined, "another query is another page");
+    assert.equal(world.ml._fetchCached(url), undefined, "a plain read is the server's bytes, never the DOM");
 });
 
 test("fetch_url: an HTML page is auto-converted to Markdown (+ a note); format:\"html\" returns the original HTML", async () => {
