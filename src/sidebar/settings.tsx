@@ -1152,7 +1152,7 @@ export function Settings() {
                 <Section id="python" title="Sandboxed Python">
 
                 <div class="set-field"><span>Environment</span>
-                    <div class="set-hint">Bundled packages: {PY_PACKAGES.map(p => p.load).join(", ")}, + the Python stdlib.</div>
+                    <div class="set-hint">Bundled packages: {PY_PACKAGES.filter(p => !p.lazy).map(p => p.load).join(", ")}, + the Python stdlib.</div>
                     <div class="py-env">
                         <span class="tt">
                             <button class="test-btn" disabled={pyEnv.value.state === "probing"} onClick={probePython}>

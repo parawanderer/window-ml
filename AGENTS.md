@@ -1635,6 +1635,34 @@ every glance at the bench cost a cold start. Installing a package and choosing w
 are **stated in words, not drawn as controls that no-op**: an affordance that silently does nothing cannot be
 told from a bug, so you try it twice.
 
+**The bench editor's COMPLETION is Jedi, in the sandbox (`COMPLETE_HELPER`/`completeIn`, python-runtime.ts).**
+Static analysis of the script being typed — it is never RUN — so the stateless sandbox is no limit for
+anything reached through an import or written in the script: module attributes (`np.ara`), pandas frames
+(`pd.read_csv(...).he`, via pandas' own stubs), literals, and the script's own functions all complete. It
+**cannot** type an array returned by a numpy call (`grid = np.arange(24).reshape(4, 6)` → `grid.` offers
+nothing): Jedi 0.19 cannot resolve numpy 2's stub layout. That is the case a PERSISTED bench fixes, and why
+`namespace` is the helper's one moving part — `None` is Jedi's `Script`, a live namespace is its
+`Interpreter`, which completes the real object (`grid.su` → `sum`, pinned in `tests/python.test.mjs` along with
+the gap, so a Jedi that fixes it announces itself). Five things are load-bearing:
+- **Lazy** (`PyPackage.lazy`, `PY_LAZY_LOADS`): the 1.6 MB of wheels are fetched with the rest but loaded on
+  the first completion, never at start-up and never offered to the model.
+- **Only once the sandbox is WARM** (`completeInSandbox` returns null until `benchEnv` is set): a completion
+  starts Pyodide when it is cold, and a keystroke must not pay that start, nor push your first Run behind it.
+- **A completion arms NO watchdog** (offscreen.ts). The kill timer starts when a message is POSTED, and a
+  completion queued behind a long run would fire it mid-run and kill the worker — your script with it —
+  because you typed. A hung completion is still cleared by the next run's own watchdog.
+- **Always hardened, and only from our own surfaces** (the `PYTHON_EXEC` choke point, `sender.url`): analysis
+  can import a compiled module to inspect it, which must not reach the network even in `full` mode, and a
+  page is refused rather than handed a new kind of request to the one sandbox.
+- **Budgeted, with the static list as the floor** (`withRemote`, cm-editor.ts, 350 ms): the first request
+  after warming loads Jedi and falls back, the next word gets it. Asked once per WORD — `validFor` narrows the
+  same answer as you type. On a MEMBER (`np.zz`) a missing answer means no popup, never builtins offered as
+  attributes; inside a string or comment it asks nothing (Jedi would complete the sandbox's file paths).
+- **A kind Jedi could not RESOLVE is shown as no label, never as the wrong one.** numpy 2's stubs make Jedi
+  call 35 of numpy's functions "module" (`np.arange` among them), so "module" is believed only when the name
+  really is a loaded module (`sys.modules`); otherwise it is `""`. Only module/class/function/property/keyword
+  are printed beside a name at all — `statement`/`instance`/`param` are Jedi's internals, not a reader's.
+
 **One `openBench(code?)`.** There were two openers and they disagreed: a code block's ▶ went straight to the
 FULL page, which is precisely the trip the drawer exists to stop — you press it FROM a step in order to
 compare against that step. Both go through the one function now, which honours the dock preference and puts

@@ -17,7 +17,17 @@ export interface CodeEditorOptions {
     onRun?(): void;
     /** Shown while the document is empty. */
     placeholder?: string;
+    /**
+     * A completion source that knows more than the static list — for the bench, Jedi in the sandbox. Given
+     * the whole document and a 1-based line / 0-based column, resolve candidates, or null when it cannot say
+     * (still loading, busy behind a run, failed). The static list stays the floor: the editor never waits
+     * past its budget for this, and a late answer is dropped.
+     */
+    complete?(code: string, line: number, column: number): Promise<RemoteCompletion[] | null>;
 }
+
+/** One candidate from a `complete` source: the whole `name` and its kind (`module`/`function`/…). */
+export interface RemoteCompletion { name: string; type: string; }
 
 /** The live editor, as the sidebar sees it. */
 export interface CodeEditorHandle {

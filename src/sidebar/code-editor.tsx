@@ -6,7 +6,7 @@
 // whole reason the editor is loaded this way rather than imported.
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { CodeEditorFactory, CodeEditorHandle } from "./code-editor-api";
+import type { CodeEditorFactory, CodeEditorHandle, CodeEditorOptions } from "./code-editor-api";
 
 let pending: Promise<CodeEditorFactory | null> | null = null;
 
@@ -44,6 +44,9 @@ interface CodeEditorProps {
      */
     onRun?(): void;
     placeholder?: string;
+    /** A completion backend beyond the static list (the bench passes Jedi-in-the-sandbox). Only CodeMirror
+     *  asks it; the textarea fallback has no completion to offer. */
+    complete?: CodeEditorOptions["complete"];
     /** Class for the field itself, so callers keep owning its size and border. */
     class?: string;
 }
@@ -54,15 +57,15 @@ interface CodeEditorProps {
  * built bundle lands, so it is never NOT usable. Controlled by `value`/`onChange`; the caller owns its size.
  * Extracted for the Python bench; reach for it instead of a bare `<textarea class="code">`.
  */
-export function CodeEditor({ value, onChange, onRun, placeholder, class: className = "" }: CodeEditorProps) {
+export function CodeEditor({ value, onChange, onRun, placeholder, complete, class: className = "" }: CodeEditorProps) {
     const host = useRef<HTMLDivElement>(null);
     const editor = useRef<CodeEditorHandle | null>(null);
     const [upgraded, setUpgraded] = useState(false);
 
     // The editor is mounted once, but its callbacks are read through a ref so a re-render with a new
     // closure does not mean tearing the view down and losing the cursor with it.
-    const latest = useRef({ onChange, onRun });
-    latest.current = { onChange, onRun };
+    const latest = useRef({ onChange, onRun, complete });
+    latest.current = { onChange, onRun, complete };
 
     // Every text this editor has produced and not yet seen come back. Typing goes out as onChange and
     // returns as a new `value` prop a render later, and pushing that back in replaces the document
@@ -89,6 +92,7 @@ export function CodeEditor({ value, onChange, onRun, placeholder, class: classNa
                 // Bound only when the caller wants it: an unconditional handler would swallow
                 // Cmd/Ctrl+Enter for a caller that has nothing to run.
                 onRun: onRun ? () => latest.current.onRun?.() : undefined,
+                complete: complete ? (code, line, column) => latest.current.complete?.(code, line, column) ?? Promise.resolve(null) : undefined,
             });
             setUpgraded(true);
         });

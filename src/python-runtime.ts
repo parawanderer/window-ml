@@ -341,3 +341,68 @@ export function unharden(py: any, saved: Hardened): void {
     try { py.registerJsModule("js", globalThis); } catch { /* already present */ }
     try { py.registerJsModule("pyodide_js", py); } catch { /* already present */ }
 }
+
+// ── THE BENCH EDITOR'S COMPLETION ENGINE ─────────────────────────────────────────────────────────────────
+// Jedi, loaded lazily (`PY_LAZY_LOADS`) the first time the bench asks. It never RUNS the script being typed:
+// completion is static analysis, so the stateless sandbox is no limit for anything reached through an
+// import or written in the script — measured in Pyodide: module attributes (`np.ara`, `np.linalg.i`,
+// `from numpy import lin`), pandas frames (`pd.read_csv(...).he` → `head`, via pandas' own stubs), literals,
+// and the script's own functions and classes all complete.
+//
+// What it CANNOT infer is an array returned by a numpy call (`np.arange(24).reshape(4, 6)`, `np.zeros(3)`):
+// Jedi 0.19 cannot resolve numpy 2's stub layout, so `grid.` offers nothing. That is exactly the case a
+// persisted session fixes, and why `namespace` is the one parameter that changes when the bench keeps its
+// state: `None` is Jedi's `Script`, a namespace is its `Interpreter`, which completes the LIVE object
+// (`grid.su` → `sum`, verified). The same `complete(line, column)` either way, so the editor never changes.
+//
+// `InterpreterEnvironment`: the default environment looks for a Python executable to introspect compiled
+// modules in a SUBPROCESS, and there is no subprocess in Pyodide.
+export const COMPLETE_HELPER = /* python */ `
+def _ml_complete(code, line, column, namespace=None):
+    import json, jedi, sys, warnings
+    out = []
+    # Jedi WARNS when a stub points at a module it cannot import (numpy 2's layout does, on every numpy
+    # completion); on a path that runs per keystroke that is console spam, not information.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        if namespace is None:
+            script = jedi.Script(code, environment=jedi.InterpreterEnvironment())
+        else:
+            script = jedi.Interpreter(code, [namespace])
+        for c in script.complete(line, column):
+            kind = c.type
+            # Jedi types a name it could not RESOLVE as a module — numpy 2's stubs re-export from modules it
+            # cannot import, so np.arange, np.array, np.asarray (40 of numpy's first 200) all came back
+            # "module". A module is believed only when it really is one that is loaded; otherwise the kind is
+            # unknown, which the editor shows as no label rather than a wrong one.
+            if kind == "module" and c.full_name not in sys.modules:
+                kind = ""
+            out.append({"name": c.name, "type": kind, "complete": c.complete})
+            if len(out) >= 200:
+                break
+    return json.dumps(out)
+`;
+
+/** One completion Jedi offered: the whole `name`, its kind (`module`/`function`/`instance`/…), and the part
+ *  still to type (`complete`). */
+export interface PyCompletion { name: string; type: string; complete: string; }
+
+/**
+ * Ask Jedi what can go at a position in a script. Needs `COMPLETE_HELPER` installed (the worker does that
+ * once, after loading the lazy wheels). Always HARDENED, whatever mode the bench is in: analysis can import a
+ * compiled module to inspect it, and that import must not reach the network even when the user picked `full`.
+ *
+ * @param line 1-based, as Jedi counts. @param column 0-based, in characters.
+ * @returns at most 200 completions, best first as Jedi ranks them.
+ */
+export function completeIn(py: any, code: string, line: number, column: number): PyCompletion[] {
+    const saved = harden(py);
+    try {
+        // Handed over as a global rather than spliced into the source, so no script can break out of a quote.
+        py.globals.set("_ml_c_code", code);
+        return JSON.parse(py.runPython(`_ml_complete(_ml_c_code, ${Math.max(1, line | 0)}, ${Math.max(0, column | 0)})`) as string);
+    } finally {
+        try { py.globals.delete("_ml_c_code"); } catch { /* already gone */ }
+        unharden(py, saved);
+    }
+}

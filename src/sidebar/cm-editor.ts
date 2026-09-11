@@ -7,10 +7,10 @@
 // It attaches to `window` rather than exporting, because every entry here is IIFE (content and
 // injected scripts have to be classic scripts) so there is no module graph to import into.
 
-import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete";
+import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, type Completion, type CompletionContext, type CompletionResult } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
-import { python } from "@codemirror/lang-python";
-import { HighlightStyle, bracketMatching, indentUnit, syntaxHighlighting } from "@codemirror/language";
+import { globalCompletion, localCompletionSource, python } from "@codemirror/lang-python";
+import { HighlightStyle, bracketMatching, indentUnit, syntaxHighlighting, syntaxTree } from "@codemirror/language";
 import { EditorState } from "@codemirror/state";
 import { EditorView, drawSelection, highlightActiveLine, keymap, placeholder, rectangularSelection } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
@@ -62,6 +62,71 @@ const THEME = EditorView.theme({
     ".cm-placeholder": { color: "var(--fg-faint)" },
 });
 
+// How long the editor waits for a `complete` source before showing the static list instead. Warm Jedi
+// answers in ~20ms plus the message hops; the first request also loads 1.6 MB of wheels, which this
+// deliberately does NOT wait for — that one shows the static list and the next word gets Jedi.
+const REMOTE_BUDGET_MS = 350;
+
+// Jedi's kinds, onto CodeMirror's icon set. Jedi reports methods as `function`, which is what it shows.
+const KIND: Record<string, string> = {
+    module: "namespace", class: "class", function: "function", instance: "variable", param: "variable",
+    statement: "variable", property: "property", keyword: "keyword", path: "text",
+};
+
+// Which of those are worth SAYING beside a name. Jedi's own words for the rest (`statement`, `instance`,
+// `param`) are its internals, not something a reader acts on; an unknown kind (`""`) says nothing at all.
+const LABELLED = new Set(["module", "class", "function", "property", "keyword"]);
+
+// Where completion would only be noise: Jedi completes FILE PATHS inside a string (the sandbox's own
+// filesystem), and nothing useful can be completed inside a comment.
+const QUIET = new Set(["String", "FormatString", "Comment"]);
+
+/** The static sources `python()` ships — keywords, builtins, snippets, names in the buffer — merged. */
+async function staticCompletions(ctx: CompletionContext): Promise<CompletionResult | null> {
+    const results = (await Promise.all([localCompletionSource(ctx), globalCompletion(ctx)]))
+        .filter((r): r is CompletionResult => !!r);
+    if (!results.length) return null;
+    const seen = new Set<string>();
+    const options: Completion[] = [];
+    for (const r of results) for (const o of r.options) if (!seen.has(o.label)) { seen.add(o.label); options.push(o); }
+    return { from: Math.min(...results.map(r => r.from)), options, validFor: /^\w*$/ };
+}
+
+/**
+ * The editor's one completion source when a `complete` backend is given: ask it, within a budget, and fall
+ * back to the static list. Asked once per WORD — `validFor` lets CodeMirror narrow the same answer as you
+ * keep typing, so a request is made when a name starts or after a `.`, not on every keystroke.
+ */
+function withRemote(remote: NonNullable<CodeEditorOptions["complete"]>) {
+    return async (ctx: CompletionContext): Promise<CompletionResult | null> => {
+        if (QUIET.has(syntaxTree(ctx.state).resolveInner(ctx.pos, -1).name)) return null;
+        const word = ctx.matchBefore(/[A-Za-z_]\w*$/);
+        const from = word ? word.from : ctx.pos;
+        // A MEMBER access — `np.` or `np.ar` alike: what matters is whether the NAME being typed follows a dot,
+        // not whether the cursor does.
+        const member = from > 0 && ctx.state.sliceDoc(from - 1, from) === ".";
+        if (!word && !member && !ctx.explicit) return null;
+        const line = ctx.state.doc.lineAt(ctx.pos);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const answer = await Promise.race([
+            remote(ctx.state.doc.toString(), line.number, ctx.pos - line.from).catch(() => null),
+            new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), REMOTE_BUDGET_MS); }),
+        ]);
+        clearTimeout(timer);
+        if (ctx.aborted) return null;
+        if (answer?.length) {
+            return {
+                from,
+                options: answer.map(c => ({ label: c.name, type: KIND[c.type] ?? "variable", ...(LABELLED.has(c.type) ? { detail: c.type } : {}) })),
+                validFor: /^\w*$/,
+            };
+        }
+        // On a member the static list has nothing true to say (it would offer builtins as attributes of `np`),
+        // so a remote with no answer there means no popup rather than a wrong one.
+        return member ? null : staticCompletions(ctx);
+    };
+}
+
 /**
  * Build the extension list for one editor.
  *
@@ -89,7 +154,10 @@ function extensions(options: CodeEditorOptions, onChange: (view: EditorView) => 
         highlightActiveLine(),
         bracketMatching(),
         closeBrackets(),
-        autocompletion(),
+        // With a `complete` backend this REPLACES the language's own sources rather than adding to them: the
+        // backend already offers what they would (Jedi knows keywords, builtins and the buffer's names), and
+        // two lists merged would show every name twice. They remain the fallback inside `withRemote`.
+        options.complete ? autocompletion({ override: [withRemote(options.complete)] }) : autocompletion(),
         indentUnit.of("    "),
         python(),
         syntaxHighlighting(HLJS_STYLE),

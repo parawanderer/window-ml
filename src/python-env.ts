@@ -6,7 +6,9 @@
 // without pulling anything else in.) `load` is the Pyodide package name; `prelude` is the
 // import line executed before user code (empty = load-only, imported lazily elsewhere);
 // `label` is what the model sees in the tool description (empty = hidden, e.g. a parser dep).
-export interface PyPackage { load: string; prelude: string; label: string; }
+// `lazy` = the wheel is FETCHED (so it works offline) but not loaded at sandbox start and never offered to
+// the model: tooling the bench loads on first use, so a `python_exec` pays nothing for it.
+export interface PyPackage { load: string; prelude: string; label: string; lazy?: boolean; }
 
 export const PY_PACKAGES: PyPackage[] = [
     { load: "numpy", prelude: "import numpy as np", label: "numpy (np)" },
@@ -24,9 +26,16 @@ export const PY_PACKAGES: PyPackage[] = [
     // fallback. bs4 + html5lib are pure-Python (light) vs lxml's heavy WASM C-extension.
     { load: "beautifulsoup4", prelude: "", label: "" },
     { load: "html5lib", prelude: "", label: "" },
+    // The bench EDITOR's completion (static analysis of the script being typed, plus a live namespace once
+    // one persists). Lazy: loaded the first time someone asks for a completion, never at start-up, and
+    // hidden from the model — it is not something a script is meant to import. Pulls in parso via the lock.
+    { load: "jedi", prelude: "", label: "", lazy: true },
 ];
 
-export const PY_PACKAGE_LOADS: string[] = PY_PACKAGES.map(p => p.load);
+/** Loaded when the sandbox STARTS. Lazy tooling is excluded: see `PY_LAZY_LOADS`. */
+export const PY_PACKAGE_LOADS: string[] = PY_PACKAGES.filter(p => !p.lazy).map(p => p.load);
+/** Fetched with the rest but loaded on first use — the bench editor's completion engine. */
+export const PY_LAZY_LOADS: string[] = PY_PACKAGES.filter(p => p.lazy).map(p => p.load);
 export const PY_PRELUDE_IMPORTS: string = PY_PACKAGES.filter(p => p.prelude).map(p => p.prelude).join("\n");
 export const PY_PACKAGE_LABELS: string = PY_PACKAGES.filter(p => p.label).map(p => p.label).join(", ");
 
