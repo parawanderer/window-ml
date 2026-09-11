@@ -471,6 +471,10 @@ export interface FetchResult {
     negotiation?: FetchNegotiation;
     rendered?: boolean;       // the body is the SETTLED DOM after the page's JS ran in a background tab (rendered
                               // mode), not the raw HTTP response — so client-rendered/SPA content is present
+    /** The body is the LIVE DOM of the page the call was made from, serialized — no request was made. Only for
+     *  that page's own URL over `file:`, which cannot be fetched (a local read could be any file on the
+     *  machine). It includes whatever scripts changed since load, so it is not the file's bytes on disk. */
+    live?: boolean;
     /** A SAFELIST of NON-SENSITIVE response headers — the ONLY headers ever exposed. Auth-bearing headers
      *  (Cookie, Set-Cookie, Authorization, WWW-Authenticate, CSRF/API-key headers, …) are STRUCTURALLY excluded
      *  and never appear here, so a fetch can never leak the user's session. Each field is absent when the server

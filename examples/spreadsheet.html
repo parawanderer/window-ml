@@ -36,16 +36,6 @@
   highest-grossing region? Use python_exec on the #sales table — don't eyeball it.",
   { extraTools: [ml.pythonTool()] })</code></p>
 
-  <!--
-    ANSWER KEY (in a comment → NOT in the DOM, so findByText can't cheat; the model must COMPUTE it):
-      • Grand total of Q1–Q4 across all reps   = 6260
-      • Column totals: Q1=1455, Q2=1590, Q3=1555, Q4=1660
-      • Top rep by annual total                = Gia (850)   [runner-up: Kim 810]
-      • Region totals: East=2440, North=1760, South=1230, West=830
-      • Highest-grossing region                = East (2440)
-      • Average annual total per rep           ≈ 521.67
-  -->
-
   <div class="card">
     <h2>FY sales ($k)</h2>
     <table id="sales">
@@ -69,8 +59,8 @@
     </table>
   </div>
 
-  <p class="hint">The expected answers live in an HTML comment (view source) so the DOM text carries no
-  totals — a correct answer has to come from <code>df</code>, not from reading a number off the page.</p>
+  <p class="hint">The expected answers are kept off this page entirely — not in its text, its source or its
+  comments — so a correct answer has to come from <code>df</code>, not from reading a number off the page.</p>
 
   <!-- ───────────────────────── Ridiculous mode ───────────────────────── -->
   <h1 style="margin-top:28px">😈 Ridiculous mode</h1>
@@ -84,14 +74,6 @@
   cells), and the top region by total. Use python_exec on #bigsales — the table scrolls, don't try to
   read it.", { extraTools: [ml.pythonTool()] })</code></p>
 
-  <!--
-    ANSWER KEY (JS-generated, seed 1337 — also console.logged when you open it):
-      • Grand total of all 12 months (dirty cells coerced to NaN, skipped) = 116153
-      • Region totals: West=24069, East=23508, South=23063, North=22994, Central=22519
-      • Top region by total = West (24069)
-      • The ID column has leading zeros (00001…) — casting drops them, so if a task needs IDs use tableRaw.
-  -->
-
   <button id="bigToggle" style="padding:8px 14px;border:1px solid #ccc;border-radius:8px;cursor:pointer">
     Show the giant scrolling table</button>
   <div id="bigWrap" style="display:none;margin-top:14px">
@@ -99,7 +81,7 @@
       <table id="bigsales"></table>
     </div>
     <p class="hint">Scrolls vertically (40 rows) and horizontally (15 columns). The answer is in the
-    devtools console when you open this, and in an HTML comment above.</p>
+    devtools console when you open this.</p>
   </div>
 
   <style>
@@ -111,7 +93,7 @@
   </style>
 
   <script>
-    // Deterministic (seed 1337) so the answer key is stable. mulberry32 PRNG.
+    // Deterministic (seed 1337) so the expected totals are stable. mulberry32 PRNG.
     const mulberry32 = (a) => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
     // Mirrors dom.ts parseNumericCell — so the console answer matches what python_exec computes.
     const parseNum = (v) => { let s = String(v == null ? "" : v).trim(); if (!s) return null; const p = /^\((.*)\)$/.exec(s); if (p) s = "-" + p[1]; s = s.replace(/[,$€£¥%\s]/g, ""); if (!/^[-+]?(\d+\.?\d*|\.\d+)$/.test(s)) return null; const n = Number(s); return Number.isFinite(n) ? n : null; };
@@ -131,7 +113,7 @@
       let html = "<thead><tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>";
       for (let i = 0; i < N; i++) html += `<tr><td>${data[i].id}</td><td>${data[i].rep}</td><td>${data[i].region}</td>${display[i].map(s => `<td class="num">${s}</td>`).join("")}</tr>`;
       document.getElementById("bigsales").innerHTML = html + "</tbody>";
-      // Compute + log the answer key (dirty cells → null, skipped — like pandas NaN in .sum()).
+      // Compute + log the expected totals (dirty cells → null, skipped — like pandas NaN in .sum()).
       let grand = 0; const byRegion = {};
       for (let i = 0; i < N; i++) { let rs = 0; for (let m = 0; m < 12; m++) { const n = parseNum(display[i][m]); if (n != null) { grand += n; rs += n; } } byRegion[data[i].region] = (byRegion[data[i].region] || 0) + rs; }
       const top = Object.entries(byRegion).sort((a, b) => b[1] - a[1])[0];

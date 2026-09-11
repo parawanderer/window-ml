@@ -139,6 +139,10 @@ test("FETCH_LLM: a network failure that NEVER recovers gives up after the retry 
     const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], model: "m" } });
     assert.ok(calls >= 5, `bounded retries then surfaces the error (was ${calls} attempts)`);
     assert.match(res.error, /Couldn't reach the server/, "gives up with the actionable offline error");
+    // How long each attempt was outstanding is what separates a refused connection (milliseconds) from one
+    // dropped mid-wait (tens of seconds, often a round number) — the question a cold-load failure raised and
+    // nothing had recorded.
+    assert.match(res.error, new RegExp(`${calls} attempts, each failed after (\\d+ ms(, )?){${calls}}\\)`), "says how long each attempt lasted");
 });
 
 test("FETCH_LLM: an unreachable server → an actionable error, not a bare 'Failed to fetch'", async () => {
@@ -2328,7 +2332,16 @@ test("SECURITY (FETCH_URL): an untrusted page with NO consent is refused — loc
     assert.equal(fetched, false, "the gate is BEFORE the network — no request sent for any un-consented address");
     // A non-http(s) scheme is refused outright (a page can't turn this into a file:// / data: read).
     const f = await bg.send({ type: "FETCH_URL", payload: { url: "file:///etc/passwd" } }, { tab: { id: 9, url: "https://evil.example/" } });
-    assert.ok(/only http\(s\)/i.test(f.error), "file:// refused");
+    assert.match(f.error, /cannot read local files/i, "file:// refused");
+    assert.doesNotMatch(f.error, /that is/, "a web page is not told about a local page it is not on");
+    // A LOCAL page is refused too, even for ITS OWN URL: that read is answered page-side from the live DOM and
+    // never reaches here, so the background serves no file:// URL at all. The refusal names the one read that
+    // does work, so the model stops retrying the same thing.
+    for (const url of ["file:///Users/me/.ssh/id_ed25519", "file:///Users/me/page.html"]) {
+        const l = await bg.send({ type: "FETCH_URL", payload: { url } }, { tab: { id: 9, url: "file:///Users/me/page.html#top" } });
+        assert.match(l.error, /cannot read local files.*the page you are on.*that is file:\/\/\/Users\/me\/page\.html\./i, `${url} refused, naming the page`);
+    }
+    assert.equal(fetched, false, "and still no request for any of them");
     const c = await bg.send({ type: "FETCH_URL", payload: { url: "chrome://settings" } }, { tab: { id: 9, url: "https://evil.example/" } });
     assert.ok(/only http\(s\)/i.test(c.error), "chrome:// refused");
 });

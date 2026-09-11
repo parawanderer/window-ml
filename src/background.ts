@@ -6,7 +6,7 @@ import type { NeutralMessage, ToolCall, TokenUsage, StartRunPayload, SetApproval
 import { modelFilterAllows, bgRunResumable, pushReplay, UI_OUT_CAP } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
-import { externalSheetIds, googleSheetId, clipOut } from "./dom";
+import { externalSheetIds, googleSheetId, clipOut, isLocalCurrentPage } from "./dom";
 import { TokenStore, type DerefRead } from "./token-pipe";   // per-session `@tool:` pointer store for background-hosted runs   // track approved external sheets across a run + the choke-point grants
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -1152,6 +1152,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // consentedOrigins — seeded with the start origin) is FREE: the page can already fetch its own
                 // origin, so it's no escalation. Used by the auto-approve (no prompt), like a same-origin navigate.
                 fetchSameOrigin: (url: string): boolean => {
+                    // The start page's OWN file:// URL: the tool reads it from the live DOM page-side (see
+                    // isLocalCurrentPage), so there is nothing to consent to. Any other file:// URL still gates,
+                    // and FETCH_URL refuses it regardless.
+                    if (p.pageUrl && isLocalCurrentPage(url, p.pageUrl)) return true;
                     try {
                         if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return true;   // relative → the page's own origin
                         return consentedOrigins.has(new URL(url.startsWith("//") ? "https:" + url : url).origin);
@@ -1400,7 +1404,17 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             const format = (message.payload as { format?: unknown })?.format === "html" ? "html" as const : "markdown" as const;
             let scheme = "";
             try { scheme = new URL(url).protocol; } catch { sendResponse({ error: `Refused: "${url}" is not a valid URL.` }); return; }
-            if (scheme !== "http:" && scheme !== "https:") { sendResponse({ error: `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").` }); return; }
+            if (scheme !== "http:" && scheme !== "https:") {
+                // A local file is refused because it could be ANY file on the machine. The one file:// read that
+                // works is the page the call came from, answered page-side from its live DOM and never reaching
+                // here — so a refusal of a file: URL is always a DIFFERENT file, and saying which one works is
+                // what stops the model retrying the same thing.
+                const from = sender.url ?? sender.tab?.url ?? "";   // the frame's URL, else its tab's
+                sendResponse({ error: scheme === "file:"
+                    ? `Refused: ml.fetch cannot read local files ("${url}"). The only file:// URL it reads is the page you are on, from its live DOM${from.startsWith("file:") ? ` — that is ${from.replace(/#.*$/, "")}` : ""}.`
+                    : `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").` });
+                return;
+            }
             const tabId = sender.tab?.id;
             const untrusted = await senderTrust(sender) === "untrusted";
             // SAME-ORIGIN as the sender's page: a free read (the page can already `fetch()` its own origin, and

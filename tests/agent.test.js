@@ -2234,6 +2234,42 @@ test("cached ml.fetch: fetch_url prompts + caches once, then a readonly exec re-
     assert.deepEqual(execStep.reused, [{ kind: "fetch-url", detail: url }], "the reused cached URL is reported on the step");
 });
 
+test("ml.fetch: the local page's OWN file:// URL is read from the live DOM, never fetched and never cached", { timeout: 5000 }, async () => {
+    // A model on a local page reached for "fetch this page and grep it" and hit the background's http(s)-only
+    // refusal with no way forward. The page's DOM is already readable, so its own URL answers from there.
+    const url = "file:///Users/me/report.html";
+    const world = loadDomWorld(`<h1>Quarterly</h1><p id="n">41</p>`, { url });
+    const r = await world.ml.fetch(`${url}#totals`);   // the fragment names no other document
+    assert.equal(r.live, true, "marked as a live read, not a fetch");
+    assert.equal(r.url, url);
+    assert.match(r.text, /^<!DOCTYPE html>\n<html>/, "the doctype survives serialization");
+    assert.match(r.text, /<p id="n">41<\/p>/, ".text is the raw markup — what a grep wants");
+    assert.match(r.markdown, /# Quarterly/, ".markdown is attached like any HTML fetch");
+
+    // LIVE means live: a script's change shows up on the next read, where a cached copy would answer with
+    // the page as it was.
+    world.document.getElementById("n").textContent = "42";
+    assert.match((await world.ml.fetch(url)).text, /<p id="n">42<\/p>/, "reflects the DOM now, not at first read");
+    // The read-only dialect's cache-only reader answers it too — the same bytes `outerHTML` already gives
+    // that dialect for free, so it must not cost an approval.
+    assert.equal(world.ml._fetchCached(url).live, true);
+    assert.equal(world.ml._fetchCached("file:///Users/me/other.html"), undefined, "a DIFFERENT local file is not the page");
+
+    // The tool says what it did: "HTTP 200" would claim a request that never happened.
+    const out = await world.ml.fetchTool().run({ url, format: "html" });
+    const text = typeof out === "string" ? out : out.content;
+    assert.match(text, /^Read file:\/\/\/Users\/me\/report\.html from the LIVE page/);
+    assert.doesNotMatch(text, /HTTP 200/);
+});
+
+test("ml.fetch: an http(s) page's own URL is NOT answered from the DOM", () => {
+    // Fetching an http page returns what the SERVER sends — a different document from the live DOM — so a
+    // caller asking for one must not silently receive the other.
+    const url = "https://x.test/page";
+    const world = loadDomWorld(`<p>hi</p>`, { url });
+    assert.equal(world.ml._fetchCached(url), undefined);
+});
+
 test("fetch_url: an HTML page is auto-converted to Markdown (+ a note); format:\"html\" returns the original HTML", async () => {
     const url = "https://x.test/page.html";
     let fetchResult;

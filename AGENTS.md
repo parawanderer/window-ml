@@ -583,7 +583,11 @@ collapse, and copy-CSV; all zero-dep, no grid library). The export draws a **rea
 A `table` selector loads the **FIRST** match; a `>1`-match warning is prepended (python_exec,
 and the single-element `describeElement`/`ancestors` via `firstOfNote`) so a wrong pick isn't
 silent. `examples/spreadsheet.html` is a table demo (a small static table + a toggleable
-**Ridiculous mode**: a 40×12 dirty scrolling table) — both with comment-hidden answer keys.
+**Ridiculous mode**: a 40×12 dirty scrolling table). Its answers are in `examples/spreadsheet.answers.md` and
+**never on the page**: they used to sit in HTML comments, which a read-only `exec` reaches through `outerHTML`
+for free — one read away from every run (the bench's included) that was supposed to compute them. The page
+must not NAME that file either, since an agent reading its own repo source could follow the path;
+`tests/bench-specs.test.mjs` pins both.
 
 **RULE — the log/export ALWAYS carries what the MODEL actually saw.** The exports (Markdown +
 PDF) and the DevTools/debug log exist for DEBUGGABILITY: there must ALWAYS be a view of the raw
@@ -1111,7 +1115,9 @@ per device, in bytes.
   - **An empty list is not a clean bill of health** ("nothing to report OR could not look"), so it may drive a
     warning and never a reassurance; `not_offered_by_backend` is a HEALTHY card no backend claimed and draws
     nothing. `pci_id` is the identity (two cards share a name); `name`/`uuid` are absent under
-    `not_reported_by_driver` and on AMD. `detail` and `recovery` render verbatim — `detail` is the driver's
+    `not_reported_by_driver` and on AMD. AMD's `reset_in_progress` is still a fault but usually TRANSIENT
+    (a reset takes seconds), so `gpuFaultNote` says so; drawn like `reset_required` it sends someone to
+    power-cycle a machine that is fixing itself. `detail` and `recovery` render verbatim — `detail` is the driver's
     own string and is only useful if it can be searched as shown.
 - **A CARD'S OWN FACTS ARE ON ITS NAME** (`DeviceFacts`, a hover on the track header). The part that earns the
   space is the TWO TOTALS: ollama places against `total_memory` while the header draws `physical_memory`,
@@ -2462,6 +2468,14 @@ OpenWebUI fork is not needed for the capacity work.
   CDNs) — a known limitation, not a bug. The popup's **Permissions → "Enable
   Google Sheets access"** requests just the Google origins at runtime
   (`chrome.permissions.request`), a narrower grant than "On all sites".
+- **`ml.fetch` / `fetch_url` never read a local file.** The background refuses every non-http(s) URL: a
+  `file:` read could be any file on the machine (`~/.ssh`, a `.env` holding the API key), and a hostile page
+  reaches that handler directly. The ONE exception is answered page-side and never reaches the background:
+  on a `file://` page, that page's own URL (`isLocalCurrentPage`, dom.ts) returns the LIVE DOM serialized,
+  marked `live: true`. That grants nothing, because a read-only `exec` already gets `outerHTML` for free, and
+  it is what a model on a local page reaching for "fetch this page and grep it" needs. An http(s) page's own
+  URL is deliberately NOT included: the server's bytes and the live DOM are different documents. The
+  refusal for any other `file:` URL names the page that does work, so the model stops retrying.
 - **A privileged/credentialed background fetch MUST validate its target host —
   the client-side approval gate does NOT protect it.** The agent approval lives
   in `injected.ts`, but raw messages (`FETCH_SHEET`, …) are reachable by any page

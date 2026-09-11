@@ -2000,6 +2000,24 @@ test("unavailableFrom: the shapes that are NOT a fault, and the ones with nothin
     assert.deepEqual(M.parseInfo(CUDA_INFO).unavailable, [], "a server that says nothing reports nothing");
 });
 
+test("unavailableFrom: an AMD fault — no name, no uuid, and a reset in progress is not a dead card", () => {
+    // The shape `gpuhealth5` serves for AMD: read from PCI sysfs rather than a vendor library, so there is no
+    // name and no uuid, ever — keyed on `pci_id` like every other entry.
+    const [busy, dead] = M.unavailableFrom([
+        { pci_id: "0000:0c:00.0", reason: "reset_in_progress", detail: "EBUSY" },
+        { pci_id: "0000:0d:00.0", reason: "unresponsive", detail: "ETIMEDOUT" },
+    ]);
+    assert.equal(busy.name, undefined);
+    assert.equal(busy.uuid, undefined);
+    assert.equal(M.isGpuFault(busy), true, "it cannot take work right now, so it is still reported");
+    assert.equal(M.isGpuFault(dead), true);
+    // A reset usually completes in seconds. Drawn identically to `reset_required` it sends someone to power-
+    // cycle a machine that is fixing itself, so it carries a note saying when it stops being transient.
+    assert.match(M.gpuFaultNote(busy), /usually clears within seconds/);
+    assert.equal(M.gpuFaultNote(dead), null, "an unresponsive card gets the driver's words and nothing reassuring");
+    assert.equal(M.gpuFaultNote({ reason: "reset_required" }), null);
+});
+
 test("a faulted card is an INCIDENT, not a different machine — the history survives it", () => {
     // This is the mid-session half. A card vanishing changes the device list, and if that read as "you
     // pointed at another box" the samples leading up to the fault — the most valuable ones on screen —

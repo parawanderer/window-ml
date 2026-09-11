@@ -39,7 +39,7 @@ import { expandPointers } from "./pointer-macro";   // `@tool:` → a real deref
 import { htmlToMarkdown } from "./html-to-md";
 import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
 import { citeParam } from "./tool-params";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isLocalCurrentPage, typeFromExtension } from "./dom";
 import { makeAnswerFacade, finalizeAnswer, resolveOutputs } from "./answer-set";
 import { isSelfSourceUrl } from "./self-source";
 import { BUILD_INFO } from "./build-info.gen";
@@ -96,6 +96,22 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
     // operate on it freely. Page-scoped (module lifetime); holds only public, uncredentialed, non-rendered bytes
     // (a credentialed / rendered fetch is authenticated or session-bound → NEVER cached).
     const mlFetchCache = new Map<string, import("./contract").FetchResult>();
+
+    /** `ml.fetch` of the local page's OWN URL, answered from the live document (see `isLocalCurrentPage`).
+     *  A plain object of strings — the serialized DOM, never a node — so handing it to the read-only dialect
+     *  leaks nothing a survey of `outerHTML` would not already return. Not cached: the DOM changes, and a
+     *  cached copy would answer a later read with an older page. */
+    const liveDocumentFetch = (): import("./contract").FetchResult => {
+        const doctype = document.doctype ? `<!DOCTYPE ${document.doctype.name}>\n` : "";
+        const text = doctype + document.documentElement.outerHTML;
+        let markdown: string | undefined;
+        try { markdown = htmlToMarkdown(text); } catch { /* callers fall back to .text */ }
+        return {
+            url: location.href, status: 200, ok: true, type: "html", typeByHeader: null, typeByContent: "html",
+            typeByExtension: typeFromExtension(location.href), contentType: "text/html", text,
+            ...(markdown !== undefined ? { markdown } : {}), live: true,
+        };
+    };
 
     // ---- Agent tool helpers (page-context DOM introspection) ----
     // These keep observations SMALL on purpose: the point of the agent is to
@@ -1077,6 +1093,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     // otherwise it — and any cross-origin fetch — falls through to the gate.
                     if (name === "fetch_url") {
                         const u = String((args as { url?: unknown }).url ?? "");
+                        // The page's OWN file:// URL is read from the live DOM (ml.fetch), which a read-only exec
+                        // already gets for free — so it asks nobody. `new URL("file:…").origin` is "null", which
+                        // is why sameOriginFetch cannot be what decides this.
+                        if (isLocalCurrentPage(u, location.href)) return "same-origin";
                         const so = sameOriginFetch(u);
                         if ((args as { credentials?: unknown }).credentials) return (agentCfg?.autoApproveSameOriginAuth && so) ? "same-origin" : null;
                         if (so) return "same-origin";
@@ -1726,7 +1746,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 parameters: {
                     type: "object",
                     properties: {
-                        url: { type: "string", description: "The absolute http(s) URL to fetch." },
+                        url: { type: "string", description: "The absolute http(s) URL to fetch. On a local file:// page, its own URL reads the live document." },
                         schema: { type: "boolean", description: "If true, return a compact TS-like SHAPE of the JSON (not the body). Errors if the URL isn't JSON." },
                         credentials: { type: "boolean", description: "If true, fetch AS THE USER (send their cookies) for authenticated data. Always prompts; never cached/remembered." },
                         rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. Renders in INCOGNITO (no session/cookies): same-origin is FREE, cross-origin asks once then remembered (needs 'Allow in Incognito'). Add credentials:true to render in the user's SESSION (a normal tab with cookies) — always re-asks. Slower/heavier; never cached." },
@@ -1753,7 +1773,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     try { r = await ml.fetch(url, { credentials, rendered, format: wantHtml ? "html" : "markdown" }); }
                     catch (e) { return `Error: ${errText(e)}`; }
                     const mislabel = r.typeByHeader && r.typeByHeader !== r.type ? ` (header said "${r.typeByHeader}")` : "";
-                    const head = `Fetched ${r.url} — HTTP ${r.status}, type: ${r.type}${r.language ? ` (${r.language})` : ""}${mislabel}${r.truncated ? " · body truncated" : ""}.`;
+                    // A LIVE read is not a fetch, and saying "HTTP 200" about it would claim a request that never
+                    // happened. What the model needs to know is that this is the DOM NOW, not the file on disk.
+                    const head = r.live
+                        ? `Read ${r.url} from the LIVE page (a file:// URL cannot be fetched, so this is the current DOM serialized: it includes changes scripts made since load and is not the file's bytes on disk).`
+                        : `Fetched ${r.url} — HTTP ${r.status}, type: ${r.type}${r.language ? ` (${r.language})` : ""}${mislabel}${r.truncated ? " · body truncated" : ""}.`;
                     // HTML → Markdown by DEFAULT (readability): an HTML page is mostly slop (scripts/nav/chrome) to a
                     // reading model, so distil it unless `raw` is set. Only HTML — json/csv/code/text/markdown are
                     // already clean. Applies to BOTH the normal view and the ask-mode reader input.
@@ -2607,6 +2631,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const credentials = !!opts?.credentials;
             const rendered = !!opts?.rendered;
             const format = opts?.format === "html" ? "html" as const : "markdown" as const;
+            // THE PAGE YOU ARE ON, over file://. The background refuses every non-http(s) URL — a local read
+            // could be any file on the machine — and a model on a local page reaching for "fetch this page and
+            // grep it" hit that refusal with no way forward. Its own DOM is already readable, so it is answered
+            // from the live document: no request, no grant, and `live` says so (see `isLocalCurrentPage`).
+            if (!credentials && !rendered && isLocalCurrentPage(key, location.href)) return Promise.resolve(liveDocumentFetch());
             return makeBackgroundTaskPromise<import("./contract").FetchResult>("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: key, credentials, rendered, format })
                 .then(r => {
                     // For an HTML body, attach a `.markdown` distillation (scripts/nav/chrome stripped) so ANY
@@ -2632,6 +2661,9 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @returns {FetchResult|undefined} The cached result, or undefined if this URL hasn't been fetched.
          */
         _fetchCached: function(url: string): import("./contract").FetchResult | undefined {
+            // The local page's own URL is a read of the live DOM — which this dialect can already do through
+            // `outerHTML` — so it answers here too rather than costing an approval for the same bytes.
+            if (isLocalCurrentPage(String(url), location.href)) return liveDocumentFetch();
             return mlFetchCache.get(String(url));
         },
         /**

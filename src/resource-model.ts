@@ -123,6 +123,16 @@ export interface UnavailableGpu {
  *  answered every query. */
 export const isGpuFault = (g: UnavailableGpu): boolean => g.reason !== "not_offered_by_backend";
 
+/** What the banner says about a fault BEYOND the driver's own words, or null when there is nothing to add.
+ *  Only one reason earns a note today: AMD's `reset_in_progress` (the driver answered EBUSY) is USUALLY
+ *  TRANSIENT — a successful amdgpu reset takes seconds — so drawn exactly like `reset_required` it tells
+ *  someone to power-cycle a machine that is fixing itself. It stays a fault (the card really cannot take
+ *  work right now), and the note says when it stops being a transient: when it persists. */
+export function gpuFaultNote(g: UnavailableGpu): string | null {
+    if (g.reason === "reset_in_progress") return "A reset is under way. This usually clears within seconds; it is only a problem if it persists.";
+    return null;
+}
+
 export interface Capacity {
     devices: DeviceCapacity[];
     /** GPUs the server can see and cannot use. **An empty list does NOT mean "all healthy"** — it means

@@ -604,8 +604,14 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
         // Xs" in the body). Rather than fail the whole run, pace ourselves — wait the advised delay and retry.
         // Bounded (attempts + per-wait cap) so it can be slow but never hangs. Harmless on a local backend
         // (Ollama never 429s). See RATE_LIMIT_* below.
+        // How long each attempt was outstanding when the network failed it. The one fact that tells the causes
+        // apart and was never recorded: a refused connection fails in milliseconds, while a request dropped
+        // mid-wait (a cold load of a large model has a ~50 s time to first byte) fails after a long, possibly
+        // suspiciously ROUND, interval — which is what points at a timeout somewhere on the path.
+        const failedAfterMs: number[] = [];
         for (let attempt = 0; ; attempt++) {
             let res: Response;
+            const sentAt = Date.now();
             try {
                 res = await fetch(config.chatUrl, {
                     method: "POST",
@@ -623,9 +629,11 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
                 // (box restarting mid-run) is ridden out so the run RECOVERS when the backend returns. Only
                 // after the bounded window do we give up with an actionable message (the raw one is meaningless
                 // and identical for every cause). abortableWait rejects on a cancel, so Stop still works.
+                failedAfterMs.push(Date.now() - sentAt);
                 if (attempt < NET_RETRIES) { await abortableWait(NET_RETRY_WAIT_MS); continue; }
+                const after = failedAfterMs.map((ms) => ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`).join(", ");
                 throw new Error(
-                    `Couldn't reach the server at ${config.chatUrl} (${e?.message || e}). ` +
+                    `Couldn't reach the server at ${config.chatUrl} (${e?.message || e}; ${failedAfterMs.length} attempts, each failed after ${after}). ` +
                     `Is OpenWebUI / Ollama running there? Check the Server URL, API key, and API format in the extension settings.`
                 );
             }

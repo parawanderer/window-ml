@@ -443,8 +443,10 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
 // instead of a hand-rolled fake. No content.js relay — these helpers are pure
 // page-context DOM code and never touch the background. `html` is the <body>
 // inner HTML. Returns { ml, window, document } for querying in assertions.
-function loadDomWorld(html = "") {
-    const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`);
+// `url` sets the document's address (jsdom's default is about:blank), for code that branches on where the page
+// IS — a local file:// page, for one.
+function loadDomWorld(html = "", { url } = {}) {
+    const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, url ? { url } : undefined);
     const win = dom.window;
     const context = {
         console: mkConsole(),
@@ -455,6 +457,9 @@ function loadDomWorld(html = "") {
         window: win,
         document: win.document,
         location: win.location,
+        // A browser global; without it every `new URL` in injected.js throws inside its own try and reads as
+        // "not a URL", which silently takes whichever branch a failed parse means.
+        URL,
         Event: win.Event,
         HTMLImageElement: win.HTMLImageElement,
         // DOM globals the agent tools reference (real in a browser main world).

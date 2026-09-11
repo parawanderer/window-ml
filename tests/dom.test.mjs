@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx, isCspEvalBlocked, markdownAlternateHref, resolveMarkdownAlternate, markdownAffordance, markdownTwin, externalSheetIds, markdownSiblingUrl, isMarkdownResponse } from "../src/dom.ts";
+import { elementReference, classifyOverlay, navTarget, isLocalCurrentPage,typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx, isCspEvalBlocked, markdownAlternateHref, resolveMarkdownAlternate, markdownAffordance, markdownTwin, externalSheetIds, markdownSiblingUrl, isMarkdownResponse } from "../src/dom.ts";
 
 // --- ml.fetch content classification (header / content / extension → a HEURISTIC type for chaining) ---
 test("typeFromHeader: specific content-types map; generic ones return null (defer to content/extension)", () => {
@@ -95,6 +95,21 @@ test("jsonShape is BOUNDED — depth, key count, and array sample are capped", (
     assert.match(jsonShape(wide, { maxKeys: 2 }), /^\{ k0: number, k1: number, …\+3 \}$/);
     // Sample cap: a huge array is summarised from a sample but still reports the TRUE length.
     assert.match(jsonShape(Array.from({ length: 10000 }, () => ({ x: 1 })), { sample: 3 }), /\/\* 10000 items \*\/$/);
+});
+
+test("isLocalCurrentPage: only the local page's own URL, and only over file:", () => {
+    const here = "file:///Users/me/page.html#top";
+    assert.equal(isLocalCurrentPage("file:///Users/me/page.html", here), true);
+    assert.equal(isLocalCurrentPage("file:///Users/me/page.html#other", here), true, "a fragment names no other document");
+    assert.equal(isLocalCurrentPage("page.html", here), true, "relative resolves against the page");
+    // Everything else is a DIFFERENT file, which is the read the http(s)-only rule exists to refuse.
+    assert.equal(isLocalCurrentPage("file:///Users/me/.ssh/id_ed25519", here), false);
+    assert.equal(isLocalCurrentPage("../.env", here), false);
+    assert.equal(isLocalCurrentPage("file:///Users/me/page.html?x=1", here), false, "a different query is a different URL");
+    // An http(s) page's own URL is what the SERVER sends, a different document from the live DOM.
+    assert.equal(isLocalCurrentPage("https://x.test/p", "https://x.test/p"), false);
+    assert.equal(isLocalCurrentPage("file:///Users/me/page.html", "https://x.test/p"), false, "a web page never reads a local file");
+    assert.equal(isLocalCurrentPage("http://[bad", here), false);
 });
 
 test("navTarget: a same-origin relative URL resolves to an absolute destination", () => {

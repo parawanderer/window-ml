@@ -87,6 +87,24 @@ export const navTarget = (url: string, currentHref: string, opts: { allowCrossOr
     return { dest: dest.href, crossOrigin };
 };
 
+/** Whether a fetch of `url` is a request for THE PAGE THE CALL WAS MADE FROM, over a scheme the background
+ *  will not fetch (`file:`, today). That one case is answered from the live document instead of refused.
+ *
+ *  Why only that case: `ml.fetch` is http(s)-only because a `file:` read could be ANY file on this machine
+ *  (`~/.ssh`, a `.env` with the API key in it) and a hostile page can reach the handler. The page you are
+ *  standing on is different — its DOM is already readable (a read-only `exec` gets `outerHTML` for free), so
+ *  answering from it grants nothing new. An http(s) page is deliberately NOT included: fetching its URL
+ *  returns what the SERVER sends, which is a different document from the live DOM, and a caller asking for
+ *  one should not silently receive the other. The fragment is ignored (it never reaches a server and names no
+ *  other document); the query is not (a different query is a different URL). */
+export const isLocalCurrentPage = (url: string, currentHref: string): boolean => {
+    let here: URL, want: URL;
+    try { here = new URL(currentHref); want = new URL(url, currentHref); } catch { return false; }
+    if (here.protocol !== "file:" || want.protocol !== "file:") return false;
+    here.hash = ""; want.hash = "";
+    return here.href === want.href;
+};
+
 /**
  * Escape an id/class token so it's a VALID CSS identifier. Tailwind classes are
  * full of chars that are illegal unescaped in a selector — `/` (opacity, bg-black/5),

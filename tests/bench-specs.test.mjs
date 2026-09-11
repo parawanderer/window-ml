@@ -54,10 +54,19 @@ test("pointer-ids/cite-or-retype scores the region the PAGE says wins", async ()
     // this task loads /spreadsheet, where East wins. Both arms would have scored 0 and it would have read
     // as a task too hard rather than a broken bench. Restating the answer here would have re-encoded
     // exactly the same assumption, so the page is asked instead.
+    //
+    // The page no longer CARRIES an answer (a key in an HTML comment was one `outerHTML` away from the runs
+    // that were supposed to compute it), so the winner is computed from the table's own cells — ground truth
+    // from the data rather than from a key — and the answers file beside the page has to agree with it.
     const html = await readFile(new URL("../examples/spreadsheet.html", import.meta.url), "utf8");
-    const key = /Highest-grossing region\s*=\s*(\w+)/.exec(html);
-    assert.ok(key, "examples/spreadsheet.html no longer declares a highest-grossing region in its answer key");
-    const winner = key[1];
+    const table = /<table id="sales">([\s\S]*?)<\/table>/.exec(html)?.[1] ?? "";
+    const totals = {};
+    for (const [, region, cells] of table.matchAll(/<tr><td>\w+<\/td><td>(\w+)<\/td>((?:<td class="num">\d+<\/td>)+)<\/tr>/g))
+        totals[region] = (totals[region] ?? 0) + [...cells.matchAll(/>(\d+)</g)].reduce((s, m) => s + Number(m[1]), 0);
+    assert.equal(Object.keys(totals).length, 4, `parsed the four regions out of #sales (${JSON.stringify(totals)})`);
+    const winner = Object.entries(totals).sort((a, b) => b[1] - a[1])[0][0];
+    const answers = await readFile(new URL("../examples/spreadsheet.answers.md", import.meta.url), "utf8");
+    assert.match(answers, new RegExp(`Highest-grossing region \\| ${winner} \\(${totals[winner]}\\)`), "the answers file agrees with the table");
 
     const t = task(await load("pointer-ids"), "cite-or-retype");
     assert.ok(scores(t, `${winner} had the highest revenue.`), `must accept the page's own winner (${winner})`);
@@ -68,6 +77,16 @@ test("pointer-ids/cite-or-retype scores the region the PAGE says wins", async ()
         .filter((r) => r !== winner);
     assert.ok(others.length >= 2, "expected several regions to distinguish between");
     for (const r of others) assert.equal(scores(t, `${r} had the highest revenue.`), false, `must reject ${r}`);
+});
+
+test("examples/spreadsheet.html carries no answers — not in its text, its source or its comments", async () => {
+    // Everything on the page is reachable by the model it is testing: a read-only `exec` gets `outerHTML`
+    // for free, `fetch_url` returns the markup, and a local copy's own URL reads the live DOM. A key hidden
+    // in a comment therefore contaminates every run on the page, the bench's included.
+    const html = await readFile(new URL("../examples/spreadsheet.html", import.meta.url), "utf8");
+    for (const leak of ["6260", "116153", "2440", "24069", "521.67"]) assert.ok(!html.includes(leak), `the page contains the answer ${leak}`);
+    assert.doesNotMatch(html, /answer key/i);
+    assert.doesNotMatch(html, /spreadsheet\.answers/, "the page must not name the file an agent could go and read");
 });
 
 test("smoke/read-code accepts only a real page code", async () => {
