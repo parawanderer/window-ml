@@ -2073,7 +2073,9 @@ thing. The parts:
   headless SHELL, a stripped binary with no extension support at all. `channel: "chromium"` runs the FULL
   browser in `--headless=new`, where the worker registers in ~0.5s and the whole suite passes. This
   matters beyond tidiness: a headful window grabs focus and the mouse on every launch, and the suite
-  launches one per spec. Pass `headful: true` (the narrated demos do) or set `E2E_HEADFUL=1` for a look. **A run is started exactly like a console call:** `page.evaluate(() =>
+  launches one per spec. Pass `headful: true` (the narrated demos do) or set `E2E_HEADFUL=1` for a look.
+  **`E2E_DIST=<dir>`** runs specs against a bundle built elsewhere (`node build.mjs --outdir <dir>`) — use it
+  whenever `dist/` is loaded in a window someone is using, rather than rebuilding underneath them. **A run is started exactly like a console call:** `page.evaluate(() =>
   window.ml.agent(task, opts))` — Playwright's `page.evaluate` runs in the page **main world**,
   where `injected.js` defines `window.ml`, so no test-only hooks; the same front door a human
   uses. The result structured-clones back to Node.
@@ -2328,6 +2330,29 @@ rate includes the network; that whole matrix (openai/ollama x streamed/not) is p
   Screenshots land in `tests/e2e/artifacts/stream-demo/`; `HOLD=0` exits instead of holding the browser
   open. Deterministic (fake-LLM, approvals resolved via the SW `__mlApprovals` channel). The automated
   assertions are `python-stream.spec.mjs` (the reverse channel) and `output-scroll.spec.mjs` (tail-follow).
+- **`bench-editor-demo.mjs`** — a **narrated demo, not a test** of the Python bench's editor:
+  `npm run build && node --import tsx tests/e2e/bench-editor-demo.mjs` opens a headful browser, switches
+  to the bench, and types numpy into it so you can watch the plain textarea upgrade to CodeMirror, the
+  highlighting land, the completion popup filter, and Cmd/Ctrl+Enter run against the real Pyodide
+  sandbox. `PACE` sets the keystroke delay, `HOLD=0` exits instead of holding the window open, and
+  `HEADLESS=1` captures the screenshots (`tests/e2e/artifacts/bench-editor-demo/`) without a window.
+  Deterministic — nothing here calls a model. The automated assertions are `bench-editor.spec.mjs`.
+  Three things about the editor (`CodeEditor`, `src/sidebar/code-editor.tsx`) are easy to break:
+  - **The run chord is ALWAYS claimed, whoever acts on it.** CodeMirror's default keymap reads `Mod-Enter`
+    as "insert a blank line", so an editor that leaves it unbound adds a line to the script AND lets it
+    bubble to whatever runs it. With `onRun` the editor runs it and STOPS it; without, it swallows it and
+    lets it bubble. The bench passes no `onRun` — it owns `⌘/Ctrl+↵` panel-wide (`onBenchKey`). Both
+    modifiers are bound, since "Mod" is Cmd-ONLY on macOS and the textarea this replaced took either.
+  - **A test must press the platform's OWN Mod** to see the blank-line bug: on a Mac only Cmd reaches
+    that binding, so a Ctrl+Enter test passes there and fails on Linux CI.
+  - **A stale `value` prop is an echo, not an edit.** Preact replays props several keystrokes behind, and
+    pushing one back in rewrote the document under a moved cursor ("pri" landed as "rip"); echoes are
+    consumed as a queue.
+  **`.bench-code` is the FRAME, not the field** — it sizes the editor in its pane. A test drives
+  `.bench-code textarea` under jsdom (the bundle never loads there, so that is the fallback it gets) and
+  `.bench-code .cm-content` in a real browser, where `inputValue()`/`toHaveValue()` no longer apply: read
+  the document as `.cm-line`s joined by `\n`, since `toHaveText` normalises exactly the whitespace a
+  reflow test is about.
 - **Real model:** point the extension at a real backend with `E2E_BACKEND=<chatUrl>
   E2E_MODEL=<id> E2E_KEY=<bearer>` (the observer also accepts `USE_ENV=1` to read
   `OPENWEBUI_URL/KEY/MODEL` + `OPENWEBUI_UTILITY_MODEL`/`OPENWEBUI_VISION_MODEL` from `.env`).

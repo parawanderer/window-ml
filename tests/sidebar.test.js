@@ -2687,7 +2687,7 @@ test("python bench: opens from the header, runs a script, and renders the sandbo
     const w = await loadSidebarWorld({ pythonExec: (p) => ({ ok: true, value: p.hardened ? 1 : 2, stdout: "hi\n" }) });
     w.shadow.querySelector('[aria-label="Python bench"]').click();
     await w.tick();
-    const ta = w.shadow.querySelector(".bench-code");
+    const ta = w.shadow.querySelector(".bench-code textarea");   // jsdom: CodeEditor's textarea fallback
     assert.ok(ta, "the code editor renders");
     ta.value = "print('hi')\nreturn 1";
     ta.dispatchEvent(new w.window.Event("input"));
@@ -2729,7 +2729,7 @@ test("python bench: a returned DataFrame renders as a real table (PyDfTable), no
     const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: "  foo  bar\n0  1  4", stdout: "", table: { columns: ["foo", "bar"], rows: [[1, 4], [2, 5]] } }) });
     w.shadow.querySelector('[aria-label="Python bench"]').click();
     await w.tick();
-    const ta = w.shadow.querySelector(".bench-code");
+    const ta = w.shadow.querySelector(".bench-code textarea");   // jsdom: CodeEditor's textarea fallback
     ta.value = "return df"; ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
     w.shadow.querySelector(".bench-play").click();
@@ -2757,7 +2757,7 @@ test("python bench: a DataFrame cell holding a dict renders as JSON, not [object
         ] } }) });
     w.shadow.querySelector('[aria-label="Python bench"]').click();
     await w.tick();
-    const ta = w.shadow.querySelector(".bench-code");
+    const ta = w.shadow.querySelector(".bench-code textarea");   // jsdom: CodeEditor's textarea fallback
     ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
     w.shadow.querySelector(".bench-play").click();
@@ -2779,7 +2779,7 @@ test("python bench: a cell that cannot be serialised says so, and says what it w
         table: { columns: ["metric", "value"], rows: [["fine", 1], ["broken", circular]] } }) });
     w.shadow.querySelector('[aria-label="Python bench"]').click();
     await w.tick();
-    const ta = w.shadow.querySelector(".bench-code");
+    const ta = w.shadow.querySelector(".bench-code textarea");   // jsdom: CodeEditor's textarea fallback
     ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
     w.shadow.querySelector(".bench-play").click();
@@ -2806,7 +2806,7 @@ test("python bench: a Map, a Set or an Error is marked rather than printed as {}
         ] } }) });
     w.shadow.querySelector('[aria-label="Python bench"]').click();
     await w.tick();
-    const ta = w.shadow.querySelector(".bench-code");
+    const ta = w.shadow.querySelector(".bench-code textarea");   // jsdom: CodeEditor's textarea fallback
     ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
     w.shadow.querySelector(".bench-play").click();
@@ -2832,7 +2832,7 @@ test("python bench: a cell the SANDBOX marked names its Python type, and blames 
         ] } }) });
     w.shadow.querySelector('[aria-label="Python bench"]').click();
     await w.tick();
-    const ta = w.shadow.querySelector(".bench-code");
+    const ta = w.shadow.querySelector(".bench-code textarea");   // jsdom: CodeEditor's textarea fallback
     ta.value = "return out"; ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
     w.shadow.querySelector(".bench-play").click();
@@ -2857,7 +2857,7 @@ test("python bench: full mode sends hardened:false", async () => {
     const sel = w.shadow.querySelector(".bench-mode select");
     sel.value = "full";
     sel.dispatchEvent(new w.window.Event("change"));
-    const ta = w.shadow.querySelector(".bench-code");
+    const ta = w.shadow.querySelector(".bench-code textarea");   // jsdom: CodeEditor's textarea fallback
     ta.value = "return 1";
     ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
@@ -8274,7 +8274,7 @@ test("python: a traceback's user lines are links, and the deepest one is marked"
     const w = await loadSidebarWorld({ pythonExec: () => ({ ok: false, error: err, stdout: "" }) });
     w.shadow.querySelector('[aria-label="Python bench"]').click();
     await w.tick();
-    const ta = w.shadow.querySelector(".bench-code");
+    const ta = w.shadow.querySelector(".bench-code textarea");   // jsdom: CodeEditor's textarea fallback
     ta.value = "x = 1"; ta.dispatchEvent(new w.window.Event("input"));
     await w.tick();
     w.shadow.querySelector(".bench-play").click();

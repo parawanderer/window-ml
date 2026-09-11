@@ -94,7 +94,7 @@ test("✕ closes the drawer and KEEPS the script — closing is not discarding",
         await frame.locator('[aria-label="Python bench"]').click();
         const drawer = frame.locator(".bench-drawer");
         await expect(drawer).toBeVisible();
-        await drawer.locator(".bench-code").fill("return 6 * 7   # my work in progress");
+        await drawer.locator(".bench-code .cm-content").fill("return 6 * 7   # my work in progress");
         // The draft is persisted when it RUNS, and the bench also reads it back on mount; either way what
         // must not happen is that closing throws it away.
         await drawer.locator(".bench-play").click();
@@ -105,7 +105,7 @@ test("✕ closes the drawer and KEEPS the script — closing is not discarding",
         await expect(frame.locator(".astep.tool"), "and the run is still what you are reading").toHaveCount(1);
 
         await frame.locator('[aria-label="Python bench"]').click();
-        await expect(frame.locator(".bench-drawer .bench-code")).toHaveValue(/my work in progress/);
+        await expect.poll(() => editorText(frame.locator(".bench-drawer .bench-code"))).toMatch(/my work in progress/);
         // Closed stays closed across a reload, too — it is a state, not a transient.
         await frame.locator('[aria-label="Close the Python bench"]').click();
         await page.reload();
@@ -322,7 +322,7 @@ test("a step's ▶ bench hands over the script and opens the DRAWER, keeping the
         const drawn = (await frame.locator(".astep .r-py-in .code").first().innerText()).replace(/\s+$/, "");
         expect(drawn, "the reflow did something, or this test compares two identical strings")
             .not.toBe("rows=[{'a':1},{'a':2}]\nreturn len(rows)");
-        await expect(frame.locator(".bench-drawer .bench-code")).toHaveValue(drawn);
+        await expect.poll(() => editorText(frame.locator(".bench-drawer .bench-code"))).toBe(drawn);
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
@@ -359,8 +359,12 @@ test("the drawer's grab handle is centred, and nothing interactive sits under it
 /** Run a script in the bench and wait for it to SETTLE. The signal is the live elapsed readout going away —
  *  it is the pane's own "still running", so its absence is the finish, and it survives the pane having no
  *  footer once settled. (Waiting on the Run button re-enabling would be the same thing read off the header.) */
+/** The bench field is CodeMirror in a real browser, so read its DOCUMENT rather than a textarea value: one
+ *  `.cm-line` per line, exact. `toHaveText` would normalise the very whitespace a reflow test is about. */
+const editorText = (field) => field.locator(".cm-line").allTextContents().then((lines) => lines.join("\n"));
+
 const runInBench = async (frame, code) => {
-    await frame.locator(".bench-code").fill(code);
+    await frame.locator(".bench-code .cm-content").fill(code);
     await frame.locator(".bench-play").click();
     // …but only once it has actually STARTED, or an immediate check catches the pre-run state.
     for (let i = 0; i < 30 && !(await frame.locator(".bench-outpane").count()); i++) await sleep(100);
@@ -573,7 +577,7 @@ test("the bench streams stdout as the script runs, and the value supersedes it a
         // Pyodide's download rather than about the tee.
         await runInBench(frame, "print('warm')");
 
-        await frame.locator(".bench-code").fill(
+        await frame.locator(".bench-code .cm-content").fill(
             "import time\nprint('FIRST')\ntime.sleep(2)\nprint('SECOND')\nreturn {'answer': 42}");
         await frame.locator(".bench-play").click();
 
@@ -721,19 +725,19 @@ test("the bench keeps its script and its last result across a dock switch", asyn
         await expect(frame.locator(".bench-outbody")).toContainText("7");
         // An EDIT after the run, unsaved by any button — the state most easily lost, and the one a person is
         // most annoyed to lose.
-        await frame.locator(".bench-code").fill("print('kept across the switch')\nreturn {'n': 7}\n# an edit nobody pressed save on");
+        await frame.locator(".bench-code .cm-content").fill("print('kept across the switch')\nreturn {'n': 7}\n# an edit nobody pressed save on");
 
         // …to full page.
         await frame.locator('[aria-label="Expand the Python bench"]').click();
         await expect(frame.locator(".bench-full")).toBeVisible({ timeout: 5000 });
-        await expect(frame.locator(".bench-code"), "the script survives").toHaveValue(/an edit nobody pressed save on/);
+        await expect.poll(() => editorText(frame.locator(".bench-code")), { message: "the script survives" }).toMatch(/an edit nobody pressed save on/);
         await expect(frame.locator(".bench-outbody"), "and so does the result").toContainText("7");
         await expect(frame.locator(".bench-tab.on"), "and the tab you were on").toHaveText("value");
 
         // …and back down.
         await frame.locator('[aria-label="Dock the Python bench"]').click();
         await expect(frame.locator(".bench-drawer")).toBeVisible({ timeout: 5000 });
-        await expect(frame.locator(".bench-code")).toHaveValue(/an edit nobody pressed save on/);
+        await expect.poll(() => editorText(frame.locator(".bench-code"))).toMatch(/an edit nobody pressed save on/);
         await expect(frame.locator(".bench-outbody")).toContainText("7");
     } finally { await ext.context.close(); await fake.stop(); }
 });
@@ -789,5 +793,47 @@ test("the bench can turn the 15s run limit off, and only the bench can", async (
         // And a RUN still works with it off (the flag must not break the ordinary path).
         await runInBench(frame, "print('no limit')\nreturn 1");
         await expect(frame.locator(".bench-outbody")).toContainText("1");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+test("the bench's output takes no resize grip — the divider is the resize", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await runInBench(frame, "for i in range(300):\n    print('line', i)");
+        const scroll = frame.locator(".bench-outbody .r-outscroll");
+        // The precondition, asserted rather than assumed: the grip is drawn only on OVERFLOW, so a pane that
+        // happened to fit would pass this test with the grip still wired up.
+        expect(await scroll.evaluate((el) => el.scrollHeight - el.clientHeight), "the output overflows its pane")
+            .toBeGreaterThan(100);
+        // In the LOG an overflowing cell does grow a grip (output-scroll.spec.mjs pins that); in the bench the pane
+        // is the cap and the divider already resizes it, so a second gesture for the same edge is withheld.
+        await expect(frame.locator(".bench-outpane .r-outgrip")).toHaveCount(0);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+test("the bench's timestamps toggle hides the gutter, and remembers it", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        // Nothing printed → no times → no toggle: one that visibly changed nothing would read as broken.
+        await runInBench(frame, "return 1");
+        await expect(frame.locator(".bench-times")).toHaveCount(0);
+
+        await runInBench(frame, "for i in range(5):\n    print('tick', i)");
+        const toggle = frame.locator(".bench-times");
+        await expect(toggle).toHaveAttribute("aria-pressed", "true");
+        // The precondition: the gutter really is drawn, or hiding it proves nothing.
+        expect(await frame.locator(".bench-outbody .r-ts").count(), "streamed lines carry a produced-at gutter").toBeGreaterThan(0);
+
+        await toggle.click();
+        await expect(toggle).toHaveAttribute("aria-pressed", "false");
+        await expect(frame.locator(".bench-outbody .r-ts")).toHaveCount(0);
+        await expect(frame.locator(".bench-outbody"), "the output itself stays").toContainText("tick 4");
+        // Remembered: the bench reads this key when it loads.
+        expect(await frame.evaluate(() => localStorage.getItem("ml_bench_times"))).toBe("off");
+
+        await toggle.click();
+        await expect(frame.locator(".bench-outbody .r-ts").first()).toBeVisible();
     } finally { await ext.context.close(); await fake.stop(); }
 });

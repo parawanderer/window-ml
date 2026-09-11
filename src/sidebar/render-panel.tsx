@@ -13,7 +13,7 @@ import { codeDiff, diffStat } from "../diff";
 import { elementReference } from "../dom";
 import { pyFormat, lineChanged } from "../py-format";
 import { lineMapBetween } from "../line-map";
-import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, config, lsSet, BENCH_CODE_KEY, surface, codeLineNumbers, openBench } from "./store";
+import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, config, lsSet, BENCH_CODE_KEY, surface, codeLineNumbers, openBench, benchTimes } from "./store";
 import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmtDur, hourNow, armHourTick, dayBreaks } from "./timestamps";
 import { markdown, truncate, pretty, highlight } from "./format";
 import { codeNotes, notesState, notesHidden, fetchLineNotes, toggleLineNotes } from "./summaries";
@@ -708,7 +708,7 @@ export function OutputCell({ children, text, corner, fill }: { children: Compone
     // `fill` gives up the cap and takes the height of whatever contains it. In the LOG a cell is capped so
     // one step's output cannot swallow the transcript; in the BENCH the pane IS the cap — you dragged the
     // divider to say how much you wanted — and a short box floating in a tall empty pane reads as output
-    // that got cut off. A drag still pins it either way: that is you overriding both.
+    // that got cut off. So `fill` draws no grip either: the divider is the resize, and one edge wants one.
     const cap = dragH ?? (fill ? 0 : outMaxH.value);
 
     const [overflows, setOverflows] = useState(false);
@@ -824,7 +824,10 @@ export function OutputCell({ children, text, corner, fill }: { children: Compone
             {corner ? <span class="r-outcorner">{corner}</span> : null}
             <div class={`r-outscroll${text ? " r-outtext" : ""}`} ref={box} tabIndex={0} onKeyDown={onKey} onScroll={onScroll}
                 style={cap > 0 ? { maxHeight: `${cap}px` } : undefined}>{children}</div>
-            {overflows || dragH != null ? <div class="r-outgrip" role="separator" aria-label="Drag to resize this output" {...cursorTipOn("Drag to resize this output")} onPointerDown={onGrab} /> : null}
+            {/* NOT in `fill`: there the pane is the cap and the bench's divider already resizes it, so a grip here
+                is a second resize gesture for the same edge — and dragging it would re-cap a cell whose whole point
+                is to have no cap of its own. */}
+            {!fill && (overflows || dragH != null) ? <div class="r-outgrip" role="separator" aria-label="Drag to resize this output" {...cursorTipOn("Drag to resize this output")} onPointerDown={onGrab} /> : null}
         </div>
     );
 }
@@ -1131,6 +1134,10 @@ export function PyBenchOut({ d, running, marks }: { d: Extract<RenderDescriptor,
     // With nothing pinned: the LAST section, which is the returned value — stdout comes first, and what you
     // ran the script for is the answer, not the printing on the way to it.
     const active = sections.find((x) => x.id === pinned) ?? sections[sections.length - 1];
+    // OFFERED ONLY WHEN THERE ARE TIMES TO HIDE. With Settings → Appearance off, or a run that printed
+    // nothing, the gutter is not drawn, and a toggle that visibly changes nothing reads as a broken one.
+    const hasTimes = showOutTimes.value && !!marks?.length;
+    const times = benchTimes.value;
     return (
         <div class="bench-outpane">
             {/* ALWAYS the strip, even for one section — and even while the script is still running, when the
@@ -1147,6 +1154,19 @@ export function PyBenchOut({ d, running, marks }: { d: Extract<RenderDescriptor,
                 {/* While it runs and nothing has printed yet there is no section to name — but the strip
                     still has to be the same height, or it appears from nowhere with the first line. */}
                 {!sections.length ? <span class="bench-tab dim" aria-hidden="true">output</span> : null}
+                {/* The produced-at gutter, switched off HERE rather than in Settings: it is usually worth having
+                    and occasionally just noise, and the moment you want it gone you are looking at this pane.
+                    Struck through when off, the same convention as the header's run-watchdog toggle. */}
+                {hasTimes ? (
+                    <button class="tt bench-times" aria-pressed={times}
+                        aria-label={times ? "Hide the time each line was printed" : "Show the time each line was printed"}
+                        onClick={() => { benchTimes.value = !times; lsSet("ml_bench_times", benchTimes.value ? "on" : "off"); }}>
+                        timestamps
+                        <span class="tt-pop wrap left" role="tooltip"><TipText md={times
+                            ? "The time each line was **printed**, stamped by the sandbox as it ran. Click to hide it when it is noise — remembered for the bench."
+                            : "Timestamps are **hidden** in the bench. Click to show when each line was printed. Settings → Appearance turns them off everywhere."} /></span>
+                    </button>
+                ) : null}
             </div>
             <div class="bench-outbody">
                 {/* The states that are not a section, each said out loud — an empty pane is
@@ -1156,7 +1176,7 @@ export function PyBenchOut({ d, running, marks }: { d: Extract<RenderDescriptor,
                     : !d ? null
                         : !active ? <span class="dim">(ran — no output, no return)</span>
                             : <>
-                                <PyOutBody id={active.id} d={d} marks={marks} fill />
+                                <PyOutBody id={active.id} d={d} marks={times ? marks : undefined} fill />
                             </>}
             </div>
             {/* NO TIMING ROW AT ALL. A settled "ran in 3.0s" is a number nobody came to the bench to read, and

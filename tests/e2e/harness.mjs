@@ -20,7 +20,10 @@ const DEFAULT_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
  * (an esbuild `--define`d build in its own outdir) without the experiment ever becoming a product flag.
  */
 export async function launchExtension(/** @type {{ headful?: boolean, dist?: string }} */ { dist, headful } = {}) {
-    const DIST = dist ? path.resolve(dist) : DEFAULT_DIST;
+    // `E2E_DIST` runs a whole spec against a bundle built ELSEWHERE (`node build.mjs --outdir <dir>`), so a suite
+    // can test a change while `dist/` is still loaded in a window someone is using — rebuilding it underneath a
+    // live extension is exactly the hazard the build rule warns about.
+    const DIST = dist ? path.resolve(dist) : process.env.E2E_DIST ? path.resolve(process.env.E2E_DIST) : DEFAULT_DIST;
     const context = await chromium.launchPersistentContext("", {
         // HEADLESS by default, via `channel: "chromium"`.
         //

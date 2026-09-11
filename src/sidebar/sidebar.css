@@ -903,10 +903,23 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* No `resize` of its own: the DIVIDER owns that gesture. Three resize grips in one drawer — its edge, the
    field's corner, and nothing at all for the output — is two too many, and the corner one could not shrink
    the output pane, which is the direction you usually want. */
-.bench-code { width: 100%; height: 100%; resize: none; box-sizing: border-box;
-    background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 9px;
+/* The bench's code field fills its pane, and that is ALL this says: the divider under it is the one resize
+   gesture, so the field carries no grip of its own. The look belongs to `.ced`. */
+.bench-code { flex: 1 1 auto; min-height: 0; height: 100%; }
+/* A code field that upgrades itself (`CodeEditor`): `.ced` is the FRAME — border, background, focus ring —
+   and owns nothing about the text. Inside it sits CodeMirror, or until that bundle lands a plain textarea;
+   both fill the frame completely, so the swap is invisible apart from the colours arriving. Sized by its
+   container, never by itself. */
+.ced { position: relative; width: 100%; box-sizing: border-box; overflow: hidden;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 0; }
+.ced-cm, .ced-cm .cm-editor { height: 100%; }
+/* No focus ring at all, the frame's included: the caret and the active-line tint already say where you
+   are typing, and a coloured rounded ring around the whole pane read as a form field rather than an editor. */
+.ced-cm .cm-editor.cm-focused { outline: none; }
+.ced-ta { display: block; width: 100%; height: 100%; box-sizing: border-box; resize: none;
+    background: none; color: var(--fg); border: 0; padding: 8px 9px;
     font: 0.88em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; white-space: pre; overflow: auto; }
-.bench-code:focus { outline: none; border-color: var(--accent); }
+.ced-ta:focus { outline: none; }
 .bench-bar { display: flex; align-items: center; gap: 8px; }
 .bench-mode { display: flex; align-items: center; gap: 5px; color: var(--fg-dim); font-size: 0.85em; }
 .bench-mode select { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px; font: inherit; font-size: 0.92em; cursor: pointer; }
@@ -949,6 +962,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
     border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
     padding: 3px 9px; cursor: pointer; white-space: nowrap; }
 .bench-tab:hover { color: var(--fg-dim); }
+/* The bench output's timestamps toggle: pushed to the far end of the tab row and set in the tabs' own type, so
+   it reads as a property of the pane rather than a fourth tab. Struck through when off, like `.bench-timer`. */
+.bench-times { margin-left: auto; align-self: center; flex: 0 0 auto; cursor: pointer;
+    font: inherit; font-size: 0.74em; color: var(--fg-dim); background: transparent;
+    border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
+.bench-times:hover { color: var(--fg); border-color: var(--fg-dim); }
+.bench-times[aria-pressed="false"] { color: var(--fg-faint); text-decoration: line-through; }
 .bench-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
 /* A failure is MARKED, not just selected — the strip has to say a run went wrong even once you have
    clicked away to look at what it printed on the way there. */
@@ -2831,7 +2851,14 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
     display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
     font: inherit; font-size: 0.82em; padding: 2px 7px; border-radius: 5px;
     color: var(--fg-dim); background: var(--panel); border: 1px solid var(--border);
+    /* ONE LINE, always: in a tight header it gives up width and ends in "…" rather than growing a second
+       row. It is the item in the row that gives the width up, so it needs a FLOOR as well — without one it
+       absorbed the whole squeeze and collapsed to a sliver beside the ⓘ, a control nobody could read. The
+       floor keeps the chevron and a few letters; the row's other controls (Run above all) never move off. */
+    white-space: nowrap; min-width: 4em; max-width: 100%;
 }
+.bench-env-btn .tri { flex: 0 0 auto; }
+.bench-env-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .bench-env-btn:hover { color: var(--fg); border-color: var(--fg-dim); }
 .bench-env-btn .tri { display: flex; transition: transform 0.15s ease; }
 /* The button sits in the header and the panel hangs below it — they are siblings now, so the open state is
