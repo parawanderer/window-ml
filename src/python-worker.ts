@@ -10,10 +10,10 @@
 // (wrapUserCode/harden/unharden) is the same shared, real-CPython-tested module the
 // offscreen path used. The offscreen doc is now a thin id-matched relay (offscreen.ts).
 
-import { PY_PACKAGE_LOADS } from "./python-env";
-import { wrapUserCode, harden, unharden } from "./python-runtime";
+import { PY_PACKAGE_LOADS, PY_LAZY_LOADS } from "./python-env";
+import { wrapUserCode, harden, unharden, COMPLETE_HELPER, completeIn, type PyCompletion } from "./python-runtime";
 
-type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean };
+type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number } };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
 // two never have to be inferred from one another.
 type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
@@ -125,6 +125,18 @@ json.dumps({ "python": sys.version.split()[0], "packages": { n: _v(n) for n in $
     };
 }
 
+// THE EDITOR'S COMPLETION ENGINE, loaded on the FIRST request and never at start-up: 1.6 MB of wheels a
+// `python_exec` has no use for. A failed load clears the memo, so a later request tries again rather than
+// the bench being stuck on the static list for the rest of the session.
+let completerReady: Promise<void> | null = null;
+async function complete(code: string, line: number, column: number): Promise<PyCompletion[]> {
+    const py = await getPyodide();
+    completerReady ??= (async () => { await py.loadPackage(PY_LAZY_LOADS); py.runPython(COMPLETE_HELPER); })()
+        .catch((err: unknown) => { completerReady = null; throw err; });
+    await completerReady;
+    return completeIn(py, code, line, column);
+}
+
 self.onmessage = (e: MessageEvent) => {
     const msg = e.data as RunMsg;
     if (!msg || typeof msg.id !== "number") return;
@@ -133,6 +145,18 @@ self.onmessage = (e: MessageEvent) => {
     if ((msg as unknown as { env?: boolean }).env) {
         runChain = runChain.then(() => env()).then(
             (info) => self.postMessage({ id: msg.id, ok: true, stdout: "", env: info }),
+            (err: unknown) => self.postMessage({ id: msg.id, ok: false, stdout: "", error: String(err) }),
+        );
+        return;
+    }
+    // A COMPLETION, not a run: the script is analysed, never executed. It joins the same serialized chain for
+    // the same reason the env query does — it reads the one interpreter, and hardens it while it does, which
+    // must not interleave with a run's own harden/unharden. A completion asked for during a long run therefore
+    // waits for it; the editor has a short budget and falls back to its static list rather than blocking.
+    if (msg.complete) {
+        const { line, column } = msg.complete;
+        runChain = runChain.then(() => complete(msg.code, line, column)).then(
+            (completions) => self.postMessage({ id: msg.id, ok: true, stdout: "", completions }),
             (err: unknown) => self.postMessage({ id: msg.id, ok: false, stdout: "", error: String(err) }),
         );
         return;

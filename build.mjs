@@ -31,6 +31,10 @@ const ENTRIES = {
     // the sidebar.html iframe.
     "sidebar-shell": "src/sidebar/shell.ts",
     "sidebar-app": "src/sidebar/app.tsx",
+    // CodeMirror for the Python bench, kept OUT of sidebar-app and fetched when that tab opens. It is
+    // ~395 KB minified against sidebar-app's ~694 KB, and sidebar-app loads in an iframe on every page
+    // the overlay mounts on, for a tab most sessions never open. See sidebar/cm-editor.ts.
+    "cm-editor": "src/sidebar/cm-editor.ts",
     // Optional DevTools panel: a second surface for the same app. `devtools` registers
     // the panel; `panel` hosts the app iframe and relays the debug stream from the
     // background (see sidebar/panel.ts).
@@ -77,8 +81,10 @@ const DEFINES = Object.fromEntries(process.argv
 // Core (injected/content/background/popup/sidebar-shell) is left UNminified so
 // injected.js stays readable when inspected in devtools. The sidebar app is a
 // compiled Preact bundle (not meant to be read) and pulls in highlight.js, so
-// it's minified.
-const { "sidebar-app": sidebarApp, ...coreEntries } = ENTRIES;
+// it's minified — and so is the CodeMirror chunk beside it, which is third-party
+// code nobody reads and triples in size unminified.
+const { "sidebar-app": sidebarApp, "cm-editor": cmEditor, ...coreEntries } = ENTRIES;
+const uiEntries = { "sidebar-app": sidebarApp, "cm-editor": cmEditor };
 const base = {
     outdir: BUILD_DIR,
     bundle: true,
@@ -142,7 +148,7 @@ writeSchema();
 if (watch) {
     const copyPlugin = { name: "copy-assets", setup(b) { b.onEnd(() => copyAssets()); } };
     const coreCtx = await esbuild.context({ ...base, entryPoints: coreEntries, plugins: [copyPlugin] });
-    const sidebarCtx = await esbuild.context({ ...base, entryPoints: { "sidebar-app": sidebarApp }, minify: true, plugins: [copyPlugin] });
+    const sidebarCtx = await esbuild.context({ ...base, entryPoints: uiEntries, minify: true, plugins: [copyPlugin] });
     await coreCtx.watch();
     await sidebarCtx.watch();
     copyPyodide(); copyKatexFonts();   // once — static, not worth recopying on every rebuild
@@ -150,7 +156,7 @@ if (watch) {
 } else {
     try {
     await esbuild.build({ ...base, entryPoints: coreEntries });
-    await esbuild.build({ ...base, entryPoints: { "sidebar-app": sidebarApp }, minify: true });
+    await esbuild.build({ ...base, entryPoints: uiEntries, minify: true });
     // NOTE: the pure modules (locate, readonly-exec, python-runtime, agent-loop, auto-approve,
     // run-delegation, agent-host) used to be bundled here as standalone CJS for the node unit
     // tests. They aren't anymore — those tests `require("../<name>.ts")` directly under the

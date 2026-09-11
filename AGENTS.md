@@ -1675,6 +1675,34 @@ every glance at the bench cost a cold start. Installing a package and choosing w
 are **stated in words, not drawn as controls that no-op**: an affordance that silently does nothing cannot be
 told from a bug, so you try it twice.
 
+**The bench editor's COMPLETION is Jedi, in the sandbox (`COMPLETE_HELPER`/`completeIn`, python-runtime.ts).**
+Static analysis of the script being typed — it is never RUN — so the stateless sandbox is no limit for
+anything reached through an import or written in the script: module attributes (`np.ara`), pandas frames
+(`pd.read_csv(...).he`, via pandas' own stubs), literals, and the script's own functions all complete. It
+**cannot** type an array returned by a numpy call (`grid = np.arange(24).reshape(4, 6)` → `grid.` offers
+nothing): Jedi 0.19 cannot resolve numpy 2's stub layout. That is the case a PERSISTED bench fixes, and why
+`namespace` is the helper's one moving part — `None` is Jedi's `Script`, a live namespace is its
+`Interpreter`, which completes the real object (`grid.su` → `sum`, pinned in `tests/python.test.mjs` along with
+the gap, so a Jedi that fixes it announces itself). Five things are load-bearing:
+- **Lazy** (`PyPackage.lazy`, `PY_LAZY_LOADS`): the 1.6 MB of wheels are fetched with the rest but loaded on
+  the first completion, never at start-up and never offered to the model.
+- **Only once the sandbox is WARM** (`completeInSandbox` returns null until `benchEnv` is set): a completion
+  starts Pyodide when it is cold, and a keystroke must not pay that start, nor push your first Run behind it.
+- **A completion arms NO watchdog** (offscreen.ts). The kill timer starts when a message is POSTED, and a
+  completion queued behind a long run would fire it mid-run and kill the worker — your script with it —
+  because you typed. A hung completion is still cleared by the next run's own watchdog.
+- **Always hardened, and only from our own surfaces** (the `PYTHON_EXEC` choke point, `sender.url`): analysis
+  can import a compiled module to inspect it, which must not reach the network even in `full` mode, and a
+  page is refused rather than handed a new kind of request to the one sandbox.
+- **Budgeted, with the static list as the floor** (`withRemote`, cm-editor.ts, 350 ms): the first request
+  after warming loads Jedi and falls back, the next word gets it. Asked once per WORD — `validFor` narrows the
+  same answer as you type. On a MEMBER (`np.zz`) a missing answer means no popup, never builtins offered as
+  attributes; inside a string or comment it asks nothing (Jedi would complete the sandbox's file paths).
+- **A kind Jedi could not RESOLVE is shown as no label, never as the wrong one.** numpy 2's stubs make Jedi
+  call 35 of numpy's functions "module" (`np.arange` among them), so "module" is believed only when the name
+  really is a loaded module (`sys.modules`); otherwise it is `""`. Only module/class/function/property/keyword
+  are printed beside a name at all — `statement`/`instance`/`param` are Jedi's internals, not a reader's.
+
 **One `openBench(code?)`.** There were two openers and they disagreed: a code block's ▶ went straight to the
 FULL page, which is precisely the trip the drawer exists to stop — you press it FROM a step in order to
 compare against that step. Both go through the one function now, which honours the dock preference and puts
@@ -2127,7 +2155,9 @@ thing. The parts:
   headless SHELL, a stripped binary with no extension support at all. `channel: "chromium"` runs the FULL
   browser in `--headless=new`, where the worker registers in ~0.5s and the whole suite passes. This
   matters beyond tidiness: a headful window grabs focus and the mouse on every launch, and the suite
-  launches one per spec. Pass `headful: true` (the narrated demos do) or set `E2E_HEADFUL=1` for a look. **A run is started exactly like a console call:** `page.evaluate(() =>
+  launches one per spec. Pass `headful: true` (the narrated demos do) or set `E2E_HEADFUL=1` for a look.
+  **`E2E_DIST=<dir>`** runs specs against a bundle built elsewhere (`node build.mjs --outdir <dir>`) — use it
+  whenever `dist/` is loaded in a window someone is using, rather than rebuilding underneath them. **A run is started exactly like a console call:** `page.evaluate(() =>
   window.ml.agent(task, opts))` — Playwright's `page.evaluate` runs in the page **main world**,
   where `injected.js` defines `window.ml`, so no test-only hooks; the same front door a human
   uses. The result structured-clones back to Node.
@@ -2382,6 +2412,29 @@ rate includes the network; that whole matrix (openai/ollama x streamed/not) is p
   Screenshots land in `tests/e2e/artifacts/stream-demo/`; `HOLD=0` exits instead of holding the browser
   open. Deterministic (fake-LLM, approvals resolved via the SW `__mlApprovals` channel). The automated
   assertions are `python-stream.spec.mjs` (the reverse channel) and `output-scroll.spec.mjs` (tail-follow).
+- **`bench-editor-demo.mjs`** — a **narrated demo, not a test** of the Python bench's editor:
+  `npm run build && node --import tsx tests/e2e/bench-editor-demo.mjs` opens a headful browser, switches
+  to the bench, and types numpy into it so you can watch the plain textarea upgrade to CodeMirror, the
+  highlighting land, the completion popup filter, and Cmd/Ctrl+Enter run against the real Pyodide
+  sandbox. `PACE` sets the keystroke delay, `HOLD=0` exits instead of holding the window open, and
+  `HEADLESS=1` captures the screenshots (`tests/e2e/artifacts/bench-editor-demo/`) without a window.
+  Deterministic — nothing here calls a model. The automated assertions are `bench-editor.spec.mjs`.
+  Three things about the editor (`CodeEditor`, `src/sidebar/code-editor.tsx`) are easy to break:
+  - **The run chord is ALWAYS claimed, whoever acts on it.** CodeMirror's default keymap reads `Mod-Enter`
+    as "insert a blank line", so an editor that leaves it unbound adds a line to the script AND lets it
+    bubble to whatever runs it. With `onRun` the editor runs it and STOPS it; without, it swallows it and
+    lets it bubble. The bench passes no `onRun` — it owns `⌘/Ctrl+↵` panel-wide (`onBenchKey`). Both
+    modifiers are bound, since "Mod" is Cmd-ONLY on macOS and the textarea this replaced took either.
+  - **A test must press the platform's OWN Mod** to see the blank-line bug: on a Mac only Cmd reaches
+    that binding, so a Ctrl+Enter test passes there and fails on Linux CI.
+  - **A stale `value` prop is an echo, not an edit.** Preact replays props several keystrokes behind, and
+    pushing one back in rewrote the document under a moved cursor ("pri" landed as "rip"); echoes are
+    consumed as a queue.
+  **`.bench-code` is the FRAME, not the field** — it sizes the editor in its pane. A test drives
+  `.bench-code textarea` under jsdom (the bundle never loads there, so that is the fallback it gets) and
+  `.bench-code .cm-content` in a real browser, where `inputValue()`/`toHaveValue()` no longer apply: read
+  the document as `.cm-line`s joined by `\n`, since `toHaveText` normalises exactly the whitespace a
+  reflow test is about.
 - **Real model:** point the extension at a real backend with `E2E_BACKEND=<chatUrl>
   E2E_MODEL=<id> E2E_KEY=<bearer>` (the observer also accepts `USE_ENV=1` to read
   `OPENWEBUI_URL/KEY/MODEL` + `OPENWEBUI_UTILITY_MODEL`/`OPENWEBUI_VISION_MODEL` from `.env`).

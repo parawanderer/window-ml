@@ -332,6 +332,11 @@ export const benchMode = signal<"readonly" | "full">(lsGet("ml_bench_mode") === 
  *  long; the model's own `python_exec` keeps the cap regardless, and the background only honours the flag
  *  from one of our own surfaces. */
 export const benchTimeout = signal<boolean>(lsGet("ml_bench_timeout") !== "off");
+/** Does the workbench's output show the produced-at gutter? ON by default, like everywhere else, and turned off
+ *  from the bench's OWN output pane for the times it is noise. A narrowing only: Settings → Appearance
+ *  (`showOutTimes`) still turns the gutter off everywhere, the bench included, so this never shows times that
+ *  setting hid. */
+export const benchTimes = signal<boolean>(lsGet("ml_bench_times") !== "off");
 
 /** Is a bench script in flight right now — what the header's ▶ spinner and the disabled Run button read. */
 export const benchRunning = signal(false);

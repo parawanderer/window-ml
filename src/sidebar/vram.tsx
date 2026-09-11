@@ -18,6 +18,8 @@ import { isCloudModel } from "./card-state";
 import { IconWarn, IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevron, IconExpand, IconClose, IconPlay, IconSendToModel, IconTimer } from "./icons";
 import { Disclosure, cursorTipOn, TipText } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
+import { CodeEditor } from "./code-editor";
+import type { RemoteCompletion } from "./code-editor-api";
 import { hhmmss } from "./timestamps";
 import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, type BenchRun } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
@@ -2207,6 +2209,25 @@ function loadBenchEnv(onErr?: (m: string) => void) {
     });
 }
 
+/** Jedi in the sandbox, as the bench editor's completion backend — module attributes, pandas frames, the
+ *  script's own names, and (once the bench keeps state) live objects. ONLY ONCE THE SANDBOX IS WARM: a
+ *  completion starts Pyodide when it is cold, and a keystroke must not be what pays that start, nor push your
+ *  first Run behind it — the same reason the environment is not read on mount. Until something has started
+ *  the sandbox, the editor keeps its static list. Resolves null rather than rejecting, so the editor's
+ *  fallback is the only failure path. */
+function completeInSandbox(code: string, line: number, column: number): Promise<RemoteCompletion[] | null> {
+    if (!benchEnv.value) return Promise.resolve(null);
+    return new Promise((resolve) => {
+        try {
+            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code, hardened: true, complete: { line, column } } }, (resp: any) => {
+                void chrome.runtime.lastError;   // a torn-down sandbox is a fallback, not a console error
+                const r = resp?.data;
+                resolve(r?.ok && Array.isArray(r.completions) ? r.completions : null);
+            });
+        } catch { resolve(null); }
+    });
+}
+
 /** WHAT THE SANDBOX IS — the Python and Pyodide versions and the packages you can import, read from the
  *  running interpreter rather than from our manifest (the manifest says what we ASKED for; the wheel that
  *  installed is what the code will import, and a panel reporting the first while the second differs is
@@ -2233,7 +2254,10 @@ function BenchEnvButton() {
         <button class={`bench-env-btn${open ? " on" : ""}`} aria-expanded={open}
             onClick={() => { benchEnvOpen.value = !open; if (!benchEnvErr.value) loadBenchEnv((m) => (benchEnvErr.value = m)); }}>
             <span class="tri" aria-hidden="true"><IconChevron /></span>
-            environment{env ? <span class="bench-env-ver"> · {env.python}</span> : null}
+            {/* ONE element for the whole label, because an ellipsis needs one: as separate flex items the name
+                and the version wrapped onto two lines when the header got tight, and the button grew a
+                second row. */}
+            <span class="bench-env-label">environment{env ? <span class="bench-env-ver"> · {env.python}</span> : null}</span>
         </button>
     );
 }
@@ -2323,7 +2347,6 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
     const setLive = (f: { text: string; marks: [number, number][] } | null | ((p: { text: string; marks: [number, number][] } | null) => { text: string; marks: [number, number][] })) => {
         benchLive.value = typeof f === "function" ? f(benchLive.value) : f;
     };
-    const taRef = useRef<HTMLTextAreaElement>(null);
     const run = () => {
         if (running || !code.trim()) return;
         const started = Date.now();
@@ -2360,16 +2383,6 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                     loadBenchEnv();
                 });
         } catch (e) { stop(); setResult({ ok: false, stdout: "", error: String(e) }); setRunning(false); }
-    };
-    // Tab inserts spaces rather than escaping the field. Textarea-only, since it is about the caret.
-    const onKey = (e: KeyboardEvent) => {
-        const ta = taRef.current;
-        if (e.key === "Tab" && ta) {
-            e.preventDefault();
-            const s = ta.selectionStart, en = ta.selectionEnd;
-            setCode(code.slice(0, s) + "    " + code.slice(en));
-            requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + 4; });
-        }
     };
     // ⌘/Ctrl+Enter runs, from ANYWHERE in the bench — not just the textarea. It used to be bound to the
     // field alone, so clicking the mode picker or the environment list silently disarmed the only shortcut
@@ -2490,7 +2503,10 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                 corner, and nothing at all for the output) is two too many. */}
             <div class="bench-split">
                 <div class="bench-pane" style={{ flexGrow: hasOut ? benchSplit.value : 1 }}>
-                    <textarea ref={taRef} class="bench-code code" spellcheck={false} value={code} onInput={e => setCode((e.target as HTMLTextAreaElement).value)} onKeyDown={onKey} placeholder="return 6 * 7" />
+                    {/* NO `onRun`: the bench owns ⌘/Ctrl+↵ from anywhere in the panel (`onBenchKey`), so the
+                        editor claims the chord — CodeMirror would otherwise read it as "insert a blank line" —
+                        and lets it bubble up to that one handler. Handing it onRun too would run twice. */}
+                    <CodeEditor class="bench-code" value={code} onChange={setCode} complete={completeInSandbox} placeholder="return 6 * 7" />
                 </div>
                 {/* THE OUTPUT PANE ARRIVES WITH THE FIRST RUN and never leaves. Before that the editor has the
                     whole bench: an empty pane with a line of placeholder in it is chrome promising something

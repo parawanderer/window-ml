@@ -1258,7 +1258,19 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // whitelisted domain, or with a per-call grant for THIS code. An untrusted page without one is
         // REJECTED (a clear error, not a silent readonly downgrade).
         (async () => {
-            const wantsFull = message.payload?.hardened === false;
+            const ownSurface = (sender.url || "").startsWith(chrome.runtime.getURL(""));
+            // A COMPLETION is the bench EDITOR's, and only ours. It never runs the code, but it does load a
+            // package and read the interpreter, so a page gains nothing by reaching it and is refused rather
+            // than handed a new kind of request to the single sandbox. Always HARDENED, whatever it asked for.
+            const rawComplete = message.payload?.complete;
+            if (rawComplete && !ownSurface) {
+                sendResponse({ error: "Refused: code completion is a workbench feature." });
+                return;
+            }
+            const complete = rawComplete
+                ? { line: Math.max(1, Number(rawComplete.line) | 0), column: Math.max(0, Number(rawComplete.column) | 0) }
+                : null;
+            const wantsFull = !complete && message.payload?.hardened === false;
             if (wantsFull) {
                 const trust = await senderTrust(sender);
                 if (trust === "untrusted") {
@@ -1287,7 +1299,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // watching it; in the bench a person chose it, is sitting in front of it, and can close the panel.
             const noTimeout = !!message.payload?.noTimeout
                 && (sender.url || "").startsWith(chrome.runtime.getURL(""));
-            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(message.payload?.env ? { env: true } : {}) };
+            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: complete ? true : message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(message.payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}) };
             const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
             attempt()
                 .catch((err) => {
