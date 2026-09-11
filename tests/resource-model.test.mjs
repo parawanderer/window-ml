@@ -222,7 +222,19 @@ test("presetsFor: the default layout follows the hardware", () => {
     assert.equal(withRam.tracks.length, 3, "GPU + RAM breaks the same data into a track per pool");
     // There is deliberately no cards-only preset: it would be GPU + RAM minus the host track, and what that
     // hides is your CPU-resident models. The editor can drop the track for anyone who wants it.
-    assert.deepEqual(multi.map((p) => p.id), ["overview", "memory"]);
+    // THREE KINDS, and the third is a different QUESTION rather than a narrowing. Overview asks how full
+    // each pool is, GPU + RAM asks what is in each, and Whole box asks what shape the machine is — which the
+    // per-pool tracks cannot answer, since they give every pool the same height whatever its capacity. It
+    // had no preset and could only be reached by hand-editing tracks, which made Custom carry a whole view
+    // instead of meaning "a preset with something excluded".
+    assert.deepEqual(multi.map((p) => p.id), ["overview", "memory", "box"]);
+    const box = multi.find((p) => p.id === "box");
+    assert.equal(box.tracks.length, 1, "one axis, not a track per pool — that is what the other view is for");
+    assert.equal(box.tracks[0].mode, "total");
+    assert.deepEqual(box.tracks[0].series, ["vram.0", "vram.1", "ram"], "every pool, laid end to end");
+    // A preset must never propose a layout `stackRefusal` would reject; `total` is judged separately because
+    // it does not claim a fungible sum — the walls between the pools are the point.
+    assert.equal(M.presetRefusal(box, { t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] }), null);
     assert.ok(!multi.some((p) => p.id === "placement"));
 
     // The Mac: ONE pool, so one preset with one track — not a GPU view and a RAM view of the same silicon.
@@ -230,6 +242,9 @@ test("presetsFor: the default layout follows the hardware", () => {
     assert.deepEqual(single.map((p) => p.id), ["memory"]);
     assert.deepEqual(single[0].tracks.map((t) => t.series), [["mem"]], "the one pool, once");
     assert.ok(!single.some((p) => p.id === "placement"));
+    // …and NO whole-box view there: with one pool the axis already IS that pool, so "end to end" would be
+    // the same picture under a name promising something else.
+    assert.ok(!single.some((p) => p.id === "box"), "one pool has no end-to-end arrangement to show");
 });
 
 test("segments: history breaks at a hole instead of drawing across it", () => {

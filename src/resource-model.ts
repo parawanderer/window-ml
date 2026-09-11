@@ -818,7 +818,24 @@ export function presetsFor(sample: ResourceSample): Preset[] {
     // There was a third, "Placement" — GPU + RAM minus the host track. It was exactly that flaw as a named
     // option: strictly narrower, and what it narrowed AWAY was your CPU-resident models. Anyone who genuinely
     // wants cards-only can drop the RAM track in the editor, which is one click and says what it did.
-    return [overview, withRam];
+    //
+    // A THIRD KIND, though, not a narrowing: every pool END TO END on one axis. It is a different QUESTION
+    // from the other two — not "how full is each" (Overview) or "what is in each" (GPU + RAM) but "what shape
+    // is this box, and how much of it is spoken for" — and the per-pool tracks cannot answer it, because they
+    // give every pool the same height whatever its capacity, so a 12 GiB card and a 96 GiB one look alike.
+    //
+    // It had no preset and could only be reached by editing tracks by hand, which made Custom carry a whole
+    // view rather than what Custom should mean: a preset with something excluded or a mode changed. A mode
+    // nobody can find is a mode nobody uses.
+    //
+    // Only where there is more than one pool. On a single-pool box the axis IS that pool's, so laying it
+    // "end to end" is the same picture under a name that promises something else.
+    const pools = [...devices.map((d) => `vram.${d.id}`), "ram"].filter((id) => have.has(id));
+    const box: Preset = {
+        id: "box", label: "Whole box", description: "Every pool end to end on one axis, with the walls drawn between them.",
+        tracks: [{ ...track("box", pools, "total"), heightPx: 150 }].filter(nonEmpty),
+    };
+    return pools.length > 1 ? [overview, withRam, box] : [overview, withRam];
 }
 
 /** A stable identity for the MACHINE this capacity describes — its devices (id, name, runner, size) and its

@@ -244,12 +244,51 @@ function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = 
         }
     });
 
+    /**
+     * A MODEL'S MEMORY IS PIECEWISE-CONSTANT, SO ITS EDGE IS A STEP.
+     *
+     * A resident model does not drift: the runner appears holding its whole footprint, and the KV cache is
+     * preallocated for the FULL context window at load and never grows — verified on the box, byte-identical
+     * before and after 4,217 tokens went through it. So a straight line between two samples was drawing a
+     * decay that cannot happen, and on an eviction it drew the worst version of it: samples 14 seconds apart
+     * (the stream's idle cadence) with the model resident at one end and gone at the other, rendered as
+     * fourteen seconds of memory gently draining away. The `unload` edge sits at the true instant, so the
+     * dashed rule and the descent disagreed by up to a whole sample interval, which reads as the lane being
+     * misaligned with the chart rather than as the chart interpolating.
+     *
+     * Held at its last measured value and dropped where the next reading says, the descent lands on the
+     * sample that reported it — 2 ms after the edge in the capture that prompted this — so the two agree
+     * without either being moved to suit the other.
+     *
+     * THE DEVICE'S OWN BANDS STAY LINES, and that difference is the point rather than an inconsistency. A
+     * card's free memory really does fall progressively while weights land — the server describes it as a
+     * continuous progress signal during the long half of a load — so stepping it would be the same error
+     * pointed the other way. A band is drawn stepped when its top is a MODEL's, which is what `identity`
+     * already answers for the fill.
+     *
+     * Adjacent bands SHARE an edge (this band's floor is the one below's ceiling), so the floor is drawn with
+     * the step-ness of the band BELOW, never its own. Get that wrong and the two disagree by a step's height
+     * and the stack opens a seam. It also means a residual sitting on models is exactly right: its base jumps
+     * when a model goes, while its own thickness still varies smoothly.
+     */
+    const isStep = (k: string | null): boolean => !!k && !!identity[k];
+    /** One edge as points, left to right. A stepped edge emits the corner first: hold the previous value up
+     *  to this sample's x, then drop to this sample's. Reversing the list retraces the same shape, which is
+     *  how the floor is drawn without a second implementation that could disagree with this one. */
+    const edge = (series: number[], stepped: boolean): string[] => {
+        const out: string[] = [];
+        for (let i = 0; i < frames.length; i++) {
+            const v = series[i] ?? 0;
+            if (stepped && i > 0) out.push(`${x(i).toFixed(1)},${y(series[i - 1] ?? 0).toFixed(1)}`);
+            out.push(`${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+        }
+        return out;
+    };
     const areas = order.filter((k) => k !== "free").map((key, ki, keys) => {
         const below = ki === 0 ? null : keys[ki - 1];
         const top = tops[key] || [];
-        const pts: string[] = [];
-        for (let i = 0; i < frames.length; i++) pts.push(`${x(i).toFixed(1)},${y(top[i] ?? 0).toFixed(1)}`);
-        for (let i = frames.length - 1; i >= 0; i--) pts.push(`${x(i).toFixed(1)},${y(below ? (tops[below]?.[i] ?? 0) : 0).toFixed(1)}`);
+        const floor = below ? (tops[below] || []) : new Array<number>(frames.length).fill(0);
+        const pts: string[] = [...edge(top, isStep(key)), ...edge(floor, isStep(below)).reverse()];
         // The band knows which model it is, so hovering it can name it — and dim its neighbours, so a stack of
         // similar colours resolves into one identifiable shape.
         const model = identity[key];

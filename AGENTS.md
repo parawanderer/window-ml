@@ -1047,6 +1047,40 @@ per device, in bytes.
   presence IS the lane, so its row offered a control that could not remove the one thing it drew. `timeline()`
   filters on `hiddenModels`, ghost rows get a working dot, and the keyboard's list skips hidden models because
   there is no shape left to point at.
+- **A MODEL'S MEMORY IS PIECEWISE-CONSTANT, SO ITS BAND IS A STEP.** A resident model does not drift: the
+  runner appears holding its whole footprint, and the KV cache is preallocated for the FULL context window at
+  load and never grows (verified on the box — byte-identical before and after 4,217 tokens). A straight line
+  between two samples therefore drew a decay that cannot happen, and an eviction drew the worst version of
+  it: at the stream's 15 s idle cadence, two samples with the model resident at one end and gone at the
+  other became fifteen seconds of memory gently draining away, while the `unload` rule sat at the true
+  instant — so the lane and the chart disagreed by up to a whole sample interval and it read as the lane
+  being misaligned. Held at its last value and dropped where the next reading says, the descent lands on the
+  sample that reported it (2 ms after the edge, in the capture that prompted this) and the two agree without
+  either being moved to suit the other. **The DEVICE's own bands stay lines**, and the difference is the
+  point rather than an inconsistency: a card's free memory really does fall progressively while weights land
+  (the server calls it a continuous progress signal), so stepping it would be the same error pointed the
+  other way. A band is stepped when its top is a MODEL's, which is what `identity` already answers for the
+  fill. Adjacent bands SHARE an edge, so a floor is drawn with the step-ness of the band BELOW, never its
+  own — otherwise the two disagree by a step's height and the stack opens a seam. That also makes a residual
+  sitting on models exactly right: its base jumps when a model goes, while its own thickness varies smoothly.
+- **THE SNAP MARK CARRIES THE MODEL'S COLOUR.** A model's colour is its identity across the whole panel, and
+  a mark sitting ON that band was drawn in the panel's accent — saying "a reading" where every other surface
+  says "this model", with nothing to tell several marks apart. It reads from `identity`, the same source
+  `bandFill` colours the band from, so the mark and the thing it marks cannot disagree. A boundary with NO
+  model keeps the accent rather than taking `bandFill`'s grey: the residual and driver overhead are drawn in
+  `--fg-faint`, and a faint grey mark on a faint grey band is one you cannot find.
+- **THE PANEL'S OWN SETTINGS LIVE IN THE PANEL** (the track editor behind its gear). How far back the chart
+  draws and which palette a model's colour comes from were in Settings, which is a surface you have to LEAVE
+  the chart to reach — and the whole argument for putting them there, a paragraph each explaining what they
+  do, stops applying the moment the chart is on screen while you change them. Neither is a `MlConfig` flag,
+  so the "every user-editable setting also appears in DevTools Settings" rule does not reach them; they are
+  storage.local display preferences like the lane's height, and the cursor-snap toggle moved there first.
+  **The window picker shows a PREFERENCE, never the live window**: scrubbing writes the window, so bound to
+  one quantity the control read "56 seconds (dragged)" — a reading of the moment dressed as a setting, which
+  also needed an extra option to render at all, since a value no preset names leaves a select BLANK.
+  `RESWIN_PREF_KEY` is where the chart OPENS and `RESWIN_KEY` is where it currently IS; the picker edits the
+  first and applies it at once (a preference you cannot see take effect reads as broken, so it clears a
+  pinned zoom too), the scrub writes only the second, and a dragged window still survives a reload.
 - **A THIRD MODE, `total`: THE WHOLE BOX ON ONE AXIS** (`boxAxis`, `BoxView`). Summing pools' CAPACITY into
   one denominator is the panel's oldest refusal — 40 GiB free as 20+20 cannot hold a 30 GiB model — but the
   question behind it is real, and it only lies when the pools are MIXED. So they are laid END TO END up the
@@ -1055,7 +1089,13 @@ per device, in bytes.
   non-fungibility is visible rather than something the reader has to know. It also makes the box's SHAPE
   visible, which the per-pool tracks cannot — they give every pool the same height whatever its size. The
   header says what is HELD and never what is FREE, which is the one sentence the walls exist to deny; hiding
-  a pool shrinks the axis rather than leaving a hole. Offered only where there is more than one pool.
+  a pool shrinks the axis rather than leaving a hole. Offered only where there is more than one pool, and it
+  has its OWN PRESET ("Whole box"). It had none for a while and could be reached only by hand-editing tracks,
+  which made Custom carry a whole VIEW rather than what Custom should mean — a preset with something excluded
+  or a mode changed. A mode nobody can find is a mode nobody uses. The three presets are three different
+  QUESTIONS, not three scopes: how full is each pool (Overview), what is in each (GPU + RAM), what shape is
+  this box (Whole box) — the last being the one the per-pool tracks cannot answer, since they give every pool
+  the same height whatever its capacity.
 - **THE STACKING RULE JUDGES THE MODE, not only the series.** `stackRefusal` guarded the series CHECKBOXES —
   it stopped you adding a series that would make an unstackable track — and left the mode select unguarded, so
   a three-pool Overview track could simply be switched to "stack". `TrackView`'s stack branch reads

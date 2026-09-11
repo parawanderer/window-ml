@@ -3930,3 +3930,71 @@ test("resource panel: a mark on a model's band is drawn in that model's colour",
         expect(dotBg, "a model's mark is no longer the generic accent").not.toBe(accent);
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+// A MODEL'S MEMORY IS PIECEWISE-CONSTANT, SO ITS BAND IS A STEP.
+//
+// A resident model does not drift: the runner appears holding its whole footprint and the KV cache is
+// preallocated for the full window at load. A straight line between two samples therefore drew a decay that
+// cannot happen — and on an eviction it drew the worst version of it, because the stream's idle cadence is
+// 15s: two samples that far apart, resident at one end and gone at the other, rendered as fifteen seconds of
+// memory gently draining away, while the `unload` rule sat at the true instant. The chart and the lane
+// disagreed by up to a whole sample interval.
+test("resource panel: a model's band steps, and the device's own bands do not", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await seedStacked(ext);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(5000);   // several samples, or there are no segments to join
+
+        // …now it goes, between two samples. The band must hold its height and DROP, not slope.
+        fake.setResident([]);
+        await sleep(5000);
+
+        /**
+         * Read the polygon itself: the claim is about SHAPE and there is no other way to see it. A stepped
+         * edge emits a CORNER — two points sharing an x — where an interpolated one emits exactly one point
+         * per sample and never repeats an x.
+         *
+         * The top edge has to be isolated first, and neither obvious way of doing it works. Splitting at the
+         * midpoint is wrong because a stepped edge emits about twice the points a plain one does, so the
+         * halves are not equal. Splitting where x first stops rising is wrong because the polygon CLOSES with
+         * a vertical at the right-hand edge — a shared x that is the shape joining top to floor, not a step,
+         * and it made the residual look stepped when it is not.
+         */
+        const topEdge = (pts) => {
+            const p = pts.trim().split(/\s+/).map((q) => q.split(",").map(Number));
+            let turn = p.length;
+            for (let i = 1; i < p.length; i++) if (p[i][0] < p[i - 1][0]) { turn = i; break; }
+            const head = p.slice(0, turn);
+            // Drop the closing vertical: everything after the FIRST point that reaches the rightmost x.
+            const maxX = Math.max(...head.map((q) => q[0]));
+            const at = head.findIndex((q) => q[0] === maxX);
+            return head.slice(0, at + 1);
+        };
+        const stepsIn = (pts) => topEdge(pts).filter((q, i, a) => i > 0 && q[0] === a[i - 1][0]).length;
+
+        const band = frame.locator(".rc-band").first();
+        await expect(band).toHaveCount(1);
+        expect(stepsIn(await band.getAttribute("points")),
+            "the model's band turns square corners rather than sloping").toBeGreaterThan(0);
+
+        // THE DEVICE'S OWN BANDS STAY LINES, and that difference is deliberate rather than an inconsistency:
+        // a card's free memory really does fall progressively while weights land, so stepping it would be the
+        // same error pointed the other way. The residual is the polygon with no `.rc-band` class — it belongs
+        // to no model. Its FLOOR is stepped, because it sits on the models and a shared edge has to match on
+        // both sides or the stack opens a seam; only its own top is checked here.
+        const plain = frame.locator(".rc-plot").first().locator("polygon:not(.rc-band)");
+        if (await plain.count()) {
+            expect(stepsIn(await plain.first().getAttribute("points")),
+                "a device band's own edge is still a line").toBe(0);
+        }
+    } finally { await ext.context.close(); await fake.stop(); }
+});
