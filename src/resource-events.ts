@@ -35,6 +35,10 @@ export interface ResourceFrame {
     /** The server's own clock at `hello`, and a stable id for the box. */
     serverTime?: string;
     box?: string;
+    /** hello: GPUs the server can see and cannot use (`compute.unavailable_gpus` in the same shape). It rides
+     *  the HELLO rather than an edge event on purpose — a card can fault hours before anything connects, and
+     *  an edge-only signal is silent in exactly that case. Read it on every connect. */
+    unavailable_gpus?: unknown;
     /** Cumulative frames dropped for THIS subscriber, when it stopped reading fast enough. Non-zero means
      *  a hole in the record, which is a different thing from a quiet period. */
     dropped?: number;

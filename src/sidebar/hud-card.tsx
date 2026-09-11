@@ -14,7 +14,7 @@ import { residentNow } from "./vram";
 import { orbStatus } from "./orb-status";   // the orb's live status projection (humanized tool phase + live token count + stall heartbeat)
 import { exportSession, printSession } from "./export";
 import { IconChevron, IconWarn, IconSend } from "./icons";
-import { AnswerMediaGallery, ContextMenu, clearHighlight, decideGate, decidedSteps, stepKey } from "./ui-kit";
+import { cursorTipOn, AnswerMediaGallery, ContextMenu, clearHighlight, decideGate, decidedSteps, stepKey } from "./ui-kit";
 import { ReplyBubble } from "./reply";
 import { AgentTurn, ToolStep, GrantCard, hasPersistGrants, KEEP_HINT } from "./agent-detail";
 import { AnswerBody, ResultBlock } from "./answer-render";
@@ -565,6 +565,17 @@ export function CardApp() {
                                 ? <button class="continue-run" title="Resume this run with more steps, continuing from where it stopped"
                                     onClick={() => window.parent.postMessage({ __mlSidebarApp: "continueRun", hash: run.hash }, "*")}>
                                     Continue <span class="continue-steps">+{run.maxSteps || 20} steps</span>
+                                  </button>
+                                : null}
+                            {/* A FAILED run gets the same resume, as Retry — parity with the sidebar's failed-run
+                                bubble, since a surface that offers the way forward in one place and a dead end in
+                                the other teaches you not to trust either. Resuming from the checkpoint re-asks the
+                                turn that failed without adding a message; a call that errored produced nothing, so
+                                the worst case is that it fails again. */}
+                            {run.error && !run.cancelled
+                                ? <button class="continue-run" onClick={() => window.parent.postMessage({ __mlSidebarApp: "continueRun", hash: run.hash }, "*")}
+                                    {...cursorTipOn("Try this turn again, from where the run stopped. Nothing is re-typed and no new message is added — the same request goes out again.")}>
+                                    Retry
                                   </button>
                                 : null}
                           </>}

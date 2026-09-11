@@ -756,7 +756,11 @@ export function AgentRunView({ s }: { s: Session }) {
     };
     const answer = (a: NonNullable<Session["answers"]>[number], key: string, i: number) =>
         a.error
-            ? <ReplyBubble key={key} content="" status="err" model={s.model} profile={sessionProfile(s)} ts={a.ts} error={a.error} label="run failed" />
+            // RETRY on the latest failure only, and not while something is already running — the same guard
+            // Continue uses, for the same reason: resuming an old buried failure would re-run a turn the reader
+            // has since moved past, and a live run has nothing to resume.
+            ? <ReplyBubble key={key} content="" status="err" model={s.model} profile={sessionProfile(s)} ts={a.ts} error={a.error} label="run failed"
+                retry={a.ts === lastAnswerTs && s.status !== "pending" ? { hash: s.hash } : undefined} />
             : <ReplyBubble key={key} content={a.text} status={a.status} model={s.model} profile={sessionProfile(s)} ts={a.ts} tokenRun={s} tokenScope={a.ts === lastAnswerTs ? undefined : scopeFor(i)} latest={a.ts === lastAnswerTs}
                 label={a.cancelled ? "cancelled" : a.hitCap ? "stopped (step cap)" : undefined} capped={a.hitCap || a.cancelled}
                 // Only the LATEST answer, and only a step-cap stop (not a cancel/error), offers Continue — resuming

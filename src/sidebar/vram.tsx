@@ -12,7 +12,10 @@ import {
 } from "./store";
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
-import { IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevron, IconExpand, IconClose, IconPlay, IconSendToModel, IconTimer } from "./icons";
+// The ONE predicate for "this runs somewhere else": affirmatively not a model of this server. Shared with the
+// composer rather than re-derived here, so the panel and the picker cannot disagree about what is local.
+import { isCloudModel } from "./card-state";
+import { IconWarn, IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevron, IconExpand, IconClose, IconPlay, IconSendToModel, IconTimer } from "./icons";
 import { Disclosure, cursorTipOn, TipText } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { hhmmss } from "./timestamps";
@@ -22,7 +25,7 @@ import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KE
 export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, dropInferredLoads, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, memorySplit, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
+import { parseInfo, holdCapacity, memorySplit, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault } from "../resource-model";
 import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -153,10 +156,87 @@ export const capacity = signal<Capacity | null>(null);
 // flashed the legacy chart for a moment before the tracks replaced it. Until the first answer lands the plot
 // is simply empty.
 export const capacityAsked = signal(false);
+/** A machine-level banner for GPUs the server can see and cannot use.
+ *
+ *  MACHINE-LEVEL, NOT A PER-CARD BADGE, because there is no card to badge: a faulted GPU is absent from
+ *  `supported_gpus` entirely, so the panel draws one healthy card and every figure agrees with every other.
+ *  The question this answers is "why does this box have fewer GPUs than I expect?", which no per-device
+ *  decoration can be attached to.
+ *
+ *  It renders NOTHING when the list is empty. That is not the same as "all healthy": an empty list means
+ *  nothing to report OR the server could not look, and the two are not distinguished at the source — so it
+ *  may drive a warning and must never drive a reassurance. `not_offered_by_backend` is filtered out for a
+ *  related reason: that card answers every query and was simply not claimed by a backend (usually
+ *  `CUDA_VISIBLE_DEVICES`), and a warning triangle there tells someone to reseat working hardware.
+ *
+ *  `detail` and `recovery` are rendered VERBATIM. `detail` is the driver's own string — "GPU requires reset"
+ *  is NVIDIA's wording, not ours — and its value is that it can be searched in vendor documentation exactly
+ *  as shown, which paraphrasing would destroy. */
+function GpuFaults() {
+    const faults = unavailableGpus.value.filter(isGpuFault);
+    if (!faults.length) return null;
+    const total = faults.length + (capacity.value?.devices.length ?? 0);
+    return (
+        <div class="rc-gpufault" role="alert">
+            <IconWarn />
+            <div class="rc-gpufault-body">
+                <b>{faults.length} of {total} GPUs unavailable</b>
+                {faults.map((g) => (
+                    <div class="rc-gpufault-one" key={g.pciId}>
+                        {/* The PCI address is the IDENTITY — two cards in one machine share a name — and it is
+                            also the only thing present under `not_reported_by_driver`, where the driver
+                            describes nothing and neither name nor uuid can be read. */}
+                        <span class="rc-gpufault-id">{g.name ?? "GPU"} at <code>{g.pciId}</code></span>
+                        {g.detail ? <span class="rc-gpufault-detail">{g.detail}</span> : null}
+                        {g.recovery ? <span class="rc-gpufault-fix"><b>Fix:</b> {g.recovery}</span> : null}
+                        {/* A non-zero error counter points at the SLOT or the riser rather than the card, and
+                            saying so is worth a line: a card blamed for a bad slot gets replaced and the fault
+                            follows the slot. Silent when the counters are zero or absent. */}
+                        {(g.bus?.fatalErrors || g.bus?.nonFatalErrors)
+                            ? <span class="rc-gpufault-bus">PCIe link errors on this slot ({g.bus.fatalErrors ?? 0} fatal, {g.bus.nonFatalErrors ?? 0} non-fatal) — that points at the slot or riser rather than the card.</span>
+                            : null}
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+/** GPUs the server can SEE and cannot USE, from wherever it last said so. A signal of its own rather than a
+ *  read of `capacity.value.unavailable`, because it arrives by TWO routes and the earlier one carries no
+ *  capacity at all: the `hello` frame, on every connect, and `/api/info` on every sample thereafter.
+ *
+ *  The hello route is the one that matters and it is not an optimisation. The reference machine's fault began
+ *  at 05:51 and was still unreported when a client connected hours later — hardware does not wait for a
+ *  subscriber, so an edge-only signal is silent in exactly the situation it exists for. Last writer wins,
+ *  which is correct here: both routes report the server's current answer, and `hello` simply gets there first
+ *  on a fresh open. */
+export const unavailableGpus = signal<UnavailableGpu[]>([]);
+
 /** One reading of the machine's CAPACITY, from a poll or from a `sample` frame's embedded `/api/info` body.
  *  Same rule as {@link applyLoaded}: one parser, one place it becomes state. */
 export function applyInfo(raw: unknown): void {
     capacityAsked.value = true;
+    {
+        // BEFORE the early return below. That return means "this poll learned nothing new about CAPACITY",
+        // which is a different question — a card faulting changes this list while every surviving pool's
+        // ceiling stays exactly where it was, so folding the two would report the fault only if it happened
+        // to coincide with a capacity change.
+        //
+        // A FULL `/api/info` BODY IS AUTHORITATIVE FOR THIS LIST, and an absent key in one means "nothing to
+        // report" — which CLEARS the banner. That is the server's contract: on a healthy box the field is
+        // ABSENT rather than `[]`. The distinction that matters is three-way, not two: no body at all means
+        // this reading learned nothing (keep what we have); a body without the key means nothing to report
+        // (clear it); a body with it means that list.
+        //
+        // An earlier version kept the last report whenever the key was absent, and that was WRONG in the way
+        // that matters most: a GPU that faulted and then RECOVERED makes the field disappear, so the banner
+        // would have stood for good, reporting a fault that was gone. It was written to fix a test in which
+        // the hello carried a fault and the next sample did not — a combination the real server cannot
+        // produce, since both are built from one cached probe. The fixture was inconsistent, not the server.
+        const compute = (raw as { compute?: { unavailable_gpus?: unknown } } | null)?.compute;
+        if (compute) unavailableGpus.value = unavailableFrom(compute.unavailable_gpus);
+    }
     {
         const next = holdCapacity(capacity.value, parseInfo(raw));
         if (!next || next === capacity.value) return;   // this poll learned nothing new
@@ -407,6 +487,10 @@ export function connectResourceStream(): () => void {
         // BEFORE the frame is used for anything: a drop is news about the interval that ENDS at this frame, so
         // the mark has to be standing when this frame's own reading is recorded.
         if (msg?.lost) { pendingGap = true; framesLost.value += msg.lost; }
+        // THE HELLO'S OWN CARGO, and the reason this route exists: a GPU that faulted before anything
+        // connected is reported nowhere else. Applied before the frame is otherwise used, so a panel opening
+        // onto a broken box says so on its first frame rather than on its first sample.
+        if (msg?.unavailable) unavailableGpus.value = unavailableFrom(msg.unavailable);
         if (!msg?.frame) return;
         streamLive.value = true; streamNote.value = null;
         // A `sample` frame IS a poll's two answers, embedded verbatim by the server precisely so one parser
@@ -803,11 +887,16 @@ export function sessionModels(hash: string): readonly string[] | undefined {
  *
  *  ONE component for what were three near-identical copies (in-scope evicted, in-scope off-box, and the same
  *  two again inside the out-of-scope disclosure) — the third copy is what made it worth extracting. */
-function GhostRow({ name, kind }: { name: string; kind: "off" | "ghost" | "unseen" | "loading" }) {
+function GhostRow({ name, kind }: { name: string; kind: "off" | "ghost" | "unseen" | "loading" | "idle" }) {
     const off = hiddenModels.value.has(name);
-    const label = kind === "off" ? "off-box" : kind === "unseen" ? "not seen" : kind === "loading" ? "loading" : "evicted";
+    const label = kind === "off" ? "off-box" : kind === "unseen" ? "not seen" : kind === "loading" ? "loading" : kind === "idle" ? "not loaded" : "evicted";
     const why = kind === "off"
-        ? "Never resident here — a cloud model, or one already gone before the panel opened. It is drawn in the lane because it RAN; this row is what says whose colour that is."
+        // Only ever a CLOUD model now — the server's own list says it is not one of its models. This tooltip
+        // used to add "or one already gone before the panel opened", which lumped a local model the panel had
+        // simply not seen in with a model that runs somewhere else entirely: two different facts, one label.
+        ? "Not one of this server's models — it runs somewhere else, and never occupies memory here. It is drawn in the lane because it RAN; this row is what says whose colour that is."
+        : kind === "idle"
+            ? "Served by this box, and not in memory right now — either its load has not started yet, or it ran and left before the panel took a reading. Not off-box: when it runs, it runs here."
         : kind === "unseen"
             ? "Where this is running is UNKNOWN: the backend is not answering, so nothing has told us what is resident. It is drawn in the lane because it ran. Not the same as off-box, which is a claim we have no reading to make."
             : kind === "loading"
@@ -1722,7 +1811,21 @@ export function VramPanel() {
             name,
             // A model with a load IN FLIGHT is the commonest way this went wrong, and the least excusable:
             // the server told us it was loading, onto this box, and the row said it was somewhere else.
-            kind: (loadingNow.has(name) ? "loading" : residencyKnown ? "off" : "unseen") as "off" | "unseen" | "loading",
+            // "OFF-BOX" IS A CLAIM ABOUT WHERE A MODEL RUNS, so it needs evidence that it runs ELSEWHERE — and
+            // the only such evidence is the server's provenance list saying this is not one of its models.
+            // It was the fall-through instead, which made it the label for every local model the panel had
+            // not yet seen resident. The case that exposed it: ask the Commander for a local model that is not
+            // loaded, and between the request going out (the lane names it at once) and the server reporting a
+            // `load.start`, the row called a model ollama was about to load onto this very box "off-box".
+            // Then it flipped to "loading", then to resident — two corrections of a claim that never should
+            // have been made. Now it reads not loaded → loading → resident, each step true when shown.
+            //
+            // Unknown provenance does NOT count as cloud (`isCloudModel` is false until the list lands), so a
+            // model is never called off-box on the strength of the list not having arrived yet.
+            kind: (loadingNow.has(name) ? "loading"
+                : !residencyKnown ? "unseen"
+                : isCloudModel(name) ? "off"
+                : "idle") as "off" | "unseen" | "loading" | "idle",
         }));
     })();
     // SCOPED, the same way the lane is. The rows are the lane's legend, so a lane showing one session's
@@ -1849,6 +1952,7 @@ export function VramPanel() {
                 inert={editorOpen.value ? undefined : true} aria-hidden={editorOpen.value ? undefined : "true"}>
                 <TrackEditor sample={latestSample} />
             </div> : null}
+            <GpuFaults />
             <RowTip sample={latestSample} />
             {capacity.value
                 ? <ResourceTracks samples={resourceHistory.value} capacity={capacity.value} hidden={hidden} layout={layout.value} events={timeline()} />

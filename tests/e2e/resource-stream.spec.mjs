@@ -619,3 +619,126 @@ test("frames the server says it dropped break the line, not interpolate across i
         expect(lost, "the connection reports what it lost").toBe(3);
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+// A GPU THE SERVER CAN SEE AND CANNOT USE, reported on the HELLO frame.
+//
+// A faulted GPU is not reported broken, it is reported ABSENT — gone from `supported_gpus`, so `/api/ps`
+// looks normal, `/api/info` returns one healthy card, every figure agrees with every other, and a two-GPU
+// box with a dead card renders identically to a one-GPU box. One sat faulted for five and a half hours on
+// the reference machine while the panel drew a perfectly consistent picture of the wrong machine.
+//
+// It rides the HELLO rather than an edge event because hardware does not wait for a subscriber: that fault
+// began at 05:51 and was still unreported when a client connected hours later. This test is the fresh-open
+// case specifically — no sample has arrived yet, so `hello` is the ONLY thing that has spoken.
+test("a GPU that faulted before we connected is reported on the hello frame", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const TOTAL = 101_959_499_776, VRAM = 20 * 1024 ** 3, MODEL = "gemma4:31b";
+        // ONE card in `supported_gpus` — the faulted one is absent, which is the whole shape of the failure.
+        const FAULT = [{
+            pci_id: "0000:03:00.0",
+            name: "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+            uuid: "GPU-ea77999f-c55b-d5ed-bcae-71115e033a47",
+            reason: "reset_required",
+            detail: "GPU requires reset",
+            recovery: "a cold power cycle: shut down, wait for the rails to drain, power on.",
+            bus: { present: true, pcie_fatal_errors: 0, pcie_nonfatal_errors: 0 },
+        }];
+        // CONSISTENT WITH THE REAL SERVER: `hello` and every `/api/info` body are built from ONE cached probe,
+        // so while a card is faulted BOTH carry it, and on a healthy box the field is ABSENT from both. An
+        // earlier fixture put the fault on the hello only, which the server cannot produce — and fixing the
+        // panel to survive that impossible state made a GPU that RECOVERED leave its banner up for good.
+        const info = (faulted) => ({
+            version: "0.0.0", models: { running: 1, vram_used: VRAM },
+            compute: {
+                system_compute: { cpu_cores: 32, total_memory: 130_142_785_536, free_memory: 100 * 1024 ** 3 },
+                supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", compute: "12.0", driver: "13.2",
+                    total_memory: TOTAL, physical_memory: 102_641_958_912, free_memory: TOTAL - VRAM }],
+                ...(faulted ? { unavailable_gpus: FAULT } : {}),
+            },
+        });
+        const ps = () => ({ models: [{ model: MODEL, name: MODEL, size: VRAM, size_vram: VRAM,
+            context_length: 8192, expires_at: new Date(Date.now() + 300_000).toISOString(),
+            gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: VRAM }] }] });
+
+        fake.setEvents([
+            { v: 1, kind: "hello", t: 0, box: "test", retainedMs: 60_000, unavailable_gpus: FAULT },
+            { v: 1, kind: "sample", t: -1000, ps: ps(), info: info(true) },
+        ]);
+        const { frame } = await openPanel(fake, ext);
+
+        const banner = frame.locator(".rc-gpufault");
+        await expect(banner).toHaveCount(1, { timeout: 25000 });
+        const text = await banner.textContent();
+        // MACHINE-LEVEL: the question is "why does this box have fewer GPUs than I expect", which attaches
+        // to no card — there IS no card to badge, since the faulted one is not in the device list.
+        expect(text, "says how many of how many").toMatch(/1 of 2 GPUs unavailable/);
+        // The PCI address is the identity: two cards in one machine share a name.
+        expect(text).toContain("0000:03:00.0");
+        // VERBATIM, because `detail` is the driver's own string and its value is that it can be searched in
+        // vendor docs exactly as shown — paraphrasing destroys the only thing it is good for.
+        expect(text).toContain("GPU requires reset");
+        expect(text, "and what to actually do").toMatch(/cold power cycle/);
+        // Zero error counters say nothing rather than saying "0 errors" — the line exists to implicate a
+        // SLOT when there is something to implicate.
+        expect(text, "no link errors, so no line about them").not.toMatch(/link errors/);
+
+        // AND THE FAULTED CARD IS NOT A POOL. It holds nothing and can hold nothing, so it must never
+        // appear as a track or be summed into a capacity — the chart still shows exactly one card.
+        expect(await frame.locator(".rc-name").allTextContents()).not.toContain("0000:03:00.0");
+        const headers = (await frame.locator(".rc-name").allTextContents()).join(" ");
+        expect(headers, "one card and the host, not two cards").not.toMatch(/CUDA1/);
+
+        // AND WHEN THE CARD RECOVERS, THE BANNER GOES. The field disappears from `/api/info` on a healthy box —
+        // absent, not `[]` — so a panel that treated absence as "learned nothing" would keep reporting a fault
+        // that no longer exists. This is the case the first version got wrong.
+        fake.pushFrame({ v: 1, kind: "sample", t: 500, ps: ps(), info: info(false) });
+        await expect(banner, "a recovered card is no longer reported unavailable").toHaveCount(0, { timeout: 10000 });
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE OTHER HALF: an empty list is not a clean bill of health. It means nothing to report OR the server
+// could not look, and those are not distinguished at the source — so it may drive a warning and must never
+// drive a reassurance. `not_offered_by_backend` is the same rule in a different costume: that card answered
+// every query and was simply not claimed by a backend, so a warning there tells someone to reseat hardware
+// that is working perfectly.
+test("no fault, and a card merely not claimed by a backend, both draw nothing", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const TOTAL = 101_959_499_776;
+        const info = (unavailable) => ({
+            version: "0.0.0", models: { running: 0, vram_used: 0 },
+            compute: {
+                system_compute: { cpu_cores: 32, total_memory: 130_142_785_536, free_memory: 100 * 1024 ** 3 },
+                supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", compute: "12.0", driver: "13.2",
+                    total_memory: TOTAL, physical_memory: 102_641_958_912, free_memory: TOTAL }],
+                ...(unavailable ? { unavailable_gpus: unavailable } : {}),
+            },
+        });
+        fake.setEvents([{ v: 1, kind: "hello", t: 0, box: "test", retainedMs: 60_000 },
+            { v: 1, kind: "sample", t: -1000, ps: { models: [] }, info: info(null) }]);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await expect(frame.locator(".rc-gpufault")).toHaveCount(0);
+
+        // …and a card the backend did not claim is REPORTED by the server but is not a fault, so it still
+        // draws nothing. This is the assertion that stops the banner from becoming a false alarm on every
+        // machine running CUDA_VISIBLE_DEVICES.
+        fake.pushFrame({ v: 1, kind: "sample", t: 500, ps: { models: [] }, info: info([
+            { pci_id: "0000:01:00.0", name: "CUDA1", reason: "not_offered_by_backend",
+              detail: "no backend claimed this device" },
+        ]) });
+        await sleep(1500);
+        await expect(frame.locator(".rc-gpufault")).toHaveCount(0);
+    } finally { await ext.context.close(); await fake.stop(); }
+});

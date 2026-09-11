@@ -17,9 +17,9 @@ import {
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
     presetsFor,
-    type ResourceSample, type Band, type Capacity, type TrackDef,
+    type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
-import { colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
+import { capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
 import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
@@ -161,6 +161,26 @@ function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = 
     if (frames.length < 2 || ceiling <= 0) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
     const x = (i: number) => (i / (frames.length - 1)) * W;
     const y = (v: number) => H - Math.min(1, v / ceiling) * H;
+    /** One edge as points, left to right, against a given vertical mapping. A stepped edge emits the corner
+     *  first: hold the previous value up to this sample's x, then drop to this sample's. Reversing the list
+     *  retraces the same shape, which is how a floor is drawn without a second implementation that could
+     *  disagree with this one.
+     *
+     *  Defined HERE, above the drilled-in branch, because every polygon in this component needs it and that
+     *  branch returns early: the band edges, the hover breakdown AND the drilled-in parts. It was first written
+     *  for the bands alone, so a band stepped while the parts drawn INSIDE it still sloped — a flat band with
+     *  diagonal lines across it, which reads as the breakdown disagreeing with the total it breaks down. The
+     *  y-mapper is a parameter because the drilled-in view draws against its OWN shared ceiling. (After `x`/`y`,
+     *  never before: a closure here running ahead of those consts is the TDZ crash this function has had once.) */
+    const stepEdge = (series: number[], stepped: boolean, yOf: (v: number) => number): string[] => {
+        const out: string[] = [];
+        for (let i = 0; i < frames.length; i++) {
+            if (stepped && i > 0) out.push(`${x(i).toFixed(1)},${yOf(series[i - 1] ?? 0).toFixed(1)}`);
+            out.push(`${x(i).toFixed(1)},${yOf(series[i] ?? 0).toFixed(1)}`);
+        }
+        return out;
+    };
+    const zeros = new Array<number>(frames.length).fill(0);
     /**
      * DRILLED IN: ONE MODEL, FROM THE BASELINE, ON A SHARED SCALE.
      *
@@ -214,15 +234,15 @@ function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = 
                     // deliberately flat and faint with a dashed top: it must not read as a part, because
                     // which part it is is precisely what is not known.
                     const pts: string[] = [];
-                    for (let i = 0; i < frames.length; i++) pts.push(`${x(i).toFixed(1)},${dy(unsplit[i]).toFixed(1)}`);
-                    for (let i = frames.length - 1; i >= 0; i--) pts.push(`${x(i).toFixed(1)},${dy(0).toFixed(1)}`);
+                    pts.push(...stepEdge(unsplit, true, dy), ...stepEdge(zeros, true, dy).reverse());
                     return <polygon key="d:unsplit" points={pts.join(" ")} class="rc-part rc-part-unsplit"
                         fill={partFill(deep.model, "other")} vector-effect="non-scaling-stroke" />;
                 })() : null}
                 {keys.map((part, pi) => {
                     const pts: string[] = [];
-                    for (let i = 0; i < frames.length; i++) pts.push(`${x(i).toFixed(1)},${dy(tops[pi][i]).toFixed(1)}`);
-                    for (let i = frames.length - 1; i >= 0; i--) pts.push(`${x(i).toFixed(1)},${dy(pi === 0 ? 0 : tops[pi - 1][i]).toFixed(1)}`);
+                    // ONE model's memory, all of it piecewise-constant, so every part edge steps — a part's floor included,
+                    // since it is the part beneath it (or the baseline) and must match that edge exactly.
+                    pts.push(...stepEdge(tops[pi], true, dy), ...stepEdge(pi === 0 ? zeros : tops[pi - 1], true, dy).reverse());
                     return <polygon key={`d:${part.key}`} points={pts.join(" ")} class={`rc-part rc-part-${part.key}`}
                         fill={partFill(deep.model, part.key)} vector-effect="non-scaling-stroke" />;
                 })}
@@ -272,23 +292,11 @@ function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = 
      * when a model goes, while its own thickness still varies smoothly.
      */
     const isStep = (k: string | null): boolean => !!k && !!identity[k];
-    /** One edge as points, left to right. A stepped edge emits the corner first: hold the previous value up
-     *  to this sample's x, then drop to this sample's. Reversing the list retraces the same shape, which is
-     *  how the floor is drawn without a second implementation that could disagree with this one. */
-    const edge = (series: number[], stepped: boolean): string[] => {
-        const out: string[] = [];
-        for (let i = 0; i < frames.length; i++) {
-            const v = series[i] ?? 0;
-            if (stepped && i > 0) out.push(`${x(i).toFixed(1)},${y(series[i - 1] ?? 0).toFixed(1)}`);
-            out.push(`${x(i).toFixed(1)},${y(v).toFixed(1)}`);
-        }
-        return out;
-    };
     const areas = order.filter((k) => k !== "free").map((key, ki, keys) => {
         const below = ki === 0 ? null : keys[ki - 1];
         const top = tops[key] || [];
-        const floor = below ? (tops[below] || []) : new Array<number>(frames.length).fill(0);
-        const pts: string[] = [...edge(top, isStep(key)), ...edge(floor, isStep(below)).reverse()];
+        const floor = below ? (tops[below] || []) : zeros;
+        const pts: string[] = [...stepEdge(top, isStep(key), y), ...stepEdge(floor, isStep(below), y).reverse()];
         // The band knows which model it is, so hovering it can name it — and dim its neighbours, so a stack of
         // similar colours resolves into one identifiable shape.
         const model = identity[key];
@@ -353,8 +361,10 @@ function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = 
         });
         return keys.map((part, pi) => {
             const pts: string[] = [];
-            for (let i = 0; i < frames.length; i++) pts.push(`${x(i).toFixed(1)},${y(subTops[pi][i]).toFixed(1)}`);
-            for (let i = frames.length - 1; i >= 0; i--) pts.push(`${x(i).toFixed(1)},${y(pi === 0 ? base[i] : subTops[pi - 1][i]).toFixed(1)}`);
+            // Every part is this model's, so every top steps. The FIRST part's floor is the band beneath the model and
+            // takes THAT band's step-ness: it is the same edge the model's own band sits on, and two renderings of one
+            // edge that disagree open a seam between the parts and the band.
+            pts.push(...stepEdge(subTops[pi], true, y), ...stepEdge(pi === 0 ? base : subTops[pi - 1], pi === 0 ? isStep(belowKey) : true, y).reverse());
             return <polygon key={`p:${part.key}`} points={pts.join(" ")} class={`rc-part rc-part-${part.key}`}
                 fill={partFill(model, part.key)} vector-effect="non-scaling-stroke" />;
         });
@@ -419,6 +429,62 @@ function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = 
     );
 }
 
+/** The device name, with the card's own facts behind a hover.
+ *
+ *  WHAT IT IS FOR: the panel draws a pool's occupancy and says almost nothing about the hardware under it,
+ *  so "which card is this, and why do two totals for it disagree" has no answer on screen. The two totals
+ *  are the part worth the space — `total_memory` is what ollama PLACES against and `physical_memory` is what
+ *  nvidia-smi shows, ~638 MiB apart on the reference cards, and a reader who spots the difference elsewhere
+ *  has no way to learn it is expected rather than a bug in one of them.
+ *
+ *  WHAT IT DELIBERATELY DOES NOT SAY:
+ *
+ *  - **The interconnect, beyond admitting it is unknown.** Interconnect is a property of a PAIR, not of a
+ *    card — consumer NVLink is 2-way, so a four-card box has some NVLinked pairs and some that fall back to
+ *    PCIe, and a per-device "interconnect: PCIe" would be unrepresentable-wrong there. The server does not
+ *    report the matrix at all yet, and an absent matrix must never render as "no NVLink": on a 4x3090, which
+ *    is a very common rig, that is a confident lie. So the line says NOT REPORTED, which is true now and
+ *    becomes a real answer when the field ships. Shown only where there is more than one device, since a
+ *    single card has no pair to have a link with.
+ *  - **Link speed and width.** Available only for FAULTED cards today, and both are LIVE readings rather
+ *    than capabilities: an idle Blackwell drops to 2.5 GT/s under ASPM and would read as 12x degraded while
+ *    perfectly healthy, and `width < max_width` is by design wherever a board splits its lanes x8/x8.
+ *  - **Any derived ceiling or grade.** `compute` and `driver` are printed verbatim as reference facts and
+ *    nothing branches on them — a panel that did would be encoding hardware knowledge that rots. */
+function DeviceFacts({ device, label }: { device: DeviceCapacity; label: string }) {
+    // How many OTHER devices there are — a single card has no pair to have a link with, so the
+    // interconnect line is shown only where the question exists.
+    const others = (capacity.value?.devices.length ?? 1) - 1;
+    return (
+        // THE NAME STAYS THE NAME. A `.tt-pop` only works inside an element carrying `tt`, so the trigger is a
+        // WRAPPER around `.rc-name` rather than `.rc-name` itself — put the tooltip inside the name element
+        // and the name's own text content becomes the name plus three sentences of prose, which every reader
+        // of that element then picks up. The panel reads `.rc-name` as a label in several places.
+        <span class="tt rc-devfacts">
+            <span class="rc-name">{label}</span>
+            <span class="tt-pop wrap" role="tooltip">
+                <span class="rc-df-row"><b>{device.name}</b> · {device.runner}{device.unified ? " · unified memory" : ""}</span>
+                {/* THE TWO TOTALS, and which decides what. This is the counter-intuitive one and the reason
+                    the hover exists at all. */}
+                <span class="rc-df-row">{formatBytes(device.totalBytes)} usable — what placement decides against</span>
+                {device.physicalBytes && device.physicalBytes !== device.totalBytes ? (
+                    <span class="rc-df-row rc-df-dim">{formatBytes(device.physicalBytes)} on the card — what the driver and nvidia-smi report. The difference is reserved before anything loads; neither figure is wrong.</span>
+                ) : null}
+                {device.compute || device.driver ? (
+                    <span class="rc-df-row rc-df-dim">
+                        {device.compute ? <>compute {device.compute}</> : null}
+                        {device.compute && device.driver ? " · " : null}
+                        {device.driver ? <>driver {device.driver}</> : null}
+                    </span>
+                ) : null}
+                {others > 0 ? (
+                    <span class="rc-df-row rc-df-dim">Link to the other {others === 1 ? "card" : "cards"}: not reported by this server. It is a property of each PAIR rather than of a card — some pairs can be NVLinked while others fall back to PCIe — so nothing is assumed either way.</span>
+                ) : null}
+            </span>
+        </span>
+    );
+}
+
 export interface DeviceViewProps {
     label: string;
     /** The samples to draw — already the window the panel wants. */
@@ -432,6 +498,9 @@ export interface DeviceViewProps {
      *  honest sentence differs per pool: a discrete card's driver total names that vendor's tool, a unified
      *  device's is the system total, and the host pool has no driver in the story at all. */
     ceilingNote: string;
+    /** The DEVICE this track draws, when it is one. Absent for the host pool, which has no card behind it —
+     *  so the hover carries hardware facts only where there is hardware to describe. */
+    device?: DeviceCapacity;
     hidden: Set<string>;
     /** Instants to rule through this plot (evictions). Spans live in the lane below, not here. */
     events?: ResourceEvent[];
@@ -473,7 +542,7 @@ function HideTrack({ onHide, label }: { onHide?: () => void; label: string }) {
 }
 
 /** One track: a header carrying the denominator, then the stacked history, gaps left as gaps. */
-export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden, events = [], onHide }: DeviceViewProps) {
+export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden, events = [], onHide, device }: DeviceViewProps) {
     const scope = `track:${label}`;   // one track per pool, so the label identifies the surface
     const latest = samples.at(-1);
     const bands = latest ? bandsOf(latest) : [];
@@ -524,7 +593,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
         <div class={`rc-track${deepModel ? " deep" : ""}${deepModel && !deep ? " away" : ""}`}>
             <div class="rc-head">
                 <HideTrack onHide={onHide} label={label} />
-                <span class="rc-name">{label}</span>
+                {device ? <DeviceFacts device={device} label={label} /> : <span class="rc-name">{label}</span>}
                 <span class="sp" />
                 {/* A RESCALED AXIS HAS TO SAY SO. Drilled in, this track stops being "how full is this pool"
                     and becomes "what is this model holding here" — the band is lifted to the baseline and
@@ -1145,7 +1214,7 @@ function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDe
         const d = deviceOf(first);
         if (!d) return null;
         const c = ceilingsFor(latest, d.id);
-        return <DeviceView label={d.name} onHide={onHide} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
+        return <DeviceView label={d.name} onHide={onHide} device={d} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
             ceiling={c?.displayBytes ?? d.totalBytes} ceilingNote={deviceCeilingNote(d)}
             soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
     }

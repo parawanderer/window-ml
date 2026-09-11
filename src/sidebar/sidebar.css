@@ -2025,6 +2025,34 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .backend-offline .bo-title { color: var(--warn); font-size: 0.9em; }
 .backend-offline .bo-detail { color: var(--fg-dim); font-size: 0.8em; line-height: 1.4; }
 .backend-offline .bo-detail code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+/* The card's own facts, behind the track name. Rows rather than a paragraph: each line is ONE fact, and the
+   two totals in particular have to be told apart at a glance — they differ by a few hundred MiB and a reader
+   who cannot separate them learns nothing from seeing both. */
+.rc-devfacts { cursor: help; min-width: 0; display: inline-flex; }
+.rc-df-row { display: block; }
+.rc-df-row + .rc-df-row { margin-top: 3px; }
+/* Reference facts and caveats recede; the first two rows are what the hover is for. */
+.rc-df-dim { color: var(--fg-faint); }
+
+/* A GPU THE SERVER CAN SEE AND CANNOT USE — machine-level, inside the resource panel, because the question
+   it answers ("why does this box have fewer GPUs than I expect?") is asked while looking at the chart and
+   attaches to no single card: a faulted GPU is ABSENT from the device list, so there is nothing to badge. */
+.rc-gpufault { display: flex; align-items: flex-start; gap: 7px; margin: 0 0 6px; padding: 6px 8px;
+    border-radius: 4px; background: color-mix(in srgb, var(--warn) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); }
+.rc-gpufault > svg { flex: none; width: 14px; height: 14px; margin-top: 2px; color: var(--warn); }
+.rc-gpufault-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 0.82em; }
+.rc-gpufault-body > b { color: var(--warn); }
+/* One block per faulted card, because a two-card fault is two different addresses and two different fixes. */
+.rc-gpufault-one { display: flex; flex-direction: column; gap: 1px; }
+.rc-gpufault-id code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.95em; }
+/* The DRIVER's own wording, shown verbatim so it can be searched in vendor docs exactly as it appears. */
+.rc-gpufault-detail { color: var(--fg-dim); }
+/* What a person should actually DO — the only line here that is an instruction, so it carries the weight. */
+.rc-gpufault-fix { color: var(--fg); }
+/* Link errors implicate the SLOT rather than the card, and that distinction decides what gets replaced. */
+.rc-gpufault-bus { color: var(--fg-faint); }
+
 /* THE SAME SLOT, SAYING THE OPPOSITE THING: a model is loading and the box is fine. It reuses the offline
    banner's layout (.bo-body/.bo-title/.bo-detail) because it occupies the same strip and a second geometry
    there would make the two read as unrelated events rather than as one answer replacing another — but it is
@@ -2035,6 +2063,9 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
     border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
 .backend-loading > svg { flex: none; width: 15px; height: 15px; margin-top: 1px; color: var(--accent);
     animation: bl-pulse 1.6s ease-in-out infinite; }
+/* The title and the sentence under it are two LINES. `.bo-body`'s column layout is written under
+   `.backend-offline`, so without this the loading variant ran them together into one run-on line. */
+.backend-loading .bo-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .backend-loading .bo-title { color: var(--accent); font-size: 0.9em; }
 .backend-loading .bo-detail { color: var(--fg-dim); font-size: 0.8em; line-height: 1.4; }
 /* A load has no progress figure and elapsed time does not predict what is left, so the only honest motion is

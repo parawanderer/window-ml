@@ -1082,6 +1082,38 @@ test("step-cap stop (sidebar): a normal (non-capped) or CANCELLED answer shows N
     assert.equal(w2.shadow.querySelector(".continue-run"), null, "a cancelled run offers no Continue");
 });
 
+// A FAILED RUN OFFERED NO WAY FORWARD but to type something, and a failure is usually not about what was
+// asked: the backend restarting underneath a run answered "Model not found" for a model that was serving a
+// minute earlier and was listed again a minute later. Retry is the SAME resume a step-capped run's Continue
+// sends — by hash, from the stored state, with no follow-up text — so it re-asks the turn that failed without
+// adding a message to the transcript.
+test("a failed run (sidebar) offers Retry, which resumes the same run", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rt1", "a task", "m", 20));
+    await w.dispatch({ ...agentResult("rt1", "", 1, false), error: 'HTTP 400 from http://gpubox:3000/api/chat/completions: {"detail":"Model not found"}' });
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const btn = [...w.shadow.querySelectorAll(".continue-run")].find((b) => /Retry/.test(b.textContent));
+    assert.ok(btn, "a failed run offers Retry rather than leaving only the composer");
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    btn.click();
+    const msg = posted.find((m) => m.__mlSidebarApp === "continueRun");
+    assert.ok(msg, "…and it is the same resume Continue sends, so nothing new is appended");
+    assert.equal(msg.hash, "rt1");
+});
+
+test("a finished or cancelled run offers no Retry", async () => {
+    // Retry is for a run that FAILED. A clean finish has nothing to redo, and a cancel was deliberate — offering
+    // to re-run what the user just stopped would be the button arguing with them.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rt2", "task", "m", 20));
+    await w.dispatch(agentResult("rt2", "All done.", 3, false));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(![...w.shadow.querySelectorAll(".continue-run")].some((b) => /Retry/.test(b.textContent)), "no Retry on a success");
+});
+
 test("step-cap stop (HUD card): the corner card offers 'Continue (+N steps)' → posts continueRun (parity)", async () => {
     const w = await loadSidebarWorld();
     await w.raw({ __mlSidebarSurface: "card" });

@@ -9,7 +9,7 @@ import type { Session, Turn, Status, AgentStep } from "./store";
 import { pretty, truncate, collapsedPreview, markdown } from "./format";
 import { annotatedConfig, turnProfile } from "./model";
 import { IconChevron } from "./icons";
-import { Dot, Stamp, Hash, TagBadge, CopyBtn, CopyModel, Code, ClickableImg } from "./ui-kit";
+import { cursorTipOn, Dot, Stamp, Hash, TagBadge, CopyBtn, CopyModel, Code, ClickableImg } from "./ui-kit";
 import { aliasOf, AnswerBody, ResultBlock } from "./answer-render";
 import { hasTokens } from "../answer-tokens";
 
@@ -60,10 +60,11 @@ export function OptionsBlock({ s }: { s: Session }) {
 // timestamp) over the body (markdown ⇄ raw, collapsible), with optional thinking
 // and sources. No "assistant"/"answer" word — the header controls carry the
 // meaning; `label` appears only for an exceptional state (e.g. an agent step-cap).
-export function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap, streaming, tokenRun, tokenScope, anchorHash, latest }: {
+export function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap, retry, streaming, tokenRun, tokenScope, anchorHash, latest }: {
     content: string; status: Status; model: string | null; profile: "utility" | "default" | null; ts: number;
     reasoning?: string | null; sources?: unknown[] | null; error?: string; label?: string; capped?: boolean; initialRaw?: boolean;
     resumeCap?: { hash: string; steps: number };   // a step-capped run → a "Continue (+N steps)" button (resume, fresh budget)
+    retry?: { hash: string };   // a FAILED run → a "Retry" button: the same resume, from the same checkpoint
     streaming?: boolean;   // the answer is STREAMING live — same bubble as the finished reply (model chip + content) with a live pulse, no copy/raw/stamp yet
     tokenRun?: Session;   // an agent ANSWER: resolve its @tool citations against this run (chat replies pass none). The existing [raw] shows the literal markdown.
     tokenScope?: readonly AgentStep[];
@@ -118,7 +119,23 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
             {status === "pending"
                 ? <div class="pending-note">…thinking</div>
                 : error
-                    ? <div class="errtext">{error}</div>
+                    ? <>
+                        <div class="errtext">{error}</div>
+                        {/* A FAILED RUN OFFERED NO WAY FORWARD but to type something, and a failure is usually not
+                            about what was asked: the backend restarting underneath a run answers "Model not found"
+                            for a model that was serving a minute earlier and is listed again a minute later. This
+                            is the SAME resume a step-capped run's Continue sends — by hash, from the stored state,
+                            with no follow-up text. Nothing was appended for the call that failed, so the checkpoint
+                            ends with the message that was being answered, and resuming asks it again: a retry, with
+                            no new turn in the transcript and nothing for the user to retype. Always safe to offer,
+                            because a call that errored produced nothing — the worst case is failing again. */}
+                        {retry
+                            ? <button class="continue-run" onClick={() => window.parent.postMessage({ __mlSidebarApp: "continueRun", hash: retry.hash }, "*")}
+                                {...cursorTipOn("Try this turn again, from where the run stopped. Nothing is re-typed and no new message is added — the same request goes out again.")}>
+                                Retry
+                              </button>
+                            : null}
+                      </>
                     : collapsed
                         ? <div class="asst-collapsed" onClick={() => setCollapsed(false)}>{preview!.text}{preview!.more ? <span class="more"> …</span> : null}</div>
                         : showRaw

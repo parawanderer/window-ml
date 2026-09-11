@@ -72,6 +72,11 @@ export interface DeviceCapacity {
     freeBytes: number;
     /** Metal: `totalBytes` is a recommended working set overlapping host RAM — never add it to the host total. */
     unified: boolean;
+    /** The vendor's compute capability ("12.0") and driver version ("13.2"), verbatim. Reference facts for a
+     *  hover, never used in a decision: absent on Metal and on any server that does not report them, and a
+     *  panel that BRANCHED on them would be encoding hardware knowledge that rots. */
+    compute?: string;
+    driver?: string;
 }
 
 export interface HostCapacity {
@@ -82,8 +87,48 @@ export interface HostCapacity {
     swapFreeBytes: number | null;
 }
 
+/** A GPU the server can SEE but cannot USE. It is not a device with a problem — it is absent from
+ *  `supported_gpus` entirely, which is the worst shape a hardware fault can take in a UI: `/api/ps` looks
+ *  normal, `/api/info` returns one healthy card, every figure is internally consistent, and a two-GPU box
+ *  with a dead card is byte-identical to a one-GPU box. One sat faulted for five and a half hours on the
+ *  reference machine while the panel rendered perfectly.
+ *
+ *  It carries NO memory fields, deliberately: these devices hold nothing and can hold nothing, so there is
+ *  nothing to add to a capacity. */
+export interface UnavailableGpu {
+    /** Bus address, and the IDENTITY — two cards in one machine share a `name`. */
+    pciId: string;
+    /** Both may be ABSENT: under `not_reported_by_driver` the kernel sees the card and the driver does not
+     *  describe it, so there is nothing to read and nothing is invented. */
+    name?: string;
+    uuid?: string;
+    /** A stable token to branch on. `not_offered_by_backend` is HEALTHY — a card that answers every query
+     *  which no backend claimed, usually `CUDA_VISIBLE_DEVICES` — so it must never draw a warning. */
+    reason: string;
+    /** The DRIVER's own wording, passed through unparaphrased so it can be searched verbatim in vendor
+     *  docs. "GPU requires reset" is NVIDIA's string, not ours — render it as given. */
+    detail?: string;
+    /** What a person should DO, in plain words. Empty means no known action, NOT that nothing is wrong. */
+    recovery?: string;
+    /** The PCIe view, read without the driver's help. Deliberately excludes the link speed and width: both
+     *  are LIVE readings rather than capabilities (an idle Blackwell drops to 2.5 GT/s and would read as 12x
+     *  degraded), and `width < max_width` is by design wherever a board splits its lanes. The error counters
+     *  are the part worth having — non-zero points at the SLOT rather than the card, and a card blamed for a
+     *  bad slot gets replaced while the fault stays put. */
+    bus?: { present?: boolean; fatalErrors?: number; nonFatalErrors?: number };
+}
+
+/** Whether this entry is a FAULT worth telling someone about. `not_offered_by_backend` is a healthy card
+ *  that nothing claimed, and drawing a warning triangle on it tells a person to reseat hardware that
+ *  answered every query. */
+export const isGpuFault = (g: UnavailableGpu): boolean => g.reason !== "not_offered_by_backend";
+
 export interface Capacity {
     devices: DeviceCapacity[];
+    /** GPUs the server can see and cannot use. **An empty list does NOT mean "all healthy"** — it means
+     *  nothing to report OR the server could not look, and the two are not distinguished at the source. So
+     *  it may drive a warning and must never drive a reassurance: render nothing, never a tick. */
+    unavailable: UnavailableGpu[];
     host: HostCapacity;
     /** Any unified device → device and host memory overlap, so they can never be stacked or summed. */
     unified: boolean;
@@ -131,8 +176,40 @@ export function holdCapacity(current: Capacity | null, answered: Capacity | null
     return answered ?? current;
 }
 
+/** Parse `compute.unavailable_gpus[]`. Kept SEPARATE from `devices` rather than folded in with a state
+ *  field, which is the trap: every consumer iterating the device list is correct today, and merging would
+ *  make all of them wrong until each learned about the flag — failing OPEN, on hardware that is broken.
+ *
+ *  An entry with no `pci_id` is dropped: the bus address is the identity (two cards share a name), so an
+ *  entry without one cannot be told from another, and a fault that cannot be attributed cannot be shown. */
+export function unavailableFrom(raw: unknown): UnavailableGpu[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((x) => {
+        const g = x as Record<string, any>;
+        const pciId = String(g.pci_id ?? "").trim();
+        if (!pciId) return [];
+        const bus = g.bus && typeof g.bus === "object" ? g.bus as Record<string, any> : null;
+        const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+        return [{
+            pciId,
+            reason: String(g.reason || "unknown"),
+            // Absent rather than empty-string: under `not_reported_by_driver` the driver describes nothing,
+            // and "" would render as a nameless card rather than as a card whose name is unknown.
+            ...(g.name ? { name: String(g.name) } : {}),
+            ...(g.uuid ? { uuid: String(g.uuid) } : {}),
+            ...(g.detail ? { detail: String(g.detail) } : {}),
+            ...(g.recovery ? { recovery: String(g.recovery) } : {}),
+            ...(bus ? { bus: {
+                ...(typeof bus.present === "boolean" ? { present: bus.present } : {}),
+                ...(n(bus.pcie_fatal_errors) !== undefined ? { fatalErrors: n(bus.pcie_fatal_errors) } : {}),
+                ...(n(bus.pcie_nonfatal_errors) !== undefined ? { nonFatalErrors: n(bus.pcie_nonfatal_errors) } : {}),
+            } } : {}),
+        }];
+    });
+}
+
 export function parseInfo(raw: unknown): Capacity | null {
-    const r = raw as { compute?: { system_compute?: Record<string, number>; supported_gpus?: Record<string, unknown>[] } };
+    const r = raw as { compute?: { system_compute?: Record<string, number>; supported_gpus?: Record<string, unknown>[]; unavailable_gpus?: unknown } };
     const c = r?.compute;
     if (!c || typeof c !== "object") return null;
     const sys = c.system_compute;
@@ -149,6 +226,8 @@ export function parseInfo(raw: unknown): Capacity | null {
             freeBytes: Number.isFinite(free) ? free : 0,
             ...(Number.isFinite(Number(g.physical_memory)) && Number(g.physical_memory) > 0 ? { physicalBytes: Number(g.physical_memory) } : {}),
             unified: !isDiscrete(runner),
+            ...(g.compute ? { compute: String(g.compute) } : {}),
+            ...(g.driver ? { driver: String(g.driver) } : {}),
         }];
     });
     // The server's own stall bound, when it publishes one. Absent on every build before it and on every
@@ -156,6 +235,7 @@ export function parseInfo(raw: unknown): Capacity | null {
     const stall = Number((raw as { load_stall_timeout_ms?: unknown })?.load_stall_timeout_ms);
     return {
         devices,
+        unavailable: unavailableFrom(c.unavailable_gpus),
         host: {
             cores: typeof sys.cpu_cores === "number" ? sys.cpu_cores : null,
             totalBytes: sys.total_memory,

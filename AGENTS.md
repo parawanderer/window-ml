@@ -1041,7 +1041,13 @@ per device, in bytes.
   evicted a minute ago out of the ghost list, the lane went on naming it, and its row came back as "never
   resident here" about a model the panel had just watched load and evict. A window is a question about what
   to DRAW; whether something was ever here is answered over the whole history (`everResident`), and anything
-  the lane still names that WAS resident gets an "evicted" row rather than falling through to off-box.
+  the lane still names that WAS resident gets an "evicted" row rather than falling through to off-box. **And
+  "off-box" needs evidence of ELSEWHERE, which only the server's provenance list can give** (`isCloudModel`:
+  affirmatively not one of its models, and false while the list is still loading). It was the fall-through
+  label for anything not seen resident, so asking for a LOCAL model that was not loaded yet called it off-box
+  for the whole stretch between the request going out and the server's `load.start` — then it flipped to
+  "loading", then to resident: two corrections of a claim that never should have been made. A local model the
+  panel has not seen resident is `not loaded`, so the sequence reads not loaded → loading → resident.
 - **SWITCHING A MODEL OFF SWITCHES IT OFF EVERYWHERE THE PANEL DRAWS IT.** The colour dot took it out of the
   stack and the totals and left its LANE blocks standing — most visibly on an off-box model, whose only
   presence IS the lane, so its row offered a control that could not remove the one thing it drew. `timeline()`
@@ -1063,6 +1069,11 @@ per device, in bytes.
   fill. Adjacent bands SHARE an edge, so a floor is drawn with the step-ness of the band BELOW, never its
   own — otherwise the two disagree by a step's height and the stack opens a seam. That also makes a residual
   sitting on models exactly right: its base jumps when a model goes, while its own thickness varies smoothly.
+  **Every polygon that draws a model's memory steps — the band, the hover breakdown and the drilled-in parts.**
+  It was first applied to the band edges alone, so the band held flat while the parts drawn INSIDE it still
+  sloped: a flat band with diagonal lines across it, which reads as the breakdown disagreeing with the total
+  it breaks down. One helper (`stepEdge`, taking the y-mapper since the drilled-in view draws against its own
+  shared ceiling) serves all three, defined right after `x`/`y` because the drilled-in branch returns early.
 - **THE SNAP MARK CARRIES THE MODEL'S COLOUR.** A model's colour is its identity across the whole panel, and
   a mark sitting ON that band was drawn in the panel's accent — saying "a reading" where every other surface
   says "this model", with nothing to tell several marks apart. It reads from `identity`, the same source
@@ -1081,6 +1092,38 @@ per device, in bytes.
   `RESWIN_PREF_KEY` is where the chart OPENS and `RESWIN_KEY` is where it currently IS; the picker edits the
   first and applies it at once (a preference you cannot see take effect reads as broken, so it clears a
   pinned zoom too), the scrub writes only the second, and a dragged window still survives a reload.
+- **A FAULTED GPU IS REPORTED ABSENT, NOT BROKEN** (`unavailable_gpus`, `GpuFaults`). A card whose firmware
+  faults vanishes from `supported_gpus` entirely, so `/api/ps` looks normal, `/api/info` returns one healthy
+  card and every figure agrees with every other — a two-GPU box with a dead card renders identically to a
+  one-GPU box, and one sat faulted for five and a half hours that way. The server lists such cards separately
+  in `compute.unavailable_gpus[]`, and the panel draws a MACHINE-level banner, because there is no card to
+  badge. Four rules, each a bug found or designed out:
+  - **Read it off `hello`, on every connect.** A fault can begin hours before anything subscribes; an
+    edge-only signal is silent in exactly that case. `hello` was used purely as a clock anchor before.
+  - **A full `/api/info` body is AUTHORITATIVE, and an absent key CLEARS it.** On a healthy box the field is
+    absent, not `[]`. A first version kept the last report whenever the key was absent, which left the banner
+    up for good after a card RECOVERED. It was written to survive a test whose hello carried a fault its next
+    sample did not — a combination the real server cannot produce, since both come from one cached probe. The
+    fixture was inconsistent, not the server; the recovery case now has its own assertion.
+  - **Never a device, never capacity.** Kept in a separate list rather than folded into `supported_gpus` with
+    a state flag, which would make every existing consumer wrong until it learned the flag — failing open on
+    broken hardware. It carries no memory fields, so nothing can be summed by accident.
+  - **An empty list is not a clean bill of health** ("nothing to report OR could not look"), so it may drive a
+    warning and never a reassurance; `not_offered_by_backend` is a HEALTHY card no backend claimed and draws
+    nothing. `pci_id` is the identity (two cards share a name); `name`/`uuid` are absent under
+    `not_reported_by_driver` and on AMD. `detail` and `recovery` render verbatim — `detail` is the driver's
+    own string and is only useful if it can be searched as shown.
+- **A CARD'S OWN FACTS ARE ON ITS NAME** (`DeviceFacts`, a hover on the track header). The part that earns the
+  space is the TWO TOTALS: ollama places against `total_memory` while the header draws `physical_memory`,
+  ~638 MiB apart, and a reader who notices the difference elsewhere has no way to learn it is expected. The
+  trigger WRAPS `.rc-name` rather than being it — a `.tt-pop` inside the name element made the label's own
+  text "CUDA0" plus three sentences of prose, which every reader of that element then picked up. What it
+  deliberately does NOT say: **the interconnect, beyond admitting it is unknown** — interconnect is a property
+  of a PAIR (consumer NVLink is 2-way, so a four-card box has some NVLinked pairs and some on PCIe), the server
+  reports no topology yet, and an absent matrix must never render as "PCIe only", which on a 4x3090 is a
+  confident lie; and **link speed or width**, which are LIVE readings rather than capabilities (an idle
+  Blackwell reads 2.5 GT/s under ASPM while perfectly healthy, and x8-of-x16 is by design on a board that
+  splits its lanes).
 - **A THIRD MODE, `total`: THE WHOLE BOX ON ONE AXIS** (`boxAxis`, `BoxView`). Summing pools' CAPACITY into
   one denominator is the panel's oldest refusal — 40 GiB free as 20+20 cannot hold a 30 GiB model — but the
   question behind it is real, and it only lies when the pools are MIXED. So they are laid END TO END up the
@@ -1266,6 +1309,24 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   size: they flip when they do not FIT (not at an arbitrary fraction of the width), never sit under the
   pointer, and only the surface the pointer is on renders one. Pinned by `tests/e2e/tooltips.spec.mjs`, which
   sweeps positions in a narrow and a wide panel rather than probing one point.
+
+**A claim of unreachability needs the ABSENCE of evidence, not the presence of a failure**
+(`backendStateFrom`, contract.ts). During a 64-second load of a 142 GB model, `/api/ps` answered every poll in
+0.4-0.8 ms while the request that triggered the load produced no bytes for the whole minute — and from that one
+hanging request the panel concluded the box was down and sent the user to check their Server URL. Anything
+proving the box answers (`backendAliveAt`, stamped wherever a reading comes back) now vetoes the claim, and a
+load in flight is reported as a load instead. The evidence is a TIMESTAMP, bounded, because stale evidence is
+exactly what a box dying looks like. Three writers (the health probe's timeout, a failed run, a failed chat)
+go through ONE gate in store.ts, since three separate decisions is how one said "unreachable" beside a live
+reading. And the proof of life cannot come from `/api/ps` alone: that poll is gated on the panel being open,
+while the banner is shown to everyone — so the health probe, which always runs, stamps it too.
+
+**A failed run offers Retry** (sidebar AND HUD card, for parity with Continue). It is the SAME resume a
+step-capped run's Continue sends — by hash, from the stored state, with no follow-up text — so it re-asks the
+turn that failed without adding a message. Always safe to offer: a call that errored produced nothing, so the
+worst case is failing again. It exists because a failure is usually not about what was asked: the backend
+restarting underneath a run answered "Model not found" for a model that was serving a minute earlier and was
+listed again a minute later, and the only way forward was to retype something.
 
 **A python traceback names the line the USER wrote.** The sandbox indents the code into `def _user():` after
 a three-line prefix, so every traceback pointed three lines past the statement that actually failed — on a

@@ -1928,3 +1928,86 @@ test("boxAxis: a pool with no capacity takes no band", () => {
     assert.deepEqual(a.bands.map((b) => b.id), ["vram.0", "ram"]);
     assert.equal(a.total, 224);
 });
+
+// A GPU THE SERVER CAN SEE AND CANNOT USE. The failure this exists for is that a faulted card is not
+// reported BROKEN, it is reported ABSENT: it vanishes from `supported_gpus`, so /api/ps looks normal,
+// /api/info returns one healthy GPU, every number is internally consistent, and a two-GPU box with a dead
+// card is byte-identical to a one-GPU box. One sat faulted for five and a half hours on the reference
+// machine while the panel rendered perfectly and was silently wrong.
+//
+// The capture is real (mlbox, 2026-09-11, taken live while the GPU was faulted).
+const FAULT_INFO = {
+    compute: {
+        system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 12330946560 },
+        supported_gpus: [
+            { gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 101972967424, free_memory: 101972377600 },
+        ],
+        unavailable_gpus: [{
+            pci_id: "0000:03:00.0",
+            name: "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+            uuid: "GPU-ea77999f-c55b-d5ed-bcae-71115e033a47",
+            reason: "reset_required",
+            detail: "GPU requires reset",
+            recovery: "a cold power cycle: shut down, wait for the rails to drain, power on.",
+            bus: { present: true, link_speed: "5.0 GT/s PCIe", link_width: 8, power_state: "D0",
+                   max_link_speed: "32.0 GT/s PCIe", max_link_width: 16,
+                   pcie_fatal_errors: 0, pcie_nonfatal_errors: 0 },
+        }],
+    },
+};
+
+test("unavailableFrom: a faulted card is carried, and never becomes a device", () => {
+    const cap = M.parseInfo(FAULT_INFO);
+    assert.equal(cap.devices.length, 1, "the faulted card is NOT a device — it is absent from the list");
+    assert.equal(cap.unavailable.length, 1);
+    const g = cap.unavailable[0];
+    assert.equal(g.pciId, "0000:03:00.0");
+    assert.equal(g.reason, "reset_required");
+    assert.equal(g.detail, "GPU requires reset", "the DRIVER's own string, unparaphrased so it is searchable");
+    assert.match(g.recovery, /cold power cycle/);
+
+    // NEVER COUNTED TOWARD CAPACITY. These devices hold nothing and can hold nothing, which is why the
+    // entry carries no memory fields at all — there is nothing here that could be summed by accident.
+    assert.equal(cap.devices[0].totalBytes, 101972967424, "the ONE working card, and only it");
+    assert.ok(!("totalBytes" in g) && !("freeBytes" in g), "a faulted card has no memory to report");
+});
+
+test("unavailableFrom: the shapes that are NOT a fault, and the ones with nothing to read", () => {
+    // `not_offered_by_backend` is a HEALTHY card that answers every query and that no backend claimed —
+    // usually CUDA_VISIBLE_DEVICES. A warning triangle there tells someone to reseat working hardware.
+    const idle = M.unavailableFrom([{ pci_id: "0000:01:00.0", name: "CUDA1", reason: "not_offered_by_backend" }]);
+    assert.equal(idle.length, 1, "still reported — the panel may want to say why a card is not in use");
+    assert.equal(M.isGpuFault(idle[0]), false, "…but it is not a fault");
+    assert.equal(M.isGpuFault({ reason: "reset_required" }), true);
+    assert.equal(M.isGpuFault({ reason: "not_reported_by_driver" }), true);
+
+    // `not_reported_by_driver`: the kernel enumerates the card and the driver does not describe it, so
+    // there is no name and no uuid to read. They stay ABSENT rather than becoming empty strings — "" would
+    // render as a nameless card instead of a card whose name is unknown.
+    const mute = M.unavailableFrom([{ pci_id: "0000:03:00.0", reason: "not_reported_by_driver",
+        detail: "the kernel enumerates this GPU but the driver does not report it",
+        bus: { present: true, power_state: "D0", max_link_width: 16, pcie_fatal_errors: 0 } }]);
+    assert.equal(mute[0].name, undefined);
+    assert.equal(mute[0].uuid, undefined);
+    assert.equal(mute[0].bus.present, true);
+
+    // The PCI address is the IDENTITY — two cards in one machine share a `name` — so an entry without one
+    // cannot be attributed and is dropped rather than drawn against the wrong card.
+    assert.deepEqual(M.unavailableFrom([{ reason: "lost", name: "CUDA0" }]), []);
+    // Absent, not-an-array and a stock server all mean the same thing here, and none of them mean "healthy".
+    assert.deepEqual(M.unavailableFrom(undefined), []);
+    assert.deepEqual(M.unavailableFrom("nope"), []);
+    assert.deepEqual(M.parseInfo(CUDA_INFO).unavailable, [], "a server that says nothing reports nothing");
+});
+
+test("a faulted card is an INCIDENT, not a different machine — the history survives it", () => {
+    // This is the mid-session half. A card vanishing changes the device list, and if that read as "you
+    // pointed at another box" the samples leading up to the fault — the most valuable ones on screen —
+    // would be dropped at the exact moment they became evidence.
+    const before = M.parseInfo(CUDA_INFO);            // two healthy cards
+    const after = M.parseInfo(FAULT_INFO);            // one, and a fault report
+    assert.equal(M.boxChange(before, after), "shrank", "a card that vanishes is an incident, not a switch");
+    assert.notEqual(M.boxChange(before, after), "switched");
+    // And coming back is equally not a switch: nothing measured before is invalidated by a card returning.
+    assert.equal(M.boxChange(after, before), "grew");
+});

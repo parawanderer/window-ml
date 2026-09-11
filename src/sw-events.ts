@@ -24,6 +24,10 @@ export interface ResourceStreamMessage {
     unsupported?: string;
     /** The connection dropped and is being retried. The panel keeps what it has and marks nothing new. */
     interrupted?: string;
+    /** hello: GPUs the server can see and cannot use, forwarded raw and parsed once in the panel like every
+     *  other server body. Carried separately from `info` because a `hello` has no `/api/info` body at all —
+     *  and this is the ONLY route that reports a fault which began before anything connected. */
+    unavailable?: unknown;
     /** How many frames the server dropped for THIS subscriber immediately before this one — the delta of its
      *  cumulative counter, resolved here because the counter belongs to the connection and one connection
      *  feeds every open panel. Non-zero means the record has a hole and the trace must BREAK there rather
@@ -140,6 +144,7 @@ async function connect(): Promise<void> {
             fan({
                 frame, at,
                 ...(lost ? { lost } : {}),
+                ...(frame.kind === "hello" && frame.unavailable_gpus ? { unavailable: frame.unavailable_gpus } : {}),
                 ...(frame.kind === "sample" ? {
                     loaded: loadedFrom((frame.ps?.models as unknown[]) || []),
                     info: frame.info ?? null,

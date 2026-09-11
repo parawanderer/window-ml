@@ -5,7 +5,7 @@
 // over time: capacity refreshing as models load, and a GAP appearing because polling really did stop while
 // the panel was closed. The narrated version of the same script is resource-demo.mjs.
 import { test, expect } from "@playwright/test";
-import { launchExtension, configureExtension } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, openRunInSidebar } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -4040,5 +4040,168 @@ test("resource panel: resizing the window offers a way back to the default", asy
         const restored = await ext.sw.evaluate(() => new Promise((r) =>
             chrome.storage.local.get({ ml_res_window: 0 }, (d) => r(d.ml_res_window))));
         expect(restored, "back at the default the picker names").toBe(300);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE CARD'S OWN FACTS, behind a hover on the track name. The panel draws a pool's occupancy and says almost
+// nothing about the hardware under it, so "which card is this, and why do two totals for it disagree" had no
+// answer on screen — and the two totals are exactly the thing a reader spots elsewhere and cannot resolve:
+// ollama places against `total_memory` while the header draws `physical_memory`, ~638 MiB apart.
+test("resource panel: a card's facts are on its name, and the interconnect is not guessed", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await seedStacked(ext);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-name").count(), { timeout: 25000 }).toBeGreaterThan(0);
+
+        // THE NAME IS STILL THE NAME. The tooltip is a SIBLING inside the trigger, not a child of `.rc-name`
+        // — put it inside and the label's own text becomes the label plus three sentences of prose, which
+        // every reader of that element then picks up. Several tests and the panel itself read this as a label.
+        expect(await frame.locator(".rc-name").first().textContent()).toBe("CUDA0");
+
+        const tip = frame.locator(".rc-devfacts").first().locator(".tt-pop");
+        const text = await tip.textContent();
+        // THE TWO TOTALS, and which decides what — the reason this hover exists.
+        expect(text, "what placement decides against").toMatch(/94\.97 GiB usable/);
+        expect(text, "…and what the driver reports, named as such").toMatch(/95\.59 GiB on the card/);
+        expect(text).toMatch(/nvidia-smi/);
+        expect(text, "neither figure is presented as the wrong one").toMatch(/neither figure is wrong/);
+        expect(text, "reference facts, verbatim").toMatch(/compute 12\.0/);
+
+        // THE INTERCONNECT IS NOT GUESSED. The server reports no topology, and an absent matrix must never
+        // render as "PCIe only": interconnect is a property of a PAIR, so on a four-card box some pairs can
+        // be NVLinked while others fall back — claiming a per-card answer is unrepresentable-wrong there.
+        expect(text, "says it is unknown").toMatch(/not reported by this server/);
+        expect(text, "and never asserts the absence of NVLink").not.toMatch(/PCIe only|no NVLink/i);
+
+        // LINK SPEED AND WIDTH ARE ABSENT ON A HEALTHY CARD. Both are LIVE readings rather than capabilities
+        // — an idle Blackwell drops to 2.5 GT/s under ASPM and would read as 12x degraded while perfectly
+        // healthy — and a board that splits its lanes x8/x8 is correct, not degraded.
+        expect(text, "no live link reading dressed as a spec").not.toMatch(/GT\/s|x8|x16/);
+
+        // THE HOST POOL HAS NO CARD, so it gets no hardware hover at all rather than an empty one.
+        const names = await frame.locator(".rc-name").allTextContents();
+        expect(names).toContain("System RAM");
+        const ramHead = frame.locator(".rc-track").filter({ hasText: "System RAM" }).first();
+        expect(await ramHead.locator(".rc-devfacts").count(), "no device, no device facts").toBe(0);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// "OFF-BOX" IS A CLAIM ABOUT WHERE A MODEL RUNS, and it was the FALL-THROUGH. Any model the lane named that the
+// panel had not seen resident was labelled off-box — so asking the Commander for a LOCAL model that was not
+// loaded yet called it off-box for the whole stretch between the request going out (the lane names it at once)
+// and the server reporting a `load.start`. Then it flipped to "loading", then to resident: two corrections of a
+// claim that should never have been made. Reported from a real box, on a model ollama serves.
+//
+// Off-box needs evidence that the model runs ELSEWHERE, and the only such evidence is the server's own
+// provenance list saying it is not one of its models (`isCloudModel`). The fake lists its model as
+// `owned_by: "ollama"`, so a run against it that nothing reports loading is exactly the reported case.
+test("resource panel: a local model the box has not loaded yet is not called off-box", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setScript([{ content: "done" }]);
+        fake.setCapacity(box(IDLE, IDLE));
+        // NOT RESIDENT, and no load reported — the gap between the request and the server's first word.
+        fake.setResident([]);
+
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1400, height: 950 });
+        await page.goto(`${fake.url}/api/version`);
+        await waitForMl(page);
+        await page.evaluate(() => { window.ml.agent("say done", { approvalRouting: "both" }); });
+        const frame = await openRunInSidebar(page, { task: "say done" });
+        for (let i = 0; i < 5 && !(await frame.locator(".vram").count()); i++) {
+            await frame.locator('[aria-label="VRAM monitor"]').click();
+            await sleep(400);
+        }
+        await expect(frame.locator(".vram")).toBeVisible();
+
+        /** The kind badge on a not-resident row, without the tooltip prose inside it. */
+        const kindOf = async (name) => {
+            const head = frame.locator(".disc-head", { hasText: "not resident" }).first();
+            if (await head.count()) await head.click().catch(() => {});
+            await sleep(400);
+            const row = frame.locator(".vram-row.ghost").filter({ hasText: name }).first();
+            if (!(await row.count())) return null;
+            return row.locator(".vram-embed").evaluate((e) => (e.firstChild?.textContent ?? "").trim());
+        };
+
+        // The lane has to be naming the model, or its absence from the row list would mean nothing.
+        await expect.poll(() => kindOf("fake-model"), { timeout: 25000 }).not.toBeNull();
+        const kind = await kindOf("fake-model");
+        expect(kind, "a model ollama serves is never off-box — when it runs, it runs here").not.toBe("off-box");
+        expect(kind, "it is simply not loaded yet").toBe("not loaded");
+
+        // …and the moment the server DOES report a load, the row says so. Not loaded → loading → resident,
+        // each step true when it is shown, rather than off-box → loading → resident.
+        fake.setResident([{ model: "fake-model", name: "fake-model", state: "loading" }]);
+        await expect.poll(() => kindOf("fake-model"), { timeout: 15000 }).toBe("loading");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE BREAKDOWN STEPS WITH THE BAND IT BREAKS DOWN. The step was first applied to the band edges alone, so
+// the band held flat while the parts drawn INSIDE it on hover still sloped — a flat band with diagonal lines
+// across it, which reads as the breakdown disagreeing with the total. Every part is one model's memory, and a
+// model's memory is piecewise-constant, so every part edge steps too. Reported from a real eviction.
+test("resource panel: a model's breakdown steps with its band, not across it", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        // The real shape from a live `gemma4:e2b`, whose parts sum to `size_vram` to the byte.
+        const MEM = { weights: 1465426903, kv_cache: 836763648, compute: 1129588981, projector: 1208032952 };
+        const VRAM = 4639812484;
+        const model = {
+            model: "gemma4:e2b", name: "gemma4:e2b", size: VRAM, size_vram: VRAM, context_length: 262144,
+            expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+            memory: MEM, gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: VRAM, memory: MEM }],
+        };
+        fake.setResident([model]);
+        await seedStacked(ext);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(4000);
+
+        // …then it goes, so the parts have a descent to draw.
+        fake.setResident([]);
+        await sleep(4500);
+
+        /** Corners in a polygon's TOP edge — two points sharing an x. The top edge is isolated by cutting at the
+         *  closing vertical at the right-hand end, which is the shape joining top to floor rather than a step. */
+        const stepsIn = (pts) => {
+            const p = pts.trim().split(/\s+/).map((q) => q.split(",").map(Number));
+            let turn = p.length;
+            for (let i = 1; i < p.length; i++) if (p[i][0] < p[i - 1][0]) { turn = i; break; }
+            const head = p.slice(0, turn);
+            const maxX = Math.max(...head.map((q) => q[0]));
+            const top = head.slice(0, head.findIndex((q) => q[0] === maxX) + 1);
+            // Only corners that actually MOVE vertically: a hold across an unchanged value emits a zero-height
+            // pair, which is a step of nothing and would pass this test without the fix.
+            return top.filter((q, i, a) => i > 0 && q[0] === a[i - 1][0] && Math.abs(q[1] - a[i - 1][1]) > 0.5).length;
+        };
+
+        // The breakdown is a HOVER affordance, so hover the band to draw it.
+        await frame.locator(".rc-band").first().hover();
+        await expect.poll(() => frame.locator(".rc-part").count(), { timeout: 8000 }).toBeGreaterThan(0);
+        const parts = await frame.locator(".rc-part").evaluateAll((els) => els.map((e) => e.getAttribute("points")));
+        for (const pts of parts) {
+            expect(stepsIn(pts), "every part of the breakdown drops square, like the band it sits in").toBeGreaterThan(0);
+        }
     } finally { await ext.context.close(); await fake.stop(); }
 });
