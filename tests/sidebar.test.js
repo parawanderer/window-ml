@@ -6053,15 +6053,39 @@ test("overview: hovering a model row dims the pools it isn't on", async () => {
     assert.equal(w.shadow.querySelectorAll(".rc-key.away").length, 0, "and it clears on leave");
 });
 
-test("the resource chart window is configurable, and short by default", async () => {
+test("the chart's own settings live in the chart, and the window picker shows a PREFERENCE", async () => {
     const { RESWIN_DEFAULT } = await import("../src/sidebar/store.ts");
     assert.equal(RESWIN_DEFAULT, 300, "5 minutes — 30 squeezed into a narrow panel is an unreadable smear");
-    // The knob belongs in DevTools Settings (the superset), per the AGENTS rule for user-editable config.
+
+    // The live window is 56s — a value no preset names, of the kind a scrub drag produces. The PICKER must
+    // still read the preference. Sharing one quantity made the control read "56 seconds (dragged)": a reading
+    // of the moment rendered as a setting, which also needed an extra option to render at all, since a value
+    // no preset names leaves a select BLANK. Where you actually are is on screen twice already — the zoom
+    // chip and the scrub strip — so the picker's job is the default, and only that.
+    const w = await loadSidebarWorld({
+        vram: [], info: INFO_MIXED,
+        local: { ml_res_window: 56, ml_res_window_pref: 900 },
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+    w.shadow.querySelector('[aria-label="Edit tracks"]').click();
+    await w.flush();
+
+    // IN THE PANEL'S OWN EDITOR, beside the tracks it configures — not in Settings, which is a surface you
+    // have to leave the chart to reach for a knob whose whole effect is visible on the chart. (Not a
+    // `MlConfig` flag, so the "everything also appears in DevTools Settings" rule does not reach it; the
+    // cursor snap toggle moved here first and is the precedent.)
+    const win = w.shadow.querySelector('[aria-label="Chart window"]');
+    assert.ok(win, "the window picker is in the track editor");
+    assert.equal(win.value, "900", "it shows the PREFERENCE, not the 56s the chart is currently drawing");
+    assert.ok(![...win.options].some((o) => /dragged/.test(o.textContent)),
+        "and it never grows an option describing where the scrub happens to be");
+    assert.ok(w.shadow.querySelector('[aria-label="Model colours"]'), "…as does the palette");
+
     const settings = await import("node:fs").then((fs) => fs.readFileSync("src/sidebar/settings.tsx", "utf8"));
-    assert.match(settings, /Chart window/, "surfaced in Settings → Appearance → Resource panel");
-    assert.match(settings, /RESWIN_KEY/, "and persisted");
-    assert.match(settings, /Samples are kept for the whole session either way/,
-        "the note distinguishes what is DRAWN from what is retained");
+    assert.doesNotMatch(settings, /Chart window/, "and it is no longer in two places disagreeing");
 });
 
 // A saved PRESET is re-derived, not replayed: storing its tracks pins the preset as it was the day it was

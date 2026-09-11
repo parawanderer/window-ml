@@ -29,6 +29,16 @@ export const OUTMAX_KEY = "ml_debug_outmax";               // max height (px) of
 export const VRAMH_KEY = "ml_vram_h";
 export const RESWIN_KEY = "ml_res_window";   // storage.local: seconds of history the resource chart DRAWS (retention is separate)
 export const RESWIN_DEFAULT = 300;                         // 5 minutes — readable at this width
+/** storage.local: the window the chart OPENS at — a preference, where `RESWIN_KEY` is the live window.
+ *
+ *  They were one quantity, and that made the control lie about what it was: scrubbing writes the live window,
+ *  so the picker sat there reading "56 seconds (dragged)" — a reading of the moment, rendered as a setting.
+ *  It even needed an extra option to do it, because a value no preset names would otherwise render the select
+ *  BLANK. Splitting them costs one key and makes each honest: the picker always shows a preset, the scrub
+ *  strip and the zoom chip always show where you actually are, and a dragged window still survives a reload
+ *  because the live key is still written. */
+export const RESWIN_PREF_KEY = "ml_res_window_pref";
+export const resWindowPref = signal(RESWIN_DEFAULT);   // the window the chart OPENS at (see RESWIN_PREF_KEY) — a preference, not the live window
 
 export type Status = "pending" | "ok" | "err";
 export interface Turn {

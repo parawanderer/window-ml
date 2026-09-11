@@ -11,8 +11,7 @@ import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundin
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS, modelKinds, embedDims, view } from "./store";
-import { VRAM_PALETTES, VRAM_PALETTE_KEY, vramPalette } from "./vram";
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, modelKinds, embedDims, view } from "./store";
 import { truncate } from "./format";
 import { ToolDefsView } from "./agent-detail";   // the SAME viewer an agent run uses for its local toolset
 import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
@@ -21,15 +20,6 @@ import { Disclosure } from "./ui-kit";
 
 /** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is
  *  why the select needs to know which values it already has an option for. */
-const RESWIN_PRESETS = [60, 180, RESWIN_DEFAULT, 900, 1800, 0];
-/** A window length as a person would say it — for the option a drag creates, which has no preset name. */
-function fmtWindow(s: number): string {
-    if (!s) return "Everything kept";
-    if (s < 60) return `${s} seconds`;
-    const m = s / 60;
-    return `${Number.isInteger(m) ? m : m.toFixed(1)} minute${m === 1 ? "" : "s"}`;
-}
-
 // Update one config field: mirror it into the signal (live UI), optionally
 // persist to chrome.storage.sync (which the popup also reads → they sync).
 // String LISTS are config values too (the server-tool curation) — the signature took scalars only, so a
@@ -1077,40 +1067,6 @@ export function Settings() {
                         onChange={(e: any) => setField("agentHudInDevtools", e.target.checked)} />
                     <span>Also show the HUD alongside the DevTools panel</span>
                 </label>
-                </Section>
-
-                {/* The resource panel's own APPEARANCE. Both of these lived inside "Visual grounding" on the
-                    Models tab, which is where they were written rather than where they belong — one is how far
-                    back a chart draws and the other is which hues it draws in, and neither has anything to do
-                    with a coordinate model. */}
-                <Section id="resourcepanel" title="Resource panel">
-                <label class="set-field"><span>Chart window</span>
-                    <select value={String(resWindowS.value)}
-                        onChange={(e: any) => { resWindowS.value = Number(e.target.value); chrome.storage.local.set({ [RESWIN_KEY]: resWindowS.value }); }}>
-                        <option value="60">1 minute</option>
-                        <option value="180">3 minutes</option>
-                        <option value={String(RESWIN_DEFAULT)}>5 minutes</option>
-                        <option value="900">15 minutes</option>
-                        <option value="1800">30 minutes</option>
-                        <option value="0">Everything kept</option>
-                        {/* The chart's scrub strip edits this same quantity by dragging its left edge, which
-                            lands on values no preset names. Without a matching option the select renders
-                            BLANK — a control that shows nothing while the thing it controls is plainly set. */}
-                        {RESWIN_PRESETS.includes(resWindowS.value) ? null
-                            : <option value={String(resWindowS.value)}>{fmtWindow(resWindowS.value)} (dragged)</option>}
-                    </select></label>
-                <div class="set-note">How much history the VRAM/RAM chart DRAWS. Samples are kept for the whole session either way — this only sets how far back the chart looks, because a long window squeezed into a narrow panel smears into an unreadable blur. Gaps stay gaps: while the panel is closed nothing is sampled, so the line breaks rather than being drawn across.</div>
-                <label class="set-field"><span>Model colours</span>
-                    <select value={vramPalette.value}
-                        onChange={(e: any) => { vramPalette.value = e.target.value; chrome.storage.local.set({ [VRAM_PALETTE_KEY]: vramPalette.value }); }}>
-                        <option value="vivid">Vivid</option>
-                        <option value="grafana">Grafana</option>
-                        <option value="cool">Cool</option>
-                        <option value="warm">Warm</option>
-                    </select></label>
-                <div class="set-note">Which palette a model's colour is drawn from. A model's colour is its identity across the whole panel — the line, its band, its row, its blocks in the event lane, its ticks on the strip — so which hues read as distinct is worth choosing rather than being stuck with. The assignment is a hash of the model's name, so a given model keeps the same colour within a palette.
-                    <span class="pal-swatches">{(VRAM_PALETTES[vramPalette.value] ?? []).map((c) => <i key={c} style={{ background: c }} />)}</span>
-                </div>
                 </Section>
 
                 <Section id="codeblocks" title="Code blocks">

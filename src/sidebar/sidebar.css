@@ -2471,6 +2471,14 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 
 /* The chosen palette, shown beside its picker: eight names in a dropdown say nothing about whether the hues
    read as distinct, which is the entire question being asked. */
+/* A select inside the track editor's own rows. The rows are built for checkboxes, so a select needs its own
+   sizing or it stretches the row and pushes the tracks below it around every time the editor opens. */
+.rc-eopt.rc-esel { gap: 4px; }
+.rc-eopt.rc-esel select { font: inherit; font-size: 0.92em; padding: 1px 2px; max-width: 12ch; }
+.rc-eopt.rc-esel .pal-swatches { margin-left: 2px; }
+.rc-eopt.rc-esel .pal-swatches i { width: 8px; height: 8px; border-radius: 2px; }
+/* The palette itself, shown beside its name — the hues are the thing being chosen, and a list of four words
+   ("Vivid", "Grafana", …) says nothing about which of them will read as distinct on this box's models. */
 .pal-swatches { display: inline-flex; gap: 3px; margin-left: 8px; vertical-align: middle; }
 .pal-swatches i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 

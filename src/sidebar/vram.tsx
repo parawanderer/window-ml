@@ -16,7 +16,7 @@ import { IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevron, IconEx
 import { Disclosure, cursorTipOn, TipText } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { hhmmss } from "./timestamps";
-import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, type BenchRun } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, type BenchRun } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
@@ -1287,6 +1287,57 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
                     snap to datapoint
                     <span class="tt-pop wrap" role="tooltip"><TipText
                         md="Snap the crosshair to the nearest **sample** and mark it with a dot. The tooltip already reads a real datapoint — a value between two polls was never measured — so this makes the line agree with the number beside it. Useful for reading one reading; noise while scanning the shape." /></span>
+                </label>
+            </div>
+            {/* WHAT THE CHART DRAWS AND IN WHAT COLOURS, beside the tracks it draws them on. Both lived in
+                Settings, which is a surface you have to LEAVE the chart to reach — and the whole argument for
+                putting them there (a paragraph each explaining what they do) stops applying the moment the
+                chart is on screen while you change them. You can simply watch. Same move as the cursor row
+                above, and the lane/model-list row above that.
+                (Neither is a `MlConfig` flag, so the "every setting also appears in DevTools Settings" rule
+                does not reach them — these are sidebar display preferences in storage.local.) */}
+            <div class="rc-erow rc-esections">
+                <span class="rc-esection-label">Chart</span>
+                {/* THE PREFERENCE, NEVER THE LIVE WINDOW. Scrubbing writes the live window, so when these were
+                    one quantity the picker read "56 seconds (dragged)" — a reading of the moment, dressed as a
+                    setting, and it needed an extra option to do it because a value no preset names renders the
+                    select blank. The live window is already on screen twice, in the zoom chip and the strip. */}
+                <label class="tt rc-eopt rc-esel">
+                    <select value={String(resWindowPref.value)} aria-label="Chart window"
+                        onChange={(e: any) => {
+                            const v = Number((e.target as HTMLSelectElement).value);
+                            resWindowPref.value = v;
+                            resWindowS.value = v;   // applies NOW — a preference you cannot see take effect reads as broken
+                            zoomRange.value = null; // …and a pinned zoom would swallow the change it just made
+                            try { chrome.storage.local.set({ [RESWIN_PREF_KEY]: v, [RESWIN_KEY]: v }); } catch { /* opaque origin */ }
+                        }}>
+                        <option value="60">1 minute</option>
+                        <option value="180">3 minutes</option>
+                        <option value={String(RESWIN_DEFAULT)}>5 minutes</option>
+                        <option value="900">15 minutes</option>
+                        <option value="1800">30 minutes</option>
+                        <option value="0">Everything kept</option>
+                    </select>
+                    <span class="tt-pop wrap" role="tooltip"><TipText
+                        md="How far back the chart looks when it opens. Samples are kept for the whole session either way — dragging the strip changes the window you are looking at now, this sets where it starts." /></span>
+                </label>
+                <label class="tt rc-eopt rc-esel">
+                    <select value={vramPalette.value} aria-label="Model colours"
+                        onChange={(e: any) => {
+                            vramPalette.value = (e.target as HTMLSelectElement).value;
+                            try { chrome.storage.local.set({ [VRAM_PALETTE_KEY]: vramPalette.value }); } catch { /* opaque origin */ }
+                        }}>
+                        <option value="vivid">Vivid</option>
+                        <option value="grafana">Grafana</option>
+                        <option value="cool">Cool</option>
+                        <option value="warm">Warm</option>
+                    </select>
+                    {/* The palette itself, beside its name. It came with the control from Settings and is worth
+                        more here: the chart below is already drawn in these hues, so the swatches are how you
+                        tell two palettes apart without opening the select and watching the whole panel restyle. */}
+                    <span class="pal-swatches">{(VRAM_PALETTES[vramPalette.value] ?? []).map((c) => <i key={c} style={{ background: c }} />)}</span>
+                    <span class="tt-pop wrap" role="tooltip"><TipText
+                        md="Which palette a model's colour comes from. A model's colour is its identity everywhere in the panel, so which hues read as distinct is worth choosing. Assigned by a hash of the name, so a model keeps its colour within a palette." /></span>
                 </label>
             </div>
             {tracks.map((t, i) => (

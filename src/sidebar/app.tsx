@@ -9,7 +9,7 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { MlDebugEvent, MlConfig, ElementContext } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 import {
-    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, laneEnabled, showLane, showModels, LANEH_KEY, laneH, LANE_H_DEFAULT, SNAPDOT_KEY, snapDot, FOCUS_KEY, focusMode,
+    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, resWindowPref, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, laneEnabled, showLane, showModels, LANEH_KEY, laneH, LANE_H_DEFAULT, SNAPDOT_KEY, snapDot, FOCUS_KEY, focusMode,
     benchOpen, benchDock, benchH, benchSplit, viewReturn, markReturn, openBench, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY,
     benchEnv, BENCH_ENV_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
@@ -469,12 +469,16 @@ function mount(): void {
     // ONE floating tooltip layer for the whole surface (see tooltip-layer.ts): nothing clips it, it opens
     // whichever way there is room, and the source nodes stay display:none so their prose is never copied.
     try { installTooltipLayer(document); } catch { /* no DOM in a test harness */ }
-    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [LANEH_KEY]: LANE_H_DEFAULT, [SNAPDOT_KEY]: false, [VRAM_PALETTE_KEY]: "", [FOCUS_KEY]: false, [BENCH_OPEN_KEY]: false, [BENCH_DOCK_KEY]: "drawer", [BENCH_H_KEY]: 280, [BENCH_SPLIT_KEY]: 0 }, (d: any) => {
+    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: 0, [RESWIN_PREF_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0, [LANE_HIDDEN_KEY]: [], [LANE_SCOPE_KEY]: true, [SECTIONS_KEY]: null, [LANEH_KEY]: LANE_H_DEFAULT, [SNAPDOT_KEY]: false, [VRAM_PALETTE_KEY]: "", [FOCUS_KEY]: false, [BENCH_OPEN_KEY]: false, [BENCH_DOCK_KEY]: "drawer", [BENCH_H_KEY]: 280, [BENCH_SPLIT_KEY]: 0 }, (d: any) => {
         if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont();
         codeWrap.value = d[WRAP_KEY] !== false; codeLineNumbers.value = !!d[LINES_KEY]; applyCodePrefs();
         showStatsTokens.value = d[STATS_TOKENS_KEY] !== false; showStatsTps.value = !!d[STATS_TPS_KEY];
         if (typeof d[OUTMAX_KEY] === "number") outMaxH.value = d[OUTMAX_KEY];
-        if (typeof d[RESWIN_KEY] === "number") resWindowS.value = d[RESWIN_KEY];
+        // The PREFERENCE first, then the live window if one was left behind. A dragged window survives a
+        // reload (it is where you were), and with none stored the chart opens at the preference — which is
+        // what "the default when unset" means, and why the picker can always show a preset.
+        if (typeof d[RESWIN_PREF_KEY] === "number" && d[RESWIN_PREF_KEY] > 0) resWindowPref.value = d[RESWIN_PREF_KEY];
+        resWindowS.value = typeof d[RESWIN_KEY] === "number" && d[RESWIN_KEY] > 0 ? d[RESWIN_KEY] : resWindowPref.value;
         if (Array.isArray(d[LANE_HIDDEN_KEY])) laneHidden.value = d[LANE_HIDDEN_KEY];
         if (typeof d[LANE_SCOPE_KEY] === "boolean") laneScoped.value = d[LANE_SCOPE_KEY];
         // An unknown palette name (a downgrade, a typo in storage) falls back rather than leaving every model
