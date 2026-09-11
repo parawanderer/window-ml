@@ -264,3 +264,42 @@ test("an unload that NAMES its model is drawn", () => {
     assert.equal(ev.model, "qwen3-vl:30b", "canonicalised, like every other edge");
     assert.match(ev.label, /idle/, "…and it says WHY: an idle expiry, not making room for something");
 });
+
+test("generations off a REAL capture: split by the engine's durations, keyed by model through an interleave", async () => {
+    // tests/e2e/fixtures/events-gen-timings.json — 125 live frames, five generations, three of them traffic
+    // this browser never started. Replayed through the same mapper the stream feeds.
+    const { readFile } = await import("node:fs/promises");
+    const frames = JSON.parse(await readFile(new URL("./e2e/fixtures/events-gen-timings.json", import.meta.url), "utf8"));
+    reset();
+    const base = 1_700_000_000_000;
+    const gens = frames.map((f) => machineEventFrom(f, base + f.t)).filter((e) => e?.kind === "gen");
+    assert.equal(gens.length, 5, "one span per gen.end that carried timings");
+    // Names are canonicalised at this boundary, like every other edge.
+    assert.deepEqual(gens.map((g) => g.model), ["gemma4:e2b", "granite4.1:3b", "gemma4:e2b", "qwen3.8:27b", "gemma4:31b"]);
+    // THE INTERLEAVE: gemma opened at 14767, granite opened 15086 and closed 15121, gemma closed 15314. Keyed by
+    // model, gemma's span must start at ITS OWN gen.start, not granite's.
+    const gemmaSecond = gens[2];
+    assert.equal(gemmaSecond.until, base + 15314);
+    assert.ok(gemmaSecond.t <= base + 15314 - 528.904 - 5.524, "starts no later than its measured prefill");
+    // Granite's gen.start (15086) lands a millisecond BEFORE its own load.complete (15087) in the capture — the
+    // request took the runner as the load finished. The load is its own span, so the generation starts where
+    // it ended: granite's own edges, not gemma's (whose open generation began at 14767).
+    assert.equal(gens[1].t, base + 15087, "granite's span starts where granite's load ended");
+    // THE CACHE HIT: the same prompt twice, 99.567 ms of prefill cold and 5.524 ms with 2222 of 2223 cached.
+    assert.equal(gemmaSecond.gen.promptTokensCached, 2222);
+    assert.equal("promptTokensCached" in gens[0].gen, false, "the older build OMITTED a cold count — kept absent, not 0");
+    for (const g of gens) {
+        assert.deepEqual(g.phases.slice(-2).map((p) => p.kind), ["prefill", "decode"]);
+        assert.ok(g.phases.every((p, i) => p.until >= (i ? g.phases[i - 1].until : g.t)), `${g.model}: phases in order`);
+    }
+});
+
+test("a gen.end with no timings draws nothing — the serving span already says the box was busy", () => {
+    reset();
+    machineEventFrom({ kind: "gen.start", model: "nt" }, 1000);
+    assert.equal(machineEventFrom({ kind: "gen.end", model: "nt" }, 2000), null);
+    // …and its start does not linger to be paired with the NEXT generation's end.
+    machineEventFrom({ kind: "gen.start", model: "nt" }, 5000);
+    const e = machineEventFrom({ kind: "gen.end", model: "nt", timings: { prompt_ms: 10, eval_ms: 100 } }, 5200);
+    assert.equal(e.t, 5000);
+});

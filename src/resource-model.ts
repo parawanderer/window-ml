@@ -77,6 +77,25 @@ export interface DeviceCapacity {
      *  panel that BRANCHED on them would be encoding hardware knowledge that rots. */
     compute?: string;
     driver?: string;
+    /** The bus address (`pci_id`), the same form `unavailable_gpus` and the topology's links use — which is
+     *  what lets a link, or a fault, be joined to a DRAWN card. `gpu_id` cannot: it is an index into one
+     *  enumeration and can change when a card drops out and returns. Absent where the backend has none (Metal). */
+    pciId?: string;
+    /** The card's fixed CEILINGS, read once at discovery — never live readings. `memoryBandwidth` is derived by
+     *  the server from the two fields beside it (bus/8 × clock × 2, checked against published GDDR7, GDDR6X and
+     *  HBM2e figures); `pcieMaxWidth` is the NARROWER of card and slot, since a link cannot train wider than its
+     *  narrower end (x8 on a board that splits its lanes, though each card says x16). Each absent, never zero,
+     *  where it could not be read. */
+    memoryBandwidth?: number;
+    memoryBusWidthBits?: number;
+    memoryClockMaxMhz?: number;
+    pcieMaxGeneration?: number;
+    pcieMaxWidth?: number;
+    /** How busy the card is, as the DRIVER averages it (NVML's own window, 1/6 s to 1 s by product, not
+     *  reported). `gpuPercent` and `memoryPercent` are independent: an AMD iGPU has the first and no file for
+     *  the second. `0` is idle; ABSENT is "not read" — and a missing reading is not a fault signal (a dead card
+     *  and a card without the counter answer alike; faults come from `unavailable_gpus`). */
+    utilization?: { gpuPercent?: number; memoryPercent?: number };
 }
 
 export interface HostCapacity {
@@ -153,6 +172,171 @@ export interface Capacity {
      *  building context — so four fifths of that load had nothing to do with model size, and a size-derived
      *  timeout is wrong in the direction that bites. Null when the server does not publish it. */
     loadStallTimeoutMs?: number | null;
+    /** How the GPUs are connected to EACH OTHER — a property of each PAIR, never of a card. Null when the
+     *  server does not report it, which must read as "not measured" and never as "no NVLink". */
+    topology?: Topology | null;
+}
+
+/** One PAIR of GPUs and what connects them, keyed on bus addresses (`a` < `b` after parsing). `type` is the
+ *  vendor-neutral kind — `nvlink` and `xgmi` are a DIRECT GPU-to-GPU fabric, `pcie` goes through the host's
+ *  bridges, `unknown` is a pair the server could not classify (with its `reason`). `path` is the vendor tool's
+ *  own vocabulary (`NV4`, `PHB`, …) so it can be matched against `nvidia-smi topo -m`; `pciePath` is the PCIe
+ *  route that still exists underneath a bridge. Bandwidth only when the driver READ it — never a table. */
+export interface TopoLink {
+    a: string;
+    b: string;
+    type: "nvlink" | "xgmi" | "pcie" | "unknown" | string;
+    path?: string;
+    pciePath?: string;
+    linkCount?: number;
+    /** NVLink generation, as the driver reports it — on a direct NVLink pair only. */
+    version?: number;
+    bandwidthBytesPerSec?: number;
+    /** WHERE the bandwidth figure came from: `derived_from_pcie_link` is the PCIe spec applied to the narrower
+     *  end's capability — a PEAK (measured peer-to-peer on gpubox: 27.7 GB/s against 31.5 derived); `kfd_io_link`
+     *  is the AMD driver's own figure. An NVLink rate is never derived from a table, so it is absent until the
+     *  driver can be read. */
+    bandwidthSource?: string;
+    reason?: string;
+}
+
+/** The pair list, parsed. `status` separates "measured, and here is every pair" from "could not look"
+ *  (`unavailable`) and "some pairs only" (`partial`), with the driver's own `detail`. `missing` is every
+ *  unordered pair of `gpus` the list does NOT contain: the server promises each pair exactly once, so a missing
+ *  one is a BUG on one side and is reported as such rather than read as PCIe. */
+export interface Topology {
+    status: "measured" | "partial" | "unavailable" | string;
+    detail?: string;
+    gpus: string[];
+    links: TopoLink[];
+    missing: [string, string][];
+}
+
+/** Parse the server's topology. Null when absent or unshaped — "not reported", which every consumer must
+ *  render as nothing measured, never as "PCIe only". Pairs are normalised to one unordered key and deduped, so
+ *  a producer that emitted both directions (KFD's io_links are directed) cannot double-count coverage. */
+export function topologyFrom(raw: unknown): Topology | null {
+    if (!raw || typeof raw !== "object") return null;
+    const o = raw as Record<string, unknown>;
+    const status = typeof o.status === "string" && o.status ? o.status : null;
+    if (!status) return null;
+    const gpus = Array.isArray(o.gpus) ? o.gpus.filter((g): g is string => typeof g === "string" && !!g.trim()).map((g) => g.trim()) : [];
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
+    const seen = new Map<string, TopoLink>();
+    for (const x of Array.isArray(o.links) ? o.links : []) {
+        const l = x as Record<string, unknown>;
+        const a0 = typeof l.a === "string" ? l.a.trim() : "", b0 = typeof l.b === "string" ? l.b.trim() : "";
+        if (!a0 || !b0 || a0 === b0) continue;          // a diagonal is not a link
+        const [a, b] = a0 < b0 ? [a0, b0] : [b0, a0];
+        const key = `${a}|${b}`;
+        if (seen.has(key)) continue;
+        seen.set(key, {
+            a, b, type: typeof l.type === "string" && l.type ? l.type : "unknown",
+            ...(typeof l.path === "string" && l.path ? { path: l.path } : {}),
+            ...(typeof l.pcie_path === "string" && l.pcie_path ? { pciePath: l.pcie_path } : {}),
+            ...(n(l.nvlink_count) ?? n(l.link_count) ? { linkCount: (n(l.nvlink_count) ?? n(l.link_count))! } : {}),
+            ...(n(l.nvlink_version) ? { version: n(l.nvlink_version)! } : {}),
+            ...(n(l.bandwidth_bytes_per_sec) ? { bandwidthBytesPerSec: n(l.bandwidth_bytes_per_sec)! } : {}),
+            ...(typeof l.bandwidth_source === "string" && l.bandwidth_source ? { bandwidthSource: l.bandwidth_source } : {}),
+            ...(typeof l.reason === "string" && l.reason ? { reason: l.reason } : {}),
+        });
+    }
+    const missing: [string, string][] = [];
+    for (let i = 0; i < gpus.length; i++) for (let j = i + 1; j < gpus.length; j++) {
+        const [a, b] = gpus[i] < gpus[j] ? [gpus[i], gpus[j]] : [gpus[j], gpus[i]];
+        if (!seen.has(`${a}|${b}`)) missing.push([a, b]);
+    }
+    return { status, ...(typeof o.detail === "string" && o.detail ? { detail: o.detail } : {}), gpus, links: [...seen.values()], missing };
+}
+
+/** The link between two cards, by bus address, or null when the topology does not name the pair. */
+export function linkBetween(t: Topology | null | undefined, x: string | undefined, y: string | undefined): TopoLink | null {
+    if (!t || !x || !y || x === y) return null;
+    const [a, b] = x < y ? [x, y] : [y, x];
+    return t.links.find((l) => l.a === a && l.b === b) ?? null;
+}
+
+/** A DIRECT GPU-to-GPU fabric — the only kind of link a bridge is drawn for. */
+export const isBridge = (l: TopoLink | null | undefined): boolean => !!l && (l.type === "nvlink" || l.type === "xgmi");
+
+/** The order to lay cards out in so that DIRECTLY-linked pairs sit side by side — the only place a bridge can
+ *  be drawn on a one-dimensional axis. Greedy and stable: start from the first unplaced card in the server's
+ *  order, keep appending a card bridged to the last one placed, and when none is left take the next in order.
+ *  Bridges 0–1 and 2–3 keep 0,1,2,3; bridges 0–2 and 1–3 become 0,2,1,3; an all-to-all switch keeps the order.
+ *  Only a `measured` topology reorders anything — the order is a claim about the links. */
+export function bridgeOrder<T extends { pciId?: string }>(cards: T[], t: Topology | null | undefined): T[] {
+    if (!t || t.status !== "measured" || cards.length < 3) return cards;
+    const left = cards.slice(), out: T[] = [];
+    while (left.length) {
+        let next = left.shift()!;
+        out.push(next);
+        for (;;) {
+            const i = left.findIndex((c) => isBridge(linkBetween(t, next.pciId, c.pciId)));
+            if (i < 0) break;
+            next = left.splice(i, 1)[0];
+            out.push(next);
+        }
+    }
+    return out;
+}
+
+/** Each WALL between adjacent cards (in the order given), and what to draw there: whether that exact pair is
+ *  bridged, and whether the RUN of bridged cards the wall belongs to is a full mesh.
+ *
+ *  The second half exists because per-wall honesty is not enough. On a DGX-1 hybrid cube-mesh every card is
+ *  linked to 4 of its 7 peers, and the ordering finds a chain in which every ADJACENT pair is linked — so a
+ *  bridge on every wall, which draws exactly like an all-to-all NVSwitch box. Each bridge is true and the
+ *  picture as a whole is false. So a run of bridged cards is checked as a whole: `full` when every pair inside
+ *  it is directly linked (an NVSwitch, or a bridged pair), `partial` when some are not — drawn differently, and
+ *  its tooltip says which pairs are missing. Nothing at all unless the topology was `measured`. */
+export function bridgeWalls(cards: { pciId?: string }[], t: Topology | null | undefined): { bridge: boolean; mesh: "full" | "partial" | null; link: TopoLink | null; unlinked: [number, number][] }[] {
+    const walls = cards.slice(1).map((c, i) => {
+        const link = t?.status === "measured" ? linkBetween(t, cards[i].pciId, c.pciId) : null;
+        return { bridge: isBridge(link), mesh: null as "full" | "partial" | null, link, unlinked: [] as [number, number][] };
+    });
+    // Maximal runs of consecutive bridged walls → the card range they join, checked as a clique.
+    for (let i = 0; i < walls.length;) {
+        if (!walls[i].bridge) { i++; continue; }
+        let j = i;
+        while (j + 1 < walls.length && walls[j + 1].bridge) j++;
+        const unlinked: [number, number][] = [];
+        for (let x = i; x <= j + 1; x++) for (let y = x + 1; y <= j + 1; y++)
+            if (!isBridge(linkBetween(t, cards[x].pciId, cards[y].pciId))) unlinked.push([x, y]);
+        for (let k = i; k <= j; k++) { walls[k].mesh = unlinked.length ? "partial" : "full"; walls[k].unlinked = unlinked; }
+        i = j + 1;
+    }
+    return walls;
+}
+
+/** What a PCIe route crosses, in words — the `nvidia-smi topo -m` rungs, nearest first. */
+const PCIE_PATH_WORDS: Record<string, string> = {
+    PIX: "through one PCIe switch",
+    PXB: "through several PCIe switches",
+    PHB: "through the CPU's host bridge",
+    NODE: "across host bridges within one CPU",
+    SYS: "across CPU sockets",
+};
+
+/** One link, said plainly, for a hover: "NVLink ×4 (NV4) · 112.5 GB/s" or "PCIe, through the CPU's host bridge
+ *  (PHB)". Bandwidth is decimal GB/s because that is how link rates are quoted everywhere — unlike memory,
+ *  which is binary. An unknown pair says so, with the server's reason. */
+export function linkPhrase(l: TopoLink): string {
+    // A DERIVED figure is a peak, and says so: measured peer-to-peer lands below it (27.7 against 31.5 GB/s on
+    // gpubox), and an unqualified number beside a measured memory trace reads as a measurement.
+    const bw = l.bandwidthBytesPerSec
+        ? ` · ${(l.bandwidthBytesPerSec / 1e9).toFixed(1)} GB/s${l.bandwidthSource === "derived_from_pcie_link" ? " peak" : ""}` : "";
+    if (l.type === "nvlink" || l.type === "xgmi") {
+        const name = l.type === "nvlink" ? `NVLink${l.version ? ` ${l.version}` : ""}` : "xGMI";
+        // No link count on an NVLink pair is the SWITCH case (peer-to-peer over NVLink with no direct link),
+        // which carries the server's reason: said, so it is not read as a bridge between the two cards.
+        const via = l.type === "nvlink" && !l.linkCount && l.reason ? ` — ${l.reason}` : "";
+        return `${name}${l.linkCount ? ` ×${l.linkCount}` : ""}${l.path ? ` (${l.path})` : ""}${bw}${via}`;
+    }
+    if (l.type === "pcie") {
+        const p = l.path || l.pciePath;
+        return `PCIe${p ? `, ${PCIE_PATH_WORDS[p] ?? "route"} (${p})` : ""}${bw}`;
+    }
+    return `not classified${l.reason ? `: ${l.reason}` : ""}`;
 }
 
 /** Parse `/api/info`. Returns null for anything that isn't the expected JSON — a stock Ollama or unpatched
@@ -218,6 +402,24 @@ export function unavailableFrom(raw: unknown): UnavailableGpu[] {
     });
 }
 
+/** A card's fixed ceilings and its utilization reading, each kept only when it is a real number — absent is
+ *  "could not read", and `0` survives as a reading (idle), never collapsed into absent or vice versa. */
+function ceilingsOf(g: Record<string, unknown>): Partial<DeviceCapacity> {
+    const pos = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
+    const pct = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100 ? v : undefined);
+    const u = g.utilization && typeof g.utilization === "object" ? g.utilization as Record<string, unknown> : null;
+    const util = u ? { ...(pct(u.gpu_percent) != null ? { gpuPercent: pct(u.gpu_percent) } : {}),
+                       ...(pct(u.memory_percent) != null ? { memoryPercent: pct(u.memory_percent) } : {}) } : null;
+    return {
+        ...(pos(g.memory_bandwidth_bytes_per_sec) ? { memoryBandwidth: pos(g.memory_bandwidth_bytes_per_sec) } : {}),
+        ...(pos(g.memory_bus_width_bits) ? { memoryBusWidthBits: pos(g.memory_bus_width_bits) } : {}),
+        ...(pos(g.memory_clock_max_mhz) ? { memoryClockMaxMhz: pos(g.memory_clock_max_mhz) } : {}),
+        ...(pos(g.pcie_max_generation) ? { pcieMaxGeneration: pos(g.pcie_max_generation) } : {}),
+        ...(pos(g.pcie_max_width) ? { pcieMaxWidth: pos(g.pcie_max_width) } : {}),
+        ...(util && Object.keys(util).length ? { utilization: util } : {}),
+    };
+}
+
 export function parseInfo(raw: unknown): Capacity | null {
     const r = raw as { compute?: { system_compute?: Record<string, number>; supported_gpus?: Record<string, unknown>[]; unavailable_gpus?: unknown } };
     const c = r?.compute;
@@ -238,6 +440,8 @@ export function parseInfo(raw: unknown): Capacity | null {
             unified: !isDiscrete(runner),
             ...(g.compute ? { compute: String(g.compute) } : {}),
             ...(g.driver ? { driver: String(g.driver) } : {}),
+            ...(typeof g.pci_id === "string" && g.pci_id.trim() ? { pciId: g.pci_id.trim() } : {}),
+            ...ceilingsOf(g),
         }];
     });
     // The server's own stall bound, when it publishes one. Absent on every build before it and on every
@@ -254,6 +458,10 @@ export function parseInfo(raw: unknown): Capacity | null {
         },
         unified: devices.some((d) => d.unified),
         ...(Number.isFinite(stall) && stall > 0 ? { loadStallTimeoutMs: stall } : {}),
+        // `compute.topology`, beside the two GPU lists it is keyed against — confirmed by the server's own
+        // response (tests/fixtures/hw/info-ceilings-and-topology-2026-09-11.json). A top-level `topology` is
+        // still accepted, since nothing is lost by it.
+        topology: topologyFrom((c as { topology?: unknown }).topology ?? (raw as { topology?: unknown })?.topology),
     };
 }
 
@@ -325,6 +533,8 @@ export interface ModelResidency {
      *  which is a different thing from `phase: "idle"` — and the difference matters, because idle is the
      *  answer that carries the occupancy figure. */
     activity?: RunnerActivity;
+    /** The server's decode ceiling for this placement, or its reason for not having one — see `Roofline`. */
+    roofline?: Roofline;
 }
 
 /** What the engine is doing with a model right now, from `llama-server`'s `/slots`.
@@ -355,6 +565,62 @@ export interface RunnerActivity {
     promptTokensCached?: number;
     /** Tokens generated so far for the task in flight. Absent once it ends. */
     decoded?: number;
+}
+
+/**
+ * THE DECODE CEILING the server computed for a model's placement — how fast decode COULD go if every token did
+ * nothing but read the memory it has to read — or the server's reason for not computing one.
+ *
+ * Decode is memory-bandwidth-bound, so the ceiling is bytes-read-per-token over bandwidth, summed over the
+ * devices a layer-split model is on in turn: `1 / Σ_d (bytes_d / bw_d)`. The measured split-vs-single figures
+ * on gpubox came out identical, as that predicts. What the server sends is the EMPTY-context figure plus a
+ * per-token KV rate, because the cache is read every token too and grows with the context: at 38k tokens a 32B
+ * model reads 9.9 GB of cache against 19.8 GB of weights per token, and decode fell 30% (the ceiling predicted
+ * 33%). So a measured speed is compared against the ceiling AT ITS OCCUPANCY (`decodeCeiling`) — against the
+ * empty one, a box running at a steady 80% efficiency reads as collapsing to 53%.
+ *
+ * `unavailable` carries the reason there is no honest ceiling: `mixture_of_experts` (an MoE model reads only
+ * its active experts — a dense bound on one measured at 165%, which reads as a server bug), `partly_on_cpu`,
+ * `bandwidth_unknown`. `kvBytesPerToken` is absent for a sliding-window model, whose windowed layers stop growing
+ * at the window, so the cache follows no single per-token rate.
+ */
+export type Roofline =
+    | { basis: string; bytesPerToken: number; ceilingTps: number; kvBytesPerToken?: number;
+        devices: { gpuId?: string; pciId?: string; bytesPerToken: number; kvBytesPerToken?: number; bandwidth: number }[] }
+    | { unavailable: string };
+
+/** Parse `/api/ps` `roofline`. Null when absent or unshaped — not reported, which draws nothing. */
+export function rooflineFrom(raw: unknown): Roofline | null {
+    if (!raw || typeof raw !== "object") return null;
+    const o = raw as Record<string, unknown>;
+    if (typeof o.unavailable === "string" && o.unavailable) return { unavailable: o.unavailable };
+    const pos = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
+    const bpt = pos(o.bytes_per_token), tps = pos(o.ceiling_tokens_per_sec);
+    if (!bpt || !tps) return null;
+    const devices = (Array.isArray(o.devices) ? o.devices : []).flatMap((x) => {
+        const d = x as Record<string, unknown>;
+        const b = pos(d.bytes_per_token), bw = pos(d.memory_bandwidth_bytes_per_sec);
+        if (!b || !bw) return [];
+        return [{ ...(d.gpu_id != null ? { gpuId: String(d.gpu_id) } : {}), ...(typeof d.pci_id === "string" ? { pciId: d.pci_id } : {}),
+            bytesPerToken: b, bandwidth: bw, ...(pos(d.kv_bytes_per_context_token) ? { kvBytesPerToken: pos(d.kv_bytes_per_context_token) } : {}) }];
+    });
+    return { basis: typeof o.basis === "string" ? o.basis : "", bytesPerToken: bpt, ceilingTps: tps, devices,
+        ...(pos(o.kv_bytes_per_context_token) ? { kvBytesPerToken: pos(o.kv_bytes_per_context_token) } : {}) };
+}
+
+/** The decode ceiling AT A GIVEN CONTEXT OCCUPANCY, in tokens per second: `1 / Σ_d ((bytes_d + occ × kv_d) /
+ *  bw_d)`, per device with each device's own KV rate. For a generation, occupancy is its mean over the decode
+ *  — `prompt_tokens + decoded / 2`. Null when there is no honest figure: an unavailable ceiling, no per-device
+ *  figures, or any device with no KV rate (a sliding-window cache follows no single rate, and leaving it out
+ *  would OVERSTATE the ceiling by exactly the traffic the comparison exists to count). */
+export function decodeCeiling(r: Roofline | null | undefined, occupancy: number): number | null {
+    if (!r || "unavailable" in r || !r.devices.length) return null;
+    let secs = 0;
+    for (const d of r.devices) {
+        if (d.kvBytesPerToken == null) return null;
+        secs += (d.bytesPerToken + Math.max(0, occupancy) * d.kvBytesPerToken) / d.bandwidth;
+    }
+    return secs > 0 ? 1 / secs : null;
 }
 
 /** Parse a server `activity` object, or null when it is absent or unusable.
@@ -756,7 +1022,9 @@ export function hostBands(sample: ResourceSample): Band[] {
 
 // --- series + tracks: what the panel can plot, and how the user may combine it ------------------------------
 
-export type SeriesScope = "device" | "host";
+/** What a series MEASURES: a device's memory, the host's, or a device's UTILIZATION — a share of TIME, not
+ *  of capacity, which is why it never shares a track with the other two (see `kindRefusal`). */
+export type SeriesScope = "device" | "host" | "util";
 export interface SeriesDef {
     id: string;
     label: string;
@@ -787,6 +1055,12 @@ export function seriesCatalog(sample: ResourceSample): SeriesDef[] {
         for (const m of sample.models) {
             if (!isCpuResident(m)) out.push({ id: `vram.${d.id}.${m.model}`, label: `${m.model} on ${d.name}`, scope: "device", pool: `device:${d.id}`, deviceId: d.id, model: m.model, capacityBytes: d.totalBytes });
         }
+    }
+    // HOW BUSY each card is — only for a card that reports a reading at all. Absent is "not read", and a series
+    // for a card that never reports would be a line that is never drawn, or worse, one drawn at zero.
+    for (const d of cap?.devices ?? []) {
+        if (d.utilization && (d.utilization.gpuPercent != null || d.utilization.memoryPercent != null))
+            out.push({ id: `util.${d.id}`, label: `${d.name} busy`, scope: "util", pool: `util:${d.id}`, deviceId: d.id, capacityBytes: null });
     }
     if (cap?.host) {
         out.push({ id: "ram", label: "System RAM", scope: "host", pool: "host", capacityBytes: cap.host.totalBytes });
@@ -845,7 +1119,20 @@ export function boxAxis(pools: { id: string; ceiling: number }[]): { total: numb
  *  meaningful whole: true within one device, false across two (a model uses one card's capacity, not their
  *  sum) and false across device+host on unified memory, where the two totals describe the SAME silicon.
  *  `overlay` has no such constraint — it makes no claim about a total — so this gates only stacking. */
+/** Why these series cannot share ONE track in any mode, or null. Utilization is a share of TIME (how busy the
+ *  card was) and memory a share of CAPACITY; drawn on one 0–100% axis they would line up as though comparable,
+ *  and a card "90% busy" beside a card "90% full" says nothing about either. Separate tracks. */
+export function kindRefusal(defs: SeriesDef[]): string | null {
+    const util = defs.filter((d) => d.scope === "util").length;
+    return util && util < defs.length
+        ? "How busy a card is is a share of TIME; memory is a share of CAPACITY. One axis for both would line them up as though they were comparable. Put utilization in a track of its own."
+        : null;
+}
+
 export function stackRefusal(defs: SeriesDef[], cap: Capacity | null): string | null {
+    // A busy percentage is not an AMOUNT: there is nothing in it to add up, and a stack is a sum.
+    if (defs.some((d) => d.scope === "util"))
+        return "A card's utilization is a share of time, not an amount of memory — a stack adds its parts up, and there is nothing here to add. Overlay it.";
     const pools = new Set(defs.map((d) => d.pool));
     if (pools.size <= 1) return null;
     const scopes = new Set(defs.map((d) => d.scope));
@@ -867,6 +1154,8 @@ export function presetRefusal(p: Preset, sample: ResourceSample): string | null 
     for (const t of p.tracks) {
         const defs = t.series.map((id) => cat.find((s) => s.id === id)).filter(Boolean) as SeriesDef[];
         if (defs.length !== t.series.length) return `references a series this machine doesn't have`;
+        { const r = kindRefusal(defs); if (r) return r; }
+        if (t.mode === "total" && defs.some((d) => d.scope === "util")) return "utilization has no capacity to lay end to end";
         if (t.mode === "stack") { const r = stackRefusal(defs, sample.capacity); if (r) return r; }
     }
     return null;
@@ -892,9 +1181,8 @@ export function presetsFor(sample: ResourceSample): Preset[] {
     }
     const overview: Preset = {
         id: "overview", label: "Overview", description: "Every card in one track, overlaid — no false total.",
-        // OVERLAY, not stack: several pools have no meaningful combined total (a model can only use one
-        // card's capacity), and stackRefusal rightly refuses that. A preset must never propose a layout the
-        // rule then rejects. Overlaying claims nothing about a total, so it is the honest way to compare them.
+        // OVERLAY, not stack: each pool has its own ceiling and a stack draws against one, so stackRefusal
+        // rightly refuses a stack across pools. A preset must never propose a layout the rule then rejects. Overlaying claims nothing about a total, so it is the honest way to compare them.
         // The HOST pool is included: a CPU-resident model holds no VRAM, so a cards-only overview would make
         // it vanish from the chart while it still sits in the legend below — the same flaw that took Placement
         // out of the default slot.
@@ -940,7 +1228,16 @@ export function presetsFor(sample: ResourceSample): Preset[] {
         id: "box", label: "Whole box", description: "Every pool end to end on one axis, with the walls drawn between them.",
         tracks: [{ ...track("box", pools, "total"), heightPx: 150 }].filter(nonEmpty),
     };
-    return pools.length > 1 ? [overview, withRam, box] : [overview, withRam];
+    // A FOURTH QUESTION, not a memory view: how BUSY is each card. Its own preset because it is its own unit — a
+    // share of time — and offered only where some card reports a reading; a preset of lines that are never
+    // drawn would read as an idle box. Unified memory returns earlier and has no per-card counter to show.
+    const util = [...have].filter((id) => id.startsWith("util."));
+    const activity: Preset = {
+        id: "activity", label: "Activity",
+        description: "How busy each card is — the GPU and its memory controller, as the driver averages them.",
+        tracks: [track("activity", util, "overlay")].filter(nonEmpty),
+    };
+    return [overview, withRam, ...(pools.length > 1 ? [box] : []), ...(util.length ? [activity] : [])];
 }
 
 /** A stable identity for the MACHINE this capacity describes — its devices (id, name, runner, size) and its
@@ -1565,6 +1862,14 @@ export function sessionWindow(
  *  error than drawing everything twice. */
 export function sameMachineEvent(a: ResourceEvent, b: ResourceEvent, tolMs = 1500): boolean {
     if (a.kind !== b.kind || a.model !== b.model) return false;
+    // A GENERATION is identified by its END and the engine's own figures, never its start: a replay that
+    // lost its `gen.start` (it fell outside the requested window) starts the same span somewhere else, while
+    // two short generations of one model can end milliseconds apart (3-token calls at 35 ms in a real capture)
+    // and must stay two. The figures are the identity — a replay carries them verbatim since the backfill fix.
+    if (a.kind === "gen" && a.gen && b.gen) {
+        return a.until != null && b.until != null && Math.abs(a.until - b.until) <= tolMs
+            && a.gen.promptMs === b.gen.promptMs && a.gen.evalMs === b.gen.evalMs && a.gen.decoded === b.gen.decoded;
+    }
     if (Math.abs(a.t - b.t) > tolMs) return false;
     // A span and an instant of the same kind at the same moment are not the same thing, and two spans that
     // start together but end apart are two different periods of work.
@@ -1591,7 +1896,7 @@ export function countByKind(events: readonly ResourceEvent[]): Record<string, nu
     return out;
 }
 
-/** An event's whole lineage:/** An event's whole lineage:/** An event's whole lineage: itself, everything it descends from, and everything descended from it. Hovering
+/** An event's whole lineage: itself, everything it descends from, and everything descended from it. Hovering
  *  a sub-call should leave the step that spawned it and the run that contains it lit — the relationship is
  *  what makes the bar mean anything — and hovering the step should keep what it spawned, which is the same
  *  relationship read the other way. */
@@ -1838,7 +2143,189 @@ export function placeEvents(runs: { t: number }[][], events: ResourceEvent[], gr
  *  word "tool", which reads as a wrong fact rather than as a missing one. */
 // `boot` is an executor's COLD START — a sandbox fetching its runtime before the code runs. Like a model
 // load it is the step's wall time and none of the work you asked for, so it is drawn apart from `tool`.
-export type PhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "boot" | "dispatch" | "weights" | "context";
+export type PhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "boot" | "dispatch" | "weights" | "context"
+    | "prefill" | "decode" | "other";
+
+/** What the ENGINE measured for one generation (`gen.end.timings`, patched Ollama). Every figure is the
+ *  executor's own, which is what makes a prefill/decode boundary drawable at all: the event stream carries no
+ *  phase transition (llama.cpp emits none, and a sampled one would stamp the moment a poll NOTICED), so the
+ *  split exists only as these two durations, anchored at the end.
+ *
+ *  `promptTokensCached` keeps the server's three states apart: `0` is a cold prefill, a number is a cache hit,
+ *  ABSENT is "not reported" (an older build omitted the cold case, and so does a route that never had it).
+ *  Collapsing absent into 0 would claim a cold prefill nobody measured. `promptTokens` alone hides a cache hit
+ *  completely — it is the same on both — so the count of cached tokens and the DURATION are the evidence. */
+export interface GenTimings {
+    promptTokens?: number;
+    promptTokensCached?: number;
+    promptMs: number;
+    evalMs: number;
+    decoded?: number;
+}
+
+/** Parse `gen.end.timings`. Null unless BOTH durations are present, since the split is built from the pair —
+ *  one without the other is a boundary with only one side. */
+export function genTimingsFrom(raw: unknown): GenTimings | null {
+    if (!raw || typeof raw !== "object") return null;
+    const o = raw as Record<string, unknown>;
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+    const promptMs = n(o.prompt_ms), evalMs = n(o.eval_ms);
+    if (promptMs == null || evalMs == null) return null;
+    return {
+        promptMs, evalMs,
+        ...(n(o.prompt_tokens) != null ? { promptTokens: n(o.prompt_tokens) } : {}),
+        ...(n(o.prompt_tokens_cached) != null ? { promptTokensCached: n(o.prompt_tokens_cached) } : {}),
+        ...(n(o.decoded) != null ? { decoded: n(o.decoded) } : {}),
+    };
+}
+
+/**
+ * ONE GENERATION as the lane draws it, from the server's own edges — split into PREFILL and DECODE.
+ *
+ * Anchored at `gen.end` and built BACKWARDS, like every span in the lane: decode occupied the last `evalMs`,
+ * prefill the `promptMs` before that. Both are the engine's figures, so the boundary between them is
+ * MEASURED — which is the one thing sampling could never give us (a ~400 ms prefill against a 1–2 s cadence).
+ *
+ * `gen.start` is OLLAMA's stamp, the moment the request took the runner, so it is the near end of a
+ * REMAINDER: whatever lies between it and the prefill is neither phase — scheduling, tokenizing, sampler setup
+ * — and is drawn as `other` rather than folded into either. Usually 12–15 ms; measured at 1.78 s once, on a
+ * generation whose model was still LOADING. That load is drawn as its own span, so when one ended inside the
+ * generation the span starts where it ended (`loadEnd`) — otherwise the same seconds would be drawn twice.
+ *
+ * A re-entry into prefill after decode (a context shift) cannot be represented: the engine reports one pair
+ * of durations per request, so it is one stretch each. Without a `gen.start` (a reconnect mid-generation)
+ * there is no remainder to draw, and none is invented.
+ */
+export function genSpan(o: { model: string; startAt?: number; endAt: number; timings: GenTimings; loadEnd?: number }): ResourceEvent {
+    const { model, endAt, timings } = o;
+    const decodeFrom = endAt - timings.evalMs;
+    const prefillFrom = decodeFrom - timings.promptMs;
+    // The remainder begins at the later of the runner being taken and any load finishing; a start AFTER the
+    // prefill would mean the two clocks disagree by more than the gap, and then there is no remainder.
+    let t = Math.max(o.startAt ?? prefillFrom, o.loadEnd ?? -Infinity);
+    if (t > prefillFrom) t = prefillFrom;
+    const phases: { kind: PhaseKind; until: number }[] = [];
+    if (prefillFrom - t >= 1) phases.push({ kind: "other", until: prefillFrom });
+    phases.push({ kind: "prefill", until: decodeFrom }, { kind: "decode", until: endAt });
+    return { t, until: endAt, kind: "gen", label: `${model} generating`, model, via: "server", phases, gen: timings };
+}
+
+/** WHAT ONE GENERATION LEFT IN THE KV CACHE, as shares of the cache's token capacity, bottom to top:
+ *  reused from the cache, computed this turn (prefill), decoded this turn. The cache is reserved in full at
+ *  load and its bytes never move, so this is the only place its FILL can be read — and it is read from the
+ *  engine's own counts, not sampled.
+ *
+ *  - The capacity is `context_length × slots`: the context is PER SLOT (llama.cpp rounds each up to a multiple
+ *    of 256), and the reservation covers every slot.
+ *  - When the cached count was NOT reported (an older build omitted it; a route that never had it), the prompt
+ *    is ONE layer (`prompt`) rather than a guessed split — 0 cached is a cold prefill and absent is unknown.
+ *  - Shares are of TOKENS, not bytes: a sliding-window layer stops growing at its window and recurrent state
+ *    does not grow per token at all, so "40% of the band" must never be read as 40% of the bytes in use.
+ *  - `overflow` when the tokens exceed the capacity: the context SHIFTED (older tokens were dropped to make
+ *    room), and the layers are scaled to fit rather than drawn past the band.
+ *
+ *  Null when there is no prompt count or no capacity to be a share OF. */
+export function kvFill(gen: GenTimings, contextTokens: number | null | undefined, slots = 1): { cached?: number; computed?: number; prompt?: number; decoded: number; overflow: boolean } | null {
+    const cap = (contextTokens ?? 0) * Math.max(1, slots);
+    if (!(cap > 0) || gen.promptTokens == null) return null;
+    const decoded = gen.decoded ?? 0;
+    const total = gen.promptTokens + decoded;
+    const scale = total > cap ? cap / total : 1;
+    const f = (n: number) => (n * scale) / cap;
+    const cached = gen.promptTokensCached;
+    return {
+        ...(cached != null
+            ? { cached: f(Math.min(cached, gen.promptTokens)), computed: f(Math.max(0, gen.promptTokens - cached)) }
+            : { prompt: f(gen.promptTokens) }),
+        decoded: f(decoded),
+        overflow: total > cap,
+    };
+}
+
+/** How far apart OUR finish stamp and the server's `gen.end` may be and still be one generation. Our stamp is
+ *  taken in the service worker when the response completes, so it trails the server's by the return leg of the
+ *  network, and the server's clock reaches us through one `hello` anchor. Wide enough for both; a model runs
+ *  one request at a time at `n_parallel` 1, so a neighbour of the same model is seconds away, not this. */
+export const GEN_JOIN_TOLERANCE_MS = 1500;
+
+/** Where a SESSION block's model work ends — the whole block for a plain turn, the last model-ish phase for a
+ *  tool step (the rest is dispatch, a human at a gate, the tool). */
+const modelEndOf = (e: ResourceEvent): number | null => {
+    if (e.kind === "gen") return e.until ?? null;
+    if (e.kind !== "tool" || !e.phases?.length) return null;
+    let end: number | null = null;
+    for (const ph of e.phases) if (["model", "think", "answer", "call"].includes(ph.kind)) end = ph.until;
+    return end;
+};
+
+/**
+ * JOIN the server's generations to the session blocks they ARE. Our own calls reach the server too, so with
+ * the stream carrying, every one of them arrives twice — once as the step block the session drew, once as a
+ * server `gen` span — and drawing both is the same generation on the lane twice.
+ *
+ * The session block wins (it carries the click-through, the cost and the channel phases), and takes the
+ * server's figures: `gen` goes onto it, and its model stretch is split with the measured prefill — the
+ * leading, pre-first-token stretch of a streamed call becomes `other | prefill` (its channel phases ARE the
+ * decode); a non-streamed call's single `model` phase becomes `other | prefill | decode`, anchored backwards
+ * from where the model work ended. A split that does not FIT the stretch it would subdivide (clock skew, a
+ * mis-join) is not drawn: the figures still attach, the phases are left as they were.
+ *
+ * Matched per model, nearest first, each side at most once. Server gens that match nothing are other traffic
+ * and are returned to be drawn as they are.
+ */
+export function joinGens(sessionEvents: ResourceEvent[], serverEvents: ResourceEvent[]): { session: ResourceEvent[]; server: ResourceEvent[] } {
+    const gens = serverEvents.filter((e) => e.kind === "gen" && e.via === "server" && e.gen && e.model && e.until != null);
+    if (!gens.length) return { session: sessionEvents, server: serverEvents };
+    const pairs: { si: number; g: ResourceEvent; d: number }[] = [];
+    sessionEvents.forEach((s, si) => {
+        const end = modelEndOf(s);
+        if (end == null || !s.model || s.open) return;
+        for (const g of gens) {
+            if (g.model !== s.model) continue;
+            const d = Math.abs(end - g.until!);
+            if (d <= GEN_JOIN_TOLERANCE_MS) pairs.push({ si, g, d });
+        }
+    });
+    pairs.sort((a, b) => a.d - b.d);
+    const usedS = new Set<number>(), usedG = new Set<ResourceEvent>();
+    const session = sessionEvents.slice();
+    for (const { si, g } of pairs) {
+        if (usedS.has(si) || usedG.has(g)) continue;
+        usedS.add(si); usedG.add(g);
+        session[si] = withGen(session[si], g.gen!);
+    }
+    return { session, server: serverEvents.filter((e) => !usedG.has(e)) };
+}
+
+/** One session block with a matched generation's figures, and its model stretch split where they fit. */
+function withGen(e: ResourceEvent, timings: GenTimings): ResourceEvent {
+    const phases = e.phases?.length ? e.phases : [{ kind: "model" as PhaseKind, until: e.until ?? e.t }];
+    const out: { kind: PhaseKind; until: number }[] = [];
+    let from = e.t, split = false;
+    for (const [i, ph] of phases.entries()) {
+        const next = phases[i + 1];
+        if (!split && ph.kind === "model") {
+            const len = ph.until - from;
+            // Followed by a channel phase → this is the stretch BEFORE the first token: prefill ends where it
+            // ends. Otherwise it is the whole model call: decode ends where it ends, prefill before that.
+            const streamed = !!next && ["think", "answer", "call"].includes(next.kind);
+            const need = timings.promptMs + (streamed ? 0 : timings.evalMs);
+            if (need <= len) {
+                const prefillEnd = streamed ? ph.until : ph.until - timings.evalMs;
+                const prefillFrom = prefillEnd - timings.promptMs;
+                if (prefillFrom - from >= 1) out.push({ kind: "other", until: prefillFrom });
+                out.push({ kind: "prefill", until: prefillEnd });
+                if (!streamed) out.push({ kind: "decode", until: ph.until });
+                split = true;
+                from = ph.until;
+                continue;
+            }
+        }
+        out.push(ph);
+        from = ph.until;
+    }
+    return { ...e, gen: timings, ...(split ? { phases: out } : {}) };
+}
 
 export interface ResourceEvent {
     t: number;
@@ -1920,6 +2407,17 @@ export interface ResourceEvent {
      *  load does not fail — it quietly runs the remainder on the CPU and is merely slow. There is no error
      *  and no other signal, so this difference is the only way to know a load was degraded. */
     totalBytes?: number;
+    /** The ENGINE's own figures for a generation — prompt and cached tokens, prefill and decode durations,
+     *  tokens decoded — when the server's event stream reported it (`gen.end.timings`). On a server `gen`
+     *  span, and on a session block the server's generation was JOINED to (see `joinGens`). */
+    gen?: GenTimings;
+    /** The model's KV-cache CAPACITY when a generation ended — its context (per slot) and slot count, read from
+     *  the sample at that moment — so the cache fill can be drawn as shares wherever the span is shown, not only
+     *  inside a drilled-in chart. Absent when no sample carried the model then. */
+    genCtx?: { contextTokens: number; slots: number };
+    /** The model's decode CEILING (or the reason it has none) at the generation's end, from the same sample as
+     *  `genCtx` — so the tooltip can put the measured decode rate against the ceiling AT THAT CONTEXT. */
+    genRoofline?: Roofline;
     /** This span has NOT FINISHED: `until` is where it had reached when the snapshot was taken, not where it
      *  ended. Only ever set by an `eventsFrom` given a `now` — a surface drawing live. It exists so the UI can
      *  say "still going" rather than drawing a bar whose right edge looks like a measured end. */
@@ -1944,6 +2442,9 @@ export interface ResourceEvent {
         /** How long the model took to LOAD before this call could start (`load_duration`). Inside `wallMs`,
          *  so anything deriving "network" from the wall clock has to subtract it — see the tooltip. */
         loadMs?: number;
+        /** How many of `inTokens` the server's prefix cache served — see `TokenUsage.cachedTokens`. Time, not
+         *  spend: shown beside the count, never subtracted from it. */
+        cachedTokens?: number;
     };
 }
 

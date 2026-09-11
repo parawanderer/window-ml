@@ -1,0 +1,16 @@
+{
+  "status": "unavailable",
+  "detail": "NVML is not available: dlopen libnvidia-ml.so.1: /fakenvml/libnvidia-ml.so.1: file too short; dlopen libnvidia-ml.so: /fakenvml/libnvidia-ml.so: file too short",
+  "gpus": [
+    "0000:01:00.0",
+    "0000:03:00.0"
+  ],
+  "links": [
+    {
+      "a": "0000:01:00.0",
+      "b": "0000:03:00.0",
+      "type": "unknown",
+      "reason": "NVML is not available: dlopen libnvidia-ml.so.1: /fakenvml/libnvidia-ml.so.1: file too short; dlopen libnvidia-ml.so: /fakenvml/libnvidia-ml.so: file too short"
+    }
+  ]
+}

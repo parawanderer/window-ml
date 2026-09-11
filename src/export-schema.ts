@@ -496,9 +496,14 @@ export interface ExportEvent {
  * ExportEventCost.promptEvalMs} exists to fix: one number that is the tool plus the network, and a
  * difference between two runs attributable to neither.
  *
+ * `prefill` / `decode` split a generation by the ENGINE's own durations (patched Ollama's `gen.end`), anchored
+ * at its end; `other` is what lies between the request taking the runner and the prefill — neither phase, and
+ * named as neither rather than folded into one.
+ *
  * Switch on the kinds you know and fall through on the rest.
  */
-export type ExportPhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "boot" | "dispatch" | "weights" | "context";
+export type ExportPhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "boot" | "dispatch" | "weights" | "context"
+    | "prefill" | "decode" | "other";
 
 export interface ExportEventPhase {
     kind: ExportPhaseKind;

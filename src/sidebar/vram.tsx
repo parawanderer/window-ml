@@ -25,7 +25,7 @@ import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KE
 export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, dropInferredLoads, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, memorySplit, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote } from "../resource-model";
+import { parseInfo, holdCapacity, memorySplit, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, joinGens, rooflineFrom, kindRefusal } from "../resource-model";
 import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -63,6 +63,7 @@ export function residencyOf(m: LoadedModel): ModelResidency {
         ...(host ? { memoryHost: host } : {}),
         ...((() => { const pl = placementFrom(m.placement); return pl ? { placement: pl } : {}; })()),
         ...((() => { const ac = activityFrom(m.activity); return ac ? { activity: ac } : {}; })()),
+        ...((() => { const rf = rooflineFrom(m.roofline); return rf ? { roofline: rf } : {}; })()),
     };
 }
 import { RenderPanel, PyBenchOut } from "./render-panel";
@@ -353,6 +354,13 @@ export const machineEvents = signal<ResourceEvent[]>([]);
 export const othersOpen = signal(false);
 /** Loads that have started and not yet completed, so `load.complete` can close the span it opened. */
 const openLoads = new Map<string, { t: number; weightsAt?: number; weightsBytes?: number }>();
+/** Generations that have started and not yet ended, PER MODEL and in order — generations interleave across
+ *  models (one capture: gemma opened, granite opened and closed, gemma closed), so one slot per model is the
+ *  key, and a queue within it covers a server running more than one slot. */
+const openGens = new Map<string, number[]>();
+/** When each model's most recent LOAD finished, so a generation that was waiting on it starts where the load
+ *  ended rather than drawing the load's seconds a second time (see `genSpan`). */
+const loadEndedAt = new Map<string, number>();
 /** WHICH MODELS ARE LOADING RIGHT NOW — the open half of `openLoads`, as a signal so a reading can carry it.
  *
  *  This is the answer to a question `/api/ps` cannot be asked: for most of a load Ollama has no runner object
@@ -381,7 +389,7 @@ const pushMachine = (e: ResourceEvent): void => {
 /** One edge frame → what the lane draws. Returns nothing for the frames that are not events in their own
  *  right (`sample`, `heartbeat`, `hello`) and for a `load.complete` with no start to close, which is what a
  *  reconnect mid-load looks like — half a span is worse than none, since its left edge would be invented. */
-export function machineEventFrom(frame: { kind: string; model?: string; reason?: string; duration_ms?: number; weights_ms?: number; context_ms?: number; size_vram?: number; size_total?: number }, at: number): ResourceEvent | null {
+export function machineEventFrom(frame: { kind: string; model?: string; reason?: string; duration_ms?: number; weights_ms?: number; context_ms?: number; size_vram?: number; size_total?: number; timings?: unknown }, at: number): ResourceEvent | null {
     // CANONICALISED ONCE, here at the boundary, so nothing downstream has to know that the same model has two
     // spellings on one server: the stream says `registry.ollama.ai/library/gemma4:31b`, `/api/ps` says
     // `gemma4:31b`. Matching them late — at the colour, at the legend, at the off-box check — means every new
@@ -409,6 +417,7 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
             const open = model ? openLoads.get(model) : undefined;
             if (!model || !open) return null;
             openLoads.delete(model); noteLoading();
+            loadEndedAt.set(model, at);
             // The server reports the split DIRECTLY when it can (`weights_ms`/`context_ms` on the closing
             // edge), and that is the form to prefer: differencing two frames only works for a client that was
             // already connected when the load began, so a panel opened mid-load lost the divider entirely.
@@ -447,6 +456,24 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
             const from = model ? servingSince.value[model] : undefined;
             if (model) { const next = { ...servingSince.value }; delete next[model]; servingSince.value = next; }
             return model && from ? { t: from, until: at, kind: "serve", label: `${model} serving`, model } : null;
+        }
+        // A GENERATION, split into prefill and decode by the engine's own durations (see `genSpan`). The
+        // opening edge is held, not drawn: the span needs its end, and the split is anchored there.
+        case "gen.start":
+            if (model) openGens.set(model, [...(openGens.get(model) ?? []), at]);
+            return null;
+        case "gen.end": {
+            if (!model) return null;
+            const q = openGens.get(model) ?? [];
+            const startAt = q.shift();
+            if (q.length) openGens.set(model, q); else openGens.delete(model);
+            const timings = genTimingsFrom(frame.timings);
+            // No timings (an older build) → no split to draw and nothing the serving span does not already
+            // say; a bare "generating" bar would be a second copy of it.
+            if (!timings) return null;
+            const loadEnd = loadEndedAt.get(model);
+            return genSpan({ model, endAt: at, timings, ...(startAt != null ? { startAt } : {}),
+                ...(loadEnd != null && startAt != null && loadEnd > startAt && loadEnd <= at ? { loadEnd } : {}) });
         }
         case "load.failed": {
             if (model) { openLoads.delete(model); noteLoading(); }
@@ -859,8 +886,29 @@ export function timeline(): ResourceEvent[] {
     // only presence IS the lane: its row offered a control that could not remove the one thing it drew. The
     // row itself stays, because the row is what you turn it back on with.
     const off = hiddenModels.value;
-    const all = [...dropInferredLoads(fromSessions, machine), ...machine].sort((a, b) => a.t - b.t);
+    // OUR OWN GENERATIONS ARRIVE TWICE with the stream carrying — as the step the session drew and as the
+    // server's `gen` span — so the server's is joined onto ours (its prefill/decode figures travel with it) and
+    // only the generations that match nothing, other clients' traffic, are drawn as spans of their own.
+    const joined = joinGens(dropInferredLoads(fromSessions, machine), machine);
+    const all = [...joined.session, ...joined.server].map(withGenCtx).sort((a, b) => a.t - b.t);
     return off.size ? all.filter((e) => !e.model || !off.has(e.model)) : all;
+}
+
+/** A generation's cache CAPACITY at its end, read from the first sample at or after it that carries the model —
+ *  where the counts describe the cache. Attached here, where the history is, so the lane's tooltip can draw the
+ *  fill in any preset; the drilled-in chart reads the same sample itself. */
+function withGenCtx(e: ResourceEvent): ResourceEvent {
+    if (!e.gen || !e.model || e.until == null || e.genCtx) return e;
+    const hist = resourceHistory.value;
+    for (const s of hist) {
+        if (s.t < e.until) continue;
+        const r = s.models.find((m) => m.model === e.model);
+        if (!r) continue;
+        return { ...e,
+            ...(r.contextLength ? { genCtx: { contextTokens: r.contextLength, slots: r.activity?.slots ?? 1 } } : {}),
+            ...(r.roofline ? { genRoofline: r.roofline } : {}) };
+    }
+    return e;
 }
 
 /** The session the lane scopes to when scoping is on: whichever one is open. Null in the list view, where
@@ -1466,7 +1514,7 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
                                         {/* THE WHOLE BOX ON ONE AXIS. Offered only where there is more than
                                             one pool to lay end to end — on a single pool it would be the
                                             stacked view with the models taken out, which is strictly less. */}
-                                        {t.series.length > 1 ? <option value="total">total</option> : null}
+                                        {t.series.length > 1 && !t.series.some((x) => x.startsWith("util.")) ? <option value="total">total</option> : null}
                                     </select>
                                     {refusal ? <span class="tt-pop wrap left" role="tooltip">{refusal}</span> : null}
                                 </span>
@@ -1477,7 +1525,9 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
                             const on = t.series.includes(sd.id);
                             const next = on ? t.series.filter(x => x !== sd.id) : [...t.series, sd.id];
                             const defs = next.map(id => cat.find(c => c.id === id)!).filter(Boolean);
-                            const refusal = !on && t.mode === "stack" ? stackRefusal(defs, sample.capacity) : null;
+                            // Mixing KINDS is refused in every mode (a share of time beside a share of memory
+                            // compares nothing); a stack is refused on top of that where it would not add up.
+                            const refusal = !on ? (kindRefusal(defs) ?? (t.mode === "stack" ? stackRefusal(defs, sample.capacity) : null)) : null;
                             return (
                                 <label class={`rc-eopt${refusal ? " tt off" : ""}`} key={sd.id}>
                                     <input type="checkbox" checked={on} disabled={!!refusal}

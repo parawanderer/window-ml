@@ -212,6 +212,8 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
             // whole load inside its wall time, and what is left after subtracting only generation and prompt
             // eval was being reported as network — 70.8s of it, on a real box.
             ...(u.loadMs != null ? { loadMs: u.loadMs } : {}),
+            // The prefix-cache hit, when the route reported it — 0 (cold) kept, absent kept absent.
+            ...(u.cachedTokens != null ? { cachedTokens: u.cachedTokens } : {}),
         };
     };
     const call = (ts: number | undefined, u: TokenUsage | null | undefined, model: string | null | undefined,

@@ -1,0 +1,73 @@
+{
+  "model": "qwen3:32b",
+  "num_ctx": 65536,
+  "context_length": 40960,
+  "devices": [
+    "0"
+  ],
+  "roofline": {
+    "basis": "dense_weights",
+    "bytes_per_token": 19757688422,
+    "ceiling_tokens_per_sec": 90.70534779789736,
+    "kv_bytes_per_context_token": 262144,
+    "devices": [
+      {
+        "gpu_id": "0",
+        "pci_id": "0000:01:00.0",
+        "bytes_per_token": 19757688422,
+        "kv_bytes_per_context_token": 262144,
+        "memory_bandwidth_bytes_per_sec": 1792128000000
+      }
+    ]
+  },
+  "runs": [
+    {
+      "prompt_tokens": 53,
+      "decoded": 256,
+      "decode_tps": 69.60419952587577,
+      "load_ms": 1.515868,
+      "label": "short",
+      "occupancy": 181.0,
+      "ceiling_empty": 90.70534779789736,
+      "ceiling_at_occupancy": 90.48804088105288,
+      "of_ceiling_at_occupancy": 0.7692088241513698,
+      "of_ceiling_empty": 0.7673659956738434
+    },
+    {
+      "prompt_tokens": 53,
+      "decoded": 256,
+      "decode_tps": 69.74503829438508,
+      "load_ms": 1.988152,
+      "label": "short",
+      "occupancy": 181.0,
+      "ceiling_empty": 90.70534779789736,
+      "ceiling_at_occupancy": 90.48804088105288,
+      "of_ceiling_at_occupancy": 0.7707652593127239,
+      "of_ceiling_empty": 0.7689187020128689
+    },
+    {
+      "prompt_tokens": 37623,
+      "decoded": 256,
+      "decode_tps": 48.35972685066157,
+      "load_ms": 2.666835,
+      "label": "long",
+      "occupancy": 37751.0,
+      "ceiling_empty": 90.70534779789736,
+      "ceiling_at_occupancy": 60.434843709653386,
+      "of_ceiling_at_occupancy": 0.8001961100949612,
+      "of_ceiling_empty": 0.5331518816113574
+    },
+    {
+      "prompt_tokens": 37623,
+      "decoded": 256,
+      "decode_tps": 48.4343043528439,
+      "load_ms": 2.280845,
+      "label": "long",
+      "occupancy": 37751.0,
+      "ceiling_empty": 90.70534779789736,
+      "ceiling_at_occupancy": 60.434843709653386,
+      "of_ceiling_at_occupancy": 0.8014301250705045,
+      "of_ceiling_empty": 0.5339740768180667
+    }
+  ]
+}

@@ -7,6 +7,7 @@
 import { test, expect } from "@playwright/test";
 import { launchExtension, configureExtension, waitForMl, openRunInSidebar } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
+import { TOPOLOGIES, pci } from "../fixtures/boxes.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const GiB = 1024 ** 3;
@@ -3809,6 +3810,142 @@ test("resource panel: the total view lays every pool end to end, with walls", as
 
 // THE TOTAL VIEW ANSWERS A HOVER, as every other view does. It shipped with none: pointing at the plot or at a
 // legend key read nothing, while the same pools drawn as lines one preset over opened a reading of each.
+// HOW THE CARDS CONNECT, against the MOCK topologies (tests/fixtures/boxes.mjs — unverified against real NVLink
+// hardware by agreement; replace with the first real capture). A 4x3090 cabled 0–2 and 1–3: the bands must
+// reorder so each bridge falls on a wall, and every card's hover names its link to every other card.
+test("resource panel: whole box bridges directly-linked cards, reordered so each bridge has a wall", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const rig = (topology) => ({ compute: {
+            system_compute: { cpu_cores: 32, total_memory: 137438953472, free_memory: 100 * GiB },
+            supported_gpus: [0, 1, 2, 3].map((i) => ({ gpu_id: String(i), pci_id: pci(i), name: `CUDA${i}`, runner: "CUDA",
+                total_memory: 25757220864, physical_memory: 25769803776, free_memory: 25757220864 - (i + 1) * GiB })),
+            topology } });
+        fake.setCapacity(rig(TOPOLOGIES.rigCrossed));
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_layout: { presetId: "custom", tracks: [
+            { id: "box", series: ["vram.0", "vram.1", "vram.2", "vram.3", "ram"], mode: "total", heightPx: 140 },
+            { id: "c0", series: ["vram.0"], mode: "stack", heightPx: 80 },
+        ] } }));
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-boxfill").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(2500);
+
+        // ORDER: the bridges join 0–2 and 1–3, so the cards are laid out 0, 2, 1, 3 — each bridge on a wall.
+        const keys = (await frame.locator(".rc-track").first().locator(".rc-legend .rc-key").allTextContents()).map((k) => k.trim().split(" ")[0]);
+        expect(keys).toEqual(["CUDA0", "CUDA2", "CUDA1", "CUDA3", "System"]);
+        // Two bridges — the two bridged pairs — and the walls between them and to RAM stay solid.
+        await expect(frame.locator(".rc-boxwall.bridge").first()).toBeAttached({ timeout: 5000 });
+        const perSeg = await frame.locator(".rc-track").first().locator(".rc-seg").first().locator(".rc-boxwall")
+            .evaluateAll((els) => els.map((e) => e.className.replace("rc-boxwall", "").trim() || "solid"));
+        expect(perSeg).toEqual(["bridge", "solid", "bridge", "solid"]);
+
+        // THE POOL READING SAYS WHAT EACH BRIDGE IS — the walls themselves open no tooltip.
+        const plot = frame.locator(".rc-track").first().locator(".rc-plot");
+        const bb = await plot.boundingBox();
+        await plot.hover({ position: { x: bb.width / 2, y: bb.height * 0.9 } });
+        const links = frame.locator(".rc-tip-pools .rc-tip-links");
+        await expect(links).toBeVisible({ timeout: 5000 });
+        const lt = (await links.textContent()).replace(/\s+/g, " ");
+        expect(lt).toMatch(/CUDA0 ═ CUDA2\s*NVLink ×4 \(NV4\) · 112\.5 GB\/s/);
+        expect(lt).toMatch(/CUDA1 ═ CUDA3/);
+
+        // THE CARD'S HOVER: one line per OTHER card, direct fabric first — never one "interconnect" for the card.
+        // Read from the `.tt-pop` in the DOM, as the other facts test does: the floating layer shows a COPY, so
+        // the original is present and hidden by design.
+        const facts = frame.locator(".rc-devfacts .tt-pop").first();
+        const ft = (await facts.textContent()).replace(/\s+/g, " ");
+        expect(ft).toMatch(/to CUDA2: NVLink ×4 \(NV4\)/);
+        expect(ft).toMatch(/to CUDA1: PCIe, through the CPU's host bridge \(PHB\)/);
+        expect(ft.indexOf("CUDA2"), "the bridged peer is listed first").toBeLessThan(ft.indexOf("CUDA1"));
+
+        // NOTHING MEASURED IS NOT "NO NVLINK": the same box, with the driver refusing the NVLink calls.
+        fake.setCapacity(rig({ ...TOPOLOGIES.unavailable, gpus: [0, 1, 2, 3].map(pci) }));
+        await expect.poll(() => frame.locator(".rc-boxwall.bridge").count(), { timeout: 10000 }).toBe(0);
+        await expect.poll(async () => (await facts.textContent()).replace(/\s+/g, " "), { timeout: 5000 })
+            .toMatch(/could not be measured \(NVML is not available/);
+        expect((await facts.textContent())).not.toMatch(/PCIe/);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// HOW BUSY, not how full: the Activity view. Lines per card — solid GPU, dashed memory controller — and a card
+// that stops reporting draws no line rather than a line at zero.
+test("resource panel: Activity draws each card's utilization, and a missing reading is a gap, not zero", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const info = (u1) => ({ compute: {
+            system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 100 * GiB },
+            supported_gpus: [0, 1].map((i) => ({ gpu_id: String(i), pci_id: pci(i), name: `CUDA${i}`, runner: "CUDA",
+                total_memory: 101972967424, physical_memory: 102641958912, free_memory: 90 * GiB,
+                ...(i === 0 ? { utilization: { gpu_percent: 99, memory_percent: 90 } } : u1 ? { utilization: u1 } : {}) })) } });
+        fake.setCapacity(info({ gpu_percent: 0, memory_percent: 0 }));
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_layout: { presetId: "activity", tracks: [
+            { id: "activity", series: ["util.0", "util.1"], mode: "overlay", heightPx: 110 },
+        ] } }));
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-util-gpu").count(), { timeout: 25000 }).toBeGreaterThan(1);
+        const keys = frame.locator(".rc-legend .rc-key");
+        await expect(keys.first()).toHaveText(/CUDA0 99% · memory 90%/);
+        // 0 is IDLE, and drawn as such: a real reading of an idle card.
+        await expect(keys.nth(1)).toHaveText(/CUDA1 0% · memory 0%/);
+        expect(await frame.locator(".rc-util-mem").count(), "the memory controller is its own (dashed) line").toBeGreaterThan(1);
+
+        // The second card STOPS reporting: its line ends and its figure reads as not reported — never a 0.
+        fake.setCapacity(info(null));
+        await expect(keys.nth(1)).toHaveText(/CUDA1 —/, { timeout: 15000 });
+        const plot = frame.locator(".rc-plot").first();
+        const bb = await plot.boundingBox();
+        await plot.hover({ position: { x: bb.width - 4, y: bb.height / 2 } });
+        const tip = frame.locator(".rc-tip-pools");
+        await expect(tip).toBeVisible({ timeout: 5000 });
+        const t = (await tip.textContent()).replace(/\s+/g, " ");
+        expect(t).toMatch(/CUDA1\s*GPU not reported/);
+        expect(t).toMatch(/averaged by the driver/);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// A PARTIAL MESH must not read as a switch: on a DGX-1 cube-mesh every ADJACENT pair of the chosen order is linked,
+// so every wall is a bridge — and the run is marked partial, with the pairs that are not linked named.
+test("resource panel: a partial NVLink mesh is drawn as partial, never as one group of eight", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const ids = [0, 1, 2, 3, 4, 5, 6, 7];
+        fake.setCapacity({ compute: {
+            system_compute: { cpu_cores: 64, total_memory: 1099511627776, free_memory: 900 * GiB },
+            supported_gpus: ids.map((i) => ({ gpu_id: String(i), pci_id: pci(i), name: `CUDA${i}`, runner: "CUDA",
+                total_memory: 34359738368, physical_memory: 34359738368, free_memory: 30 * GiB })),
+            topology: TOPOLOGIES.dgx1 } });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_layout: { presetId: "custom", tracks: [
+            { id: "box", series: [0, 1, 2, 3, 4, 5, 6, 7].map((i) => `vram.${i}`), mode: "total", heightPx: 160 },
+        ] } }));
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-boxfill").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(2500);
+        const walls = await frame.locator(".rc-seg").first().locator(".rc-boxwall")
+            .evaluateAll((els) => els.map((e) => e.className.replace("rc-boxwall", "").trim()));
+        expect(walls.length).toBe(7);
+        expect(walls.every((w) => w === "bridge partial"), `walls: ${walls}`).toBe(true);
+        const plot = frame.locator(".rc-plot").first();
+        const bb = await plot.boundingBox();
+        await plot.hover({ position: { x: bb.width / 2, y: bb.height * 0.5 } });
+        await expect(frame.locator(".rc-tip-pools .rc-tip-links")).toContainText("PARTIAL mesh", { timeout: 5000 });
+    } finally { await ext.close(); await fake.stop(); }
+});
+
 test("resource panel: the total view's plot and keys open the pool reading, picking the band you are inside", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();

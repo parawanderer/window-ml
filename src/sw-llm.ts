@@ -75,6 +75,10 @@ export const normalizeUsage = (u: any): TokenUsage | null => {
     if (evalNs != null && evalNs > 0) out.evalMs = evalNs / 1e6;
     if (loadNs != null && loadNs > 0) out.loadMs = loadNs / 1e6;
     if (promptNs != null && promptNs > 0) out.promptEvalMs = promptNs / 1e6;
+    // The prefix-cache hit, in whichever spelling this route uses. A real 0 is kept (a cold prefill); absent
+    // stays absent (not reported), which is why `n()` rather than `|| 0`.
+    const cached = n(u.prompt_tokens_details?.cached_tokens) ?? n(u.prompt_eval_cached_count) ?? n(u.cached_tokens);
+    if (cached != null && cached >= 0) out.cachedTokens = cached;
     return out;
 };
 
@@ -830,6 +834,8 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
                 usage = normalizeUsage({
                     prompt_tokens: f.end.promptTokens, completion_tokens: f.end.completionTokens,
                     total_tokens: (f.end.promptTokens || 0) + (f.end.completionTokens || 0),
+                    // `optional` on the wire, so undefined here means the server did not report it.
+                    ...(f.end.cachedTokens !== undefined ? { cached_tokens: f.end.cachedTokens } : {}),
                 });
             }
             // `Start` carries the id/model/created that JSON repeated per token. Nothing downstream reads
@@ -944,7 +950,8 @@ export async function streamAgentTurn(
                 if (f.end) {
                     handleChunk({ delta: "", reasoning: "", toolCall: f.end.finishReason === "tool_calls", toolCallDelta: null, sources: null,
                                   usage: normalizeUsage({ prompt_tokens: f.end.promptTokens, completion_tokens: f.end.completionTokens,
-                                                          total_tokens: (f.end.promptTokens || 0) + (f.end.completionTokens || 0) }) });
+                                                          total_tokens: (f.end.promptTokens || 0) + (f.end.completionTokens || 0),
+                                                          ...(f.end.cachedTokens !== undefined ? { cached_tokens: f.end.cachedTokens } : {}) }) });
                 }
             }
         }
