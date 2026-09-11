@@ -2590,16 +2590,16 @@ test("resource panel: in snap mode the selection box lands on datapoints, not be
 
         const plot = await frame.locator(".rc-plot").first().boundingBox();
         const y = plot.y + plot.height * 0.5;
-        /** The selection box and the snap mark, as fractions of the plot, read in ONE go. */
-        const edges = async () => {
-            const sel = await frame.locator(".rc-brush").first().boundingBox();
-            const dot = await frame.locator(".rc-snapdot").first().boundingBox();
-            return sel && dot ? {
-                left: (sel.x - plot.x) / plot.width,
-                right: (sel.x + sel.width - plot.x) / plot.width,
-                mark: (dot.x + dot.width / 2 - plot.x) / plot.width,
-            } : null;
-        };
+        /** The selection box and the snap mark, as fractions of the plot, read in ONE go — genuinely: one
+         *  synchronous evaluation in the frame, so no render can land between the two rectangles. It was two
+         *  Playwright `boundingBox()` calls, and a sample arriving between them moved every fraction on the
+         *  live axis, so the box was measured against the mark one sample later: 0.405 against 0.500 on CI. */
+        const edges = () => frame.evaluate(() => {
+            const plotEl = document.querySelector(".rc-plot"), sel = document.querySelector(".rc-brush"), dot = document.querySelector(".rc-snapdot");
+            if (!plotEl || !sel || !dot) return null;
+            const p = plotEl.getBoundingClientRect(), b = sel.getBoundingClientRect(), d = dot.getBoundingClientRect();
+            return { left: (b.left - p.left) / p.width, right: (b.right - p.left) / p.width, mark: (d.left + d.width / 2 - p.left) / p.width };
+        });
 
         /**
          * THE MARK IS THE WITNESS, and it is read at the SAME INSTANT as the box.
