@@ -86,6 +86,10 @@ export interface RunAgentHostDeps {
     // true → this UNCREDENTIALED fetch is same-origin as the run (its own / consented origins) → FREE (no
     // prompt), like a same-origin navigate: the page could fetch its own origin itself. Background-decided.
     fetchSameOrigin?(url: string): boolean;
+    // true → `url` is the page the run's tab is on NOW → every mode is free, as-you included (the page already
+    // holds it and can fetch its own URL with its own cookies). Prompt-only: FETCH_URL re-judges against the
+    // sender's real frame URL.
+    fetchIsCurrentPage?(url: string): boolean;
     // Debug fan-out (agent-step events: the pending START then the DONE).
     emit?: AgentLoopDeps["emit"];
     // Debug fan-out for a model call being UNDERWAY (agent-turn).
@@ -170,6 +174,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
             // auto-approves; a new one gates once, then is remembered.
             if (name === "fetch_url") {
                 const url = String((args as { url?: unknown }).url ?? "");
+                if (deps.fetchIsCurrentPage?.(url)) return "same-origin";   // the page you are on: any mode, no prompt
                 const sameOrigin = !!deps.fetchSameOrigin?.(url);
                 if ((args as { credentials?: unknown }).credentials) {
                     // CREDENTIALED (as-you): cross-origin always asks. Same-origin asks too UNLESS the user opted

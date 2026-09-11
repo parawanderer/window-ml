@@ -73,6 +73,26 @@ function htmlResponse(status = 200) {
 
 // A streaming response stub: `lines` are raw wire lines (SSE "data: {...}\n" or
 // Ollama NDJSON) fed through body.getReader() one read() at a time.
+/** A BINARY streamed response, with the content-type that selects the protobuf path. Chunk boundaries are
+ *  whatever the caller passes, deliberately: the framing has to survive a message split across two reads. */
+function binaryStreamResponse(chunks, { status = 200, type = "application/protobuf; delimited=varint" } = {}) {
+    let i = 0;
+    return {
+        ok: status >= 200 && status < 300,
+        status,
+        headers: { get: (k) => (String(k).toLowerCase() === "content-type" ? type : null) },
+        body: {
+            getReader: () => ({
+                read: async () => (i < chunks.length
+                    ? { done: false, value: new Uint8Array(chunks[i++]) }
+                    : { done: true, value: undefined })
+            })
+        },
+        text: async () => { throw new Error("binary response has no text()"); },
+        json: async () => { throw new Error("streaming response has no json()"); }
+    };
+}
+
 function streamResponse(lines, { status = 200 } = {}) {
     const enc = new TextEncoder();
     let i = 0;
@@ -423,8 +443,10 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
 // instead of a hand-rolled fake. No content.js relay — these helpers are pure
 // page-context DOM code and never touch the background. `html` is the <body>
 // inner HTML. Returns { ml, window, document } for querying in assertions.
-function loadDomWorld(html = "") {
-    const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`);
+// `url` sets the document's address (jsdom's default is about:blank), for code that branches on where the page
+// IS — a local file:// page, for one.
+function loadDomWorld(html = "", { url } = {}) {
+    const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, url ? { url } : undefined);
     const win = dom.window;
     const context = {
         console: mkConsole(),
@@ -435,6 +457,9 @@ function loadDomWorld(html = "") {
         window: win,
         document: win.document,
         location: win.location,
+        // A browser global; without it every `new URL` in injected.js throws inside its own try and reads as
+        // "not a URL", which silently takes whichever branch a failed parse means.
+        URL,
         Event: win.Event,
         HTMLImageElement: win.HTMLImageElement,
         // DOM globals the agent tools reference (real in a browser main world).
@@ -472,9 +497,24 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     let psVram = vram;   // mutable so a test can change the resident set mid-run (setVram)
     const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
     const win = dom.window;
+    // TIME RUNS FAST IN HERE. The panel polls `/api/ps` on a 2-second interval and ticks its TTL countdowns
+    // every second, and a test that wants "the resident set changed" has no way to ask for a poll — it can
+    // only wait for one. So the sidebar tests were littered with `for (…25) { flush(); sleep(150) }` loops
+    // whose real cost was waiting out an interval, and the nine slowest were 26 seconds of the suite between
+    // them, all of it sleeping.
+    //
+    // Compressing INTERVALS (not timeouts) collapses that to nothing and changes no behaviour under test: an
+    // interval here is a poll or a clock tick, and both are things a test wants MORE of, sooner. Timeouts are
+    // left exactly alone, because those ARE behaviour — a debounce, an easing, "stays quiet for the first
+    // half second" — and speeding them up would make those assertions meaningless rather than fast.
+    const realSetInterval = win.setInterval;
+    win.setInterval = (fn, ms, ...rest) => realSetInterval.call(win, fn, Math.min(ms || 0, 120), ...rest);
     _sidebarWins.push(win);   // closed in an after() hook — the VRAM panel's setInterval keeps the event loop alive otherwise
     const syncStore = { debugMode: "overlay", theme: "auto", ...sync };
-    const localStore = { ml_debug_fontscale: 1, ...local };
+    // The event LANE is collapsed by default in the product. Most sidebar tests that touch it are about what
+    // it draws rather than about the default, so they get it OPEN unless they ask otherwise — the default is
+    // pinned by its own test, in the browser, where the collapse is a CSS grid transition jsdom cannot see.
+    const localStore = { ml_debug_fontscale: 1, ml_res_sections: { lane: true, models: true }, ...local };
     const changeListeners = [];
     // Fire storage.onChanged like Chrome does, so cross-context (popup↔sidebar)
     // config sync is exercised. `set` merges then notifies.
@@ -556,4 +596,4 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, pyCalls, printCalls, setVram };
 }
 
-module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };
+module.exports = { jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };

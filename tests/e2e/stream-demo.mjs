@@ -15,7 +15,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
-import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl, narrate, narrateDone } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
@@ -27,6 +27,12 @@ const HOLD = process.env.HOLD !== "0";
 // Paced JS: enough lines to OVERFLOW the capped output cell, so the scroll + tail-follow is visible.
 const EXEC_JS = `
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
+// FIRST, not last. One deliberately WIDE line with the needle at its far end — what the find bar's
+// horizontal reveal is for: with wrapping off, a match past the right-hand fold used to be painted and
+// counted while the view never moved. It leads because truncation eats the END: after eighteen lines of
+// output the needle was past the cap and simply absent, and the demo reported "No results" for a reason
+// that had nothing to do with scrolling.
+console.log('a very wide line ' + '-'.repeat(200) + ' NEEDLEFAR');
 for (let i = 1; i <= 18; i++) { console.log('exec line ' + i + ' — streaming into a capped, scrollable cell'); await wait(260); }
 console.log('exec finished');
 return 'exec done';
@@ -66,6 +72,11 @@ const main = async () => {
             debugMode: "overlay",        // overlay → BACKGROUND-hosted run (the real streaming path)
             autoApprovePython: true,     // readonly python needs no gate
         });
+        // WRAPPING OFF, before anything mounts. The horizontal half of the find only means something when a
+        // line can actually run off the edge — and this pref is read at MOUNT, so setting it later (as a
+        // first version of this demo did) leaves every block wrapped and the sideways beat measuring 0px,
+        // which looks exactly like the fix not working.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_debug_codewrap: false }));
         fake.setScript([
             { tool: "exec", args: { js: EXEC_JS } },
             { tool: "python_exec", args: { code: PY_CODE, mode: "readonly" } },
@@ -128,8 +139,13 @@ const main = async () => {
                 const seq = await st.getAttribute("data-astep-seq").catch(() => null);
                 if (seq == null || expanded.has(seq)) continue;
                 const cls = (await st.getAttribute("class").catch(() => "")) || "";
-                if (!cls.includes("open")) await st.locator(".astep-head").click({ timeout: 600 }).catch(() => {});
-                expanded.add(seq);
+                if (cls.includes("open")) { expanded.add(seq); continue; }
+                await st.locator(".astep-head").click({ timeout: 600 }).catch(() => {});
+                // Only count it as done once it ACTUALLY opened. Marking it regardless meant a click that
+                // landed while the step was still re-rendering was never retried, and that step stayed shut
+                // for the rest of the demo — which is why fetch_url's never opened.
+                const after = (await st.getAttribute("class").catch(() => "")) || "";
+                if (after.includes("open")) expanded.add(seq);
             }
         };
         const answered = async () => (await frame.locator(".msg.asst").filter({ hasText: "same output cell" }).count().catch(() => 0)) > 0;
@@ -160,14 +176,17 @@ const main = async () => {
             log("captured the truncation marking (output the model never received).");
         } else log("  (no truncation marking — output stayed under the model cap)");
 
+        await narrate(page, "The in-cell find bar", { sub: "Click the Out cell, then Ctrl+F — substring only, with a match count." });
         // --- the in-cell find bar (click the cell to focus it, then Ctrl+F) ------------------------------
-        const cell = frame.locator(".r-outscroll").last();
+        const cell = frame.locator(".r-py-stdout .r-outscroll").last();
         await cell.click({ position: { x: 20, y: 20 } }).catch(() => {});
         await page.keyboard.press("Control+f");
         await sleep(250);
-        // The LAST cell is fetch_url's fetched page (not the exec/python streams), so search for a term that
-        // is actually in it — otherwise the shot captures a truthful but pointless "No results".
-        await page.keyboard.type("step");
+        // Search for something that is ACTUALLY in the cell being searched. This used to type "step" on the
+        // assumption that the last cell was fetch_url's fetched page; it is python's `value` cell, holding
+        // the word "done" — so the demo captured a truthful, pointless "No results" and looked like the find
+        // was broken. The console cell above it is the one worth searching.
+        await page.keyboard.type("python line");
         await sleep(500);
         await page.screenshot({ path: path.join(ART, "find-bar.png") }).catch(() => {});
         const n = await frame.locator(".r-find-n").first().textContent().catch(() => null);
@@ -176,8 +195,47 @@ const main = async () => {
         await frame.locator(".r-find-nav").last().click().catch(() => {});
         await sleep(400);
         await page.screenshot({ path: path.join(ART, "find-next.png") }).catch(() => {});
+
+        // --- and the find scrolls SIDEWAYS to a match past the fold ---------------------------------------
+        // The bug: reveal only adjusted scrollTop, so a match beyond the right-hand edge was painted and
+        // counted while nothing moved — the bar reading "1 of 1" over an unchanged screen. (Wrapping was
+        // turned off at configure time, above: with it on there is no horizontal overflow to reveal.)
+        await narrate(page, "…and the find scrolls SIDEWAYS", { sub: "In the RAW view, where a long line really does run off the edge." });
+        await page.keyboard.press("Escape").catch(() => {});
+        await sleep(400);
+        // THE RAW VIEW, not the console. The streamed console section is `overflow-x: hidden` by design and
+        // wraps, so it can never scroll sideways — pointing the beat at it measured 0px and looked exactly
+        // like the fix failing. Raw is one long JSON line inside the same findable cell, which is the case
+        // the horizontal reveal exists for and the one that was reported.
+        await frame.locator(".astep.tool .rr-toggle button", { hasText: "raw" }).first().click().catch(() => {});
+        await sleep(500);
+        const wide = frame.locator(".io-raw .r-outscroll").first();
+        const scrolledBy = () => wide.evaluate((el) =>
+            Math.max(0, ...[el, ...el.querySelectorAll("*")].map((n) => n.scrollLeft || 0))).catch(() => 0);
+        // Say out loud whether there is anything to scroll. A beat that measures 0px because the line WRAPS
+        // is indistinguishable, in the terminal, from the fix not working — which cost a full re-run to tell
+        // apart, twice.
+        const overflow = await wide.evaluate((el) => {
+            const all = [el, ...el.querySelectorAll("*")];
+            const s = all.find((n) => n.scrollWidth > n.clientWidth + 1);
+            return s ? `${s.className || s.tagName} overflows by ${s.scrollWidth - s.clientWidth}px` : "NOTHING overflows (the line wrapped — nothing to reveal)";
+        }).catch((e) => `could not measure: ${e}`);
+        log(`the cell: ${overflow}`);
+        log(`codewrap attr: ${await frame.evaluate(() => document.documentElement.dataset.codewrap ?? "(unset)")}`);
+        log(`cell white-space: ${await wide.evaluate((el) => getComputedStyle(el).whiteSpace).catch(() => "?")}`);
+        log(`before the find, scrolled sideways by: ${await scrolledBy()}px`);
+        await wide.click({ position: { x: 20, y: 20 } }).catch(() => {});
+        await page.keyboard.press("Control+f");
+        await sleep(250);
+        await page.keyboard.type("NEEDLEFAR");
+        await sleep(700);
+        const n2 = await frame.locator(".r-find-n").first().textContent().catch(() => null);
+        log(`the find says: ${n2 ?? "(bar not open)"}`);
+        log(`after finding a match past the fold:   ${await scrolledBy()}px`);
+        await page.screenshot({ path: path.join(ART, "find-sideways.png") }).catch(() => {});
         log(`\ndone — screenshots in ${ART}`);
         if (HOLD) {
+            await narrateDone(page);
             log("holding the browser open (HOLD=0 to skip). Close the window or Ctrl+C to exit.");
             await page.waitForEvent("close", { timeout: 0 }).catch(() => {});
         }

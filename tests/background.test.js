@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { jsonResponse, htmlResponse, streamResponse, loadBackground } = require("./helpers");
+const { jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground } = require("./helpers");
 
 const IMG = "data:image/png;base64,AAA";
 
@@ -139,6 +139,10 @@ test("FETCH_LLM: a network failure that NEVER recovers gives up after the retry 
     const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], model: "m" } });
     assert.ok(calls >= 5, `bounded retries then surfaces the error (was ${calls} attempts)`);
     assert.match(res.error, /Couldn't reach the server/, "gives up with the actionable offline error");
+    // How long each attempt was outstanding is what separates a refused connection (milliseconds) from one
+    // dropped mid-wait (tens of seconds, often a round number) — the question a cold-load failure raised and
+    // nothing had recorded.
+    assert.match(res.error, new RegExp(`${calls} attempts, each failed after (\\d+ ms(, )?){${calls}}\\)`), "says how long each attempt lasted");
 });
 
 test("FETCH_LLM: an unreachable server → an actionable error, not a bare 'Failed to fetch'", async () => {
@@ -658,6 +662,8 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     assert.deepEqual(res.data, {
         model: "qwen3:235b", ocrModel: "qwen2.5vl", ocrNumCtx: 8192, apiFormat: "ollama", defaultModelVision: "",
         utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: true, autoApprovePython: true,
+        // The server-tool curation: the page needs it before it builds a run's toolset.
+        serverToolsOff: [], commanderServerTools: [],
         autoApproveSameOriginAuth: false, autoApproveSelfSource: true,
         pierceClosedShadow: true, cdp: false,
         groundingEnabled: false, groundingModel: "", groundingRange: 1000, debugMode: "off",
@@ -1483,6 +1489,31 @@ test("OLLAMA_PS reports loaded models with VRAM usage", async () => {
     assert.ok(!("gpus" in res.data[1]), "a CPU-resident model has NO gpus key — absence is the signal, not []");
 });
 
+test("OLLAMA_PS: `busy` and `state` ride through, and a LOADING entry's zero deadline is dropped", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({
+            models: [
+                // Serving a request: the deadline it carries is the one written when the LAST request
+                // finished, so the panel must not count down against it.
+                { model: "a", size_vram: 1e9, size: 1e9, expires_at: "2026-09-04T18:20:34Z", busy: true },
+                // Still loading: the patched server sends the name and ZEROS for everything else, and Go's
+                // zero time parses to a deadline in year 1 — a countdown of minus two thousand years.
+                { model: "b", size_vram: 0, size: 0, expires_at: "0001-01-01T00:00:00Z", state: "loading" },
+                // A stock server sends neither field. Absent means "not known", never "idle"/"resident".
+                { model: "c", size_vram: 1e9, size: 1e9, expires_at: "later" },
+            ]
+        })
+    });
+
+    const [a, b, c] = (await bg.send({ type: "OLLAMA_PS", payload: {} })).data;
+    assert.equal(a.busy, true, "the freeze signal reaches the panel");
+    assert.equal(a.expiresAt, "2026-09-04T18:20:34Z", "the stamp is still carried — busy says how to READ it");
+    assert.equal(b.state, "loading");
+    assert.equal(b.expiresAt, null, "a loading entry's zero time is not a deadline");
+    assert.ok(!("busy" in c) && !("state" in c), "a stock server's silence stays silence, not a default");
+});
+
 // A tiny helper: drains microtasks/macrotasks so port messages settle.
 const settle = () => new Promise((r) => setTimeout(r, 10));
 
@@ -2301,9 +2332,37 @@ test("SECURITY (FETCH_URL): an untrusted page with NO consent is refused — loc
     assert.equal(fetched, false, "the gate is BEFORE the network — no request sent for any un-consented address");
     // A non-http(s) scheme is refused outright (a page can't turn this into a file:// / data: read).
     const f = await bg.send({ type: "FETCH_URL", payload: { url: "file:///etc/passwd" } }, { tab: { id: 9, url: "https://evil.example/" } });
-    assert.ok(/only http\(s\)/i.test(f.error), "file:// refused");
+    assert.match(f.error, /cannot read local files/i, "file:// refused");
+    assert.doesNotMatch(f.error, /\(file:/, "a web page is not told about a local page it is not on");
+    // A LOCAL page is refused too — for another file, and for ITS OWN URL in any mode that needs the file's
+    // BYTES (Chrome's fetch has no file scheme). A session render of itself is answered page-side from the live
+    // DOM and never reaches here, so each refusal names that mode, and the model stops retrying the same thing.
+    const local = { tab: { id: 9, url: "file:///Users/me/page.html#top" } };
+    const other = await bg.send({ type: "FETCH_URL", payload: { url: "file:///Users/me/.ssh/id_ed25519" } }, local);
+    assert.match(other.error, /cannot read local files.*the page you are on \(file:\/\/\/Users\/me\/page\.html\), with rendered: true and credentials: true/i);
+    const own = await bg.send({ type: "FETCH_URL", payload: { url: "file:///Users/me/page.html" } }, local);
+    assert.match(own.error, /is the page you are on, but a local file's bytes cannot be fetched\. Use rendered: true with credentials: true/i);
+    assert.equal(fetched, false, "and still no request for any of them");
     const c = await bg.send({ type: "FETCH_URL", payload: { url: "chrome://settings" } }, { tab: { id: 9, url: "https://evil.example/" } });
     assert.ok(/only http\(s\)/i.test(c.error), "chrome:// refused");
+});
+
+test("SECURITY (FETCH_URL): an as-you GET of the sender's OWN page needs no grant; its render and the rest of the origin still do", async () => {
+    // The page can already `fetch(location.href, { credentials: "include" })` itself, so an as-you GET of that
+    // exact URL grants it nothing. Judged against the sender's REAL frame URL — the loop's auto-approve only
+    // skipped the prompt. A render is NOT included (a second tab re-running the page's scripts; the page side
+    // answers its own session render from the live DOM), and neither is any OTHER page on the same origin.
+    const urls = [];
+    const bg = loadBackground({ config: baseConfig(), onFetch: (call) => { urls.push(call.url); return fetchResponse("<p>me</p>", { contentType: "text/html", url: call.url }); } });
+    const sender = { tab: { id: 9, url: "https://site.example/inbox?id=3" }, url: "https://site.example/inbox?id=3#top" };
+    const mine = await bg.send({ type: "FETCH_URL", payload: { url: "https://site.example/inbox?id=3", credentials: true, format: "html" } }, sender);
+    assert.ok(!mine.error, `own page fetched as-you with no grant (${mine.error})`);
+    assert.deepEqual(urls, ["https://site.example/inbox?id=3"]);
+    const sibling = await bg.send({ type: "FETCH_URL", payload: { url: "https://site.example/inbox?id=4", credentials: true } }, sender);
+    assert.match(sibling.error, /wasn't approved/, "another page on the same origin still needs a grant");
+    const render = await bg.send({ type: "FETCH_URL", payload: { url: "https://site.example/inbox?id=3", credentials: true, rendered: true } }, sender);
+    assert.match(render.error, /wasn't approved/, "a session RENDER of it still needs a grant here");
+    assert.equal(urls.length, 1, "neither refused call reached the network");
 });
 
 test("SECURITY (FETCH_URL): self-source is enforced BACKGROUND-side — own-repo SOURCE is free from an untrusted page; an issue / non-self / rendered / flag-off still gate", async () => {
@@ -3280,4 +3339,379 @@ test("SERVER_TOOL_EXEC: an UNTRUSTED page cannot run a tool it holds no grant fo
     const res = await bg.send({ type: "SERVER_TOOL_EXEC", payload: { toolId: "srv1", name: "send_email", args: { to: "a@b.c" } } }, page);
     assert.match(res.error, /needs approval/);
     assert.equal(fetched, false, "refused BEFORE the privileged fetch, not after");
+});
+
+// A remote tool's output is CITABLE by DECLARATION (`remote`), never by name — its name is generated from
+// the server's bundle, so no hardcoded list can hold it. The background builds the loop's ToolMeta from the
+// START_RUN payload, and dropping `remote` there made the whole feature page-path-only in a way nothing
+// surfaced: the tool ran, streamed and rendered exactly as it should, and only reading the pointer back
+// faulted with "nothing has been captured in this run", which reads as a pointer bug.
+test("START_RUN: a REMOTE tool's output is citable on the background path, so a pointer read resolves", async () => {
+    let turn = 0;
+    let derefResult = null;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            const msgs = call.body?.messages || [];
+            turn++;
+            if (turn === 1) return jsonResponse({ choices: [{ message: { content: null, tool_calls: [
+                { id: "c1", type: "function", function: { name: "srv1__search", arguments: JSON.stringify({ q: "pricing" }) } },
+            ] } }] });
+            if (turn === 2) return jsonResponse({ choices: [{ message: { content: null, tool_calls: [
+                { id: "c2", type: "function", function: { name: "dereference", arguments: JSON.stringify({ token: "@tool:srv1__search" }) } },
+            ] } }] });
+            const tr = [...msgs].reverse().find(m => m.role === "tool");
+            derefResult = tr ? (typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content)) : null;
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            }
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "srv1__search"
+                && !msg.payload?.renderOnly && !msg.payload?.precheck) {
+                return { result: "Plans start at $12/month." };
+            }
+            return undefined;
+        },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "rt", task: "search then read it back", systemPrompt: "S", toolTokens: true,
+        tools: [
+            { name: "srv1__search", requiresApproval: true, description: "", capabilities: [],
+              parameters: { type: "object", properties: { q: { type: "string" } } },
+              remote: { via: "openwebui", toolId: "srv1", fn: "search" } },
+            { name: "dereference", requiresApproval: false, description: "", capabilities: [],
+              parameters: { type: "object", properties: { token: { type: "string" } } } },
+        ],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    // Two tool calls with an approval round-trip between them, so this settles over several ticks rather
+    // than the single one a one-step run needs.
+    for (let i = 0; i < 50 && derefResult == null; i++) await new Promise(r => setTimeout(r, 10));
+
+    assert.ok(derefResult, `the dereference call produced a tool result (reached turn ${turn})`);
+    assert.doesNotMatch(derefResult, /MemoryFault|has been captured/i,
+        `the remote output was citable, so the read resolved — got: ${derefResult}`);
+    assert.match(derefResult, /\$12\/month/, "…and it read back the remote tool's own output");
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// PROTOBUF CHAT STREAMING. The same tokens as ~22x fewer bytes, because OpenAI's SSE re-sends the id/model/
+// created/choices envelope for EVERY token. Opt-in by config, but SELF-NEGOTIATING on the wire: we send one
+// `Accept` header and decide from what comes back, so a backend that does not serve it answers with the SSE
+// it always did and the miss IS the fallback.
+
+/** Frame a protobuf message the way the server does: its byte length as a varint, then its bytes. */
+const pbFrame = (body) => {
+    const out = [];
+    let n = body.length;
+    do { out.push(n > 127 ? (n & 0x7f) | 0x80 : n); n >>>= 7; } while (n);
+    return [...out, ...body];
+};
+/** A length-delimited protobuf string field. */
+const pbStr = (field, text) => {
+    const b = [...new TextEncoder().encode(text)];
+    return [(field << 3) | 2, b.length, ...b];
+};
+/** A varint field. */
+const pbVar = (field, n) => [(field << 3) | 0, n];
+/** Frame.delta{content} — Frame field 2, Delta field 1. */
+const pbDelta = (text) => { const d = pbStr(1, text); return pbFrame([0x12, d.length, ...d]); };
+/** Frame.end{finish_reason, prompt_tokens, completion_tokens} — Frame field 3. */
+const pbEnd = (reason, pt, ct) => {
+    const e = [...pbStr(1, reason), ...pbVar(2, pt), ...pbVar(3, ct)];
+    return pbFrame([0x1a, e.length, ...e]);
+};
+/** Frame.start{id, model} — Frame field 1. */
+const pbStart = (id, model) => {
+    const st = [...pbStr(1, id), ...pbStr(2, model)];
+    return pbFrame([0x0a, st.length, ...st]);
+};
+
+test("protobuf stream: asks for it, decodes the deltas, and reports the usage from End", async () => {
+    let accept = null;
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: "auto" },
+        onFetch: (call) => {
+            accept = call.opts?.headers?.Accept ?? null;
+            return binaryStreamResponse([
+                [...pbStart("chatcmpl-1", "gemma4:e2b"), ...pbDelta("Hel")],
+                [...pbDelta("lo"), ...pbEnd("stop", 11, 2)],
+            ]);
+        }
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+
+    assert.equal(accept, "application/protobuf", "the one header that opts in");
+    const deltas = client.messages.filter(m => m.type === "chunk").map(m => m.delta);
+    const done = client.messages.find(m => m.type === "done");
+    assert.deepEqual(deltas, ["Hel", "lo"], "each Delta reaches the caller as it lands");
+    assert.equal(done.content, "Hello");
+    // `End` replaces the finish chunk, the usage chunk AND `data: [DONE]` — one frame for all three.
+    assert.equal(done.usage?.promptTokens, 11);
+    assert.equal(done.usage?.completionTokens, 2);
+});
+
+test("protobuf stream: a message split across two network reads still arrives whole", async () => {
+    // The failure this exists for only ever shows up on a real link: chunk boundaries have NOTHING to do with
+    // message boundaries, so a frame arrives in halves and a reader that assumes otherwise loses it.
+    const wire = [...pbDelta("Hello"), ...pbEnd("stop", 1, 1)];
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: "auto" },
+        onFetch: () => binaryStreamResponse([wire.slice(0, 3), wire.slice(3, 4), wire.slice(4)]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    assert.equal(client.messages.find(m => m.type === "done")?.content, "Hello");
+});
+
+test("protobuf stream: a stream CUT mid-frame is an error, not a short answer", async () => {
+    // Partial output returned as a finished answer is a wrong answer dressed as a complete one, and the
+    // caller cannot tell the difference — so held bytes at the end are a transport failure.
+    const wire = [...pbDelta("Hel"), ...pbDelta("lo")];
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: "auto" },
+        onFetch: () => binaryStreamResponse([wire.slice(0, wire.length - 2)]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    assert.ok(client.messages.find(m => m.type === "error"), "it reports rather than truncating");
+    assert.equal(client.messages.find(m => m.type === "done"), undefined);
+});
+
+test("protobuf stream: a backend that answers SSE anyway is parsed as SSE", async () => {
+    // THE MISS IS THE FALLBACK. We ask hopefully; an older build, a proxy that drops the header, or a stock
+    // server all answer with what they always did, and asking cost one header rather than a probe request.
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: "auto" },
+        onFetch: () => streamResponse([
+            'data: {"choices":[{"delta":{"content":"plain"}}]}\n',
+            "data: [DONE]\n"
+        ]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    assert.equal(client.messages.find(m => m.type === "done")?.content, "plain");
+});
+
+test("protobuf stream: a TOOL CALL decodes out of a Delta, and the hand-back is still visible", async () => {
+    // The field and the encoder filling it landed upstream together, in one commit — so the value here is
+    // not that a generated decoder ran ahead of the wire, it is that regenerating from a PINNED schema
+    // absorbed the change with no edit on our side. Verified against the live box too
+    // (tests/e2e/proto-stream-live.mjs).
+    // Delta.tool_calls (field 3) { ToolCall.function (field 4) { Function.name (field 1) = "get_weather" } }
+    const fn = pbStr(1, "get_weather");
+    const tc = [0x22, fn.length, ...fn];
+    const d = [0x1a, tc.length, ...tc];
+    const frame = pbFrame([0x12, d.length, ...d]);
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: "auto" },
+        onFetch: () => binaryStreamResponse([[...frame, ...pbEnd("tool_calls", 5, 1)]]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    // No content and a tool_calls finish is the HAND-BACK shape the server-tool retry keys on, so it has to
+    // survive the format change or that loop would read a hand-back as a plain empty completion.
+    const done = client.messages.find(m => m.type === "done");
+    assert.equal(done?.content, "");
+    assert.equal(done?.usage?.promptTokens, 5);
+});
+
+test("protobuf stream: a toolIds call keeps SSE — the schema has nowhere to put SOURCES", async () => {
+    // PERMANENT, not a gap waiting on a field — which is why this gate did not go away when the encoder
+    // gained tool calls. `sources` is emitted by OpenWebUI ahead of the model's first token, on the route
+    // that proxies ollama's NATIVE /api/chat and parses it line by line; the protobuf encoder lives on the
+    // raw-passthrough route that path never touches. A field for it could never be filled, and a permanently
+    // empty one is indistinguishable from "there were none".
+    let accept = "unset";
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: "auto" },
+        onFetch: (call) => {
+            accept = call.opts?.headers?.Accept ?? null;
+            return streamResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n', "data: [DONE]\n"]);
+        }
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }], toolIds: ["srv1"] } });
+    await settle();
+    assert.equal(accept, undefined, "no Accept: application/protobuf on a tool call");
+});
+
+test("protobuf stream: a delta for ANOTHER choice is ignored, as it is on the SSE path", async () => {
+    // `streamChunk` reads `choices[0]` and drops the rest, so the two formats have to agree — otherwise a
+    // response with `n > 1` interleaves several completions and this concatenates them into nonsense. ollama
+    // sends only index 0 today, which is precisely why the schema gained the field: so that fact stops being
+    // what holds this together.
+    const second = [...pbStr(1, "WRONG"), ...pbVar(5, 1)];   // Delta{content:"WRONG", index:1}
+    const other = pbFrame([0x12, second.length, ...second]);
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: "auto" },
+        onFetch: () => binaryStreamResponse([[...pbDelta("right"), ...other, ...pbEnd("stop", 1, 1)]]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    const done = client.messages.find(m => m.type === "done");
+    assert.equal(done?.content, "right", "the other choice's tokens are not spliced in");
+    assert.deepEqual(client.messages.filter(m => m.type === "chunk").map(m => m.delta), ["right"]);
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// THE WIRE FORMAT HAS THREE STATES, and two of them send the identical request. What separates "auto" from
+// "on" is only what a reply that is NOT protobuf means — nothing about the bytes — so these tests are about
+// the three questions that distinguishes: was the header sent, did the reply still arrive, and was anything
+// said about it.
+
+/** Drive one streamed turn under `mode`, with the backend answering plain SSE. Returns what was asked for,
+ *  what came back, and anything the worker warned about — the three things the mode decides between. */
+async function streamUnder(mode, { answerProto = false, url } = {}) {
+    let accept = "unset";
+    const warnings = [];
+    const bg = loadBackground({
+        config: { ...baseConfig(), ...(url ? { chatUrl: url } : {}), ...(mode === undefined ? {} : { protoStream: mode }) },
+        onFetch: (call) => {
+            accept = call.opts?.headers?.Accept ?? null;
+            return answerProto
+                ? binaryStreamResponse([[...pbDelta("proto"), ...pbEnd("stop", 1, 1)]])
+                : streamResponse(['data: {"choices":[{"delta":{"content":"plain"}}]}\n', "data: [DONE]\n"]);
+        }
+    });
+    bg.context.console.warn = (...a) => warnings.push(a.join(" "));
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    return { accept, content: client.messages.find(m => m.type === "done")?.content, warnings, bg, client };
+}
+
+test("wire format: AUTO by default — it asks, with nobody having turned anything on", async () => {
+    // The default MOVED, from off to auto, and the reason is the negotiation's shape rather than a change of
+    // heart about protobuf: the header is one line, the answer's content type decides, and a backend that
+    // does not serve it answers exactly as it always did. There is nothing for a stock backend to go wrong
+    // with, so there was nothing for the old default to protect.
+    const { accept, content } = await streamUnder(undefined);
+    assert.equal(accept, "application/protobuf");
+    assert.equal(content, "plain", "…and the SSE it answered with is read as SSE");
+});
+
+test("wire format: OFF sends no header at all", async () => {
+    const { accept, content } = await streamUnder("off");
+    assert.equal(accept, undefined);
+    assert.equal(content, "plain");
+});
+
+test("wire format: AUTO absorbs a backend that will not serve it, in silence", async () => {
+    // THE MISS IS THE FALLBACK. An older build, a proxy that drops the header, or a stock server all answer
+    // with what they always did — and under `auto` that is not an event, it is the expected other branch.
+    const { accept, content, warnings } = await streamUnder("auto");
+    assert.equal(accept, "application/protobuf", "it still asks");
+    assert.equal(content, "plain", "and the reply arrives");
+    assert.deepEqual(warnings, [], "with nothing said about it");
+});
+
+test("wire format: ON still answers when protobuf is not served — but says so", async () => {
+    // A WIRE FORMAT MUST NEVER COST YOU AN ANSWER. `on` is an assertion about your backend, so a miss is
+    // worth reporting; it is not worth failing the call over, when the SSE path is right there and works.
+    // That is the whole difference between the two states, and it is the half that is easy to get wrong in
+    // the other direction — a hard failure would turn a saved envelope into a broken chat.
+    const { accept, content, warnings } = await streamUnder("on");
+    assert.equal(accept, "application/protobuf");
+    assert.equal(content, "plain", "the reply still arrives, over SSE");
+    assert.equal(warnings.length, 1, "and the miss is reported");
+    assert.match(warnings[0], /application\/protobuf/);
+    assert.match(warnings[0], /host/, "naming the URL that answered, since that is the thing to change");
+});
+
+test("wire format: ON says nothing when it IS served", async () => {
+    const { accept, content, warnings } = await streamUnder("on", { answerProto: true });
+    assert.equal(accept, "application/protobuf");
+    assert.equal(content, "proto");
+    assert.deepEqual(warnings, [], "a report only when the assertion was wrong");
+});
+
+test("wire format: ON reports a URL ONCE, not once per turn", async () => {
+    // A line per streamed turn is how a warning stops being read, and the condition cannot change within a
+    // worker's life: a backend that does not serve protobuf will not start mid-session.
+    const { bg, client, warnings } = await streamUnder("on");
+    for (let i = 0; i < 3; i++) {
+        const again = bg.connect("LLM_STREAM");
+        again.send({ payload: { messages: [{ role: "user", content: "again" }] } });
+        await settle();
+        assert.equal(again.messages.find(m => m.type === "done")?.content, "plain", "every later turn still works");
+    }
+    assert.equal(warnings.length, 1, `said once, not ${warnings.length} times`);
+    assert.ok(client.messages.length > 0);
+});
+
+test("wire format: the BOOLEAN this replaced still reads correctly", async () => {
+    // chrome.storage.sync keeps what it was given, so an existing profile hands back `true`/`false` long
+    // after the type changed. `true` becomes AUTO and not ON: that user asked for the negotiation, not for a
+    // report about it — and reading it as an unrecognised value would silently mean "off", which is the
+    // failure this mapping exists to prevent.
+    const on = await streamUnder(true);
+    assert.equal(on.accept, "application/protobuf");
+    assert.deepEqual(on.warnings, [], "`true` is AUTO, so a miss stays silent");
+    const off = await streamUnder(false);
+    assert.equal(off.accept, undefined);
+});
+
+test("wire format: a toolIds call is exempt under ON too — and reports nothing", async () => {
+    // The gate is about what the FORMAT can carry, so insisting cannot lift it. And a call that never asked
+    // must not report a miss: it would name a failure the user cannot act on, on the one route where the
+    // format is deliberately not used.
+    let accept = "unset";
+    const warnings = [];
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: "on" },
+        onFetch: (call) => {
+            accept = call.opts?.headers?.Accept ?? null;
+            return streamResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n', "data: [DONE]\n"]);
+        }
+    });
+    bg.context.console.warn = (...a) => warnings.push(a.join(" "));
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }], toolIds: ["srv1"] } });
+    await settle();
+    assert.equal(accept, undefined, "no header on a tool call");
+    assert.deepEqual(warnings, [], "and no report about a format it never asked for");
+});
+
+// ---------------------------------------------------------------------------------------------------------
+// THE PYTHON RUN WATCHDOG is a WORKBENCH-ONLY favour. A run is killed at 15s; a person who deliberately wrote
+// something slow and is sitting in front of it can turn that off, and nobody else can — a page-invoked tool
+// with no limit holds the one Pyodide instance against every later call, with nobody watching it.
+
+test("SECURITY (PYTHON_EXEC): a PAGE cannot turn off the run watchdog", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    await bg.send(
+        { type: "PYTHON_EXEC", payload: { code: "while True: pass", noTimeout: true } },
+        { tab: { id: 9, id2: 9 }, url: "https://evil.example/attack" });   // a page: its own url, not ours
+    const run = bg.pyRuns.find(m => m.type === "PY_RUN");
+    assert.ok(run, "the run still goes (readonly python is safe for any caller)");
+    assert.ok(!run.noTimeout, "…but the flag is dropped — an endless run from a page wedges the sandbox");
+});
+
+test("PYTHON_EXEC: one of OUR OWN surfaces may, and the discriminator is the sender's url", async () => {
+    // `sender.url` is set by Chrome and a page cannot forge it — the same unforgeable discriminator the live
+    // stdout routing uses. It matters that it is the URL rather than `sender.tab`: the overlay bench is an
+    // extension iframe INSIDE a tab, so it HAS a tab, and keying on that would refuse the one caller allowed.
+    const bg = loadBackground({ config: baseConfig() });
+    await bg.send(
+        { type: "PYTHON_EXEC", payload: { code: "slow()", noTimeout: true } },
+        { tab: { id: 9 }, url: "chrome-extension://test/sidebar.html" });
+    const run = bg.pyRuns.find(m => m.type === "PY_RUN");
+    assert.equal(run?.noTimeout, true);
+});
+
+test("PYTHON_EXEC: the watchdog is on unless asked otherwise", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    await bg.send({ type: "PYTHON_EXEC", payload: { code: "1+1" } }, { url: "chrome-extension://test/sidebar.html" });
+    const run = bg.pyRuns.find(m => m.type === "PY_RUN");
+    assert.ok(run && !run.noTimeout, "absent, not false — the offscreen doc treats missing as capped");
 });

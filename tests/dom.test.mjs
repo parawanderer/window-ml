@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx, isCspEvalBlocked, markdownAlternateHref, resolveMarkdownAlternate, markdownAffordance, markdownTwin, externalSheetIds, markdownSiblingUrl, isMarkdownResponse } from "../src/dom.ts";
+import { elementReference, classifyOverlay, navTarget, isCurrentPage, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx, isCspEvalBlocked, markdownAlternateHref, resolveMarkdownAlternate, markdownAffordance, markdownTwin, externalSheetIds, markdownSiblingUrl, isMarkdownResponse } from "../src/dom.ts";
 
 // --- ml.fetch content classification (header / content / extension → a HEURISTIC type for chaining) ---
 test("typeFromHeader: specific content-types map; generic ones return null (defer to content/extension)", () => {
@@ -95,6 +95,22 @@ test("jsonShape is BOUNDED — depth, key count, and array sample are capped", (
     assert.match(jsonShape(wide, { maxKeys: 2 }), /^\{ k0: number, k1: number, …\+3 \}$/);
     // Sample cap: a huge array is summarised from a sample but still reports the TRUE length.
     assert.match(jsonShape(Array.from({ length: 10000 }, () => ({ x: 1 })), { sample: 3 }), /\/\* 10000 items \*\/$/);
+});
+
+test("isCurrentPage: the page the call came from, on any http(s) or file: page, fragment ignored", () => {
+    const here = "file:///Users/me/page.html#top";
+    assert.equal(isCurrentPage("file:///Users/me/page.html", here), true);
+    assert.equal(isCurrentPage("file:///Users/me/page.html#other", here), true, "a fragment names no other document");
+    assert.equal(isCurrentPage("page.html", here), true, "relative resolves against the page");
+    assert.equal(isCurrentPage("https://x.test/p?q=1", "https://x.test/p?q=1#h"), true, "a web page's own URL counts too");
+    // Everything else is a DIFFERENT document — for file:, exactly the read the http(s)-only rule refuses.
+    assert.equal(isCurrentPage("file:///Users/me/.ssh/id_ed25519", here), false);
+    assert.equal(isCurrentPage("../.env", here), false);
+    assert.equal(isCurrentPage("file:///Users/me/page.html?x=1", here), false, "a different query is a different URL");
+    assert.equal(isCurrentPage("https://x.test/other", "https://x.test/p"), false, "same origin is not the same page");
+    assert.equal(isCurrentPage("file:///Users/me/page.html", "https://x.test/p"), false, "a web page never names a local file as itself");
+    assert.equal(isCurrentPage("about:blank", "about:blank"), false, "only http(s) and file: pages");
+    assert.equal(isCurrentPage("http://[bad", here), false);
 });
 
 test("navTarget: a same-origin relative URL resolves to an absolute destination", () => {

@@ -299,9 +299,10 @@ test("timeline: a CHAT session gets one too — turns generate, and wait for loa
         createdTs: 1_700_000_000_000, lastTs: 1_700_000_005_000, status: "ok", config: {},
         turns: [{ user: "hi", assistant: "hello", ts: 1_700_000_002_000, status: "ok", usage: timed(5, 3) }],
     });
-    // The session's own span first (a chat is a `run` too — the kind names a container, not an
-    // agent loop), then the generation inside it.
-    assert.deepEqual(doc.session.events.map(e => e.kind), ["run", "gen"]);
+    // The session's own span first, then the generation inside it. A chat is a `session`, not a `run`:
+    // `run` means an agent loop with steps, and the lane draws the two differently, so collapsing them
+    // put a "run" band around an ml.chat() (and, more visibly, around an embedding model's calls).
+    assert.deepEqual(doc.session.events.map(e => e.kind), ["session", "gen"]);
     assert.equal(doc.session.events[1].durationMs, 900, "a chat turn's generation is timed like any other");
 });
 

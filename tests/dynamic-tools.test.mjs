@@ -166,3 +166,19 @@ test("a run that was given NO server tools reaches none", async () => {
     assert.throws(() => ns.searxng_web_search, /no server tools/);
     assert.deepEqual(Object.keys(ns).filter(k => k !== "load"), []);
 });
+
+test("the console namespace does NOT gain the agent's `token` argument", async () => {
+    // `buildServerTools` adds `token` beside the server's own properties so a MODEL can name the output it
+    // captures. That is an agent-loop concept — a pointer store, a citation — and a console caller has
+    // neither. Both paths read the same `ServerTool.functions`, so this pins that they diverge on purpose.
+    const ml = stub();
+    const ns = makeDynamicTools(ml);
+    await ns.load();
+    const fn = ns.searxng_web_search.search_web;
+    assert.deepEqual(Object.keys(fn.schema.properties).sort(), ["limit", "q"], "the server's schema, verbatim");
+    assert.ok(!("token" in fn.schema.properties));
+
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const [agentTool] = buildServerTools(ml, [SEARCH], ["searxng_web_search"]);
+    assert.ok("token" in agentTool.parameters.properties, "…while the AGENT's does have it");
+});

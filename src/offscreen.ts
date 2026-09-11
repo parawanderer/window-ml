@@ -13,7 +13,10 @@
 // next run is fine.
 const PY_TIMEOUT_MS = 15000;
 
-type PyResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" };
+// `bootMs`/`runMs` come from the WORKER, which is the executor — anything measured downstream of it is
+// measuring the message bus as well. See python-worker.ts.
+type PyEnv = { python: string; pyodide: string; packages: { name: string; version?: string }[] };
+type PyResult = { ok: boolean; env?: PyEnv; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
 
 // The worker is same-origin (extension page → chrome-extension:// worker), so it needs no
 // web_accessible_resources entry; it inherits this page's 'wasm-unsafe-eval' CSP.
@@ -50,11 +53,17 @@ function ensureWorker(): Worker {
     return w;
 }
 
-function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string): Promise<PyResult> {
+/**
+ * @param noTimeout Run WITHOUT the watchdog. Only the workbench asks for this, and only the background lets
+ *   it through (see the PYTHON_EXEC handler): a page-invoked tool keeps the cap, because a run that never
+ *   ends there wedges the single Pyodide instance for every later call with nobody watching. In the bench a
+ *   person is sitting in front of it, chose this, and can close the panel.
+ */
+function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean): Promise<PyResult> {
     const w = ensureWorker();
     const id = nextId++;
     return new Promise((resolve) => {
-        const timer = setTimeout(() => {
+        const timer = noTimeout ? (0 as unknown as ReturnType<typeof setTimeout>) : setTimeout(() => {
             const entry = pending.get(id);
             if (!entry) return;   // already resolved
             pending.delete(id);
@@ -62,7 +71,7 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
             killWorker("timeout");   // nuke the (still-busy) instance + fail any others queued behind it
         }, PY_TIMEOUT_MS);
         pending.set(id, { resolve, timer, streamId });   // streamId → the background can key live stdout chunks
-        w.postMessage({ id, code, image, hardened, tables, stream });
+        w.postMessage({ id, code, image, hardened, tables, stream, ...(env ? { env: true } : {}) });
     });
 }
 
@@ -70,7 +79,7 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     if (msg?.type !== "PY_RUN") return;
     // The worker serializes runs internally (single Pyodide instance + harden/unharden swap),
     // so we can forward straight through — no need to chain here.
-    runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, msg.stream, msg.streamId)
+    runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, msg.stream, msg.streamId, msg.env, msg.noTimeout)
         .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
     return true;   // keep the channel open for the async result
 });

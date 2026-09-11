@@ -417,7 +417,7 @@ export interface ExportStep {
  * kind cannot fail a validator built against an older version.
  */
 export type ExportEventKind =
-    | "run" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
+    | "run" | "session" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note" | "serve" | "aside";
 
 export interface ExportEvent {
     /** What kind of thing happened — see {@link ExportEventKind}, which GROWS. */
@@ -498,7 +498,7 @@ export interface ExportEvent {
  *
  * Switch on the kinds you know and fall through on the rest.
  */
-export type ExportPhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net";
+export type ExportPhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "boot" | "dispatch" | "weights" | "context";
 
 export interface ExportEventPhase {
     kind: ExportPhaseKind;

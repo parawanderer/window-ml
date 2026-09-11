@@ -583,7 +583,11 @@ collapse, and copy-CSV; all zero-dep, no grid library). The export draws a **rea
 A `table` selector loads the **FIRST** match; a `>1`-match warning is prepended (python_exec,
 and the single-element `describeElement`/`ancestors` via `firstOfNote`) so a wrong pick isn't
 silent. `examples/spreadsheet.html` is a table demo (a small static table + a toggleable
-**Ridiculous mode**: a 40×12 dirty scrolling table) — both with comment-hidden answer keys.
+**Ridiculous mode**: a 40×12 dirty scrolling table). Its answers are in `examples/spreadsheet.answers.md` and
+**never on the page**: they used to sit in HTML comments, which a read-only `exec` reaches through `outerHTML`
+for free — one read away from every run (the bench's included) that was supposed to compute them. The page
+must not NAME that file either, since an agent reading its own repo source could follow the path;
+`tests/bench-specs.test.mjs` pins both.
 
 **RULE — the log/export ALWAYS carries what the MODEL actually saw.** The exports (Markdown +
 PDF) and the DevTools/debug log exist for DEBUGGABILITY: there must ALWAYS be a view of the raw
@@ -597,6 +601,25 @@ the model actually saw, add the raw view too** — in the sidebar (a rendered⇄
 disclosure) AND both exports. E.g. when a tool result carries an appended `@tool:<id>` token line,
 that model-facing result — token line included — must be recoverable in the log, not silently
 dropped for the clean render.
+
+**WHICH ARTIFACT TO REACH FOR.** A run can be got out four ways and they are not interchangeable. Picking
+the wrong one costs a whole read-through, so:
+
+| You want to | Reach for | Because |
+| --- | --- | --- |
+| READ a run — what the model did, in order, with the images | **`run.md`** (+ `images/`) | It is the canonical human narrative. Screenshots are real PNG sidecars, so a coding assistant can open them; base64 in a text file is unreadable to everyone. |
+| Read it in a browser, folded | **`run.md.html`** | The same markdown rendered, every `h2` collapsible, and a failed run's status links AT the step that broke. Relative asset paths, so it works off the disk and under a server. |
+| DIFF two runs | **`run.json`** | A markdown diff is mostly layout. Strip `VOLATILE_FIELDS` and run `canonicalizeText()` first, or every pointer id and timestamp shows as a change. |
+| Parse a run from Python/Go, or build a tool on it | **`run.json`** + `docs/spec/export.schema.json` | The schema is normative and checked in; generate models from it. Fields tagged `@unstable` will grow. |
+| Hand a run to a person who is not you | **the PDF** | Self-contained, light-themed, images inlined, prints with sane page breaks. Nothing to unzip and no sidecars to lose. |
+| Debug the resource panel / the event lane | **`ml.__events()`** | Not an export at all: the raw INPUTS the timeline is derived from (the debug stream, the server's frames, ps/info). Use it when the drawn events look wrong, because the drawing is what is in question. |
+
+The one that surprises people: **`run.json` carries `session.events`**, the whole timeline the resource panel
+draws — spans, phases, model loads, sub-call lineage. That is the "event spam", and it is the point: it is
+derived by the same `eventsFrom` the panel uses, so a consumer never redoes arithmetic that is wrong in the
+same three places every time (spans run BACKWARDS from a finish stamp; a tool step is ONE event with
+`phases`, not three; a model load is its own event). If you are asking "where did the time go", that is the
+file. If you are asking "what did it say", it is `run.md`.
 
 **Export log.** The detail-view header has an "Export log" button opening a small
 menu with two formats (chat and agent both). It serialises the in-memory session
@@ -728,6 +751,10 @@ background-hosted paths with no page round-trip and no approval.
   (comments + string literals), because five verb names are ordinary identifiers and `|` is TypeScript's
   union operator, so every false positive was code; and an explicit `…` or `e.g.` is honoured as the
   author's own "not exhaustive" disclaimer.
+- **`sed` is SUBSTITUTION only** — `s/PATTERN/REPLACEMENT/` with the `g` and `i` flags and any delimiter
+  (`sed 's|http://a|X|'`, quoted, since a bare `|` separates stages). No addresses, no `-n`, no other
+  commands: a model reaching for `sed -n '2p'` gets a refusal naming what the verb does accept, and `head`
+  is what it wanted. It is a LINE verb, so it composes with the structural stages in either order.
 - The pointer carries the value's **TYPE**, from the render descriptor the step already produced — so `keys`
   on a DataFrame means its COLUMNS, and two casts the line dialect can't express work: `latex`, and `img`,
   which never dumps the payload but says it IS base64 image data, how large, and what to do instead.
@@ -856,6 +883,316 @@ display rather than an obvious bug:
   but no longer resident, because the rows are the chart's legend and a colour with no row explains nothing.
 - **Tracks TILE at width** (auto-fit 300px columns) rather than stretching, and the learned drag floor is
   keyed by width as well as layout — tiling needs less height, and the correction only ever grows.
+- **The keep-alive countdown STOPS while the model is working** (`busy` on `/api/ps`, patched server only).
+  Ollama rewrites `expires_at` when a request FINISHES, so during a generation the deadline stands still
+  while a clock drawn against it keeps running down — on a generation longer than the TTL, past zero, with
+  the panel claiming a model should already have been evicted while it is visibly serving. The chip reads
+  `in use` instead, dashed with a pause glyph, because a frozen NUMBER reads as a stalled panel rather than
+  as a stopped clock. A local in-flight flag would not do: the point is the traffic this browser never
+  started. And read `state` before anything else on a ps entry — a `"loading"` one carries its name and
+  ZEROS, including a Go zero-time `expires_at` that parses to a deadline in the year 1.
+
+**What a model's VRAM is HOLDING, not just how much (`memory` on `/api/ps`).** `size_vram` alone cannot tell
+a big MODEL from a big CONTEXT — lots of weights with a small cache, and modest weights with an enormous one,
+are the same number and want opposite responses (a smaller quant vs. less context). A patched Ollama splits
+it: `weights` / `kv_cache` / `compute` / `recurrent_state` / `output` / `projector` / `other`, per model AND
+per device, in bytes.
+- **The parts SUM TO `size_vram` EXACTLY**, to the byte, which is what lets a band be subdivided with no
+  remainder slice. `memorySplit` REFUSES a split that does not add up rather than inventing the difference —
+  a mismatch is the server's bug to report, and papering over it would hide exactly the thing worth seeing.
+- **Absent is not zero.** The object is omitted whenever the server cannot divide the figure (a `loading`
+  row, an MLX runner, any build predating it), so check that `memory` is PRESENT rather than that its fields
+  are non-zero, and fall back to the total alone.
+- **`recurrent_state` is context too.** Hybrid/SSM layers keep a per-sequence state INSTEAD of a KV cache —
+  there are literally no keys or values in them — so the FIGURE adds it to the cache (`contextBytes`) while
+  the LABEL never calls it one. Not small: 784 MB on a 27b.
+- **`projector` is a worst-case reservation** (sized for the largest image the model accepts, not for what is
+  held with none loaded), and often the largest non-weights term — 2.32 GB of a 5.46 GB model.
+- **`weights_on_disk` sits BESIDE the split, never inside it**: it is not resident memory and including it
+  would break the sum. Against `memory.weights` it says what the load cost over the file, in either
+  direction. **`memory_host`** is the same shape for what did NOT fit — present only on a spill, which is
+  otherwise silent since the model loads, answers and is merely slow.
+- **`estimate.breakdown` is NOT a total**: only `weights`/`kv_cache` are populated, it does not sum to
+  `estimate.predicted`, and it must never be drawn as a stacked bar. Compared field by field against
+  `load.complete` it is genuinely informative — on one 27b load the weights model was within 10% while the
+  cache estimate was 4x over, which is the half a single "predicted 26 GB, used 20 GB" cannot name.
+- **A SPLIT MODEL DECOMPOSES PER CARD, and NOTHING is ever pro-rated.** `gpus[].memory` sums to that entry's
+  own `size_vram`, exactly, so each card's band subdivides with no remainder — pinned against a real capture
+  of `qwen3:235b` across two 96 GB cards rather than a fixture, because every synthetic one agrees with
+  itself. Weights and KV do track the layer share, so a proportional guess would be nearly right for them —
+  but **`compute` is FLAT PER DEVICE**: forced 3:1, one card held 31 layers to the other's 10 and both held
+  115 MiB of compute; on the real split the two figures are byte-identical. A chart dividing a whole-model
+  `compute` by a layer or byte ratio would be right about two buckets and quietly wrong about the third, more
+  so the more lopsided the split. So a multi-card model whose server reported only the whole-model figure
+  decomposes into NOTHING, which is the correct outcome and not a gap to fill.
+- **A SPLIT IS NOT A SPILL.** `memory_host` is populated only when something is on the HOST, so it is absent
+  on a multi-card split (`size_total == size_vram`). The two are different things and the panel treats them
+  so.
+- **`placement` — AVAILABLE, UNBUILT.** `/api/ps` and `load.complete` can carry which layers went where
+  (`{num_layers, devices:[{device, first_layer, last_layer, layers}], swa_layers}`), behind
+  `OLLAMA_LAYER_PLACEMENT=1` and absent by default, so treat it as optional exactly like `gpus[].memory`.
+  It wants its OWN visual rather than folding into the memory hover, and four things decide how: `device` is
+  the ENGINE's name (`"CUDA0"`), not the ollama `gpu_id`, and a mismatch is unknown rather than a guessed
+  mapping; `devices` is a list of RUNS, so `len(devices)` is not the number of cards; **layers are not a
+  proxy for memory and must not share a scale** — on an even split one card held MORE layers and LESS weight,
+  because the output layer is large and carries no KV; and `swa_layers` is a list rather than a count because
+  the pattern is irregular (`gemma2` alternates 1:1, `gemma4:31b` is 50 of 61).
+- **THE ARROW KEYS READ THE CHART, on the two axes the data actually has** (`kbFocus` in vram.tsx). The chart
+  asks two questions of one pointer — x is WHEN, y is WHAT AM I READING — so changing one disturbs the other,
+  and the y targets are a 10px hit stroke or a band three pixels tall. UP/DOWN steps along the LIST (the
+  models the panel lists, wrapping through the overview at index 0); LEFT/RIGHT along the DEPTH (summary →
+  what that model's memory is holding). That is the tree convention and ARIA's `tree` model, and separating
+  the axes is what stops one key meaning "next sibling" at the top level and "descend" once you are on a
+  model. Two consequences are load-bearing: **depth PERSISTS across up/down**, so you can step between models
+  and stay drilled in (which is the actual task — "what are these two cards each holding"); and **LEFT at
+  depth 0 does nothing** rather than wrapping, because a no-op boundary is how a tree says you are at the
+  root. The keys answer only while the pointer is on the chart (`crosshair` is set), and `preventDefault` is
+  called only when one was used, so the panel never eats scrolling it had no use for. **Esc unwinds one rung
+  at a time** — tip, then keyboard focus, then zoom.
+- **THE SAME KEY STEPS THROUGH WHAT THE VIEW DRAWS.** Overview draws pool LINES, the stacked view draws model
+  bands, so `↑↓` cycles pools there (`kbPool`/`stepPool`, its own signal — the two views focus genuinely
+  different kinds of thing, and unifying them would be a wrapper over two two-element enums). Leaving the keys
+  live in one view and dead in the other was the worse option: the same key then meant "change what I am
+  reading" or "scroll the page" depending on where the pointer happened to be. **Nothing else is copied
+  over** — a pool has no memory breakdown of its own, so `←→` do nothing there and the hint on that tip offers
+  only the pair it can honour.
+- **A KEYBOARD FOCUS HOLDS UNTIL THE POINTER MOVES** (`releaseFocus`, called from the plot's `pointermove`
+  and nothing else). A band sliding under a parked cursor as samples arrive raises `pointerenter` with nobody
+  having touched anything, so honouring that would let an arriving poll overwrite a selection the keys just
+  made. The tip is then **anchored to its TRACK** rather than to the cursor: a reader who is not moving the
+  mouse does not want an answer that moves, and a split model shows one tip per card, which under one cursor
+  would be two tooltips on the same few pixels. They alternate sides when there are several, because a
+  drilled-in tip is taller than the ~110px track it belongs to.
+- **DRILLED IN, THE AXIS IS SCALED TO THE MODEL — and to the SAME height on every card it is on.** A model is
+  often a few percent of a card, so its decomposition draws into three pixels; here the band lifts to the
+  baseline and everything else drops away. Scaling each track to its OWN contents would draw a card holding
+  1,991 MiB and one holding 878 MiB at the same height — the pro-rating mistake in a different costume, in
+  the one view built to show that the cards hold different things. The shared ceiling is computed
+  independently and identically by every track from the samples they all share, so there is no cross-track
+  state to get out of step. **The header says so** (`full height …`): a chart that changes what its height
+  means without announcing it is a confidently wrong picture.
+- **A SPLIT MODEL ANSWERS ON EVERY CARD IT IS ON**, each tip decomposing its own, and **both carry the whole
+  model's size** — the per-card figure answers "how much of this card" and cannot answer "how big is this
+  thing", and 1.94 GiB beside 878 MiB under two identical denominators invites the reader to take either one
+  for the model. The whole-model figure is read the SAME WAY THE BAND IS (falling back to the last frame that
+  held it): reading it from the hovered sample alone meant the tip drew a band from one instant and looked
+  for its size at another, found nothing, and silently printed nothing.
+- **`other` IS A SIGNAL, NOT A SLICE.** It is what the server could not name, so a large one means the
+  breakdown is behind the engine it is reporting on — the one part whose SIZE is the message. Flagged beside
+  the row, and only above 1%, since a rounding crumb is not news.
+- **`placement` — BUILT, and still opt-in on the server** (`OLLAMA_LAYER_PLACEMENT=1`, absent by default).
+  `placementFrom` parses it; the drilled-in tip draws it as its OWN section with its OWN units, never a bar
+  beside the memory ones — layers are not a proxy for memory (on an even split one card held MORE layers and
+  LESS weight, because the output layer is large and carries no KV), so drawn on a shared scale the two would
+  disagree, correctly, and read as a bug. Matched on the ENGINE's device name (`"CUDA0"`, not the ollama
+  `gpu_id`); a card whose name is not in the list shows nothing rather than being handed the entry at its
+  ordinal. `devices` is a list of RUNS, so entries are summed by name and `devices.length` is never a card
+  count. `swa_layers` is counted for THIS card, since the pattern is irregular.
+- **WHAT THE RUNNER IS DOING, AND HOW FULL ITS CACHE IS (`activity` on `/api/ps`).** Read out of
+  `llama-server`'s `/slots`, which ollama did not consult until the `activity3` build. `activityFrom` parses
+  it, `kvOccupancy` divides it. Two DIFFERENT KINDS of fact live in one object and reading them alike is the
+  mistake its shape invites: `prompt_tokens` is `n_past` — OCCUPANCY, which SURVIVES the task that filled it,
+  because those tokens really are still in the cache — while `phase`/`decoded`/`prompt_tokens_done` describe
+  the task IN FLIGHT and the server clears them the moment it ends. So an idle runner reports a full cache and
+  no work, and `phase` is the discriminator for everything else. **Absent is not idle**: the object is omitted
+  when the runner could not be asked (still loading, no `/slots`, a failed poll, every older build), and
+  `idle` is a positive answer with a figure attached — collapsing them draws a full cache as an empty one on
+  every stock server. The occupancy chip sits beside the CONTEXT chip because it is the second half of that
+  fact: that chip's tooltip has always advised a smaller `num_ctx` and had no way to know whether the advice
+  applied, since Ollama reserves the cache for the whole window at load and the bytes never move — a 256K
+  window at 2% and at 90% are identical everywhere else in the panel. `<1%` rather than `0%` for a
+  nearly-empty one, because "0%" beside a reserved 40 GiB is the claim the reader is about to act on.
+  **`prompt_tokens_cached` is the explanation for a prefill too short to draw** — measured on the box, a
+  repeat of the same 4098-token prompt hit 4097 of them, leaving one token to compute, so the phase did not
+  last long enough to be sampled at all. An impossibly fast prompt is a cache hit, not a broken clock. The
+  phase chip is kept SEPARATE from the keep-alive chip rather than folded into its "in use": they are
+  different facts and they disagree exactly where it matters — a request in flight while the slot has not
+  started reads `busy: true, phase: idle`.
+- **PHASE IS NOT DRAWN AS A SPAN, and that is a resolution fact rather than a preference.** In the real
+  capture (`tests/e2e/fixtures/runner-activity.json`) the event stream delivered ONE `prefill` frame and ZERO
+  `decode` frames across two generations that a 40 ms poll resolved completely; the 200 ms cache-hit
+  generation produced no non-idle frame at all. Our own poll is 2 s and stream sampling pulls to 1 s, against
+  a prefill that lasts ~400 ms. Inferring the boundary from two samples would be reconstructing an edge by
+  sampling — the same error the lane already avoids by MEASURING `dispatchMs` rather than subtracting it, and
+  worse here, because the invented timestamp would sit beside a memory trace that is measured. A span needs
+  the executor to stamp it (`gen.start`/`gen.phase`/`gen.end`, requested); until then phase is drawn as a
+  STATE, which is what a reading honestly is.
+- **A HOLE THE SERVER REPORTS BREAKS THE LINE (`dropped` → `lostSince` → `ResourceSample.gapBefore`).** Every
+  frame carries a cumulative count of what this subscriber lost when it fell behind, and nothing read it — so
+  under a burst the panel drew a continuous line across frames that never arrived, which is exactly the claim
+  `segments()` refuses to make about a sampling gap, and a worse one: frames are dropped when the box is
+  busiest, so the interpolation lands on the movement the chart exists to show. Three things about the
+  counter decide the arithmetic and each is a way to get it silently wrong. The news is the **DELTA**, not
+  the value — read as a value, one hiccup breaks the chart at every subsequent sample forever after, which
+  teaches a reader to ignore breaks. It is **PER SUBSCRIBER**, so a `hello` RESETS it rather than reading as a
+  recovery, and the seam across the reconnect is covered by the backfill `sinceFor` already asks for. And a
+  counter going **BACKWARDS** is a server restart we did not see: claiming a loss there would invent a number
+  and draw it as a hole in a specific place. It is resolved in `sw-events.ts` because the counter belongs to
+  the CONNECTION and one connection feeds every open panel. `gapBefore` is checked separately from the
+  interval because a drop leaves no interval to notice — the readings either side can be adjacent in time.
+- **AN EDGE SAYS WHERE IT CAME FROM** (`ResourceEvent.via`). A load or an eviction reaches the lane two ways:
+  INFERRED by diffing `/api/ps` (a model was there and then was not — which is the most polling can say, since
+  for most of a load there is no runner object at all and an eviction that made room is indistinguishable from
+  an idle expiry), or REPORTED by the server's event stream, which knows both. The instant tooltip was
+  hardcoded per KIND, so it told you "nothing reports an eviction, so this is the sample where it stopped
+  being resident" about an edge the server had just reported WITH ITS REASON — false on precisely the setup
+  the stream exists for, and it hid the one thing polling can never recover. A reported edge now says what
+  the server said (`serverSaid`, with the model's name stripped off the front, because the name is the line
+  above and the width belongs to the reason).
+- **"OFF-BOX" IS A CLAIM THAT NEEDS EVIDENCE, and the window is not it.** The label says a model was NEVER
+  resident here, and it was decided from the models drawn in the CURRENT window — while the scrub gesture
+  WRITES that window (`resWindowS`; the zoom chip is what it reports). So narrowing to 42s pushed a model
+  evicted a minute ago out of the ghost list, the lane went on naming it, and its row came back as "never
+  resident here" about a model the panel had just watched load and evict. A window is a question about what
+  to DRAW; whether something was ever here is answered over the whole history (`everResident`), and anything
+  the lane still names that WAS resident gets an "evicted" row rather than falling through to off-box. **And
+  "off-box" needs evidence of ELSEWHERE, which only the server's provenance list can give** (`isCloudModel`:
+  affirmatively not one of its models, and false while the list is still loading). It was the fall-through
+  label for anything not seen resident, so asking for a LOCAL model that was not loaded yet called it off-box
+  for the whole stretch between the request going out and the server's `load.start` — then it flipped to
+  "loading", then to resident: two corrections of a claim that never should have been made. A local model the
+  panel has not seen resident is `not loaded`, so the sequence reads not loaded → loading → resident.
+- **SWITCHING A MODEL OFF SWITCHES IT OFF EVERYWHERE THE PANEL DRAWS IT.** The colour dot took it out of the
+  stack and the totals and left its LANE blocks standing — most visibly on an off-box model, whose only
+  presence IS the lane, so its row offered a control that could not remove the one thing it drew. `timeline()`
+  filters on `hiddenModels`, ghost rows get a working dot, and the keyboard's list skips hidden models because
+  there is no shape left to point at.
+- **A MODEL'S MEMORY IS PIECEWISE-CONSTANT, SO ITS BAND IS A STEP.** A resident model does not drift: the
+  runner appears holding its whole footprint, and the KV cache is preallocated for the FULL context window at
+  load and never grows (verified on the box — byte-identical before and after 4,217 tokens). A straight line
+  between two samples therefore drew a decay that cannot happen, and an eviction drew the worst version of
+  it: at the stream's 15 s idle cadence, two samples with the model resident at one end and gone at the
+  other became fifteen seconds of memory gently draining away, while the `unload` rule sat at the true
+  instant — so the lane and the chart disagreed by up to a whole sample interval and it read as the lane
+  being misaligned. Held at its last value and dropped where the next reading says, the descent lands on the
+  sample that reported it (2 ms after the edge, in the capture that prompted this) and the two agree without
+  either being moved to suit the other. **The DEVICE's own bands stay lines**, and the difference is the
+  point rather than an inconsistency: a card's free memory really does fall progressively while weights land
+  (the server calls it a continuous progress signal), so stepping it would be the same error pointed the
+  other way. A band is stepped when its top is a MODEL's, which is what `identity` already answers for the
+  fill. Adjacent bands SHARE an edge, so a floor is drawn with the step-ness of the band BELOW, never its
+  own — otherwise the two disagree by a step's height and the stack opens a seam. That also makes a residual
+  sitting on models exactly right: its base jumps when a model goes, while its own thickness varies smoothly.
+  **Every polygon that draws a model's memory steps — the band, the hover breakdown and the drilled-in parts.**
+  It was first applied to the band edges alone, so the band held flat while the parts drawn INSIDE it still
+  sloped: a flat band with diagonal lines across it, which reads as the breakdown disagreeing with the total
+  it breaks down. One helper (`stepEdge`, taking the y-mapper since the drilled-in view draws against its own
+  shared ceiling) serves all three, defined right after `x`/`y` because the drilled-in branch returns early.
+- **THE SNAP MARK CARRIES THE MODEL'S COLOUR.** A model's colour is its identity across the whole panel, and
+  a mark sitting ON that band was drawn in the panel's accent — saying "a reading" where every other surface
+  says "this model", with nothing to tell several marks apart. It reads from `identity`, the same source
+  `bandFill` colours the band from, so the mark and the thing it marks cannot disagree. A boundary with NO
+  model keeps the accent rather than taking `bandFill`'s grey: the residual and driver overhead are drawn in
+  `--fg-faint`, and a faint grey mark on a faint grey band is one you cannot find.
+- **THE PANEL'S OWN SETTINGS LIVE IN THE PANEL** (the track editor behind its gear). How far back the chart
+  draws and which palette a model's colour comes from were in Settings, which is a surface you have to LEAVE
+  the chart to reach — and the whole argument for putting them there, a paragraph each explaining what they
+  do, stops applying the moment the chart is on screen while you change them. Neither is a `MlConfig` flag,
+  so the "every user-editable setting also appears in DevTools Settings" rule does not reach them; they are
+  storage.local display preferences like the lane's height, and the cursor-snap toggle moved there first.
+  **The window picker shows a PREFERENCE, never the live window**: scrubbing writes the window, so bound to
+  one quantity the control read "56 seconds (dragged)" — a reading of the moment dressed as a setting, which
+  also needed an extra option to render at all, since a value no preset names leaves a select BLANK.
+  `RESWIN_PREF_KEY` is where the chart OPENS and `RESWIN_KEY` is where it currently IS; the picker edits the
+  first and applies it at once (a preference you cannot see take effect reads as broken, so it clears a
+  pinned zoom too), the scrub writes only the second, and a dragged window still survives a reload.
+- **A FAULTED GPU IS REPORTED ABSENT, NOT BROKEN** (`unavailable_gpus`, `GpuFaults`). A card whose firmware
+  faults vanishes from `supported_gpus` entirely, so `/api/ps` looks normal, `/api/info` returns one healthy
+  card and every figure agrees with every other — a two-GPU box with a dead card renders identically to a
+  one-GPU box, and one sat faulted for five and a half hours that way. The server lists such cards separately
+  in `compute.unavailable_gpus[]`, and the panel draws a MACHINE-level banner, because there is no card to
+  badge. Four rules, each a bug found or designed out:
+  - **Read it off `hello`, on every connect.** A fault can begin hours before anything subscribes; an
+    edge-only signal is silent in exactly that case. `hello` was used purely as a clock anchor before.
+  - **A full `/api/info` body is AUTHORITATIVE, and an absent key CLEARS it.** On a healthy box the field is
+    absent, not `[]`. A first version kept the last report whenever the key was absent, which left the banner
+    up for good after a card RECOVERED. It was written to survive a test whose hello carried a fault its next
+    sample did not — a combination the real server cannot produce, since both come from one cached probe. The
+    fixture was inconsistent, not the server; the recovery case now has its own assertion.
+  - **Never a device, never capacity.** Kept in a separate list rather than folded into `supported_gpus` with
+    a state flag, which would make every existing consumer wrong until it learned the flag — failing open on
+    broken hardware. It carries no memory fields, so nothing can be summed by accident.
+  - **An empty list is not a clean bill of health** ("nothing to report OR could not look"), so it may drive a
+    warning and never a reassurance; `not_offered_by_backend` is a HEALTHY card no backend claimed and draws
+    nothing. `pci_id` is the identity (two cards share a name); `name`/`uuid` are absent under
+    `not_reported_by_driver` and on AMD. AMD's `reset_in_progress` is still a fault but usually TRANSIENT
+    (a reset takes seconds), so `gpuFaultNote` says so; drawn like `reset_required` it sends someone to
+    power-cycle a machine that is fixing itself. `detail` and `recovery` render verbatim — `detail` is the driver's
+    own string and is only useful if it can be searched as shown.
+- **A CARD'S OWN FACTS ARE ON ITS NAME** (`DeviceFacts`, a hover on the track header). The part that earns the
+  space is the TWO TOTALS: ollama places against `total_memory` while the header draws `physical_memory`,
+  ~638 MiB apart, and a reader who notices the difference elsewhere has no way to learn it is expected. The
+  trigger WRAPS `.rc-name` rather than being it — a `.tt-pop` inside the name element made the label's own
+  text "CUDA0" plus three sentences of prose, which every reader of that element then picked up. What it
+  deliberately does NOT say: **the interconnect, beyond admitting it is unknown** — interconnect is a property
+  of a PAIR (consumer NVLink is 2-way, so a four-card box has some NVLinked pairs and some on PCIe), the server
+  reports no topology yet, and an absent matrix must never render as "PCIe only", which on a 4x3090 is a
+  confident lie; and **link speed or width**, which are LIVE readings rather than capabilities (an idle
+  Blackwell reads 2.5 GT/s under ASPM while perfectly healthy, and x8-of-x16 is by design on a board that
+  splits its lanes).
+- **A THIRD MODE, `total`: THE WHOLE BOX ON ONE AXIS** (`boxAxis`, `BoxView`). Pools DO combine — ollama
+  splits a model too big for one card across several and spills the rest into RAM — but not one-for-one:
+  each extra card a model spans carries its own compute buffer and driver context, layers do not divide (free
+  space smaller than the next layer is stranded), and a RAM spill is far slower. **This text used to say the
+  opposite** ("40 GiB free as 20+20 cannot hold a 30 GiB model", "a model can use one pool's room, never the
+  sum") while the same panel drew split models; it was wrong everywhere it appeared, the stack refusal's
+  tooltip included. So the pools are laid END TO END up the axis rather than merged: each owns a band the
+  height of its own capacity and fills it from its own floor, with the WALLS drawn between them. The axis
+  total is then a true total, every fill is a real reading against a real ceiling (which card is full is what
+  decides where the next load lands), and the boundaries a split pays to cross are visible. It also makes the
+  box's SHAPE visible, which the per-pool tracks cannot — they give every pool the same height whatever its
+  size. The header says what is HELD and never what is FREE — a free total would overstate the room and count
+  slow RAM as VRAM; hiding
+  a pool shrinks the axis rather than leaving a hole. Offered only where there is more than one pool, and it
+  has its OWN PRESET ("Whole box"). It had none for a while and could be reached only by hand-editing tracks,
+  which made Custom carry a whole VIEW rather than what Custom should mean — a preset with something excluded
+  or a mode changed. A mode nobody can find is a mode nobody uses. The three presets are three different
+  QUESTIONS, not three scopes: how full is each pool (Overview), what is in each (GPU + RAM), what shape is
+  this box (Whole box) — the last being the one the per-pool tracks cannot answer, since they give every pool
+  the same height whatever its capacity. **It answers a hover like every other view** (`PoolsTip`, the overlaid view's reading): it shipped
+  with none, so pointing at the plot or a legend key said nothing one preset away from a view where both did.
+  The pool it picks is the band the pointer is INSIDE (`bandOf`), not the overlaid view's nearest line —
+  that rule compares the pointer against each pool's own fill SHARE, which means nothing on this axis and
+  agrees with the band by coincidence at some heights, which is how a one-probe test passed with the band rule
+  removed. Its test probes one height per band.
+- **THE STACKING RULE JUDGES THE MODE, not only the series.** `stackRefusal` guarded the series CHECKBOXES —
+  it stopped you adding a series that would make an unstackable track — and left the mode select unguarded, so
+  a three-pool Overview track could simply be switched to "stack". `TrackView`'s stack branch reads
+  `def.series[0]` and ignores the rest, so two series were silently dropped; when that card happened to be
+  empty it read as the panel rendering nothing at all. The option is disabled now, with the refusal as its
+  tooltip. A SAVED layout carrying one was already refused at restore (`restoreLayout` → `presetRefusal`),
+  which is what makes the editor guard sufficient — and is why a renderer-side fallback written for this was
+  DEAD CODE and removed: its test passed without it, because that path was doing the work.
+- **A TRACK CAN BE DROPPED FROM ITS OWN HEADER** (`HideTrack` → `editLayout`, so the view becomes Custom and
+  the layout is remembered). Not offered on the last one — a panel with no tracks is not a layout — but it
+  keeps its SPACE, because a header that reflows when a control appears shifts every surface below it. Its
+  tooltip has to say that NOTHING IS UNLOADED: the same glyph on a model row is *Evict from VRAM*. **A
+  `.tt-pop` only works inside an element carrying the `tt` class** — the floating layer finds triggers by it —
+  so without that class the explanation is display:none markup nobody can ever see, which is how this one
+  shipped mute.
+- **A FRAME THE SERVER COULD NOT SPLIT IS NOT AN EMPTY ONE.** In the drilled-in view, stacking nothing for a
+  frame with no `memory` drops the area to ZERO, which says the model was not resident — it was; what is
+  unknown is the composition. Those stretches draw at the model's real height, flat and dashed
+  (`.rc-part-unsplit`), so the trace stays continuous and only the SUBDIVISION goes missing. A frame with no
+  band at all really is zero, and that is the difference the two cases are told apart by.
+- **THE SNAP MARK IS DRAWN OVER THE CROSSHAIR, NOT UNDER IT** (`.rc-snapdot` z-index 6 against `.rc-cross`'s
+  5). The dot rides ON the line, and its legibility over a band of any shade comes entirely from a 1.5px ring
+  of the panel's own colour — so painted underneath, the line cut that ring and the mark read as a rendering
+  fault rather than as a reading. Pinned in PIXELS (`the crosshair does not cut the mark's ring`), because no
+  DOM assertion can see it: the elements, positions and computed styles are identical either way. The test
+  shoots the mark twice, once with the rule's own `background` made transparent, and asserts the ROWS the
+  mark occupies carry no difference — the line is interrupted by it. Row counts rather than sampled points,
+  since a 7px dot's rendered centre is not exactly where its box says. The bug's signature is worth knowing:
+  the FILL rows look untouched (a 55%-opacity accent line over an accent fill is invisible) and only the
+  ring rows differ, so the zero-run went 10 → 7.
+- **HOVERING A MODEL SUBDIVIDES ITS BAND IN PLACE** (`.rc-part`), rather than opening a second picture of the
+  same memory somewhere else — and it is the chart that earns it: weights sit still while the cache steps
+  with the context, which is visible over TIME and in no total. The split rides on the `Band` (attached in
+  `deviceBands`, where the device is known — a split model's cards hold different things and one average
+  describes neither), and is drawn OVER the solid band, so a frame the server could not split shows the band
+  it always had instead of the decomposition vanishing or stretching a neighbour's shares across a gap
+  nobody measured. Parts are told apart by WEIGHT of the model's own colour, not by hue: four hues inside one
+  band would lose the identity the band exists to carry.
 
 **The event lane (§4.5 of the spec).** Under the tracks, on the SAME segmented axis: what happened, against
 what memory was doing while it did. Nothing new is collected — `src/sidebar/model-stats.ts` derives it from what
@@ -863,8 +1200,12 @@ sessions already record. `usageByModel` is the per-model ledger (attributed to t
 delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
 - **Spans run BACKWARDS from when a call finished** — the timestamp we hold is the end — else every bar sits
   one generation to the right of the memory movement it caused, which defeats the shared axis.
-- **A tool step is ONE block with PHASES**: the model generating the call, the human at the approval gate,
-  the tool running. `toolMs` and `approveMs` are measured separately in `agent-loop.ts` for exactly that
+- **A tool step is ONE block with PHASES**: the model generating the call, the PLUMBING between (parsing it,
+  validating the args, the hop to the page — `dispatchMs`, measured in the loop like the others rather than
+  inferred), the human at the approval gate, the tool running. Dispatch is counted in the block's extent and
+  not merely labelled, because the start is RECONSTRUCTED by subtracting the parts we know about: an
+  unmeasured part shifts the whole block later than the work happened, which on an axis shared with the
+  memory trace draws a block after the movement it caused. `toolMs` and `approveMs` are measured separately in `agent-loop.ts` for exactly that
   reason — a human deciding is the step's wall time but not the machine's work, and the wait draws as a
   hollow neutral so a wide bar can never read as work.
 - **A generation is SPLIT by what the model was emitting** — `think` / `call` / `answer` phases inside the
@@ -907,10 +1248,413 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   without it the newest events, the ones you are watching for, were the only ones that never appeared.
 - **Instants rule through the plot** (dashed — a solid line reads as part of the chart), and one eviction is
   drawn in every track, so hovering it anywhere thickens it everywhere.
+- **A ROW is a claim that two bars OVERLAP**, so the lane spends one only when they do. Bars are packed at
+  their DRAWN width (a very short event is widened to stay visible, so packing has to reserve the same
+  width), with a hair of separation reserved after each — but that separation is dropped rather than
+  costing a row, because a bar pushed below the bar it merely ABUTS asserts an overlap that is not there.
+  Not an edge case: a model `load` ends exactly where the step it precedes begins, so every load was drawn
+  under its own step. A `run` is the container the rest sit inside and the widest bar on screen, so it is
+  drawn as a CHECKERBOARD rather than a solid fill (built from its own `--model`, so it keeps the identity
+  the lane reads by) — solid, it read as the heaviest work in the lane rather than the thing holding it.
+- **Double-clicking any block scopes the panel to it** (`scopeToSpan`, pure/tested), widening a block too
+  short to frame around its own centre — a 40ms window contains no samples and draws as an empty plot. An
+  open block has no end, so `now` stands in. A single click still navigates to the step: framing the time
+  around a step and going to read it are the same intent from two sides.
+- **The lane and the model list each hide** (Settings live in the panel's own track editor, beside which
+  tracks it draws — the same question). Both compete with the chart for whatever height the panel was
+  dragged to, and which of the three you want depends on what you are doing.
+- **A load ATTEMPT is not the request.** The server ends a `load.failed` reason with `; retrying` when it
+  evicted something or shrank the context and is trying again, and the next attempt brings its own
+  `load.start` — so one request reads start → failed → start → complete. It is labelled "load attempt failed,
+  retrying", never "failed to load", or the lane reports a failure for a load that went on to succeed. Since
+  `ollama-slop:loadguard` every `load.start` is followed by exactly one `load.complete` or `load.failed`; before
+  it, an abandoned load (the requesting client disconnected — ollama ABANDONS a load then, it does not finish
+  it) left a `state: "loading"` row on `/api/ps` forever.
+- **A reconnect must not draw the lane twice.** `sinceFor(null, …)` asks for the FULL retained ring whenever
+  the worker is fresh — which an MV3 respawn guarantees — so every span in that window arrives a second time.
+  Caught on a real box, where four serving periods read as `serving 8` and two loads as three (one load's
+  opening edge fell outside the replayed window, so only its duplicate closed). `addMachineEvent` dedupes on
+  kind + model + when, with a TOLERANCE: each connection anchors on its own hello, so the same edge lands
+  within the jitter between two hellos rather than on the same millisecond. Pinned against the real capture
+  in `tests/fixtures/real-edges.mjs`.
+- **`ml.__events({ download: true })` dumps what the panel derives its timeline FROM** — this tab's
+  `__mlDebug` stream, the server's event frames with the wall clock each resolved to, the current `ps`/`info`
+  and the stream's status. For a lane doing something that makes no sense: the drawn events are derived by
+  pure functions, so the inputs let the exact picture be rebuilt and turned into a test, where a screenshot
+  can only be described. Two capture rules: the resource panel must be OPEN (nothing subscribes to the stream
+  when nobody is looking, so `frames` would be empty), and the `debug` ring holds everything only in
+  `debugMode: "devtools"`. Underscored because it is a debugging aid, not API.
+- **The event LANE is collapsed by default**, and its chip row is the control. The lane is CONTENT (what
+  happened); the scrub strip above it is NAVIGATION (where you are), so only this half folds — which also
+  stops the panel jumping in height the first time anything runs. Collapsed, the whole chip row opens it (the
+  chips already say what you would get, which promises more than a bare chevron, and none of their own
+  meanings apply to a lane that is not drawn); open, the chevron closes it and the chips filter again. Tests
+  that are about what the lane DRAWS seed `ml_res_sections: { lane: true }` rather than relying on the
+  default — which is pinned by its own test.
+- **The panel HEADER holds its height.** It gains and loses controls as you use the panel — the zoom chip
+  arrives when you scrub, the view picker only once capacity is known — and a row that reflows when one
+  appears shifts every surface below it, the scrub strip included. Adding one control to that row made the
+  chip's arrival push the strip 12px down mid-drag, so every later drag landed above the track and did
+  nothing at all, which reads as the scrubber being broken rather than as the row growing. It never wraps,
+  carries a `min-height`, and the total gives up width first (it is the longest item and still legible at
+  half length).
+- **ONE switch decides what the panel is about** (`ScopeSwitch`, in the panel header): `session` or `full`.
+  It drives the time window (`sessionWindow` — the session's own stretch, floored so a short run is not a
+  slit), which model rows are listed, and which events the lane draws. These were three separate controls
+  and they disagreed: a qwen session's lane drew gemma loading and evicting, above a list of gemma models,
+  on a chart showing ten minutes of a shared box either side of the run. Scoping a machine event asks
+  whether the model is one the session RAN, since such an event has no session of its own; the model list
+  FOLDS the rest into a count rather than hiding them, because what else is resident is exactly the context
+  for why your model got evicted. As a chip in the lane's filter row it read as one more kind-filter beside
+  "loads 4", which is why it moved. **A memo over the lane's events must key on `events.length`, never on
+  `events`** — `timeline()` rebuilds that array every render, so keying on it recomputes per render rather
+  than per poll, and a window that closes over `Date.now()` then walks its right edge ahead of the last
+  sample between a render and the drag that reads it, silently emptying the scrub strip.
+- **A wheel over the panel scrolls the transcript underneath it** (`wheelThroughPanel` in `app.tsx`). The
+  panel is a fixed-height sibling of the scroll container rather than content inside it, so the gesture used
+  to do nothing at all; it is forwarded only when the panel cannot take the scroll itself, and `deltaMode`
+  is honoured because a wheel reports LINES, not pixels.  A wheel over the CHART means something more specific and claims the
+  gesture first (`scrubNudge`): the plot is a viewport onto a timeline, so scrolling it scrolls the window
+  along the session, by a fraction of the window's OWN width so one notch travels the same visible distance
+  at any zoom. It only fires when there IS a window to move, and signals that by calling `preventDefault` —
+  which is what `wheelThroughPanel` then checks, so a gesture the chart declined still scrolls the page.
+- **WHERE you grab the scrub window decides what the drag does** (`scrubZone` → `scrubResize`/`scrubTo`, all
+  pure/tested): the edges resize, the middle pans. Recentring on the cursor wherever it landed is what made
+  a narrowed window impossible to widen again, since every grab was a pan including a grab on a handle. The
+  handle is a constant PIXEL size converted to a fraction of the track, capped at a third of the window so a
+  very narrow one is not all handle; a resize reads from the window captured AT the grab, so the fixed edge
+  does not drift as each move rewrites the range it is measured from.
+- **A person at the approval gate is STRIPED, like a model load** — it is the step's wall time but none of
+  the machine's work, and flat, a wide block reads as a lot of work having happened. Drawn as an overlay
+  element over the flat neutral (`phaseSpans` → `.rc-ev-wait`) rather than into the phase gradient, because
+  a gradient stop takes a colour and a stripe is a pattern.
 - **Cursor tooltips share `useTipPlacement`** and are placed against the VIEWPORT from their own MEASURED
   size: they flip when they do not FIT (not at an arbitrary fraction of the width), never sit under the
   pointer, and only the surface the pointer is on renders one. Pinned by `tests/e2e/tooltips.spec.mjs`, which
   sweeps positions in a narrow and a wide panel rather than probing one point.
+
+**A claim of unreachability needs the ABSENCE of evidence, not the presence of a failure**
+(`backendStateFrom`, contract.ts). During a 64-second load of a 142 GB model, `/api/ps` answered every poll in
+0.4-0.8 ms while the request that triggered the load produced no bytes for the whole minute — and from that one
+hanging request the panel concluded the box was down and sent the user to check their Server URL. Anything
+proving the box answers (`backendAliveAt`, stamped wherever a reading comes back) now vetoes the claim, and a
+load in flight is reported as a load instead. The evidence is a TIMESTAMP, bounded, because stale evidence is
+exactly what a box dying looks like. Three writers (the health probe's timeout, a failed run, a failed chat)
+go through ONE gate in store.ts, since three separate decisions is how one said "unreachable" beside a live
+reading. And the proof of life cannot come from `/api/ps` alone: that poll is gated on the panel being open,
+while the banner is shown to everyone — so the health probe, which always runs, stamps it too.
+
+**A failed run offers Retry** (sidebar AND HUD card, for parity with Continue). It is the SAME resume a
+step-capped run's Continue sends — by hash, from the stored state, with no follow-up text — so it re-asks the
+turn that failed without adding a message. Always safe to offer: a call that errored produced nothing, so the
+worst case is failing again. It exists because a failure is usually not about what was asked: the backend
+restarting underneath a run answered "Model not found" for a model that was serving a minute earlier and was
+listed again a minute later, and the only way forward was to retype something.
+
+**A python traceback names the line the USER wrote.** The sandbox indents the code into `def _user():` after
+a three-line prefix, so every traceback pointed three lines past the statement that actually failed — on a
+four-line script, at line 7, and the frame above it (`<exec>`, the prelude's own call site) reported line 166,
+which is about nothing the user can see. Corrected in the AST (`increment_lineno` on the user's statements)
+rather than by rewriting the traceback text, so CPython emits true numbers natively — which means **the MODEL
+gets them too**: handing it a traceback that names the wrong line costs it a turn, and a UI that quietly
+disagreed with the text the model was given would break the raw-view rule. A **SyntaxError needed its own
+fix**: it is raised BY the parse, so the correction never runs for it, and the one error whose entire content
+is "which line" was naming the wrong one — its `lineno`/`end_lineno` are shifted and it is re-raised, with a
+real `filename` so the frame is identifiable as the user's. The user's frame is the one in `<python_exec>`;
+anything in `<exec>` is the prelude. Five tests in `tests/python.test.mjs` against real CPython, because an
+off-by-N that is right for one shape of script is not right for the next.
+
+**Python is PRETTY-PRINTED for the human and never for the model (`src/py-format.ts`).** A model writes
+dense one-liners on purpose — the right trade for the thing paying per token, the wrong one for the person
+reading the step — so the RENDERED view reflows and the raw view, the export and the model's context all keep
+the original. Two invariants make that safe rather than a second source of truth: **tokens are never
+changed** (only whitespace and newlines between tokens that were already there, so the displayed code always
+runs the same as the code that ran — the test compares the whole token stream), and **it reports what it
+did** via a line MAP, because reflowing moves line numbers and a traceback's entire content is a line number.
+When it cannot account for the source it returns it untouched: a formatter that is WRONG is worse than one
+that declines, since the reader would be looking at code that is not what ran with no way to tell. It
+declines on an unterminated string, an unbalanced bracket (which otherwise JOINED the following line onto
+it) and a triple-quoted string (whose statement it truncated) — all three found by writing the tests.
+
+**Line numbers survive any reformat (`src/line-map.ts`).** Every pretty-printer we show code through moves
+them, and a stack trace's whole content is a line number — so the rendered view and the error silently stop
+agreeing. `py-format` builds its own map as it goes; **js-beautify hands back none**, so for `exec`'s JS the
+map is DERIVED from the two texts: strip the whitespace from both and they are the same string, so a position
+in that stripped stream identifies the same code in each. That works for any formatter that only moves
+whitespace, which is why there is one mechanism rather than one per language. It REFUSES when the two do not
+agree once whitespace is removed — a map derived from a mismatch points confidently at the wrong line, which
+is worse than an un-mapped number the reader could at least distrust. **The one thing it cannot see** is
+whitespace inside a string literal (`'a  b'` and `'a b'` strip identically); telling those apart needs a
+tokenizer per language, which is the thing it exists to avoid, and both formatters using it copy strings
+byte-for-byte. `tests/e2e/line-map.spec.mjs` is the only thing that runs the whole chain — real CPython
+raising, the real worker returning, the real renderer mapping — because the demo asserts nothing and so
+cannot fail.
+
+**A traceback is rendered, not rewritten — but the NUMBER SHOWN is the row on screen.** Each
+`File "<python_exec>", line N` becomes a link that maps through that line map and scrolls to the line,
+pulsing it the same green a cited step gets; the DEEPEST user
+frame is marked in the CODE (a traceback gives you a number, and the number is only useful once you have
+found the line it names), with the "shown reflowed" caveat added ONLY when the formatter actually moved that
+line — an unconditional caveat is noise that undermines the times it is true. A `<exec>` frame is the
+prelude's own call site: dimmed, never dropped, because the raw view has to stay recoverable. Pointing at a
+line turns the gutter on for that block regardless of the preference — you cannot mark a line in a block with
+no lines. **The displayed number is REMAPPED, and only in the render**: the code beside a traceback is
+reflowed, so printing the number CPython produced sends the reader to a line that is not the one that
+failed — the exact failure the line map exists to prevent, reintroduced by the view. So the frame shows the
+row it now sits on and its tooltip names both (only when it actually moved), while the raw view keeps the
+traceback verbatim and the model keeps the number it was given. The map is derived ONCE — `inLineMap` in
+render-panel.tsx, handed from the In block ACROSS to the Out by the step, since the two are separate
+descriptors that cannot see each other and three copies of that arithmetic would be three chances to
+disagree about which line a failure was on.
+
+**JS reports its line too (`src/exec-trace.ts`).** `exec` returned `e.message` and dropped the stack, so a JS
+failure said WHAT and never WHERE — half the answer, for the reader and for the model about to retry it.
+There is no traceback worth rendering (an evaluated script's stack is almost entirely the wrapper), so it
+reports ONE line, which then travels the identical route a python frame does: through the derived map, into
+the beautified code, marked red and clickable (`jumpToLine` is shared by both, rather than a second near-copy
+of the same gesture). The awkward part is that the stack's line is NOT the model's line, and the two paths
+`exec` can take shift it differently — an indirect `eval` inside a `Function` (offset 0) or an
+`AsyncFunction` BODY when the source uses top-level await/return (offset 2, in V8 today). Both offsets are
+**MEASURED at runtime** by throwing from a known line inside the real construct, with the same PARAMETER LIST
+the real call uses, because a written-down constant is a guess about a wrapper we do not own and would drift
+silently rather than fail. The line rides the `exec-out` descriptor as `errorLine` and is appended to the
+model-facing message as ` (line N)` — it is retrying this code, and a line number is the difference between a
+targeted fix and a rewrite. **Anything it cannot be sure of is null**: no stack, no evaluated frame, or a
+frame that maps outside the source (a failure inside something the code called) is refused rather than
+clamped, because a confident wrong line sends the reader to innocent code and they conclude the tooling is
+broken instead of the number.
+
+**A cell we cannot render says so.** `PyDfTable` coerced every cell with `String()`, so a pandas column
+holding a dict — `dict(per_q)` in a cell is an ordinary thing to write — rendered as `[object Object]`: a
+wrong fact printed exactly where the reader is looking for the right one, and it shipped because nothing
+asserted on a non-scalar cell's TEXT. `dfCell` serialises an object as JSON (which is what the value already
+IS by the time it arrives — the sandbox returns through `json.dumps`) and returns **null** for one that
+cannot be serialised at all. Null is not the string "null": the cell then draws the same dashed red marker an
+unresolvable pointer uses, naming the type, with a tooltip saying the failure is in the PREVIEW and not in
+the run. The CSV copy goes through the same function, so what you paste cannot disagree with what you saw.
+**The same bug in another costume was still live one layer up**: pandas serialises an arbitrary object — a
+class instance, a function, a nested frame — to an **empty object**, and `{}` is a *plausible* value, so it
+read as the truth and `dfCell` had no way to tell it from a genuinely empty dict. Named at the PRODUCER
+(`python-runtime.ts`, before `to_json`), because the sandbox is the last place the real type is still known:
+a lost cell becomes `{"__ml_unrenderable__": "<type name>"}` and the panel draws the same marker with the
+**Python** type on it. Only what would be LOST is touched — a dict stays a dict, a set still becomes the list
+pandas makes of it, numpy scalars and timestamps still convert — since a rule that swallowed working values
+would be worse than the bug it fixes. Real-CPython tests both ways in `tests/python.test.mjs`, end to end in
+`tests/e2e/line-map.spec.mjs`.
+
+**Affordances on a rendered code block (`CodeTools`, render-panel.tsx).** A block of someone else's code is
+something you read, copy, and want explained, and it offered none of those. Quiet by design — half opacity
+until the block is hovered, since a toolbar competing with the code for attention is the opposite of what a
+code block is for. Python gets **explain** + **▶ bench**; JS gets **explain** + **copy**.
+- **explain** annotates the interesting LINES with the utility model (`annotate.ts` is the pure half —
+  prompt, schema, and the coercion of the reply; `summaries.tsx` holds the store, beside the approval-card
+  gloss it is a sibling of). Opt-in per block, NEVER automatic: it spends tokens and, unlike the approval
+  gloss, nobody is waiting on it to decide anything. Constrained by a **JSON schema**, because a line number
+  recovered by regex from prose is exactly the confidently-wrong number this whole subsystem exists to stop
+  producing.
+- **The notes go in the MARGIN and never into the source.** Inserting a comment would shift every line below
+  it, which invalidates `py-format`'s line map and stops a traceback resolving — so a note is a SIBLING of
+  its line (`.lnote`, drawn under it rather than to its right: the panel is often 400px wide and a true
+  right margin sits off the end of a horizontally scrolled block). Notes turn the gutter on for the same
+  reason a `markLine` does — you cannot key a note to a line the reader would have to count to.
+- **The model is numbered against what the READER sees.** The block draws reflowed source, so numbering the
+  original would have the annotator pointing at lines that moved and the note landing on the wrong row,
+  silently. `displaySource` is exported from ui-kit for exactly this: `Code` beautifies JS internally, so a
+  caller cannot get the drawn text from what it passed in.
+- **Nothing from the model is trusted.** A line outside the block is DROPPED rather than clamped (clamping
+  invents a claim about a line it never looked at, and lands it on the first or last line, where a reader
+  would believe it); repeats and blanks go; the set is capped in count and length. An unusable reply is an
+  ERROR STATE offering a retry, not an empty success — a button that visibly does nothing reads as broken.
+  The gloss is rendered through the markdown renderer (`mdInline`, one `<p>` peeled off) and its tooltip
+  says it is model-generated and approximate.
+- **▶ bench** hands the script to the Python bench (`lsSet(BENCH_CODE_KEY, …)` then navigate). The bench
+  reads that key on MOUNT and is only rendered while it is the open view, so writing-then-navigating IS the
+  handover. It sends the REFLOWED source deliberately: `py-format` never changes a token, so that is the
+  code that ran and it is the code you pressed the button next to. `lsGet`/`lsSet` live in `store.ts`, not
+  `vram.tsx`, because render-panel cannot import vram (vram imports RenderPanel — a cycle).
+
+**The RAW view of either slot is an `OutputCell`.** Capped, scrollable, and findable with Ctrl+F — because
+raw is the view you go to in order to SEARCH for a token (the one selector that differs between two calls,
+a key buried in a wide args object) and the one with no structure of its own to cap it: a call carrying a
+base64 image or a wide table otherwise stretches the step to any height. The RENDERED views are not wrapped
+here — an Out's renderer puts its own sections in cells, and a rendered In is already a code block. The
+composition question that raises is whether the JSON tree inside can hide text from the find, and it cannot:
+`RawArgs` passes `allOpen`, which makes `JsonNode` non-collapsible at EVERY depth, so nothing can be folded
+away from a search. That is load-bearing rather than incidental — a find reporting "No results" over data
+that is visibly right there reads as the find being broken — so it has its own test.
+
+**A retry's DIFF against the call it revises (`src/diff.ts`, `CodeDiff`).** The commonest loop in a run is:
+a code tool fails, the model retries with a tweak, and the reader diffs two twenty-line blocks BY EYE to
+find the one line that moved. `exec` and `python_exec` take **`revises`** (an `@tool:` pointer to the
+earlier call, in any of its three forms) and **`changed`** (a one-line account of what it altered).
+- **WE compute the diff; the model never supplies it.** Asked what it changed, a model answers from what it
+  MEANT to change — and the two disagree exactly when the diff is worth reading. Its `changed` line rides
+  BESIDE the rows on its own ground, tagged as a claim (the same rule a `token:` label follows).
+- **Both sides are REFLOWED before comparing** (the block's own `pyFormat`/`displaySource`), or pure spacing
+  differences drown the real change: a model writes dense on purpose and two calls a minute apart are not
+  spaced alike.
+- **Resolved in the LOOP** (`revisionOf`, beside `derefLocally`) for the same reason: it is a pure read of
+  run state the loop owns, so it behaves identically on the page-hosted and background-hosted paths with no
+  round-trip and no approval. The loop carries the OLD SOURCE on the descriptor and the PANEL does the diff —
+  it already owns both formatters, and shipping one into the loop would be for nothing. An unresolvable
+  pointer yields no diff rather than a fabricated comparison.
+- **The header says what it is diffing against and takes you there** — the pill is the resolved pointer
+  (canonicalised to the minted id even when the model named an alias) and clicking it runs the same
+  `scrollToStepSeq` a citation does. It draws through the shared **`PointerChip`** (ui-kit), which is also
+  the copy chip under a step: a pointer must not read as a different KIND of thing depending on which
+  surface names it, and this was a CSS copy of that chip for a while, which is how that starts. The chip is
+  the SHELL only — one copies, one navigates. Its label is the model's own name for the output when it gave
+  one (prefixed by the tool, so `the q1+q2 totals` is not mistaken for a step title) and the raw pointer
+  when it did not, because an id you can copy beats a name we invented.
+- **`scrollToStepSeq` re-queries the slot anchor after opening a collapsed step.** The lookup ran while the
+  open was still re-rendering, so nothing was visible yet and it fell back to the row — meaning a slot
+  citation worked on an already-open step and never on a closed one, which is the case you are usually in.
+  Its test needs a step TALLER than the viewport or landing on the row and landing on the code are the same
+  place, and it passes with the fix reverted (that is how the first version was caught). `TokenValue` gained `seq` for exactly that: `step` is the loop's counter
+  and several records share it, while `seq` addresses one row.
+- **It opens only when the step FAILED.** "What did I change" is the question you ask about a failure; on a
+  retry that WORKED the output is the question, and a diff pinned open above it pushes that output out of
+  the viewport to answer something nobody asked. Collapsed it is ONE line that still names what it revises
+  and by how much — so the claim row lives inside the fold too, or "collapsed" would be two lines. Focus
+  mode folds it either way, since it is a debugger's question even on a failure.
+- **The gutter draws BOTH line numbers, and only when they line up with something.** The new-side column is
+  the same numbering the code block below draws, so a diff row, a margin note and the failure mark all name
+  the same line and you can read straight down between them — that is what makes the width worth spending.
+  With the block's own gutter off they line up with nothing, so they are drawn when the line-number pref is
+  on OR the step failed (which turns that gutter on by itself, so the two can never disagree). A row that
+  exists on one side has one number; the other column is blank, which is the claim being made.
+- Hunks ELIDE (`collapse`): two thirty-line scripts differing in one place must SHOW that place, not bury it
+  in twenty-nine rows already read. A gap standing for ONE line is un-elided, since saying "1 line skipped"
+  costs more than the line and makes the reader wonder what was hidden.
+
+**The Python bench is a bottom DRAWER (`BenchDrawer`).** It used to REPLACE the session view, so trying a
+snippet cost you your place in the run you opened it from — which is exactly the trip you would be making
+(copy this step's code, poke at it, look back at the step). The drawer is a SIBLING of the scroll container,
+not content inside it, so the transcript keeps its own scroll position while you work below it. Draggable
+from the top edge (how much you want depends on the script), `✕` closes WITHOUT discarding the draft, and
+`⤢`/`⤡` swap it with the full-page mode — two real modes, since a drawer is bad for a long script and
+full-page is bad for cross-referencing. **Full-page carries `✕` and `⤡` and NO `‹`**: back and dock meant the
+same trip, differing only in whether the bench came with you, and two adjacent chevrons for that distinction
+is the confusion itself — so both remaining controls are about the BENCH and the glyph says what happens to
+it. Both **RETURN to the exact view you left** (`viewReturn`, shared with Settings and the server-tool list,
+which had the same bug — glancing at a setting mid-run cost you the run you were reading); the return is read
+only while you are somewhere that REPLACED a view, so a stale one cannot send you where you did not come
+from. The dock is a remembered preference and `✕` does not reset it: `✕` is about the bench being open, `⤢`/`⤡`
+about its shape, and conflating them makes one of them surprising.
+Opening it puts the resource panel away: two draggable strips on the same bottom edge is not a layout. Open
+state, dock and height all persist (`chrome.storage.local`) — it is a workspace you leave set up, not a
+dialog you dismiss. Covered by `tests/e2e/bench-dock.spec.mjs`.
+
+**The bench's ENVIRONMENT panel (`BenchEnv`).** What the sandbox actually IS — the Python and Pyodide
+versions and every package you can import, each with the version that INSTALLED. Read from the running
+interpreter (a `PY_RUN` with `env: true`, answered in the worker off the same serialized chain a run uses),
+never from `PY_PACKAGES`: the manifest says what we ASKED for, and the wheel that installed is what the code
+will import — a panel reporting the first while the second differs is worse than one reporting nothing.
+A PANEL rather than a tooltip, because it is read while writing and is about to be searched and acted on;
+filterable already, since that is how you will find a package to install. Fetched on OPEN, once — reading it
+STARTS the sandbox, which is exactly what a first `python_exec` pays for, so doing it on mount would make
+every glance at the bench cost a cold start. Installing a package and choosing which the model may import
+are **stated in words, not drawn as controls that no-op**: an affordance that silently does nothing cannot be
+told from a bug, so you try it twice.
+
+**One `openBench(code?)`.** There were two openers and they disagreed: a code block's ▶ went straight to the
+FULL page, which is precisely the trip the drawer exists to stop — you press it FROM a step in order to
+compare against that step. Both go through the one function now, which honours the dock preference and puts
+the resource panel away. Caught by the demo, which is what a demo is for.
+
+**A code block's `explain` (`src/sidebar/annotate.ts`).** A utility model is shown the code AND what it
+produced, and answers under a JSON **schema** with a note per interesting line. Never automatic — it spends
+tokens, and unlike the approval gloss nobody is waiting on it to decide anything — and asked at CLICK time
+only, once: a second click while in flight is a no-op, and once notes land the button becomes show/hide
+rather than re-asking.
+- **The notes go in the MARGIN and never into the source.** Inserting a comment shifts every line below it,
+  which invalidates the line map and stops a traceback resolving. A note is a SIBLING of its line.
+- **The model is numbered against what the READER sees** — the reflowed text, via the exported
+  `displaySource`. Numbering the original would key notes to lines that moved, landing each one a statement
+  adrift, silently. (The demo made exactly that mistake first.)
+- **Nothing it returns is trusted**: a line outside the block is DROPPED rather than clamped (clamping
+  invents a claim about a line it never looked at, and puts it where a reader would believe it); repeats,
+  blanks and non-numbers go; the set is capped. An unusable reply becomes a RETRY state, not an empty
+  success — a button that visibly does nothing reads as broken.
+- Prose renders through `mdInline` with **math on**: a note about arithmetic says `$q_1 + q_2$` in one glyph
+  instead of a clause.
+- **Not on the HUD card.** The card is a reading surface with no navigation of its own; `explain` belongs
+  there (understanding the code is what the card is for) and `bench` does not.
+
+**An ASIDE on the lane — a model call YOU triggered while reading.** The code annotator and the on-demand
+summary spend tokens on this box and take visible time, so hiding them from the timeline would be dishonest;
+they are also not the agent's work, and charging them to the run would make two runs incomparable on the
+strength of how much someone poked at one. So: its own `aside` kind, drawn OUTLINED rather than filled,
+carrying **no `cost` and no `parent`** — which is how "not part of the run" is enforced rather than
+remembered (hovering a step cannot light it, and it cannot enter `usageByModel`). It keeps a `ref`, so
+clicking still goes to the step you asked about, and its tooltip says outright that you triggered it. Stored
+in `store.ts` `asides` (a Map by hash, session-scoped and in memory only — it describes this READING session,
+not the run's record) and merged in at the `eventsFrom` call site rather than written into the session the
+debug reducer builds. Its tooltip is the ONE place a span names its model, because an aside runs on the
+UTILITY model while every other span runs on the session's own — which the panel already says in three
+places. `tests/e2e/aside-lane.spec.mjs` covers the seam neither unit test can: the merge, and the class the
+lane paints. It also has to SEED A BOX (`setCapacity`/`setResident`) — with no samples the panel draws no
+tracks and no lane, and a lane that was never drawn cannot be missing a bar, so the first version of that
+test would have passed the day the feature broke.
+
+**A PYTHON COLD START is not the script.** The first `python_exec` of a session spends seconds fetching
+Pyodide and its wheels before a line runs, and one elapsed figure charges the script for time it never
+spent — the confusion a model's `load_duration` exists to settle. The **worker** measures it (it is the
+executor; anything downstream measures the message bus too), charges it to the call that PAID for it and
+reports nothing on every warm call after. It rides `ToolResult.remoteMs.bootMs` → the step → both surfaces:
+the footer reads `ran in 4.2s — 3.0s cold start, 1.2s script`, and the event lane draws a **`boot` phase**
+first, STRIPED like a model load because it is the step's wall time and none of the work you asked for. A
+phase rather than its own span, because unlike a model load it happens INSIDE the dispatch `toolMs` already
+measures — a span in front would draw the time twice.
+
+**RULE — use the PANEL'S tooltip, not the browser's `title`.** `cursorTipOn(text)` (ui-kit.tsx) is the
+default for anything explanatory; a native `title` needs an argument for itself. Three reasons, all of them
+things a reader hits rather than notices: the native one waits about a second, which on something you are
+hovering to decide whether to CLICK is long enough to have given up; it renders as an OS artefact rather than
+as part of the panel, and cannot show a pointer as code or wrap a sentence sensibly; and on a wide target —
+a code line, a table cell, a whole row — it appears wherever the pointer is while an anchored tip can sit
+half a panel away from what summoned it. `cursorTipOn` follows the cursor and is read into the one shared
+floating layer (`CursorTipLayer`), which is also what makes its prose unselectable, so copying a code block
+never picks up the explanation of it.
+
+  **TWO RENDER MODES, told apart by TYPE.** `cursorTipOn` takes a `string` OR a node. A STRING is markdown
+  TEXT — escaped, then rendered inline (`code`, *emphasis*, math) — because a string is where content from
+  OUTSIDE arrives: a JSON Schema's `description`, a tool result, a model's prose. Treating one as markup
+  would be an injection. Anything else is authored JSX, passed as children rather than an HTML string, so
+  there is no way to hand it something unescaped by accident. `TipText` (ui-kit) does the same for the
+  ANCHORED `.tt-pop` tooltips whose prose comes from data — the JSON tree's key descriptions are our own
+  parameter docs, which are full of backticked identifiers, and printing the backticks reads as a renderer
+  that gave up.
+
+  **What inline markdown will NOT do, deliberately**: no images (unbounded pixels in a gutter or a tooltip,
+  and a tool result could put them there) and no links out of a model's prose — a one-click egress in chrome
+  the reader trusts, whose text and destination markdown lets disagree. A pointer link stays text there too:
+  navigating needs the run's `seq`, which this renderer has none of, and a link that goes nowhere is worse
+  than plain text. Pointer links live in the ANSWER renderer, which has that context. Both refusals have a
+  test, because both are currently true by accident of how the inline pass works.
+
+  **The exception is an accessible NAME.** A `title` on an icon-only control is what a screen reader and a
+  keyboard user get, and `cursorTip` is pointer-only — so those keep a name (prefer `aria-label`) and gain
+  the custom tip for the pointer. The split is: naming a control → `aria-label` (+ a tip); explaining
+  anything → the custom tip. When the prose must also be readable with no pointer at all, put a `.tt-pop`
+  child in the DOM beside it, the way a marked code line does.
+
+  Not yet swept: `settings.tsx`, `hud-card.tsx`, `card-composer.tsx` and `resource-chart.tsx` still hold
+  native `title`s. New code follows the rule; those are a follow-up, not a licence.
+
+**One disclosure, everywhere something opens (`Disclosure`, ui-kit.tsx).** The panel had three of these
+written three different ways — the model list's fold, the agent's system prompt and tool definitions, the
+server-tool list — and all three were a pill button that injected a box into the layout on click. That reads
+as content appearing rather than a section opening, gives no hint the thing can be closed, and shoves
+whatever is below it. One component so the next one is free and a chevron means the same thing panel-wide.
+The slide is `grid-template-rows: 0fr → 1fr`, which is the only way to animate a height nobody knows in
+advance (`height: auto` does not transition); the inner child needs `min-height: 0` or a grid item refuses to
+shrink below its content. Its body stays MOUNTED while closed — there has to be something to slide, and
+content that only exists once open can only appear — so a landed fetch stays landed and reopening is instant.
+`onOpen` fires on the opening edge only, for a section whose content has to be FETCHED (the server-tool list
+still fetches on expand, never on mount). A consequence for tests: a collapsed body's rows are IN THE DOM, and
+Playwright counts a clipped element as visible, so assert on the body's measured height rather than on
+`toBeHidden`.
 
 **Two surfaces (in-page overlay + DevTools panel).** The same `sidebar-app` bundle runs
 in two places: the in-page **overlay** (a content-script shadow-root shell, `shell.ts`,
@@ -983,6 +1727,66 @@ export sinks) — not decoration: a stub twin is a valid 200 Markdown document t
 `.markdown`, else `.text`). Advertised in `exec`'s description only — it needs exec, which a run may not
 have — and otherwise discovered through `agent_api_docs`.
 
+**Protobuf chat streaming (`protoStream`, three states).** OpenAI's SSE re-sends `id`/`object`/`created`/`model`/
+`system_fingerprint` and the `choices[0].delta` wrapper for EVERY token — ~224 bytes of envelope around ~5 of
+text. A patched Ollama serves the same stream as varint-delimited protobuf instead: the invariant half arrives
+once in `Start`, a token costs a tag + a length + its bytes, and `End` replaces the finish chunk, the usage
+chunk AND `data: [DONE]`. Measured through the proxy on `gemma4:31b`: **7343 → 292 bytes, 25.1x**.
+**One `Accept: application/protobuf` header, sent hopefully and never sniffed** — the path is chosen from the
+RESPONSE's Content-Type, so a stock server, an older build or a proxy that drops the header answers with the
+SSE it always did and the miss IS the fallback (the same shape as the Markdown ladder's first rung).
+**THREE STATES, and `"auto"` is the DEFAULT** (`ProtoMode` in contract.ts; read every stored value through
+`protoMode()`, never raw — `chrome.storage.sync` keeps what it was given, so an existing profile still hands
+back the BOOLEAN this replaced, and `true` maps to `"auto"` because that user asked for the negotiation and
+not for a report about it). `"off"` never sends the header. `"auto"` sends it and takes whatever comes back,
+in silence — safe on every backend, which is why the default could move from off to on: asking costs one line
+and the miss is the fallback, so there was nothing for the old default to protect. `"on"` sends the identical
+request and REPORTS a reply that is not protobuf — once per URL per worker (`servedProto`), because the state
+is an assertion about your backend and a silent miss is exactly what you turned it on to hear about. It
+reports rather than throwing: a wire format must never cost you an answer, so the SSE path still runs and
+`"on"` buys visibility, not a hard failure. The settings warning about a URL that can never serve it (the
+OpenWebUI route) is gated on `"on"` for the same reason — under the default it would be a permanent caveat
+about a preference nobody expressed, which is the noise that teaches people to skip the times it means
+something. The
+decoder is **GENERATED** from the schema (`scripts/gen-proto.mjs` → `src/proto/chat.gen.ts`, checked in
+because CI has no protoc; `tests/proto.test.mjs` regenerates and diffs, skipping where protoc is absent). That
+is not tidiness: `tool_calls` and `logprobs` arrived upstream — field and encoder together, in one commit,
+after the handover had said they were missing — and this read them **with no change here**, because
+regenerating from a pinned schema absorbs that where a hand-written decoder (a second copy of the field
+numbers) would have silently ignored them. The schema is not ours, so it is **pinned by git blob id**
+(`src/proto/chat.proto.pin.json` → `parawanderer/ollama:middleware/chat.proto`, beside the Go encoder, which
+is what makes it the definition rather than a copy of one). `npm run gen-proto -- --check` verifies the
+vendored copy OFFLINE (a blob id is content-addressed, so it holds in CI and a fresh checkout), confirms the
+commit still carries that blob when GitHub is reachable, and reports when upstream has moved on — which a
+content hash alone cannot, since "we match commit X" stays true forever.
+**`toolIds` KEEPS SSE**, and that is PERMANENT rather than a gap waiting on a field. `sources` is not part of
+a completion: OpenWebUI emits it ahead of the model's first token, narrating a retrieval it already did, on
+`/api/chat/completions` — which proxies ollama's NATIVE `/api/chat` and parses the stream line by line to run
+filter functions. The protobuf encoder lives on `/ollama/v1/chat/completions`, a raw passthrough that path
+never touches, so a `sources` field could never be filled: permanently empty is not "no sources" and not
+"sources dropped" but indistinguishable from both, where an absent field says "ask elsewhere". Serving
+protobuf for that class means teaching OpenWebUI's transcoder to emit it — real work, not a schema line. **No `TextDecoder` anywhere in this path** — it
+is binary, and decoding it as UTF-8 corrupts it silently rather than throwing. The framing half
+(`src/protostream.ts`) is ours because it is not in the schema: `fetch()` chunk boundaries have nothing to do
+with message boundaries, so the reader buffers and yields only whole frames, refuses a length prefix claiming
+the world, and treats **bytes still held at the end as a transport failure** rather than a short answer.
+`tests/e2e/proto-stream-live.mjs` is the debug probe against the real box, and
+**`tests/e2e/proto-live.spec.mjs`** the assertions — opt-in via `USE_ENV=1` and skipped entirely without it,
+because the backend is live and CI has neither it nor a GPU. They are the only things that put the SERVER'S
+OWN bytes through the built extension rather than frames this repo also wrote, and they cover the four cases
+that matter: a streamed reply really arrives as protobuf; a real TOOL CALL survives it (a tool the model
+cannot answer without, so the run cannot pass by answering from pre-training — and its ARGUMENT is asserted,
+which is what says the fragments were reassembled rather than merely that a call happened); the setting OFF
+sends no header at all; and a backend that will not serve it still works. That last one uses OpenWebUI's own
+chat route on the same box — a route that genuinely cannot answer protobuf, which is a better test of the
+fallback than any stub. The wire is observed by wrapping `fetch` in the SERVICE WORKER realm, because the
+decode is invisible downstream by design: a caller cannot tell which format delivered its tokens, so asking
+the caller would prove nothing.
+**Both streaming paths carry it**: `streamLLM` (`ml.chat`) and `streamAgentTurn` (the agent loop, where the
+saving actually lands, since a turn re-sends a large prompt and streams a long reply). They share one
+`handleChunk`, so the formats differ only in how a chunk is RECOVERED from the wire and cannot drift into
+different behaviour.
+
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,
 captured in `streamChunk`/`consume`). `fetchLLM`/`streamLLM` return
@@ -1017,6 +1821,53 @@ it per format: `params.think` (openai) vs a top-level `think` (ollama native).
 
 ## Conventions
 
+**RULE — when one rule VALIDATES another's output, enumerate the inputs; do not sample them.** The resource
+panel GENERATES layouts (`presetsFor`) and JUDGES them (`stackRefusal`), and the invariant is that a preset
+may never propose a layout the rule then rejects. There is a drift guard for exactly that, and it shipped a
+broken DEFAULT anyway, because it ran two machine shapes: a two-card box and a unified Mac. One discrete card
+plus host RAM — the commonest machine there is — was assumed to be a weaker case of two cards. It is not: the
+generator branched on `devices.length` while the rule judges POOLS, and those two quantities agree everywhere
+except at one card, where a GPU plus the host is still two pools. The default preset proposed a stack the
+panel then refused, on most people's hardware.
+
+The general shape, which is worth recognising before it happens again:
+
+- **A guard over generated output is only as good as the SHAPES of input it runs**, and "fewer of them" is a
+  different shape, not a smaller one. Enumerate the kinds; do not pick two and assume monotonicity.
+- **Watch for a PROXY quantity in the branch.** `devices.length` standing in for "how many pools" is the bug
+  in one line — it was right on every box anyone had tested and wrong on the one they had not. When a
+  decision is about X, branch on X, and if X is only available after a filter, read it after the filter.
+- **The DEFAULT deserves its own assertion.** It is what a user meets without choosing anything, so it is the
+  one worst to get wrong and the easiest to leave untested among a list.
+
+**`tests/fixtures/boxes.mjs` holds the shapes** — one per kind of machine people actually have (two-card
+CUDA, two-card ROCm, a four-card prosumer rig, a one-card laptop that has to spill, an eight-card lab node at
+nine pools, and a unified Mac) — and it is SHARED with `resource-demo.mjs`, because a guard and a demo
+disagreeing about what a box looks like is the same drift in another costume. Anything that routes on box
+shape gets run against all of them.
+
+**RULE — before you build a UI primitive, check whether it exists: `node scripts/components.mjs`.** One
+grep-able line per sidebar component, hook and documented CSS class — `NAME kind file:line — first sentence
+of its docstring` — so you search by CONCEPT (`grep -i pill`), which is the only way this works: nobody
+greps `tok-chip` while about to write a pill. The failure it addresses is not "I searched and could not find
+it", it is "I did not think to look": one session produced a CSS copy of the pointer chip, a FOURTH drag
+handle, and a second view-return signal, and each was one grep away. Two of those three were CSS, not JSX,
+which is why the index covers the stylesheet too.
+
+The **docstrings are the index** (nothing is duplicated into a manifest that would go stale), so the cost is
+that an undocumented export is INVISIBLE and gets rebuilt — `--undocumented` makes that loud and exits
+non-zero. **Both halves are ENFORCED**, in the pre-commit hook and in CI's `tools` job: every exported
+sidebar thing needs a docstring, and every CSS class a change ADDS under a new family needs a comment. CSS is
+a ratchet rather than a rule because 323 of the stylesheet's 557 classes have none, and a check that ships
+red is one people learn to scroll past — so it reads the diff against the merge base and asks only about what
+you are adding. A member of a documented block passes on its ancestor (`.r-diff-head` inherits `.r-diff`),
+because the failure being prevented is a NEW family under a name nobody would grep — a second pointer chip
+called something else — not a paragraph per modifier. What you owe it: a new shared thing gets a first sentence saying what it is FOR in words someone
+would search, and an EXTRACTION says what it replaced, because that sentence is what stops the third copy.
+A TRAILING `//` counts as the docstring for a one-line export, which is the house style here — teaching the
+scanner to read those fixed thirty of them with no churn, rather than having me move thirty comments above
+their declarations to satisfy an indexer. Playbook: `.claude/skills/components/SKILL.md`.
+
 **RULE — self-tools get a skill + an AGENTS.md mention, and you keep both current — WITHOUT asking.**
 Any time you (or any model working on this repo) build a TOOL FOR YOURSELF — a harness, wrapper, driver,
 or script you'll re-use to develop/debug/benchmark the extension (e.g. `tests/e2e/observe.mjs`) — you MUST
@@ -1042,6 +1893,19 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
 - **Document functions with JSDoc** (`/** … */`, `@param`/`@returns` where useful),
   not a plain `//` block — so callers get the explanation on IDE hover at the call
   site. Inline `//` comments are for logic *inside* a body.
+- **A FAILED build leaves `dist/` alone** — `build.mjs` bundles into `dist.stage/` and swaps only on
+  success, because the old order (delete, then build) left a loaded extension with no manifest whenever
+  anything threw. The consequence to remember: a build you silenced (`npm run build >/dev/null 2>&1`) that
+  FAILED now looks exactly like one that worked, and everything you run next tests the previous bundle —
+  which will mislead a bisect. It exits non-zero and says so on stderr; do not discard that stream.
+- **Iterating? Run a GENRE, not the suite: `npm run test:core`** (~8s, 978 tests) — `node scripts/test.mjs`
+  with `core` / `panel` / `ext` / `python` / `live`, `--list` to see what each holds, `--timings` for
+  per-file durations slowest-first. The full suite is ~2 minutes and three files are 80% of it
+  (`sidebar` 53s, `background` 22s, `cdp-stream` 20s), which is the right cost in CI and the wrong one in a
+  loop where you changed one pure module. `core` is DERIVED — everything the named genres do not claim — so
+  a new test file runs by DEFAULT rather than falling out of every bucket and being silently skipped; the
+  cost of that direction is that a new SLOW file quietly lands in `core`, which is what `--timings` is for.
+  Still run the full `npm test` before you commit; CI runs everything regardless.
 - **Tests: `npm test`** (Node ≥ 20, `node:test`). `tests/helpers.js` loads the
   real extension files into `node:vm` sandboxes with mocked `chrome`/`fetch`/
   `window`, so tests exercise the shipped code with no build step. Add a
@@ -1328,6 +2192,56 @@ rate includes the network; that whole matrix (openai/ollama x streamed/not) is p
   is the only thing that exercises the real background worker, its host permissions and the real consent
   path. Each site is visited first and fetched from its OWN origin, so the fetch is same-origin and needs no
   approval. Not in CI — the sites are live.
+- **`line-map-demo.mjs`** — a **narrated demo, not a test** of the line-mapping system: `npm run build &&
+  node --import tsx tests/e2e/line-map-demo.mjs` runs four steps — a dense python one-liner reflowed (toggle
+  rendered⇄raw to see the same tokens unbroken), a clean failure, one that PRINTS its way to a failure (so
+  stdout and the traceback share the Out), and the JS twin beautified by js-beautify with its map derived.
+  Click a traceback line number and the line it names lights up in the code — red for the failure, green for
+  the call path. `HOLD=0` exits instead of holding the browser open. The assertions are
+  `tests/e2e/line-map.spec.mjs`.
+- **RULE — a demo says what it is doing, on screen: `narrate(page, "…", { sub: "…" })`** (harness.mjs). A
+  demo is WATCHED, and a watcher who cannot tell which beat is running infers it from what moved — which is
+  exactly backwards when the point of a beat is that something did NOT move. It draws a banner in the PAGE
+  (top-left, its own element, very high z-index), deliberately not inside the extension's shadow hosts, so it
+  can never be mistaken for part of the product and a demo about the sidebar cannot have its narration hidden
+  by the sidebar. `narrate(page, null)` clears it for a screenshot that should show the product alone. Call it
+  at every beat, not once at the start.
+
+  The banner also says WHOSE WINDOW IT IS. A headful demo takes the pointer and the keyboard, and a watcher
+  who cannot tell a finished demo from a paused one either waits for nothing or clicks into the middle of a
+  beat — so every `narrate` marks the run as still driving, and **`narrateDone(page)` flips it** to "the
+  browser is yours". Call `narrateDone` immediately before holding the browser open (or before exiting),
+  never after a later `narrate`, which sets the status back to running.
+- **RULE — a demo about what happens INSIDE a run must call `openRunInSidebar(page)`** (harness.mjs). The
+  panel opens on the SESSIONS LIST, not on the run, so a demo that only slides the sidebar open queries an
+  empty transcript, reads zero of everything, and reports that the feature does not work — which every demo
+  here has done at least once. The helper slides the panel open, waits for the iframe, CLICKS the session row
+  (optionally matched by task text) and waits for the detail view. It does not wait for the run to finish, so
+  it is right for the live demos too.
+- **`capture-frames.mjs`** — a **capture probe, not a test**: `node --import tsx tests/e2e/capture-frames.mjs
+  > tests/e2e/fixtures/events-<name>.json` connects straight to the `.env` box's `/api/events` and dumps the
+  retained ring, so a stream fixture is a RECORDING rather than a guess (`SECS`, `SINCE`; it exits saying so
+  if the backend does not serve the route). Reach for it whenever the event stream's shapes are in question.
+  Its motivating find is the standing reason the fixtures must be recorded: **the stream names models
+  fully-qualified (`registry.ollama.ai/library/gemma4:31b`) while `/api/ps`, in the very same frame, names
+  them short (`gemma4:31b`)**. Every hand-written fixture agreed with itself, so the panel shipped drawing
+  each streamed model TWICE — once as its real row and once as an "off-box" model that had never been
+  resident. `normModel` reconciles them (the inverse of Ollama's own ShortName: the default registry, then
+  the default `library` namespace, then the implicit `:latest`), applied ONCE at the `machineEventFrom`
+  boundary so no later comparison can forget. The replay half is `fake-llm.mjs`'s **`setEvents(frames)`** /
+  **`pushFrame(frame)`** / `streamSubscribers()`, and `tests/e2e/resource-stream.spec.mjs` is what drives
+  them — the stream transport had NO e2e coverage before it, which is why every bug on this path was
+  live-only. Not in CI: only a patched Ollama serves the route.
+- **`cursor-demo.mjs`** — a **narrated demo, not a test** of everything the pointer does on the resource
+  chart: `npm run build && node --import tsx tests/e2e/cursor-demo.mjs`. Ten beats — the free crosshair,
+  turning snap on in the panel's own track editor, a mark on every line, hovering one band to narrow it to
+  one, a selection that snaps, the zoom it leaves, an eviction rule making the line and marks stand down, Esc
+  hiding the tip, moving bringing it back, and the product alone. Every one of those came from watching the
+  chart go wrong rather than from a spec, which is why they are worth having in one place you can run.
+  Deterministic (a fake box, no model and no key); `HOLD=0` exits instead of holding the browser open, `PACE`
+  sets the beat. Screenshots land in `tests/e2e/artifacts/cursor-demo/`. The assertions are in
+  `resource-panel.spec.mjs`. It also walks the KEYBOARD reading — ↑↓ picking a model without the pointer
+  moving, → drilling into what its memory is holding, and a real 3:1 split answering on both cards at once.
 - **`stream-demo.mjs`** — a **narrated demo, not a test** of LIVE tool-output streaming: `npm run build &&
   node --import tsx tests/e2e/stream-demo.mjs` opens a headful browser, slides the overlay open on a real
   (background-hosted) run, and drives a deliberately SLOW `exec` (paced `console.log`) and `python_exec`
@@ -1383,17 +2297,53 @@ BACKGROUND (`gh pr checks --watch`, ~5 minutes for a full run), read only the fa
 KNOWN-BAD failures that arrived from other branches, so a red check that is not yours is named in the PR
 body rather than chased or silently re-run.
 
+**And the `background-work` skill (`.claude/skills/background-work/SKILL.md`) is how to run ANY slow
+thing** — CI, an e2e suite (~10 min), a bench sweep — without stalling the session: start it with
+`run_in_background: true` and go and do other work, because the harness re-invokes you when it exits.
+The mistake it exists for is subtler than forgetting to background something: it is backgrounding it
+and then blocking on its output file anyway (`until [ -s "$OUT" ]; do sleep 20; done`), which is a
+foreground wait wearing a disguise and happened four times in one session. It also holds the
+`dist/`-rebuild hazard — never build while an e2e suite is running, since the suite loads the bundle
+you are replacing.
+
 ## Forked backends (two features need a patched server)
 
-Most of this runs against stock Ollama + stock OpenWebUI. Two capabilities do not, and
+Most of this runs against stock Ollama + stock OpenWebUI. Three capabilities do not, and
 **`docs/FORKED-BACKENDS.md`** is the accounting — read it before assuming a resource-panel field is
 broken:
 
 - **`GET /api/info`** (machine capacity) and **`gpus[]` on `/api/ps`** (which card a model is on, and how
-  a split is divided) come from `parawanderer/ollama`, branch `local/ps-gpu-attribution`. Stock Ollama
+  a split is divided) come from `parawanderer/ollama`, branch `slop` (the old `local/ps-gpu-attribution`
+  name is stale). Stock Ollama
   doesn't serve `/api/info` at all — OpenWebUI answers with its SPA's HTML, which is why a non-JSON body
   is read as "unknown", never as an error. Without them `ml.info()` is `null`, the panel draws no ceiling
   and says so, and a multi-GPU box cannot attribute a model to a card.
+- **`GET /api/events`** (the same branch) is an NDJSON stream of the scheduler's own transitions, and it
+  is the one thing polling cannot approximate: for most of a load there is no runner object in Ollama at
+  all, so `/api/ps` is not coarse during a load, it is EMPTY (measured: `load.start` t=4102,
+  `load.complete` t=48053, every poll across it empty). It also tells `evict` (made room) from `unload`
+  (idle expiry), which diffing polls sees as one disappearance either way. `sw-events.ts` holds ONE
+  connection per worker while a panel is open, `resource-events.ts` is the pure frame model + NDJSON
+  reader, and `machineEventFrom` (vram.tsx) turns edges into lane spans. Everything falls back to polling
+  when the route answers with HTML. Three protocol details: `t` is ms from THAT CONNECTION'S hello and is
+  negative for backfill; `?since=` is a DURATION, not an offset; and **the stream names models
+  fully-qualified while `/api/ps` names them short**, which `normModel` reconciles at the
+  `machineEventFrom` boundary — miss it and every model is drawn twice, once as a phantom "off-box" row.
+  A load is SAMPLED while it happens now (250 ms, and events wake the sampler), and its two halves each
+  carry a `size_vram` — but **`vram_used` stays flat through a load** (it counts registered runners, and the
+  runner does not exist yet), so the two steps show in the per-device free memory and nowhere else. See
+  `docs/FORKED-BACKENDS.md` for the rest, including why an event's `size_vram` is ~0.69 GiB per card below
+  the device's own step and must not be reconciled to it.
+  Recorded fixtures come from `tests/e2e/capture-frames.mjs`; the fake backend replays them via
+  `setEvents`/`pushFrame` and `tests/e2e/resource-stream.spec.mjs` is the coverage.
+- **`activity` on `/api/ps`** (the same branch, `ollama-slop:activity3`) is what the runner is DOING — phase,
+  KV occupancy, prefill progress, prefix-cache hits — read from `llama-server`'s `/slots`, which ollama did
+  not consult before. Absent on every stock server AND whenever the runner could not be asked, which is not
+  the same as idle. `tests/e2e/fixtures/runner-activity.json` is a real capture off the box (169 samples at
+  ~40 ms across a cold prefill, a decode, an idle stretch and a cache-hit repeat) and
+  `tests/runner-activity.test.mjs` asserts against it directly rather than against shapes written here —
+  two of its cases are ones nobody would have invented: an idle runner still reporting occupancy, and a
+  generation containing no prefill sample at all.
 - **`POST /api/v1/tools/id/{id}/execute`** comes from `parawanderer/open-webui`, branch
   `ml/tool-execute-api` — it runs the callable the chat pipeline would, so an external client can
   drive its own loop over OpenWebUI-configured tools. **The extension does not call it yet**: server
@@ -1535,6 +2485,24 @@ OpenWebUI fork is not needed for the capacity work.
   CDNs) — a known limitation, not a bug. The popup's **Permissions → "Enable
   Google Sheets access"** requests just the Google origins at runtime
   (`chrome.permissions.request`), a narrower grant than "On all sites".
+- **The page you are ON is free in every fetch mode; a local file is never read** (`isCurrentPage`, dom.ts).
+  - Every `fetch_url` mode aimed at the current page (fragment ignored, query not) auto-approves, AS-YOU
+    INCLUDED, on both loop paths: the page already holds it and can `fetch(location.href, {credentials:
+    "include"})` itself. The credentials rule is about the REST of the origin. At the choke point, an as-you GET
+    passes without a grant only when it is the SENDER's own frame URL — the loop's check only skips a prompt.
+  - **`rendered + credentials` of the current page is its LIVE DOM** (`live: true`), read rather than loaded a
+    second time in a session tab (which re-runs the page's scripts and their side effects). It is the ONLY mode
+    answered that way: a plain or `format: "html"` fetch promises the server's or file's BYTES, and a
+    sessionless `rendered` load is a fresh page — handing either the live DOM would be a different document
+    under the name of the one asked for. Overlays are not stripped (that works by deleting nodes, which on the
+    live page would edit the user's page).
+  - `ml.fetch` holds the rule, so `fetch_url` (which calls it) and `ml.fetch` in `exec` cannot disagree. The
+    read-only dialect hands `_fetchCached` the MODE (a sanitized copy) instead of dropping it, and serves a
+    non-default mode only as a live read — it had been answering `rendered`/`format: "html"` from the
+    default-mode cache.
+  - The background refuses every non-http(s) URL: a `file:` read could be any file on the machine (`~/.ssh`, a
+    `.env` holding the API key), a hostile page reaches that handler directly, and Chrome's fetch has no file
+    scheme anyway. On a `file://` page the refusal names `rendered + credentials` as the one mode that works.
 - **A privileged/credentialed background fetch MUST validate its target host —
   the client-side approval gate does NOT protect it.** The agent approval lives
   in `injected.ts`, but raw messages (`FETCH_SHEET`, …) are reachable by any page

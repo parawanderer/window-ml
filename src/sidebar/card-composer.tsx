@@ -2,7 +2,8 @@
 // card (ComposerCard) that starts/steers a run from the HUD. Extracted from hud-card.tsx; reads the shared
 // composer signals from ./card-state and the shared attach/thumb bits from ./composer.
 import { useState, useEffect, useRef } from "preact/hooks";
-import { models, config, ollamaIds, rev, sessionMap, backendError } from "./store";
+import { models, modelKinds, config, ollamaIds, rev, sessionMap, backendError } from "./store";
+import { generatesText, producesEmbeddings } from "../contract";
 import { IconChevron, IconEye, IconEyeOff } from "./icons";
 import { useImageAttach, ThumbStrip, ElementPill } from "./composer";
 import {
@@ -23,7 +24,21 @@ export function ComposerModelBar() {
     // The allowed set (LIST_MODELS already applied modelFilter) — but ALWAYS include the configured default:
     // a cloud default often isn't in the server's model list, and it'd be absurd to omit the model you're on.
     // Sorted A→Z so a long local list is scannable.
-    const list = [...new Set(def ? [def, ...models.value] : models.value)].sort((a, b) => a.localeCompare(b));
+    //
+    // EMBEDDING MODELS ARE NOT CHAT MODELS. This picker chooses who ANSWERS a task, and an embedding model
+    // cannot answer anything — picking `embeddinggemma:300m` here spends a round trip to be told so, in a
+    // list where it sits between two models that would have worked. The same predicate the Settings pickers
+    // and the popup use, so the three cannot disagree about what a chat model is.
+    //
+    // `generatesText` fails OPEN and `producesEmbeddings` fails CLOSED, deliberately: a model we cannot
+    // classify (a cloud id, an old server with no /api/show) stays offered, because dropping a model that
+    // works is worse than listing one that does not. Only an AFFIRMATIVE "this embeds" removes a row.
+    const chatOnly = (m: string) => {
+        const caps = modelKinds.value[m] ?? null;
+        return generatesText(caps) && !producesEmbeddings(caps);
+    };
+    const list = [...new Set(def ? [def, ...models.value.filter(chatOnly)] : models.value.filter(chatOnly))]
+        .sort((a, b) => a.localeCompare(b));
     // Offer the native-vision toggle ONLY for an AFFIRMATIVELY non-Ollama model — provenance is unknown until
     // LIST_MODELS lands, and treating unknown as cloud made the eye flash in then out once the list loaded,
     // shoving the chip sideways (the "snap" on open). Unknown → no eye, no flash.
@@ -177,10 +192,10 @@ export function ComposerCard() {
                 <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste a screenshot)</span></button>
                 <span class="card-cmp-hint"><kbd class="kb">↵</kbd> send · <kbd class="kb">esc</kbd> cancel</span>
                 <span class="sp" />
-                {/* Stream the model's thinking live — so a long reasoning phase shows its words, not a frozen count. */}
-                <button class={`card-cmp-stream${composerStream.value ? " on" : ""}`} aria-pressed={composerStream.value}
-                    title="Stream the model's thinking live (see what it's doing during a long reasoning phase)"
-                    onClick={() => (composerStream.value = !composerStream.value)}>◊ live</button>
+                {/* No `live` toggle. Streaming is what the Commander IS — a run you watch — so it was a
+                    control whose only useful setting was the one it already had, sitting in a bar that has
+                    too many. The signal stays (it is what the run is started with, and it is the seam a
+                    control would return through); the button is gone. */}
                 {/* Step budget — a pretty segmented control (not a bare <select>); caps the agent loop. */}
                 <div class="card-cmp-budget" title="How many tool steps the agent may take">
                     <span class="card-cmp-budget-label">Steps</span>

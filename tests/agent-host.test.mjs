@@ -23,6 +23,9 @@ const baseDeps = (over = {}) => {
         delegateTool: over.delegateTool || (async (name, args) => { delegated.push({ name, args }); return { result: `ran ${name}` }; }),
         approve: over.approve || (async (req) => { approvals.push(req); return true; }),
         isSheetApproved: over.isSheetApproved,
+        fetchIsCurrentPage: over.fetchIsCurrentPage,
+        fetchSameOrigin: over.fetchSameOrigin,
+        fetchNeedsConsent: over.fetchNeedsConsent,
         emit: over.emit,
         signal: over.signal,
     };
@@ -171,4 +174,26 @@ test("inline vision: a native look screenshot reaches the NEXT model turn as a u
     const imgTurn = seen[1].find(m => m.role === "user" && m.images);   // the 2nd call's messages
     assert.ok(imgTurn, "a user turn carrying the screenshot was injected before the next model call");
     assert.deepEqual(imgTurn.images, ["data:image/png;base64,SHOT"]);
+});
+
+test("fetch_url of the page the tab is ON is free in every mode, as-you included; the rest of the origin still asks", async () => {
+    // The page already holds it and can fetch its own URL with its own cookies, so no mode of it is worth a
+    // prompt. The credentials rule is about the REST of the origin, and still applies there.
+    const here = "https://site.example/inbox?id=3";
+    const deps = baseDeps({
+        callModel: scriptedModel([
+            call("fetch_url", { url: here, credentials: true }, "a"),
+            call("fetch_url", { url: here, credentials: true, rendered: true }, "b"),
+            call("fetch_url", { url: here, format: "html" }, "c"),
+            call("fetch_url", { url: "https://site.example/inbox?id=4", credentials: true }, "d"),
+            answer("done"),
+        ]),
+        fetchIsCurrentPage: (url) => url === here,
+        fetchSameOrigin: (url) => url.startsWith("https://site.example/"),
+        fetchNeedsConsent: () => true,
+    });
+    await runBackgroundAgent({ task: "t", systemPrompt: "SYS", tools: [{ name: "fetch_url", requiresApproval: true }] }, deps);
+    assert.equal(deps.delegated.length, 4, "every call ran");
+    assert.equal(deps.approvals.length, 1, "only the as-you read of ANOTHER page asked");
+    assert.equal(deps.approvals[0].arguments?.url ?? deps.approvals[0].args?.url, "https://site.example/inbox?id=4");
 });

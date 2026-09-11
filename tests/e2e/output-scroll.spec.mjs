@@ -331,3 +331,101 @@ test("output cell (real layout): cap clips, grip drags to resize, matches actual
         site.stop?.();
     }
 });
+
+// FINDING SOMETHING PAST THE RIGHT-HAND FOLD. The find bar revealed a match by adjusting scrollTop only, so
+// a match beyond the fold was painted and counted while the view never moved — the counter saying "1 of 1"
+// over a screen where nothing had changed. It is also the wrong ELEMENT to scroll: with wrapping off the
+// overflow lives on `code.hljs` inside the cell, so the cell's own scrollLeft moves nothing at all. Only a
+// real browser can show this; jsdom reports every element as zero-sized, so `scrollerX` would find nothing.
+// Kept UNDER exec's 500-char default output cap: at 600 the needle was simply truncated away, and the
+// test failed reporting "no match" for a reason that had nothing to do with scrolling. 300 chars is still
+// several times the panel's width, which is all the test needs.
+const WIDE_JS = `
+console.log('short line one');
+console.log('padding ' + 'x'.repeat(300) + ' NEEDLEFAR');
+console.log('short line two');
+return 'ok';
+`;
+
+test("output cell (real layout): the find scrolls SIDEWAYS to a match past the fold", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "overlay",
+        });
+        // Wrapping OFF is the precondition: with it on there is no horizontal overflow to scroll and the
+        // test would pass by having nothing to do.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_debug_codewrap: false }));
+        fake.setScript([{ tool: "exec", args: { js: WIDE_JS } }, { content: "done" }]);
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1400, height: 900 });
+        await page.goto(site.url + "/");
+        await waitForMl(page);
+        await page.evaluate(() => { window.ml.agent("print a wide line", { stream: true, approvalRouting: "both" }); });
+        for (let i = 0; i < 60; i++) {
+            const n = await ext.sw.evaluate(() => {
+                const p = globalThis.__mlApprovals?.list?.() || [];
+                p.forEach((d) => globalThis.__mlApprovals.resolve(d.key, true));
+                return p.length;
+            });
+            if (n) break;
+            await sleep(150);
+        }
+        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot?.getElementById("ml-sb-host"), null, { timeout: 20000 });
+        await page.evaluate(() => {
+            const root = document.getElementById("ml-sb-root").shadowRoot;
+            const panel = root.getElementById("ml-sb-host");
+            panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
+            panel.classList.add("open");
+            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+        });
+        const frame = await (async () => {
+            for (let i = 0; i < 80; i++) {
+                const f = page.frames().find((fr) => /sidebar\.html/.test(fr.url()));
+                if (f) return f;
+                await sleep(100);
+            }
+            throw new Error("sidebar iframe never appeared");
+        })();
+        for (let i = 0; i < 60; i++) {
+            const row = frame.locator("button.row").first();
+            if (await row.count()) await row.click({ timeout: 1500 }).catch(() => {});
+            if (await frame.locator('button.nav[aria-label="Back to sessions"]').count()) break;
+            await sleep(200);
+        }
+        for (let i = 0; i < 40; i++) {
+            const head = frame.locator(".astep.tool:not(.open) .astep-head").last();
+            if (await head.count()) await head.click({ timeout: 800 }).catch(() => {});
+            if (await frame.locator(".r-outscroll").count()) break;
+            await sleep(200);
+        }
+
+        const cell = frame.locator(".r-outscroll").last();
+        await expect(cell).toBeVisible({ timeout: 20000 });
+        // The widest horizontal scroll offset anywhere inside the cell — which element owns the overflow is
+        // exactly the thing under test, so the assertion does not name one.
+        const maxScrollLeft = () => cell.evaluate((el) =>
+            Math.max(0, ...[el, ...el.querySelectorAll("*")].map((n) => n.scrollLeft || 0)));
+        const overflows = () => cell.evaluate((el) =>
+            [el, ...el.querySelectorAll("*")].some((n) => n.scrollWidth > n.clientWidth + 1));
+
+        // There must BE something to scroll, or this passes for the wrong reason.
+        await expect.poll(overflows, { timeout: 20000 }).toBe(true);
+        expect(await maxScrollLeft(), "nothing is scrolled sideways yet").toBe(0);
+
+        await cell.click({ position: { x: 20, y: 20 } });
+        await page.keyboard.press("Control+f");
+        await sleep(250);
+        await page.keyboard.type("NEEDLEFAR");
+        await sleep(600);
+
+        expect(await frame.evaluate(() => CSS.highlights?.get("ml-find")?.size ?? 0), "the match is found").toBeGreaterThan(0);
+        expect(await maxScrollLeft(), "…and the view actually moved sideways to show it").toBeGreaterThan(50);
+    } finally {
+        await ext.close();
+        fake.stop?.();
+        site.stop?.();
+    }
+});

@@ -4,12 +4,13 @@
 // window.ml keeps thin delegating method wrappers. Not in the default read-only
 // domTools; opt in via extraTools, gated by the approval flow.
 
-import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext, ServerTool } from "./contract";
+import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext, ServerTool, JsonSchema } from "./contract";
 import { DEFAULT_GROUNDING_RANGE, resolveOutputCap, outputCapPrecheck, UI_OUT_CAP } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
 import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed, clickSelector } from "./dom";
 import { accessibleName } from "./a11y";
 import { regionLegend, formatLegend, type Box as LegendBox } from "./legend";
+import { outputCapParams, retryParams, citeParam } from "./tool-params";
 
 // python_exec output (stdout / value / error) fed to the model is capped per slot — default bigger than
 // exec's 500 (data output legitimately runs longer), the model can raise it per-call (gated). See run().
@@ -1445,8 +1446,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                     description: tablesDesc,
                 },
                 tableRaw: { type: "boolean", description: "Load table cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
-                maxChars: { type: "number", description: "Raise the per-slot output truncation for THIS call (default 2000, max 20000). A raise needs human approval + `maxCharsReason`. Prefer returning a compact result." },
-                maxCharsReason: { type: "string", description: "Why this call needs more than the default 2000 chars — required when `maxChars` exceeds it; shown to the human on the approval card." },
+                ...outputCapParams(2000, 20000, "Prefer returning a compact result."),
+                ...retryParams("python_exec"),
             },
             required: ["code"],
         },
@@ -1508,8 +1509,14 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const stdoutFull = r.stdout || "";
             const stdout = stdoutFull ? clipOut(stdoutFull, UI_OUT_CAP) : undefined;
             const seen = stdoutFull ? Math.min(stdoutFull.length, PY_OUT_MAX) : undefined;
+            // The SANDBOX'S OWN CLOCK, kept apart from our wall time around the dispatch: `durationMs` is the
+            // script, `bootMs` the cold start it had to pay for first (absent on every warm call). Without
+            // the split a first run reports four seconds and blames the script for time it never spent.
+            const remoteMs = r.runMs != null
+                ? { durationMs: r.runMs, ...(r.bootMs != null ? { bootMs: r.bootMs } : {}) }
+                : undefined;
             const done = (content: string, out: Omit<Extract<RenderDescriptor, { type: "python-out" }>, "type" | "stdout">): ToolResult =>
-                ({ content, renderIn, render: { type: "python-out", stdout, seen, ...out } });
+                ({ content, renderIn, render: { type: "python-out", stdout, seen, ...out }, ...(remoteMs ? { remoteMs } : {}) });
 
             if (!r.ok) {
                 const err = clipOut(r.error || "", PY_OUT_MAX);
@@ -1601,6 +1608,37 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
 
 
 /**
+ * A remote function's schema with an optional `token` beside its own properties, so the model can NAME the
+ * output at call time instead of coming back for it.
+ *
+ * A remote output is minted as a pointer either way (it is citable by declaration), so this is about giving
+ * it a name the model chose — `@tool:"the page summary"` rather than `@tool:<the generated tool name>`.
+ */
+function withToken(schema: JsonSchema | null, bundle: string): JsonSchema {
+    const base = (schema && typeof schema === "object" ? schema : { type: "object", properties: {} }) as JsonSchema & { properties?: Record<string, unknown> };
+    if (base.type !== "object" || !base.properties || "token" in base.properties) return base;
+    return {
+        ...base,
+        properties: {
+            ...base.properties,
+            token: citeParam(`the ${bundle} results`, false),
+        },
+    } as JsonSchema;
+}
+
+/** The arguments as ONE readable line for the consent sentence. Pretty-printed JSON inside the card's
+ *  quoted "what you typed" slot renders as nested quotes and wraps over three lines — for the one gate whose
+ *  entire risk is the VALUES, that is worse than useless. The full, exact object is still one click away in
+ *  the In block's raw view, per the raw-view rule. */
+function compactArgs(args: Record<string, unknown> | undefined): string {
+    const entries = Object.entries(args || {});
+    if (!entries.length) return "no arguments";
+    return entries
+        .map(([k, v]) => `${k}=${typeof v === "string" ? v : (() => { try { return JSON.stringify(v); } catch { return String(v); } })()}`)
+        .join(", ");
+}
+
+/**
  * One agent-callable tool per FUNCTION of a server-side tool bundle.
  *
  * Per function rather than one generic `run_server_tool(tool, function, args)`, because the model calls a
@@ -1616,8 +1654,12 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
  * @param bundles the bundles to expose, from `ml.serverTools()`
  * @param wanted bundle ids the caller asked for; anything else is left out
  */
-export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: readonly string[]): MlTool[] {
+export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: readonly string[], off: readonly string[] = []): MlTool[] {
     const want = new Set(wanted);
+    // Curated OUT by the user, by the same `<bundle>__<fn>` name a run would see. Not built at all rather
+    // than built and hidden: a tool the model can see is a tool it will try, and the point of curating a
+    // forty-tool backend down is that the ones left out never reach the prompt.
+    const disabled = new Set(off);
     const out: MlTool[] = [];
     for (const b of bundles) {
         if (!want.has(b.id)) continue;
@@ -1628,11 +1670,20 @@ export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: reado
             // display name cannot change what runs.
             const safe = (x: string) => String(x).replace(/[^A-Za-z0-9_]/g, "_").replace(/^(\d)/, "_$1");
             const name = `${safe(b.id)}__${safe(fn.name)}`;
+            if (disabled.has(name)) continue;
             out.push({
                 name,
                 summary: `Runs ${fn.name} on the ${b.name} server.`,
                 description: `${fn.description || `The ${fn.name} function of the ${b.name} tool.`} RUNS ON THE SERVER, not in this browser — its arguments leave this machine, so it needs approval every time. ${b.description || ""}`.trim(),
-                parameters: fn.parameters || { type: "object", properties: {} },
+                // The server's schema VERBATIM, plus `token` as a SIBLING of its own properties — never a
+                // wrapper around them. `{args: {...}, token}` would nest every remote tool's arguments to add
+                // one optional field, which is the same opaque-object problem that made this one tool per
+                // FUNCTION rather than one generic dispatcher. Sibling also matches how the citable builtins
+                // already spell it, so there is one spelling rather than two.
+                //
+                // Skipped when the function already HAS a `token` property: shadowing a real parameter to add
+                // a convenience is worse than the model reaching for `@tool:<toolname>` instead, which works.
+                parameters: withToken(fn.parameters, b.name),
                 requiresApproval: true,
                 capabilities: [],
                 remote: { via: "openwebui", toolId: b.id, fn: fn.name },
@@ -1643,15 +1694,26 @@ export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: reado
                 // name cannot make this say one thing while the grant authorises another.
                 render: (_input, args) => ({
                     type: "action" as const,
-                    verb: "Run",
-                    target: `${fn.name} on ${b.name}`,
-                    note: "on the server — these arguments leave this machine",
-                    input: (() => { try { return JSON.stringify(args ?? {}, null, 1); } catch { return String(args); } })(),
-                    // Styled like a navigation or a fetch: something is leaving, and that is the part to see.
-                    crossOrigin: b.id,
+                    // The sentence is "Send <these values> to <this callable>", because that is what is being
+                    // approved — not "run a tool". The card composes verb + input + target in that order, so
+                    // the target carries its own preposition and the whole thing reads as English.
+                    verb: "Send",
+                    input: compactArgs(args),
+                    target: `to ${fn.name} on ${b.name}`,
+                    note: "off this machine, to the configured server",
+                    // NOT `crossOrigin` — that field means one specific thing (a privileged debugger click
+                    // reaching into an embedded third-party frame) and the card states it in those words, so
+                    // borrowing it for emphasis made a web-search tool warn about a debugger click into an
+                    // iframe. A consent surface may not say something that is not happening; the emphasis a
+                    // remote call needs is its own, and this is it.
+                    offMachine: b.name,
                 }),
                 async run(args: Record<string, unknown>, ctx?: ToolContext) {
-                    const r = await ml.execServerTool(b.id, fn.name, args || {}, {
+                    // `token` is OURS, added above — the server never declared it and would reject or ignore
+                    // it. The loop reads it off the call's own arguments, so it must be stripped here and
+                    // nowhere earlier.
+                    const { token: _token, ...forServer } = (args || {}) as Record<string, unknown>;
+                    const r = await ml.execServerTool(b.id, fn.name, forServer, {
                         onOutput: ctx?.stream ? (text, ts) => ctx.stream!(text, ts) : undefined,
                     });
                     // A stream that could not be read is NOT a tool that returned nothing, and the model
@@ -1662,7 +1724,18 @@ export function buildServerTools(ml: MlApi, bundles: ServerTool[], wanted: reado
                     const text = typeof value === "string" ? value : JSON.stringify(value ?? null);
                     return {
                         content: text,
-                        ...(r.output ? { renderOut: { type: "code" as const, code: r.output, lang: "text" } } : {}),
+                        // BOTH halves, in the shared output cell exec and python already use. The streamed
+                        // frames and the returned value are different things — progress the tool produced as
+                        // it worked, and what it answered with — so replacing one with the other made the
+                        // output you watched arrive vanish the moment the step landed. (The old descriptor
+                        // also set `code`, which is not a field of the `code` render: it drew an empty block,
+                        // which is why only the result survived.)
+                        // `render` is the OUT slot — this returned `renderOut`, which nothing reads, so the
+                        // descriptor was silently dropped and the Out fell back to the raw result every time.
+                        // That is why the output you watched stream in vanished the moment the step landed.
+                        ...(r.output
+                            ? { render: { type: "exec-out" as const, stdout: r.output, stdoutLabel: "output", value: text } }
+                            : {}),
                         // The executor's own measurement. Our wall clock around this call also contains the
                         // network and the far end's overhead, so without this the timeline charges the whole
                         // span to the tool and a slow hop is indistinguishable from a slow tool.

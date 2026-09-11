@@ -62,7 +62,10 @@ test("fmtTokens: quantized so a per-delta count doesn't jitter (≥1k → ~X.Xk;
 test("orbStatus (streaming reasoning): the thinking phase carries a LIVE token count and auto-expands", () => {
     const r = run({ steps: [step({ tool: "python_exec", pending: false })], liveStream: { step: 1, reasoning: "y".repeat(4800) } });
     const o = orbStatus(r, Date.now());
-    assert.match(o.label, /Thinking about the Python output… \(~1\.2k tok\)/);   // phase + ticking count
+    // The phase and the LIVE READOUT are separate, so a surface can render the readout in a span that never
+    // shrinks: the pill ellipsizes on width, and concatenated it was the number that got cut.
+    assert.match(o.label, /^Thinking about the Python output…$/);
+    assert.equal(o.suffix, " (~1.2k tok)", "the ticking count, on its own");
     assert.equal(o.caption, true, "there's live detail → show it without a hover");
 });
 
@@ -92,7 +95,10 @@ test("orbStatus (non-streaming): a calm recent phase stays a BARE orb (caption f
 test("orbStatus (non-streaming): a STALLED run appends an elapsed heartbeat and auto-expands (liveness)", () => {
     const now = Date.now();
     const o = orbStatus(run({ steps: [step({ tool: "python_exec", pending: true })], lastTs: now - 8000 }), now);
-    assert.match(o.label, /Running Python… · 8s/);   // still-alive proof when nothing streams
+    assert.match(o.label, /^Running Python…$/);
+    // The still-alive proof when nothing streams — and the part that must survive truncation, since a
+    // truncated "· 1…" is the elapsed readout saying nothing at the moment you most need it.
+    assert.equal(o.suffix, " · 8s");
     assert.equal(o.caption, true, "a stall is exactly the case we want visible");
     assert.ok(now - (now - 8000) > STALL_MS);
 });

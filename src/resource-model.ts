@@ -72,6 +72,11 @@ export interface DeviceCapacity {
     freeBytes: number;
     /** Metal: `totalBytes` is a recommended working set overlapping host RAM — never add it to the host total. */
     unified: boolean;
+    /** The vendor's compute capability ("12.0") and driver version ("13.2"), verbatim. Reference facts for a
+     *  hover, never used in a decision: absent on Metal and on any server that does not report them, and a
+     *  panel that BRANCHED on them would be encoding hardware knowledge that rots. */
+    compute?: string;
+    driver?: string;
 }
 
 export interface HostCapacity {
@@ -82,11 +87,72 @@ export interface HostCapacity {
     swapFreeBytes: number | null;
 }
 
+/** A GPU the server can SEE but cannot USE. It is not a device with a problem — it is absent from
+ *  `supported_gpus` entirely, which is the worst shape a hardware fault can take in a UI: `/api/ps` looks
+ *  normal, `/api/info` returns one healthy card, every figure is internally consistent, and a two-GPU box
+ *  with a dead card is byte-identical to a one-GPU box. One sat faulted for five and a half hours on the
+ *  reference machine while the panel rendered perfectly.
+ *
+ *  It carries NO memory fields, deliberately: these devices hold nothing and can hold nothing, so there is
+ *  nothing to add to a capacity. */
+export interface UnavailableGpu {
+    /** Bus address, and the IDENTITY — two cards in one machine share a `name`. */
+    pciId: string;
+    /** Both may be ABSENT: under `not_reported_by_driver` the kernel sees the card and the driver does not
+     *  describe it, so there is nothing to read and nothing is invented. */
+    name?: string;
+    uuid?: string;
+    /** A stable token to branch on. `not_offered_by_backend` is HEALTHY — a card that answers every query
+     *  which no backend claimed, usually `CUDA_VISIBLE_DEVICES` — so it must never draw a warning. */
+    reason: string;
+    /** The DRIVER's own wording, passed through unparaphrased so it can be searched verbatim in vendor
+     *  docs. "GPU requires reset" is NVIDIA's string, not ours — render it as given. */
+    detail?: string;
+    /** What a person should DO, in plain words. Empty means no known action, NOT that nothing is wrong. */
+    recovery?: string;
+    /** The PCIe view, read without the driver's help. Deliberately excludes the link speed and width: both
+     *  are LIVE readings rather than capabilities (an idle Blackwell drops to 2.5 GT/s and would read as 12x
+     *  degraded), and `width < max_width` is by design wherever a board splits its lanes. The error counters
+     *  are the part worth having — non-zero points at the SLOT rather than the card, and a card blamed for a
+     *  bad slot gets replaced while the fault stays put. */
+    bus?: { present?: boolean; fatalErrors?: number; nonFatalErrors?: number };
+}
+
+/** Whether this entry is a FAULT worth telling someone about. `not_offered_by_backend` is a healthy card
+ *  that nothing claimed, and drawing a warning triangle on it tells a person to reseat hardware that
+ *  answered every query. */
+export const isGpuFault = (g: UnavailableGpu): boolean => g.reason !== "not_offered_by_backend";
+
+/** What the banner says about a fault BEYOND the driver's own words, or null when there is nothing to add.
+ *  Only one reason earns a note today: AMD's `reset_in_progress` (the driver answered EBUSY) is USUALLY
+ *  TRANSIENT — a successful amdgpu reset takes seconds — so drawn exactly like `reset_required` it tells
+ *  someone to power-cycle a machine that is fixing itself. It stays a fault (the card really cannot take
+ *  work right now), and the note says when it stops being a transient: when it persists. */
+export function gpuFaultNote(g: UnavailableGpu): string | null {
+    if (g.reason === "reset_in_progress") return "A reset is under way. This usually clears within seconds; it is only a problem if it persists.";
+    return null;
+}
+
 export interface Capacity {
     devices: DeviceCapacity[];
+    /** GPUs the server can see and cannot use. **An empty list does NOT mean "all healthy"** — it means
+     *  nothing to report OR the server could not look, and the two are not distinguished at the source. So
+     *  it may drive a warning and must never drive a reassurance: render nothing, never a tick. */
+    unavailable: UnavailableGpu[];
     host: HostCapacity;
     /** Any unified device → device and host memory overlap, so they can never be stacked or summed. */
     unified: boolean;
+    /** The server's OWN bound on a load making no progress (`OLLAMA_LOAD_TIMEOUT`, default 5 min), when it
+     *  publishes one. Read it rather than hardcoding a duration: it is configurable per host, so a constant
+     *  here would silently disagree with the machine it is describing.
+     *
+     *  It is a STALL bound, NOT a total. The server gives up when a load stops progressing for this long; a
+     *  load that keeps progressing runs as long as it needs and the server will not kill it. Measured on the
+     *  box, elapsed time cannot stand in for it in either direction: the SAME 142 GB model took 38.8 s warm
+     *  and 64.2 s cold with nothing observable differing, and `qwen3.8:27b` spent 1.0 s on weights and 4.3 s
+     *  building context — so four fifths of that load had nothing to do with model size, and a size-derived
+     *  timeout is wrong in the direction that bites. Null when the server does not publish it. */
+    loadStallTimeoutMs?: number | null;
 }
 
 /** Parse `/api/info`. Returns null for anything that isn't the expected JSON — a stock Ollama or unpatched
@@ -120,8 +186,40 @@ export function holdCapacity(current: Capacity | null, answered: Capacity | null
     return answered ?? current;
 }
 
+/** Parse `compute.unavailable_gpus[]`. Kept SEPARATE from `devices` rather than folded in with a state
+ *  field, which is the trap: every consumer iterating the device list is correct today, and merging would
+ *  make all of them wrong until each learned about the flag — failing OPEN, on hardware that is broken.
+ *
+ *  An entry with no `pci_id` is dropped: the bus address is the identity (two cards share a name), so an
+ *  entry without one cannot be told from another, and a fault that cannot be attributed cannot be shown. */
+export function unavailableFrom(raw: unknown): UnavailableGpu[] {
+    if (!Array.isArray(raw)) return [];
+    return raw.flatMap((x) => {
+        const g = x as Record<string, any>;
+        const pciId = String(g.pci_id ?? "").trim();
+        if (!pciId) return [];
+        const bus = g.bus && typeof g.bus === "object" ? g.bus as Record<string, any> : null;
+        const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+        return [{
+            pciId,
+            reason: String(g.reason || "unknown"),
+            // Absent rather than empty-string: under `not_reported_by_driver` the driver describes nothing,
+            // and "" would render as a nameless card rather than as a card whose name is unknown.
+            ...(g.name ? { name: String(g.name) } : {}),
+            ...(g.uuid ? { uuid: String(g.uuid) } : {}),
+            ...(g.detail ? { detail: String(g.detail) } : {}),
+            ...(g.recovery ? { recovery: String(g.recovery) } : {}),
+            ...(bus ? { bus: {
+                ...(typeof bus.present === "boolean" ? { present: bus.present } : {}),
+                ...(n(bus.pcie_fatal_errors) !== undefined ? { fatalErrors: n(bus.pcie_fatal_errors) } : {}),
+                ...(n(bus.pcie_nonfatal_errors) !== undefined ? { nonFatalErrors: n(bus.pcie_nonfatal_errors) } : {}),
+            } } : {}),
+        }];
+    });
+}
+
 export function parseInfo(raw: unknown): Capacity | null {
-    const r = raw as { compute?: { system_compute?: Record<string, number>; supported_gpus?: Record<string, unknown>[] } };
+    const r = raw as { compute?: { system_compute?: Record<string, number>; supported_gpus?: Record<string, unknown>[]; unavailable_gpus?: unknown } };
     const c = r?.compute;
     if (!c || typeof c !== "object") return null;
     const sys = c.system_compute;
@@ -138,10 +236,16 @@ export function parseInfo(raw: unknown): Capacity | null {
             freeBytes: Number.isFinite(free) ? free : 0,
             ...(Number.isFinite(Number(g.physical_memory)) && Number(g.physical_memory) > 0 ? { physicalBytes: Number(g.physical_memory) } : {}),
             unified: !isDiscrete(runner),
+            ...(g.compute ? { compute: String(g.compute) } : {}),
+            ...(g.driver ? { driver: String(g.driver) } : {}),
         }];
     });
+    // The server's own stall bound, when it publishes one. Absent on every build before it and on every
+    // stock Ollama, so null means "this host states no bound", never "there is none".
+    const stall = Number((raw as { load_stall_timeout_ms?: unknown })?.load_stall_timeout_ms);
     return {
         devices,
+        unavailable: unavailableFrom(c.unavailable_gpus),
         host: {
             cores: typeof sys.cpu_cores === "number" ? sys.cpu_cores : null,
             totalBytes: sys.total_memory,
@@ -149,11 +253,43 @@ export function parseInfo(raw: unknown): Capacity | null {
             swapFreeBytes: sys.free_swap ? sys.free_swap : null,   // 0 → unknown (see HostCapacity)
         },
         unified: devices.some((d) => d.unified),
+        ...(Number.isFinite(stall) && stall > 0 ? { loadStallTimeoutMs: stall } : {}),
     };
 }
 
 /** One resident model at one instant. Bytes, not the rounded GB `LoadedModel` carries for display — the
  *  band arithmetic subtracts these from exact capacity figures, so rounding would accumulate visible error. */
+/** WHAT a model's VRAM is holding, in bytes — the server's own split, not ours.
+ *
+ *  `size_vram` alone cannot tell a BIG MODEL from a BIG CONTEXT: lots of weights with a small cache, and
+ *  modest weights with an enormous one, are the same number and call for opposite responses (a smaller quant
+ *  vs. less context). This is that distinction.
+ *
+ *  The parts SUM EXACTLY to `size_vram`, to the byte — which is what lets the chart subdivide a band with no
+ *  remainder slice. Where they do not, that is the server's bug to report and never ours to paper over, so
+ *  {@link memorySplit} refuses rather than inventing the difference. */
+export interface MemoryBreakdown {
+    /** Model tensors. Fixed once the model is chosen. */
+    weights: number;
+    /** Attention cache — grows with the context length, and the part a context setting moves. */
+    kvCache: number;
+    /** Scratch for the forward pass. */
+    compute: number;
+    /** Hybrid/SSM per-sequence state: some layers keep this INSTEAD of a KV cache, so there are literally no
+     *  keys or values in them. Reported apart because calling it "KV cache" would be wrong, but it answers
+     *  the same question — together with `kvCache` it is what the CONTEXT costs. Not small: 784 MB on a 27b. */
+    recurrentState: number;
+    /** Logits buffer. */
+    output: number;
+    /** A vision model's image encoder, and often the largest non-weights term (2.32 GB of a 5.46 GB model).
+     *  A WORST-CASE reservation — sized for the largest image the model accepts, not for what is held with
+     *  none loaded — so it reads large against what the user is actually doing. */
+    projector: number;
+    /** Allocation kinds the server did not recognise. Normally 0; a LARGE one means the breakdown has gone
+     *  stale against the engine, which is worth showing rather than hiding. */
+    other: number;
+}
+
 export interface ModelResidency {
     model: string;
     /** Total across all devices. */
@@ -164,7 +300,200 @@ export interface ModelResidency {
     perDevice: Record<string, number | null>;
     contextLength: number | null;
     expiresAt: number | null;
+    /** What the VRAM holds, summed across devices. ABSENT — never zeroed — when the server cannot split it
+     *  (a model still loading, a runner that reports one total without naming its parts). An all-zero split
+     *  beside a non-zero `size_vram` would be a contradiction, so treat missing as "not reported" and fall
+     *  back to the total alone. */
+    memory?: MemoryBreakdown;
+    /** deviceId → that device's own split, which is what makes a SPLIT model worth looking at: weights on
+     *  one card and cache on another is a placement, not a number. */
+    perDeviceMemory?: Record<string, MemoryBreakdown>;
+    /** The size of the files it was loaded from. Deliberately NOT part of `memory` — it is not resident
+     *  memory, and including it would break the sum. Against `memory.weights` it says what the load cost
+     *  over the file; they are close and never equal, in either direction. */
+    weightsOnDisk?: number;
+    /** What did NOT fit on a GPU, in the same shape. Present only on a SPILL — which is otherwise silent,
+     *  since the model loads, answers correctly and is merely slow. `size_total > size_vram` already says
+     *  how MUCH went to host memory; this says WHAT went, and 2 GB of spilled weights is a different problem
+     *  from 2 GB of spilled cache. */
+    memoryHost?: MemoryBreakdown;
+    /** WHICH LAYERS WENT WHERE, when the server was started with `OLLAMA_LAYER_PLACEMENT=1`. Absent by
+     *  default, exactly like `gpus[].memory` — the engine states the assignment only at a verbosity that also
+     *  emits about a line per tensor, so it is opt-in. Treat missing as "not reported" and draw without it. */
+    placement?: LayerPlacement;
+    /** WHAT THE RUNNER IS DOING, and how full its KV cache is. Absent means the runner could not be asked,
+     *  which is a different thing from `phase: "idle"` — and the difference matters, because idle is the
+     *  answer that carries the occupancy figure. */
+    activity?: RunnerActivity;
 }
+
+/** What the engine is doing with a model right now, from `llama-server`'s `/slots`.
+ *
+ *  Two DIFFERENT KINDS of fact live in here and must not be read alike. `promptTokens` is OCCUPANCY: it is
+ *  `n_past`, it survives the task that filled it, and it is the honest answer to "would less context help".
+ *  Everything else describes the task IN FLIGHT, and the server clears those the moment it ends — so on an
+ *  idle runner they are absent while `promptTokens` still stands, describing the LAST task. Reading a
+ *  `promptTokens` on an idle runner as work in progress is the one mistake this shape invites. */
+export interface RunnerActivity {
+    /** `prefill` reads the prompt, `decode` generates, `idle` is neither. The discriminator for everything
+     *  else here: while idle, the in-flight counts are gone and only the occupancy is meaningful. */
+    phase: "prefill" | "decode" | "idle";
+    /** Slots on this runner, and how many are working. `slots` is 1 on all hardware this has been seen on,
+     *  so a `slotsBusy` above 1 is untested rather than impossible. */
+    slots: number;
+    slotsBusy: number;
+    /** `n_past` — tokens resident in the KV cache. Against `contextLength` it is the occupancy, and that
+     *  denominator is the PER-SLOT context the server already divided, so no arithmetic is owed here. */
+    promptTokens?: number;
+    /** How much of the prompt has been read, in the engine's batch-sized steps. Prefill PROGRESS, so a
+     *  prefill can be drawn filling rather than as an opaque block. Absent once the task ends. */
+    promptTokensDone?: number;
+    /** How much of the prompt came from the prefix cache and was never computed. This is the explanation for
+     *  a prefill too short to draw: measured on the box, a repeat of the same 4098-token prompt hit 4097 of
+     *  them, leaving one token to compute — so the phase did not last long enough to be sampled at all. An
+     *  impossibly fast prompt is a cache hit, not a broken clock, and this is the field that says so. */
+    promptTokensCached?: number;
+    /** Tokens generated so far for the task in flight. Absent once it ends. */
+    decoded?: number;
+}
+
+/** Parse a server `activity` object, or null when it is absent or unusable.
+ *
+ *  Absent is NOT idle. The server omits the whole object when it could not ask the runner — a model still
+ *  loading, a backend with no `/slots`, a failed poll, any build before it read them — and `idle` is a
+ *  positive answer with an occupancy figure attached. Collapsing the two would draw a full cache as an empty
+ *  one on every unpatched server, which is the same "absent is never zero" rule `memory` follows.
+ *
+ *  The counts are `omitempty` on the wire, so a missing one is genuinely zero for an in-flight task and is
+ *  simply gone once the task ends. They are kept OPTIONAL rather than defaulted to 0 for that second case:
+ *  an idle runner reporting `decoded: 0` would read as a generation that has produced nothing yet. */
+export function activityFrom(raw: unknown): RunnerActivity | null {
+    if (!raw || typeof raw !== "object") return null;
+    const a = raw as Record<string, unknown>;
+    const phase = a.phase === "prefill" || a.phase === "decode" || a.phase === "idle" ? a.phase : null;
+    if (!phase) return null;   // an unrecognised phase is not a fourth state to invent a rendering for
+    const n = (k: string) => (typeof a[k] === "number" && Number.isFinite(a[k]) && (a[k] as number) >= 0
+        ? Math.floor(a[k] as number) : undefined);
+    const out: RunnerActivity = {
+        phase, slots: n("slots") ?? 1, slotsBusy: n("slots_busy") ?? 0,
+    };
+    const past = n("prompt_tokens"), done = n("prompt_tokens_done");
+    const cached = n("prompt_tokens_cached"), dec = n("decoded");
+    if (past !== undefined) out.promptTokens = past;
+    // The in-flight counts are meaningless once the task is over, and the server already drops them — but an
+    // older or oddly-behaved build that keeps them would have this UI drawing the last task as a live one.
+    // Phase is the discriminator the server intends, so it is applied here rather than trusted to hold.
+    if (phase !== "idle") {
+        if (done !== undefined) out.promptTokensDone = done;
+        if (cached !== undefined) out.promptTokensCached = cached;
+        if (dec !== undefined) out.decoded = dec;
+    }
+    return out;
+}
+
+/** KV cache occupancy as a fraction, or null when either half is unknown.
+ *
+ *  The denominator is the model's own `context_length`, which is the PER-SLOT window the server has already
+ *  divided by the parallel slot count — so this is a straight ratio and dividing again would be wrong. Null
+ *  rather than 0 when there is nothing to divide: a model whose runner cannot be asked has an UNKNOWN cache,
+ *  and an empty bar is a claim about memory nobody measured. */
+export function kvOccupancy(r: { activity?: RunnerActivity; contextLength: number | null }): number | null {
+    const past = r.activity?.promptTokens;
+    const ctx = r.contextLength;
+    if (past === undefined || !ctx || ctx <= 0) return null;
+    return Math.min(1, past / ctx);
+}
+
+/** A fraction as a percentage for a chip, where 0 and "nearly 0" must not read the same.
+ *
+ *  A cache holding 30 of 262,144 tokens rounds to 0%, and "0%" beside a reserved 40 GiB says the cache is
+ *  EMPTY — which is the answer the reader is about to act on, and it is wrong. `<1%` is the same
+ *  glance-width and says the true thing. Zero itself still prints `0%`: an empty cache is a real reading and
+ *  hedging it would throw away the one case the number is exactly right about. */
+export function fmtOccupancy(frac: number): string {
+    const pct = frac * 100;
+    if (pct > 0 && pct < 1) return "<1%";
+    if (pct < 100 && pct > 99) return ">99%";
+    return `${Math.round(pct)}%`;
+}
+
+/** Which layers a model put on which device. */
+export interface LayerPlacement {
+    /** The model's total, so a per-device count means something. */
+    numLayers: number;
+    /** One entry per contiguous RUN of layers — usually one per card, but built by scanning consecutive
+     *  layers, so a non-contiguous assignment appears as several entries rather than as a span that never
+     *  existed. `devices.length` is therefore NOT the number of cards. */
+    devices: { device: string; firstLayer: number; lastLayer: number; layers: number }[];
+    /** WHICH layers use sliding-window attention, from the engine's own `hparams.is_swa`. A list rather than
+     *  a count because the pattern is irregular — gemma2 alternates 1:1, gemma4:31b is 50 of 61. Empty for
+     *  architectures with none. */
+    swaLayers: number[];
+}
+
+/** Parse a server `placement` object, or null when it is absent or unusable.
+ *
+ *  `device` is the ENGINE's name (`"CUDA0"`), NOT the ollama `gpu_id` — they are different fields and a
+ *  filtered-device host can make them disagree, so a consumer matches on the name it was given and treats a
+ *  mismatch as unknown rather than guessing a mapping. Nothing here is reconciled against `gpus[]`. */
+export function placementFrom(raw: unknown): LayerPlacement | null {
+    if (!raw || typeof raw !== "object") return null;
+    const p = raw as Record<string, unknown>;
+    const num = Number(p.num_layers) || 0;
+    const list = Array.isArray(p.devices) ? p.devices as Record<string, unknown>[] : [];
+    const devices = list.map((d) => ({
+        device: String(d.device ?? ""),
+        firstLayer: Number(d.first_layer) || 0,
+        lastLayer: Number(d.last_layer) || 0,
+        layers: Number(d.layers) || 0,
+    })).filter((d) => d.device && d.layers > 0);
+    if (!num || !devices.length) return null;
+    const swa = Array.isArray(p.swa_layers) ? (p.swa_layers as unknown[]).map(Number).filter((n) => Number.isFinite(n)) : [];
+    return { numLayers: num, devices, swaLayers: swa };
+}
+
+/** Parse a server `memory` object, or null when it cannot be trusted as a split.
+ *
+ *  Refuses on two counts, both because a WRONG split is worse than none: an absent object (the server says it
+ *  cannot divide this figure — a loading row, an MLX runner), and one whose parts do not sum to the total it
+ *  is meant to divide. The second is the server's invariant, verified to the byte on every model it reports,
+ *  so a mismatch is a bug to report rather than a remainder to invent. */
+export function memorySplit(raw: unknown, total: number): MemoryBreakdown | null {
+    if (!raw || typeof raw !== "object") return null;
+    const m = raw as Record<string, unknown>;
+    const n = (k: string) => Number(m[k]) || 0;   // a key is OMITTED when zero, so missing IS zero here
+    const out: MemoryBreakdown = {
+        weights: n("weights"), kvCache: n("kv_cache"), compute: n("compute"),
+        recurrentState: n("recurrent_state"), output: n("output"),
+        projector: n("projector"), other: n("other"),
+    };
+    const sum = out.weights + out.kvCache + out.compute + out.recurrentState + out.output + out.projector + out.other;
+    if (!(sum > 0)) return null;
+    if (total > 0 && sum !== total) return null;
+    return out;
+}
+
+/** The parts in the order a stack draws them, largest concern first — weights and context are what a user can
+ *  act on, the rest is overhead they cannot. Zero parts are dropped, so a text-only model shows no projector
+ *  slice rather than an empty label. */
+export const MEMORY_PARTS: { key: keyof MemoryBreakdown; label: string }[] = [
+    { key: "weights", label: "weights" },
+    { key: "kvCache", label: "context (KV cache)" },
+    { key: "recurrentState", label: "context (recurrent state)" },
+    { key: "projector", label: "vision encoder" },
+    { key: "compute", label: "compute buffers" },
+    { key: "output", label: "logits" },
+    { key: "other", label: "unrecognised" },
+];
+
+/** The parts that are worth drawing, in stack order. */
+export function memoryParts(m: MemoryBreakdown): { key: keyof MemoryBreakdown; label: string; bytes: number }[] {
+    return MEMORY_PARTS.map((p) => ({ ...p, bytes: m[p.key] })).filter((p) => p.bytes > 0);
+}
+
+/** What the CONTEXT costs — the one figure that answers "would less context help?". `recurrent_state` is
+ *  added in because for this question it is the same thing as a KV cache; only the LABEL must not be. */
+export const contextBytes = (m: MemoryBreakdown): number => m.kvCache + m.recurrentState;
 
 /** One poll: what was resident at `t`. Capacity rides along because it can change (a card appears, another
  *  process frees memory) and because a sample read back from history must know the ceiling it was drawn against. */
@@ -172,6 +501,23 @@ export interface ResourceSample {
     t: number;
     models: ModelResidency[];
     capacity: Capacity | null;
+    /** Models the server said were LOADING at this instant — a `load.start` with no `load.complete` yet.
+     *
+     *  For most of a load there is no runner object in Ollama at all, so `/api/ps` does not report the model
+     *  coarsely, it does not report it AT ALL — while the device's own `free_memory` has already dropped by
+     *  the whole allocation. Read literally that is a card 92% full with nothing accounting for it, and the
+     *  panel said exactly that: "unattributed 87.82 GiB", beside a model row calling the model off-box. Both
+     *  claims came from treating an absence as a measurement. This is the evidence that it is neither. */
+    loading?: string[];
+    /** The record has a HOLE immediately before this sample — the stream told us it dropped frames for us
+     *  (`lostSince`), so what happened between the previous reading and this one was never delivered.
+     *
+     *  It is a separate fact from a sampling gap and cannot be derived from the timestamps: the two readings
+     *  either side of a drop can be milliseconds apart, so `maxGapMs` sees nothing wrong and draws a straight
+     *  line across the interval the server has just said it cannot account for. Frames are dropped when a
+     *  subscriber falls behind, which is when the box is busiest — so the line would be interpolated over
+     *  exactly the movement it exists to show. */
+    gapBefore?: true;
 }
 
 /** Raw `/api/ps` entry → residency. `gpus` is ABSENT for a CPU-resident model — that is the contract, and it
@@ -195,6 +541,25 @@ export function residencyFrom(raw: unknown): ModelResidency {
         perDevice,
         contextLength: typeof m.context_length === "number" ? m.context_length : null,
         expiresAt: m.expires_at ? Date.parse(String(m.expires_at)) || null : null,
+        // WHAT the VRAM holds. Each device carries its own split summing to that device's own total, so a
+        // split model's cards are decomposed separately rather than sharing one average that describes
+        // neither. Absent stays absent — see `memorySplit`.
+        ...(() => {
+            const whole = memorySplit(m.memory, vram);
+            const per: Record<string, MemoryBreakdown> = {};
+            for (const g of gpus) {
+                const one = memorySplit(g.memory, Number(g.size_vram) || 0);
+                if (one) per[String(g.gpu_id ?? "")] = one;
+            }
+            const host = memorySplit(m.memory_host, 0);
+            return {
+                ...(whole ? { memory: whole } : {}),
+                ...(Object.keys(per).length ? { perDeviceMemory: per } : {}),
+                ...(typeof m.weights_on_disk === "number" ? { weightsOnDisk: m.weights_on_disk } : {}),
+                ...(host ? { memoryHost: host } : {}),
+                ...((() => { const pl = placementFrom(m.placement); return pl ? { placement: pl } : {}; })()),
+            };
+        })(),
     };
 }
 
@@ -277,6 +642,9 @@ export const OTHER_BAND_LABEL = "unattributed";
  *  display phantom third-party usage. */
 export const DRIVER_OVERHEAD_FLOOR = 1024 ** 3;
 export const DRIVER_BAND_LABEL = "driver overhead";
+/** Below this, a difference between the whole model and what reached the device is bookkeeping rather than a
+ *  spill — the two figures are taken independently, so they are not expected to agree to the byte. */
+export const SPILL_FLOOR = 8 * 1024 * 1024;
 export const OTHER_BAND_NOTE =
     "In use but not accounted for by a model's reported buffers — mostly each loaded model's CUDA context "
     + "(0.7-1.8 GiB per model, which no buffer line reports), plus anything else on the card.";
@@ -287,6 +655,11 @@ export interface Band {
     kind: BandKind;
     /** Set on a `model` band, so the chart can colour it with the model's own colour and hide it with the row. */
     model?: string;
+    /** What THIS band's bytes are holding, when the server reported it — so hovering a model can subdivide
+     *  its area in place rather than opening a separate picture of the same memory. Attached here, where the
+     *  device is known, because a split model's cards decompose differently and one average describes
+     *  neither. */
+    parts?: MemoryBreakdown;
 }
 
 /** How much of `device` this model holds, or null when the server couldn't attribute it. A single-device box
@@ -318,18 +691,38 @@ export function deviceBands(sample: ResourceSample, deviceId: string): Band[] {
         if (share == null) { unknown += m.vramBytes; continue; }
         if (share <= 0) continue;
         attributed += share;
-        bands.push({ key: `m:${m.model}`, label: m.model, bytes: share, kind: "model", model: m.model });
+        // THIS DEVICE'S split, never the model's total: on a split model the cards hold different things, and
+        // the whole-model figure would decompose a card's band into parts that are not on it.
+        const parts = m.perDeviceMemory?.[deviceId] ?? (count <= 1 ? m.memory : undefined);
+        bands.push({ key: `m:${m.model}`, label: m.model, bytes: share, kind: "model", model: m.model,
+            ...(parts ? { parts } : {}) });
     }
     if (unknown > 0) bands.push({ key: "unknown", label: "placement unknown", bytes: unknown, kind: "unknown" });
     // Everything in use that we cannot attribute to a model of ours. Clamped: `free` is sampled independently
     // of `ps`, so a race can make the arithmetic go slightly negative.
-    const used = Math.max(0, cap.totalBytes - cap.freeBytes);
+    // `ps` and `/api/info` are SEPARATE samples, so a model can be reported resident a poll before the free
+    // bytes catch up. Read literally, `total - free` is then just the idle overhead while attribution is the
+    // whole model — the residual clamps to zero and the line COLLAPSES to the floor for one sample before
+    // springing back, which looks like memory that was freed and re-taken. Attribution is a lower bound on
+    // what is in use: what we can see resident is in use whatever the other sample says yet.
+    const used = Math.max(0, cap.totalBytes - cap.freeBytes, attributed + unknown);
     const residual = Math.max(0, used - attributed - unknown);
     // Name the residual by MAGNITUDE: under the floor it is the driver's own context (present even on an idle
-    // card), above it there is genuinely something else on the card worth telling the reader about.
-    bands.push({ key: "other", label: residual < DRIVER_OVERHEAD_FLOOR ? DRIVER_BAND_LABEL : OTHER_BAND_LABEL, bytes: residual, kind: "other" });
+    // card), above it there is genuinely something else on the card worth telling the reader about — UNLESS a
+    // load is in flight, in which case we know what it is and "unattributed" is simply wrong. A loading model
+    // holds its allocation before any runner exists to report it, so the residual IS the load.
+    bands.push({ key: "other", bytes: residual, kind: "other",
+        label: residual < DRIVER_OVERHEAD_FLOOR ? DRIVER_BAND_LABEL : loadingLabel(sample) ?? OTHER_BAND_LABEL });
     bands.push({ key: "free", label: "free", bytes: Math.max(0, cap.freeBytes), kind: "free" });
     return bands;
+}
+
+/** What a large residual is, when a load explains it: `loading gemma4:31b`, or a count when several are.
+ *  Null when nothing is loading, which is when the residual is genuinely unattributed. */
+function loadingLabel(sample: ResourceSample): string | null {
+    const l = sample.loading;
+    if (!l?.length) return null;
+    return l.length === 1 ? `loading ${l[0]}` : `loading ${l.length} models`;
 }
 
 /** The host's RAM split the same way — model spill first, then everything else in use, then free. */
@@ -347,7 +740,13 @@ export function hostBands(sample: ResourceSample): Band[] {
         const bytes = unified ? m.vramBytes + m.ramBytes : m.ramBytes;
         if (bytes <= 0) continue;
         attributed += bytes;
-        bands.push({ key: `m:${m.model}`, label: m.model, bytes, kind: "model", model: m.model });
+        // UNIFIED memory only: there the pool holds the whole model, so the model's own split describes this
+        // band exactly. On a discrete box this band is the SPILL, and the split we hold describes what is on
+        // the GPU — a different quantity, so it is left off rather than drawn against the wrong bytes.
+        // (`memoryHost` is the split OF the spill; surfacing it here is worth doing once the panel has a
+        // shape for it.)
+        bands.push({ key: `m:${m.model}`, label: m.model, bytes, kind: "model", model: m.model,
+            ...(unified && m.memory ? { parts: m.memory } : {}) });
     }
     const used = Math.max(0, host.totalBytes - host.freeBytes);
     bands.push({ key: "other", label: OTHER_BAND_LABEL, bytes: Math.max(0, used - attributed), kind: "other" });
@@ -401,9 +800,45 @@ export function seriesCatalog(sample: ResourceSample): SeriesDef[] {
 export interface TrackDef {
     id: string;
     series: string[];
-    /** `stack` sums the series against one ceiling; `overlay` draws them independently, each on its own scale. */
-    mode: "stack" | "overlay";
+    /** `stack` sums the series against one ceiling; `overlay` draws them independently, each on its own scale;
+     *  `total` lays them END TO END up one axis — see {@link boxAxis}. */
+    mode: "stack" | "overlay" | "total";
     heightPx: number;
+}
+
+/**
+ * THE WHOLE BOX ON ONE AXIS, without pretending its memory is ONE pool.
+ *
+ * Pools DO combine: ollama splits a model too big for one card across several (by layer), and spills what
+ * still does not fit into system RAM — the panel draws both. But not one-for-one, and that is what a single
+ * combined figure hides: every extra card a model spans carries its own compute buffer (flat per device, not
+ * pro-rated) and, on a card that held nothing, ~0.65 GiB of driver context; layers do not divide, so free
+ * space smaller than the next layer is stranded; and a spill into RAM runs far slower, since those weights
+ * cross PCIe on every token. So two cards with 20 GiB free each are not 40 GiB of room, and a GiB of RAM is
+ * not a GiB of VRAM. The question behind "add up my box" is real — how much of this machine is in use — and
+ * the answer only misleads when the pools are MERGED into one.
+ *
+ * So they are laid END TO END up the axis rather than poured into one: each pool owns a band whose height is
+ * its own capacity, and fills that band from its own floor. The axis total is then a true total of capacity,
+ * every fill is a real reading against a real ceiling (which card is full is what decides where the next load
+ * lands), and the WALLS between the bands are drawn — so the boundaries a split has to pay to cross are
+ * visible rather than something the reader has to know.
+ *
+ * It also makes the box's SHAPE visible, which the per-pool tracks cannot: those give every pool the same
+ * height whatever its size, so a 12 GiB laptop card and a 96 GiB card look alike. Here a pool's height IS its
+ * share of the machine.
+ *
+ * Hiding a pool removes its band and shrinks the axis, which is what makes "just my two cards" a view rather
+ * than a calculation.
+ */
+export function boxAxis(pools: { id: string; ceiling: number }[]): { total: number; bands: { id: string; base: number; ceiling: number }[] } {
+    let base = 0;
+    const bands = pools.filter((p) => p.ceiling > 0).map((p) => {
+        const at = base;
+        base += p.ceiling;
+        return { id: p.id, base: at, ceiling: p.ceiling };
+    });
+    return { total: base, bands };
 }
 
 /** Why these series cannot share a STACKED axis, or null when they can. Stacking asserts the parts sum to a
@@ -417,8 +852,8 @@ export function stackRefusal(defs: SeriesDef[], cap: Capacity | null): string | 
     if (cap?.unified && scopes.size > 1)
         return "This device shares one pool of memory between the GPU and the system, so its VRAM and RAM figures describe the same silicon — stacking them would double-count. Overlay them instead.";
     if ([...pools].filter((p) => p.startsWith("device:")).length > 1)
-        return "Each card has its own capacity and a model can only use one card's, so a stack of several cards has no meaningful total. Show a track per card, or overlay them.";
-    return "These series measure different pools, so their sum isn't a real quantity. Overlay them instead.";
+        return "Each card has its own capacity, and a stack draws its parts against ONE ceiling — so several cards stacked would draw one card's models in memory another card does not have. (A model split across cards already shows on each card it uses.) Show a track per card, overlay them, or use Whole box, which lays each card's capacity end to end.";
+    return "These series measure different pools, each against its own ceiling, so one stack has no single ceiling to draw them against. Overlay them, or use Whole box.";
 }
 
 export interface Preset { id: string; label: string; description: string; tracks: TrackDef[] }
@@ -463,8 +898,18 @@ export function presetsFor(sample: ResourceSample): Preset[] {
         // The HOST pool is included: a CPU-resident model holds no VRAM, so a cards-only overview would make
         // it vanish from the chart while it still sits in the legend below — the same flaw that took Placement
         // out of the default slot.
-        tracks: ([{ ...track("overview", [...devices.map((d) => `vram.${d.id}`), "ram"]),
-                    mode: (devices.length > 1 ? "overlay" : "stack") as TrackDef["mode"] }] as TrackDef[]).filter(nonEmpty),
+        // THE MODE IS DECIDED BY HOW MANY POOLS THE TRACK ENDED UP WITH, not by how many CARDS the box has.
+        // Asking about cards got the one-card machine wrong — the commonest machine there is: one GPU plus
+        // host RAM is still TWO pools, so the default preset proposed a stack of a card and the host, which
+        // `stackRefusal` refuses ("their sum isn't a real quantity"). The panel's own default offered a
+        // layout the panel then told you off for.
+        //
+        // It has to be read off the track AFTER `track()` has filtered the series to what this machine
+        // actually has, or the count is of series we hoped for rather than series we got.
+        tracks: ((): TrackDef[] => {
+            const t = track("overview", [...devices.map((d) => `vram.${d.id}`), "ram"]);
+            return [{ ...t, mode: (t.series.length > 1 ? "overlay" : "stack") as TrackDef["mode"] }].filter(nonEmpty);
+        })(),
     };
     const withRam: Preset = {
         id: "memory", label: "GPU + RAM", description: "A track per pool, with the models stacked in each.",
@@ -478,7 +923,24 @@ export function presetsFor(sample: ResourceSample): Preset[] {
     // There was a third, "Placement" — GPU + RAM minus the host track. It was exactly that flaw as a named
     // option: strictly narrower, and what it narrowed AWAY was your CPU-resident models. Anyone who genuinely
     // wants cards-only can drop the RAM track in the editor, which is one click and says what it did.
-    return [overview, withRam];
+    //
+    // A THIRD KIND, though, not a narrowing: every pool END TO END on one axis. It is a different QUESTION
+    // from the other two — not "how full is each" (Overview) or "what is in each" (GPU + RAM) but "what shape
+    // is this box, and how much of it is spoken for" — and the per-pool tracks cannot answer it, because they
+    // give every pool the same height whatever its capacity, so a 12 GiB card and a 96 GiB one look alike.
+    //
+    // It had no preset and could only be reached by editing tracks by hand, which made Custom carry a whole
+    // view rather than what Custom should mean: a preset with something excluded or a mode changed. A mode
+    // nobody can find is a mode nobody uses.
+    //
+    // Only where there is more than one pool. On a single-pool box the axis IS that pool's, so laying it
+    // "end to end" is the same picture under a name that promises something else.
+    const pools = [...devices.map((d) => `vram.${d.id}`), "ram"].filter((id) => have.has(id));
+    const box: Preset = {
+        id: "box", label: "Whole box", description: "Every pool end to end on one axis, with the walls drawn between them.",
+        tracks: [{ ...track("box", pools, "total"), heightPx: 150 }].filter(nonEmpty),
+    };
+    return pools.length > 1 ? [overview, withRam, box] : [overview, withRam];
 }
 
 /** A stable identity for the MACHINE this capacity describes — its devices (id, name, runner, size) and its
@@ -543,6 +1005,25 @@ export function sameBoxOnly(samples: ResourceSample[], cap: Capacity | null, swi
  *  memory that was never measured. (Same rule as never inventing a timestamp for an unmarked line.) */
 export const MAX_SAMPLE_GAP_MS = 15_000;
 
+/** The same rule, for a STREAMED history. It is a different number because a gap means a different thing on
+ *  each transport, and using the polling one under the stream is a bug that hides the whole event lane.
+ *
+ *  Polling runs at a fixed 2s while the panel is open, so 15s between samples really did mean nobody was
+ *  watching. The stream's cadence is ADAPTIVE by design — 1s while a load is in flight or the body is
+ *  changing, 15s when nothing is happening — so 15s apart is the NORMAL idle spacing and means "nothing
+ *  changed", the opposite of "nothing was measured". Reading it as a hole broke an idle history into
+ *  single-sample segments, and since a lone sample draws no line, every event placed in one was dropped:
+ *  a lane counting four loads and drawing none.
+ *
+ *  Three missed idle samples, which is a stream that has genuinely stopped rather than one that is quiet. */
+export const STREAM_MAX_GAP_MS = 45_000;
+
+/** The stream's IDLE cadence. It is the grace `placeEvents` needs on a streamed history for the same reason
+ *  the poll interval is on a polled one: the last sample can be a whole idle interval old while the chart's
+ *  right edge means "now", so without it the newest events — the ones you are watching for — are the only
+ *  ones that never appear. Fifteen seconds is a long time to be blind to the thing you opened the panel for. */
+export const STREAM_SAMPLE_MS = 15_000;
+
 /** Split history into contiguous runs, so the chart draws several segments rather than one line bridging
  *  every gap. A single sample is its own segment (it renders as a point, not a line). */
 export function segments(samples: ResourceSample[], maxGapMs: number = MAX_SAMPLE_GAP_MS): ResourceSample[][] {
@@ -550,7 +1031,10 @@ export function segments(samples: ResourceSample[], maxGapMs: number = MAX_SAMPL
     let run: ResourceSample[] = [];
     for (const s of samples) {
         const prev = run[run.length - 1];
-        if (prev && s.t - prev.t > maxGapMs) { out.push(run); run = []; }
+        // A REPORTED hole breaks the run as surely as a measured one. `gapBefore` is the stream saying it lost
+        // frames on our behalf, and it is checked separately from the interval because a drop leaves no
+        // interval to notice: the readings either side can be adjacent in time.
+        if (prev && (s.gapBefore || s.t - prev.t > maxGapMs)) { out.push(run); run = []; }
         run.push(s);
     }
     if (run.length) out.push(run);
@@ -590,13 +1074,13 @@ export function residencyEvents(samples: ResourceSample[], knownLoads: ResourceE
         const before = new Set(samples[i - 1].models.map((m) => m.model));
         const after = new Set(samples[i].models.map((m) => m.model));
         const t = samples[i].t;
-        for (const m of before) if (!after.has(m)) out.push({ t, kind: "evict", label: `${m} evicted`, model: m });
+        for (const m of before) if (!after.has(m)) out.push({ t, kind: "evict", label: `${m} evicted`, model: m, via: "poll" });
         for (const m of after) {
             if (before.has(m)) continue;
             // Within a poll of a load span for the same model → that span already tells the story.
             const covered = knownLoads.some((e) => e.model === m && e.kind === "load" &&
                 t >= e.t - MAX_SAMPLE_GAP_MS && t <= (e.until ?? e.t) + MAX_SAMPLE_GAP_MS);
-            if (!covered) out.push({ t, kind: "load", label: `${m} appeared`, model: m });
+            if (!covered) out.push({ t, kind: "load", label: `${m} appeared`, model: m, via: "poll" });
         }
     }
     return out;
@@ -609,9 +1093,14 @@ export function residencyEvents(samples: ResourceSample[], knownLoads: ResourceE
  *  time — it is an overview, and a 10-minute hole in the middle of a session is a fact about the session that
  *  an overview should show at its true width, not collapse the way the chart's segments do.
  *
- *  Returns null when there is nothing to scrub: no samples, or a session so short that the window covers all
- *  of it — a strip whose box is the whole strip is a control that cannot do anything, and drawing one implies
- *  otherwise. */
+ *  Returns null only when there is no WINDOW at all (the "everything" setting, which is not a viewport onto
+ *  anything) or no session to draw. It deliberately does NOT return null for a window that happens to cover
+ *  the whole session: that is a state a live view passes through constantly — the rolling window is wider
+ *  than a session that has just started, and a width dragged while following is REMEMBERED, so stretching
+ *  the box to the full width once made the control delete itself and reappear minutes later when the session
+ *  outgrew it. A control that vanishes is worse than one that is momentarily at its limit, and it took the
+ *  only way back with it: the chart's wheel-scrub reads this too. Full-width and draggable says the same
+ *  thing honestly. */
 export interface ScrubExtent {
     /** First and last sample in the session. */
     from: number;
@@ -631,18 +1120,19 @@ export function scrubExtent(
     samples: readonly { t: number }[],
     window: { from: number; to: number } | null,
 ): ScrubExtent | null {
+    if (!window) return null;   // no viewport: the plot already IS the whole session
     if (samples.length < 2) return null;
     const from = samples[0].t, to = samples[samples.length - 1].t;
     const span = to - from;
     if (span <= 0) return null;
-    const w = window ?? { from, to };
     // Clamped, because a window can legitimately extend past the samples (the rolling window reaches back
     // before the first sample on a fresh open, and forward to now).
     const clamp = (t: number) => Math.min(1, Math.max(0, (t - from) / span));
-    const windowFrom = clamp(w.from), windowTo = clamp(w.to);
-    // Nothing to scrub if the window already covers everything there is.
-    if (windowFrom <= 0 && windowTo >= 1) return null;
-    return { from, to, windowFrom, windowTo, atTail: w.to >= to - TAIL_SLACK_MS };
+    return {
+        from, to,
+        windowFrom: clamp(window.from), windowTo: clamp(window.to),
+        atTail: window.to >= to - TAIL_SLACK_MS,
+    };
 }
 
 /** Move a window to a new position on the strip, keeping its DURATION. Dragging the box scrolls time; it does
@@ -663,12 +1153,239 @@ export function scrubTo(
     return { from: start, to: start + width };
 }
 
+/** Which part of the scrub window a pointer landed on. The EDGES resize, the middle pans — the same
+ *  vocabulary every timeline control uses, and the reason a drag on the box must not silently mean
+ *  "recentre on the cursor" when the cursor is on a handle.
+ *
+ *  `edgePx` is converted to a fraction against the track's width so the handles are a constant, clickable
+ *  size on screen rather than a constant slice of a window that may be 2% wide.
+ *
+ *  THE CAP APPLIES INSIDE THE WINDOW ONLY. A handle is capped at a third of the window so a narrow one keeps
+ *  a middle to pan by — but the cap was applied to the OUTSIDE reach as well, which is what made a hairline
+ *  window impossible to widen: a few pixels across, its handles were one or two pixels on either side of it,
+ *  so every grab landed on the pan zone and the only way out was discarding the zoom.
+ *
+ *  Outside, the reach is always the full `edgePx`. Nothing is given up for it — the pan middle is exactly as
+ *  it was — and the narrower the window, the more the reach outside it is what you actually hit, which is
+ *  the right way round: a window too small to aim at is a window you want to make bigger. */
+export function scrubZone(
+    extent: { windowFrom: number; windowTo: number },
+    frac: number,
+    trackPx: number,
+    edgePx = 7,
+): "from" | "to" | "pan" | "outside" {
+    const { windowFrom: a, windowTo: b } = extent;
+    const outer = trackPx > 0 ? edgePx / trackPx : 0;   // never capped: this is the reach OUTSIDE the window
+    const inner = Math.min(outer, (b - a) / 3);         // capped: the window must keep a middle to pan by
+    if (frac < a - outer || frac > b + outer) return "outside";
+    if (frac <= a + inner) return "from";
+    if (frac >= b - inner) return "to";
+    return "pan";
+}
+
+/** Move ONE edge of the window, keeping the other fixed. Clamped to the session and to a minimum span, so a
+ *  drag past the opposite edge parks against it rather than inverting the range into something with a
+ *  negative duration that every consumer would then have to defend against. */
+export function scrubResize(
+    extent: { from: number; to: number },
+    window: { from: number; to: number },
+    edge: "from" | "to",
+    frac: number,
+    minMs = MIN_SCOPE_MS,
+): { from: number; to: number } {
+    const span = extent.to - extent.from;
+    const at = extent.from + Math.min(1, Math.max(0, frac)) * span;
+    const min = Math.min(minMs, span);
+    return edge === "from"
+        ? { from: Math.max(extent.from, Math.min(at, window.to - min)), to: window.to }
+        : { from: window.from, to: Math.min(extent.to, Math.max(at, window.from + min)) };
+}
+
+/** A SELECTED WINDOW, never narrower than the panel can draw. Widened symmetrically about its own centre, so
+ *  the stretch you picked stays in the middle of what you get rather than sliding to one end.
+ *
+ *  A drag can resolve to almost no time at all even when the hand moved a long way, because the axis is
+ *  SEGMENTED: a densely-sampled run occupies a lot of width for a little time. The result is a window of a
+ *  few milliseconds, which contains no samples, draws as an empty plot, and reads as the panel breaking
+ *  rather than as a selection that was too small to mean anything. `scopeToSpan` already widens a too-short
+ *  block for the same reason; this is the same rule for a hand-made selection.
+ *
+ *  Returns null for a window with no extent at all (from >= to), which is not a selection to widen but a
+ *  click to ignore. */
+export function clampWindow(win: { from: number; to: number }, minMs = MIN_SCOPE_MS): { from: number; to: number } | null {
+    const span = win.to - win.from;
+    if (span <= 0) return null;
+    if (span >= minMs) return win;
+    const mid = win.from + span / 2, half = minMs / 2;
+    return { from: mid - half, to: mid + half };
+}
+
+/**
+ * THE STRETCH THE CHART DRAWS, in priority order: an explicit zoom, then a scoped session's own extent, then
+ * the rolling window. A zoom REPLACES the rolling one — you asked for a stretch, so the panel stops sliding
+ * away from it.
+ *
+ * Pure and shared, because the HEADER has to describe the same instant the tracks do. It used to read the
+ * live resident set whatever the window was, so scrubbing back put two different moments side by side with
+ * nothing saying so: "6.53 GiB in use" above a track whose own edge read 19.95 GiB unattributed, which reads
+ * as arithmetic going wrong rather than as two clocks. Deriving the window twice would have been the same bug
+ * waiting to come back.
+ */
+export function chartWindow(zoom: { from: number; to: number } | null, scoped: { from: number; to: number } | null,
+    secs: number, now: number): { from: number; to: number } | null {
+    if (zoom) return zoom;
+    if (scoped) return scoped;
+    if (!secs) return null;                        // "everything" — no window to draw
+    return { from: now - secs * 1000, to: now };
+}
+
+/** THE SAMPLES A WINDOW SHOULD DRAW — the ones inside it, PLUS the nearest on each side.
+ *
+ *  A plain filter is wrong once the window gets narrower than the poll interval, which is exactly what
+ *  zooming into a single long event does: the window falls between two polls, the filter returns fewer than
+ *  two samples, and the chart draws an empty box. The panel then looks broken rather than zoomed — no line,
+ *  no ceiling, no tracks — while the thing you zoomed in ON, an event spanning the whole window, is still
+ *  perfectly well defined.
+ *
+ *  The BRACKETING samples are what a line needs to cross the window at all: the value did not stop existing
+ *  between two measurements. They sit outside the window by construction, so a renderer must clip to the
+ *  window rather than to the data's extent — which is what a time axis does anyway.
+ *
+ *  Not interpolation: these are real measurements, drawn where they were actually taken. Inventing a sample
+ *  at the window's edge would be a reading nobody took, which is the thing this panel refuses to do
+ *  everywhere else (see the gaps, which stay gaps). */
+export function windowSamples<T extends { t: number }>(all: readonly T[], window: { from: number; to: number } | null): T[] {
+    if (!window) return [...all];
+    const inside: T[] = [];
+    let before: T | null = null, after: T | null = null;
+    for (const s of all) {
+        if (s.t < window.from) { before = s; continue; }         // `all` is ordered, so the last one wins
+        if (s.t > window.to) { if (!after) after = s; continue; }   // …and the first one past the end
+        inside.push(s);
+    }
+    // Only reach outside when the window cannot draw itself. A window with plenty of samples must not have
+    // its scale stretched by a neighbour that is minutes away.
+    if (inside.length >= 2) return inside;
+    return [...(before ? [before] : []), ...inside, ...(after ? [after] : [])];
+}
+
+/** WHAT A FINISHED SCRUB DRAG MEANT. Two outcomes, and telling them apart is the whole point: a window
+ *  PINNED to a range, or FOLLOWING with a width.
+ *
+ *  The rule that used to be here — "ends at the tail → rejoin live" — is right for a PAN (you dragged the
+ *  box to the end, you want to follow) and wrong for a RESIZE of the left edge, which never moves `to` at
+ *  all. So every widen-while-following was read as "rejoin live", which threw the new width away and
+ *  snapped the strip back: the window could be narrowed but never stretched.
+ *
+ *  Following with a width is not a special case of a pinned range — it IS `resWindowS`, the same quantity
+ *  Settings names — so a left-edge drag against the tail returns seconds, and the caller stores it. */
+export function scrubIntent(
+    extent: { from: number; to: number },
+    next: { from: number; to: number },
+    tailSlackMs: number,
+): { live: true; windowS: number } | { live: false; window: { from: number; to: number } } {
+    // AT THE TAIL → follow, AT THE WIDTH ON SCREEN. One rule for every gesture, which is what makes it
+    // predictable: whatever the window looks like when you let go against the right edge is what live then
+    // means. Two separate bugs came from not having it. Rejoining live RESTORED whatever `resWindowS` was
+    // last set to, so narrowing a pinned window and dragging it back to the edge made it snap large again —
+    // and a left-edge stretch while already following was read as "you dropped at the tail, rejoin live",
+    // which threw the new width away, so the window could be narrowed but never widened.
+    if (next.to >= extent.to - tailSlackMs)
+        return { live: true, windowS: Math.max(1, Math.round((next.to - next.from) / 1000)) };
+    return { live: false, window: next };
+}
+
+/** Slide the window along the strip by a fraction of ITS OWN width, for a wheel gesture over the plot.
+ *  Relative to the window rather than to the session, so one notch moves the same visible distance whether
+ *  you are looking at ten seconds of a ten-minute session or all of it. */
+export function scrubNudge(
+    extent: { from: number; to: number },
+    window: { from: number; to: number },
+    byWindowFraction: number,
+): { from: number; to: number } {
+    const width = window.to - window.from;
+    const span = extent.to - extent.from;
+    if (width >= span) return { from: extent.from, to: extent.to };
+    const center = (window.from + window.to) / 2 + width * byWindowFraction;
+    return scrubTo(extent, window, (center - extent.from) / span);
+}
+
+/**
+ * A PINCH → a narrower or wider window, ANCHORED so the instant under your fingers stays under them.
+ *
+ * A trackpad pinch reaches the page as a `wheel` carrying `ctrlKey`, which is the platform convention rather
+ * than anything we invented — it is how the browser tells its own page-zoom apart from a scroll. So zooming
+ * the timeline costs no new surface: the same handler that scrolls the window along reads one more flag and
+ * changes what the gesture means. Sideways slides, pinch zooms, which is what both gestures already mean
+ * everywhere else on a trackpad.
+ *
+ * The factor is EXPONENTIAL in the delta, so the gesture is smooth and symmetric: pinching out by an amount
+ * and back in by the same amount returns to where you started, where a linear step accumulates drift and a
+ * `sign(delta) * step` moves in visible jumps.
+ *
+ * The anchor is read LINEARLY across the window, which the plot's own axis is not — it is segmented and
+ * flex-weighted by sample counts. That is deliberate and matches `scrubNudge`, which slides by a fraction of
+ * the window's own width for the same reason: consistency between the two gestures on one axis matters more
+ * than an exactness neither of them has, and the anchor is about the zoom FEELING fixed rather than about
+ * naming an instant.
+ */
+export function scrubPinch(
+    extent: { from: number; to: number },
+    window: { from: number; to: number },
+    deltaY: number,
+    anchorFrac: number,
+    minMs = MIN_SCOPE_MS,
+): { from: number; to: number } {
+    const span = extent.to - extent.from;
+    const width = window.to - window.from;
+    if (!(span > 0) || !(width > 0)) return window;
+    // Pinching OUT gives a negative delta (the same sign a scroll-up carries) and means "closer", so the
+    // window gets narrower. Capped per event, because a trackpad can deliver a very large delta in one frame
+    // and a single flick should not cross the whole zoom range.
+    const factor = Math.exp(Math.max(-0.5, Math.min(0.5, deltaY * 0.01)));
+    const next = Math.max(Math.min(minMs, span), Math.min(span, width * factor));
+    const anchor = window.from + Math.min(1, Math.max(0, anchorFrac)) * width;
+    // Keep the anchored instant at the same FRACTION of the window, which is what makes it stay under the
+    // pointer as the width changes.
+    let from = anchor - (anchor - window.from) * (next / width);
+    from = Math.max(extent.from, Math.min(from, extent.to - next));
+    return { from, to: from + next };
+}
+
+/**
+ * How far a wheel gesture should slide the window, as a fraction of the window's own width.
+ *
+ * Two things this gets right that a `Math.sign(delta) * step` does not, and both were visible as the same
+ * symptom — the chart scrubbing erratically under a trackpad:
+ *
+ * It reads BOTH AXES, taking whichever dominates. A trackpad swipe is a stream of events carrying a mixture
+ * of `deltaX` and `deltaY`, so reading only one axis means a horizontal swipe does nothing except through
+ * whatever incidental vertical jitter it happens to carry. Dominant-axis rather than summed, so a diagonal
+ * gesture is not counted twice.
+ *
+ * And it is PROPORTIONAL to the distance, scaled by the plot's own width, so the window travels 1:1 with the
+ * gesture: swipe across half the plot and the window moves half its width. A fixed step per event is what
+ * made it inconsistent — one mouse notch and one of the dozens of tiny events a trackpad emits for the same
+ * physical movement were treated identically, so the same swipe moved wildly different distances depending
+ * on how the hardware chose to quantise it.
+ *
+ * `deltaMode` is honoured because a mouse reports LINES and a page gesture reports PAGES; treating either as
+ * pixels moves the window by a few pixels for a gesture that meant a screenful.
+ */
+export function wheelScrubFraction(deltaX: number, deltaY: number, deltaMode: number, plotPx: number): number {
+    if (!(plotPx > 0)) return 0;
+    const scale = deltaMode === 1 ? 16 : deltaMode === 2 ? plotPx : 1;
+    const dx = deltaX * scale, dy = deltaY * scale;
+    const d = Math.abs(dx) > Math.abs(dy) ? dx : dy;
+    return d / plotPx;
+}
+
 /** The TIME at a fraction across the whole plot — the inverse of `placeEvents`, for turning a drag into a
  *  time range. The plot is segments laid out with flex weights proportional to their sample counts, so the
  *  fraction is spent across the segments in those proportions and then interpolated INSIDE the one it lands
  *  in. A fraction landing in a gap between segments resolves to that gap's near edge: nothing was measured
  *  there, so the honest answer is the last moment that was. */
-export function timeAtFraction(runs: { t: number }[][], frac: number): number | null {
+export function locateFraction<T extends { t: number }>(runs: T[][], frac: number): { run: T[]; within: number } | null {
     const live = runs.filter((r) => r.length > 0);
     if (!live.length) return null;
     const weights = live.map((r) => Math.max(1, r.length));
@@ -677,15 +1394,79 @@ export function timeAtFraction(runs: { t: number }[][], frac: number): number | 
     const f = Math.min(1, Math.max(0, frac));
     for (let i = 0; i < live.length; i++) {
         const share = weights[i] / total;
+        if (f <= acc + share || i === live.length - 1)
+            return { run: live[i], within: share > 0 ? Math.min(1, Math.max(0, (f - acc) / share)) : 0 };
+        acc += share;
+    }
+    return { run: live.at(-1)!, within: 1 };
+}
+
+export function timeAtFraction(runs: { t: number }[][], frac: number): number | null {
+    const at = locateFraction(runs, frac);
+    if (!at) return null;
+    // Interpolate along the INDEX axis, not between the segment's first and last stamps. A polyline places
+    // sample i at i/(n-1) of the width, so samples are evenly spaced by POSITION and not by time; reading the
+    // label off the elapsed time assumes a fixed cadence. The event stream's cadence is adaptive by design
+    // (1s while a load is in flight, 15s idle), so under it the two mappings diverge, and the crosshair would
+    // name an instant several seconds from the datapoint drawn beneath it.
+    const { run, within } = at;
+    if (run.length === 1) return run[0].t;
+    const pos = within * (run.length - 1);
+    const i = Math.min(run.length - 2, Math.floor(pos));
+    return run[i].t + (run[i + 1].t - run[i].t) * (pos - i);
+}
+
+/** The DATAPOINT under a fraction of the plot's width — what a Grafana-style hover reads, as opposed to the
+ *  interpolated instant the crosshair labels. It snaps to a real sample rather than interpolating between
+ *  two, because the values in the tooltip are measurements: a figure halfway between two polls was never
+ *  observed, and presenting one as though it had been is the whole failure mode a memory panel must not have. */
+export function sampleAtFraction<T extends { t: number }>(runs: T[][], frac: number): T | null {
+    const at = locateFraction(runs, frac);
+    if (!at) return null;
+    const { run, within } = at;
+    return run[Math.round(within * (run.length - 1))] ?? null;
+}
+
+/**
+ * WHERE THE NEAREST DATAPOINT SITS — the inverse of {@link sampleAtFraction}, so the crosshair can SNAP to
+ * the sample it is already reading instead of floating between two.
+ *
+ * The tooltip has always named a real measurement (a figure halfway between two polls was never observed),
+ * but the line was drawn wherever the pointer happened to be, so the number and the mark disagreed by up to
+ * half a sample gap. At a 15s idle cadence that is seven seconds of daylight between "here" and "the reading
+ * you are being shown" — and on an adaptive cadence the gap itself changes width as you move, which reads as
+ * the crosshair drifting.
+ *
+ * Returns null when there is nothing to snap to. The axis is segmented and flex-weighted by sample COUNT, so
+ * this must invert exactly that mapping rather than interpolating over time — see `timeAtFraction`.
+ */
+export function snapFraction<T extends { t: number }>(runs: T[][], frac: number): { frac: number; index: number; run: number } | null {
+    // The ORIGINAL indices, so a caller mapping over `runs` can ask "is the snapped sample in THIS segment?".
+    // Filtering first and returning a position in the filtered list would silently name the wrong segment on
+    // any window that contains an empty one.
+    const liveAt = runs.map((r, i) => [r, i] as const).filter(([r]) => r.length > 0);
+    const live = liveAt.map(([r]) => r);
+    if (!live.length) return null;
+    const weights = live.map((r) => Math.max(1, r.length));
+    const total = weights.reduce((a, b) => a + b, 0);
+    const f = Math.min(1, Math.max(0, frac));
+    let acc = 0;
+    for (let i = 0; i < live.length; i++) {
+        const share = weights[i] / total;
         if (f <= acc + share || i === live.length - 1) {
+            const run = live[i];
             const within = share > 0 ? Math.min(1, Math.max(0, (f - acc) / share)) : 0;
-            const from = live[i][0].t, to = live[i].at(-1)!.t;
-            return from + (to - from) * within;
+            const index = Math.round(within * (run.length - 1));
+            // A one-sample segment occupies its whole share and has no interior to place a point in, so it
+            // sits at the middle of that share rather than at an edge it does not own.
+            const at = run.length === 1 ? 0.5 : index / (run.length - 1);
+            return { frac: acc + at * share, index, run: liveAt[i][1] };
         }
         acc += share;
     }
-    return live.at(-1)!.at(-1)!.t;
+    return null;
 }
+
 
 /** What the lane draws. Everything is shown by default; this is how a busy session is narrowed.
  *
@@ -694,25 +1475,112 @@ export function timeAtFraction(runs: { t: number }[][], frac: number): number | 
  *  "which of them" — sub-calls are the numerous ones (a vision reader fires several per step) and loads and
  *  evictions are the rare, expensive ones you may want alone. */
 export interface LaneFilter {
-    /** A session hash to restrict to, or null for every session. */
+    /** The session being read, or null when none is (the overview list). */
     hash: string | null;
+    /** Whether the lane shows only that session's events, or every session's. Scoping is the DEFAULT: the
+     *  lane sits above a transcript, and events from runs you are not reading are noise against it. With
+     *  scoping on and no session open there is nothing to scope to, so a run's events are shown NOWHERE —
+     *  which is the intended overview, not an empty-looking bug. */
+    scope: "session" | "all";
     /** Kinds to HIDE. An exclusion list, so a kind added later is visible by default rather than silently
      *  filtered out by a stored preference that predates it. */
     hidden: readonly ResourceEvent["kind"][];
+    /** The models the scoped session actually ran, delegated readers included. A MACHINE event carries no
+     *  session, so scoping cannot ask who owns it — but it can ask whether the model is one this session was
+     *  using, which is the question a reader is really asking. Undefined means "not known", and everything
+     *  machine-side is kept, since inventing an empty set would silently hide the lot. */
+    models?: readonly string[];
 }
 
-export const EMPTY_LANE_FILTER: LaneFilter = { hash: null, hidden: [] };
+export const EMPTY_LANE_FILTER: LaneFilter = { hash: null, scope: "all", hidden: [] };
 
-/** Apply a filter. An event with no `ref` (an eviction — it belongs to the machine, not to a run) survives a
- *  session scope: it is what the memory trace is DOING, and hiding it because it has no owner would remove
- *  the events the chart exists for. */
+/** Apply a filter. An event with no `ref` belongs to the MACHINE rather than to a run — a load, an eviction,
+ *  the box serving someone else — so a session scope cannot ask who owns it. It asks the useful question
+ *  instead: is this a model the session was using? A qwen session was drawing gemma's loads and evictions
+ *  because "no ref" was read as "always relevant", and on a shared box that is most of the lane. Kept when
+ *  the models are unknown, since an empty set would hide everything the chart exists to show. */
 export function filterEvents(events: readonly ResourceEvent[], filter: LaneFilter): ResourceEvent[] {
     const hidden = new Set(filter.hidden);
+    const mine = filter.models ? new Set(filter.models) : null;
     return events.filter((e) => {
         if (hidden.has(e.kind)) return false;
-        if (filter.hash && e.ref && e.ref.hash !== filter.hash) return false;
-        return true;
+        if (filter.scope !== "session") return true;
+        if (e.ref) return e.ref.hash === filter.hash;
+        // A machine event about a model this session ran EXPLAINS the session — an eviction mid-run is why
+        // the next turn paid a load. One about a model it never touched is another tenant's traffic.
+        if (!mine) return true;
+        // An event with no model at all cannot be attributed either way (the server emits a bare `unload`).
+        // Dropped while scoped and kept in full: unattributable is not the same as unrelated, but a lane
+        // asked for one session should not answer with something it cannot place.
+        return e.model ? mine.has(e.model) : false;
     });
+}
+
+/** The stretch of time a SESSION occupies, for a panel scoped to it. Scoping the lane and the model list but
+ *  not the axis left the two disagreeing about what "this session" means: the list said one model, the chart
+ *  still drew ten minutes of a shared box either side of it.
+ *
+ *  Derived from the session's own events rather than from its turns, so it covers whatever the lane draws —
+ *  including a tool that was still running when the snapshot was taken. `now` extends a LIVE session to the
+ *  present instead of stopping at its last finished event, which would otherwise pin the window behind the
+ *  memory trace it is meant to sit under.
+ *
+ *  `minMs` is a floor, because a three-second session is a slit: a window narrower than a couple of samples
+ *  contains no measurements and draws as an empty plot, which reads as the panel breaking rather than as a
+ *  short run. Returns null when the session has no events at all — there is nothing to frame, and inventing
+ *  a window would be a claim about when it happened. */
+export function sessionWindow(
+    events: readonly ResourceEvent[], hash: string | null, now: number,
+    { minMs = 30_000, padFrac = 0.04 }: { minMs?: number; padFrac?: number } = {},
+): { from: number; to: number } | null {
+    if (!hash) return null;
+    let from = Infinity, to = -Infinity;
+    for (const e of events) {
+        if (e.ref?.hash !== hash) continue;
+        from = Math.min(from, e.t);
+        // An OPEN span has no end; `until` is where it had reached, which is the right right-edge for it.
+        to = Math.max(to, e.until ?? e.t);
+    }
+    if (!Number.isFinite(from)) return null;
+    // Still going, or only just finished: follow the clock rather than stopping short of it.
+    if (now - to < minMs) to = now;
+    const pad = Math.max((to - from) * padFrac, 1000);
+    from -= pad; to += pad;
+    // Widen around the CENTRE, so a short session sits in the middle of its window instead of against an edge.
+    const grow = minMs - (to - from);
+    if (grow > 0) { from -= grow / 2; to += grow / 2; }
+    return { from, to };
+}
+
+/** Is this the SAME machine edge we already hold? A subscriber that reconnects is backfilled with the ring
+ *  again — the whole ten minutes when the worker is fresh, which an MV3 respawn guarantees — so every span
+ *  in that window arrives a second time and the lane doubles. Measured on a real box: four serving periods
+ *  drawn as "serving 8", two loads as three (one load's opening edge fell outside the replayed window, so
+ *  only its duplicate closed).
+ *
+ *  Identity is kind + model + when, with a TOLERANCE. The instant is derived as `helloAt + frame.t`, and
+ *  since each connection anchors on its own hello the same edge lands within the jitter between two hellos
+ *  rather than on the exact same millisecond. A second is far tighter than the spacing of anything the
+ *  server actually emits, and collapsing two genuinely distinct edges that close together is a far smaller
+ *  error than drawing everything twice. */
+export function sameMachineEvent(a: ResourceEvent, b: ResourceEvent, tolMs = 1500): boolean {
+    if (a.kind !== b.kind || a.model !== b.model) return false;
+    if (Math.abs(a.t - b.t) > tolMs) return false;
+    // A span and an instant of the same kind at the same moment are not the same thing, and two spans that
+    // start together but end apart are two different periods of work.
+    if ((a.until == null) !== (b.until == null)) return false;
+    return a.until == null || Math.abs((a.until as number) - (b.until as number)) <= tolMs;
+}
+
+/** Append unless we already hold it. Bounded by `cap`, dropping oldest. */
+export function addMachineEvent(list: readonly ResourceEvent[], e: ResourceEvent, cap: number, tolMs = 1500): ResourceEvent[] {
+    // Backwards: a duplicate arrives in a REPLAY of recent history, so the match is near the end.
+    for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i].t < e.t - tolMs - 1) break;          // the list is time-ordered; nothing older can match
+        if (sameMachineEvent(list[i], e, tolMs)) return list as ResourceEvent[];
+    }
+    const next = [...list, e];
+    return next.length > cap ? next.slice(next.length - cap) : next;
 }
 
 /** How many of each kind are in a set — for a filter control that says what it is hiding rather than making
@@ -731,6 +1599,11 @@ export function lineageOf(events: readonly ResourceEvent[], id: string | undefin
     const out = new Set<string>();
     if (!id) return out;
     const byId = new Map(events.filter((e) => e.id).map((e) => [e.id!, e]));
+    // A focus on an event that is NOT DRAWN is not a focus. The hover is held in a signal, so it outlives the
+    // thing it pointed at — a click that navigates, a filter chip, the window moving — and an id that matches
+    // nothing produced a lineage of exactly one unmatchable member, which dimmed every bar and every step at
+    // once. That reads as the whole lane disappearing rather than as a stale highlight.
+    if (!byId.has(id)) return out;
     out.add(id);
     // ANCESTORS: straight up the chain.
     for (let cur = byId.get(id)?.parent; cur && !out.has(cur); cur = byId.get(cur)?.parent) out.add(cur);
@@ -762,25 +1635,173 @@ export function lineageOf(events: readonly ResourceEvent[], id: string | undefin
  *  visible — which means packing has to reserve the same width, or two events that do not overlap in time
  *  are drawn overlapping and read as one longer bar. */
 export const MIN_EV_SPAN = 0.006;
+/** The narrowest window double-clicking a bar will scope to. A tool call that took 40ms is a real event
+ *  worth pointing at, but a 40ms window contains no samples at all and draws as an empty plot — so a short
+ *  block is widened around its own centre rather than scoped to exactly itself. */
+export const MIN_SCOPE_MS = 2500;
+
+/**
+ * The time window to scope the panel to when a lane block is double-clicked: the block's own extent,
+ * widened symmetrically if it is shorter than {@link MIN_SCOPE_MS}.
+ *
+ * An OPEN event (work still in flight) has no end, so `now` stands in for one — scoping to it while it
+ * runs is the case where this is most useful and least able to know where it stops.
+ */
+export function scopeToSpan(from: number, until: number | null | undefined, now: number, minMs = MIN_SCOPE_MS): { from: number; to: number } {
+    const to = until ?? now;
+    const pad = Math.max(0, (minMs - (to - from)) / 2);
+    return { from: from - pad, to: to + pad };
+}
+
+/**
+ * The same thing, but guaranteed to contain enough SAMPLES to draw.
+ *
+ * A window is only as useful as the trace inside it, and everything here needs a segment of at least two
+ * samples: `segments()` drops shorter ones, so the tracks, the lane and the strip all render nothing and the
+ * panel appears to vanish. A time floor cannot promise that — scoping to a 400ms tool call on a box polled
+ * every two seconds is a window with one sample in it, or none — so this widens symmetrically until the
+ * window actually covers `minSamples`, and gives up only when the session does not have that many.
+ */
+export function scopeAround(
+    samples: readonly { t: number }[],
+    from: number,
+    until: number | null | undefined,
+    now: number,
+    minSamples = 3,
+): { from: number; to: number } {
+    let w = scopeToSpan(from, until, now);
+    if (samples.length <= minSamples) return { from: samples[0]?.t ?? w.from, to: samples[samples.length - 1]?.t ?? w.to };
+    const covered = (r: { from: number; to: number }) => samples.reduce((n, s) => n + (s.t >= r.from && s.t <= r.to ? 1 : 0), 0);
+    // Grow by the window's own width each round, so a very short scope reaches a useful size in a few steps
+    // rather than crawling, and a long one is left alone.
+    for (let i = 0; i < 40 && covered(w) < minSamples; i++) {
+        const grow = Math.max(1000, (w.to - w.from) / 2);
+        w = { from: w.from - grow, to: w.to + grow };
+    }
+    return w;
+}
+
 /** A hair of separation reserved BETWEEN bars in a row. Two bars that merely touch read as one bar with a
  *  seam — which is the same misreading as an overlap, arrived at differently. */
 export const EV_ROW_GAP = 0.004;
 
-export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN): EventPlacement[][] {
+/**
+ * Pack placed events into rows, ONE RUN AT A TIME.
+ *
+ * A run and everything under it — its steps, their sub-calls — is a tree, and the tree is what a reader is
+ * following. Packing every event together by start time interleaves two concurrent runs into the same rows,
+ * so a step of one sits between two steps of the other and the shape of neither survives. Each run instead
+ * gets a contiguous BAND: its own container bar, its steps beneath, its sub-calls beneath those. A second
+ * run overlapping in time starts a new band below rather than filling gaps in the first.
+ *
+ * This is not only a multi-model case: a server or cloud backend runs the SAME model several times at once,
+ * so the grouping is by RUN, never by model.
+ *
+ * Events belonging to no run (an eviction — a fact about the machine) are packed last, in a band of their
+ * own, so they cannot push a run's rows apart.
+ */
+/** The most rows the lane will ever draw, across every band. Each row is a few pixels, so without a TOTAL
+ *  cap a box running ten agents at once would push the transcript off the screen — banding made the per-run
+ *  cap insufficient, because the number of bands is the number of concurrent runs. */
+export const MAX_LANE_ROWS = 10;
+
+export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN, maxTotal = MAX_LANE_ROWS): EventPlacement[][] {
+    const groups = new Map<string, EventPlacement[]>();
+    for (const p of placed) {
+        const key = p.event.ref?.hash ?? "";
+        (groups.get(key) ?? groups.set(key, []).get(key)!).push(p);
+    }
+    // Runs in the order they STARTED, and the machine's own events last: a band's position should say when
+    // its run began, and an eviction belongs to no run at all.
+    const order = [...groups.entries()].sort((a, b) => {
+        if (!a[0] !== !b[0]) return a[0] ? -1 : 1;
+        return Math.min(...a[1].map((p) => p.run + p.from)) - Math.min(...b[1].map((p) => p.run + p.from));
+    });
+    const out: EventPlacement[][] = [];
+    // The drawn end of each existing row, so a later band can be told whether it would collide.
+    const ends: number[] = [];
+    const endOf = (p: EventPlacement) => p.run + Math.max(p.to, p.from + minSpan) + EV_ROW_GAP;
+    const startOf = (p: EventPlacement) => p.run + p.from;
+
+    for (const [, band] of order) {
+        const rows = packBand(band, maxRows, minSpan);
+        // REUSE rows where the band cannot collide. Banding exists so a tree is never interleaved with
+        // another — but two runs that never overlap in TIME cannot interleave, so stacking them costs rows
+        // for nothing, and most runs are sequential rather than concurrent. The band is placed as a WHOLE at
+        // the first depth where every one of its rows clears what is already there: moving rows independently
+        // would let one run's steps slide under another's container, which is the interleaving this prevents.
+        // Placed at the TOP only when everything already drawn has finished before this band begins — which
+        // is exactly the sequential case. Anything else appends. Allowing a band to start partway down would
+        // let it share a row with another run's sub-calls while overlapping that run's container, so the two
+        // trees would interleave by depth: the thing banding exists to prevent, arrived at sideways.
+        const bandStart = Math.min(...band.map(startOf));
+        const clearsEverything = ends.length > 0 && ends.every((e) => bandStart >= e);
+        let at = clearsEverything ? 0 : out.length;
+        // Out of room even appending: everything left CROWDS into the last row rather than being dropped. A
+        // bar drawn overlapping is a legibility problem; a run not drawn at all is a lie about what ran.
+        if (at >= out.length && out.length + rows.length > maxTotal) {
+            const last = out[out.length - 1] ?? (out.push([]), ends.push(0), out[0]);
+            for (const r of rows) last.push(...r);
+            continue;
+        }
+        rows.forEach((row, i) => {
+            const k = at + i;
+            if (!out[k]) { out[k] = []; ends[k] = 0; }
+            out[k].push(...row);
+            ends[k] = Math.max(ends[k], ...row.map(endOf));
+        });
+    }
+    return out;
+}
+
+/** One run's own rows — the greedy first-fit the whole lane used to get, applied within a band. */
+/** Which row-tier an event belongs to. The lane is a CONTAINMENT picture, so depth has to mean something:
+ *  a run CONTAINS its steps, so it goes above them; the machine's own spans are the ground the run happened
+ *  on, so they go below. Packing by start time alone made the order incidental — a container whose first
+ *  step began at the same instant landed UNDER its own children, and a model load could take the top row
+ *  from the run it was loading for.
+ *
+ *  A tier is only a preference between things drawn at the same time: within one tier, packing is unchanged
+ *  and two bars still share a row whenever they cannot overlap. */
+export function laneTier(kind: string): number {
+    if (kind === "run" || kind === "session") return 0;      // the container
+    if (kind === "gen" || kind === "tool" || kind === "embed") return 1;   // its own work
+    return 2;                                               // the machine: loads, serving, evictions
+}
+
+function packBand(placed: EventPlacement[], maxRows: number, minSpan: number): EventPlacement[][] {
     const rows: EventPlacement[][] = [];
-    const ends: number[] = [];   // per row: [run, to] as a comparable number
     // The END is the DRAWN end, not the true one: see MIN_EV_SPAN.
-    const key = (p: EventPlacement, edge: "from" | "to") =>
-        p.run + (edge === "from" ? p.from : Math.max(p.to, p.from + minSpan) + EV_ROW_GAP);
-    for (const p of [...placed].sort((a, b) => key(a, "from") - key(b, "from"))) {
-        let r = ends.findIndex((e) => e <= key(p, "from"));
+    const start = (p: EventPlacement) => p.run + p.from;
+    const end = (p: EventPlacement, pad: boolean) =>
+        p.run + Math.max(p.to, p.from + minSpan) + (pad ? EV_ROW_GAP : 0);
+    // A true INTERVAL test against the row's members, not a running end. The running end assumed events
+    // arrived in increasing start order, which stopped being true the moment they were sorted by tier — a
+    // load that abuts a step it precedes was then refused the row it belongs on, because a later-starting
+    // member had already pushed the end past it.
+    const fits = (row: EventPlacement[], p: EventPlacement, pad: boolean) =>
+        row.every((q) => end(q, pad) <= start(p) || end(p, pad) <= start(q));
+    // TIER first, then time. Sorting by time alone let whatever happened to begin earliest take the top row,
+    // which on a lane whose depth means containment is a wrong picture rather than an untidy one.
+    for (const p of [...placed].sort((a, b) =>
+        laneTier(a.event.kind) - laneTier(b.event.kind) || start(a) - start(b))) {
+        let r = rows.findIndex((row) => fits(row, p, true));
+        // Nothing fits WITH the separation reserved. Before opening a row, try again without it. Rows are the
+        // lane's scarcest resource and its only claim about time: two bars on separate rows say they OVERLAP.
+        // Spending a row to buy a bar 0.4% of clearance therefore asserts an overlap that isn't there, which
+        // is the same misreading the separation exists to prevent, arrived at from the other side. This is the
+        // ordinary case rather than an edge one — a model LOAD ends exactly where the block it precedes
+        // begins, so every load abutted its own step and was pushed below it.
+        if (r < 0) r = rows.findIndex((row) => fits(row, p, false));
         if (r < 0) {
             if (rows.length >= maxRows) r = rows.length - 1;   // out of rows: crowd the last one rather than drop the event
-            else { rows.push([]); ends.push(0); r = rows.length - 1; }
+            else { rows.push([]); r = rows.length - 1; }
         }
         rows[r].push(p);
-        ends[r] = Math.max(ends[r], key(p, "to"));
     }
+    // Each row back in time order: it is packed by tier, and a row read left to right should be in the order
+    // the things on it happened.
+    for (const row of rows) row.sort((a, b) => start(a) - start(b));
     return rows;
 }
 
@@ -812,6 +1833,13 @@ export function placeEvents(runs: { t: number }[][], events: ResourceEvent[], gr
 /** An annotation on the time axis — a run starting, a model loading or being evicted, a context reload.
  *  Kept separate from the samples because events are instants while samples are a cadence, and because the
  *  event source (the debug bus) is independent of the poll. */
+/** The parts a span divides into. Named rather than inline because the surfaces that render a phase have to
+ *  be TOTAL over it: a tooltip that fell through to a default label shipped a model load's two halves as the
+ *  word "tool", which reads as a wrong fact rather than as a missing one. */
+// `boot` is an executor's COLD START — a sandbox fetching its runtime before the code runs. Like a model
+// load it is the step's wall time and none of the work you asked for, so it is drawn apart from `tool`.
+export type PhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "boot" | "dispatch" | "weights" | "context";
+
 export interface ResourceEvent {
     t: number;
     /** When it ENDED, for the kinds that have a duration. Absent → an instant (a vertical rule); present → a
@@ -822,8 +1850,26 @@ export interface ResourceEvent {
      *  the driver runs. It is NOT produced yet; the kind exists so that when it is, it renders and hovers like
      *  everything else instead of arriving as an unlabelled bar. Its whole point is that it OVERLAPS the
      *  driver's own events rather than following them, which the lane's row packing already handles. */
-    kind: "run" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
+    /** `aside` is a model call YOU triggered while reading — the code annotator, a summary. It belongs on the
+     *  timeline because it spent tokens on this box and takes time you can see, and it is a separate kind
+     *  because it is NOT part of the run: charging it to the run would make two runs incomparable on the
+     *  strength of how much someone poked at one of them. Drawn outlined rather than filled, for the same
+     *  reason. */
+    kind: "run" | "session" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note" | "serve" | "aside";
     label: string;
+    /**
+     * WHERE THIS EDGE CAME FROM, for the kinds a box can produce two ways.
+     *
+     * `"poll"` is INFERRED by diffing `/api/ps` — it says a model was there and then was not, which is the
+     * most that can be read off polls: they cannot see a load happening (for most of one there is no runner
+     * object at all), and they cannot tell an eviction that made room from an idle expiry. `"server"` is the
+     * event stream's own edge, which knows both.
+     *
+     * The distinction has to travel because the panel SAYS which it is: a note reading "nothing reports an
+     * eviction" is honest about an inference and false about an edge the server reported, on the very setup
+     * the stream exists for. Absent on the kinds that are neither (a run, a generation).
+     */
+    via?: "poll" | "server";
     model?: string;
     /** This event's own id, and the event that SPAWNED it. A delegated sub-call — a vision reader, an
      *  embedding — never happens on its own: it belongs to a step, which belongs to a run. Hovering one can
@@ -834,7 +1880,10 @@ export interface ResourceEvent {
     /** Where this happened, so a click can go there: a session hash, and the step within it. Events are
      *  CROSS-SESSION — a model load belongs to the machine's timeline, not to whichever chat provoked it — so
      *  the reference is how the lane gets you back to the one that did. */
-    ref?: { hash: string; seq?: number };
+    /** Where clicking this span goes. `seq` names a STEP; without one it is a container, and `answer` says
+     *  WHICH of the session's answers it ends at — a session holds one per run, so without it every run
+     *  clicked through to the same final answer. */
+    ref?: { hash: string; seq?: number; answer?: number };
     /** A composite span's PHASES, in order, each ending at `until`. A tool step is one block because it is one
      *  step and you reason about its parts together — but the parts are different kinds of time and must look
      *  different: the model generating the call, the human deciding whether to allow it, and the tool actually
@@ -849,8 +1898,28 @@ export interface ResourceEvent {
      *  `queue`/`net` subdivide a REMOTE tool's time the same way, and for the same reason — because the
      *  executor reported its own numbers. What it said it spent evaluating is `tool`, what it spent getting
      *  started is `queue`, and whatever is left of OUR wall clock is `net`: the network and the far end's
-     *  overhead. A local tool is all `tool`, which is exactly true rather than a fallback. */
-    phases?: { kind: "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net"; until: number }[];
+     *  overhead. A local tool is all `tool`, which is exactly true rather than a fallback.
+     *
+     *  `weights`/`context` split a LOAD, and only when the server reported the boundary. They are not
+     *  "loading" and "warming up": the second half ALLOCATES, and on a long-context model it allocates most
+     *  of the footprint — measured as a second memory step some seconds after the weights land, immediately
+     *  before the model will serve. So the span says "resident at 4s, usable at 10s", which is a readiness
+     *  fact and the explanation a reader otherwise lacks for a memory trace that went flat while they waited. */
+    phases?: { kind: PhaseKind; until: number }[];
+    /** What a model LOAD moved into memory, as the server measured it: `loadBytes` is the whole load,
+     *  `weightsBytes` the first half — so the context is the difference. Only a patched Ollama reports them
+     *  (`size_vram` on the `load.weights` and `load.complete` edges).
+     *
+     *  They differ from the DEVICE's own step by the CUDA context floor (~0.69 GiB per card), which is
+     *  agreement rather than drift: the device figure includes the driver context, the model's does not.
+     *  Do not reconcile the two to zero. */
+    loadBytes?: number;
+    weightsBytes?: number;
+    /** The WHOLE model, against `loadBytes` which is what reached the DEVICE. They are equal when it fit and
+     *  differ when it did not: llama-server re-fits against the memory actually free, so an under-predicted
+     *  load does not fail — it quietly runs the remainder on the CPU and is merely slow. There is no error
+     *  and no other signal, so this difference is the only way to know a load was degraded. */
+    totalBytes?: number;
     /** This span has NOT FINISHED: `until` is where it had reached when the snapshot was taken, not where it
      *  ended. Only ever set by an `eventsFrom` given a `now` — a surface drawing live. It exists so the UI can
      *  say "still going" rather than drawing a bar whose right edge looks like a measured end. */
@@ -872,6 +1941,9 @@ export interface ResourceEvent {
          *  into model work and box latency, which are not the same kind of thing and cannot be compared
          *  between two models while they are one number. */
         promptEvalMs?: number;
+        /** How long the model took to LOAD before this call could start (`load_duration`). Inside `wallMs`,
+         *  so anything deriving "network" from the wall clock has to subtract it — see the tooltip. */
+        loadMs?: number;
     };
 }
 

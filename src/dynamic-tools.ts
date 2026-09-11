@@ -43,7 +43,13 @@ export class DynamicToolArgumentError extends Error {
     }
 }
 
-/** Build the callable for one function of one bundle. */
+/** Build the callable for one function of one bundle.
+ *
+ *  The schema is the SERVER's, verbatim — deliberately NOT the agent tool's. `buildServerTools` adds an
+ *  optional `token` beside the server's properties so a MODEL can name the output it is about to capture;
+ *  that is a concept of the agent loop (a pointer store, a citation), and a human calling from the console
+ *  has none of them. Adding it here would advertise an argument that does nothing and would be rejected by
+ *  the validation two lines below. */
 function makeTool(ml: MlApi, bundle: ServerTool, fn: ServerToolFunction): DynamicTool {
     const label = `ml.dynamicTools[${JSON.stringify(bundle.id)}].${fn.name}`;
     const call = ((args = {}, options = {}) => {

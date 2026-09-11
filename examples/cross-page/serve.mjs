@@ -170,14 +170,58 @@ export function startPageServer({ port = 0, crossPort = 0, host = "127.0.0.1" } 
                         + `tryLoad();document.addEventListener('visibilitychange',tryLoad);setInterval(tryLoad,100);`
                         + `</script>`);
                 }
-                if (p === "/slow") {   // content STREAMS in over ~2.4s (a real SPA hydrating) — a fixed 1.2s settle would
-                    // truncate it mid-stream; the DOM-quiet wait keeps going until the stream stops, then snapshots.
+                if (p === "/slow") {   // content STREAMS in over ~1.8s AFTER load (a real SPA hydrating from an API) —
+                    // a fixed 1.2s settle truncates it mid-stream; the DOM-quiet wait keeps going until the
+                    // stream stops, then snapshots.
+                    //
+                    // DRIVEN BY THE NETWORK, NOT BY A TIMER, and that is the whole reliability of this fixture.
+                    // The rendered fetch opens the page in a BACKGROUND tab, where Chrome clamps `setInterval`
+                    // to a second or worse — so a 150ms tick became a >700ms gap, the quiet wait concluded the
+                    // page had settled, and the test failed intermittently under load while being perfectly
+                    // reliable in isolation. Network delivery is not throttled that way, so the mutations keep
+                    // coming at the pace the SERVER sets whatever the tab's timers are doing.
+                    //
+                    // Chunks are delimited by "|" rather than a newline: this script is a string inside a
+                    // template literal inside this file, and a "\n" in it lands in the page as a real line
+                    // break in the middle of a string literal.
                     res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
                     return res.end(`<!doctype html><meta charset=utf-8><title>slow</title><body><div id=app>EARLY-CONTENT</div>`
-                        + `<script>var n=0,iv=setInterval(function(){n++;var d=document.createElement('div');d.textContent='CHUNK-'+n;document.body.appendChild(d);`
-                        // Dense 150ms ticks (well under the 700ms quiet threshold, even load-stretched) for ~1.8s — past
-                        // the old fixed 1.2s window, so a fixed settle truncates it while the DOM-quiet wait captures it.
-                        + `if(n>=12){clearInterval(iv);var f=document.createElement('div');f.id='done';f.textContent='STREAM-DONE-3377 all chunks loaded';document.body.appendChild(f);}},150)</script>`);
+                        + `<script>fetch('/slow-chunks').then(function(r){var rd=r.body.getReader(),dec=new TextDecoder();`
+                        + `(function pump(){return rd.read().then(function(x){if(x.done)return;`
+                        + `dec.decode(x.value,{stream:true}).split('|').forEach(function(line){if(!line)return;`
+                        + `var d=document.createElement('div');if(line.indexOf('STREAM-DONE')===0){d.id='done';}`
+                        + `d.textContent=line;document.body.appendChild(d);});`
+                        + `return pump();});})();});<\/script>`);
+                }
+                if (p === "/slow-chunks") {
+                    // THE PACER for /slow, and it has TWO deadlines to sit between, which is the thing that
+                    // took three attempts to see. Its GAP must stay well under the settle's quiet threshold
+                    // (RENDER_QUIET_MS, 700ms) or a pause reads as the page having finished; and its TOTAL
+                    // must stay well under the settle's cap (RENDER_SETTLE_MAX_MS, 7s) or the snapshot is
+                    // taken mid-stream. Both were tuned by changing the chunk count, which moves them in
+                    // OPPOSITE directions: 12 chunks at 150ms flaked on the gap, and the 60 at 30ms that
+                    // fixed it then failed on the total, because sixty CHAINED relative timers accumulate
+                    // sixty overshoots — on a runner sharing a core with Playwright, a browser and the fake
+                    // LLM, a 30ms timer is not 30ms, and 60 of them are not 1.8s.
+                    //
+                    // So the schedule is ABSOLUTE rather than chained: chunk n is due at t0 + n*GAP, a late
+                    // wake-up writes every chunk that has come due, and the next timer is set against the
+                    // clock rather than as a delay from now. Overshoot then costs one gap instead of
+                    // compounding, so the stream ends at ~1.8s under any load — while no chunk can arrive
+                    // EARLY, which is what keeps the premise (the marker lands past the ~1.2s a fixed settle
+                    // would have waited) true rather than incidentally true.
+                    res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+                    const CHUNKS = 60, GAP = 30, t0 = Date.now();
+                    let n = 0;
+                    const tick = () => {
+                        if (res.writableEnded) return;
+                        const due = Math.min(CHUNKS, Math.floor((Date.now() - t0) / GAP));
+                        while (n < due) res.write(`CHUNK-${++n}|`);
+                        if (n >= CHUNKS) { res.end("STREAM-DONE-3377 all chunks loaded|"); return; }
+                        setTimeout(tick, Math.max(5, t0 + (n + 1) * GAP - Date.now()));
+                    };
+                    setTimeout(tick, GAP);
+                    return;
                 }
                 if (p === "/lazy") {   // a widget that only loads when SCROLLED into view (IntersectionObserver, like GitHub's lazy fragments).
                     res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });

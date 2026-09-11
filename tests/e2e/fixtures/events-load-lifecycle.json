@@ -1,0 +1,1088 @@
+[
+  {
+    "v": 1,
+    "kind": "sample",
+    "t": -113082,
+    "backfilled": null,
+    "ps": {
+      "models": [
+        {
+          "name": "qwen3.8-flash-next:vision",
+          "model": "qwen3.8-flash-next:vision",
+          "size": 94171928982,
+          "digest": "f680b6f2f22edfb7d511e6b9469cd31090ff275255a314150951a7e977f012c6",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "qwen4exp",
+            "families": [
+              "qwen4exp"
+            ],
+            "parameter_size": "176.9B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:43.269380403Z",
+          "size_vram": 94171928982,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "0",
+              "runner": "CUDA",
+              "size_vram": 94171928982
+            }
+          ]
+        },
+        {
+          "name": "gemma4:e2b",
+          "model": "gemma4:e2b",
+          "size": 7957601318,
+          "digest": "7fbdbf8f5e45a75bb122155ed546e765b4d9c53a1285f62fd9f506baa1c5a47e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "5.1B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:18.308209208Z",
+          "size_vram": 0,
+          "context_length": 4096
+        }
+      ]
+    },
+    "info": {
+      "version": "0.0.0",
+      "models": {
+        "store": "/root/.ollama/models",
+        "count": 39,
+        "filesystem_used": 1069018926118,
+        "running": 2,
+        "vram_used": 94171928982
+      },
+      "compute": {
+        "system_compute": {
+          "cpu_cores": 32,
+          "total_memory": 130142785536,
+          "free_memory": 121100132352,
+          "free_swap": 5093855232
+        },
+        "supported_gpus": [
+          {
+            "gpu_id": "0",
+            "name": "CUDA0",
+            "total_memory": 101972967424,
+            "processes": [
+              {
+                "pid": 956,
+                "used_memory": 94778687488
+              }
+            ],
+            "physical_memory": 102641958912,
+            "free_memory": 6601834496,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          },
+          {
+            "gpu_id": "1",
+            "name": "CUDA1",
+            "total_memory": 101972967424,
+            "physical_memory": 102641958912,
+            "free_memory": 101386813440,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "v": 1,
+    "kind": "sample",
+    "t": -97072,
+    "backfilled": null,
+    "ps": {
+      "models": [
+        {
+          "name": "qwen3.8-flash-next:vision",
+          "model": "qwen3.8-flash-next:vision",
+          "size": 94171928982,
+          "digest": "f680b6f2f22edfb7d511e6b9469cd31090ff275255a314150951a7e977f012c6",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "qwen4exp",
+            "families": [
+              "qwen4exp"
+            ],
+            "parameter_size": "176.9B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:43.269380403Z",
+          "size_vram": 94171928982,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "0",
+              "runner": "CUDA",
+              "size_vram": 94171928982
+            }
+          ]
+        },
+        {
+          "name": "gemma4:e2b",
+          "model": "gemma4:e2b",
+          "size": 7957601318,
+          "digest": "7fbdbf8f5e45a75bb122155ed546e765b4d9c53a1285f62fd9f506baa1c5a47e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "5.1B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:18.308209208Z",
+          "size_vram": 0,
+          "context_length": 4096
+        }
+      ]
+    },
+    "info": {
+      "version": "0.0.0",
+      "models": {
+        "store": "/root/.ollama/models",
+        "count": 39,
+        "filesystem_used": 1069018926118,
+        "running": 2,
+        "vram_used": 94171928982
+      },
+      "compute": {
+        "system_compute": {
+          "cpu_cores": 32,
+          "total_memory": 130142785536,
+          "free_memory": 121100341248,
+          "free_swap": 5093855232
+        },
+        "supported_gpus": [
+          {
+            "gpu_id": "0",
+            "name": "CUDA0",
+            "total_memory": 101972967424,
+            "processes": [
+              {
+                "pid": 956,
+                "used_memory": 94778687488
+              }
+            ],
+            "physical_memory": 102641958912,
+            "free_memory": 6601834496,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          },
+          {
+            "gpu_id": "1",
+            "name": "CUDA1",
+            "total_memory": 101972967424,
+            "physical_memory": 102641958912,
+            "free_memory": 101386813440,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "v": 1,
+    "kind": "sample",
+    "t": -81124,
+    "backfilled": null,
+    "ps": {
+      "models": [
+        {
+          "name": "qwen3.8-flash-next:vision",
+          "model": "qwen3.8-flash-next:vision",
+          "size": 94171928982,
+          "digest": "f680b6f2f22edfb7d511e6b9469cd31090ff275255a314150951a7e977f012c6",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "qwen4exp",
+            "families": [
+              "qwen4exp"
+            ],
+            "parameter_size": "176.9B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:43.269380403Z",
+          "size_vram": 94171928982,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "0",
+              "runner": "CUDA",
+              "size_vram": 94171928982
+            }
+          ]
+        },
+        {
+          "name": "gemma4:e2b",
+          "model": "gemma4:e2b",
+          "size": 7957601318,
+          "digest": "7fbdbf8f5e45a75bb122155ed546e765b4d9c53a1285f62fd9f506baa1c5a47e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "5.1B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:18.308209208Z",
+          "size_vram": 0,
+          "context_length": 4096
+        }
+      ]
+    },
+    "info": {
+      "version": "0.0.0",
+      "models": {
+        "store": "/root/.ollama/models",
+        "count": 39,
+        "filesystem_used": 1069018926118,
+        "running": 2,
+        "vram_used": 94171928982
+      },
+      "compute": {
+        "system_compute": {
+          "cpu_cores": 32,
+          "total_memory": 130142785536,
+          "free_memory": 121100677120,
+          "free_swap": 5093855232
+        },
+        "supported_gpus": [
+          {
+            "gpu_id": "0",
+            "name": "CUDA0",
+            "total_memory": 101972967424,
+            "processes": [
+              {
+                "pid": 956,
+                "used_memory": 94778687488
+              }
+            ],
+            "physical_memory": 102641958912,
+            "free_memory": 6601834496,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          },
+          {
+            "gpu_id": "1",
+            "name": "CUDA1",
+            "total_memory": 101972967424,
+            "physical_memory": 102641958912,
+            "free_memory": 101386813440,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "v": 1,
+    "kind": "sample",
+    "t": -65168,
+    "backfilled": null,
+    "ps": {
+      "models": [
+        {
+          "name": "qwen3.8-flash-next:vision",
+          "model": "qwen3.8-flash-next:vision",
+          "size": 94171928982,
+          "digest": "f680b6f2f22edfb7d511e6b9469cd31090ff275255a314150951a7e977f012c6",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "qwen4exp",
+            "families": [
+              "qwen4exp"
+            ],
+            "parameter_size": "176.9B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:43.269380403Z",
+          "size_vram": 94171928982,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "0",
+              "runner": "CUDA",
+              "size_vram": 94171928982
+            }
+          ]
+        },
+        {
+          "name": "gemma4:e2b",
+          "model": "gemma4:e2b",
+          "size": 7957601318,
+          "digest": "7fbdbf8f5e45a75bb122155ed546e765b4d9c53a1285f62fd9f506baa1c5a47e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "5.1B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:18.308209208Z",
+          "size_vram": 0,
+          "context_length": 4096
+        }
+      ]
+    },
+    "info": {
+      "version": "0.0.0",
+      "models": {
+        "store": "/root/.ollama/models",
+        "count": 39,
+        "filesystem_used": 1069018926118,
+        "running": 2,
+        "vram_used": 94171928982
+      },
+      "compute": {
+        "system_compute": {
+          "cpu_cores": 32,
+          "total_memory": 130142785536,
+          "free_memory": 121100566528,
+          "free_swap": 5093855232
+        },
+        "supported_gpus": [
+          {
+            "gpu_id": "0",
+            "name": "CUDA0",
+            "total_memory": 101972967424,
+            "processes": [
+              {
+                "pid": 956,
+                "used_memory": 94778687488
+              }
+            ],
+            "physical_memory": 102641958912,
+            "free_memory": 6601834496,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          },
+          {
+            "gpu_id": "1",
+            "name": "CUDA1",
+            "total_memory": 101972967424,
+            "physical_memory": 102641958912,
+            "free_memory": 101386813440,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "v": 1,
+    "kind": "load.start",
+    "t": -62551,
+    "backfilled": null,
+    "model": "registry.ollama.ai/library/gemma4:31b"
+  },
+  {
+    "v": 1,
+    "kind": "load.weights",
+    "t": -61563,
+    "backfilled": null,
+    "model": "registry.ollama.ai/library/gemma4:31b"
+  },
+  {
+    "v": 1,
+    "kind": "busy.start",
+    "t": -60000,
+    "backfilled": null,
+    "model": "registry.ollama.ai/library/gemma4:31b"
+  },
+  {
+    "v": 1,
+    "kind": "load.complete",
+    "t": -60000,
+    "backfilled": null,
+    "model": "registry.ollama.ai/library/gemma4:31b"
+  },
+  {
+    "v": 1,
+    "kind": "busy.end",
+    "t": -59027,
+    "backfilled": null,
+    "model": "registry.ollama.ai/library/gemma4:31b"
+  },
+  {
+    "v": 1,
+    "kind": "expires",
+    "t": -59027,
+    "backfilled": null,
+    "model": "registry.ollama.ai/library/gemma4:31b"
+  },
+  {
+    "v": 1,
+    "kind": "busy.start",
+    "t": -58966,
+    "backfilled": null,
+    "model": "registry.ollama.ai/library/gemma4:31b"
+  },
+  {
+    "v": 1,
+    "kind": "busy.end",
+    "t": -56964,
+    "backfilled": null,
+    "model": "registry.ollama.ai/library/gemma4:31b"
+  },
+  {
+    "v": 1,
+    "kind": "expires",
+    "t": -56964,
+    "backfilled": null,
+    "model": "registry.ollama.ai/library/gemma4:31b"
+  },
+  {
+    "v": 1,
+    "kind": "sample",
+    "t": -50147,
+    "backfilled": null,
+    "ps": {
+      "models": [
+        {
+          "name": "gemma4:31b",
+          "model": "gemma4:31b",
+          "size": 46006565599,
+          "digest": "6316f0629137b426c9d9b853ffc4c8209589f30ee39aebede6285096c0ff47e7",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "31.3B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T22:01:49.496179288Z",
+          "size_vram": 46006565599,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "1",
+              "runner": "CUDA",
+              "size_vram": 46006565599
+            }
+          ]
+        },
+        {
+          "name": "qwen3.8-flash-next:vision",
+          "model": "qwen3.8-flash-next:vision",
+          "size": 94171928982,
+          "digest": "f680b6f2f22edfb7d511e6b9469cd31090ff275255a314150951a7e977f012c6",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "qwen4exp",
+            "families": [
+              "qwen4exp"
+            ],
+            "parameter_size": "176.9B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:43.269380403Z",
+          "size_vram": 94171928982,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "0",
+              "runner": "CUDA",
+              "size_vram": 94171928982
+            }
+          ]
+        },
+        {
+          "name": "gemma4:e2b",
+          "model": "gemma4:e2b",
+          "size": 7957601318,
+          "digest": "7fbdbf8f5e45a75bb122155ed546e765b4d9c53a1285f62fd9f506baa1c5a47e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "5.1B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:18.308209208Z",
+          "size_vram": 0,
+          "context_length": 4096
+        }
+      ]
+    },
+    "info": {
+      "version": "0.0.0",
+      "models": {
+        "store": "/root/.ollama/models",
+        "count": 39,
+        "filesystem_used": 1069018926118,
+        "running": 3,
+        "vram_used": 140178494581
+      },
+      "compute": {
+        "system_compute": {
+          "cpu_cores": 32,
+          "total_memory": 130142785536,
+          "free_memory": 119402110976,
+          "free_swap": 5093855232
+        },
+        "supported_gpus": [
+          {
+            "gpu_id": "0",
+            "name": "CUDA0",
+            "total_memory": 101972967424,
+            "processes": [
+              {
+                "pid": 956,
+                "used_memory": 94778687488
+              }
+            ],
+            "physical_memory": 102641958912,
+            "free_memory": 7212787306,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          },
+          {
+            "gpu_id": "1",
+            "name": "CUDA1",
+            "total_memory": 101972967424,
+            "processes": [
+              {
+                "pid": 1888,
+                "used_memory": 46533705728
+              }
+            ],
+            "physical_memory": 102641958912,
+            "free_memory": 55380247841,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "v": 1,
+    "kind": "sample",
+    "t": -49127,
+    "backfilled": null,
+    "ps": {
+      "models": [
+        {
+          "name": "gemma4:31b",
+          "model": "gemma4:31b",
+          "size": 46006565599,
+          "digest": "6316f0629137b426c9d9b853ffc4c8209589f30ee39aebede6285096c0ff47e7",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "31.3B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T22:01:49.496179288Z",
+          "size_vram": 46006565599,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "1",
+              "runner": "CUDA",
+              "size_vram": 46006565599
+            }
+          ]
+        },
+        {
+          "name": "qwen3.8-flash-next:vision",
+          "model": "qwen3.8-flash-next:vision",
+          "size": 94171928982,
+          "digest": "f680b6f2f22edfb7d511e6b9469cd31090ff275255a314150951a7e977f012c6",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "qwen4exp",
+            "families": [
+              "qwen4exp"
+            ],
+            "parameter_size": "176.9B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:43.269380403Z",
+          "size_vram": 94171928982,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "0",
+              "runner": "CUDA",
+              "size_vram": 94171928982
+            }
+          ]
+        },
+        {
+          "name": "gemma4:e2b",
+          "model": "gemma4:e2b",
+          "size": 7957601318,
+          "digest": "7fbdbf8f5e45a75bb122155ed546e765b4d9c53a1285f62fd9f506baa1c5a47e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "5.1B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:18.308209208Z",
+          "size_vram": 0,
+          "context_length": 4096
+        }
+      ]
+    }
+  },
+  {
+    "v": 1,
+    "kind": "sample",
+    "t": -34103,
+    "backfilled": null,
+    "ps": {
+      "models": [
+        {
+          "name": "gemma4:31b",
+          "model": "gemma4:31b",
+          "size": 46006565599,
+          "digest": "6316f0629137b426c9d9b853ffc4c8209589f30ee39aebede6285096c0ff47e7",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "31.3B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T22:01:49.496179288Z",
+          "size_vram": 46006565599,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "1",
+              "runner": "CUDA",
+              "size_vram": 46006565599
+            }
+          ]
+        },
+        {
+          "name": "qwen3.8-flash-next:vision",
+          "model": "qwen3.8-flash-next:vision",
+          "size": 94171928982,
+          "digest": "f680b6f2f22edfb7d511e6b9469cd31090ff275255a314150951a7e977f012c6",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "qwen4exp",
+            "families": [
+              "qwen4exp"
+            ],
+            "parameter_size": "176.9B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:43.269380403Z",
+          "size_vram": 94171928982,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "0",
+              "runner": "CUDA",
+              "size_vram": 94171928982
+            }
+          ]
+        },
+        {
+          "name": "gemma4:e2b",
+          "model": "gemma4:e2b",
+          "size": 7957601318,
+          "digest": "7fbdbf8f5e45a75bb122155ed546e765b4d9c53a1285f62fd9f506baa1c5a47e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "5.1B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:18.308209208Z",
+          "size_vram": 0,
+          "context_length": 4096
+        }
+      ]
+    },
+    "info": {
+      "version": "0.0.0",
+      "models": {
+        "store": "/root/.ollama/models",
+        "count": 39,
+        "filesystem_used": 1069018926118,
+        "running": 3,
+        "vram_used": 140178494581
+      },
+      "compute": {
+        "system_compute": {
+          "cpu_cores": 32,
+          "total_memory": 130142785536,
+          "free_memory": 119402397696,
+          "free_swap": 5093855232
+        },
+        "supported_gpus": [
+          {
+            "gpu_id": "0",
+            "name": "CUDA0",
+            "total_memory": 101972967424,
+            "processes": [
+              {
+                "pid": 956,
+                "used_memory": 94778687488
+              }
+            ],
+            "physical_memory": 102641958912,
+            "free_memory": 7212787306,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          },
+          {
+            "gpu_id": "1",
+            "name": "CUDA1",
+            "total_memory": 101972967424,
+            "processes": [
+              {
+                "pid": 1888,
+                "used_memory": 46533705728
+              }
+            ],
+            "physical_memory": 102641958912,
+            "free_memory": 55380247841,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "v": 1,
+    "kind": "sample",
+    "t": -19078,
+    "backfilled": null,
+    "ps": {
+      "models": [
+        {
+          "name": "gemma4:31b",
+          "model": "gemma4:31b",
+          "size": 46006565599,
+          "digest": "6316f0629137b426c9d9b853ffc4c8209589f30ee39aebede6285096c0ff47e7",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "31.3B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T22:01:49.496179288Z",
+          "size_vram": 46006565599,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "1",
+              "runner": "CUDA",
+              "size_vram": 46006565599
+            }
+          ]
+        },
+        {
+          "name": "qwen3.8-flash-next:vision",
+          "model": "qwen3.8-flash-next:vision",
+          "size": 94171928982,
+          "digest": "f680b6f2f22edfb7d511e6b9469cd31090ff275255a314150951a7e977f012c6",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "qwen4exp",
+            "families": [
+              "qwen4exp"
+            ],
+            "parameter_size": "176.9B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:43.269380403Z",
+          "size_vram": 94171928982,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "0",
+              "runner": "CUDA",
+              "size_vram": 94171928982
+            }
+          ]
+        },
+        {
+          "name": "gemma4:e2b",
+          "model": "gemma4:e2b",
+          "size": 7957601318,
+          "digest": "7fbdbf8f5e45a75bb122155ed546e765b4d9c53a1285f62fd9f506baa1c5a47e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "5.1B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:18.308209208Z",
+          "size_vram": 0,
+          "context_length": 4096
+        }
+      ]
+    },
+    "info": {
+      "version": "0.0.0",
+      "models": {
+        "store": "/root/.ollama/models",
+        "count": 39,
+        "filesystem_used": 1069018926118,
+        "running": 3,
+        "vram_used": 140178494581
+      },
+      "compute": {
+        "system_compute": {
+          "cpu_cores": 32,
+          "total_memory": 130142785536,
+          "free_memory": 119402172416,
+          "free_swap": 5093855232
+        },
+        "supported_gpus": [
+          {
+            "gpu_id": "0",
+            "name": "CUDA0",
+            "total_memory": 101972967424,
+            "processes": [
+              {
+                "pid": 956,
+                "used_memory": 94778687488
+              }
+            ],
+            "physical_memory": 102641958912,
+            "free_memory": 7212787306,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          },
+          {
+            "gpu_id": "1",
+            "name": "CUDA1",
+            "total_memory": 101972967424,
+            "processes": [
+              {
+                "pid": 1888,
+                "used_memory": 46533705728
+              }
+            ],
+            "physical_memory": 102641958912,
+            "free_memory": 55380247841,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "v": 1,
+    "kind": "sample",
+    "t": -4054,
+    "backfilled": null,
+    "ps": {
+      "models": [
+        {
+          "name": "gemma4:31b",
+          "model": "gemma4:31b",
+          "size": 46006565599,
+          "digest": "6316f0629137b426c9d9b853ffc4c8209589f30ee39aebede6285096c0ff47e7",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "31.3B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T22:01:49.496179288Z",
+          "size_vram": 46006565599,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "1",
+              "runner": "CUDA",
+              "size_vram": 46006565599
+            }
+          ]
+        },
+        {
+          "name": "qwen3.8-flash-next:vision",
+          "model": "qwen3.8-flash-next:vision",
+          "size": 94171928982,
+          "digest": "f680b6f2f22edfb7d511e6b9469cd31090ff275255a314150951a7e977f012c6",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "qwen4exp",
+            "families": [
+              "qwen4exp"
+            ],
+            "parameter_size": "176.9B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:43.269380403Z",
+          "size_vram": 94171928982,
+          "context_length": 262144,
+          "gpus": [
+            {
+              "gpu_id": "0",
+              "runner": "CUDA",
+              "size_vram": 94171928982
+            }
+          ]
+        },
+        {
+          "name": "gemma4:e2b",
+          "model": "gemma4:e2b",
+          "size": 7957601318,
+          "digest": "7fbdbf8f5e45a75bb122155ed546e765b4d9c53a1285f62fd9f506baa1c5a47e",
+          "details": {
+            "parent_model": "",
+            "format": "gguf",
+            "family": "gemma4",
+            "families": [
+              "gemma4"
+            ],
+            "parameter_size": "5.1B",
+            "quantization_level": "Q4_K_M"
+          },
+          "expires_at": "2026-09-04T21:58:18.308209208Z",
+          "size_vram": 0,
+          "context_length": 4096
+        }
+      ]
+    },
+    "info": {
+      "version": "0.0.0",
+      "models": {
+        "store": "/root/.ollama/models",
+        "count": 39,
+        "filesystem_used": 1069018926118,
+        "running": 3,
+        "vram_used": 140178494581
+      },
+      "compute": {
+        "system_compute": {
+          "cpu_cores": 32,
+          "total_memory": 130142785536,
+          "free_memory": 119402029056,
+          "free_swap": 5093855232
+        },
+        "supported_gpus": [
+          {
+            "gpu_id": "0",
+            "name": "CUDA0",
+            "total_memory": 101972967424,
+            "processes": [
+              {
+                "pid": 956,
+                "used_memory": 94778687488
+              }
+            ],
+            "physical_memory": 102641958912,
+            "free_memory": 7212787306,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          },
+          {
+            "gpu_id": "1",
+            "name": "CUDA1",
+            "total_memory": 101972967424,
+            "processes": [
+              {
+                "pid": 1888,
+                "used_memory": 46533705728
+              }
+            ],
+            "physical_memory": 102641958912,
+            "free_memory": 55380247841,
+            "compute": "12.0",
+            "driver": "13.2",
+            "runner": "CUDA"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "v": 1,
+    "kind": "unload",
+    "t": -1200,
+    "backfilled": null
+  }
+]

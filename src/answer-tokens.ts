@@ -30,6 +30,54 @@ export type AnswerSegment =
 const tokenLinkRe = (): RegExp => new RegExp(`(!?)\\[([^\\]]*)\\]\\(@tool:(${TOKEN_HEX_SRC}|${TOOL_NAME_SRC})(?::(in|out))?(?:\\s*\\|\\s*([a-z][a-z0-9]*))?\\)`, "g");
 const isHex6 = (s: string): boolean => isTokenShape(s);
 
+/** The character ranges of markdown CODE — fenced blocks and inline `` ` `` spans.
+ *
+ *  A citation inside code is being MENTIONED, not used: the model writes ``` `![example](@tool:abc1234)` ```
+ *  to EXPLAIN the syntax, and rendering it swallows the explanation and shows the thing being described in
+ *  place of the description. It is the rule the `@tool:` macro already follows in `exec` — a C macro does
+ *  not expand inside a string or a comment — arrived at here from the other direction.
+ *
+ *  Fences are matched FIRST and their interior is skipped wholesale, because a fenced block may contain an
+ *  odd number of backticks and pairing them across it would mark half the document as code. Inline spans
+ *  honour the CommonMark run rule: a span opened with N backticks closes on the next run of exactly N.
+ *
+ *  A 4-SPACE INDENTED BLOCK IS DELIBERATELY NOT CODE HERE, because it is not code in the renderer either —
+ *  `markdown()` emits an ordinary paragraph for it. This function exists to keep the citation parser and the
+ *  text renderer agreeing about what code is, so calling an indented block code would leave an unexpanded
+ *  `![x](@tool:…)` sitting in plain prose, which reads as a BROKEN citation rather than as an explanation.
+ *  If the renderer ever grows indented-code support, this has to grow with it — `tests/answer-tokens` pins
+ *  both halves of that coupling so the decision surfaces instead of drifting. */
+export function codeRanges(md: string): [number, number][] {
+    const out: [number, number][] = [];
+    const fence = /^[ \t]*(`{3,}|~{3,})[^\n]*$/gm;
+    let m: RegExpExecArray | null;
+    let openAt = -1, marker = "";
+    while ((m = fence.exec(md))) {
+        if (openAt < 0) { openAt = m.index; marker = m[1][0].repeat(3); }
+        else if (m[1][0].repeat(3) === marker) { out.push([openAt, m.index + m[0].length]); openAt = -1; }
+    }
+    if (openAt >= 0) out.push([openAt, md.length]);   // an UNCLOSED fence runs to the end — as markdown renders it
+    const inFence = (i: number) => out.some(([a, b]) => i >= a && i < b);
+    const tick = /`+/g;
+    while ((m = tick.exec(md))) {
+        if (inFence(m.index)) continue;
+        const run = m[0].length, from = m.index;
+        const close = new RegExp("(?<!`)`{" + run + "}(?!`)", "g");
+        close.lastIndex = from + run;
+        const c = close.exec(md);
+        if (!c || inFence(c.index)) continue;         // unterminated → not a span; leave the rest alone
+        out.push([from, c.index + run]);
+        tick.lastIndex = c.index + run;
+    }
+    return out;
+}
+
+/** Is this offset inside markdown code? Shared by every pointer parser, so a citation the ANSWER renderer
+ *  refuses to expand is one the PROSE renderer refuses to link — the two disagreeing would be worse than
+ *  either behaviour on its own. */
+export const inCode = (ranges: [number, number][], at: number): boolean =>
+    ranges.some(([a, b]) => at >= a && at < b);
+
 /**
  * Split answer markdown into prose + token segments. A 6-hex token always splits; a non-hex TOOL-NAME alias splits
  * only when `isAlias(name)` confirms that tool ran (accommodating `@tool:python_exec`). Everything else — a
@@ -37,12 +85,15 @@ const isHex6 = (s: string): boolean => isTokenShape(s);
  */
 export function splitAnswer(md: string, isAlias?: (name: string) => boolean): AnswerSegment[] {
     const out: AnswerSegment[] = [];
+    const code = codeRanges(md);
     let last = 0;
     for (const m of md.matchAll(tokenLinkRe())) {
         const [full, bang, label, id, slot, fmt] = m;
         // A non-hex id is only a token when the caller confirms it's a real tool that ran — otherwise leave the
         // whole span as ordinary markdown (don't advance `last`, so it flows into the surrounding prose verbatim).
         if (!isHex6(id) && !(isAlias?.(id))) continue;
+        // Inside code it is being explained, not cited. Same non-advance of `last`, so it stays verbatim.
+        if (inCode(code, m.index ?? 0)) continue;
         const at = m.index ?? 0;
         if (at > last) out.push({ kind: "prose", text: md.slice(last, at) });
         out.push({ kind: "token", embed: bang === "!", label: label || "", id, slot: (slot as "in" | "out") || "out", ...(fmt ? { fmt } : {}) });
@@ -62,7 +113,10 @@ export const hasTokens = (md: string, isAlias?: (name: string) => boolean): bool
  *  appended) and to drive `res.outputs`; an alias that resolves to no render is harmlessly skipped downstream. */
 export function tokenIdsIn(md: string): Set<string> {
     const ids = new Set<string>();
-    for (const m of (md || "").matchAll(tokenLinkRe())) ids.add(m[3]);
+    const code = codeRanges(md || "");
+    // Same code exclusion as `splitAnswer`, or a citation that is only MENTIONED would still dedup the
+    // bottom-of-answer render — removing an output on the strength of a mention that never showed it.
+    for (const m of (md || "").matchAll(tokenLinkRe())) if (!inCode(code, m.index ?? 0)) ids.add(m[3]);
     return ids;
 }
 

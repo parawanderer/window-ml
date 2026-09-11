@@ -6,7 +6,7 @@ import type { NeutralMessage, ToolCall, TokenUsage, StartRunPayload, SetApproval
 import { modelFilterAllows, bgRunResumable, pushReplay, UI_OUT_CAP } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
-import { externalSheetIds, googleSheetId, clipOut } from "./dom";
+import { externalSheetIds, googleSheetId, clipOut, isCurrentPage } from "./dom";
 import { TokenStore, type DerefRead } from "./token-pipe";   // per-session `@tool:` pointer store for background-hosted runs   // track approved external sheets across a run + the choke-point grants
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
@@ -20,6 +20,7 @@ import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpEval, cdpScreensh
 import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
 import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
+import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -247,13 +248,19 @@ const delegateSend = (tabId: number, msg: unknown): Promise<any> =>
 // The navigation SENSOR: a committed MAIN-frame navigation on a tab that hosts a live run means its document
 // (and registered toolset) is going away → engage the barrier so the next delegated tool waits for re-adopt.
 // Sub-frame navigations (frameId != 0) don't replace the run's document, so they're ignored.
+/** Each tab's current main-frame URL, as navigation reports it — so a background-hosted run can tell a fetch
+ *  of the page it is ON from a fetch of the page it STARTED on (see `fetchIsCurrentPage`). History-API
+ *  changes count too: an SPA moves between URLs without committing a navigation. */
+const tabPageUrl = new Map<number, string>();
 if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     chrome.webNavigation.onCommitted.addListener((d) => {
+        if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url);
         if (d.frameId === 0 && activeRuns.has(d.tabId)) navBarrier.noteNavigating(d.tabId);
     });
+    chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url); });
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseDebugger(tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseDebugger(tabId); });
 }
 
 // ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
@@ -358,7 +365,11 @@ const pendingPrints = new Map<string, { html: string; timer: ReturnType<typeof s
 // LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
 // chunk the offscreen doc forwards can be relayed to the RIGHT page. Set when a streaming PYTHON_EXEC starts,
 // deleted when it resolves. Only populated for opt-in streaming runs (a bounded, short-lived map).
-const pyStreamTabs = new Map<string, number>();
+/** streamId → where its live stdout goes. A TAB id relays through that tab's content script (a page's
+ *  `ml.pythonExec`, i.e. the agent's tool); NULL means the caller was one of our OWN surfaces — the sidebar's
+ *  Python bench — which is not reachable that way and is broadcast to instead. Both callers ask for the same
+ *  worker tee; only the last hop differs. */
+const pyStreamTabs = new Map<string, number | null>();
 // The same, for a server tool's frames: streamId (the page's requestId) → tabId, so a frame reaches the
 // page that asked for it and no other.
 const serverToolTabs = new Map<string, number>();
@@ -677,7 +688,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // Durable resume: snapshot the run NOW (before the first step) + after each step (the checkpoint dep),
         // so an SW evicted mid-run rehydrates from storage. Cleared when the run settles (finally).
         persistRun(runId, { p, tabId, messages: resumeMessages || [], sub: snapSub() });
-        const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities }));
+        // `remote` has to survive into the loop's ToolMeta: it is what makes a remote tool's output CITABLE
+        // (`meta?.remote` in agent-loop), and it cannot be recovered from the name — the name is generated
+        // from the server's own bundle, so no hardcoded list can hold it. Dropping it here made the whole
+        // feature page-path-only, silently: the tool ran, streamed and rendered exactly as it should, and
+        // only reading the pointer back faulted with "nothing has been captured in this run".
+        const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities, ...(t.remote ? { remote: t.remote } : {}) }));
         const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
         // Cross-origin navigation consent: origins this run may navigate to WITHOUT re-prompting — seeded
@@ -793,7 +809,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             resumed: resurrected || undefined,   // the sidebar can mark it "resumed after interruption"
             config: {
                 system: p.systemPrompt, customSystem: false,
-                tools: p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, vision: t.capabilities.includes("vision"), description: t.description, parameters: t.parameters, summary: t.summary })),
+                tools: p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, vision: t.capabilities.includes("vision"), description: t.description, parameters: t.parameters, summary: t.summary, ...(t.remote ? { remote: t.remote } : {}) })),
                 maxSteps: p.maxSteps, think: p.think, env: true, vision: null, hints: null, unattended: p.unattended, silent: p.silent,
                 stream: p.stream,
             },
@@ -1034,7 +1050,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                         // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):
                         // the loop injects it into the model's next turn (pushToolImages).
-                        return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images };
+                        return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images, remoteMs: env?.remoteMs };
                     } finally {
                         pendingGrants.delete(tabId);   // grants were for THIS approved call's sub-ops only
                         if (onStream) delegateStreams.delete(runId);   // the call is done — stop routing live chunks to it
@@ -1141,6 +1157,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // An UNCREDENTIALED fetch to an origin the run is at / has been consented to (relative, or in
                 // consentedOrigins — seeded with the start origin) is FREE: the page can already fetch its own
                 // origin, so it's no escalation. Used by the auto-approve (no prompt), like a same-origin navigate.
+                // The page the run's tab is on NOW (not where it started — a run navigates). Only skips a prompt:
+                // the FETCH_URL handler still judges an as-you read against the sender's real frame URL, so a
+                // stale entry here can at worst ask for nothing or be refused there, never grant a read.
+                fetchIsCurrentPage: (url: string): boolean => {
+                    const here = tabPageUrl.get(tabId) ?? p.pageUrl;
+                    return !!here && isCurrentPage(url, here);
+                },
                 fetchSameOrigin: (url: string): boolean => {
                     try {
                         if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return true;   // relative → the page's own origin
@@ -1240,10 +1263,25 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     }
                 }
             }
-            // LIVE stdout streaming (opt-in): record streamId→tab so a PY_STDOUT chunk reaches this page.
+            // LIVE stdout streaming (opt-in): record where this run's chunks go. The discriminator is the
+            // sending FRAME's own url, not `sender.tab` — the overlay sidebar is an extension iframe INSIDE a
+            // tab, so it has one, and relaying its chunks through that tab's content script would post them
+            // to the page instead of to the bench that asked. `sender.url` is set by Chrome and a page cannot
+            // forge it.
             const streamId: string | undefined = message.payload?.stream ? message.requestId : undefined;
-            if (streamId && sender.tab?.id != null) pyStreamTabs.set(streamId, sender.tab.id);
-            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId };
+            if (streamId) {
+                const fromSurface = (sender.url || "").startsWith(chrome.runtime.getURL(""));
+                if (fromSurface) pyStreamTabs.set(streamId, null);
+                else if (sender.tab?.id != null) pyStreamTabs.set(streamId, sender.tab.id);
+            }
+            // NO WATCHDOG is a WORKBENCH-ONLY favour, gated at the same choke point and on the same
+            // unforgeable discriminator as the stream routing above: `sender.url` is set by Chrome, so only
+            // one of OUR OWN surfaces can ask. A page-invoked tool keeps the 15s cap whatever it sends — a
+            // run that never ends holds the single Pyodide instance against every later call, with nobody
+            // watching it; in the bench a person chose it, is sitting in front of it, and can close the panel.
+            const noTimeout = !!message.payload?.noTimeout
+                && (sender.url || "").startsWith(chrome.runtime.getURL(""));
+            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(message.payload?.env ? { env: true } : {}) };
             const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
             attempt()
                 .catch((err) => {
@@ -1286,8 +1324,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     if (message.type === "PY_STDOUT") {
         // A live stdout chunk from the offscreen Pyodide host → relay to the run's page (keyed by streamId), which
         // resolves it as a PYTHON_EXEC_RESPONSE progress event to the awaiting ml.pythonExec (→ the tool's ctx.stream).
+        if (!pyStreamTabs.has(message.streamId)) return false;
         const tabId = pyStreamTabs.get(message.streamId);
-        if (tabId != null) chrome.tabs.sendMessage(tabId, { type: "PYTHON_STREAM", requestId: message.streamId, chunk: message.chunk, ts: message.ts }).catch(() => { /* page gone → drop */ });
+        const chunk = { type: "PYTHON_STREAM", requestId: message.streamId, chunk: message.chunk, ts: message.ts };
+        // A SURFACE (the bench) is an extension context, so the chunk goes out on the runtime channel every
+        // such context hears; it is filtered by requestId at the other end, which is unique per run. A PAGE
+        // is reached the long way, through its content script.
+        if (tabId == null) chrome.runtime.sendMessage(chunk).catch(() => { /* nobody listening → drop */ });
+        else chrome.tabs.sendMessage(tabId, chunk).catch(() => { /* page gone → drop */ });
         return false;
     }
     if (message.type === "SERVER_TOOL_EXEC") {
@@ -1369,7 +1413,21 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             const format = (message.payload as { format?: unknown })?.format === "html" ? "html" as const : "markdown" as const;
             let scheme = "";
             try { scheme = new URL(url).protocol; } catch { sendResponse({ error: `Refused: "${url}" is not a valid URL.` }); return; }
-            if (scheme !== "http:" && scheme !== "https:") { sendResponse({ error: `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").` }); return; }
+            if (scheme !== "http:" && scheme !== "https:") {
+                // A local file is refused because it could be ANY file on the machine — and Chrome's fetch has no
+                // file scheme anyway. The one file:// read that works is a session render of the page the call
+                // came from, answered page-side from its live DOM and never reaching here. So a file: URL here is
+                // either another file, or this page in a mode that would need its BYTES; the refusal says which,
+                // and names the mode that works, so the model does not retry the same thing.
+                const from = sender.url ?? sender.tab?.url ?? "";   // the frame's URL, else its tab's
+                const own = from.startsWith("file:") && isCurrentPage(url, from);
+                sendResponse({ error: scheme !== "file:"
+                    ? `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").`
+                    : own
+                    ? `Refused: "${url}" is the page you are on, but a local file's bytes cannot be fetched. Use rendered: true with credentials: true to get its live DOM.`
+                    : `Refused: ml.fetch cannot read local files ("${url}"). The only one it reads is the page you are on${from.startsWith("file:") ? ` (${from.replace(/#.*$/, "")})` : ""}, with rendered: true and credentials: true.` });
+                return;
+            }
             const tabId = sender.tab?.id;
             const untrusted = await senderTrust(sender) === "untrusted";
             // SAME-ORIGIN as the sender's page: a free read (the page can already `fetch()` its own origin, and
@@ -1385,7 +1443,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // origin always needs the grant; execOpen/consent never authorize the credentialed path.
             if (credentials) {
                 const sameOriginAuthOk = !!cfg.autoApproveSameOriginAuth && sameOriginAsSender;
-                if (untrusted && !sameOriginAuthOk && !takeCredFetch(tabId, url)) {
+                // THE SENDER'S OWN PAGE, as a raw GET: the page can already `fetch(location.href, {credentials:
+                // "include"})` itself, so it gains nothing here. Judged against the sender's REAL frame URL — the
+                // loop's auto-approve only skipped a prompt. A RENDER of it is not included: that would open a
+                // second tab of the page (re-running its scripts), which the page side never asks for — it
+                // answers a session render of itself from its live DOM.
+                const ownPage = !rendered && !!sender.url && isCurrentPage(url, sender.url);
+                if (untrusted && !sameOriginAuthOk && !ownPage && !takeCredFetch(tabId, url)) {
                     sendResponse({ error: `Refused: an as-you fetch of "${url}" wasn't approved. A fetch AS THE USER (${rendered ? "rendered in your session" : "cookies"}) must be approved per-URL via the fetch_url tool; it can't run inline in exec or reuse a prior grant.` });
                     return;
                 }
@@ -1589,6 +1653,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     defaultModelVision: config.defaultModelVision,
                     utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
                     autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
+                    serverToolsOff: config.serverToolsOff || [], commanderServerTools: config.commanderServerTools || [],
                     autoApproveSameOriginAuth: config.autoApproveSameOriginAuth, autoApproveSelfSource: config.autoApproveSelfSource,
                     pierceClosedShadow: config.pierceClosedShadow, cdp: config.cdp,
                     groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
@@ -1621,6 +1686,27 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             .then(config => modelCapabilities(config, (message.payload && message.payload.model) || config.model))
             .then(caps => sendResponse({ data: caps }))
             .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "DUMP_EVENTS") {
+        // `ml.__events()` — everything the panel derives its timeline FROM, in one object, so a lane that
+        // draws something impossible can be reproduced instead of described. Deliberately the raw INPUTS
+        // rather than the drawn events: the derivation (`eventsFrom` + `machineEventFrom`) is pure and
+        // shared, so a fixture built from these exercises the real thing rather than a snapshot of its
+        // output. Exposes nothing the page cannot already see — the debug stream is what the page itself
+        // emitted, and the frames are machine capacity, no URL and no key.
+        (async () => {
+            const tabId = sender.tab?.id;
+            sendResponse({ data: {
+                capturedAt: Date.now(),
+                tabId: tabId ?? null,
+                debug: tabId != null ? (debugBuffer.get(tabId) || []) : [],
+                frames: recentFrames(),
+                stream: resourceStreamStatus(),
+                ps: await listLoadedModels().catch(() => null),
+                info: await fetchOllamaInfo().catch(() => null),
+            } });
+        })();
         return true;
 
     } else if (message.type === "OLLAMA_PS") {
@@ -1784,6 +1870,14 @@ function resetDebug(tabId: number): void {
     const ports = devtoolsPorts.get(tabId);
     if (ports) for (const p of ports) { try { p.postMessage({ reset: true }); } catch { /* port closing */ } }
 }
+
+// The resource panel's live feed. ONE connection to the server's event stream per worker, fanned out to
+// every open panel — see sw-events.ts, which also owns the reconnect and the backfill that makes an evicted
+// worker cost latency rather than history.
+chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== "ml-resource") return;
+    subscribeResourceEvents(port);
+});
 
 chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "ml-devtools") return;

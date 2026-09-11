@@ -132,7 +132,13 @@ export function buildSession(events) {
                 config: { system: null, model: ev.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
             });
         } else if (ev.kind === "agent-step" && s) {
-            const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, modelResult: ev.modelResult, token: ev.token, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage };
+            // Everything but the ENVELOPE is step data. This was a hand-written field list — a second copy of
+            // the sidebar reducer's mapping — and it had drifted: `ts`, `toolMs`, `approveMs` and `dispatchMs`
+            // were all missing, so every artifact this harness wrote had a timeline containing the run
+            // container and nothing else. Nothing looked wrong (the markdown reads fine, the steps are all
+            // there), and the bench reads `session.events` from exactly this document. Dropping the envelope
+            // instead of naming the fields is what makes the drift impossible rather than merely fixed.
+            const { kind: _k, id: _i, session: _s, save: _v, ...step } = ev;
             const steps = s.steps || [];
             const i = ev.seq != null ? steps.findIndex((x) => x.seq === ev.seq) : -1;
             const merged = i >= 0 ? { ...step, renderIn: step.renderIn ?? steps[i].renderIn, renderOut: step.renderOut ?? steps[i].renderOut } : step;

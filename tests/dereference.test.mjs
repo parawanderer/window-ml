@@ -272,6 +272,40 @@ test("dereference: reading by NAME hands back the stable id, and that id does no
     assert.doesNotMatch(byId, /\[pinned:/, "and a read BY id doesn't re-pin — it already holds the handle");
 });
 
+// A LABEL is not a moving target, and the pin line used to say it was. The condition was "the reference you
+// gave is not the id it resolved to", which is true of a label as well as a tool alias — so a label read was
+// told its own handle "always means the LATEST call and will move when you run it again", which is false. The
+// model then repeated it back as a rule it had learned, which is how it was noticed. The message also quoted
+// the value's DISPLAY name (`look: "hud render check"`) as though that were a reference form; it is not one,
+// and a model copying it would write a handle that resolves to nothing.
+test("dereference: reading by LABEL pins the id WITHOUT claiming the label moves", async () => {
+    const { results } = await drive(
+        [call("python_exec", { code: "df", token: "the budget table" }),
+         call("dereference", { token: '@tool:"the budget table"' })],
+        (name) => name === "python_exec" ? { result: "ROWS" } : { result: "" });
+    const read = results.filter((r) => r.name === "dereference").pop().result;
+
+    assert.match(read, /this label names @tool:[0-9a-f]{7}\./, "it still hands over the stable id");
+    assert.match(read, /ROWS/);
+    assert.doesNotMatch(read, /will move when you run it again/, "a label does not move — only a tool alias does");
+    assert.doesNotMatch(read, /always means the LATEST/, "…so it must not be told that it does");
+    // The HEAD line names the value (`@tool:x (python_exec: "the budget table") — text, …`), which is what it
+    // is for. The PIN line is the one that teaches a spelling, so it is the one that must not quote a form
+    // nobody can type — check it on its own rather than on the whole result.
+    const pin = /\[this label names[^\]]*\]/.exec(read)?.[0] ?? "";
+    assert.doesNotMatch(pin, /python_exec: "the budget table"/, "the pin never quotes a non-reference form");
+});
+
+// The alias message has to quote the alias the model would actually type, not a rendering of it.
+test("dereference: the moving-target warning quotes the BARE tool form", async () => {
+    const { results } = await drive(
+        [call("python_exec", { code: "df", token: "some label" }), call("dereference", { token: "python_exec" })],
+        (name) => name === "python_exec" ? { result: "ROWS" } : { result: "" });
+    const read = results.filter((r) => r.name === "dereference").pop().result;
+    assert.match(read, /@tool:python_exec always means the LATEST python_exec call and will move/);
+    assert.doesNotMatch(read, /"python_exec: "some label"" always means/, "not the display name");
+});
+
 // A soft label match must never be silent: an address dereference that quietly picks different data is the
 // failure that costs ten steps of the model explaining an anomaly it caused itself.
 test("dereference: a label resolved by SIMILARITY says so; an exact one says nothing", async () => {

@@ -2,9 +2,12 @@
 // The POINTER layer behind `dereference`: what a @tool:<id> points at, what type it is, how stale it is, and
 // the two type-level casts (latex / img) the line dialect can't express. The pipe language itself is
 // text-pipe.ts and is tested there — these tests cover what a pointer knows that a bare string doesn't.
-import { test } from "node:test";
+import { test, describe } from "node:test";
 import assert from "node:assert";
+import { readFile } from "node:fs/promises";
 const P = await import("../src/token-pipe.ts");
+const { PIPE_SYNTAX, PIPE_REF } = await import("../src/text-pipe.ts");
+const { PIPE_CLAUSE } = await import("../src/prompts.ts");
 
 const tok = (over = {}) => ({ id: "a1b2c3f", tool: "exec", kind: "text", out: "hello", t: 1000, step: 1, ...over });
 const TABLE = tok({ id: "bbb222", tool: "python_exec", kind: "table", step: 3,
@@ -556,4 +559,40 @@ test("labelMatch: the configured metric reaches resolution, and a bad value fall
     assert.equal(s.resolveRef(q, "edit").value, null, "edit distance cannot see past the rewording");
     assert.equal(s.resolveRef(q, "nonsense").value.out, "REWORDED", "an unknown metric falls back to the default");
     assert.equal(s.resolveRef(q, undefined).value.out, "REWORDED", "…as does none at all");
+});
+
+// THE DIALECT IS SPELLED OUT ONCE. It used to be inlined verbatim in four `pipe` PARAMETERS at ~270 tokens
+// each — consistent, because PIPE_CMDS single-sources them, but still serialised into context four times.
+// Single-sourcing buys correctness; it does not buy brevity, and those were being conflated.
+describe("the pipe dialect is described once", () => {
+    const dialectish = (s) => /grep PATTERN|chained with/.test(s);
+
+    test("no tool PARAMETER carries the dialect verbatim any more", async () => {
+        const files = ["../src/tools.ts", "../src/builtin-tools.ts", "../src/injected.ts"];
+        for (const f of files) {
+            const src = await readFile(new URL(f, import.meta.url), "utf8");
+            for (const line of src.split("\n")) {
+                if (/pipe:\s*\{/.test(line))
+                    assert.ok(!/PIPE_SYNTAX/.test(line),
+                        `a pipe parameter inlines the whole dialect again in ${f}: ${line.trim().slice(0, 90)}`);
+            }
+        }
+    });
+
+    test("…and the reference points at the clause that will be there", () => {
+        // The parameter is only safe to shorten because the clause is appended whenever a tool with a `pipe`
+        // is wired. If the wording of one drifts from the other the model is sent looking for a heading that
+        // does not exist, which is worse than the repetition this replaced.
+        const heading = /THE PIPE DIALECT/;
+        assert.match(PIPE_REF, heading, "the reference names the section");
+        assert.match(PIPE_CLAUSE, heading, "…and the clause carries that heading");
+        assert.ok(dialectish(PIPE_CLAUSE), "the clause holds the actual dialect");
+        assert.ok(!dialectish(PIPE_REF), "the reference does NOT restate it");
+    });
+
+    test("the reference is short enough to be worth it", () => {
+        // Four copies of it plus the clause must beat four copies of the dialect, or this is churn.
+        assert.ok(PIPE_CLAUSE.length + 4 * PIPE_REF.length < 4 * PIPE_SYNTAX.length,
+            "the indirection has to actually save context");
+    });
 });

@@ -9,19 +9,21 @@
 //     ~0.55 GiB of ollama's discovery context and calling that "other processes" invents a process.
 //   • HONEST GAPS. Polling is gated on the panel being open, so history is discontinuous. A line drawn across
 //     a ten-minute hole is a confident claim about memory nobody measured; `segments` breaks it instead.
-import { useMemo, useRef, useState, useLayoutEffect } from "preact/hooks";
+import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
-    filterEvents, countByKind, type ResourceEvent, type EventPlacement,
-    OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
+    boxAxis, chartWindow, placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
+    scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
+    filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
+    OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
     presetsFor,
-    type ResourceSample, type Band, type Capacity, type TrackDef,
+    type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
-import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter } from "./vram";
-import { loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY } from "./store";
-import { clockAt, hhmmssms } from "./timestamps";
-import { scrollToStepSeq } from "./answer-render";
+import { capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
+import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot } from "./store";
+import { Disclosure } from "./ui-kit";
+import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
+import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
 import { signal } from "@preact/signals";
 
@@ -39,12 +41,77 @@ const hoverPool = signal<string | null>(null);
 //   • A surface, because every track renders a BandTip and the lane renders an EventTip, all reading these
 //     same signals — so hovering a lane bar (which cross-highlights a model) made every track's band tip
 //     appear at once. A tip renders only for the surface the pointer is actually on.
-const hoverAt = signal<{ x: number; y: number; w: number; surface: string } | null>(null);
+const hoverAt = signal<{ x: number; y: number; w: number; surface: string; yFrac?: number } | null>(null);
+/** Which part of the scrub window the pointer is over, so the cursor can say a handle is there before you
+ *  try to use it. A resize affordance you can only discover by failing to pan is not an affordance. */
+const scrubGrab = signal<"from" | "to" | "pan" | "outside" | null>(null);
+/** WHICH SAMPLE the pointer is over, resolved from the LIVE data every time it is asked.
+ *
+ *  Deliberately a function of the current `runs` rather than a stored answer. The pointer is a position on
+ *  screen; which sample sits under it changes as the timeline advances, so holding the resolution pins the
+ *  mark to a sample that then walks out from under the cursor. Cheap enough to call per render — it is a
+ *  weighted walk over the segment list. */
+const snapUnder = (runs: ResourceSample[][]) => {
+    const c = crosshair.value;
+    if (!snapDot.value || !c) return null;
+    // AN EVENT RULE OWNS THE POINTER while it is hovered. A dashed instant is a vertical mark of its own, a
+    // pixel or two from the crosshair and never on the same x — it names an INSTANT, the crosshair names the
+    // nearest SAMPLE — so drawn together they read as one thing that cannot decide where it is. The same rule
+    // the reading tooltips already follow (`cursorOn`), applied to the mark.
+    if (eventHover.value) return null;
+    return snapFraction(runs, c.frac);
+};
+/**
+ * IS THE TOOLTIP MUTED? Esc hides it so you can LOOK at the chart, and the next pointer movement brings it
+ * back. A cursor tip has to sit near the pointer to be readable, which means it sits on top of the trace you
+ * paused over — so the one moment you want to study a shape is the one moment something is covering it.
+ *
+ * Deliberately not sticky: it clears on the next move rather than needing a second Esc, because the gesture
+ * is "get out of the way for a second", not a mode. Nothing else about the hover changes — the crosshair and
+ * its dots stay, since they mark WHERE you were looking and that is the thing being preserved.
+ */
+export const tipMuted = signal(false);
+
+/** Mute the cursor tip if one is showing, and say whether that happened — so the Esc handler can fall through
+ *  to leaving the zoom when there was nothing to hide. The decision lives HERE, beside the signals it reads,
+ *  rather than exporting the hover state so another module can ask the same question less well. */
+export function muteTip(): boolean {
+    if (!hoverAt.value || tipMuted.value) return false;
+    tipMuted.value = true;
+    return true;
+}
+
 /** Read the cursor for a surface, or null when the pointer is somewhere else. */
-const cursorOn = (surface: string) => (hoverAt.value?.surface === surface ? hoverAt.value : null);
+const cursorAt = (surface: string) => (tipMuted.value || hoverAt.value?.surface !== surface ? null : hoverAt.value);
+/** The cursor for a surface, for the tips that READ THE PLOT (the sample stamp, a band, the pool rows) —
+ *  null while an EVENT on that same surface is hovered, because then the event's own tip is the answer.
+ *
+ *  A dashed instant rule is drawn INSIDE the plot, so pointing at one is also pointing at the plot: both tips
+ *  fired, both are placed at the pointer, and they stacked — with the one you actually pointed at underneath
+ *  the memory reading you did not ask for. The same "only the surface the pointer is on renders a tip" rule
+ *  as everywhere else in this panel, applied to two things sharing ONE surface. `cursorAt` is the unguarded
+ *  read, and only EventTip wants it. */
+const cursorOn = (surface: string) =>
+    (eventHover.value?.scope === surface ? null : cursorAt(surface));
 /** Track a pointer against the viewport, tagged with the surface it is over. */
 const trackCursor = (surface: string) => (e: PointerEvent) => {
-    hoverAt.value = { x: e.clientX, y: e.clientY, w: typeof window !== "undefined" ? window.innerWidth : 1024, surface };
+    tipMuted.value = false;   // moving is the ask for it back — see tipMuted
+    // MOVING HANDS THE FOCUS BACK. A keyboard selection holds against everything else — including a band
+    // sliding under a still cursor as samples arrive, which raises `pointerenter` with nobody having touched
+    // anything — and it is a real move that ends it. See releaseFocus.
+    releaseFocus(e.target);
+    releasePool(e.target);
+    readingOverlay = surface === "overlay";
+    // `yFrac` is the pointer's height within the PLOT (0 = top, 1 = bottom), which is the only thing that can
+    // say which of several overlaid lines the pointer is nearest. Read off the plot element rather than the
+    // event target: the hit targets are strokes inside it, so measuring against those would give the pointer's
+    // position within a 10px band and mean nothing.
+    const plot = (e.currentTarget as HTMLElement)?.closest?.(".rc-plot") as HTMLElement | null;
+    const box = plot?.getBoundingClientRect();
+    hoverAt.value = {
+        x: e.clientX, y: e.clientY, w: typeof window !== "undefined" ? window.innerWidth : 1024, surface,
+        ...(box && box.height > 0 ? { yFrac: Math.min(1, Math.max(0, (e.clientY - box.top) / box.height)) } : {}),
+    };
 };
 
 const W = 300, H = 72;
@@ -74,13 +141,114 @@ const bandFill = (key: string, model: string | undefined): string => {
     return model ? colorFor(model) : "var(--fg-faint)";
 };
 
+/** A memory PART, in the model's own colour so the decomposition still reads as that model rather than as a
+ *  new set of things. The parts are told apart by WEIGHT, not by hue: weights keep the full colour (they are
+ *  the model), context is lighter, and the overhead a user cannot act on is lighter still. A hue per part
+ *  would put four unrelated colours inside one band and lose the identity the band exists to carry. */
+const PART_MIX: Record<keyof MemoryBreakdown, number> = {
+    weights: 100, kvCache: 62, recurrentState: 62, projector: 44, compute: 26, output: 18, other: 18,
+};
+const partFill = (model: string, key: keyof MemoryBreakdown): string => {
+    const c = colorFor(model);
+    const mix = PART_MIX[key];
+    return mix >= 100 ? c : `color-mix(in srgb, ${c} ${mix}%, transparent)`;
+};
+
 /** One device (or the host pool) as a stacked area over time. `frames` is one band list per sample. */
-function StackedArea({ frames, ceiling, hidden, scope }: { frames: Band[][]; ceiling: number; hidden: Set<string>; scope: string }) {
+function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = null }: { frames: Band[][]; ceiling: number; hidden: Set<string>; scope: string; snapIndex?: number | null; deep?: { model: string; ceiling: number } | null }) {
     const order = useMemo(() => bandOrder(frames), [frames]);
     const identity = useMemo(() => bandIdentity(frames), [frames]);
     if (frames.length < 2 || ceiling <= 0) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
     const x = (i: number) => (i / (frames.length - 1)) * W;
     const y = (v: number) => H - Math.min(1, v / ceiling) * H;
+    /** One edge as points, left to right, against a given vertical mapping. A stepped edge emits the corner
+     *  first: hold the previous value up to this sample's x, then drop to this sample's. Reversing the list
+     *  retraces the same shape, which is how a floor is drawn without a second implementation that could
+     *  disagree with this one.
+     *
+     *  Defined HERE, above the drilled-in branch, because every polygon in this component needs it and that
+     *  branch returns early: the band edges, the hover breakdown AND the drilled-in parts. It was first written
+     *  for the bands alone, so a band stepped while the parts drawn INSIDE it still sloped — a flat band with
+     *  diagonal lines across it, which reads as the breakdown disagreeing with the total it breaks down. The
+     *  y-mapper is a parameter because the drilled-in view draws against its OWN shared ceiling. (After `x`/`y`,
+     *  never before: a closure here running ahead of those consts is the TDZ crash this function has had once.) */
+    const stepEdge = (series: number[], stepped: boolean, yOf: (v: number) => number): string[] => {
+        const out: string[] = [];
+        for (let i = 0; i < frames.length; i++) {
+            if (stepped && i > 0) out.push(`${x(i).toFixed(1)},${yOf(series[i - 1] ?? 0).toFixed(1)}`);
+            out.push(`${x(i).toFixed(1)},${yOf(series[i] ?? 0).toFixed(1)}`);
+        }
+        return out;
+    };
+    const zeros = new Array<number>(frames.length).fill(0);
+    /**
+     * DRILLED IN: ONE MODEL, FROM THE BASELINE, ON A SHARED SCALE.
+     *
+     * A model is usually a few percent of a card — 6.8% in the case that prompted this — so its decomposition
+     * is drawn into three pixels and the parts are a rumour. Here the track stops being "how full is this
+     * pool" and becomes "what is this model holding, over time, on this card": the band lifts to the baseline
+     * and everything else drops away, which is also the reading a CHART is uniquely good at, since weights
+     * sit still while the cache steps with the context.
+     *
+     * THE SCALE IS SHARED ACROSS THE CARDS, and that is the part that must not be got wrong. Scaling each
+     * track to its own contents would draw a card holding 1,991 MiB and one holding 878 MiB at the SAME
+     * height — the pro-rating mistake in a different costume, in the one mode built to show that the cards
+     * hold different amounts. `deep.ceiling` is the largest of them over the window, computed identically by
+     * every track from the samples they all share, so no cross-track plumbing can get it out of step.
+     */
+    if (deep) {
+        const dy = (v: number) => H - (v / Math.max(1, deep.ceiling)) * H;
+        const seen = new Set<keyof MemoryBreakdown>();
+        for (const bands of frames) {
+            const p = bands.find((b) => b.model === deep.model)?.parts;
+            if (p) for (const q of memoryParts(p)) seen.add(q.key);
+        }
+        const keys = MEMORY_PARTS.filter((k) => seen.has(k.key));
+        if (!keys.length) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
+        const tops = keys.map(() => new Array<number>(frames.length).fill(0));
+        /**
+         * A FRAME THE SERVER COULD NOT SPLIT IS NOT AN EMPTY ONE.
+         *
+         * `memory` is omitted whenever the server cannot divide the figure — a loading row, an MLX runner, a
+         * build predating the field — and stacking nothing for those frames drops the area to ZERO, which
+         * says the model was not resident. It was: we know its total, we do not know its composition, and
+         * those are different absences. Drawn as an undifferentiated area at its real height instead, so the
+         * trace stays continuous and only the SUBDIVISION goes missing where it is missing.
+         *
+         * Told apart from a frame where the model is genuinely absent by whether a BAND exists at all — no
+         * band means it is not on this card at that instant, which really is zero.
+         */
+        const unsplit = new Array<number>(frames.length).fill(0);
+        frames.forEach((bands, i) => {
+            const b = bands.find((x2) => x2.model === deep.model);
+            const p = b?.parts;
+            let acc = 0;
+            keys.forEach((part, pi) => { if (p) acc += p[part.key]; tops[pi][i] = acc; });
+            unsplit[i] = !p && b ? b.bytes : 0;
+        });
+        const anyUnsplit = unsplit.some((v) => v > 0);
+        return (
+            <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                {anyUnsplit ? (() => {
+                    // ONE shape for the whole stretch, at the model's own height, in its own colour but
+                    // deliberately flat and faint with a dashed top: it must not read as a part, because
+                    // which part it is is precisely what is not known.
+                    const pts: string[] = [];
+                    pts.push(...stepEdge(unsplit, true, dy), ...stepEdge(zeros, true, dy).reverse());
+                    return <polygon key="d:unsplit" points={pts.join(" ")} class="rc-part rc-part-unsplit"
+                        fill={partFill(deep.model, "other")} vector-effect="non-scaling-stroke" />;
+                })() : null}
+                {keys.map((part, pi) => {
+                    const pts: string[] = [];
+                    // ONE model's memory, all of it piecewise-constant, so every part edge steps — a part's floor included,
+                    // since it is the part beneath it (or the baseline) and must match that edge exactly.
+                    pts.push(...stepEdge(tops[pi], true, dy), ...stepEdge(pi === 0 ? zeros : tops[pi - 1], true, dy).reverse());
+                    return <polygon key={`d:${part.key}`} points={pts.join(" ")} class={`rc-part rc-part-${part.key}`}
+                        fill={partFill(deep.model, part.key)} vector-effect="non-scaling-stroke" />;
+                })}
+            </svg>
+        );
+    }
 
     // Cumulative tops per key, so each band is drawn between its own top and the one below it.
     const tops: Record<string, number[]> = {};
@@ -96,12 +264,39 @@ function StackedArea({ frames, ceiling, hidden, scope }: { frames: Band[][]; cei
         }
     });
 
+    /**
+     * A MODEL'S MEMORY IS PIECEWISE-CONSTANT, SO ITS EDGE IS A STEP.
+     *
+     * A resident model does not drift: the runner appears holding its whole footprint, and the KV cache is
+     * preallocated for the FULL context window at load and never grows — verified on the box, byte-identical
+     * before and after 4,217 tokens went through it. So a straight line between two samples was drawing a
+     * decay that cannot happen, and on an eviction it drew the worst version of it: samples 14 seconds apart
+     * (the stream's idle cadence) with the model resident at one end and gone at the other, rendered as
+     * fourteen seconds of memory gently draining away. The `unload` edge sits at the true instant, so the
+     * dashed rule and the descent disagreed by up to a whole sample interval, which reads as the lane being
+     * misaligned with the chart rather than as the chart interpolating.
+     *
+     * Held at its last measured value and dropped where the next reading says, the descent lands on the
+     * sample that reported it — 2 ms after the edge in the capture that prompted this — so the two agree
+     * without either being moved to suit the other.
+     *
+     * THE DEVICE'S OWN BANDS STAY LINES, and that difference is the point rather than an inconsistency. A
+     * card's free memory really does fall progressively while weights land — the server describes it as a
+     * continuous progress signal during the long half of a load — so stepping it would be the same error
+     * pointed the other way. A band is drawn stepped when its top is a MODEL's, which is what `identity`
+     * already answers for the fill.
+     *
+     * Adjacent bands SHARE an edge (this band's floor is the one below's ceiling), so the floor is drawn with
+     * the step-ness of the band BELOW, never its own. Get that wrong and the two disagree by a step's height
+     * and the stack opens a seam. It also means a residual sitting on models is exactly right: its base jumps
+     * when a model goes, while its own thickness still varies smoothly.
+     */
+    const isStep = (k: string | null): boolean => !!k && !!identity[k];
     const areas = order.filter((k) => k !== "free").map((key, ki, keys) => {
         const below = ki === 0 ? null : keys[ki - 1];
         const top = tops[key] || [];
-        const pts: string[] = [];
-        for (let i = 0; i < frames.length; i++) pts.push(`${x(i).toFixed(1)},${y(top[i] ?? 0).toFixed(1)}`);
-        for (let i = frames.length - 1; i >= 0; i--) pts.push(`${x(i).toFixed(1)},${y(below ? (tops[below]?.[i] ?? 0) : 0).toFixed(1)}`);
+        const floor = below ? (tops[below] || []) : zeros;
+        const pts: string[] = [...stepEdge(top, isStep(key), y), ...stepEdge(floor, isStep(below), y).reverse()];
         // The band knows which model it is, so hovering it can name it — and dim its neighbours, so a stack of
         // similar colours resolves into one identifiable shape.
         const model = identity[key];
@@ -109,14 +304,184 @@ function StackedArea({ frames, ceiling, hidden, scope }: { frames: Band[][]; cei
         const hot = !!model && hoverModel.value === model;
         return <polygon key={key} points={pts.join(" ")} fill={bandFill(key, model)}
             class={model ? `rc-band${hot ? " hot" : ""}` : undefined} vector-effect="non-scaling-stroke"
-            onPointerEnter={model ? (e: PointerEvent) => { hoverModel.value = model; trackCursor(scope)(e); } : undefined}
-            onPointerLeave={model ? () => { hoverModel.value = null; hoverAt.value = null; } : undefined}
+            onPointerEnter={model ? (e: PointerEvent) => {
+                // THE KEYBOARD OWNS THE FOCUS while it has one. This fires without the reader touching
+                // anything whenever a band moves under a parked pointer, so honouring it here would let an
+                // arriving sample overwrite a selection the keys had just made. `trackCursor` still runs —
+                // the tip has to follow the cursor either way — and it is what releases the focus, on a real
+                // move rather than on a boundary event.
+                if (!kbFocus.value) hoverModel.value = model;
+                trackCursor(scope)(e);
+            } : undefined}
+            onPointerLeave={model ? () => { if (!kbFocus.value) { hoverModel.value = null; hoverAt.value = null; } } : undefined}
             opacity={dim ? 0.18 : key === "other" ? 0.35 : 0.75} />;
     });
+
+    /**
+     * THE HOVERED MODEL'S BAND, SUBDIVIDED IN PLACE.
+     *
+     * `size_vram` alone cannot tell a big MODEL from a big CONTEXT — lots of weights with a small cache, and
+     * modest weights with an enormous one, are the same number and want opposite responses. The server splits
+     * it now, so hovering decomposes the area you are already looking at rather than opening a second picture
+     * of the same memory somewhere else. Which also shows the part a chart is uniquely good at: weights sit
+     * still while the cache steps with the context, and that is visible over TIME and nowhere in a total.
+     *
+     * Drawn OVER the solid band rather than instead of it, so a frame the server could not split (a loading
+     * row, an MLX runner, a sample from before the field existed) simply shows the band it always had — the
+     * parts collapse to zero height there instead of the whole decomposition vanishing or, worse, stretching
+     * a neighbouring frame's shares across a gap it never measured.
+     */
+    const split = (() => {
+        const model = hoverModel.value;
+        if (!model) return null;
+        const key = order.find((k) => identity[k] === model && k !== "free");
+        if (!key || hidden.has(model)) return null;
+        const ki = order.filter((k) => k !== "free").indexOf(key);
+        if (ki < 0) return null;
+        const belowKey = ki === 0 ? null : order.filter((k) => k !== "free")[ki - 1];
+        // The parts present in ANY frame, in stack order, so a slice does not appear and disappear as the
+        // window scrolls over the moment a projector was allocated.
+        const seen = new Set<keyof MemoryBreakdown>();
+        for (const bands of frames) {
+            const p = bands.find((b) => b.key === key)?.parts;
+            if (p) for (const q of memoryParts(p)) seen.add(q.key);
+        }
+        if (!seen.size) return null;
+        const keys = MEMORY_PARTS.filter((p) => seen.has(p.key));
+        const base = frames.map((_f, i) => (belowKey ? (tops[belowKey]?.[i] ?? 0) : 0));
+        // Cumulative sub-tops, one row per part.
+        const subTops = keys.map(() => new Array<number>(frames.length).fill(0));
+        frames.forEach((bands, i) => {
+            const p = bands.find((b) => b.key === key)?.parts;
+            let acc = base[i];
+            keys.forEach((part, pi) => {
+                if (p) acc += p[part.key];
+                subTops[pi][i] = acc;   // no parts → every sub-top is the base, so nothing is drawn here
+            });
+        });
+        return keys.map((part, pi) => {
+            const pts: string[] = [];
+            // Every part is this model's, so every top steps. The FIRST part's floor is the band beneath the model and
+            // takes THAT band's step-ness: it is the same edge the model's own band sits on, and two renderings of one
+            // edge that disagree open a seam between the parts and the band.
+            pts.push(...stepEdge(subTops[pi], true, y), ...stepEdge(pi === 0 ? base : subTops[pi - 1], pi === 0 ? isStep(belowKey) : true, y).reverse());
+            return <polygon key={`p:${part.key}`} points={pts.join(" ")} class={`rc-part rc-part-${part.key}`}
+                fill={partFill(model, part.key)} vector-effect="non-scaling-stroke" />;
+        });
+    })();
+    /**
+     * THE DATAPOINT, ON THE LINES IT IS A POINT OF.
+     *
+     * The dot used to ride at the POINTER's height on the argument that a stacked area has many values at one
+     * x and so no single y to choose. That was wrong twice over: the lines ARE there — they are the band
+     * boundaries the chart already draws — and a mark that tracks the cursor vertically is not a datapoint at
+     * all, it is the cursor with a circle on it. Marking every boundary is what "where does this sample sit"
+     * actually means in a stack, and it is exactly what `tops` already holds.
+     *
+     * The FREE band is excluded: its boundary is the ceiling, which is a constant and not a reading.
+     */
+    const dots = (() => {
+        if (snapIndex == null || snapIndex < 0 || snapIndex >= frames.length) return null;
+        // HOVERING ONE BAND narrows this to that band alone. Every boundary marked is an OVERVIEW — right
+        // when the pointer is on the plot's background and nothing is picked out — but once a band is
+        // hovered the panel has already dimmed its neighbours to say "this one", and a full set of dots
+        // contradicts that by marking the things it just faded.
+        const focus = hoverModel.value;
+        const keys = order.filter((k) => k !== "free")
+            .filter((k) => !focus || identity[k] === focus);
+        const seen = new Set<number>();
+        return keys.map((key) => {
+            const v = tops[key]?.[snapIndex];
+            if (v == null) return null;
+            const cy = y(v);
+            // Two boundaries at the same height are one line on screen, and two dots on it read as a
+            // rendering fault rather than as two bands that happen to meet.
+            const at = Math.round(cy * 10);
+            if (seen.has(at)) return null;
+            seen.add(at);
+            // THE MARK CARRIES THE MODEL'S COLOUR, the way the overlaid view's marks carry their pool's. A
+            // model's colour is its identity across the whole panel — the band, the row, its blocks in the
+            // lane — so a mark sitting ON that band in the panel's accent said "a reading" where every other
+            // surface says "this model", and with several boundaries marked at once there was nothing to tell
+            // them apart. Read from `identity`, which is what `bandFill` colours the band from, so the mark
+            // and the thing it is marking cannot disagree.
+            //
+            // A boundary with NO model keeps the accent rather than taking `bandFill`'s grey: driver overhead
+            // and the unattributed residual are drawn in `--fg-faint`, and a faint grey mark on a faint grey
+            // band is a mark you cannot find. Blue there is not a fallback, it is "a reading, of nothing named".
+            const model = identity[key];
+            // HTML, not an SVG <circle>: the viewBox is stretched with `preserveAspectRatio="none"`, so a
+            // circle inside it draws as an ELLIPSE whose eccentricity depends on the plot's current size.
+            // Percentages of the same box put it in exactly the same place and keep it round.
+            return <i key={`d:${key}`} class="rc-snapdot" aria-hidden="true"
+                style={{ left: `${(x(snapIndex) / W) * 100}%`, top: `${(cy / H) * 100}%`,
+                         ...(model ? { background: colorFor(model) } : {}) }} />;
+        });
+    })();
     return (
-        <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-            {areas}
-        </svg>
+        <>
+            <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                {areas}
+                {split}
+            </svg>
+            {dots}
+        </>
+    );
+}
+
+/** The device name, with the card's own facts behind a hover.
+ *
+ *  WHAT IT IS FOR: the panel draws a pool's occupancy and says almost nothing about the hardware under it,
+ *  so "which card is this, and why do two totals for it disagree" has no answer on screen. The two totals
+ *  are the part worth the space — `total_memory` is what ollama PLACES against and `physical_memory` is what
+ *  nvidia-smi shows, ~638 MiB apart on the reference cards, and a reader who spots the difference elsewhere
+ *  has no way to learn it is expected rather than a bug in one of them.
+ *
+ *  WHAT IT DELIBERATELY DOES NOT SAY:
+ *
+ *  - **The interconnect, beyond admitting it is unknown.** Interconnect is a property of a PAIR, not of a
+ *    card — consumer NVLink is 2-way, so a four-card box has some NVLinked pairs and some that fall back to
+ *    PCIe, and a per-device "interconnect: PCIe" would be unrepresentable-wrong there. The server does not
+ *    report the matrix at all yet, and an absent matrix must never render as "no NVLink": on a 4x3090, which
+ *    is a very common rig, that is a confident lie. So the line says NOT REPORTED, which is true now and
+ *    becomes a real answer when the field ships. Shown only where there is more than one device, since a
+ *    single card has no pair to have a link with.
+ *  - **Link speed and width.** Available only for FAULTED cards today, and both are LIVE readings rather
+ *    than capabilities: an idle Blackwell drops to 2.5 GT/s under ASPM and would read as 12x degraded while
+ *    perfectly healthy, and `width < max_width` is by design wherever a board splits its lanes x8/x8.
+ *  - **Any derived ceiling or grade.** `compute` and `driver` are printed verbatim as reference facts and
+ *    nothing branches on them — a panel that did would be encoding hardware knowledge that rots. */
+function DeviceFacts({ device, label }: { device: DeviceCapacity; label: string }) {
+    // How many OTHER devices there are — a single card has no pair to have a link with, so the
+    // interconnect line is shown only where the question exists.
+    const others = (capacity.value?.devices.length ?? 1) - 1;
+    return (
+        // THE NAME STAYS THE NAME. A `.tt-pop` only works inside an element carrying `tt`, so the trigger is a
+        // WRAPPER around `.rc-name` rather than `.rc-name` itself — put the tooltip inside the name element
+        // and the name's own text content becomes the name plus three sentences of prose, which every reader
+        // of that element then picks up. The panel reads `.rc-name` as a label in several places.
+        <span class="tt rc-devfacts">
+            <span class="rc-name">{label}</span>
+            <span class="tt-pop wrap" role="tooltip">
+                <span class="rc-df-row"><b>{device.name}</b> · {device.runner}{device.unified ? " · unified memory" : ""}</span>
+                {/* THE TWO TOTALS, and which decides what. This is the counter-intuitive one and the reason
+                    the hover exists at all. */}
+                <span class="rc-df-row">{formatBytes(device.totalBytes)} usable — what placement decides against</span>
+                {device.physicalBytes && device.physicalBytes !== device.totalBytes ? (
+                    <span class="rc-df-row rc-df-dim">{formatBytes(device.physicalBytes)} on the card — what the driver and nvidia-smi report. The difference is reserved before anything loads; neither figure is wrong.</span>
+                ) : null}
+                {device.compute || device.driver ? (
+                    <span class="rc-df-row rc-df-dim">
+                        {device.compute ? <>compute {device.compute}</> : null}
+                        {device.compute && device.driver ? " · " : null}
+                        {device.driver ? <>driver {device.driver}</> : null}
+                    </span>
+                ) : null}
+                {others > 0 ? (
+                    <span class="rc-df-row rc-df-dim">Link to the other {others === 1 ? "card" : "cards"}: not reported by this server. It is a property of each PAIR rather than of a card — some pairs can be NVLinked while others fall back to PCIe — so nothing is assumed either way.</span>
+                ) : null}
+            </span>
+        </span>
     );
 }
 
@@ -133,13 +498,51 @@ export interface DeviceViewProps {
      *  honest sentence differs per pool: a discrete card's driver total names that vendor's tool, a unified
      *  device's is the system total, and the host pool has no driver in the story at all. */
     ceilingNote: string;
+    /** The DEVICE this track draws, when it is one. Absent for the host pool, which has no card behind it —
+     *  so the hover carries hardware facts only where there is hardware to describe. */
+    device?: DeviceCapacity;
     hidden: Set<string>;
     /** Instants to rule through this plot (evictions). Spans live in the lane below, not here. */
     events?: ResourceEvent[];
+    /** Drop this track from the layout. Absent when there is only one left — an empty chart is not a layout,
+     *  and a control that refuses on click is worse than one that is not offered. */
+    onHide?: () => void;
+}
+
+/**
+ * DROP THIS TRACK, from the track itself.
+ *
+ * Which pools you want on screen is a decision you make WHILE reading — a card you are not interested in is
+ * costing height the ones you are could use — and it lived only behind the gear, which means leaving the
+ * chart to change what the chart shows. This is the same operation the editor's remove is (`editLayout`,
+ * which flips the picker to Custom and remembers the layout), put where the decision is made.
+ *
+ * ✕ MATCHES THE EDITOR'S OWN VOCABULARY for this action, not the model rows' — where the same glyph means
+ * EVICT FROM VRAM, which unloads the model from the card. Same shape, wildly different consequence, so the
+ * tip says plainly that this only changes what is drawn, and how to get it back.
+ *
+ * It holds its space when idle rather than appearing on hover: the header gains and loses controls as you use
+ * the panel, and a row that reflows when one arrives shifts every surface below it — which is how a drag on
+ * the scrub strip once started landing 12px off.
+ */
+function HideTrack({ onHide, label }: { onHide?: () => void; label: string }) {
+    return (
+        // `tt` IS WHAT MAKES THE TOOLTIP EXIST. The floating layer finds a trigger by that class and reads its
+        // `.tt-pop`; without it the markup is inert — display:none and nothing to clone it — so the button
+        // carried an explanation nobody could ever see. And `left`, because this sits at the panel's far edge
+        // and the default right-anchored pop opens off the side of it.
+        <button class={`tt rc-hide${onHide ? "" : " none"}`} aria-label={`Hide the ${label} track`}
+            disabled={!onHide} onClick={onHide}>
+            ✕
+            {onHide ? <span class="tt-pop wrap left" role="tooltip">Stop drawing <b>{label}</b> here. It only
+                changes the chart — nothing is unloaded and no memory is freed — and the view becomes
+                <b> Custom</b>; add the track back under the gear.</span> : null}
+        </button>
+    );
 }
 
 /** One track: a header carrying the denominator, then the stacked history, gaps left as gaps. */
-export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden, events = [] }: DeviceViewProps) {
+export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden, events = [], onHide, device }: DeviceViewProps) {
     const scope = `track:${label}`;   // one track per pool, so the label identifies the surface
     const latest = samples.at(-1);
     const bands = latest ? bandsOf(latest) : [];
@@ -148,36 +551,111 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     // A run of ONE sample has no shape to draw — StackedArea needs two points — and giving it a 2px column
     // leaves a pale sliver where the band wash is missing, which reads as a rendering artifact rather than as
     // data. Undrawable runs are skipped; nothing is lost, because a lone point conveys no trend either.
-    const runs = useMemo(() => segments(samples).filter((r) => r.length > 1), [samples]);
+    const runs = noteRuns(useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]));
     // Only the instants: a span is a duration and belongs in the lane, where its length can be read.
     const instants = useInstants(runs, events);
+    // The DATAPOINT under the pointer, resolved through the same segmented geometry the crosshair uses, so
+    // the tooltip's figures and the instant the crosshair names are the same sample and cannot drift apart.
+    const hoverSample = hoveredSample(runs, scope);
+    /**
+     * DRILLED IN, on this track. Two facts have to line up: the model has to BE on this card (a split holds
+     * different amounts on each, and a card it is not on has nothing to decompose), and the scale has to be
+     * the same on every card it IS on.
+     *
+     * Both come out of `samples`, which every track already has in full — so the shared ceiling is computed
+     * independently and identically by each of them rather than passed down from a parent that would have to
+     * know about all the tracks. There is no cross-track state to get out of step, which is the failure the
+     * one-scale rule exists to prevent in the first place.
+     */
+    // READ UNCONDITIONALLY, AT THE TOP, AND KEEP THE VALUE. A signal read buried in a helper or behind a
+    // condition does not reliably subscribe the component to it once the bundle is minified — the panel's
+    // oldest rendering gotcha. It showed here as ONE track entering the drilled-in mode while its siblings
+    // kept drawing the summary: they had subscribed to `hoverModel` (which the previous keypress also wrote)
+    // and not to this, so the depth change reached exactly one of them.
+    const kbNow = kbFocus.value;
+    const deepModel = kbNow && kbNow.depth > 0 ? kbNow.model : null;
+    const deep = (() => {
+        if (!deepModel || hidden.has(deepModel)) return null;
+        let mine = 0, most = 0;
+        for (const s of samples) {
+            const r = s.models.find((x) => x.model === deepModel);
+            if (!r) continue;
+            for (const v of Object.values(r.perDevice)) most = Math.max(most, v ?? 0);
+        }
+        for (const b of bands) if (b.model === deepModel) mine = Math.max(mine, b.bytes);
+        for (const s of samples) {
+            const bs = bandsOf(s).find((b) => b.model === deepModel);
+            if (bs) mine = Math.max(mine, bs.bytes);
+        }
+        return mine > 0 && most > 0 ? { model: deepModel, ceiling: most } : null;
+    })();
     return (
-        <div class="rc-track">
+        <div class={`rc-track${deepModel ? " deep" : ""}${deepModel && !deep ? " away" : ""}`}>
             <div class="rc-head">
-                <span class="rc-name">{label}</span>
+                <HideTrack onHide={onHide} label={label} />
+                {device ? <DeviceFacts device={device} label={label} /> : <span class="rc-name">{label}</span>}
                 <span class="sp" />
-                <span class="rc-total tt">
-                    {formatShare(used, ceiling, "/")}
-                    {/* RIGHT-anchored (the default): this figure sits at the panel's right edge, so a
-                        left-anchored pop extends rightward and is clipped. `wrap` because it is prose. */}
-                    <span class="tt-pop wrap" role="tooltip">{ceilingNote}</span>
-                </span>
+                {/* A RESCALED AXIS HAS TO SAY SO. Drilled in, this track stops being "how full is this pool"
+                    and becomes "what is this model holding here" — the band is lifted to the baseline and
+                    everything else dropped, so the same shape now means something completely different.
+                    Reporting the pool's occupancy over it would be a confidently wrong picture, and a chart
+                    that quietly changes what its height means is the worst kind. */}
+                {deep ? (
+                    <span class="rc-total tt rc-scaled">
+                        full height {formatBytes(deep.ceiling)}
+                        <span class="tt-pop wrap" role="tooltip">Scaled to {deep.model}, not to this pool — and to the SAME height on every card it is on, so a card holding less of it draws shorter. Scaling each card to its own contents would draw them the same size, which is the one thing this view exists to disprove.</span>
+                    </span>
+                ) : deepModel ? (
+                    // A card the model is not on has nothing to decompose, and saying so beats leaving its
+                    // ordinary stack up as though it were part of the answer.
+                    <span class="rc-total rc-scaled">not on this card</span>
+                ) : (
+                    <span class="rc-total tt">
+                        {formatShare(used, ceiling, "/")}
+                        {/* RIGHT-anchored (the default): this figure sits at the panel's right edge, so a
+                            left-anchored pop extends rightward and is clipped. `wrap` because it is prose. */}
+                        <span class="tt-pop wrap" role="tooltip">{ceilingNote}</span>
+                    </span>
+                )}
             </div>
             <div class="rc-plot"
                 onPointerDown={startBrush(runs)}
                 onPointerMove={(e: PointerEvent) => { trackCursor(scope)(e); trackCrosshair(runs)(e); }}
-                onPointerLeave={() => { hoverAt.value = null; hoverModel.value = null; eventHover.value = null; crosshair.value = null; }}>
+                onPointerLeave={() => {
+                    // THE KEYBOARD OWNS THE READING, and the pointer leaving the plot is not a decision to
+                    // stop reading. Clearing the focus here threw away the whole reading whenever the surface
+                    // moved out from under a still cursor — which THIS MODE CAUSES: drilling in collapses the
+                    // cards the model is not on, so the track the pointer was over shrinks, fires a leave,
+                    // and the chart stayed drilled in (that comes from `kbFocus`) while its tooltip lost its
+                    // subject. The crosshair stays too: it is the instant being read, the keys are gated on
+                    // it, and a reading anchored to a moment does not stop being anchored because the mouse
+                    // wandered. Only a real move (`releaseFocus`) or Escape ends it.
+                    hoverAt.value = null;                     // the cursor-following tips do go
+                    if (kbFocus.value) return;
+                    hoverModel.value = null; eventHover.value = null; crosshair.value = null;
+                }}>
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
-                        <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} scope={scope} />
+                        <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} scope={scope}
+                            deep={deep}
+                            snapIndex={snapUnder(runs)?.run === i ? snapUnder(runs)!.index : null} />
                         <InstantRules instants={instants} run={i} scope={scope} />
+                        <HoverSpan run={i} scope="lane" />
                     </div>
                 ))}
-                <BrushOverlay />
-                <Crosshair />
+                <BrushOverlay runs={runs} />
+                <Crosshair runs={runs} />
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
                     title={soft.label} /> : null}
-                <BandTip bands={bands} history={samples.map(bandsOf)} ceiling={ceiling} scope={scope} />
+                <BandTip bands={bands} frame={hoverSample ? bandsOf(hoverSample) : null}
+                    history={samples.map(bandsOf)} samples={samples} ceiling={ceiling} scope={scope} label={label}
+                    hidden={hidden} at={hoverSample} />
+                {/* Hovering the plot ANYWHERE, not just a model's band, answers the question this track's
+                    header answers for the present: how full was this pool, then. Without it the free area
+                    and the space above the stack were the only parts of the chart that said nothing. */}
+                {hoverSample && !hoverModel.value
+                    ? <PlotTip at={hoverSample} bands={bandsOf(hoverSample)} ceiling={ceiling} label={label} hidden={hidden} scope={scope} />
+                    : null}
                 <EventTip scope={scope} />
             </div>
             <div class="rc-legend">
@@ -201,72 +679,444 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     );
 }
 
-/** What the hovered band is, shown over the plot. Deliberately the SAME facts as the legend row (ModelFacts),
- *  because a band and its row describe one model — an SVG <title> could carry none of it: no colour, no live
- *  TTL, no badge, and a half-second delay before it appears. */
-function BandTip({ bands, history, ceiling, scope }: { bands: Band[]; history: Band[][]; ceiling: number; scope: string }) {
-    const name = hoverModel.value;
-    const at = cursorOn(scope);
-    if (!name || !at) return null;
-    // A band drawn in the HISTORY belongs to a model that may have evicted since. Fall back to the last frame
-    // that held it, so hovering the shape still answers what it was — silence there would leave a coloured
-    // area on the chart with nothing below it to explain the colour.
-    const band = bands.find((b) => b.model === name)
-        ?? [...history].reverse().flatMap((f) => f.filter((b) => b.model === name && b.bytes > 0)).at(0);
-    if (!band) return null;   // hovering a model that isn't on THIS device — its own track shows the tip
-    const gone = !bands.some((b) => b.model === name);
-    const m = (loadedModels.value || []).find((x) => x.model === name);
-    // Follows the cursor, offset up-left so it never sits under the pointer (which would flicker as the
-    // pointer enters the tip itself) and clamped inside the plot so it can't run off the narrow panel.
-    const { ref, style } = useTipPlacement(at);
+/** The sample under the pointer, or null when the pointer is not over this plot. The fraction comes from the
+ *  crosshair — one pointermove sets both — so a tooltip can never name a different datapoint than the line
+ *  the crosshair is drawn at, which is the drift you get from measuring the pointer twice. */
+function hoveredSample(runs: ResourceSample[][], scope: string): ResourceSample | null {
+    const c = crosshair.value;
+    if (!c) return null;
+    // EVERY TRACK RESOLVES ONE WHEN THE KEYBOARD HAS THE FOCUS. Normally only the surface the pointer is on
+    // reads a datapoint — a tooltip per track under one cursor is four answers to a question asked once. But
+    // a keyboard focus is not asked at a position: it names a MODEL, and a model split across cards is on
+    // several tracks at once, each holding different things (compute is flat per device, so one card's
+    // breakdown genuinely does not describe the other). Reading only the pointed-at track would show one
+    // half of a split and silently omit the rest.
+    if (!kbFocus.value?.model && !cursorOn(scope)) return null;
+    return sampleAtFraction(runs, c.frac);
+}
+
+/** WHEN the figures above were measured. A tooltip that reads a historical datapoint has to say which one,
+ *  or every reading in it is ambiguous between "now" and "some time back". Nothing is shown when the pointer
+ *  is not over the plotted area (a legend key), because there is no datapoint to stamp — inventing "now"
+ *  there would be the same wrong claim from the other direction. */
+function SampleStamp({ at }: { at: ResourceSample | null }) {
+    if (!at) return null;
+    const ago = Math.max(0, Date.now() - at.t);
     return (
-        // A STACK, not a row: name, then the figure, then the badges. On one line the name and the figure set
-        // the tip's width and every shorter line left a slab of empty space beside it.
-        <div class="rc-tip rc-tip-model" role="tooltip" ref={ref} style={style}>
-            <div class="rc-tip-line"><i class="rc-tip-dot" style={{ background: colorFor(name) }} />
-                <span class="rc-tip-name">{name}</span></div>
-            {/* Bytes AND the share of this device — a model is "big" only relative to the card it is on. */}
-            <div class="rc-tip-line"><span class="rc-tip-size">{formatBytes(band.bytes)} <span class="rc-tip-pct">({percentOf(band.bytes, ceiling)})</span></span></div>
-            {/* Its row is gone from the list below, so the tip is the only place that can say why the colour
-                is still on the chart: this is history, not something resident now. */}
-            {gone ? <span class="rc-tip-gone">evicted</span> : null}
-            {/* Badges and cost each break onto their OWN line. On one line the tip grew past the panel and was
-                clipped at the window edge — and the figure that matters (how much, what share) is the part
-                that got cut. */}
-            {m ? <div class="rc-tip-facts"><ModelFacts m={m} tips={false} /></div> : null}
-            <CostFacts model={name} />
+        <div class="rc-tip-line rc-tip-when">
+            {/* TO THE MILLISECOND. Samples land ~250ms apart during a load and the interesting ones are
+                consecutive — two readings a quarter-second apart both stamped "19:21:40" cannot be told
+                apart, which is exactly the stretch you hover when something looks wrong. */}
+            <span>{hhmmssms(at.t)}</span>
+            {/* "how long ago" is what makes a clock time mean something at a glance on a plot with no axis
+                labels; the clock time is what makes it comparable with the transcript and the event lane. */}
+            <span class="rc-tip-ago">{ago < 1500 ? "now" : `${fmtAge(ago)} ago`}</span>
         </div>
     );
 }
 
-/** Which device the hovered line is, and what is resident on it — following the cursor, like the band tip.
- *  The model list is deliberately SHORT here: the full detail is the rows below, which grey out to show the
- *  same answer, so this only has to name the device and confirm the selection. */
-function PoolTip({ latest }: { latest: ResourceSample }) {
-    const h = poolHover.value, at = cursorOn("overlay");
-    if (!h || !at) return null;
-    const { ref, style } = useTipPlacement(at);
-    // Read from the NEWEST sample, not from what was true when the pointer arrived: a model can load or evict
-    // while you hold the cursor still, and the tip has to say the same thing as the chart under it.
-    const { used, consumers } = poolFacts(h.bandsOf(latest));
+/**
+ * WHAT THIS MODEL'S MEMORY IS HOLDING, on THIS card.
+ *
+ * `size_vram` alone cannot tell a big MODEL from a big CONTEXT — lots of weights with a small cache, and
+ * modest weights with an enormous one, are the same number and want opposite responses (a smaller quant, or
+ * less context). This is the answer, and it is drawn as ROWS rather than as a second chart because the chart
+ * is already showing it: the swatches are the exact fills the band is subdivided with, so the tip and the
+ * plot are one picture rather than two pictures of the same memory.
+ *
+ * PER CARD, and that is not a detail. `gpus[].memory` sums to that entry's own `size_vram` exactly, so each
+ * card's figures are MEASUREMENTS — while a whole-model split divided by a layer or byte ratio would be
+ * right about weights and cache and quietly wrong about `compute`, which is FLAT PER DEVICE (measured: 31
+ * layers against 10, and both cards holding 115 MiB of it).
+ *
+ * NO TOTAL ROW. The parts sum to `size_vram` to the byte, and that figure is already two lines above — a
+ * total would print the same number twice, and the panel refuses a split that does not add up rather than
+ * padding one with a remainder.
+ */
+function HoldingRows({ model, parts }: { model: string; parts: MemoryBreakdown }) {
+    const rows = memoryParts(parts);
+    const total = rows.reduce((n, r) => n + r.bytes, 0);
+    if (!rows.length || total <= 0) return null;
+    return (
+        <>
+            <div class="rc-tip-line rc-tip-sec">holding</div>
+            {rows.map((r) => (
+                <div class={`rc-tip-line rc-tip-part${r.key === "other" ? " odd" : ""}`} key={r.key}>
+                    <i class="rc-tip-dot" style={{ background: partFill(model, r.key) }} />
+                    <span class="rc-tip-plabel">{r.label}</span>
+                    <span class="rc-tip-pbytes">{formatBytes(r.bytes)}</span>
+                    <span class="rc-tip-ppct">{percentOf(r.bytes, total)}</span>
+                </div>
+            ))}
+            {/* `other` IS THE SIGNAL, not a slice. It is what the server could not name, so it means the
+                breakdown is behind the engine — the one part whose SIZE is the message. Called out rather
+                than left to sit quietly in the list, and only when it is big enough to matter: a rounding
+                crumb under a percent is not news. */}
+            {parts.other > 0 && parts.other / total >= 0.01 ? (
+                <div class="rc-tip-line rc-tip-dim rc-tip-warn">the server could not name this part — its
+                    breakdown is behind the engine it is reporting on</div>
+            ) : null}
+        </>
+    );
+}
+
+/**
+ * KEEP THE KEYBOARD TIPS FROM SITTING ON EACH OTHER — by TILING them, not by dodging.
+ *
+ * Each of these is anchored to the track whose reading it is, which is what makes a split model's two answers
+ * legible as belonging to two cards. But a drilled-in tip is taller than the ~110px track it belongs to, so
+ * the second one landed on the first. The first fix put them on alternating SIDES, which stopped them
+ * colliding with each other and did nothing about the plot underneath — and it broke the correspondence,
+ * since which side a tip sat on then said nothing about which track it was for.
+ *
+ * So they are laid out in a column instead: each one wants to start at its own track's top, and is pushed
+ * down only as far as the one above it requires. ORDER IS PRESERVED, which is what carries the meaning — the
+ * top tip is the top track's — and a track with no tip leaves a real gap, because the next tip's preferred
+ * position is still its own track's top and nothing pushed it up.
+ *
+ * ONLY WHEN THEY WOULD ACTUALLY OVERLAP. A single tip, or two far enough apart, is not moved at all, so the
+ * common case keeps the exact alignment with its track that makes it readable.
+ *
+ * Done imperatively after layout because it is a measurement: how tall a tip is depends on how many parts the
+ * server reported, which nothing knows until it is drawn. Idempotent — it resets each transform before
+ * measuring — so every tip may safely run it.
+ */
+const KB_TIP_GAP = 6;
+function tileKbTips(root: Document | null): void {
+    if (!root) return;
+    // DOM ORDER IS TRACK ORDER: the tips are rendered inside their tracks, top to bottom.
+    const els = Array.from(root.querySelectorAll(".rc-tip-kb")) as HTMLElement[];
+    // SAID ONCE, AT THE BOTTOM. The instant being read and the keys that move the reading are facts about the
+    // READING, not about a card — so a split model repeating both on every tip is the same two lines two or
+    // three times, in the one view where height is what everything is competing for. Trimming them is what
+    // takes a stack of tips from taller than its tracks to shorter, which is the difference between a tip
+    // beside the trace it describes and a tip on top of it. Marked before measuring, or the layout below
+    // would be computed from heights that are about to change.
+    els.forEach((el, i) => el.classList.toggle("dup", i < els.length - 1));
+    let prevBottom = -Infinity;
+    for (const el of els) {
+        el.style.transform = "";                       // measure where it WANTS to be
+        const r = el.getBoundingClientRect();
+        const dy = r.top < prevBottom + KB_TIP_GAP ? prevBottom + KB_TIP_GAP - r.top : 0;
+        if (dy) el.style.transform = `translateY(${dy}px)`;
+        prevBottom = r.bottom + dy;
+    }
+}
+
+/**
+ * WHICH LAYERS THIS CARD IS HOLDING.
+ *
+ * Its OWN section with its OWN units, never a bar beside the memory ones: layers are NOT a proxy for memory
+ * and must not share a scale. On an even split of `granite4.1:3b` one card held MORE layers and LESS weight —
+ * the output layer is large and carries no KV — so a layers bar and a memory bar drawn together would
+ * disagree, correctly, and read as a bug.
+ *
+ * MATCHED BY NAME, and unmatched means UNKNOWN. `device` is the ENGINE's name (`"CUDA0"`), not the ollama
+ * `gpu_id`; they are different fields and a filtered-device host can make them disagree, so a card whose name
+ * is not in the list simply shows nothing rather than being handed the entry that happens to sit at its
+ * ordinal. `devices` is a list of RUNS rather than one entry per card, so they are summed.
+ */
+function LayerRows({ placement, device }: { placement: LayerPlacement; device: string }) {
+    const mine = placement.devices.filter((d) => d.device === device);
+    if (!mine.length) return null;
+    const held = mine.reduce((n, d) => n + d.layers, 0);
+    const span = mine.map((d) => `#${d.firstLayer}\u2013${d.lastLayer}`).join(", ");
+    const swa = placement.swaLayers.filter((n) => mine.some((d) => n >= d.firstLayer && n <= d.lastLayer)).length;
+    return (
+        <>
+            <div class="rc-tip-line rc-tip-sec">layers</div>
+            {/* Its OWN class, sharing the parts' layout but not their identity: a layer count is not a
+                memory part, and anything counting the parts must not pick this up as a seventh one. */}
+            <div class="rc-tip-line rc-tip-part rc-tip-lrow">
+                <span class="rc-tip-plabel">{held} of {placement.numLayers}</span>
+                <span class="rc-tip-pbytes">{span}</span>
+            </div>
+            {/* A LIST, not a count, upstream — the pattern is irregular (gemma2 alternates 1:1, gemma4:31b is
+                50 of 61), so this counts the ones that landed on THIS card rather than repeating a total. */}
+            {swa ? <div class="rc-tip-line rc-tip-dim">{swa} sliding-window</div> : null}
+        </>
+    );
+}
+
+/** What the hovered band is, shown over the plot. Deliberately the SAME facts as the legend row (ModelFacts),
+ *  because a band and its row describe one model — an SVG <title> could carry none of it: no colour, no live
+ *  TTL, no badge, and a half-second delay before it appears. */
+function BandTip({ bands, frame, history, samples, ceiling, scope, label, hidden, at: hoverSample }: { bands: Band[]; frame: Band[] | null; history: Band[][]; samples: ResourceSample[]; ceiling: number; scope: string; label?: string; hidden: Set<string>; at: ResourceSample | null }) {
+    const name = hoverModel.value;
+    // ANCHORED TO THE TRACK, not to the cursor, whenever the keyboard owns the focus. Two reasons, and the
+    // second is the one that forces it: a reader who is not moving the mouse does not want an answer that
+    // moves; and a split model shows a tip on EVERY card it is on, which under one cursor would be two
+    // tooltips stacked on the same few pixels.
+    const kb = kbFocus.value?.model ? kbFocus.value : null;
+    const at = cursorOn(scope);
+    if (!name || (!kb && !at)) return null;
+    // NOTHING TO DESCRIBE once a model is switched off: it is out of the stack and out of the totals, so a
+    // tip naming it would be a reading of a shape that is not on the chart.
+    if (hidden.has(name)) return null;
+    // READ THE DATAPOINT UNDER THE CURSOR, not the newest one. The chart is a history, so the shape being
+    // hovered is a measurement from some earlier instant — often of a model that has since evicted, and
+    // almost always of a different figure than the model holds now. Answering with the current value would
+    // put a number in the tooltip that was never true at the place the pointer is.
+    const band = (frame ?? bands).find((b) => b.model === name && b.bytes > 0)
+        // Nothing at this instant: the pointer is over the model's shape in a neighbouring column, or the
+        // hover fell in a gap. The last frame that held it still answers what the colour IS, rather than
+        // leaving a coloured area on the chart with nothing below it to explain it.
+        ?? [...history].reverse().flatMap((f) => f.filter((b) => b.model === name && b.bytes > 0)).at(0);
+    if (!band) return null;   // hovering a model that isn't on THIS device — its own track shows the tip
+    const m = (loadedModels.value || []).find((x) => x.model === name);
+    const deep = !!kb && focusDepth() > 0;
+    /**
+     * THE WHOLE MODEL, found the SAME WAY ITS BAND IS.
+     *
+     * `perDevice` names every card it is on, so the card count is measured rather than inferred from how many
+     * tracks happen to be drawn. But it has to be read from the same instant the band came from: the band
+     * lookup already falls back to the last frame that held this model (the pointer is often parked on a
+     * stretch from before it loaded), and reading the TOTAL from the hovered sample alone meant the tip drew
+     * a band from one instant and looked for its size at another — found nothing, and silently printed
+     * nothing. A split model's tips then named no total at all, which is the one figure a per-card reading
+     * cannot supply.
+     */
+    const resAt = (sm: ResourceSample | null) => sm?.models.find((x) => x.model === name);
+    let res = resAt(hoverSample);
+    for (let i = samples.length - 1; i >= 0 && !res; i--) res = resAt(samples[i]);
+    const across = res ? { bytes: res.vramBytes, cards: Object.values(res.perDevice).filter((v) => (v ?? 0) > 0).length } : null;
+    // WHICH SIDE. One tip goes wherever the crosshair is not, which is all that matters when there is one.
+    // Several — a split model puts one on every card — must not stack, and they are only ~110px of track
+    // apart while a drilled-in tip is taller than that, so they alternate instead. Measured before it was
+    // fixed: the first tip's last row sat underneath the second tip's header.
+    // Away from the mark rather than over it: the crosshair is what the reading belongs to. ALL of them on
+    // the same side — several tips are kept apart by tiling them down the column (see tileKbTips), which
+    // preserves the correspondence with the tracks that alternating sides destroyed.
+    const side = (crosshair.value?.frac ?? 0) < 0.5 ? " right" : " left";
+    // Follows the cursor, offset up-left so it never sits under the pointer (which would flicker as the
+    // pointer enters the tip itself) and clamped inside the plot so it can't run off the narrow panel.
+    const { ref, style } = useTipPlacement(kb ? null : at);
+    // AFTER EVERY RENDER, because what decides the layout is how TALL these turned out — which depends on how
+    // many parts the server reported and is not knowable until they are drawn. Every tip runs it and the pass
+    // is idempotent, so no coordinator has to know how many there are.
+    useLayoutEffect(() => { tileKbTips(ref.current?.ownerDocument ?? null); });
+    return (
+        // A STACK, not a row: name, then the figure, then the badges. On one line the name and the figure set
+        // the tip's width and every shorter line left a slab of empty space beside it.
+        <div class={`rc-tip rc-tip-model${kb ? ` rc-tip-kb${side}` : ""}`} role="tooltip" ref={ref} style={style}>
+            <div class="rc-tip-line"><i class="rc-tip-dot" style={{ background: colorFor(name) }} />
+                <span class="rc-tip-name">{name}</span>
+                {/* WHICH CARD, once you are reading one card's contents. A split model shows one of these per
+                    track and their figures differ on purpose, so a tip that did not name its own device
+                    would be two unlabelled answers to the same question. */}
+                {deep && label ? <span class="rc-tip-of rc-tip-onwhat">on {label}</span> : null}</div>
+            {/* Bytes AND the share of this device — a model is "big" only relative to the card it is on. */}
+            <div class="rc-tip-line"><span class="rc-tip-size">{formatBytes(band.bytes)} <span class="rc-tip-pct">({percentOf(band.bytes, ceiling)})</span></span></div>
+            {/* THE DENOMINATOR, dimmed and on its own row — the same line the pool tip carries, because the
+                percentage above is a share of THIS pool and a share with no denominator on screen is the one
+                figure a reader has to go and find. Dimmed because it is a CONSTANT: it does not change as
+                you move along the trace, so it is the number that should recede rather than be read first.
+                On the same line it competed with the reading for one glance. */}
+            {/* The CARD's denominator, and only while the card is the subject. Drilled in it is not — the
+                question became "what is this model holding", the rows below answer it as shares of the model,
+                and a second denominator in the same tip is one the reader has to work out is unused. Dropping
+                it also buys back a line, which is the difference between a tip that fits inside its track and
+                one that covers the shape it is describing. */}
+            {!deep ? <div class="rc-tip-line rc-tip-of">out of {formatBytes(ceiling)}</div> : null}
+            {/* HOW BIG THE MODEL IS, when this card holds only part of it — the per-card figure above cannot
+                answer that, and on a split it is the first thing you want. Only when it IS split: on one card
+                the card's figure IS the total, and printing it twice is the same noise as a total row under
+                the parts. Read from the SAMPLE rather than from what is resident now, so the whole tip stays
+                a reading of one instant. */}
+            {/* HOW BIG THE MODEL IS, on EVERY card's tip. A split model's per-card figure answers "how much of
+                this card" and cannot answer "how big is this thing" — and 1.94 GiB beside 878 MiB, each under
+                its own denominator, invites the reader to take either one for the model. So both tips carry
+                the whole, and say what share of it this card is holding, which is the relationship between
+                the two numbers rather than a third number to reconcile. Only when it IS split: on one card
+                the card's figure IS the total, and printing it twice is the noise a total row would be. */}
+            {across && across.cards > 1
+                ? <div class="rc-tip-line rc-tip-of">{formatBytes(across.bytes)} across {across.cards} cards
+                    <span class="rc-tip-here">{percentOf(band.bytes, across.bytes)} here</span></div>
+                : null}
+            {deep && band.parts ? <HoldingRows model={name} parts={band.parts} /> : null}
+            {deep && res?.placement && label ? <LayerRows placement={res.placement} device={label} /> : null}
+            {deep && !band.parts
+                // ABSENT IS NOT ZERO. A loading row, an MLX runner, or a build predating the field reports no
+                // split at all — and an empty decomposition would read as "it is holding nothing".
+                ? <div class="rc-tip-line rc-tip-dim">the server did not report what this is holding</div>
+                : null}
+            <SampleStamp at={hoverSample} />
+            {/* NO "not resident now" HERE, and none on the consumer rows either. This tooltip reads a sample
+                from the PAST: it answers what was on this card at that instant, the stamp above says which
+                instant, and at that instant the model WAS there. Annotating it with what happened afterwards
+                answers a question nobody asked at the place they asked it. It was here to explain why a
+                colour was still on the chart with no row under it — which the model list's GHOST rows now do,
+                where "is it resident" is actually the question being asked. */}
+            {/* Badges and cost each break onto their OWN line. On one line the tip grew past the panel and was
+                clipped at the window edge — and the figure that matters (how much, what share) is the part
+                that got cut. */}
+            {m && !deep ? <div class="rc-tip-facts"><ModelFacts m={m} tips={false} /></div> : null}
+            {!deep ? <CostFacts model={name} /> : null}
+            {/* WHAT THE KEYS DO, and only while the keys are what is driving. A hint under a tip the pointer
+                summoned would advertise a mode at the one moment the reader is already in another one. */}
+            {/* WHENEVER A TIP IS UP, not only once the keys are already driving. Gating it on the keyboard
+                showed the affordance exclusively to readers who had discovered it — the one group that did
+                not need telling — so nobody arrived at it from the mouse, which is how everybody arrives.
+                The keys work from a hover exactly as they do from a keyboard focus (see stepDepth), so the
+                hint is true in both.
+
+                And it names EVERYTHING the key reaches: "another model" was wrong, because the list wraps
+                through the OVERVIEW, and a reader told half of what a key does stops pressing before finding
+                the rest. */}
+            <div class="rc-tip-line rc-tip-keys">
+                <span><kbd>↑↓</kbd> models &amp; overview</span>
+                <span>{deep ? <><kbd>←</kbd> back</> : <><kbd>→</kbd> details</>}</span>
+            </div>
+        </div>
+    );
+}
+
+/** The whole pool's occupancy at the hovered instant — the stacked view's answer to "how full was it then",
+ *  which is the reading a memory chart is hovered for most often and the one the band tips could not give
+ *  (they each describe one model). Suppressed while a band IS hovered, so one pointer never opens two tips. */
+function PlotTip({ at, bands, ceiling, label, hidden, scope }: { at: ResourceSample; bands: Band[]; ceiling: number; label: string; hidden: Set<string>; scope: string }) {
+    const cur = cursorOn(scope);
+    if (!cur) return null;
+    const { ref, style } = useTipPlacement(cur);
+    // Hidden models are excluded, exactly as they are from the drawn stack and the header total: the figure
+    // has to match the shape under the pointer, and hiding a model changes that shape retroactively.
+    const used = bands.filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
+    const models = bands.filter((b) => b.kind === "model" && b.bytes > 0 && !(b.model && hidden.has(b.model)));
     return (
         <div class="rc-tip rc-tip-pool" role="tooltip" ref={ref} style={style}>
-            <div class="rc-tip-line"><span class="rc-tip-name">{h.name}</span>
-                <span class="rc-tip-size">{formatShare(used, h.ceiling)}</span></div>
-            {consumers.length
-                ? consumers.map((c) => (
-                    <div class="rc-tip-line rc-tip-dim" key={c.label}>
-                        <span class="rc-tip-consumer">
-                            {/* A model's own dot, the same one its row carries. The residual gets none: it is
-                                not a model, and a dot would say it was. */}
-                            {c.model ? <i class="rc-tip-dot" style={{ background: colorFor(c.model) }} /> : null}
-                            {c.label}
-                        </span>
-                        {/* Its own share of THIS pool: the question a per-consumer line is asked is "how much
-                            of the card is this", which bytes alone only answer after arithmetic. */}
-                        <span>{formatBytes(c.bytes)} <span class="rc-tip-pct">{percentOf(c.bytes, h.ceiling)}</span></span></div>
-                ))
-                : <div class="rc-tip-line rc-tip-dim">nothing resident</div>}
+            {/* THE FIGURE FIRST, THE DENOMINATOR UNDER IT. On one line the ceiling competes with the reading
+                for the same glance — and the ceiling is a CONSTANT, the one number in the tooltip that never
+                changes as you move along the trace, so it is the one that should recede. Dimmed and on its
+                own row it is still there to answer "of what", which is the question the panel exists to make
+                unavoidable, without being read first. */}
+            <div class="rc-tip-line"><span class="rc-tip-name">{label}</span>
+                <span class="rc-tip-size">{formatBytes(used)} in use{percentOf(used, ceiling) ? ` (${percentOf(used, ceiling)})` : ""}</span></div>
+            <div class="rc-tip-line rc-tip-of">out of {formatBytes(ceiling)}</div>
+            <SampleStamp at={at} />
+            {/* Named, because "62% full" invites "of what" as the immediate next question, and the answer is
+                on the screen already but only in a list that shows the PRESENT. */}
+            {models.length
+                ? <div class="rc-tip-line rc-tip-dim rc-tip-holders">{models.map((b) => (
+                    <span class="rc-tip-consumer" key={b.key}>
+                        <i class="rc-tip-dot" style={{ background: colorFor(b.model!) }} />{b.model}</span>))}</div>
+                // NOT "nothing resident" WHEN THE POOL IS FULL. Read off `ps`, which has no runner object
+                // during a load, that put "88.28 GiB of 95.59 GiB (92%)" and "nothing resident" in the SAME
+                // tooltip. The sample knows what was loading; when it does not, "not attributed" is still the
+                // honest phrasing, because the memory is plainly there.
+                : used > 0
+                    ? <div class="rc-tip-line rc-tip-dim">{at.loading?.length
+                        ? `loading ${at.loading.join(", ")} — not attributed yet`
+                        : "in use, not attributed to a model"}</div>
+                    : <div class="rc-tip-line rc-tip-dim">nothing resident</div>}
+            {/* THE WAY IN. This is the tip you get by pointing anywhere on the plot, so it is where a reader
+                who does not know the keys exist is standing — and the models it just listed are exactly what
+                the key steps through. */}
+            {models.length ? <div class="rc-tip-line rc-tip-keys"><span><kbd>↑↓</kbd> pick a model</span></div> : null}
+        </div>
+    );
+}
+
+/** EVERY series at the datapoint under the cursor, one row each — the Grafana reading. Hovering a single line
+ *  could only ever answer for the line that happened to be drawn on top: where two lines meet, the one
+ *  underneath is unreachable, and that crossing is exactly the moment worth reading (one pool filling as
+ *  another empties). So the plot itself opens the tip and every pool gets a row, with the nearest one marked
+ *  rather than being the only one present.
+ *
+ *  Each row carries the pool's own swatch, its occupancy and its share — the shares are what the lines plot,
+ *  since the pools have different capacities and a common axis of bytes would compare nothing. */
+function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf, surface = "overlay", bandOf }: {
+    pools: { id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] }[];
+    latest: ResourceSample;
+    at: ResourceSample | null;
+    fracOf: (s: ResourceSample, p: any) => number;
+    usedOf: (s: ResourceSample, p: any) => number;
+    /** The surface the view tracks its pointer as — the overlaid view's, or a whole-box track's own scope. */
+    surface?: string;
+    /** Where a pool OWNS the height, as [bottom, top] fractions of the plot. The whole-box view lays pools end
+     *  to end, so the pool you are pointing at is the band the pointer is inside, not the fill top nearest to
+     *  it — nearest-by-line would name a neighbour whenever you point low inside a tall band. */
+    bandOf?: (p: any) => [number, number];
+}) {
+    const cur = cursorOn(surface);
+    if (!cur || !pools.length) return null;
+    const frame = hoverSample ?? latest;
+    const { ref, style } = useTipPlacement(cur);
+    // Nearest by the pointer's height in the plot, which is where the lines are: a line at 92% is drawn near
+    // the TOP, so the comparison is against 1 - frac.
+    // A pool that is not drawn gets no row: the tip reads the LINES, and reporting a series that is not on
+    // screen would be answering about something the reader deliberately removed.
+    const rows = pools.filter((p) => !hiddenPools.value.has(p.id)).map((p) => {
+        const frac = fracOf(frame, p);
+        return { p, frac, used: usedOf(frame, p), dy: cur.yFrac == null ? Infinity : Math.abs((1 - frac) - cur.yFrac) };
+    });
+    // A DELIBERATE hover wins over proximity: pointing at a line, or at its key in the legend, says which pool
+    // you mean more precisely than the pointer's height can. Height decides only when the pointer is just
+    // somewhere on the plot, which is the case the stacked reading exists for.
+    const inside = bandOf && cur.yFrac != null ? rows.find((r) => { const [lo, hi] = bandOf(r.p); const h = 1 - cur.yFrac!; return h >= lo && h <= hi; }) : null;
+    const picked = (poolHover.value ? rows.find((r) => r.p.id === poolHover.value!.id) : null) ?? inside;
+    const near = picked ?? rows.reduce((a, b) => (b.dy < a.dy ? b : a), rows[0]);
+    const hasNear = !!picked || near.dy < Infinity;
+    return (
+        // ONE GRID, not a stack of independently-laid-out rows. Every row — a pool's and a consumer's alike —
+        // places its name, its amount and its share in the SAME three columns, so the numbers line up on one
+        // right edge whatever their nesting depth. Formatting each row's tail separately is what produced
+        // three different right edges and two different percent styles in the same tooltip.
+        <div class="rc-tip rc-tip-pools" role="tooltip" ref={ref} style={style}>
+            <SampleStamp at={hoverSample} />
+            {rows.map((r) => {
+                const isNear = r === near && hasNear;
+                // Only the NEAREST pool is decomposed. Listing what is resident on all three at once is the
+                // detail the model rows below already carry, and it turns a reading into a wall — the stack
+                // exists so a crossing can be read at a glance.
+                const consumers = isNear ? poolFacts(r.p.bandsOf(frame)).consumers : [];
+                const now = isNear ? new Set(poolFacts(r.p.bandsOf(latest)).consumers.map((c) => c.label)) : new Set<string>();
+                return (
+                    // One SECTION per pool: the pool's own line, then whatever is resident on it. The rule
+                    // between sections is what stops a consumer reading as another device.
+                    <div class="rc-tip-sect" key={r.p.id}>
+                        <div class={`rc-tip-row rc-tip-poolrow${isNear ? " near" : ""}`}>
+                            <span class="rc-tip-label"><i class="rc-swatch" style={{ background: r.p.color }} />{r.p.name}</span>
+                            {/* Split into the grid's own columns rather than one formatted string: the whole
+                                point is that the amount and the share are COLUMNS, and formatShare renders
+                                them as a sentence. "of <ceiling>" rides with the amount, since it is what the
+                                share is a share OF. */}
+                            <span class="rc-tip-amt">{formatBytes(r.used)}<span class="rc-tip-of"> of {formatBytes(r.p.ceiling)}</span></span>
+                            <span class="rc-tip-pct">{percentOf(r.used, r.p.ceiling)}</span>
+                        </div>
+                        {consumers.map((c) => (
+                            <div class="rc-tip-row rc-tip-consumer-row" key={c.label}>
+                                <span class="rc-tip-label">
+                                    {/* A model's own dot, the same one its row carries. The residual gets a
+                                        HOLLOW one: an empty ring holds the same space so the names line up,
+                                        while visibly not being a colour swatch — which is the thing that
+                                        would claim the residual is a model. Omitting it entirely aligned
+                                        nothing and left the column ragged. */}
+                                    {c.model
+                                        ? <i class="rc-tip-dot" style={{ background: colorFor(c.model) }} />
+                                        : <i class="rc-tip-dot rc-tip-dot-none" />}
+                                    <span class="rc-tip-cname">{c.label}</span>
+                                    {/* NO "gone" MARKER HERE. This tooltip reads a sample from the PAST — it
+                                        answers "what was on this card at that instant", and at that instant
+                                        the model was resident, so annotating it with what happened later is
+                                        answering a question nobody asked at the place they asked it. Whether
+                                        a model is resident NOW is the model list's job, where the row says
+                                        so and the tooltip on it explains. */}
+                                </span>
+                                <span class="rc-tip-amt">{formatBytes(c.bytes)}</span>
+                                <span class="rc-tip-pct">{percentOf(c.bytes, r.p.ceiling)}</span>
+                            </div>
+                        ))}
+                        {isNear && !consumers.length
+                            ? <div class="rc-tip-row rc-tip-consumer-row"><span class="rc-tip-label rc-tip-dim">nothing resident</span></div>
+                            : null}
+                    </div>
+                );
+            })}
+            {/* AT THE BOTTOM, where the other view puts it — a hint that moves between views is one more
+                thing to find. ONLY ↑↓: there is no depth here to descend into, since a pool has no memory
+                breakdown of its own (the decomposition is per MODEL), and naming a key that silently does
+                nothing is worse than naming none. */}
+            {rows.length > 1 ? <div class="rc-tip-row rc-tip-keys"><span><kbd>↑↓</kbd> pick a line</span></div> : null}
         </div>
     );
 }
@@ -278,10 +1128,49 @@ function PoolTip({ latest }: { latest: ResourceSample }) {
  *  every resident model, so they are the legend: rows not on this pool grey out, and a tooltip on the plot
  *  names the device. That reuses what is on screen instead of injecting a row that pushes the layout around
  *  under the cursor. */
-function enterPool(p: { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }): void {
+type PoolRef = { id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] };
+/**
+ * THE LINES THE KEYS STEP THROUGH, published from the render that draws them — the key handler runs outside
+ * render, and "which pools are on screen" is a fact about what was just drawn. A plain ref for the same
+ * reason `liveRuns` is one: written DURING render, and a signal written during render re-enters rendering.
+ */
+let poolRefs: PoolRef[] = [];
+/** Publish the lines the arrow keys step through — call it from the render that DRAWS them. */
+export const notePools = (pools: PoolRef[]): void => { poolRefs = pools; };
+/** Is the reading currently in the overlaid view? Decides which list the arrow keys step through. */
+export const readingIsOverlay = (): boolean => readingOverlay;
+/**
+ * WHICH VIEW THE READING IS IN, so one key can mean "the thing this view draws" in both. Recorded from the
+ * pointer's own surface rather than from the layout, because a layout may hold tracks of both kinds and the
+ * answer is about where the reader is pointing. It OUTLIVES a pointerleave deliberately: the keyboard keeps
+ * reading after the pointer wanders off, and it has to keep reading the same view.
+ */
+let readingOverlay = false;
+/** Cycle the focused LINE in the overlaid view, wrapping through "nothing picked out" at index 0. Hidden
+ *  pools are skipped: switching a line off takes it off the chart, so there is nothing left to point at. */
+export function stepPool(dir: number): void {
+    const shown = poolRefs.filter((p) => !hiddenPools.value.has(p.id));
+    const list: (PoolRef | null)[] = [null, ...shown];
+    const cur = kbPool.value ? kbPool.value.id : poolHover.value?.id ?? null;
+    const at = list.findIndex((p) => (p?.id ?? null) === (cur ?? null));
+    const next = list[((at < 0 ? 0 : at) + dir + list.length) % list.length];
+    kbPool.value = { id: next?.id ?? null };
+    if (next) enterPool(next); else leavePool();
+}
+/** Hand the LINE focus back to the pointer, on a real move and nothing else — the twin of `releaseFocus`. */
+function releasePool(target: EventTarget | null): void {
+    if (!kbPool.value) return;
+    kbPool.value = null;
+    if (!(target as Element | null)?.closest?.(".rc-hit")) leavePool();
+}
+
+function enterPool(p: { id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] }): void {
     hoverPool.value = p.id;
-    // The pool itself, not a reading of it — every figure is derived from the latest sample at render time.
-    poolHover.value = { id: p.id, name: p.name, ceiling: p.ceiling, bandsOf: p.bandsOf };
+    // The pool itself, not a reading of it — every figure is derived from the sample under the cursor at
+    // render time. Its COLOUR rides along so the tip can carry the same swatch its legend key does: several
+    // lines cross in one plot, and a tip that only names a device leaves you matching a name to a stroke by
+    // eye, which is the work the legend's swatches already do everywhere else.
+    poolHover.value = { id: p.id, name: p.name, ceiling: p.ceiling, color: p.color, bandsOf: p.bandsOf };
 }
 function leavePool(): void { hoverPool.value = null; poolHover.value = null; }
 
@@ -304,6 +1193,10 @@ function deviceCeilingNote(dev: { runner: string; unified: boolean; physicalByte
  *  renders one line per series, each against its own ceiling, because several pools have no shared total —
  *  which is exactly what `stackRefusal` refuses and why the Overview preset overlays. */
 function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[] }) {
+    // NOT OFFERED ON THE LAST ONE. A panel with no tracks is not a layout you can get back from by the same
+    // gesture, and a button that refuses when pressed is worse than one that is visibly unavailable.
+    const all = layout.value ?? [];
+    const onHide = all.length > 1 ? () => editLayout(all.filter((t) => t.id !== def.id)) : undefined;
     const cap = latest.capacity!;
     const deviceOf = (id: string) => cap.devices.find((d) => d.id === id.replace(/^vram\./, ""));
     const first = def.series[0] ?? "";
@@ -321,23 +1214,169 @@ function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDe
             const note = first === "mem" && cap.devices[0]
                 ? deviceCeilingNote(cap.devices[0])
                 : "Total system memory. Models here are running on the CPU, or are the spilled part of a model too large for the accelerator.";
-            return <DeviceView label={label} samples={samples} bandsOf={hostBands}
+            return <DeviceView label={label} onHide={onHide} samples={samples} bandsOf={hostBands}
                 ceiling={c?.hardBytes ?? cap.host.totalBytes} ceilingNote={note}
                 soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
         }
         const d = deviceOf(first);
         if (!d) return null;
         const c = ceilingsFor(latest, d.id);
-        return <DeviceView label={d.name} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
+        return <DeviceView label={d.name} onHide={onHide} device={d} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
             ceiling={c?.displayBytes ?? d.totalBytes} ceilingNote={deviceCeilingNote(d)}
             soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
     }
-    return <OverlayView def={def} samples={samples} latest={latest} hidden={hidden} events={events} />;
+    if (def.mode === "total") {
+        return <BoxView def={def} onHide={onHide} samples={samples} latest={latest} hidden={hidden} events={events} />;
+    }
+    return <OverlayView def={def} onHide={onHide} samples={samples} latest={latest} hidden={hidden} events={events} />;
 }
 
-/** Several series in ONE track, drawn as independent lines rather than a stack: their sum is not a quantity
- *  anything is measured against (a model can only use one card's capacity), so the chart must not draw one. */
-function OverlayView({ def, samples, latest, hidden, events = [] }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[] }) {
+/**
+ * THE WHOLE BOX ON ONE AXIS — every pool laid END TO END, each filling its own band from its own floor.
+ *
+ * The question it answers is "how much of this machine is in use", which the per-pool tracks cannot: they
+ * give every pool the same height whatever its size, so a 12 GiB card and a 96 GiB one look alike and the
+ * box's shape is invisible. Here a pool's height IS its share of the machine.
+ *
+ * What it must never do is draw the memory as ONE pool. Pools do combine — ollama splits a model across
+ * cards and spills the rest into RAM — but at a cost per boundary (a compute buffer and driver context per
+ * extra card, layers that do not divide, a RAM spill that is far slower), so the pools are concatenated
+ * rather than poured together, and the WALLS between them are drawn. The axis total is then a true total of capacity and every fill is a real
+ * reading against a real ceiling. The header says what is HELD and never what is free, which is the one
+ * sentence the walls exist to deny.
+ */
+function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[]; onHide?: () => void }) {
+    const cap = latest.capacity!;
+    const scope = `total:${def.id}`;
+    const all = def.series.map((id) => {
+        if (id === "ram" || id === "mem") {
+            const c = id === "mem" ? ceilingsFor(latest, cap.devices[0]?.id ?? "") : null;
+            return { id, name: id === "mem" ? `${cap.devices[0]?.name ?? "Memory"}` : "System RAM",
+                ceiling: c?.hardBytes ?? cap.host.totalBytes, bandsOf: hostBands };
+        }
+        const d = cap.devices.find((x) => x.id === id.replace(/^vram\./, ""));
+        if (!d) return null;
+        const c = ceilingsFor(latest, d.id);
+        return { id, name: d.name, ceiling: c?.displayBytes ?? d.totalBytes,
+            bandsOf: (sm: ResourceSample) => deviceBands(sm, d.id) };
+    }).filter(Boolean) as { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }[];
+    // A pool switched off leaves the axis entirely rather than sitting there empty: shrinking the total is
+    // what makes "just my two cards" a view rather than arithmetic the reader has to do.
+    const pools = all.filter((p) => !hiddenPools.value.has(p.id));
+    if (!pools.length) return null;
+    const axis = boxAxis(pools);
+    if (!axis.total) return null;
+    const usedOf = (sm: ResourceSample, p: typeof pools[number]) =>
+        p.bandsOf(sm).filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
+    const runs = noteRuns(segments(samples, sampleGapMs()).filter((r) => r.length > 1));
+    const instants = useInstants(runs, events);
+    const held = pools.reduce((n, p) => n + usedOf(latest, p), 0);
+    // THE SAME READING THE OVERLAID VIEW GIVES, because it is the same question asked of the same pools — this
+    // view had none, so pointing at it (or at a key) answered nothing. Colours are the ones the bands are drawn
+    // in; the pool you are pointing at is the band you are INSIDE, since the pools here own heights rather
+    // than drawing lines to be near.
+    const tipPools = pools.map((p) => {
+        const bi = axis.bands.findIndex((b) => b.id === p.id);
+        return { ...p, color: poolColor(bi < 0 ? 0 : bi, axis.bands.length) };
+    });
+    const bandOf = (p: { id: string }): [number, number] => {
+        const b = axis.bands.find((x) => x.id === p.id);
+        return b ? [b.base / axis.total, (b.base + b.ceiling) / axis.total] : [0, 0];
+    };
+    return (
+        <div class="rc-track">
+            <div class="rc-head">
+                <HideTrack onHide={onHide} label={pools.map((p) => p.name).join(" · ")} />
+                <span class="rc-name">{pools.map((p) => p.name).join(" · ")}</span>
+                <span class="sp" />
+                {/* HELD, never FREE. Those bytes are measured, so the figure is true. A "free" total would
+                    overstate the room — per-card overheads and layer-sized leftovers mean the gap is not all
+                    usable — and would count a GiB of slow RAM the same as a GiB of VRAM. */}
+                <span class="rc-total tt">
+                    {formatBytes(held)} of {formatBytes(axis.total)} held
+                    <span class="tt-pop wrap" role="tooltip">Every pool on one axis, laid end to end — each band is one pool's own capacity, filled from its own floor. Pools do combine: a model too big for one card is split across several, and what still does not fit spills into System RAM. But not one-for-one: each extra card a model spans carries its own compute buffer and driver context, layers do not divide, and a spill into RAM runs far slower — so the room above the fills does not simply add up. Switch a pool off in the legend to take it out of the axis.</span>
+                </span>
+            </div>
+            <div class="rc-plot"
+                onPointerDown={startBrush(runs)}
+                onPointerMove={(e: PointerEvent) => { trackCursor(scope)(e); trackCrosshair(runs)(e); }}
+                onPointerLeave={() => {
+                    hoverAt.value = null;
+                    if (kbFocus.value || kbPool.value) return;
+                    crosshair.value = null;
+                }}>
+                <BrushOverlay runs={runs} />
+                <Crosshair runs={runs} />
+                <PoolsTip pools={tipPools} latest={latest} at={hoveredSample(runs, scope)} surface={scope} bandOf={bandOf}
+                    fracOf={(sm, p) => (p.ceiling > 0 ? Math.min(1, usedOf(sm, p) / p.ceiling) : 0)} usedOf={usedOf} />
+                <EventTip scope={scope} />
+                {runs.map((run, ri) => (
+                    <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
+                        <InstantRules instants={instants} run={ri} scope={scope} />
+                        <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                            {axis.bands.map((b, bi) => {
+                                const p = pools.find((x) => x.id === b.id)!;
+                                const y = (v: number) => H - (v / axis.total) * H;
+                                const pts: string[] = [];
+                                run.forEach((sm, i) => {
+                                    const x = run.length === 1 ? W / 2 : (i / (run.length - 1)) * W;
+                                    pts.push(`${x.toFixed(1)},${y(b.base + Math.min(b.ceiling, usedOf(sm, p))).toFixed(1)}`);
+                                });
+                                for (let i = run.length - 1; i >= 0; i--) {
+                                    const x = run.length === 1 ? W / 2 : (i / (run.length - 1)) * W;
+                                    pts.push(`${x.toFixed(1)},${y(b.base).toFixed(1)}`);
+                                }
+                                return <polygon key={b.id} points={pts.join(" ")} class="rc-boxfill"
+                                    fill={poolColor(bi, axis.bands.length)} vector-effect="non-scaling-stroke" />;
+                            })}
+                        </svg>
+                        {/* THE WALLS. Drawn per segment so they sit inside the same clipped box the fills do,
+                            and they are the whole reason this axis is honest: without them a reader sees one
+                            column and infers one pool. */}
+                        {axis.bands.slice(1).map((b) => (
+                            <i key={`w:${b.id}`} class="rc-boxwall" aria-hidden="true"
+                                style={{ bottom: `${(b.base / axis.total) * 100}%` }} />
+                        ))}
+                    </div>
+                ))}
+            </div>
+            {/* One key per pool, carrying what it holds OF ITS OWN capacity — the per-pool reading the axis
+                deliberately refuses to compute for you. Clicking one takes it off the axis.
+                THE SAME KEY THE OVERLAID VIEW USES, down to the element: `.rc-key` is styled for a SPAN with
+                `role="button"`, so a native <button> here picked up the browser's own chrome and the two
+                legends stopped looking like the same control. Reused rather than restyled — a second key that
+                merely resembles the first is how the pointer chip got cloned. */}
+            <div class="rc-legend">
+                {all.map((p, i) => {
+                    const off = hiddenPools.value.has(p.id);
+                    const idx = axis.bands.findIndex((b) => b.id === p.id);
+                    const color = poolColor(idx < 0 ? i : idx, Math.max(1, axis.bands.length));
+                    return (
+                        <span class={`rc-key${off ? " off" : ""}${hoverPool.value && hoverPool.value !== p.id ? " away" : ""}`}
+                            key={p.id} role="button" tabIndex={0} aria-pressed={!off}
+                            // A NAME, not an explanation: the reading is the pool tip this hover opens, exactly as
+                            // on the overlaid view's keys. A native `title` as well was a second tooltip, a second
+                            // late, for a hint the pressed state already carries.
+                            aria-label={off ? `Show ${p.name}` : `Hide ${p.name}`}
+                            onClick={() => togglePool(p.id)}
+                            onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); togglePool(p.id); } }}
+                            onPointerEnter={(e: PointerEvent) => { enterPool({ ...p, color }); trackCursor(scope)(e); }}
+                            onPointerMove={trackCursor(scope)}
+                            onPointerLeave={() => { leavePool(); hoverAt.value = null; }}>
+                            <i class="rc-swatch" style={{ background: off ? "var(--fg-faint)" : color }} />
+                            {p.name} {off ? "off" : formatShare(usedOf(latest, p), p.ceiling, "/")}
+                        </span>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+/** Several series in ONE track, drawn as independent lines rather than a stack: each pool is measured against
+ *  its OWN ceiling, so the lines are shares of their own capacity, and one stacked ceiling would compare
+ *  nothing. (How much of the whole box is in use is the `total` view's question, answered with walls.) */
+function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[]; onHide?: () => void }) {
     const cap = latest.capacity!;
     // Each series is a POOL: a card, or the host. Including the host matters — a CPU-resident model holds no
     // VRAM, so a cards-only overlay makes it vanish from the chart entirely while it sits in the legend below.
@@ -353,8 +1392,12 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
         return { id, name: d.name, ceiling: c?.displayBytes ?? d.totalBytes, bandsOf: (s: ResourceSample) => deviceBands(s, d.id) };
     }).filter(Boolean) as { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }[];
     if (!pools.length) return null;
+    // WHAT THE ARROW KEYS STEP THROUGH HERE. Published with the colours the lines are actually drawn in, so a
+    // keyboard focus lights the same key the pointer would — `poolColor` is keyed by index among ALL pools,
+    // so colouring after any filtering renumbers them.
+    notePools(pools.map((p, pi) => ({ ...p, color: poolColor(pi, pools.length) })));
 
-    const runs = segments(samples).filter((r) => r.length > 1);
+    const runs = noteRuns(segments(samples, sampleGapMs()).filter((r) => r.length > 1));
     const usedOf = (s: ResourceSample, p: typeof pools[number]) =>
         p.bandsOf(s).filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
     // Plotted as a FRACTION of each pool's own capacity. Absolute bytes on a shared axis would be a lie here:
@@ -372,6 +1415,7 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
     return (
         <div class="rc-track">
             <div class="rc-head">
+                <HideTrack onHide={onHide} label={pools.map((p) => p.name).join(" · ")} />
                 <span class="rc-name">{pools.map((p) => p.name).join(" · ")}</span>
                 <span class="sp" />
                 <span class="rc-total tt">
@@ -382,15 +1426,37 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
             <div class="rc-plot"
                 onPointerDown={startBrush(runs)}
                 onPointerMove={(e: PointerEvent) => { trackCursor("overlay")(e); trackCrosshair(runs)(e); }}
-                onPointerLeave={() => { hoverAt.value = null; leavePool(); crosshair.value = null; }}>
-                <BrushOverlay />
-                <Crosshair />
-                <PoolTip latest={latest} />
+                onPointerLeave={() => {
+                    hoverAt.value = null;                     // …and the same on the overlaid view
+                    if (kbFocus.value || kbPool.value) return;
+                    leavePool(); crosshair.value = null;
+                }}>
+                <BrushOverlay runs={runs} />
+                <Crosshair runs={runs} />
+                <PoolsTip pools={pools.map((p, pi) => ({ ...p, color: poolColor(pi, pools.length) }))}
+                    latest={latest} at={hoveredSample(runs, "overlay")} fracOf={frac} usedOf={usedOf} />
                 {/* This view has rules of its own now, so it needs the tip that explains them. */}
                 <EventTip scope="overlay" />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                         <InstantRules instants={instants} run={ri} scope="overlay" />
+                        <HoverSpan run={ri} scope="lane" />
+                        {/* ONE DOT PER LINE at the snapped sample — this view is literally lines, so it is the
+                            view where "snap to the line" means the most. Positioned HTML rather than an SVG
+                            circle for the same reason as the stacked one: the viewBox is stretched, so a
+                            circle inside it would draw as an ellipse. */}
+                        {snapUnder(runs)?.run === ri && run.length ? pools
+                            // COLOURED BEFORE FILTERING: `poolColor` is keyed by the pool's index among ALL
+                            // pools, so filtering first renumbers them and a focused pool takes the first
+                            // pool's colour.
+                            .map((p, pi) => ({ p, color: poolColor(pi, pools.length) }))
+                            .filter(({ p }) => !poolHover.value || poolHover.value.id === p.id)
+                            .map(({ p, color }) => {
+                                const i = Math.min(run.length - 1, Math.max(0, snapUnder(runs)!.index));
+                                const cx = run.length === 1 ? 50 : (i / (run.length - 1)) * 100;
+                                return <i key={`sd:${p.id}`} class="rc-snapdot" aria-hidden="true"
+                                    style={{ left: `${cx}%`, top: `${(1 - frac(run[i], p)) * 100}%`, background: color }} />;
+                            }) : null}
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {pools.map((p, pi) => {
                                 const pts = run.map((s, i) => `${((i / (run.length - 1)) * W).toFixed(1)},${(H - frac(s, p) * H).toFixed(1)}`).join(" ");
@@ -399,6 +1465,10 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
                                 // Two directions of the same question. Hovering this pool highlights it; and
                                 // hovering a MODEL row dims every pool that model is NOT resident on, so the
                                 // chart points back at the row rather than only the other way round.
+                                // Switched off in the legend: no line at all, rather than a dimmed one. The
+                                // point of turning a pool off is to get it out of the way of the ones you are
+                                // reading, and a ghost still crosses them.
+                                if (hiddenPools.value.has(p.id)) return null;
                                 const holdsHovered = !!hoverModel.value && p.bandsOf(latest).some((b) => b.model === hoverModel.value);
                                 const on = hoverPool.value === p.id || holdsHovered;
                                 const muted = (!!hoverPool.value && hoverPool.value !== p.id)
@@ -412,7 +1482,7 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
                                             target cannot move out from under a still pointer. */}
                                         <polyline points={pts} fill="none" stroke="transparent" stroke-width="10"
                                             vector-effect="non-scaling-stroke" class="rc-hit"
-                                            onPointerEnter={(e: PointerEvent) => { enterPool(p); trackCursor("overlay")(e); }}
+                                            onPointerEnter={(e: PointerEvent) => { enterPool({ ...p, color: poolColor(pi, pools.length) }); trackCursor("overlay")(e); }}
                                             onPointerLeave={() => leavePool()} />
                                         {/* The visible line takes NO pointer events. Painted on top of the hit
                                             target, it would take them by default — and since it THICKENS on
@@ -438,9 +1508,17 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
                     // NO `tt` class here: this key opens the cursor-following pool tip (below), and a static
                     // popup as well meant two tooltips for one hover. The pool tip carries the same figure
                     // plus what is resident, so the static one had nothing left to add.
+                    // CLICK toggles the line, the way clicking a series in Grafana does — and the way a model
+                    // row already works here. Two different "off" states share the styling deliberately: a
+                    // pool you switched off, and one whose models you have ALL hidden, both read as a line
+                    // that is absent by choice rather than by measurement.
                     <span class={`rc-key${(hoverModel.value && !p.bandsOf(latest).some((b) => b.model === hoverModel.value))
-                            || (hoverPool.value && hoverPool.value !== p.id) ? " away" : ""}${allHidden(p) ? " off" : ""}`} key={p.id}
-                        onPointerEnter={(e: PointerEvent) => { enterPool(p); trackCursor("overlay")(e); }} onPointerLeave={() => leavePool()}>
+                            || (hoverPool.value && hoverPool.value !== p.id) ? " away" : ""}${allHidden(p) || hiddenPools.value.has(p.id) ? " off" : ""}`} key={p.id}
+                        role="button" tabIndex={0} aria-pressed={!hiddenPools.value.has(p.id)}
+                        aria-label={hiddenPools.value.has(p.id) ? `Show ${p.name}` : `Hide ${p.name}`}
+                        onClick={() => togglePool(p.id)}
+                        onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); togglePool(p.id); } }}
+                        onPointerEnter={(e: PointerEvent) => { enterPool({ ...p, color: poolColor(pi, pools.length) }); trackCursor("overlay")(e); }} onPointerLeave={() => leavePool()}>
                         <i class="rc-swatch" style={{ background: poolColor(pi, pools.length) }} />
                         {p.name} {pct(frac(latest, p))}
                     </span>
@@ -459,8 +1537,38 @@ function OverlayView({ def, samples, latest, hidden, events = [] }: { def: Track
  *  to arrive is not the model working, so it must not look like a solid block of its time — but it IS that
  *  model's wait, so the colour stays. (A plain model-coloured bar is what the inline colouring made of it,
  *  which is exactly the confusion the stripes exist to prevent.) */
+/** The server's own words for an edge, with the model's name taken off the front — the name is already the
+ *  line above, and repeating it costs the width the REASON needs (`evicted (made room)` against
+ *  `unloaded (idle)`, which is the whole difference between the two things polling reads as one). */
+function serverSaid(label: string, model?: string): string {
+    const rest = model && label.startsWith(model) ? label.slice(model.length).trim() : label;
+    return rest ? `the server reported this — ${rest}` : "reported by the server";
+}
+
 /** A phase's swatch, matching its stripe in the bar exactly — so the tooltip's sections and the block's parts
  *  are visibly the same three things, rather than a list you have to map onto a picture yourself. */
+// THREE STRIPE PATTERNS THAT DIFFER IN DIRECTION, NOT IN WEIGHT. A load, its weights half and its context
+// half were all 45° stripes in the model's colour, separated only by opacity — which is legible in a 200px
+// bar and not at all in a 10px tooltip swatch, so the tooltip listed three rows with what read as the same
+// glyph three times. Direction survives being tiny:
+//
+//   load (the whole thing)  ▨  crosshatch — it IS both halves, so it is both leans
+//   moving the weights in   ╱  leaning one way
+//   allocating the context  ╲  leaning the other
+//
+// Which also fixes the bar: a load's two halves were told apart by a divider and a shade, and the shade did
+// almost none of the work.
+const loadStripes = (model?: string): string => {
+    const c = model ? colorFor(model) : "var(--warn, #f59e0b)";
+    // Two layers: the first leans one way over a transparent gap, the second the other way over the panel's
+    // ground, so what shows through the first is the second rather than whatever is behind the element.
+    return `repeating-linear-gradient(45deg, ${c} 0 2px, transparent 2px 7px), `
+        + `repeating-linear-gradient(-45deg, ${c} 0 2px, var(--panel) 2px 7px)`;
+};
+/** One half of a load: same colour, opposite leans, so the two are told apart by DIRECTION at any size. */
+const halfStripes = (c: string, lean: 45 | -45): string =>
+    `repeating-linear-gradient(${lean}deg, ${c} 0 3px, var(--panel) 3px 8px)`;
+
 const phaseFill = (kind: string, model?: string): string => {
     const base = model ? colorFor(model) : "var(--accent)";
     // The model's channels share its colour and differ in WEIGHT, because they are the same model doing the
@@ -474,15 +1582,38 @@ const phaseFill = (kind: string, model?: string): string => {
         // far end queueing before it started. Both borrow the neutral the approval wait uses rather than the
         // model's colour, because neither is the model or the tool doing anything — `net` fainter still,
         // since it is the one figure we DERIVE by subtraction rather than being told.
+        // Plumbing between the model finishing and the tool starting. The faintest of the neutrals: it is
+        // ours, it is usually milliseconds, and it exists mainly so the block sits where the work did.
+        : kind === "dispatch" ? "color-mix(in srgb, var(--fg-faint) 20%, transparent)"
         : kind === "net" ? "color-mix(in srgb, var(--fg-faint) 26%, transparent)"
         : kind === "queue" ? "color-mix(in srgb, var(--fg-faint) 38%, transparent)"
+        // A COLD START is a wait, like a model load — so it is STRIPED for the same reason: a wide flat block
+        // reads as a lot of work having happened, and none of this is work you asked for. Neutral rather than
+        // the model's colour, since it is the sandbox arriving and not the model.
+        : kind === "boot" ? "repeating-linear-gradient(45deg, color-mix(in srgb, var(--fg-faint) 34%, transparent) 0 3px, var(--panel) 3px 8px)"
+        // A LOAD's two halves. Both are the model arriving, so both are its colour — but the first is the
+        // weights moving (dense, and where the memory trace actually steps) and the second is the context
+        // being allocated before it will serve. Striped either way, because a load is a wait rather than
+        // work; they LEAN OPPOSITE WAYS, because a difference in shade alone is invisible in a swatch and
+        // nearly invisible in a thin bar (see loadStripes).
+        : kind === "weights" ? halfStripes(base, 45)
+        : kind === "context" ? halfStripes(`color-mix(in srgb, ${base} 55%, transparent)`, -45)
         : `color-mix(in srgb, ${base} 38%, transparent)`;
 };
 
-const loadStripes = (model?: string): string => {
-    const c = model ? colorFor(model) : "var(--warn, #f59e0b)";
-    return `repeating-linear-gradient(45deg, ${c} 0 3px, var(--panel) 3px 8px)`;
-};
+
+/** Each phase as a [start, end] FRACTION of the block. Phases carry only their end, so a start is the
+ *  previous end — which every consumer would otherwise re-derive, and one of them would get wrong. */
+function phaseSpans(phases: { kind: string; until: number }[], from: number, total: number) {
+    const clamp = (v: number) => Math.min(1, Math.max(0, v));
+    let at = 0;
+    return phases.map((ph) => {
+        const end = clamp((ph.until - from) / total);
+        const span = { kind: ph.kind, start: at, end };
+        at = end;
+        return span;
+    });
+}
 
 function phaseGradient(phases: { kind: string; until: number }[], from: number, total: number, model?: string): string {
     const fill = (kind: string) => phaseFill(kind, model);
@@ -507,7 +1638,7 @@ function phaseGradient(phases: { kind: string; until: number }[], from: number, 
 function useInstants(runs: ResourceSample[][], events: ResourceEvent[]): EventPlacement[] {
     return useMemo(() => {
         const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
-        return placeEvents(runs, eventsIn(events.filter((e) => e.until == null), from, to + VRAM_POLL_MS), VRAM_POLL_MS);
+        return placeEvents(runs, eventsIn(events.filter((e) => e.until == null), from, to + sampleGraceMs()), sampleGraceMs());
     }, [runs, events]);
 }
 
@@ -518,7 +1649,13 @@ function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; ru
         // Keyed by the EVENT, not the element: the same eviction is drawn in every track, so hovering it in
         // one plot thickens it in all of them — one thing that happened, not three.
         <div class={`rc-rule rc-rule-${p.event.kind}${eventKey(p.event) === hotEvent.value ? " hot" : ""}`}
-            key={k} style={{ left: `${p.from * 100}%` }}
+            key={k}
+            // A rule about a MODEL carries that model's colour, the same one its row, its band and its lane
+            // blocks already use — so "gemma was evicted here" is legible from the line without reading the
+            // tooltip. Generic red said only "something bad", which on a box running four models is the one
+            // thing you already knew. Falls back to the danger colour when the event names no model.
+            style={{ left: `${p.from * 100}%`, ...(p.event.model ? { "--model": colorFor(p.event.model) } : {}) }}
+            data-model={p.event.model ?? undefined}
             onPointerEnter={(e: PointerEvent) => { eventHover.value = { p, scope }; hotEvent.value = eventKey(p.event); trackCursor(scope)(e); }}
             onPointerLeave={() => { eventHover.value = null; hotEvent.value = null; }} />
     ))}</>;
@@ -531,47 +1668,215 @@ function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; ru
  *  Its own axis is LINEAR in time, unlike the chart's: this is an overview, and a ten-minute hole is a fact
  *  about the session that an overview should show at its true width rather than collapse. The runs are drawn
  *  as filled blocks with the gaps left empty, so "nothing was measured here" reads as a hole. */
-function ScrubStrip({ samples, window: win }: { samples: ResourceSample[]; window: { from: number; to: number } | null }) {
+/**
+ * Apply a scrubbed window — and REJOIN LIVE when it reaches the tail.
+ *
+ * A pinned window that merely happens to sit at the end is not the same as following: new samples arrive,
+ * the window stays where it was pinned, and the view silently falls behind while the button still reads
+ * live (which is computed from where the window sits, not from whether it is following). The drag path has
+ * always done this on release; the wheel paths did not, so scrolling to the end looked like rejoining live
+ * and then drifted away from it.
+ */
+
+
+/** Persisting `resWindowS` on every frame of a continuous gesture would write to storage dozens of times for
+ *  one pinch, so the value is applied live and only the WRITE is deferred to the end of the gesture. */
+let windowWrite: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Settle ANY gesture that moved or resized the window — the one place the "did this rejoin live" rule lives,
+ * so a wheel, a pinch and a drag cannot disagree about what "at the tail" means.
+ *
+ * The wheel paths used to have their own version of it, which nulled the zoom and nothing else — so scrolling
+ * a NARROW window back to the tail rejoined live at whatever `resWindowS` last held, and a window you had
+ * carefully narrowed sprang back to five minutes on arrival. The drag had been fixed for exactly that and
+ * this was the same bug surviving in the gesture beside it, which is the argument for there being one
+ * function rather than two.
+ *
+ * Following with a width is not a special case of a pinned range: it IS `resWindowS`, the quantity Settings
+ * names. So zooming while live changes how much history is drawn and STAYS live, rather than pinning the
+ * window at wherever it happened to be when you pinched — which would have made the gesture a way to
+ * accidentally stop following.
+ */
+function settleScrub(next: { from: number; to: number }, ex: { from: number; to: number }): void {
+    const intent = scrubIntent(ex, next, TAIL_SLACK_MS);
+    if (!intent.live) { zoomRange.value = intent.window; return; }
+    resWindowS.value = intent.windowS;
+    zoomRange.value = null;
+    if (windowWrite) clearTimeout(windowWrite);
+    windowWrite = setTimeout(() => {
+        windowWrite = null;
+        try { chrome.storage.local.set({ [RESWIN_KEY]: resWindowS.value }); } catch { /* opaque origin */ }
+    }, 400);
+}
+
+function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSample[]; window: { from: number; to: number } | null; events?: ResourceEvent[] }) {
+    const wrapRef = useRef<HTMLDivElement>(null);
+    const trackRef = useRef<HTMLDivElement>(null);
+    // Where the TRACK sits inside the strip, as percentages of the strip — the connector below is drawn in
+    // the strip's coordinates but its top ends belong to the track's, and the two differ by the live button.
+    const [geom, setGeom] = useState<{ left: number; width: number } | null>(null);
+    useLayoutEffect(() => {
+        const w = wrapRef.current, t = trackRef.current;
+        if (!w || !t) return;
+        const wb = w.getBoundingClientRect(), tb = t.getBoundingClientRect();
+        if (!(wb.width > 0)) return;
+        const next = { left: ((tb.left - wb.left) / wb.width) * 100, width: (tb.width / wb.width) * 100 };
+        setGeom((v) => (v && Math.abs(v.left - next.left) < 0.2 && Math.abs(v.width - next.width) < 0.2 ? v : next));
+    });
     const ex = scrubExtent(samples, win);
     if (!ex || !win) return null;   // nothing to scrub: the window already covers the session
     const span = ex.to - ex.from;
-    const runs = segments(samples);
+    const runs = segments(samples, sampleGapMs());
+    // WHERE you grabbed decides what the drag does, which is the vocabulary every timeline control uses:
+    // the middle pans, an edge resizes. Recentring on the cursor wherever it lands is what made the window
+    // impossible to widen once it had been narrowed — every grab was a pan, including a grab on a handle.
     const drag = (e: PointerEvent) => {
         if (e.button !== 0) return;
         const el = e.currentTarget as HTMLElement;
         const box = el.getBoundingClientRect();
         const at = (x: number) => Math.min(1, Math.max(0, (x - box.left) / Math.max(1, box.width)));
+        // The window at the moment of the grab. A resize reads from THIS rather than from the live signal, so
+        // the fixed edge stays fixed instead of drifting as each move rewrites the range it is measured from.
+        const start = { ...win };
+        const zone = scrubZone(ex, at(e.clientX), box.width);
+        // The window the drag LANDED on. While dragging, the box simply follows the pointer; what the
+        // gesture MEANT is decided once, on release — a mid-drag decision would rejoin live the moment you
+        // passed the tail and yank the box out from under you.
+        let landed: { from: number; to: number } | null = null;
+        // A DRAG THAT HAS GONE QUIET IS OVER — but not before it has begun. `buttons === 0` on a move is the
+        // backstop for a `pointerup` that never arrived, and reading it on the FIRST move lets one event with
+        // an unset button field end the gesture before it starts: the window is then settled at wherever the
+        // pointerdown put it, which looks exactly like a drag that did nothing rather than like one that was
+        // cancelled. So it takes one move with the button confirmed down first; a release that genuinely
+        // happened before any move still arrives as `pointerup`, which is the real end and always was.
+        let held = false;
         const move = (ev: PointerEvent) => {
-            if (ev.buttons === 0 && ev.type === "pointermove") return up();
-            zoomRange.value = scrubTo(ex, win, at(ev.clientX));
+            if (ev.buttons === 0 && ev.type === "pointermove") { if (held) return up(); return; }
+            held = true;
+            landed = zone === "from" || zone === "to"
+                ? scrubResize(ex, start, zone, at(ev.clientX))
+                : scrubTo(ex, win, at(ev.clientX));
+            zoomRange.value = landed;
         };
         const up = () => {
             window.removeEventListener("pointermove", move);
             window.removeEventListener("pointerup", up);
-            // Dropped against the right edge → back to live, rather than a pinned window that happens to end
-            // at the tail and then falls behind it as new samples arrive.
-            const z = zoomRange.value;
-            if (z && z.to >= ex.to - TAIL_SLACK_MS) zoomRange.value = null;
+            // What the gesture meant is decided HERE, by pure logic in resource-model.
+            const intent = landed && scrubIntent(ex, landed, TAIL_SLACK_MS);
+            if (!intent) return;
+            if (!intent.live) { zoomRange.value = intent.window; return; }
+            // A width dragged while following is a PREFERENCE, like the one in Settings — the same quantity,
+            // reached the other way — so it is remembered rather than lost on the next mount.
+            resWindowS.value = intent.windowS;
+            chrome.storage.local.set({ [RESWIN_KEY]: intent.windowS });
+            zoomRange.value = null;
+
         };
         move(e);
         window.addEventListener("pointermove", move);
         window.addEventListener("pointerup", up);
     };
     return (
-        <div class="rc-scrub">
-            <div class="rc-scrub-track" onPointerDown={drag}>
+        <div class="rc-scrub" ref={wrapRef}>
+            <div class={`rc-scrub-track${scrubGrab.value ? ` z-${scrubGrab.value}` : ""}`} ref={trackRef} onPointerDown={drag}
+                // Scrolling over the strip PANS the window, never resizes it — the same thing dragging its
+                // middle does, and the same mapping the chart uses, so one gesture means one thing on both
+                // surfaces. Resizing stays a deliberate grab on a handle: a wheel has no way to say which
+                // edge it meant.
+                onWheel={(ev: WheelEvent) => {
+                    const b = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+                    // A PINCH names a CENTRE, not an edge, which is why it belongs here where a wheel-resize
+                    // does not: the objection above is that a wheel cannot say which edge it meant, and a
+                    // pinch does not have to. It is also the surface a person reaches for to change the range,
+                    // since it is the one drawing the range.
+                    if (ev.ctrlKey) {
+                        if (!ev.deltaY) return;
+                        // The strip's x is a fraction of the WHOLE SESSION and linear in time; `scrubPinch`
+                        // anchors on a fraction of the WINDOW. So resolve the instant under the pointer and
+                        // ask where that sits inside the window — which also gives the right degenerate:
+                        // pinching outside the window clamps to its nearer edge rather than teleporting it.
+                        const at = ex.from + ((ev.clientX - b.left) / Math.max(1, b.width)) * (ex.to - ex.from);
+                        const within = (at - win.from) / Math.max(1, win.to - win.from);
+                        settleScrub(scrubPinch({ from: ex.from, to: ex.to }, win, ev.deltaY, within), ex);
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        return;
+                    }
+                    const by = wheelScrubFraction(ev.deltaX, ev.deltaY, ev.deltaMode, b.width);
+                    if (!by) return;
+                    settleScrub(scrubNudge({ from: ex.from, to: ex.to }, win, by), ex);
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                }}
+                onPointerMove={(ev: PointerEvent) => {
+                    // The cursor is the only thing that says a handle is there before you try to use it.
+                    const b = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+                    scrubGrab.value = scrubZone(ex, Math.min(1, Math.max(0, (ev.clientX - b.left) / Math.max(1, b.width))), b.width);
+                }}
+                onPointerLeave={() => (scrubGrab.value = null)}>
                 {runs.map((run, i) => {
                     const a = (run[0].t - ex.from) / span, b = (run.at(-1)!.t - ex.from) / span;
                     return <div class="rc-scrub-run" key={i}
                         style={{ left: `${a * 100}%`, width: `${Math.max(0.4, (b - a) * 100)}%` }} />;
+                })}
+                {/* WHERE the work is, so scrubbing is aimed rather than swept: the strip is the only view of
+                    the whole session, and without this it says which stretch you are looking at but nothing
+                    about which stretch is worth looking at. Carries each event's model colour, the same one
+                    its lane bar and its row already use. Runs are skipped — a run spans everything, so a tick
+                    for it would just be a wash across the strip. */}
+                {/* OVERLAP, not containment. Filtering on the start dropped every event that began before the
+                    first sample — and the panel only samples while it is open, so a run started before you
+                    looked lost exactly its opening steps, leaving the strip blank on the left while the lane
+                    below still drew them. Clamped into the strip instead, so a span that began earlier starts
+                    at the edge rather than disappearing. */}
+                {events.filter((e) => e.kind !== "run" && (e.until ?? e.t) >= ex.from && e.t <= ex.to).map((e, i) => {
+                    // A SPAN, not a tick. Drawing every event at its start made a step that ran for seconds
+                    // look identical to an instant, so a busy stretch read as two hairlines instead of as the
+                    // block of activity it was. A genuine instant (an eviction) still gets a minimum width so
+                    // it stays visible.
+                    const from = Math.max(0, (e.t - ex.from) / span);
+                    const to = Math.min(1, ((e.until ?? e.t) - ex.from) / span);
+                    return (
+                        <i class="rc-scrub-ev" key={i}
+                            style={{ left: `${from * 100}%`, width: `${Math.max(0.35, (to - from) * 100)}%`,
+                                     ...(e.model ? { background: colorFor(e.model) } : {}) }} />
+                    );
                 })}
                 <div class="rc-scrub-win" style={{ left: `${ex.windowFrom * 100}%`,
                     width: `${Math.max(1, (ex.windowTo - ex.windowFrom) * 100)}%` }} />
             </div>
             {/* Says which state you are in, and is the way back. A view that has silently stopped following
                 live is the failure this prevents. */}
+            {/* The icon slot is ALWAYS filled — playing or paused. An icon present in only one state changes
+                the button's width, so the control jumped every time the view left or rejoined live, which is
+                exactly the moment you are looking at it. */}
             <button class={`rc-scrub-live${ex.atTail ? " on" : ""}`} title={ex.atTail ? "Following new samples" : "Jump back to live"}
-                onClick={() => (zoomRange.value = null)}>{ex.atTail ? "live" : "⏸ live"}</button>
+                onClick={() => (zoomRange.value = null)}>
+                <span class="rc-live-icon" aria-hidden="true">{ex.atTail ? "▶" : "⏸"}</span>live
+            </button>
+            {/* Two lines from the window's edges down to the LANE's, so the magnification between them is
+                visible. The strip and the lane are different axes and can never line up — the strip is linear
+                across the whole session with the window as a sub-range, the lane is only that window spread
+                across the full width — and side by side with nothing joining them that reads as two views
+                disagreeing rather than as one being the other, opened out.
+
+                The top ends are in the TRACK's coordinates and the bottom ends in the panel's: the track is
+                inset by the live button, so drawing both in one space put every line beside the box it was
+                supposed to touch. Hence the measurement. And with the lane HIDDEN there is nothing at the
+                other end, so lines pointing into empty space are worse than none. */}
+            {geom && laneEnabled.value && showLane.value ? (
+                <svg class="rc-zoomlink" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">
+                    {/* S-curves, not straight diagonals: each arm leaves the window edge going straight DOWN
+                        and arrives at the lane edge going straight down too. A straight line from a window
+                        sitting mid-strip cuts across at an arbitrary angle and reads as a stray rule; a curve
+                        that starts and ends vertically reads as the selection widening into the view below. */}
+                    <path d={`M ${geom.left + ex.windowFrom * geom.width} 0 C ${geom.left + ex.windowFrom * geom.width} 6, 0 4, 0 10`}
+                        vector-effect="non-scaling-stroke" />
+                    <path d={`M ${geom.left + ex.windowTo * geom.width} 0 C ${geom.left + ex.windowTo * geom.width} 6, 100 4, 100 10`}
+                        vector-effect="non-scaling-stroke" />
+                </svg>
+            ) : null}
         </div>
     );
 }
@@ -579,14 +1884,29 @@ function ScrubStrip({ samples, window: win }: { samples: ResourceSample[]; windo
 /** The crosshair, mirrored into every track: a line where the pointer is, and the instant it names. Reading
  *  one pool against another at a given moment is the whole reason these are small multiples, and doing it by
  *  eye across three plots is exactly what a shared line removes. */
-function Crosshair() {
+function Crosshair({ runs }: { runs?: ResourceSample[][] } = {}) {
     const c = crosshair.value;
     if (!c) return null;
+    if (eventHover.value) return null;   // the rule you are pointing at is the mark — see snapUnder
+    // RECOMPUTED, never the stored fraction, whenever we are snapped to a known sample. The stored one is a
+    // fact about the sample COUNT at the instant the pointer moved; one poll later the same sample sits at a
+    // different fraction, and a line holding the old number drifts off the dots that were recomputed — by a
+    // whole sample's width on a short history (measured at 0.601 against 0.500, one poll apart).
+    const snap = runs ? snapUnder(runs) : null;
+    const frac = snap ? snap.frac : c.frac;
     // Past the middle the label would run off the right edge, so it hangs on the other side of the line.
-    const flip = c.frac > 0.72;
+    const flip = frac > 0.72;
     return (
-        <div class="rc-cross" style={{ left: `${c.frac * 100}%` }}>
-            {c.t != null ? <span class={`rc-cross-t${flip ? " flip" : ""}`}>{clockAt(c.t, c.msPerPx ?? Infinity)}</span> : null}
+        <div class={`rc-cross${snap ? " snapped" : ""}`} style={{ left: `${frac * 100}%` }}>
+            {/* The DOTS are drawn inside each plot, on the band boundaries they are points of — see
+                StackedArea. Nothing here: a mark riding at the pointer's height is the cursor with a circle on
+                it, not a datapoint. */}
+            {/* Snapped, the label names the SAMPLE's own instant rather than the interpolated one under the
+                pointer — the dot is on a measurement, so the clock beside it has to be that measurement's. */}
+            {(() => {
+                const t = snap && runs ? (runs[snap.run]?.[snap.index]?.t ?? c.t) : c.t;
+                return t != null ? <span class={`rc-cross-t${flip ? " flip" : ""}`}>{clockAt(t, c.msPerPx ?? Infinity)}</span> : null;
+            })()}
         </div>
     );
 }
@@ -596,22 +1916,74 @@ function Crosshair() {
  *  name the wrong instant. */
 const trackCrosshair = (runs: ResourceSample[][]) => (e: PointerEvent) => {
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const frac = Math.min(1, Math.max(0, (e.clientX - box.left) / Math.max(1, box.width)));
+    const raw = Math.min(1, Math.max(0, (e.clientX - box.left) / Math.max(1, box.width)));
+    // SNAPPED, when asked: the tooltip already reads a real SAMPLE rather than interpolating between two, so
+    // a line drawn at the pointer instead disagrees with its own number by up to half a sample gap — seven
+    // seconds of daylight at an idle cadence, and a gap that changes width as you move, which reads as drift.
+    // THE RAW POINTER POSITION is what is stored. Snapping is derived at RENDER, never here, and the
+    // difference is the whole behaviour: with the pointer parked and the timeline advancing, "the sample I am
+    // pointing at" becomes a NEWER sample every poll. Resolving it once and holding the answer made the line
+    // and its dots slide left with the data they were pinned to, away from a cursor that had not moved.
+    const frac = raw;
     // How much time ONE PIXEL is worth here, which is what decides whether milliseconds mean anything in the
     // label: zoomed into ten seconds they do, over five minutes of history they are noise.
     const first = runs[0]?.[0]?.t, last = runs.at(-1)?.at(-1)?.t;
     const msPerPx = first != null && last != null && box.width > 0 ? (last - first) / box.width : Infinity;
+    // The TIME comes from the unsnapped position when floating and from the snapped one when not, so the
+    // label always names the instant the line is actually drawn at.
     crosshair.value = { frac, t: timeAtFraction(runs, frac), msPerPx };
 };
 
+/** The hovered EVENT's stretch, shaded on the plot above it. The lane and the chart share an axis and that
+ *  is the whole point of the panel — "did that forty-second turn spend its time loading a model, or was the
+ *  model already there" — but reading a block against the trace meant eyeballing two x positions a couple of
+ *  rows apart. This says it: hover a block, and the memory that was measured WHILE it ran is picked out.
+ *
+ *  Drawn inside its own SEGMENT, exactly like the block is, because the axis is segmented by gaps and is not
+ *  linear in time — a fraction of the whole plot would land somewhere else entirely. Carries the model's
+ *  colour so the shade and the block are visibly the same thing, and disappears with the hover. */
+function HoverSpan({ run, scope }: { run: number; scope: string }) {
+    const h = eventHover.value;
+    if (!h || h.scope !== scope || h.p.run !== run) return null;
+    const { from, to } = h.p;
+    // An INSTANT has no width; the dashed rule already marks it, and a zero-width shade would be a hairline
+    // competing with it.
+    if (!(to > from)) return null;
+    const e = h.p.event;
+    return <div class="rc-hoverspan" style={{ left: `${from * 100}%`, width: `${(to - from) * 100}%`,
+        ...(e.model ? { "--model": colorFor(e.model) } : {}) }} />;
+}
+
 /** The selection, mirrored. Every track draws the same fractions, so a drag on ONE plot is visibly a drag on
  *  the whole chart — the ranges only mean anything compared across pools. */
-function BrushOverlay() {
+function BrushOverlay({ runs }: { runs?: ResourceSample[][] } = {}) {
     const b = brush.value;
     if (!b) return null;
-    const from = Math.min(b.from, b.to), to = Math.max(b.from, b.to);
+    // SNAPPED AT RENDER, from the RAW screen fractions the drag stored — the same rule, and for the same
+    // reason, as the mark (`snapUnder`). A fraction is a fact about the sample COUNT when it was taken, so an
+    // edge resolved once drifts off the dot it was dragged against the moment a poll lands: measured a whole
+    // sample apart (a box edge at 0.600 beside a mark at 0.500). Both now answer "which sample is under this
+    // screen position" from the same data at the same instant, which is the only way they cannot disagree.
+    const at = (f: number) => (snapDot.value && runs ? snapFraction(runs, f)?.frac ?? f : f);
+    const from = Math.min(at(b.from), at(b.to)), to = Math.max(at(b.from), at(b.to));
     return <div class="rc-brush" style={{ left: `${from * 100}%`, width: `${Math.max(0, to - from) * 100}%` }} />;
 }
+
+/**
+ * THE RUNS THE PLOTS ARE CURRENTLY DRAWN FROM.
+ *
+ * A drag outlives the render that started it: `onPointerDown={startBrush(runs)}` closes over the array from
+ * whichever render attached the handler, and every poll after that leaves it one sample staler. The mark
+ * re-resolves per render and the brush did not, which is exactly how they came to name different samples.
+ *
+ * A plain module-level ref rather than a signal, deliberately: it is written DURING render, and a signal
+ * written during render re-enters rendering. Nothing reads it to decide what to DRAW — only the pointer
+ * handlers, which run outside render and want the newest data there is.
+ */
+let liveRuns: ResourceSample[][] | null = null;
+/** Publish the runs a plot is about to draw, for the pointer handlers. Call it from a render, not an effect:
+ *  a drag begun in the same frame must not consult the previous one's data. */
+const noteRuns = (runs: ResourceSample[][]): ResourceSample[][] => (liveRuns = runs);
 
 /** Drag across a plot to select a time range (and release to apply it). The fractions are mapped back to TIME
  *  through the same segmented geometry events are placed with — the axis is not linear, so a range read off
@@ -620,24 +1992,60 @@ const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
     if (e.button !== 0) return;
     const el = (e.currentTarget as HTMLElement);
     const box = el.getBoundingClientRect();
-    const frac = (x: number) => Math.min(1, Math.max(0, (x - box.left) / Math.max(1, box.width)));
-    const start = frac(e.clientX);
+    const raw = (x: number) => Math.min(1, Math.max(0, (x - box.left) / Math.max(1, box.width)));
+    /**
+     * THE SELECTION SNAPS TOO, when snapping is on.
+     *
+     * A box drawn to free fractions beside a crosshair that lands on datapoints is the panel using two
+     * different rules for "where the pointer is" at once, and you can see it: the edges sit between the dots
+     * they were dragged against. It is also the more honest range — the edges are then real MEASUREMENTS
+     * rather than instants interpolated between two polls, which is the same reason the tooltip refuses to
+     * interpolate.
+     *
+     * Resolved live rather than captured, like the crosshair: a drag can outlast a poll, and a fraction is a
+     * fact about the sample count at the instant it was taken.
+     */
+    /** The INSTANT an edge means, read from the FRESHEST runs there are — a drag can outlast several polls,
+     *  and the array this handler closed over stopped being current the moment the first one landed.
+     *  Snapped, it is the sample's own stamp, not the axis position read back through `timeAtFraction`,
+     *  which would interpolate the very value the snap exists to avoid. */
+    const timeAt = (x: number) => {
+        const rs = liveRuns ?? runs;
+        if (snapDot.value) {
+            const s = snapFraction(rs, raw(x));
+            const t = s ? rs[s.run]?.[s.index]?.t : null;
+            if (t != null) return t;
+        }
+        return timeAtFraction(rs, raw(x));
+    };
+    const startX = e.clientX;
+    // RAW screen fractions, snapped where they are DRAWN (BrushOverlay) — see there. Storing the snapped
+    // value here is what made the box a claim about a sample count that had already changed.
+    const start = raw(startX);
     let moved = false;
     brush.value = { from: start, to: start };
     const move = (ev: PointerEvent) => {
         if (ev.buttons === 0) return up(ev);
         moved = true;
-        brush.value = { from: start, to: frac(ev.clientX) };
+        brush.value = { from: start, to: raw(ev.clientX) };
     };
     const up = (ev: PointerEvent) => {
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", up);
-        const end = frac(ev.clientX);
         brush.value = null;
-        // A CLICK is not a selection: without this every click on the chart would zoom to an instant.
-        if (!moved || Math.abs(end - start) < 0.01) return;
-        const a = timeAtFraction(runs, Math.min(start, end)), b = timeAtFraction(runs, Math.max(start, end));
-        if (a != null && b != null && b > a) zoomRange.value = { from: a, to: b };
+        // A CLICK is not a selection: without this every click on the chart would zoom to an instant. Measured
+        // on the RAW positions, because snapped they can collapse onto the same datapoint — which is a real
+        // drag across less than one sample, not a click, and the result guard below is what refuses it.
+        if (!moved || Math.abs(raw(ev.clientX) - raw(startX)) < 0.01) return;
+        const [ta, tb] = [timeAt(startX), timeAt(ev.clientX)];
+        if (ta == null || tb == null) return;
+        const a = Math.min(ta, tb), b = Math.max(ta, tb);
+        // …and neither is a selection that rounds to nothing. The fraction guard above is about the GESTURE
+        // (did the hand move); this is about the RESULT, and they are not the same test: the axis is
+        // segmented, so a perfectly deliberate drag across a densely-sampled stretch can still resolve to a
+        // window of a few milliseconds — which draws as an empty plot and reads as the panel breaking.
+        const win = clampWindow({ from: a, to: b });
+        if (win) zoomRange.value = win;
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -653,12 +2061,20 @@ const hotEvent = signal<string | null>(null);
  *  owner every one of them rendered the same tooltip at once, four deep on a three-track panel. */
 const eventHover = signal<{ p: EventPlacement; scope: string } | null>(null);
 
+/** "local (ollama)" or "cloud" for a model, or "" when the server never told us. Provenance comes from the
+ *  ollama id list; without it an absence is not evidence of anything, so nothing is said. */
+function modelWhere(model: string): string {
+    const ollama = ollamaIds.value;
+    if (!ollama) return "";
+    return ollama.includes(model) ? "local · ollama" : (models.value.includes(model) ? "cloud" : "");
+}
+
 function EventTip({ scope }: { scope: string }) {
-    const h = eventHover.value, at = cursorOn(scope);
+    const h = eventHover.value, at = cursorAt(scope);
     if (!h || !at || h.scope !== scope) return null;
     const e = h.p.event;
     const dur = (e.until ?? e.t) - e.t;
-    const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`);
+    const ms = fmtDur;   // one duration scale for the whole panel — see timestamps.ts
     // Each phase's own duration, from where the previous one ended.
     const { ref, style } = useTipPlacement(at);
     // What getting TO the model cost. Wall MINUS generation is not that on its own: it also contains reading
@@ -666,23 +2082,60 @@ function EventTip({ scope }: { scope: string }) {
     // over-charged the box for something the model did — so prompt eval comes out first, and what is left is
     // queue and network, which really are facts about the box and the moment.
     const promptMs = e.cost?.promptEvalMs ?? null;
+    // …and LOADING comes out too, for exactly the same reason prompt eval does. Our wall clock starts when
+    // the request goes out, so on a call that triggered a load it contains the whole load — measured at 70.8s
+    // on a real box, reported as "+70884ms network", which is a claim about the box's networking that is off
+    // by seventy seconds and points the reader at the wrong thing entirely. The load is drawn as its own
+    // span; what is left after the model's own three durations is queue and network.
+    const loadMs = e.cost?.loadMs ?? null;
     const overheadMs = e.cost?.evalMs != null && e.cost.wallMs != null
-        ? Math.max(0, e.cost.wallMs - e.cost.evalMs - (promptMs ?? 0)) || null : null;
+        ? Math.max(0, e.cost.wallMs - e.cost.evalMs - (promptMs ?? 0) - (loadMs ?? 0)) || null : null;
     const phases = (e.phases || []).map((ph, i) => ({ ...ph, from: i ? e.phases![i - 1].until : e.t }));
+    // The two halves of a load, in bytes: the weights as the server measured them, and the context as the
+    // difference between the whole load and the weights. Null unless the server reported both.
+    const phaseBytes = (kind: string): number | null =>
+        kind === "weights" ? (e.weightsBytes ?? null)
+        : kind === "context" ? (e.loadBytes != null && e.weightsBytes != null ? e.loadBytes - e.weightsBytes : null)
+        : null;
+    // HOW MUCH DID NOT FIT. Null unless the server reported both figures AND they differ by enough to be a
+    // real spill rather than the byte or two of bookkeeping that separates two independently-taken readings.
+    const spilled = e.totalBytes != null && e.loadBytes != null && e.totalBytes - e.loadBytes > SPILL_FLOOR
+        ? e.totalBytes - e.loadBytes : null;
     const first = phases[0];
-    const nameFor = (kind: string) => (kind === "model" ? e.model || "model"
-        : kind === "think" ? "thinking"
-        : kind === "answer" ? "answering"
-        : kind === "call" ? "emitting the tool call"
-        : kind === "wait" ? "waiting for approval"
+    // A TOTAL record over the phase kinds, not a chain ending in a default. The chain shipped `weights` and
+    // `context` — the two halves of a model load — as the word "tool", because an unknown kind fell through
+    // to the tool branch and a fallback cannot tell "no name for this" from "this is a tool". Adding a phase
+    // kind without naming it is now a compile error instead of a plausible wrong label.
+    const PHASE_NAMES: Record<PhaseKind, string | (() => string)> = {
+        model: () => e.model || "model",
+        think: "thinking",
+        answer: "answering",
+        call: "emitting the tool call",
+        wait: "waiting for approval",
+        // The two halves of getting a model ready. NOT "warmup": the second half allocates the KV cache and
+        // the compute buffers, which on a long-context model is most of the footprint — and the halves invert
+        // between a cold load and a warm one, which is the whole reason to draw them apart.
+        weights: "moving the weights in",
+        context: "allocating the context",
         // Said as what it IS rather than as a label: the point of splitting a remote step is that these two
         // are not the tool being slow, and a reader should not have to know that to read the bar.
-        : kind === "net" ? "network, there and back"
-        : kind === "queue" ? "queued before it started"
-        : e.tool || "tool");
+        dispatch: "dispatching the call",
+        net: "network, there and back",
+        queue: "queued before it started",
+        // A sandbox fetching its runtime. Said as the thing it is, because a reader seeing four seconds in
+        // front of a one-line script needs to know it was not the script.
+        boot: "starting the sandbox (cold start)",
+        tool: () => e.tool || "tool",
+    };
+    const nameFor = (kind: string) => {
+        const n = PHASE_NAMES[kind as PhaseKind];
+        // A kind from OUTSIDE the union — the export's phase kinds are `@unstable` and another producer may
+        // time something we have no concept of. Show the kind itself: it is at least true.
+        return typeof n === "function" ? n() : (n ?? kind);
+    };
     // A run span has no phases and no cost of its own — it is the CONTAINER. Saying "click to open this step"
     // under it was wrong twice over: it is not a step, and its ref carries no seq to scroll to.
-    const isRun = e.kind === "run";
+    const isRun = e.kind === "run" || e.kind === "session";
     // An INSTANT has no duration and no cost — it is a moment, and the tooltip built for spans reported it as
     // "0ms" with its label dropped entirely, which said nothing at all about the thing you were pointing at.
     const instant = e.until == null;
@@ -694,10 +2147,19 @@ function EventTip({ scope }: { scope: string }) {
                 {/* WHEN, not how long: that is the only quantity a moment has. */}
                 <span class="rc-tip-size">{hhmmssms(e.t)}</span>
             </div>
-            <div class="rc-tip-note">{e.kind === "evict"
-                ? "left memory here — nothing reports an eviction, so this is the sample where it stopped being resident"
-                : e.kind === "load" ? "appeared here — loaded by something else, or while the panel was closed"
-                : e.label}</div>
+            {/* WHAT THIS EDGE IS, said differently depending on where it CAME FROM.
+                An inferred one is read off `/api/ps` by noticing a model was there and then was not, and the
+                note says so. A REPORTED one came from the server's own event stream, which knows things
+                polling cannot — above all whether an eviction MADE ROOM or was an idle expiry — so it says
+                what the server said. Hardcoding the inference note for both claimed "nothing reports an
+                eviction" about an edge the server had just reported, on exactly the setup the stream exists
+                for, and hid the reason it had gone to the trouble of sending. */}
+            <div class="rc-tip-note">{e.via === "server"
+                ? serverSaid(e.label, e.model)
+                : e.kind === "evict"
+                    ? "left memory here — nothing reports an eviction, so this is the sample where it stopped being resident"
+                    : e.kind === "load" ? "appeared here — loaded by something else, or while the panel was closed"
+                        : e.label}</div>
         </div>
     );
     return (
@@ -707,8 +2169,32 @@ function EventTip({ scope }: { scope: string }) {
                 {/* Each section carries the swatch of the stripe it describes, so the tooltip and the block
                     read as the same three things. */}
                 {first || e.model ? <i class="rc-tip-dot" style={{ background: phaseFill(first?.kind ?? "model", e.model) }} /> : null}
-                <span class="rc-tip-name">{first ? nameFor(first.kind) : isRun ? <>run · {e.model || "agent"}</> : e.model || e.label}</span>
-                <span class="rc-tip-size">{first ? ms(first.until - first.from) : ms(dur)}</span></div>
+                {/* WHAT THIS BLOCK IS, always — its own label ("qwen:32b serving", "loading gemma4:e2b"), not
+                    a hardcoded "run" and not just the model name. The first PHASE used to take this line,
+                    which meant a machine event with no phases said nothing but the model: a serving span and
+                    a load looked identical, and neither said which it was. Phases are rows below now, all of
+                    them, so the header is the identity and the rows are how the time split. */}
+                <span class="rc-tip-name">{e.label || e.model}</span>
+                {/* An ASIDE names its MODEL too, and only it does. Every other span's model is the session's
+                    own — the panel says it in three places already — but an aside runs on the UTILITY model,
+                    and "which model spent this" is most of what a reader wants from a bar they triggered
+                    themselves. Elsewhere it would be the same string repeated on every tooltip. */}
+                {e.kind === "aside" && e.model ? <span class="rc-tip-aside-model">{e.model}</span> : null}
+                <span class="rc-tip-size">{ms(dur)}</span></div>
+            {/* WHICH SESSION this belongs to — only while the lane is showing every session. Scoped, every
+                block on screen is from the one you are reading, and the pill would repeat the same eight
+                characters on every tooltip to say nothing. */}
+            {/* WHERE this model runs. A cloud model occupies no local memory ever, so a span with no matching
+                line in the chart above is expected of it and puzzling for a local one — the tooltip is the
+                place that difference belongs. Omitted when provenance is UNKNOWN (an unpatched server lists
+                no ollama ids), because guessing "cloud" from an absence would be a claim we cannot make. */}
+            {(!laneScoped.value && e.ref?.hash) || (e.model && modelWhere(e.model))
+                ? <div class="rc-tip-chips">
+                    {e.model && modelWhere(e.model)
+                        ? <span class="rc-chip rc-chip-dim">{modelWhere(e.model)}</span> : null}
+                    {!laneScoped.value && e.ref?.hash
+                        ? <span class="rc-chip rc-chip-hash">{e.ref.hash}</span> : null}
+                </div> : null}
             {/* The figures as BADGES, the same little blocks the model rows use. Loose text on two dim lines
                 gave no way to tell which numbers belonged together; a chip is visibly one fact. */}
             {e.cost ? (
@@ -725,33 +2211,63 @@ function EventTip({ scope }: { scope: string }) {
                     {overheadMs != null ? <span class="rc-chip rc-chip-dim">+{Math.round(overheadMs)}ms network</span> : null}
                 </div>
             ) : null}
-            {phases.slice(1).map((ph, i) => (
+            {/* A SEPARATOR IS A BORDER ON THE SECTION IT OPENS, never an element of its own. A standalone rule
+                can end up with nothing on one side of it — first, last, or next to another rule — and then
+                it is a line dividing nothing, which this tooltip produced in three different ways before it
+                was made structurally impossible. A border cannot exist without the content it belongs to. */}
+            {phases.map((ph, i) => (
                 <>
-                    <div class="rc-tip-rule" key={`r${i}`} />
-                    <div class="rc-tip-line" key={i}>
+                    <div class="rc-tip-line sep" key={i}>
                         <i class="rc-tip-dot" style={{ background: phaseFill(ph.kind, e.model) }} />
                         {/* A bare "exec" reads as a label of unknown kind. Saying what it IS — a tool call,
                             with the name as code — is the difference between a word and an identifier. */}
                         <span class="rc-tip-name">{ph.kind === "tool"
                             ? <>tool call: <code>{e.tool}</code></>
                             : nameFor(ph.kind)}</span>
+                        {/* WHAT IT MOVED, beside how long it took. A six-second weights step that moved 17
+                            GiB reads very differently from one that moved 300 MiB, and the duration alone
+                            cannot tell them apart. Only when the server measured it. */}
+                        {phaseBytes(ph.kind) != null
+                            ? <span class="rc-chip rc-chip-dim">{formatBytes(phaseBytes(ph.kind)!)}</span> : null}
                         <span class="rc-tip-size">{ms(ph.until - ph.from)}</span></div>
                 </>
             ))}
             {/* An OPEN span has no end yet, so every duration in this tooltip is "so far". Said once, plainly,
                 because the alternative is a reader taking a number that is still growing as a measurement. */}
             {e.open ? <div class="rc-tip-note">still running — these durations are so far, not final</div> : null}
+            {/* A DEGRADED LOAD, and the only place the fact exists. When the prediction was too low,
+                llama-server re-fits against the memory actually free and runs the remainder on the CPU: the
+                load SUCCEEDS, nothing errors, and the model is simply slow from then on. The difference
+                between what the whole model is and what reached the device is the only signal, so it is
+                stated in words rather than left as two numbers to subtract. */}
+            {spilled != null
+                ? <div class="rc-tip-note warn">{formatBytes(spilled)} of this model did not fit — it is
+                    running on the CPU, which is why it will be slow. No error is raised for this.</div>
+                : null}
+            {/* ONE rule opens the footer, and the PROSE comes first inside it. The notes explain the block —
+                "the model wasn't resident", "continues past what was measured" — and they were sitting under
+                the timestamp, which read as a caption on the clock rather than on the thing. The timestamp is
+                the reference line: quiet, last, and the part you go looking for rather than read.
+
+                One rule, not two: ruling the timestamp on both sides put a divider above and below a single
+                line, which reads as an empty boxed cell rather than as two sections. */}
+            {/* The footer opens with a border on whichever of these actually renders — `sepFirst` hands it to
+                the first one, so the section is separated exactly when it has something in it. */}
+            {(() => {
+                const notes = [
+                    e.kind === "load" ? "the model wasn't resident — this is the wait before a token" : null,
+                    // Said plainly, because a bar in a run's lane that is not part of the run is exactly the
+                    // sort of thing a reader would otherwise spend a minute misattributing.
+                    e.kind === "aside" ? "you triggered this while reading — NOT part of the run, and not counted in its tokens" : null,
+                    h.p.clipped ? "continues past what was measured" : null,
+                    e.ref ? `click to open this ${e.ref.seq != null ? "step" : "run"}` : null,
+                ].filter(Boolean) as string[];
+                return notes.map((n, i) => <div class={`rc-tip-note${i === 0 ? " sep" : ""}`} key={n}>{n}</div>);
+            })()}
             {/* WHEN, exactly. The durations say how long each part took; this is what lets a block be lined up
                 against another one, or against a timestamped log. Milliseconds because an event's own timings
                 are exact — unlike the crosshair, which interpolates between samples. */}
-            <div class="rc-tip-rule" />
-            <div class="rc-tip-when">{hhmmssms(e.t)} → {hhmmssms(e.until ?? e.t)}</div>
-            {/* A rule before the notes: they are about the BLOCK, and without it "click to open this step"
-                read as part of whatever phase happened to be last. */}
-            {(e.kind === "load" || h.p.clipped || e.ref) ? <div class="rc-tip-rule" /> : null}
-            {e.kind === "load" ? <div class="rc-tip-note">the model wasn't resident — this is the wait before a token</div> : null}
-            {h.p.clipped ? <div class="rc-tip-note">continues past what was measured</div> : null}
-            {e.ref ? <div class="rc-tip-note">click to open this {e.ref.seq != null ? "step" : "run"}</div> : null}
+            <div class={`rc-tip-when${(e.kind === "load" || e.kind === "aside" || h.p.clipped || e.ref) ? "" : " sep"}`}>{hhmmssms(e.t)} → {hhmmssms(e.until ?? e.t)}</div>
         </div>
     );
 }
@@ -761,33 +2277,138 @@ function EventTip({ scope }: { scope: string }) {
  *
  *  Spans are bars in the lane; instants (an eviction) are rules. Both are placed inside the run that contains
  *  them, because the axis is segmented by gaps and is not linear in time. */
-function EventLane({ samples, events: all }: { samples: ResourceSample[]; events: ResourceEvent[] }) {
+function EventLane({ samples, events: all, session }: { samples: ResourceSample[]; events: ResourceEvent[]; session: ResourceSample[] }) {
     // Filtered before anything is placed, so the rows pack against what is actually drawn — a hidden kind
     // must not leave a hole where it would have been.
     const filter = laneFilter();
-    const events = useMemo(() => filterEvents(all, filter), [all, filter.hash, filter.hidden]);
+    // The model set is part of the filter now, so it has to be part of the KEY — a memo that ignores it holds
+    // the previous session's answer, which is the exact bug being fixed, just one render later.
+    const evKey = (filter.models || []).join("\u0000");
+    const events = useMemo(() => filterEvents(all, filter), [all, filter.hash, filter.scope, filter.hidden, evKey]);
     const counts = useMemo(() => countByKind(all), [all]);
-    const runs = useMemo(() => segments(samples).filter((r) => r.length > 1), [samples]);
+    const runs = noteRuns(useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]));
     const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
     // The window admits a poll's worth past the last sample, for the same reason placeEvents does.
-    const placed = useMemo(() => placeEvents(runs, eventsIn(events, from, to + VRAM_POLL_MS), VRAM_POLL_MS),
+    const placed = useMemo(() => placeEvents(runs, eventsIn(events, from, to + sampleGraceMs()), sampleGraceMs()),
         [runs, events, from, to]);
     // The CONTROL still shows when everything is filtered out — otherwise hiding the last kind hides the way
     // to bring it back.
     if (!runs.length || (!placed.length && !all.length)) return null;
     const spans = placed.filter((p) => p.event.until != null);
     const rows = laneRows(spans);
+    const [pulsed, setPulsed] = useState<string | null>(null);
     const lit = lineageOf(events, eventHover.value?.p.event.id);
+    // The same focus, carried into the transcript: the log dims every step outside the hovered lineage, so a
+    // bar and the rows it is about light up together. Derived from the lineage rather than from the one
+    // hovered event, so a sub-call still points at the step that spawned it.
+    useEffect(() => {
+        // The log belongs to ONE session. A hovered block from another run shares no step with it, so
+        // "everything outside the lineage" was the whole transcript — hovering run B greyed out run A's log
+        // entirely. The lane still dims its OWN bars by lineage; that is within one surface and correct.
+        const hovered = eventHover.value?.p.event;
+        const open = view.value.name === "detail" ? view.value.hash : null;
+        const mine = !!hovered?.ref && !!open && hovered.ref.hash === open;
+        const on = lit.size > 0 && mine;
+        laneLitSeqs.value = on
+            ? new Set(events.filter((e) => e.id && lit.has(e.id) && e.ref?.seq != null).map((e) => e.ref!.seq as number))
+            : null;
+        // The transcript holds more than steps — the task, the answer, a mid-run steer — and none of them is
+        // in any lineage, so focusing has to reach them too or the log only half-dims and the effect reads as
+        // broken rather than as scoped. Driven by an attribute on <html> and pure CSS, the same way the code
+        // wrap and gutter prefs are: it is a display MODE, and the alternative is subscribing every message
+        // component to a signal that changes on hover.
+        // A generation that produced no tool call IS the answer, so hovering it must leave the answer lit —
+        // dimming the very thing the bar points at is the failure this whole affordance exists to avoid. It
+        // is the one message the lane can identify: every other message belongs to no lineage at all.
+        const answerLit = on && events.some((e) => e.id && lit.has(e.id) && e.kind === "gen" && e.ref?.seq == null);
+        try {
+            const el = document.documentElement;
+            if (on) el.setAttribute("data-lane-focus", answerLit ? "answer" : "step");
+            else el.removeAttribute("data-lane-focus");
+        } catch { /* no document in this realm */ }
+    }, [lit, events]);
     const open = (e: ResourceEvent) => {
         if (!e.ref) return;
         view.value = { name: "detail", hash: e.ref.hash };
-        scrollToStepSeq(e.ref.seq, e.ref.hash);
+        // A generation with no step seq IS the answer — it is the only event in a run that points at a
+        // message rather than a step, so it needs the other destination or the click lands nowhere.
+        if (e.ref.seq == null) scrollToAnswer(e.ref.hash);
+        else scrollToStepSeq(e.ref.seq, e.ref.hash);
+    };
+    // Double-click scopes the panel to the block: the shortest path from "something happened there" to
+    // reading it at a scale where it is legible. Every block, not only a run — zooming to one tool call is
+    // the same gesture as zooming to the turn that contains it. The single click still navigates, since
+    // going to the step and framing the time around it are the same intent from two sides.
+    // Widened to cover a few SAMPLES, not just a few milliseconds: scoping to a 400ms tool call on a box
+    // polled every two seconds produced a window with one sample in it, and everything here needs a segment
+    // of at least two — so the tracks, the lane and the strip all drew nothing and the panel looked like it
+    // had disappeared.
+    // Measured against the WHOLE session, not `samples` — those are already windowed, so widening against
+    // them would ask "does the new window fit inside the old one", which is the wrong question and answers
+    // yes right up until the panel is empty.
+    // …and SAY which block you landed on. The window has to be wider than a short block (it needs samples in
+    // it to draw at all), so the answer to "which one did I zoom to" is otherwise "somewhere in here".
+    const scope = (e: ResourceEvent) => {
+        zoomRange.value = scopeAround(session, e.t, e.until, Date.now());
+        if (e.id) { setPulsed(e.id); setTimeout(() => setPulsed((v) => (v === e.id ? null : v)), 1400); }
+    };
+    /** DRAG THE LANE'S OWN EDGE. Pixels, not a ratio: the lane's content is rows of a fixed 9px, so "six rows
+     *  of events" is the thing being chosen and it must not change meaning when the panel is resized. Floored
+     *  at one row — a lane dragged to nothing is not a smaller lane, it is a lost one, and the grip would go
+     *  with it. Capped so it cannot swallow the charts it exists to be read against. */
+    const onLaneGrab = (e: PointerEvent) => {
+        e.preventDefault();
+        const el = e.currentTarget as HTMLElement;
+        const box = el.previousElementSibling as HTMLElement | null;
+        if (!box) return;
+        const startY = e.clientY, startH = box.getBoundingClientRect().height;
+        try { el.setPointerCapture(e.pointerId); } catch { /* older engines */ }
+        const move = (ev: PointerEvent) => {
+            laneH.value = Math.max(12, Math.min(400, Math.round(startH + (ev.clientY - startY))));
+        };
+        const up = () => {
+            el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up);
+            try { chrome.storage.local.set({ [LANEH_KEY]: laneH.value }); } catch { /* opaque origin */ }
+        };
+        el.addEventListener("pointermove", move); el.addEventListener("pointerup", up);
+    };
+    // Double-click restores the default, the way every other learned size here does — a drag you cannot undo
+    // is a setting with no reset.
+    const resetLane = () => {
+        laneH.value = LANE_H_DEFAULT;
+        try { chrome.storage.local.set({ [LANEH_KEY]: LANE_H_DEFAULT }); } catch { /* opaque origin */ }
     };
     return (
         <div class="rc-lane" onPointerLeave={() => { eventHover.value = null; hoverAt.value = null; hoverModel.value = null; }}>
-            {rows.map((row, ri) => (
+            {/* Rows carry the SAME drag-select the plot has. The lane shares the plot's axis, so a range
+                picked out here means exactly what one picked out above does — and having to go up to the
+                chart to select the stretch you are looking at down here reads as the lane being a picture
+                rather than a control. A short press is not a drag (see startBrush), so a bar's own click and
+                double-click still work. */}
+            {/* COLLAPSED by default — the chip row below is the control. The lane is CONTENT (what happened);
+                the scrub strip above it is NAVIGATION (where you are), which is why only this half folds and
+                the strip stays. Folding the pair together also made the panel jump in height the first time
+                anything ran, which is the thing that kept moving surfaces out from under the pointer. */}
+            {/* THE ROWS SCROLL INSIDE THEIR OWN BOX. The lane RE-PACKS as the window moves — a step entering
+                the view can add a row, and a row is a claim that two bars overlap — so its natural height
+                changes constantly. Unbounded inside a fixed-height panel, every row it gained came off the
+                CHARTS above it: they visibly shrank while you were dragging the panel's edge, which is the
+                one moment you are looking at them. Bounded, the lane scrolls and nothing above it moves.
+                Its own edge is draggable, so how much of each you want is still yours to say.
+
+                A FIXED height, not a max: a cap still lets the box grow and shrink with its content, which is
+                the jumping, just with a ceiling on it. Fixed, the lane occupies exactly what it was given
+                whatever happens inside it, and everything above it is nailed down. */}
+            {showLane.value ? <div class="rc-lane-rows" style={{ height: `${laneH.value}px` }}>{rows.map((row, ri) => (
                 <div class="rc-lane-row" key={ri}
+                    onPointerDown={startBrush(runs)}
                     onPointerMove={trackCursor("lane")}>
+                    {/* The SAME selection box the tracks draw. The lane already took the drag — it shares
+                        `startBrush` — but showed nothing while you made it, so the gesture worked and looked
+                        like it had not: you released and the window jumped with no sign of what you had
+                        chosen. Every surface on this axis draws the same fractions, which is the point of
+                        the axis being shared. */}
+                    <BrushOverlay runs={runs} />
                     {runs.map((run, i) => (
                         <div class="rc-lane-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                             {row.filter((p) => p.run === i).map((p, k) => {
@@ -797,29 +2418,76 @@ function EventLane({ samples, events: all }: { samples: ResourceSample[]; events
                                 // model, the human deciding, the tool. Drawn as gradient stops rather than
                                 // separate elements, so it still hovers and clicks as the single step it is.
                                 const total = (e.until ?? e.t) - e.t;
+                                // A LOAD keeps its stripe for the whole span — it is a wait, and a flat fill
+                                // would read as work. Its two halves are drawn as an OVERLAY below instead,
+                                // for exactly the reason the approval wait is: a gradient stop takes a
+                                // COLOUR, and a stripe is a pattern. Feeding the phase fills into
+                                // phaseGradient produced `linear-gradient(..., repeating-linear-gradient(...)
+                                // 0% 8%, ...)`, which is not valid CSS at all: the whole declaration was
+                                // dropped and the divider silently never appeared.
                                 const bg = e.kind === "load" ? loadStripes(e.model)
                                     : e.phases && total > 0 ? phaseGradient(e.phases, e.t, total, e.model) : undefined;
                                 // Hovering one event dims everything outside its LINEAGE: a sub-call only means
                                 // something next to the step that spawned it and the run that contains it.
                                 const away = lit.size > 0 && !(e.id && lit.has(e.id));
                                 return (
-                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}${e.open ? " open" : ""}`} key={k}
+                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}${e.open ? " open" : ""}${e.id && e.id === pulsed ? " pulse" : ""}`} key={k}
                                         style={{ left: `${p.from * 100}%`, width: `${w}%`,
-                                                 ...(e.model && !bg ? { background: colorFor(e.model) } : {}),
+                                                 // A `run` is the CONTAINER every other block sits inside, so it is
+                                                 // drawn as a pattern rather than a solid fill (see .rc-ev-run) —
+                                                 // otherwise the widest, most prominent bar in the lane reads as the
+                                                 // heaviest piece of work in it. The pattern is built from `--model`
+                                                 // below, so it keeps the same identity; an inline `background`
+                                                 // shorthand here would reset the background-image that draws it.
+                                                 ...(e.model && !bg && e.kind !== "run" ? { background: colorFor(e.model) } : {}),
                                                  // A model's events carry ITS colour — the same one its row and
                                                  // its band already use, so the lane reads against the list
                                                  // without a legend of its own.
                                                  ...(e.model ? { "--model": colorFor(e.model) } : {}),
                                                  ...(bg ? { background: bg } : {}) }}
                                         title=""
+                                        // Which model this block belongs to, readable from OUTSIDE the
+                                        // colour. The identity is otherwise only expressed as a CSS custom
+                                        // property, so "is the lane drawing one model or two" — the question
+                                        // behind the two-spellings bug — could only be answered by eye.
+                                        data-model={e.model ?? undefined}
                                         onPointerEnter={(ev: PointerEvent) => { eventHover.value = { p, scope: "lane" }; hoverModel.value = e.model ?? null; trackCursor("lane")(ev); }}
-                                        onClick={() => open(e)} />
+                                        onClick={() => open(e)}
+                                        onDblClick={() => scope(e)}>
+                                        {/* A person at the approval gate is the step's wall time but none of
+                                            the machine's work, so it is STRIPED for the same reason a model
+                                            load is: a wide flat block reads as a lot of work having happened.
+                                            Drawn over the flat neutral rather than into the gradient, because
+                                            a gradient stop takes a colour and a stripe is a pattern. */}
+                                        {e.phases && total > 0
+                                            ? phaseSpans(e.phases, e.t, total)
+                                                .filter((ph) => (ph.kind === "wait" || ph.kind === "context") && ph.end > ph.start)
+                                                .map((ph, wi) => (
+                                                    // `context` is the second half of a LOAD: the KV cache and
+                                                    // compute buffers being allocated, which is where most of a
+                                                    // long-context model's footprint actually lands. Denser than
+                                                    // the weights half it follows, so the boundary reads as a
+                                                    // change of texture rather than needing a drawn line.
+                                                    <i class={ph.kind === "context" ? "rc-ev-ctxphase" : "rc-ev-wait"} key={wi}
+                                                        style={{ left: `${ph.start * 100}%`, width: `${(ph.end - ph.start) * 100}%` }} />
+                                                ))
+                                            : null}
+                                    </button>
                                 );
                             })}
                         </div>
                     ))}
                 </div>
-            ))}
+            ))}</div> : null}
+            {/* Its own grip, under the rows and above the header — a lane too short to show what happened is
+                as bad as one that eats the charts, and which you want depends entirely on the run. */}
+            {/* ITS EDGE IS THE HANDLE, and the edge is a real rule. A centred pill said "drag me" in a place
+                where a pill means a drawer, and the lane is not one — while the box it bounds had no visible
+                bottom at all, so the events floated in the panel with nothing saying where their space ended.
+                One line does both jobs: it closes the box, and it is what you grab. Same pairing the editor
+                and its divider already use — the border IS the line, the strip over it is the grab target. */}
+            {showLane.value ? <div class="rc-lane-grip" role="separator" aria-orientation="horizontal"
+                aria-label="Drag to resize the event lane" onPointerDown={onLaneGrab} onDblClick={resetLane} /> : null}
             <EventTip scope="lane" />
             <LaneFilterBar counts={counts} shown={events.length} total={all.length} />
         </div>
@@ -831,64 +2499,209 @@ function EventLane({ samples, events: all }: { samples: ResourceSample[]; events
 function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number>; shown: number; total: number }) {
     const hidden = new Set(laneHidden.value);
     const KINDS: { kind: ResourceEvent["kind"]; label: string }[] = [
-        { kind: "run", label: "runs" }, { kind: "tool", label: "steps" }, { kind: "gen", label: "calls" },
+        { kind: "run", label: "runs" }, { kind: "session", label: "sessions" },
+        { kind: "tool", label: "steps" }, { kind: "gen", label: "calls" },
         { kind: "embed", label: "sub-calls" }, { kind: "load", label: "loads" }, { kind: "evict", label: "evictions" },
+        // What the BOX was doing, as opposed to what this browser asked for — a serving span covers traffic
+        // from any client, which is exactly why it is worth drawing and why it is separately hideable.
+        { kind: "serve", label: "serving" },
     ];
     const toggle = (k: string) => {
         const next = hidden.has(k) ? laneHidden.value.filter((x) => x !== k) : [...laneHidden.value, k];
         laneHidden.value = next;
         try { chrome.storage.local.set({ [LANE_HIDDEN_KEY]: next }); } catch { /* opaque origin */ }
     };
-    const inDetail = view.value.name === "detail";
+    const open = showLane.value;
+    // What is in there, on the header — the thing that makes the row worth opening. Counts only, no filter
+    // state: a filter is about what is DRAWN, and nothing is drawn while it is closed. And ONLY while it is
+    // closed: open, the chips directly below say the same counts in the same order, so the header was
+    // reciting the row under it.
+    const summary = open ? "" : KINDS.filter((k) => counts[k.kind]).map((k) => `${counts[k.kind]} ${k.label}`).join(" · ");
+    const setOpen = (v: boolean) => {
+        showLane.value = v;
+        try { chrome.storage.local.set({ [SECTIONS_KEY]: { laneOn: laneEnabled.value, laneOpen: v, models: showModels.value } }); } catch { /* opaque origin */ }
+    };
     return (
-        <div class="rc-lane-filter">
-            {KINDS.filter((k) => counts[k.kind]).map((k) => (
-                <button class={`rc-lane-chip${hidden.has(k.kind) ? " off" : ""}`} key={k.kind}
-                    title={hidden.has(k.kind) ? `Show ${k.label}` : `Hide ${k.label}`}
-                    onClick={() => toggle(k.kind)}>{k.label} {counts[k.kind]}</button>
-            ))}
-            {/* Scope follows what you are READING, so it is only offered where "this run" names something. */}
-            {inDetail ? (
-                <button class={`rc-lane-chip scope${laneScoped.value ? " on" : ""}`}
-                    title={laneScoped.value ? "Showing only this run" : "Show only this run"}
-                    onClick={() => (laneScoped.value = !laneScoped.value)}>this run</button>
-            ) : null}
-            {shown < total ? <span class="rc-lane-count">{shown}/{total}</span> : null}
+        // The SAME disclosure the two sections directly below it use (`agent options`, `other models on the
+        // box`), rather than a bespoke chevron in a box beside a row of chips — which read as unrelated
+        // chrome and gave no hint that the chips and the fold were the same control.
+        //
+        // ONE LINE, open or closed. The chips used to be the disclosure's BODY, so opening the lane spent a
+        // whole row on them — under a header that was already reciting the same counts in the same order, in
+        // a panel whose entire problem is vertical space. Closed, the header says what is in there (that is
+        // what makes it worth opening); open, the same counts BECOME the filters, in the same place. Nothing
+        // is repeated and nothing costs a row.
+        <Disclosure label="events" note={summary} open={open} onToggle={setOpen} aside={open ? (
+            <div class="rc-lane-filter">
+                {KINDS.filter((k) => counts[k.kind]).map((k) => (
+                    <button class={`rc-lane-chip${hidden.has(k.kind) ? " off" : ""}`} key={k.kind}
+                        title={hidden.has(k.kind) ? `Show ${k.label}` : `Hide ${k.label}`}
+                        onClick={() => toggle(k.kind)}>{k.label} {counts[k.kind]}</button>
+                ))}
+                {/* The scope switch used to live here, as one more chip in a row of chips — which said it was
+                    a filter over KINDS like the others, when it decides the window, the model list and the
+                    lane together. It is in the panel HEADER now (`ScopeSwitch`). */}
+                {shown < total ? <span class="rc-lane-count">{shown}/{total}</span> : null}
+            </div>
+        ) : undefined} />
+    );
+}
+
+/** SESSION or FULL — the one switch that decides what the whole panel is about. It drives three things at
+ *  once and that is the point: the time window (the session's own stretch, or the rolling one), which model
+ *  rows are listed, and which events the lane draws. As a chip in the filter row it read as one more
+ *  kind-filter beside "loads 4"; here, beside the view picker, it reads as what it is.
+ *
+ *  Offered in the OVERVIEW too, where nothing is open to scope to — because scoping is the default, so it is
+ *  the only thing that explains an empty lane and the only way out of it. */
+export function ScopeSwitch() {
+    const inDetail = view.value.name === "detail";
+    const set = (scoped: boolean) => {
+        laneScoped.value = scoped;
+        try { chrome.storage.local.set({ [LANE_SCOPE_KEY]: scoped }); } catch { /* opaque origin */ }
+    };
+    return (
+        <div class="rc-scope" role="group" aria-label="Scope">
+            <button class={`tt rc-scope-seg${laneScoped.value ? " on" : ""}`} aria-pressed={laneScoped.value} onClick={() => set(true)}>
+                session
+                <span class="tt-pop wrap" role="tooltip">{inDetail
+                    ? "The window, the model list and the lane all follow the session you are reading."
+                    : "Scoped to the open session — nothing is open, so no run events are drawn. Switch to full for the whole box."}</span>
+            </button>
+            <button class={`tt rc-scope-seg${laneScoped.value ? "" : " on"}`} aria-pressed={!laneScoped.value} onClick={() => set(false)}>
+                full
+                <span class="tt-pop wrap left" role="tooltip">The whole box: every session's events, every resident model, and the rolling time window from Settings.</span>
+            </button>
         </div>
     );
 }
 
+/** THE CHART itself: one track per memory pool on a shared segmented axis, the scrub strip above and the
+ *  event lane below. Drawing only — placement, packing, bands and windows are the pure functions in
+ *  resource-model.ts, which is what makes the picture testable without a browser. */
 export function ResourceTracks({ samples, capacity, hidden, layout, events = [] }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null; events?: ResourceEvent[] }) {
     // Capacity is fetched once per open and arrives AFTER the first ps poll, so the earliest samples carry
-    // none. Backfill the current one rather than dropping them: capacity is slow-moving (a card doesn't change
-    // size), and the alternative is a panel that renders nothing for the first two seconds every time.
+    // none — see the note on `filled` below.
+    //
     // The visible window as an explicit RANGE, so the scrub strip can say where it sits in the session and
     // move it. A zoom (or a scrub) REPLACES the rolling window: you asked for a stretch, so the panel stops
     // sliding away from it.
-    const window_ = useMemo(() => {
-        const z = zoomRange.value;
-        if (z) return z;
-        const secs = resWindowS.value;
-        if (!secs) return null;                    // "everything" — no window to draw
-        const now = Date.now();
-        return { from: now - secs * 1000, to: now };
-    }, [resWindowS.value, zoomRange.value, samples.length]);
-    const windowed = useMemo(
-        () => (window_ ? samples.filter((s) => s.t >= window_.from && s.t <= window_.to) : samples),
-        [samples, window_]);
+    // SCOPED to a session: the axis is that session's own stretch. One switch drives the lane, the model list
+    // and the window, so the three cannot say different things about what "this session" means — the list
+    // naming one model while the chart drew ten minutes of a shared box either side of it is exactly the
+    // disagreement this collapses. Null in the overview, where there is no session to be the extent of.
+    //
+    // Its OWN memo, and the rolling window below keeps the key it always had. The separation is load-bearing
+    // rather than tidy: the rolling window closes over `Date.now()`, so every extra recomputation walks its
+    // right edge further ahead of the last sample — and the scrub drag reads that window to decide what a
+    // resize means, so widening its key by one dependency moving at a different cadence made a drag on the
+    // right handle snap back to live instead of resizing, and emptied the strip outright in another test.
+    // Here the value is a stable `null` whenever nothing is scoped, so it cannot disturb the memo below.
+    // (`events.length`, never `events`: `timeline()` rebuilds that array every render.)
+    const scopedWindow = useMemo(
+        () => (laneScoped.value ? sessionWindow(events, scopedHash(), Date.now()) : null),
+        [laneScoped.value, scopedHash(), events.length, samples.length]);
+    const window_ = useMemo(
+        () => chartWindow(zoomRange.value, scopedWindow, resWindowS.value, Date.now()),
+        [resWindowS.value, zoomRange.value, samples.length, scopedWindow]);
+    // The samples in the window, plus the nearest either side when the window is too narrow to draw itself —
+    // see `windowSamples`. Zooming inside one long event used to leave fewer than two samples and an empty
+    // chart, which reads as the panel having broken rather than as a window between two polls.
+    const windowed = useMemo(() => windowSamples(samples, window_), [samples, window_]);
+    // KNOWN BUG, diagnosed and deliberately still here: this backfills the CURRENT capacity into a sample
+    // that has none, and a capacity carries FREE BYTES — which is what usage is computed from. So a sample
+    // taken before `/api/info` first answered is drawn with TODAY's usage and MOVES as the present moves: the
+    // history changes shape behind you, a flat opening becoming a valley the moment something loads.
+    //
+    // Three fixes were tried and each was worse. Dropping such samples, or not recording them, blanks the
+    // panel whenever the window holds only one or two — which is every fresh open, and which broke twenty-odd
+    // tests that assert on exactly that frame. Deriving their free from what they saw resident assumes
+    // everything unattributed is free, erasing a card holding memory nobody claims. The real fix is a sample
+    // that can say its usage is UNKNOWN and render as a GAP in the line — the same treatment this panel
+    // already gives time nobody measured — which the band model cannot express yet.
     const filled = useMemo(() => windowed.map((s) => (s.capacity ? s : { ...s, capacity })), [windowed, capacity]);
     const latest = filled.at(-1);
     if (!latest?.capacity) return null;
     const tracks = layout && layout.length ? layout : (presetsFor(latest)[0]?.tracks ?? []);
+    // Hiding a model hides its EVENTS too. The dot on a model row takes it out of the totals and the bands,
+    // and leaving its lane blocks and its ticks behind left the panel saying two different things about the
+    // same model at once — one surface showing it gone, the other still charging time to it.
+    const shown = useMemo(
+        () => (hidden.size ? events.filter((e) => !(e.model && hidden.has(e.model))) : events),
+        [events, hidden]);
+    // The lane's KIND chips have to reach the strip's ticks too. Filtering only inside the lane meant hiding
+    // (say) loads left their ticks on the strip — the same "two surfaces disagreeing about one run" the
+    // model-hiding fix was about. The lane still receives the unfiltered list, because its chips count from
+    // it: a filter you have to toggle blindly to discover what it hides is worse than none.
+    const stripFilter = laneFilter();
+    const stripEvents = useMemo(() => filterEvents(shown, stripFilter),
+        [shown, stripFilter.hash, stripFilter.scope, stripFilter.hidden]);
+    // Wheeling over the CHART moves the window along the session — the plot is a viewport onto a timeline, so
+    // a scroll gesture on it should scroll the timeline. It nudges by a fraction of the window's own width, so
+    // one notch travels the same visible distance whether you are looking at ten seconds or at everything.
+    //
+    // It only means anything once there is a window to move: with no zoom and no rolling window the plot
+    // already shows the whole session, and `scrubExtent` returns null there. In that case the event is left
+    // alone so the panel's wheel-through still scrolls the transcript underneath.
+    const wheelScrub = (e: WheelEvent) => {
+        const w = window_;
+        if (!w) return;
+        const ex = scrubExtent(samples, w);
+        if (!ex) return;
+        const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        // A TRACKPAD PINCH arrives as a wheel carrying ctrlKey — the platform's own way of telling a zoom from
+        // a scroll, which is also why it must be swallowed: unhandled, the browser zooms the whole panel.
+        // Sideways slides the window, pinch changes its width, which is what both gestures already mean.
+        if (e.ctrlKey) {
+            if (!e.deltaY) return;
+            const at = box.width > 0 ? (e.clientX - box.left) / box.width : 0.5;
+            settleScrub(scrubPinch({ from: ex.from, to: ex.to }, w, e.deltaY, at), ex);
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+        }
+        const by = wheelScrubFraction(e.deltaX, e.deltaY, e.deltaMode, box.width);
+        if (!by) return;
+        settleScrub(scrubNudge({ from: ex.from, to: ex.to }, w, by), ex);
+        e.preventDefault();
+        e.stopPropagation();
+    };
+    // OVER THE LANE, only a HORIZONTAL wheel scrubs. The plot can take the gesture in either direction
+    // because it has nothing of its own to scroll; the lane's rows do, so a vertical wheel there belongs to
+    // them — and `wheelScrubFraction` reads whichever delta is larger, which would have swallowed it. Sideways
+    // is the direction that means "move along the timeline" anyway, and it is what the lane was missing: the
+    // bars are a window onto the session, and there was no way to push that window along from the half of the
+    // panel you are actually looking at.
+    const wheelLane = (e: WheelEvent) => {
+        // A PINCH is vertical by nature, so it has to be let through before the axis test — otherwise zooming
+        // works on the plot and silently does nothing an inch below it, on the surface sharing its axis.
+        if (!e.ctrlKey && Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;   // theirs: the rows scroll
+        wheelScrub(e);
+    };
     return (
         <>
-            <div class="rc">
-                {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} events={events} />)}
+            <div class="rc" onWheel={wheelScrub}>
+                {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} events={shown} />)}
             </div>
-            {/* Below every track, sharing their x-axis: what happened, against what was in memory while it did. */}
-            <EventLane samples={filled} events={events} />
-            {/* And below THAT: where this window sits in the whole session. */}
-            <ScrubStrip samples={samples} window={window_} />
+            {/* Directly under the tracks: where this window sits in the whole session. It sits ABOVE the lane
+                rather than below it because the lane RE-PACKS as the window moves — a step entering the view
+                can add a row — and anything below a control whose height changes shifts out from under the
+                pointer mid-drag. The strip is the thing being dragged, so it goes where nothing moves it. */}
+            <ScrubStrip samples={samples} window={window_} events={stripEvents} />
+            {/* And below that, sharing the tracks' x-axis: what happened, against what memory was doing. The
+                connector says the second is the first opened out — see ZoomLink. */}
+            {/* Drawn unless the track editor's "event lane" is off — `laneEnabled` is that switch and takes
+                the whole section with it, header included. `showLane` is only the fold: it collapses the ROWS
+                and leaves the chip row as the control that brings them back. One signal used to do both, so
+                unchecking the setting merely collapsed the section and left its header sitting there. */}
+            {/* The LANE takes the same wheel gesture as the plot — it is the same axis, so scrolling it means
+                the same thing, and the lane is the half you are usually looking at when you want to move
+                along. Its rows scroll VERTICALLY inside their own box; horizontally there is nothing to
+                scroll, because the lane is a window onto the session rather than a wide strip, and moving
+                that window is exactly what this does. */}
+            {laneEnabled.value
+                ? <div onWheel={wheelLane}><EventLane samples={filled} events={shown} session={samples} /></div>
+                : null}
         </>
     );
 }

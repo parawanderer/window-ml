@@ -3,7 +3,7 @@
 // (sessionMap + the rev signal): agent runs, chat turns, cross-page replay ordering (the orphan
 // queue), mid-run steers, live streaming. It also owns the lazy utility-model TITLE + per-task BLOCK
 // summaries and the run-block segmentation (buildRunBlocks). Pure logic, no JSX — extracted from app.tsx.
-import { sessionMap, rev, config, sidebarOpen, backendError } from "./store";
+import { sessionMap, rev, config, sidebarOpen, backendError, unreachableIfNothingSaysOtherwise } from "./store";
 import type { Session, Status, Turn, AgentStep } from "./store";
 import type { MlDebugEvent } from "../contract";
 import { isBackendUnreachable } from "../contract";
@@ -38,6 +38,9 @@ function drainOrphans(hash: string): void {
     for (const oev of q) onDebug(oev);
 }
 
+/** THE REDUCER: one `__mlDebug` event → the session model the whole panel reads. Must CONVERGE whatever
+ *  the order — a cross-page run's replay and its live fan arrive interleaved — so it patches by `seq`
+ *  rather than appending, and never recreates or re-seals a session it has already seen. */
 export function onDebug(ev: MlDebugEvent): void {
     // --- ml.agent runs (own session kind) ---
     if (ev.kind === "agent") {
@@ -134,8 +137,11 @@ export function onDebug(ev: MlDebugEvent): void {
         s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined; s.cancelled = !!ev.cancelled;
         // Backend health: a run that couldn't reach the box flags the offline banner/card; any run that
         // finished (or failed for another reason) means the box answered → clear it.
-        if (ev.error && isBackendUnreachable(ev.error)) backendError.value = ev.error;
-        else if (!ev.error) backendError.value = "";
+        // Through the shared gate, never straight from the message: a request can fail with the network-level
+        // shape while the box is answering `/api/ps` in under a millisecond, which is what a large model
+        // loading cold looks like from here (the request produces no bytes at all for a minute).
+        if (ev.error) backendError.value = unreachableIfNothingSaysOtherwise(ev.error);
+        else backendError.value = "";
         // REPLACE (not merge): each turn's result carries THIS turn's answer media, so a new round that
         // designates nothing CLEARS the old answer (resets to 0) — the card never shows a stale prior answer.
         s.answerMedia = (ev.answerMedia && ev.answerMedia.length) ? ev.answerMedia : undefined;   // HUD card only
@@ -208,6 +214,9 @@ export function onDebug(ev: MlDebugEvent): void {
         if (!s) {
             s = {
                 hash: ev.session.hash, model: ev.request.model, tag: ev.save ? "saved" : "session",
+                // What this session IS, when it is not an ordinary chat — `ml.embed()` reports through the
+                // chat events but is not a chat, and every surface that names it should say so.
+                ...(ev.sessionKind ? { kind: ev.sessionKind } : {}),
                 createdTs: ev.ts, lastTs: ev.ts, status: "pending", config: ev.config, turns: [],
             };
             sessionMap.set(ev.session.hash, s);
@@ -232,7 +241,7 @@ export function onDebug(ev: MlDebugEvent): void {
             : { ...prev, error: ev.error, status: "err", ts: ev.ts };
         // Backend health (mirror the agent-result path): a chat that couldn't reach the box flags offline; a
         // successful chat-result clears it.
-        if (ev.kind === "chat-error" && isBackendUnreachable(ev.error)) backendError.value = ev.error;
+        if (ev.kind === "chat-error") backendError.value = unreachableIfNothingSaysOtherwise(ev.error || "");
         else if (ev.kind === "chat-result") backendError.value = "";
         s.turns = s.turns.map((x, idx) => idx === i ? updated : x);
         s.lastTs = ev.ts; s.status = rollupStatus(s);
@@ -256,6 +265,7 @@ function cleanTitle(raw: string): string {
     return truncate(line.replace(/^["'`*]+|["'`*.]+$/g, "").trim(), 60);
 }
 
+/** Ask the utility model for a short session title, once per session, best-effort. */
 export function genTitle(hash: string, prompt: string): void {
     const messages = [
         { role: "system", content: "You write terse 3-6 word titles for a request. Reply with ONLY the title — no quotes, no trailing punctuation, no preamble." },
@@ -278,7 +288,9 @@ export function genTitle(hash: string, prompt: string): void {
 // with the UTILITY model (cached). The user's own prompt is the instant fallback until/unless a summary lands.
 export const blockSummaries = new Map<string, string>();   // `${hash}:${blockIndex}` → the one-line summary
 const blockSummaryTried = new Set<string>();
+/** One turn-block's identity within a run — `<hash>:<index>`. */
 export const blockKey = (hash: string, i: number): string => `${hash}:${i}`;
+/** A one-line gloss of what a whole turn did, via the utility model — the folded label on a turn block. */
 export function ensureBlockSummary(hash: string, i: number, prompt: string, result: string): void {
     if (!config.value.utilityModel.trim()) return;   // no utility model → the prompt fallback simply stays
     const key = blockKey(hash, i);
@@ -338,7 +350,9 @@ export function maybeGenerateTitles(): void {
     // main model — a user who hasn't set one hasn't asked for auto-titles.
     if (!sidebarOpen.value || !config.value.autoTitles || !config.value.utilityModel.trim()) return;
     for (const s of sessionMap.values()) {
-        if (s.title || titleTried.has(s.hash)) continue;
+        // An EMBED session is named by its invocation (`ml.embed() · N calls`), not summarised: its "prompt"
+        // is a description WE wrote, so a model asked to summarise it would be summarising our own text.
+        if (s.title || titleTried.has(s.hash) || s.kind === "embed") continue;
         // A CHAT session titles off its first completed turn; an AGENT run has no chat turns, so it titles off
         // its `task` (known from agent-start) — same utility-model summariser, so both surfaces read alike.
         const first = s.turns[0];
@@ -357,6 +371,8 @@ export function maybeGenerateTitles(): void {
 // `localStep` is the PER-TURN step shown in the pill — maxSteps is a per-turn budget, so a follow-up run
 // counts 1/N again, not 18/20. (Falls back to `step` for a pre-localStep event.)
 export interface AgentTurnGroup { step: number; localStep: number; thought?: string; reasoning?: string | null; tools: AgentStep[]; }
+/** Split a run's steps into TURNS — one model call and the tool calls it decided on all share a `step`.
+ *  `steps.length` over-counts turns, which is why the count comes from here and not from the array. */
 export function groupTurns(steps: AgentStep[]): AgentTurnGroup[] {
     const byStep = new Map<number, AgentTurnGroup>();
     const order: number[] = [];

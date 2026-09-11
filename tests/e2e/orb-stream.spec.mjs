@@ -40,13 +40,21 @@ test("HUD orb (streaming): a live token count ticks in the corner-card orb durin
 
         // Poll the orb caption for a live token count while the reasoning streams (bounded well under the ~5s
         // reasoning window). Capture the text we saw for a helpful failure message.
+        // The count lives in `.card-orb-live`, its OWN span beside the label — the pill ellipsizes on width
+        // and with the two concatenated it was the number that got cut. Read the whole orb so this asserts
+        // the count is on screen, then check separately that it is in the span that cannot be truncated.
         let seen = "";
         for (let i = 0; i < 120; i++) {
-            const txt = await cardFrame.locator(".card-orb-label").first().textContent().catch(() => null);
+            const txt = await cardFrame.locator(".card-orb").first().textContent().catch(() => null);
             if (txt) { seen = txt; if (/~\d[\d.]*k? tok/.test(txt)) break; }
             await new Promise((r) => setTimeout(r, 70));
         }
         expect(seen, `orb caption should carry a live token count; last saw: "${seen}"`).toMatch(/~\d[\d.]*k? tok/);
+        const live = cardFrame.locator(".card-orb-live").first();
+        await expect(live).toHaveText(/~\d[\d.]*k? tok/);
+        // It must not shrink: whatever the label does, the readout is the part still telling you something.
+        expect(await live.evaluate((el) => getComputedStyle(el).flexShrink)).toBe("0");
+        expect(await cardFrame.locator(".card-orb-label").first().textContent()).not.toMatch(/tok/);
     } finally {
         await ext.close();
         fake.stop?.();

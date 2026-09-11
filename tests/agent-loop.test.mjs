@@ -430,13 +430,18 @@ test("pending In render: a STREAMING run pre-renders the In for a GATED call too
     assert.equal(start.renderIn?.text, "1+1");
 });
 
-test("pending In render: streaming OFF → no pre-render round-trip (unchanged behaviour)", async () => {
+// REPLACES an earlier test that asserted the opposite — that a non-streaming run skipped the pre-render to
+// save a page round-trip. The saving was real and the reasoning was wrong: it tied the pretty In to how the
+// MODEL's output arrives, when what keeps a pending row on screen is how long the TOOL takes. A python call
+// pays a multi-second cold start before a line of it runs, streamed or not, and it showed raw JSON args for
+// all of it. One postMessage against a tool call that already round-trips to run is the right trade.
+test("pending In render: asked for on EVERY run, streaming or not", async () => {
     const { deps, calls } = makeDeps({ turns: [toolCall("myTool", {}), reply("done")] });
     let asked = 0;
     deps.renderFor = async () => { asked++; return { type: "code", text: "x", lang: "javascript" }; };
     await runAgentLoop("x", { tools: [{ name: "myTool" }] }, deps);   // no `stream`
-    assert.equal(asked, 0, "no extra page round-trip when not streaming");
-    assert.equal(calls.emits.find(e => e.pending && e.tool === "myTool").renderIn, undefined);
+    assert.equal(asked, 1, "the pre-render is asked for without `stream`");
+    assert.equal(calls.emits.find(e => e.pending && e.tool === "myTool").renderIn?.text, "x");
 });
 
 // Stream timestamps belong to the EXECUTOR: a tool whose work happens elsewhere (python_exec's worker, a
@@ -456,4 +461,35 @@ test("stream marks: the executor's own timestamp is recorded verbatim; otherwise
     assert.equal(marks[0][1], 111111, "the executor's timestamp is kept verbatim, not re-stamped on arrival");
     assert.equal(marks[1][0], "first\n".length, "the next chunk is anchored where it starts");
     assert.ok(marks[1][1] > 1e12, "a producer that supplies none falls back to the fan's clock");
+});
+
+// A PENDING step's pretty In used to be gated on `stream`, on the reasoning that only a streaming run leaves
+// the row on screen long enough to matter. That conflated two clocks: streaming is about how the MODEL's
+// output arrives, while how long a TOOL sits pending is about the tool — a python call pays a multi-second
+// cold start before a line of it runs, streamed or not. The symptom was a running python_exec showing raw
+// JSON args where the finished one shows a notebook cell.
+test("a pending step carries the tool's In render even when the run is NOT streaming", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("python_exec", { code: "1+1" }), reply("done")] });
+    deps.renderFor = async (name, args) => ({ type: "python-in", mode: "script", code: String(args.code) });
+    await runAgentLoop("x", { tools: [{ name: "python_exec" }] }, deps);
+    const pend = calls.emits.find((e) => e.pending && e.tool === "python_exec");
+    assert.ok(pend, "a pending START is emitted");
+    assert.deepEqual(pend.renderIn, { type: "python-in", mode: "script", code: "1+1" },
+        "the pending row renders the code cell, not raw args — with no `stream` option set");
+});
+
+test("a host with no renderFor still emits the pending step, just on its raw args", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("python_exec", { code: "1+1" }), reply("done")] });
+    await runAgentLoop("x", { tools: [{ name: "python_exec" }] }, deps);
+    const pend = calls.emits.find((e) => e.pending && e.tool === "python_exec");
+    assert.ok(pend, "still emitted");
+    assert.equal(pend.renderIn, undefined, "no descriptor invented on a host that cannot compute one");
+});
+
+test("a renderFor that THROWS leaves the step pending on raw args rather than failing the run", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("python_exec", { code: "1+1" }), reply("done")] });
+    deps.renderFor = async () => { throw new Error("render blew up"); };
+    const res = await runAgentLoop("x", { tools: [{ name: "python_exec" }] }, deps);
+    assert.equal(calls.emits.find((e) => e.pending)?.renderIn, undefined);
+    assert.equal(res.summary, "done", "the run completed regardless");
 });

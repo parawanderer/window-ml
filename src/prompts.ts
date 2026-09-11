@@ -91,7 +91,7 @@ export const ANSWER_CLAUSE =
     "`remove` an item by index, or `clear` and redo. If the task is to FIND / LOCATE an element, designate " +
     "it here so the real node reaches the caller. You can also curate it from `exec` for free via " +
     "`ml.answer` (`.add(el | \"text\")`, `.remove(i)`, `.clear()`, `.length`) — no approval.";
-import { PIPE_CMDS } from "./text-pipe";
+import { PIPE_CMDS, PIPE_SYNTAX } from "./text-pipe";
 
 export const TOOLTOKENS_CLAUSE =
     "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a HANDLE to one tool result, and it has TWO uses: showing that " +
@@ -123,6 +123,23 @@ export const TOOLTOKENS_CLAUSE =
     "forces the literal text. E.g. `![derivative](@tool:<id>:out)` typesets a sympy result on its own.";
 // The other half of tool tokens: a token is not only a CITATION for the answer, it is a POINTER the model can
 // read back mid-run. Kept in the same clause because it is only true when tool tokens are on.
+/** THE PIPE DIALECT, once. It was spelled out verbatim in four `pipe` PARAMETERS (fetch_url, navigate,
+ *  sampleText, dereference) at ~270 tokens each, which is ~800 tokens of pure repetition on every run that
+ *  wires any two of them.
+ *
+ *  Note what this is NOT fixing. `PIPE_CMDS` was already the single source for all four, so they could not
+ *  DRIFT — and single-sourcing is about correctness, not size: the string was still serialised into the
+ *  model's context four times over. Two different problems, and only one of them was solved.
+ *
+ *  Appended when the toolset holds ANY tool with a `pipe` parameter, which is what makes the parameters safe
+ *  to shorten: the tool and the clause arrive together, so the reference always resolves and no tool becomes
+ *  unusable read cold. Detected from the SCHEMA rather than a list of names, so a new tool that takes a
+ *  `pipe` is covered without anyone remembering to add it here. */
+export const PIPE_CLAUSE =
+    "\n\nTHE PIPE DIALECT. Several tools take a `pipe` that reduces text BEFORE it reaches you — read only " +
+    "the lines you need instead of the whole document. It is the same dialect everywhere it appears. " +
+    PIPE_SYNTAX;
+
 export const DEREF_CLAUSE =
     "\n\nNAME WHAT YOU KEEP. `token` can be a SHORT LABEL instead of `true` — `token: \"the pricing table\"` — " +
     "and that label is for YOU, not the user: it is how you'll recognise the handle later, and you can find a " +

@@ -1,0 +1,3499 @@
+{
+  "captured": "2026-09-09",
+  "box": "mlbox",
+  "model": "granite4.1:3b",
+  "num_ctx": 8192,
+  "note": "Real capture, not a fixture. ps_samples polled at ~40 ms; frames are the /api/events stream. Marks label the scenario boundaries.",
+  "marks": [
+    {
+      "t": 0,
+      "label": "unload"
+    },
+    {
+      "t": 4.032,
+      "label": "cold load + prefill that MISSES the cache"
+    },
+    {
+      "t": 8.654,
+      "label": "prefill that HITS the cache (same prompt again)"
+    },
+    {
+      "t": 11.864,
+      "label": "idle, still holding the last task's counts"
+    }
+  ],
+  "ps_samples": [
+    {
+      "t": 6.257,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0
+      }
+    },
+    {
+      "t": 6.301,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "prefill",
+        "slots": 1,
+        "slots_busy": 1,
+        "prompt_tokens": 2048,
+        "prompt_tokens_done": 1024
+      }
+    },
+    {
+      "t": 6.346,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "prefill",
+        "slots": 1,
+        "slots_busy": 1,
+        "prompt_tokens": 2048,
+        "prompt_tokens_done": 1024
+      }
+    },
+    {
+      "t": 6.39,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "prefill",
+        "slots": 1,
+        "slots_busy": 1,
+        "prompt_tokens": 4098,
+        "prompt_tokens_done": 4096
+      }
+    },
+    {
+      "t": 6.433,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "decode",
+        "slots": 1,
+        "slots_busy": 1,
+        "prompt_tokens": 4104,
+        "prompt_tokens_done": 4098,
+        "decoded": 6
+      }
+    },
+    {
+      "t": 6.477,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "decode",
+        "slots": 1,
+        "slots_busy": 1,
+        "prompt_tokens": 4119,
+        "prompt_tokens_done": 4098,
+        "decoded": 21
+      }
+    },
+    {
+      "t": 6.521,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "decode",
+        "slots": 1,
+        "slots_busy": 1,
+        "prompt_tokens": 4134,
+        "prompt_tokens_done": 4098,
+        "decoded": 36
+      }
+    },
+    {
+      "t": 6.564,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "decode",
+        "slots": 1,
+        "slots_busy": 1,
+        "prompt_tokens": 4149,
+        "prompt_tokens_done": 4098,
+        "decoded": 51
+      }
+    },
+    {
+      "t": 6.607,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "decode",
+        "slots": 1,
+        "slots_busy": 1,
+        "prompt_tokens": 4165,
+        "prompt_tokens_done": 4098,
+        "decoded": 67
+      }
+    },
+    {
+      "t": 6.651,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 6.694,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 6.739,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 6.785,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 6.83,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 6.874,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 6.92,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 6.965,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.011,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.056,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.1,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.144,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.19,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.235,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.278,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.323,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.367,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.41,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.454,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.5,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.546,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.593,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.639,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.685,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.731,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.777,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.821,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.867,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.913,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 7.959,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.005,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.05,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.096,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.142,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.188,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.234,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.28,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.326,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.371,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.416,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.462,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.509,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.554,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.6,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.646,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.689,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4177
+      }
+    },
+    {
+      "t": 8.733,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "decode",
+        "slots": 1,
+        "slots_busy": 1,
+        "prompt_tokens": 4114,
+        "prompt_tokens_done": 1,
+        "prompt_tokens_cached": 4097,
+        "decoded": 16
+      }
+    },
+    {
+      "t": 8.777,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "decode",
+        "slots": 1,
+        "slots_busy": 1,
+        "prompt_tokens": 4129,
+        "prompt_tokens_done": 1,
+        "prompt_tokens_cached": 4097,
+        "decoded": 31
+      }
+    },
+    {
+      "t": 8.82,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "decode",
+        "slots": 1,
+        "slots_busy": 1,
+        "prompt_tokens": 4144,
+        "prompt_tokens_done": 1,
+        "prompt_tokens_cached": 4097,
+        "decoded": 46
+      }
+    },
+    {
+      "t": 8.863,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": true,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 8.906,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 8.95,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 8.993,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.038,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.083,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.128,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.174,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.219,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.265,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.311,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.356,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.401,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.447,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.492,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.535,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.579,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.623,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.666,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.71,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.756,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.801,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.847,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.893,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.939,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 9.983,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.028,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.074,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.121,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.166,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.212,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.258,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.302,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.346,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.39,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.433,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.479,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.525,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.57,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.616,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.662,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.708,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.754,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.799,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.845,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.891,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.937,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 10.981,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.026,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.072,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.118,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.164,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.21,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.255,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.301,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.346,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.39,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.436,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.482,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.528,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.574,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.62,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.666,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.713,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.759,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.805,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.85,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.896,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.942,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 11.988,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.032,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.076,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.122,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.168,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.215,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.261,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.306,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.351,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.395,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.441,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.486,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.533,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.579,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.625,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.672,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.718,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.764,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.81,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.856,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.902,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.948,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 12.994,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.038,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.084,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.13,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.176,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.221,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.266,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.311,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.356,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.402,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.446,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.49,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.534,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.58,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.626,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.672,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.718,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.764,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.809,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    },
+    {
+      "t": 13.855,
+      "name": "granite4.1:3b",
+      "state": null,
+      "busy": null,
+      "context_length": 8192,
+      "activity": {
+        "phase": "idle",
+        "slots": 1,
+        "slots_busy": 0,
+        "prompt_tokens": 4156
+      }
+    }
+  ],
+  "frames": [
+    {
+      "t": -0.997,
+      "frame": {
+        "v": 1,
+        "kind": "hello",
+        "t": 0,
+        "serverTime": "2026-09-09T10:31:51.75130126Z",
+        "box": "bd891d52cba7",
+        "retainedMs": 10941,
+        "backfilled": 0
+      }
+    },
+    {
+      "t": 5.468,
+      "frame": {
+        "v": 1,
+        "kind": "estimate",
+        "t": 6464,
+        "backfilled": null,
+        "model": "registry.ollama.ai/library/granite4.1:3b",
+        "estimate": {
+          "predicted": 2915943054,
+          "predicted_for_load": 3721249422,
+          "source": "calibration",
+          "num_ctx": 8192,
+          "num_gpu": 1,
+          "num_batch": 1024,
+          "metadata_complete": true,
+          "breakdown": {
+            "weights": 2095933440,
+            "kv_cache": 671088640,
+            "compute": 0
+          }
+        },
+        "ps": {
+          "models": []
+        }
+      }
+    },
+    {
+      "t": 5.468,
+      "frame": {
+        "v": 1,
+        "kind": "load.start",
+        "t": 6464,
+        "backfilled": null,
+        "model": "registry.ollama.ai/library/granite4.1:3b"
+      }
+    },
+    {
+      "t": 5.878,
+      "frame": {
+        "v": 1,
+        "kind": "load.weights",
+        "t": 6873,
+        "backfilled": null,
+        "model": "registry.ollama.ai/library/granite4.1:3b",
+        "duration_ms": 408,
+        "size_vram": 2095935651,
+        "memory": {
+          "weights": 2095935651,
+          "kv_cache": 0,
+          "compute": 148918763
+        },
+        "weights_on_disk": 2099501664,
+        "ps": {
+          "models": []
+        }
+      }
+    },
+    {
+      "t": 6.232,
+      "frame": {
+        "v": 1,
+        "kind": "busy.start",
+        "t": 7229,
+        "backfilled": null,
+        "model": "registry.ollama.ai/library/granite4.1:3b",
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "state": "loading",
+              "model": "granite4.1:3b",
+              "size": 0,
+              "digest": "",
+              "details": {
+                "parent_model": "",
+                "format": "",
+                "family": "",
+                "families": null,
+                "parameter_size": "",
+                "quantization_level": ""
+              },
+              "expires_at": "0001-01-01T00:00:00Z",
+              "size_vram": 0,
+              "context_length": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "t": 6.233,
+      "frame": {
+        "v": 1,
+        "kind": "load.complete",
+        "t": 7230,
+        "backfilled": null,
+        "model": "registry.ollama.ai/library/granite4.1:3b",
+        "duration_ms": 764,
+        "weights_ms": 408,
+        "context_ms": 356,
+        "size_vram": 2915943054,
+        "memory": {
+          "weights": 2095935651,
+          "kv_cache": 671088640,
+          "compute": 148918763
+        },
+        "weights_on_disk": 2099501664,
+        "placement": {
+          "num_layers": 41,
+          "devices": [
+            {
+              "device": "CUDA0",
+              "first_layer": 0,
+              "last_layer": 40,
+              "layers": 41
+            }
+          ]
+        },
+        "size_total": 2915943054,
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "busy": true,
+              "model": "granite4.1:3b",
+              "size": 2915943054,
+              "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+              "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "granite",
+                "families": [
+                  "granite"
+                ],
+                "parameter_size": "3.4B",
+                "quantization_level": "Q4_K_M"
+              },
+              "expires_at": "2026-09-09T10:36:58.981877852Z",
+              "size_vram": 2915943054,
+              "context_length": 8192,
+              "memory": {
+                "weights": 2095935651,
+                "kv_cache": 671088640,
+                "compute": 148918763
+              },
+              "weights_on_disk": 2099501664,
+              "placement": {
+                "num_layers": 41,
+                "devices": [
+                  {
+                    "device": "CUDA0",
+                    "first_layer": 0,
+                    "last_layer": 40,
+                    "layers": 41
+                  }
+                ]
+              },
+              "activity": {
+                "phase": "idle",
+                "slots": 1,
+                "slots_busy": 0
+              },
+              "gpus": [
+                {
+                  "gpu_id": "0",
+                  "runner": "CUDA",
+                  "size_vram": 2915943054,
+                  "memory": {
+                    "weights": 2095935651,
+                    "kv_cache": 671088640,
+                    "compute": 148918763
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "t": 6.346,
+      "frame": {
+        "v": 1,
+        "kind": "sample",
+        "t": 7343,
+        "backfilled": null,
+        "ps": {
+          "models": []
+        },
+        "info": {
+          "version": "0.0.0",
+          "models": {
+            "store": "/root/.ollama/models",
+            "count": 70,
+            "filesystem_used": 1359174418249,
+            "running": 1,
+            "vram_used": 2915943054
+          },
+          "compute": {
+            "system_compute": {
+              "cpu_cores": 32,
+              "total_memory": 130142785536,
+              "free_memory": 129790627840,
+              "free_swap": 5147615232
+            },
+            "supported_gpus": [
+              {
+                "gpu_id": "0",
+                "name": "CUDA0",
+                "total_memory": 101972967424,
+                "processes": [
+                  {
+                    "pid": 253,
+                    "used_memory": 3600809984
+                  }
+                ],
+                "physical_memory": 102641958912,
+                "free_memory": 98362916864,
+                "compute": "12.0",
+                "driver": "13.2",
+                "runner": "CUDA"
+              },
+              {
+                "gpu_id": "1",
+                "name": "CUDA1",
+                "total_memory": 101972967424,
+                "physical_memory": 102641958912,
+                "free_memory": 101972377600,
+                "compute": "12.0",
+                "driver": "13.2",
+                "runner": "CUDA"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "t": 6.347,
+      "frame": {
+        "v": 1,
+        "kind": "sample",
+        "t": 7344,
+        "backfilled": null,
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "busy": true,
+              "model": "granite4.1:3b",
+              "size": 2915943054,
+              "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+              "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "granite",
+                "families": [
+                  "granite"
+                ],
+                "parameter_size": "3.4B",
+                "quantization_level": "Q4_K_M"
+              },
+              "expires_at": "2026-09-09T10:36:59.094357076Z",
+              "size_vram": 2915943054,
+              "context_length": 8192,
+              "memory": {
+                "weights": 2095935651,
+                "kv_cache": 671088640,
+                "compute": 148918763
+              },
+              "weights_on_disk": 2099501664,
+              "placement": {
+                "num_layers": 41,
+                "devices": [
+                  {
+                    "device": "CUDA0",
+                    "first_layer": 0,
+                    "last_layer": 40,
+                    "layers": 41
+                  }
+                ]
+              },
+              "activity": {
+                "phase": "prefill",
+                "slots": 1,
+                "slots_busy": 1,
+                "prompt_tokens": 4096,
+                "prompt_tokens_done": 3072
+              },
+              "gpus": [
+                {
+                  "gpu_id": "0",
+                  "runner": "CUDA",
+                  "size_vram": 2915943054,
+                  "memory": {
+                    "weights": 2095935651,
+                    "kv_cache": 671088640,
+                    "compute": 148918763
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "t": 6.654,
+      "frame": {
+        "v": 1,
+        "kind": "busy.end",
+        "t": 7650,
+        "backfilled": null,
+        "model": "registry.ollama.ai/library/granite4.1:3b",
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "busy": true,
+              "model": "granite4.1:3b",
+              "size": 2915943054,
+              "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+              "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "granite",
+                "families": [
+                  "granite"
+                ],
+                "parameter_size": "3.4B",
+                "quantization_level": "Q4_K_M"
+              },
+              "expires_at": "2026-09-09T10:36:59.399455801Z",
+              "size_vram": 2915943054,
+              "context_length": 8192,
+              "memory": {
+                "weights": 2095935651,
+                "kv_cache": 671088640,
+                "compute": 148918763
+              },
+              "weights_on_disk": 2099501664,
+              "placement": {
+                "num_layers": 41,
+                "devices": [
+                  {
+                    "device": "CUDA0",
+                    "first_layer": 0,
+                    "last_layer": 40,
+                    "layers": 41
+                  }
+                ]
+              },
+              "activity": {
+                "phase": "idle",
+                "slots": 1,
+                "slots_busy": 0,
+                "prompt_tokens": 4177
+              },
+              "gpus": [
+                {
+                  "gpu_id": "0",
+                  "runner": "CUDA",
+                  "size_vram": 2915943054,
+                  "memory": {
+                    "weights": 2095935651,
+                    "kv_cache": 671088640,
+                    "compute": 148918763
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "t": 6.654,
+      "frame": {
+        "v": 1,
+        "kind": "expires",
+        "t": 7650,
+        "backfilled": null,
+        "model": "registry.ollama.ai/library/granite4.1:3b",
+        "expires_at": "2026-09-09T10:36:59.401901747Z",
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "busy": true,
+              "model": "granite4.1:3b",
+              "size": 2915943054,
+              "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+              "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "granite",
+                "families": [
+                  "granite"
+                ],
+                "parameter_size": "3.4B",
+                "quantization_level": "Q4_K_M"
+              },
+              "expires_at": "2026-09-09T10:36:59.399455801Z",
+              "size_vram": 2915943054,
+              "context_length": 8192,
+              "memory": {
+                "weights": 2095935651,
+                "kv_cache": 671088640,
+                "compute": 148918763
+              },
+              "weights_on_disk": 2099501664,
+              "placement": {
+                "num_layers": 41,
+                "devices": [
+                  {
+                    "device": "CUDA0",
+                    "first_layer": 0,
+                    "last_layer": 40,
+                    "layers": 41
+                  }
+                ]
+              },
+              "activity": {
+                "phase": "idle",
+                "slots": 1,
+                "slots_busy": 0,
+                "prompt_tokens": 4177
+              },
+              "gpus": [
+                {
+                  "gpu_id": "0",
+                  "runner": "CUDA",
+                  "size_vram": 2915943054,
+                  "memory": {
+                    "weights": 2095935651,
+                    "kv_cache": 671088640,
+                    "compute": 148918763
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "t": 6.655,
+      "frame": {
+        "v": 1,
+        "kind": "sample",
+        "t": 7651,
+        "backfilled": null,
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "busy": true,
+              "model": "granite4.1:3b",
+              "size": 2915943054,
+              "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+              "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "granite",
+                "families": [
+                  "granite"
+                ],
+                "parameter_size": "3.4B",
+                "quantization_level": "Q4_K_M"
+              },
+              "expires_at": "2026-09-09T10:36:59.399455801Z",
+              "size_vram": 2915943054,
+              "context_length": 8192,
+              "memory": {
+                "weights": 2095935651,
+                "kv_cache": 671088640,
+                "compute": 148918763
+              },
+              "weights_on_disk": 2099501664,
+              "placement": {
+                "num_layers": 41,
+                "devices": [
+                  {
+                    "device": "CUDA0",
+                    "first_layer": 0,
+                    "last_layer": 40,
+                    "layers": 41
+                  }
+                ]
+              },
+              "activity": {
+                "phase": "idle",
+                "slots": 1,
+                "slots_busy": 0,
+                "prompt_tokens": 4177
+              },
+              "gpus": [
+                {
+                  "gpu_id": "0",
+                  "runner": "CUDA",
+                  "size_vram": 2915943054,
+                  "memory": {
+                    "weights": 2095935651,
+                    "kv_cache": 671088640,
+                    "compute": 148918763
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "info": {
+          "version": "0.0.0",
+          "models": {
+            "store": "/root/.ollama/models",
+            "count": 70,
+            "filesystem_used": 1359174418249,
+            "running": 1,
+            "vram_used": 2915943054
+          },
+          "compute": {
+            "system_compute": {
+              "cpu_cores": 32,
+              "total_memory": 130142785536,
+              "free_memory": 129782890496,
+              "free_swap": 5147615232
+            },
+            "supported_gpus": [
+              {
+                "gpu_id": "0",
+                "name": "CUDA0",
+                "total_memory": 101972967424,
+                "processes": [
+                  {
+                    "pid": 253,
+                    "used_memory": 3600809984
+                  }
+                ],
+                "physical_memory": 102641958912,
+                "free_memory": 98362916864,
+                "compute": "12.0",
+                "driver": "13.2",
+                "runner": "CUDA"
+              },
+              {
+                "gpu_id": "1",
+                "name": "CUDA1",
+                "total_memory": 101972967424,
+                "physical_memory": 102641958912,
+                "free_memory": 101972377600,
+                "compute": "12.0",
+                "driver": "13.2",
+                "runner": "CUDA"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "t": 6.656,
+      "frame": {
+        "v": 1,
+        "kind": "sample",
+        "t": 7652,
+        "backfilled": null,
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "model": "granite4.1:3b",
+              "size": 2915943054,
+              "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+              "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "granite",
+                "families": [
+                  "granite"
+                ],
+                "parameter_size": "3.4B",
+                "quantization_level": "Q4_K_M"
+              },
+              "expires_at": "2026-09-09T10:36:59.401901747Z",
+              "size_vram": 2915943054,
+              "context_length": 8192,
+              "memory": {
+                "weights": 2095935651,
+                "kv_cache": 671088640,
+                "compute": 148918763
+              },
+              "weights_on_disk": 2099501664,
+              "placement": {
+                "num_layers": 41,
+                "devices": [
+                  {
+                    "device": "CUDA0",
+                    "first_layer": 0,
+                    "last_layer": 40,
+                    "layers": 41
+                  }
+                ]
+              },
+              "activity": {
+                "phase": "idle",
+                "slots": 1,
+                "slots_busy": 0,
+                "prompt_tokens": 4177
+              },
+              "gpus": [
+                {
+                  "gpu_id": "0",
+                  "runner": "CUDA",
+                  "size_vram": 2915943054,
+                  "memory": {
+                    "weights": 2095935651,
+                    "kv_cache": 671088640,
+                    "compute": 148918763
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "t": 7.659,
+      "frame": {
+        "v": 1,
+        "kind": "sample",
+        "t": 8655,
+        "backfilled": null,
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "model": "granite4.1:3b",
+              "size": 2915943054,
+              "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+              "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "granite",
+                "families": [
+                  "granite"
+                ],
+                "parameter_size": "3.4B",
+                "quantization_level": "Q4_K_M"
+              },
+              "expires_at": "2026-09-09T10:36:59.401901747Z",
+              "size_vram": 2915943054,
+              "context_length": 8192,
+              "memory": {
+                "weights": 2095935651,
+                "kv_cache": 671088640,
+                "compute": 148918763
+              },
+              "weights_on_disk": 2099501664,
+              "placement": {
+                "num_layers": 41,
+                "devices": [
+                  {
+                    "device": "CUDA0",
+                    "first_layer": 0,
+                    "last_layer": 40,
+                    "layers": 41
+                  }
+                ]
+              },
+              "activity": {
+                "phase": "idle",
+                "slots": 1,
+                "slots_busy": 0,
+                "prompt_tokens": 4177
+              },
+              "gpus": [
+                {
+                  "gpu_id": "0",
+                  "runner": "CUDA",
+                  "size_vram": 2915943054,
+                  "memory": {
+                    "weights": 2095935651,
+                    "kv_cache": 671088640,
+                    "compute": 148918763
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "info": {
+          "version": "0.0.0",
+          "models": {
+            "store": "/root/.ollama/models",
+            "count": 70,
+            "filesystem_used": 1359174418249,
+            "running": 1,
+            "vram_used": 2915943054
+          },
+          "compute": {
+            "system_compute": {
+              "cpu_cores": 32,
+              "total_memory": 130142785536,
+              "free_memory": 129782841344,
+              "free_swap": 5147615232
+            },
+            "supported_gpus": [
+              {
+                "gpu_id": "0",
+                "name": "CUDA0",
+                "total_memory": 101972967424,
+                "processes": [
+                  {
+                    "pid": 253,
+                    "used_memory": 3600809984
+                  }
+                ],
+                "physical_memory": 102641958912,
+                "free_memory": 98362916864,
+                "compute": "12.0",
+                "driver": "13.2",
+                "runner": "CUDA"
+              },
+              {
+                "gpu_id": "1",
+                "name": "CUDA1",
+                "total_memory": 101972967424,
+                "physical_memory": 102641958912,
+                "free_memory": 101972377600,
+                "compute": "12.0",
+                "driver": "13.2",
+                "runner": "CUDA"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "t": 8.661,
+      "frame": {
+        "v": 1,
+        "kind": "busy.start",
+        "t": 9657,
+        "backfilled": null,
+        "model": "registry.ollama.ai/library/granite4.1:3b",
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "model": "granite4.1:3b",
+              "size": 2915943054,
+              "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+              "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "granite",
+                "families": [
+                  "granite"
+                ],
+                "parameter_size": "3.4B",
+                "quantization_level": "Q4_K_M"
+              },
+              "expires_at": "2026-09-09T10:36:59.401901747Z",
+              "size_vram": 2915943054,
+              "context_length": 8192,
+              "memory": {
+                "weights": 2095935651,
+                "kv_cache": 671088640,
+                "compute": 148918763
+              },
+              "weights_on_disk": 2099501664,
+              "placement": {
+                "num_layers": 41,
+                "devices": [
+                  {
+                    "device": "CUDA0",
+                    "first_layer": 0,
+                    "last_layer": 40,
+                    "layers": 41
+                  }
+                ]
+              },
+              "activity": {
+                "phase": "idle",
+                "slots": 1,
+                "slots_busy": 0,
+                "prompt_tokens": 4177
+              },
+              "gpus": [
+                {
+                  "gpu_id": "0",
+                  "runner": "CUDA",
+                  "size_vram": 2915943054,
+                  "memory": {
+                    "weights": 2095935651,
+                    "kv_cache": 671088640,
+                    "compute": 148918763
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "t": 8.663,
+      "frame": {
+        "v": 1,
+        "kind": "sample",
+        "t": 9659,
+        "backfilled": null,
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "model": "granite4.1:3b",
+              "size": 2915943054,
+              "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+              "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "granite",
+                "families": [
+                  "granite"
+                ],
+                "parameter_size": "3.4B",
+                "quantization_level": "Q4_K_M"
+              },
+              "expires_at": "2026-09-09T10:36:59.401901747Z",
+              "size_vram": 2915943054,
+              "context_length": 8192,
+              "memory": {
+                "weights": 2095935651,
+                "kv_cache": 671088640,
+                "compute": 148918763
+              },
+              "weights_on_disk": 2099501664,
+              "placement": {
+                "num_layers": 41,
+                "devices": [
+                  {
+                    "device": "CUDA0",
+                    "first_layer": 0,
+                    "last_layer": 40,
+                    "layers": 41
+                  }
+                ]
+              },
+              "activity": {
+                "phase": "idle",
+                "slots": 1,
+                "slots_busy": 0,
+                "prompt_tokens": 4177
+              },
+              "gpus": [
+                {
+                  "gpu_id": "0",
+                  "runner": "CUDA",
+                  "size_vram": 2915943054,
+                  "memory": {
+                    "weights": 2095935651,
+                    "kv_cache": 671088640,
+                    "compute": 148918763
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "info": {
+          "version": "0.0.0",
+          "models": {
+            "store": "/root/.ollama/models",
+            "count": 70,
+            "filesystem_used": 1359174418249,
+            "running": 1,
+            "vram_used": 2915943054
+          },
+          "compute": {
+            "system_compute": {
+              "cpu_cores": 32,
+              "total_memory": 130142785536,
+              "free_memory": 129788620800,
+              "free_swap": 5147615232
+            },
+            "supported_gpus": [
+              {
+                "gpu_id": "0",
+                "name": "CUDA0",
+                "total_memory": 101972967424,
+                "processes": [
+                  {
+                    "pid": 253,
+                    "used_memory": 3600809984
+                  }
+                ],
+                "physical_memory": 102641958912,
+                "free_memory": 98362916864,
+                "compute": "12.0",
+                "driver": "13.2",
+                "runner": "CUDA"
+              },
+              {
+                "gpu_id": "1",
+                "name": "CUDA1",
+                "total_memory": 101972967424,
+                "physical_memory": 102641958912,
+                "free_memory": 101972377600,
+                "compute": "12.0",
+                "driver": "13.2",
+                "runner": "CUDA"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "t": 8.864,
+      "frame": {
+        "v": 1,
+        "kind": "busy.end",
+        "t": 9861,
+        "backfilled": null,
+        "model": "registry.ollama.ai/library/granite4.1:3b",
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "busy": true,
+              "model": "granite4.1:3b",
+              "size": 2915943054,
+              "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+              "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "granite",
+                "families": [
+                  "granite"
+                ],
+                "parameter_size": "3.4B",
+                "quantization_level": "Q4_K_M"
+              },
+              "expires_at": "2026-09-09T10:36:59.401901747Z",
+              "size_vram": 2915943054,
+              "context_length": 8192,
+              "memory": {
+                "weights": 2095935651,
+                "kv_cache": 671088640,
+                "compute": 148918763
+              },
+              "weights_on_disk": 2099501664,
+              "placement": {
+                "num_layers": 41,
+                "devices": [
+                  {
+                    "device": "CUDA0",
+                    "first_layer": 0,
+                    "last_layer": 40,
+                    "layers": 41
+                  }
+                ]
+              },
+              "activity": {
+                "phase": "idle",
+                "slots": 1,
+                "slots_busy": 0,
+                "prompt_tokens": 4156
+              },
+              "gpus": [
+                {
+                  "gpu_id": "0",
+                  "runner": "CUDA",
+                  "size_vram": 2915943054,
+                  "memory": {
+                    "weights": 2095935651,
+                    "kv_cache": 671088640,
+                    "compute": 148918763
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "t": 8.864,
+      "frame": {
+        "v": 1,
+        "kind": "expires",
+        "t": 9861,
+        "backfilled": null,
+        "model": "registry.ollama.ai/library/granite4.1:3b",
+        "expires_at": "2026-09-09T10:37:01.612396008Z",
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "busy": true,
+              "model": "granite4.1:3b",
+              "size": 2915943054,
+              "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+              "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "granite",
+                "families": [
+                  "granite"
+                ],
+                "parameter_size": "3.4B",
+                "quantization_level": "Q4_K_M"
+              },
+              "expires_at": "2026-09-09T10:36:59.401901747Z",
+              "size_vram": 2915943054,
+              "context_length": 8192,
+              "memory": {
+                "weights": 2095935651,
+                "kv_cache": 671088640,
+                "compute": 148918763
+              },
+              "weights_on_disk": 2099501664,
+              "placement": {
+                "num_layers": 41,
+                "devices": [
+                  {
+                    "device": "CUDA0",
+                    "first_layer": 0,
+                    "last_layer": 40,
+                    "layers": 41
+                  }
+                ]
+              },
+              "activity": {
+                "phase": "idle",
+                "slots": 1,
+                "slots_busy": 0,
+                "prompt_tokens": 4156
+              },
+              "gpus": [
+                {
+                  "gpu_id": "0",
+                  "runner": "CUDA",
+                  "size_vram": 2915943054,
+                  "memory": {
+                    "weights": 2095935651,
+                    "kv_cache": 671088640,
+                    "compute": 148918763
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "t": 8.866,
+      "frame": {
+        "v": 1,
+        "kind": "sample",
+        "t": 9863,
+        "backfilled": null,
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "model": "granite4.1:3b",
+              "size": 2915943054,
+              "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+              "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "granite",
+                "families": [
+                  "granite"
+                ],
+                "parameter_size": "3.4B",
+                "quantization_level": "Q4_K_M"
+              },
+              "expires_at": "2026-09-09T10:37:01.612396008Z",
+              "size_vram": 2915943054,
+              "context_length": 8192,
+              "memory": {
+                "weights": 2095935651,
+                "kv_cache": 671088640,
+                "compute": 148918763
+              },
+              "weights_on_disk": 2099501664,
+              "placement": {
+                "num_layers": 41,
+                "devices": [
+                  {
+                    "device": "CUDA0",
+                    "first_layer": 0,
+                    "last_layer": 40,
+                    "layers": 41
+                  }
+                ]
+              },
+              "activity": {
+                "phase": "idle",
+                "slots": 1,
+                "slots_busy": 0,
+                "prompt_tokens": 4156
+              },
+              "gpus": [
+                {
+                  "gpu_id": "0",
+                  "runner": "CUDA",
+                  "size_vram": 2915943054,
+                  "memory": {
+                    "weights": 2095935651,
+                    "kv_cache": 671088640,
+                    "compute": 148918763
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "info": {
+          "version": "0.0.0",
+          "models": {
+            "store": "/root/.ollama/models",
+            "count": 70,
+            "filesystem_used": 1359174418249,
+            "running": 1,
+            "vram_used": 2915943054
+          },
+          "compute": {
+            "system_compute": {
+              "cpu_cores": 32,
+              "total_memory": 130142785536,
+              "free_memory": 129780752384,
+              "free_swap": 5147615232
+            },
+            "supported_gpus": [
+              {
+                "gpu_id": "0",
+                "name": "CUDA0",
+                "total_memory": 101972967424,
+                "processes": [
+                  {
+                    "pid": 253,
+                    "used_memory": 3600809984
+                  }
+                ],
+                "physical_memory": 102641958912,
+                "free_memory": 98362916864,
+                "compute": "12.0",
+                "driver": "13.2",
+                "runner": "CUDA"
+              },
+              {
+                "gpu_id": "1",
+                "name": "CUDA1",
+                "total_memory": 101972967424,
+                "physical_memory": 102641958912,
+                "free_memory": 101972377600,
+                "compute": "12.0",
+                "driver": "13.2",
+                "runner": "CUDA"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "t": 8.868,
+      "frame": {
+        "v": 1,
+        "kind": "sample",
+        "t": 9864,
+        "backfilled": null,
+        "ps": {
+          "models": [
+            {
+              "name": "granite4.1:3b",
+              "model": "granite4.1:3b",
+              "size": 2915943054,
+              "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+              "details": {
+                "parent_model": "",
+                "format": "gguf",
+                "family": "granite",
+                "families": [
+                  "granite"
+                ],
+                "parameter_size": "3.4B",
+                "quantization_level": "Q4_K_M"
+              },
+              "expires_at": "2026-09-09T10:37:01.612396008Z",
+              "size_vram": 2915943054,
+              "context_length": 8192,
+              "memory": {
+                "weights": 2095935651,
+                "kv_cache": 671088640,
+                "compute": 148918763
+              },
+              "weights_on_disk": 2099501664,
+              "placement": {
+                "num_layers": 41,
+                "devices": [
+                  {
+                    "device": "CUDA0",
+                    "first_layer": 0,
+                    "last_layer": 40,
+                    "layers": 41
+                  }
+                ]
+              },
+              "activity": {
+                "phase": "idle",
+                "slots": 1,
+                "slots_busy": 0,
+                "prompt_tokens": 4156
+              },
+              "gpus": [
+                {
+                  "gpu_id": "0",
+                  "runner": "CUDA",
+                  "size_vram": 2915943054,
+                  "memory": {
+                    "weights": 2095935651,
+                    "kv_cache": 671088640,
+                    "compute": 148918763
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

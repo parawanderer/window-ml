@@ -487,6 +487,42 @@ test("ml.fetch is CACHE-ONLY in the dialect: a cached URL reads free, a new URL 
     assert.deepEqual((await run(`ml.fetch("https://x.test/data.json", { fresh: false })`, world(), ml)).value, cached);
 });
 
+test("ml.fetch in the dialect hands the MODE to the host — a sanitized copy, and `fresh` never reaches it", async () => {
+    // The mode is part of the question: the cache holds default-mode results, so a `rendered` or `format:
+    // "html"` read answered from it would be a different document under the name of the one asked for. The
+    // host decides; the dialect passes the four fields it reads and nothing else.
+    const seen = [];
+    const live = { url: "https://x.test/here", status: 200, ok: true, type: "html", text: "<p>now</p>", live: true, rendered: true };
+    const ml = {
+        getModel: async () => "m",
+        fetch: async () => { throw new Error("RAN: real fetch (egress) — must not happen in read-only"); },
+        // Stands in for injected.ts: only a session render of the page you are on is answered (live).
+        _fetchCached: (url, mode) => { seen.push(mode); return mode?.rendered && mode?.credentials && url === live.url ? live : undefined; },
+    };
+    const r = await run(`ml.fetch("https://x.test/here", { rendered: true, credentials: true, format: "html" })`, world(), ml);
+    assert.deepEqual(r.value, live, "a session render of the page you are on reads free");
+    assert.deepEqual(seen.at(-1), { fresh: false, credentials: true, rendered: true, format: "html" }, "exactly the four fields, normalised");
+    assert.deepEqual(r.reused, [], "a live read reused no grant, so none is reported");
+
+    // ADVERSARIAL. Whatever else the script's object carries never reaches the host — not an extra key, not a
+    // function, not an object where a flag belongs — because the host is handed a fresh object of booleans and
+    // one enum, never the script's own.
+    seen.length = 0;
+    await run(`ml.fetch("https://x.test/here", { rendered: 1, credentials: "yes", format: "html", method: "POST", body: "x", then: () => 1, headers: { a: 1 } })`, world(), ml);
+    assert.deepEqual(seen.at(-1), { fresh: false, credentials: true, rendered: true, format: "html" }, "extra keys dropped, flags coerced to booleans");
+    await run(`ml.fetch("https://x.test/here", { rendered: true, credentials: true, format: { toString: () => "html" } })`, world(), ml).catch(() => {});
+    assert.equal(seen.at(-1).format, "markdown", "a non-string format is not an enum member");
+    // `fresh` is a live fetch by definition — refused BEFORE the host is asked, even alongside a mode it would answer.
+    seen.length = 0;
+    await assert.rejects(run(`ml.fetch("https://x.test/here", { fresh: true, rendered: true, credentials: true })`, world(), ml), outOfDialect);
+    assert.equal(seen.length, 0, "the host was never consulted for a fresh fetch");
+    // Credentials the host does not answer (another URL, or any mode but the live one) stays Denied → approval.
+    await assert.rejects(run(`ml.fetch("https://x.test/elsewhere", { rendered: true, credentials: true })`, world(), ml), outOfDialect);
+    await assert.rejects(run(`ml.fetch("https://x.test/here", { credentials: true })`, world(), ml), outOfDialect);
+    // A mode the cache does not hold misses rather than being served the default-mode copy.
+    await assert.rejects(run(`ml.fetch("https://x.test/here", { format: "html" })`, world(), ml), outOfDialect);
+});
+
 test("awaits compose anywhere in the expression, not just at a statement seam", async () => {
     const js = `return { model: await ml.getModel(), count: (await ml.models()).length }`;
     assert.deepEqual((await run(js)).value, { model: "gemma4:31b", count: 2 });

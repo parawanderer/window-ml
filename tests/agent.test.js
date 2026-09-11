@@ -28,13 +28,16 @@ test("_truncate tolerates null/undefined", () => {
     assert.equal(ml._truncate(undefined, 5), "");
 });
 
-test("__mlStartAgent (HUD composer relay) runs a REAL createAgent().run() in the page", () => {
+test("__mlStartAgent (HUD composer relay) runs a REAL createAgent().run() in the page", async () => {
     // The Spotlight composer → shell → page: injected must start a genuine session via createAgent().run()
     // (so it registers a HANDLE the composer can then steer), not a bare ml.agent(). Stub createAgent.
     const { ml, window } = loadDomWorld();
     let createdOpts = null, ranWith = null;
     ml.createAgent = (opts) => { createdOpts = opts; return { run: (task) => { ranWith = task; return Promise.resolve({ summary: "" }); } }; };
     window.dispatchEvent(new window.MessageEvent("message", { data: { __mlStartAgent: { task: "do a thing", maxSteps: 20 } }, source: window }));
+    // The handler reads the config first (for bundles marked always-present), so the run starts a microtask
+    // later — the message is an extension round-trip, not a network one.
+    await new Promise((r) => setTimeout(r, 0));
     assert.equal(ranWith, "do a thing", "the page ran createAgent().run() with the composer's task");
     assert.equal(createdOpts?.maxSteps, 20, "the composer's step budget threads through");
     // A UI-started run gets a capable default kit (click/type/python) via extraTools — the model tried to
@@ -2231,6 +2234,60 @@ test("cached ml.fetch: fetch_url prompts + caches once, then a readonly exec re-
     assert.deepEqual(execStep.reused, [{ kind: "fetch-url", detail: url }], "the reused cached URL is reported on the step");
 });
 
+test("ml.fetch: a SESSION RENDER of the page you are on is its live DOM — and only that mode is", { timeout: 5000 }, async () => {
+    // `rendered + credentials` asks for "this URL, its JS run, in my session", which for the page the call came
+    // from is the DOM already in front of it. Every other mode names a different document (the bytes on disk, or
+    // a fresh sessionless load) and must NOT be answered with this one.
+    const url = "file:///Users/me/report.html";
+    const world = loadDomWorld(`<h1>Quarterly</h1><p id="n">41</p>`, { url });
+    const both = { rendered: true, credentials: true };
+    const r = await world.ml.fetch(`${url}#totals`, both);   // the fragment names no other document
+    assert.equal(r.live, true, "marked as a live read, not a fetch");
+    assert.equal(r.rendered, true, "it IS a rendered DOM, which is what was asked for");
+    assert.equal(r.url, url);
+    assert.match(r.text, /^<!DOCTYPE html>\n<html>/, "the doctype survives serialization");
+    assert.match(r.text, /<p id="n">41<\/p>/, ".text is the markup — what a grep wants");
+    assert.match(r.markdown, /# Quarterly/, ".markdown is attached like any HTML fetch");
+
+    // LIVE means live: a change shows up on the next read, where a cached copy would answer with the page as
+    // it was.
+    world.document.getElementById("n").textContent = "42";
+    assert.match((await world.ml.fetch(url, both)).text, /<p id="n">42<\/p>/, "reflects the DOM now, not at first read");
+
+    // The other modes go to the BACKGROUND (which refuses a file: URL, naming the mode that works) rather than
+    // being handed the live DOM under the name of the bytes. Observed as the relay message they post.
+    const posted = [];
+    world.window.addEventListener("message", (e) => { if (e.data?.type === "FETCH_URL_REQUEST") posted.push(e.data.payload); });
+    for (const opts of [{}, { format: "html" }, { credentials: true }, { rendered: true }]) void world.ml.fetch(url, opts);
+    await new Promise((res) => setTimeout(res, 20));
+    assert.equal(posted.length, 4, `every non-session-render mode went to the background (${JSON.stringify(posted)})`);
+
+    // The read-only dialect's cache reader follows the SAME rule, mode and all.
+    assert.equal(world.ml._fetchCached(url, both).live, true);
+    assert.equal(world.ml._fetchCached(url), undefined, "a plain read of the page is its bytes, not its DOM");
+    assert.equal(world.ml._fetchCached(url, { rendered: true }), undefined, "a sessionless render is a fresh page");
+    assert.equal(world.ml._fetchCached("file:///Users/me/other.html", both), undefined, "a DIFFERENT local file is not the page");
+
+    // The tool says what it did: "HTTP 200" would claim a request that never happened.
+    const out = await world.ml.fetchTool().run({ url, format: "html", ...both });
+    const text = typeof out === "string" ? out : out.content;
+    assert.match(text, /^Read file:\/\/\/Users\/me\/report\.html as rendered in your session: it is the page you are on/);
+    assert.match(text, /not the file's bytes on disk/);
+    assert.doesNotMatch(text, /HTTP 200/);
+    assert.match(text, /<p id="n">42<\/p>/, 'format "html" hands over the markup');
+});
+
+test("ml.fetch: on an http(s) page too, a session render of itself is read, not re-loaded in a tab", { timeout: 5000 }, async () => {
+    // Loading the page you are on a second time in a session tab re-runs its scripts (and their side effects)
+    // to produce what is already in front of you.
+    const url = "https://x.test/page?q=1";
+    const world = loadDomWorld(`<p>hi</p>`, { url });
+    const r = await world.ml.fetch(`${url}#frag`, { rendered: true, credentials: true });
+    assert.equal(r.live, true);
+    assert.equal(world.ml._fetchCached("https://x.test/page?q=2", { rendered: true, credentials: true }), undefined, "another query is another page");
+    assert.equal(world.ml._fetchCached(url), undefined, "a plain read is the server's bytes, never the DOM");
+});
+
 test("fetch_url: an HTML page is auto-converted to Markdown (+ a note); format:\"html\" returns the original HTML", async () => {
     const url = "https://x.test/page.html";
     let fetchResult;
@@ -2285,11 +2342,11 @@ test("fetch_url pipe: filters the returned text through the grep/head pipeline (
 
     // A command outside the dialect → an actionable error. The exec escape hatch is GATED on exec being wired.
     const withExec = { hasTool: (n) => n === "exec", tools: ["exec"], model: null, capabilities: null };
-    const err = await tool.run({ url, pipe: "sed 's/a/b/'" }, withExec);
+    const err = await tool.run({ url, pipe: "awk '{print $1}'" }, withExec);
     assert.match(String(err), /Pipe error/, "surfaces the interpreter error");
     assert.match(String(err), /const \{ markdown \} = await ml\.fetch/, "with exec wired → points at the exec escape hatch");
     // Without exec wired, the hint is omitted (no misleading suggestion to use a tool it doesn't have).
-    const errNoExec = await tool.run({ url, pipe: "sed 's/a/b/'" }, { hasTool: () => false, tools: [], model: null, capabilities: null });
+    const errNoExec = await tool.run({ url, pipe: "awk '{print $1}'" }, { hasTool: () => false, tools: [], model: null, capabilities: null });
     assert.match(String(errNoExec), /not a real shell/i, "still explains the dialect");
     assert.doesNotMatch(String(errNoExec), /use exec/, "no exec suggestion when exec isn't available");
 
@@ -3623,22 +3680,57 @@ test("exec Out: a raised (approved) output cap moves where the model's view ends
 
 // ---- exec: pointers are SYNC, because the lexical pass knows them before anything runs ----
 
+/** The shape `ToolContext.deref` actually resolves to — the run loop's read envelope, not the text. */
+const read = (value, id) => ({ value, meta: { id, kind: "text", tool: "python_exec", step: 1 } });
+
 test("exec: a @tool: pointer is a VALUE, not a promise", async () => {
     // The whole reason the macro is worth having. On a promise, `.length` is `undefined` with no error —
     // the plausible-wrong-answer shape this codebase keeps designing out.
     const world = loadPageWorld({});
     const tool = world.ml.domTools.find(t => t.name === "exec");
-    const ctx = { deref: async (ref) => (ref === "@tool:a39f599" ? "alpha\nbeta\ngamma" : (() => { throw new Error("no such pointer"); })()) };
+    // The envelope the real resolver returns (agent-loop's `derefLocally`) — `{ value, meta }`, NOT a bare
+    // string. Stubbing a string here is what hid the shim handing the script the envelope itself, whose
+    // `.length` is undefined: the exact failure this test claims to be about.
+    const ctx = { deref: async (ref) => (ref === "@tool:a39f599" ? read("alpha\nbeta\ngamma", "a39f599") : (() => { throw new Error("no such pointer"); })()) };
 
     const out = await tool.run({ js: `@tool:a39f599.split("\\n").length` }, ctx);
     assert.match(typeof out === "string" ? out : out.content, /\b3\b/, "read, split and counted — no await anywhere");
+
+    // It is the SAME value the asynchronous method returns: a String subclass, so `.length` and `.split`
+    // work, `.type`/`.id` answer what it is, and it interpolates without a cast.
+    const shape = await tool.run({ js: `const v = @tool:a39f599; return [typeof v.length, v.type, v.id, \`\${v}\`.length].join("|")` }, ctx);
+    assert.match(typeof shape === "string" ? shape : shape.content, /number\|text\|a39f599\|16/);
+});
+
+test("exec: the macro and the longhand call are the SAME object", async () => {
+    // `@tool:x` expands to `ml.dereference("@tool:x")`, so the two spellings must be interchangeable — which
+    // includes identity. A fresh wrapper per read would make `===` false between a line and its own macro.
+    const world = loadPageWorld({});
+    const tool = world.ml.domTools.find(t => t.name === "exec");
+    let calls = 0;
+    const ctx = { deref: async (ref) => { calls++; return read("alpha", "a39f599"); } };
+
+    const out = await tool.run({ js: `const v = ml.dereference("@tool:a39f599"); return v === @tool:a39f599;` }, ctx);
+    assert.match(typeof out === "string" ? out : out.content, /true/);
+    assert.equal(calls, 1, "resolved once, then cached — not re-read per mention");
+});
+
+test("exec: `ml.dereference()` with no argument is synchronous too", async () => {
+    // The listing is the read a model makes BEFORE it knows any id, so leaving it on the async path would put
+    // a promise in the one call most likely to be written without an await.
+    const world = loadPageWorld({});
+    const tool = world.ml.domTools.find(t => t.name === "exec");
+    const ctx = { deref: async (ref) => read(ref ? "a value" : "a39f599 text python_exec 2 steps ago", "") };
+
+    const out = await tool.run({ js: `return ml.dereference().split(" ")[0];` }, ctx);
+    assert.match(typeof out === "string" ? out : out.content, /a39f599/);
 });
 
 test("exec: several pointers resolve concurrently, before a line runs", async () => {
     const world = loadPageWorld({});
     const tool = world.ml.domTools.find(t => t.name === "exec");
     const seen = [];
-    const ctx = { deref: async (ref) => { seen.push(ref); return ref === "@tool:a39f599" ? "one" : "two"; } };
+    const ctx = { deref: async (ref) => { seen.push(ref); return ref === "@tool:a39f599" ? read("one", "a39f599") : read("two", "b4c8d10"); } };
 
     const out = await tool.run({ js: `[@tool:a39f599, @tool:python_exec].join("-")` }, ctx);
     assert.match(typeof out === "string" ? out : out.content, /one-two/);
@@ -3650,7 +3742,7 @@ test("exec: a BAD pointer fails only when read, not when hydrated", async () => 
     // program into a failing one.
     const world = loadPageWorld({});
     const tool = world.ml.domTools.find(t => t.name === "exec");
-    const ctx = { deref: async (ref) => { if (ref === "@tool:baaaaad") throw new Error("MemoryFault: no such pointer"); return "fine"; } };
+    const ctx = { deref: async (ref) => { if (ref === "@tool:baaaaad") throw new Error("MemoryFault: no such pointer"); return read("fine", "a39f599"); } };
 
     const ok = await tool.run({ js: `false ? @tool:baaaaad : @tool:a39f599` }, ctx);
     assert.match(typeof ok === "string" ? ok : ok.content, /fine/, "the unreachable bad pointer never surfaced");
@@ -3665,7 +3757,89 @@ test("exec: a COMPUTED handle still works — it just stays asynchronous", async
     // capability that worked before.
     const world = loadPageWorld({});
     const tool = world.ml.domTools.find(t => t.name === "exec");
-    const ctx = { deref: async () => "computed-value" };
+    const ctx = { deref: async () => read("computed-value", "a39f599") };
     const out = await tool.run({ js: `const r = "@tool:a39f599"; @tool:a39f599; return await ml.dereference(r);` }, ctx);
     assert.match(typeof out === "string" ? out : out.content, /computed-value/);
+});
+
+// ---- a remote tool's output is a pointer, and can be NAMED at call time ----
+
+test("server tools: `token` is a SIBLING of the server's own properties, never a wrapper", async () => {
+    // A wrapper (`{args: {...}, token}`) would nest every remote tool's arguments to add one optional field
+    // — the same opaque-object problem that made this one tool per FUNCTION rather than one dispatcher.
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const [tool] = buildServerTools({}, [{
+        id: "srv1", name: "Search", description: "", kind: "local",
+        functions: [{ name: "search_web", description: "", parameters: { type: "object", properties: { q: { type: "string" } }, required: ["q"] } }],
+    }], ["srv1"]);
+
+    assert.deepEqual(Object.keys(tool.parameters.properties).sort(), ["q", "token"]);
+    assert.deepEqual(tool.parameters.required, ["q"], "ours is optional and does not touch theirs");
+    assert.ok(!("args" in tool.parameters.properties), "the server's schema is not nested inside an envelope");
+});
+
+test("server tools: a function that ALREADY has `token` keeps its own", async () => {
+    // Shadowing a real parameter to add a convenience is worse than the model reaching for the name alias.
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const [tool] = buildServerTools({}, [{
+        id: "srv1", name: "S", description: "", kind: "local",
+        functions: [{ name: "f", description: "", parameters: { type: "object", properties: { token: { type: "number", description: "theirs" } } } }],
+    }], ["srv1"]);
+    assert.equal(tool.parameters.properties.token.type, "number", "the server's own, untouched");
+});
+
+test("server tools: `token` is stripped before the call leaves the machine", async () => {
+    // It is ours, added to their schema. The server never declared it and must not receive it.
+    let sent = null;
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const ml = { execServerTool: async (id, name, args) => { sent = args; return { ok: true, result: { result: "x", durationMs: 1 }, output: "", marks: [], events: [] }; } };
+    const [tool] = buildServerTools(ml, [{
+        id: "srv1", name: "S", description: "", kind: "local",
+        functions: [{ name: "f", description: "", parameters: { type: "object", properties: { q: { type: "string" } } } }],
+    }], ["srv1"]);
+    await tool.run({ q: "hello", token: "my label" });
+    assert.deepEqual(sent, { q: "hello" });
+});
+
+// A consent card may not say something that is not happening. `crossOrigin` means ONE thing — a privileged
+// debugger click reaching into an embedded third-party frame — and the card states it in those words, so a
+// remote tool borrowing the field for emphasis made a web-search call warn about a debugger click into an
+// iframe that was never involved.
+test("server tools: the approval says the ARGUMENTS leave, not that a frame is being clicked", async () => {
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const [tool] = buildServerTools({}, [{
+        id: "srv1", name: "SearXNG", description: "", kind: "local",
+        functions: [{ name: "search_web", description: "", parameters: { type: "object", properties: { q: { type: "string" } } } }],
+    }], ["srv1"]);
+    const r = tool.render(null, { q: "pricing" });
+    assert.equal(r.type, "action");
+    assert.equal(r.crossOrigin, undefined, "nothing here is a cross-origin frame click");
+    // Named from the BUNDLE, the same identity the background mints its grant from — a friendly tool name
+    // cannot make the card say one destination while the grant authorises another.
+    assert.equal(r.offMachine, "SearXNG");
+    assert.match(r.target, /search_web/);
+});
+
+// Curation is what makes a forty-tool backend usable: a tool the model can SEE is a tool it will try, so a
+// disabled function must not be built at all rather than built and hidden.
+test("server tools: a curated-out function is never built, while its siblings still are", async () => {
+    const { buildServerTools } = await import("../src/builtin-tools.ts");
+    const bundle = {
+        id: "srv1", name: "Search", description: "", kind: "local",
+        functions: [
+            { name: "search_web", description: "", parameters: { type: "object", properties: {} } },
+            { name: "send_email", description: "", parameters: { type: "object", properties: {} } },
+        ],
+    };
+    const all = buildServerTools({}, [bundle], ["srv1"]);
+    assert.deepEqual(all.map(t => t.name).sort(), ["srv1__search_web", "srv1__send_email"]);
+
+    // Disabled by the SAME `<bundle>__<fn>` name a run would see — two spellings of one identity is how a
+    // curation list ends up disabling nothing.
+    const curated = buildServerTools({}, [bundle], ["srv1"], ["srv1__send_email"]);
+    assert.deepEqual(curated.map(t => t.name), ["srv1__search_web"], "the other function is untouched");
+
+    // The bundle can still be asked for with everything in it turned off — that is an empty toolset, not an
+    // error, and a run should degrade rather than fail before it starts.
+    assert.deepEqual(buildServerTools({}, [bundle], ["srv1"], ["srv1__search_web", "srv1__send_email"]), []);
 });

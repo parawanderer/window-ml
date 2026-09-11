@@ -20,7 +20,7 @@ import { toolToken } from "./util";
 import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "./token-pipe";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
-export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
+export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; remote?: import("./contract").RemoteToolTarget; }
 // The tool's serializable result. `renderIn`/`renderOut` are the debug-render slots computed by the
 // executor's world (page-side for the delegated path) so the emitter can show a rendered In/Out.
 // `image` is a screenshot a vision tool (native `look`) captured — INLINE VISION: it's injected into
@@ -52,9 +52,9 @@ export interface AgentLoopDeps {
     // could. Reached before autoApprove/the gate for a requiresApproval tool.
     tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
     // PRE-RUN In render for the pending step (the tool's `render(input,args)` — exec's beautified JS,
-    // python's code cell), so a step you WATCH streaming shows a pretty In instead of raw JSON args from the
-    // moment it starts. Async because the background must ask the page to compute it. Used only for a
-    // streaming run (that's when a pending step is on screen long enough to matter). Optional.
+    // python's code cell), so a step shows a pretty In instead of raw JSON args from the moment it starts.
+    // Async because the BACKGROUND must ask the page to compute it; page-side it is a direct call. Optional —
+    // a host that cannot compute one leaves the pending row on its raw args, which is the old behaviour.
     renderFor?(name: string, args: Record<string, unknown>): Promise<RenderDescriptor | undefined>;
     // Doomed-action precheck (click/type): a side-effect-free target resolution → an ERROR STRING if the
     // action can only fail (no element / stale @pt / bad selector), else null/"" to proceed to the gate.
@@ -268,6 +268,30 @@ const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approv
 
 // Returns AgentResult WITHOUT `hash` — this loop is identity-agnostic; the page-side ml.agent
 // caller stamps the run's hash onto the result (it owns runHash). See injected.ts's background path.
+/** How long a PRE-RUN In render may take before the step goes ahead without one. A pretty In is a nicety; a
+ *  step that never runs is not — and on the background path this is a round-trip to the PAGE, which on a
+ *  CSP-blocked page never answers at all, because injected.js was never allowed to load there. Unbounded,
+ *  that wedged the whole step before it even attempted the tool, turning a fast, actionable "this page blocks
+ *  the extension" into a run that simply stopped. (It only surfaced once the pre-render stopped being gated
+ *  on `stream` — the bound is what makes running it on every step safe.) */
+const PRE_RENDER_MS = 1500;
+
+/** Ask the host for the pending step's In render, but never let it hold the step up. */
+async function preRender(
+    fn: NonNullable<AgentLoopDeps["renderFor"]>,
+    name: string,
+    args: Record<string, unknown>,
+): Promise<RenderDescriptor | undefined> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([
+            fn(name, args),
+            new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), PRE_RENDER_MS); }),
+        ]);
+    } catch { return undefined; }   // a host that throws is the same as one that cannot answer
+    finally { if (timer) clearTimeout(timer); }
+}
+
 export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: AgentLoopDeps): Promise<Omit<AgentResult, "hash">> {
     const { tools, signal } = opts;
     // maxSteps is read LIVE each iteration (not destructured) so a handle can raise the cap mid-run
@@ -279,6 +303,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // Per-step render data for citable steps, so the outputs resolver can turn a cited/designated token into its
     // structured value (res.outputs — the headless-scripting payload).
     const tokenRenders: TokenRender[] = [];
+    /** seq -> the id a PIPED dereference minted for its reduction, so the emit path can carry it onto that
+     *  step. Keyed by seq because that is what both sides already agree on. */
+    const mintedViews = new Map<number, string>();
     // Values addressable by `@tool:<id>` for THIS run — what `dereference` reads. Populated at mint time below,
     // so the pointer store and the citation ids can never disagree. Owned by the LOOP (not the page), which is
     // why dereference resolves here instead of being delegated: it is a pure read of run state, identical on
@@ -299,15 +326,46 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // The label says what this view IS — its source and the reduction that produced it — so a later
             // read (or the nearest-pointer list on a typo) reads as "dereference: python_exec | .rows | head 5".
             label: cleanLabel(`${nameOf(src)} | ${String(args?.pipe ?? "")}`),
-            in: JSON.stringify(args), t: Date.now(), step,
+            in: JSON.stringify(args), t: Date.now(), step, seq,
         });
         tokenRenders.push({ id, tool: DEREF_TOOL, render: undefined, result: text });   // citable in the answer
+        // …and onto the STEP. The answer renderer resolves a citation by matching `step.token`, and this id is
+        // minted outside the generic path (dereference is not `citable`), so without this the model was handed
+        // a pointer, told to cite it, and the citation rendered as "unresolved @tool:…" — a handle the run had
+        // genuinely produced, reported as one it had invented.
+        mintedViews.set(seq, id);
         return `\n\n[this view is @tool:${id} — to SHOW this reduction rather than the whole output, embed it with image syntax: ![label](@tool:${id}:out). It expands in place; don't retype it.]`;
     };
     /** Resolve a `dereference` call against this run's pointer store. Side-effect-free by construction (it only
      *  reads values already captured), so it needs no approval and never touches the page. Every answer leads
      *  with WHAT is at the pointer and WHEN it was captured: a pointer aliases a snapshot with no invalidation,
      *  so a survey taken before a click still resolves, and a model would otherwise read it as current. */
+    /** A retry's link back to the call it revises. Resolved HERE for the same reason `dereference` is: it is
+     *  a pure read of run state the loop owns, so it behaves identically on the page-hosted and
+     *  background-hosted paths with no round-trip and no approval.
+     *
+     *  We carry the OLD SOURCE and let the panel compute the diff — it already owns both formatters, and both
+     *  sides have to be reflowed before comparing or pure spacing differences drown the real change. The
+     *  model's `changed` line rides along as a CLAIM, never instead of the diff: a model asked what it changed
+     *  answers from what it MEANT to change, and the two disagree exactly when the diff is worth reading.
+     *  An unresolvable pointer yields nothing rather than a fabricated comparison — the run is unaffected. */
+    const revisionOf = (args: Record<string, unknown>): import("./contract").CodeRevision | undefined => {
+        const ref = typeof args.revises === "string" ? args.revises.trim() : "";
+        if (!ref) return undefined;
+        const prev = tokenStore.get(ref);
+        if (!prev?.in) return undefined;
+        let before = "";
+        try {
+            const a = JSON.parse(prev.in) as Record<string, unknown>;
+            before = typeof a.code === "string" ? a.code : typeof a.js === "string" ? a.js : "";
+        } catch { return undefined; }
+        if (!before) return undefined;
+        const claim = typeof args.changed === "string" ? args.changed.trim().slice(0, 200) : "";
+        return { ref: `@tool:${prev.id}`, tool: prev.tool, before,
+                 ...(prev.seq != null ? { seq: prev.seq } : {}), ...(prev.label ? { label: prev.label } : {}),
+                 ...(claim ? { claim } : {}) };
+    };
+
     const derefLocally = (args: Record<string, unknown>, step: number, seq: number): ToolRunResult => {
         const ref = String(args?.token ?? "").trim();
         const pipe = args?.pipe == null ? "" : String(args.pipe);
@@ -319,7 +377,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // Still answer with the inventory (that is what it needs to recover), but say the pipe was dropped
         // rather than silently ignoring an argument it deliberately wrote.
         if (!ref) return { result: pipe.trim() ? `${inventory()}\n\n(Your \`pipe\` was not applied: no pointer was named to apply it to.)` : inventory() };
-        const { value: v, matched, score } = tokenStore.resolveRef(ref, opts.labelMatch);
+        const { value: v, matched, score, via } = tokenStore.resolveRef(ref, opts.labelMatch);
         // A pointer that doesn't resolve is usually a HALLUCINATED id (six plausible hex characters that were
         // never minted), so name the closest real ones rather than just saying no — the model can then correct
         // itself in one step instead of guessing again.
@@ -355,8 +413,17 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const soft = matched
                 ? `\n\n[resolved by similarity, not an exact name: you asked for ${JSON.stringify(parseLabel(ref) ?? ref)} and the closest label was ${JSON.stringify(matched)} (${score?.toFixed(2)}). If that is not what you meant, list what you have with dereference and no token.]`
                 : "";
-            const pin = isAliasRef(ref, v.id)
-                ? `\n\n[pinned: this call is @tool:${v.id}. "${nameOf(v)}" always means the LATEST ${v.tool} call and will move when you run it again — @tool:${v.id} always means THIS one. Cite it with ![label](@tool:${v.id}:out).]`
+            // Only the BARE TOOL NAME is a moving target. It was keyed on "the ref is not the id", which is
+            // also true of a LABEL — so a label read was told its own handle "always means the LATEST call and
+            // will move", which is false, and the model repeated it back as a rule it had learned. A label
+            // names one captured value; the id is what it resolves to, worth handing over so the model can
+            // cite it, but nothing about it moves. And the alias message quoted `nameOf(v)` — a DISPLAY string
+            // (`look: "hud render check"`) that is not a reference form at all — where it had to quote the
+            // alias actually used, or it teaches a spelling that does not resolve.
+            const pin = via === "tool"
+                ? `\n\n[pinned: this call is @tool:${v.id}. @tool:${v.tool} always means the LATEST ${v.tool} call and will move when you run it again — @tool:${v.id} always means THIS one. Cite it with ![label](@tool:${v.id}:out).]`
+                : via === "label"
+                ? `\n\n[this label names @tool:${v.id}. Cite it with ![label](@tool:${v.id}:out) — the id stays with this capture even if you label something else the same way later.]`
                 : "";
             return { result: `${head}\n\n${text}${derived}${soft}${pin}` };
         } catch (e) {
@@ -431,9 +498,21 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     let lastToolMs: number | undefined;
     /** How long the approval GATE was open for this step, when it opened at all. */
     let lastApproveMs: number | undefined;
+    /** When the model call for the current turn RETURNED. Everything between that instant and the tool
+     *  actually starting is plumbing — parsing the call, validating its arguments, building the context,
+     *  the hop to the page on a delegated run. Measured rather than inferred, for the same reason
+     *  `approveMs` is: the timeline reconstructs a block's start by subtracting the parts it knows about,
+     *  so an unmeasured part does not merely go unlabelled, it shifts the whole block later than the work
+     *  happened — against a shared axis with the memory trace, which is the one error that matters. */
+    let turnReturnedAt: number | undefined;
+    /** That gap, for the step being emitted. */
+    let lastDispatchMs: number | undefined;
     /** Every tool dispatch goes through here so `dereference` is answered from run state instead of delegated. */
     const runTool = async (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number, seq: number): Promise<ToolRunResult> => {
         const t0 = Date.now();
+        // The gap since the model call returned, minus any time a human held the gate open — that wait is
+        // already its own phase, and counting it here would draw the same seconds twice.
+        if (turnReturnedAt != null) lastDispatchMs = Math.max(0, t0 - turnReturnedAt - (lastApproveMs ?? 0));
         try {
             if (name === DEREF_TOOL) return await derefLocally(a, step, seq);
             const l = lookArgs(name, a, step);
@@ -459,6 +538,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         deps.emitTurn?.({ step });   // the call is going out NOW — the only stamp for "the model started"
         try { msg = await deps.callModel(messages, { tools, step }); }
         catch (e) { if (signal?.aborted) return cancelled(step - 1); throw e; }
+        turnReturnedAt = Date.now();
         if (signal?.aborted) return cancelled(step - 1);
         if (msg.usage) { const u = usageTokens(msg.usage); modelCalls++; if (u.prompt) promptLast = u.prompt; genTotal += u.completion; usages.push(msg.usage as TokenUsage); }
         if (!msg.tool_calls || !msg.tool_calls.length) {
@@ -496,10 +576,14 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const meta = byName.get(call.name);
             let args = (call.arguments || {}) as Record<string, unknown>;
             const s = ++seq;
-            lastToolMs = undefined; lastApproveMs = undefined;   // this step's own measurements, never the previous step's
-            // On a STREAMING run the pending step is on screen while its output fills in, so give it a pretty
-            // In up front (the gated path already does this via approve; this covers auto-approved calls too).
-            const preIn = (opts.stream && deps.renderFor) ? await deps.renderFor(call.name, args).catch(() => undefined) : undefined;
+            lastToolMs = undefined; lastApproveMs = undefined; lastDispatchMs = undefined;   // this step's own measurements, never the previous step's
+            // A PENDING step shows a pretty In from the moment it starts, not raw JSON args. This used to be
+            // gated on `stream`, on the reasoning that only a streaming run leaves the row on screen long
+            // enough to matter — which confused two different clocks. Streaming is about how the MODEL's
+            // output arrives; how long a TOOL sits pending is about the tool, and a python call pays a
+            // multi-second cold start before a line of it runs either way. So it is asked for whenever the
+            // host can answer (the gated path also does this via approve; this covers auto-approved calls).
+            const preIn = deps.renderFor ? await preRender(deps.renderFor, call.name, args) : undefined;
             deps.emit?.({ step, seq: s, pending: true, tool: call.name, arguments: args, renderIn: preIn });   // in-flight START
             // Live tool-output fan for THIS call (opt-in `stream`): a delta emit carries only { step, seq,
             // streamOutput } so the reducer patches the pending row additively; the DONE below supersedes it.
@@ -601,6 +685,11 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const blocked = approval === "denied" || approval === "cancelled" || approval === "skipped";
             // Match the error marker at a LINE start, not just string start — `exec` prepends any `console.log`
             // output (`console:\n…\n\nError: …`) and `python_exec` can prepend a table note, so `^Error:` alone
+            // A RETRY's link to what it revises — resolved HERE, BEFORE this step mints its own pointer,
+            // because a tool-NAME alias (`@tool:python_exec`) means "the latest call of that tool" and this
+            // call is about to become it. Resolved after the mint, every retry diffs against ITSELF and
+            // reports no change — a wrong answer that looks like a working feature.
+            const revision = revisionOf(args);
             // misses a logged-then-failed call. Biasing toward "failed" is the safe direction: a false positive
             // just withholds a token (degrades to plain prose); a false negative would cite an ERROR as an answer.
             const failed = blocked
@@ -623,14 +712,25 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // `dereference` is never citable: it produces no new data, only a VIEW of a pointer that already
             // exists, so minting one would clutter the store with self-referential handles. It also has its own
             // `token` PARAMETER — the pointer being read — which would otherwise be misread here as a label.
-            const citable = call.name !== DEREF_TOOL && (CITABLE_TOOLS.has(call.name) || wantsToken) && !failed;
+            // A REMOTE tool is citable too, and by DECLARATION rather than by name: its name is generated from
+            // the server's own bundle, so it can never be in a hardcoded list — and its schema comes from the
+            // server, so it has no `token` parameter for the model to opt in with either. Which would leave
+            // the one kind of output pointers most exist for — large, expensive to reproduce, fetched from
+            // off the machine — as the only kind that can never become one.
+            const citable = call.name !== DEREF_TOOL && (CITABLE_TOOLS.has(call.name) || !!meta?.remote || wantsToken) && !failed;
             // Seed the id from the GLOBAL seq (base + per-turn) so a multi-turn run never mints a colliding id
             // (turn 2's step 1 vs turn 1's step 1) that a citation would then resolve to the wrong, earlier step.
-            const tokenId = (opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, (opts.seqBase ?? 0) + s) : undefined;
-            if (tokenId) tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs (only if CITED)
+            // A PIPED dereference mints its own id (mintView) and has already registered it — carry that one
+            // rather than minting a second, so the step the answer resolves to is the step that produced it.
+            const mintedView = mintedViews.get(s);
+            const tokenId = mintedView
+                ?? ((opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, (opts.seqBase ?? 0) + s) : undefined);
+            if (tokenId && !mintedView) tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs (only if CITED)
             // The pointer carries the value's TYPE, taken from the render descriptor the step already produced —
             // so `dereference … | keys` on a DataFrame means its COLUMNS, without re-parsing a rendered grid.
-            if (tokenId) {
+            // A minted VIEW was already stored by mintView, with the label and kind that describe the
+            // reduction. Re-noting it here would overwrite that with the dereference step's own result.
+            if (tokenId && !mintedView) {
                 const r = tr?.renderOut;
                 const df = r?.type === "python-out" ? r.df : undefined;
                 const tbl = df ? { columns: df.columns, rows: df.rows as unknown[][] }
@@ -651,14 +751,21 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 const image = tr?.image
                     ?? (r?.type === "image" ? r.src : r?.type === "look" ? r.image : r?.type === "python-out" ? r.image : undefined);
                 const latex = r?.type === "python-out" && r.latex && r.value != null ? String(r.value) : undefined;
-                tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, ...(full ? { full } : {}), ...(image ? { image } : {}), ...(latex ? { latex } : {}), ...(label ? { label } : {}), in: JSON.stringify(args), t: Date.now(), step, ...(tbl ? { table: tbl } : {}) });
+                tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, ...(full ? { full } : {}), ...(image ? { image } : {}), ...(latex ? { latex } : {}), ...(label ? { label } : {}), in: JSON.stringify(args), t: Date.now(), step, seq: s, ...(tbl ? { table: tbl } : {}) });
             }
-            const forModel = (tokenId && wantsToken)
+            // Not for a minted view: mintView appended its own line explaining what the reduction is, and
+            // `dereference`'s `token` PARAMETER is the pointer being READ, so `wantsToken` is true for every
+            // call — which would staple a second, contradictory citation instruction onto the same result.
+            const forModel = (tokenId && wantsToken && !mintedView)
                 ? `${result}\n\n[output token @tool:${tokenId} — EMBED this exact output in your final answer with image syntax: ![label](@tool:${tokenId}:out) (use ":in" for the call/code). It expands in place; don't retype it.]`
                 : result;
             // The DONE event carries the clean `result` for the pretty Out AND — when a token line was appended —
             // `modelResult` (what the model ACTUALLY saw), so the log's raw view stays complete (the AGENTS rule).
-            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}), ...(lastApproveMs != null ? { approveMs: lastApproveMs } : {}), ...(tr?.remoteMs ? { remoteMs: tr.remoteMs } : {}) });   // DONE (patches the START)
+            // Folded onto the In render — the slot that already shows the code, since a diff of it belongs
+            // beside it and not in a block of its own.
+            const renderInWithDiff = revision && tr?.renderIn && (tr.renderIn.type === "code" || tr.renderIn.type === "python-in")
+                ? { ...tr.renderIn, revision } : tr?.renderIn;
+            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: renderInWithDiff, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}), ...(lastApproveMs != null ? { approveMs: lastApproveMs } : {}), ...(lastDispatchMs ? { dispatchMs: lastDispatchMs } : {}), ...(tr?.remoteMs ? { remoteMs: tr.remoteMs } : {}) });   // DONE (patches the START)
             deps.pushToolResult(messages, call, forModel);
             if (tr?.image) pendingImages.push({ image: tr.image, label: tr.imageLabel || "screenshot" });
             // Multiple images from one call (look's overlay + no-overlay) → each becomes its own inline image.

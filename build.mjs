@@ -6,7 +6,7 @@
 // The core (injected/content/background/popup) has no runtime deps and compiles
 // to plain JS; the sidebar/ entry may pull in bundled deps (e.g. a highlighter).
 import * as esbuild from "esbuild";
-import { cpSync, rmSync, mkdirSync, existsSync, readdirSync } from "node:fs";
+import { cpSync, rmSync, mkdirSync, existsSync, readdirSync, renameSync } from "node:fs";
 import { generatePreview } from "./tools/preview-annotate.mjs";
 import { generatePreview as generateLegendPreview } from "./tools/preview-legend.mjs";
 import { writeApiDocs } from "./scripts/gen-api-docs.mjs";
@@ -62,6 +62,13 @@ function argValue(flag) {
     return i >= 0 ? process.argv[i + 1] : null;
 }
 const OUTDIR = argValue("--outdir") || "dist";
+// Built into a STAGING directory and swapped in only once everything succeeded. The old sequence deleted
+// the output first and bundled second, so any failure after that point — a typo in a CSS template literal
+// was the real one — left `dist/` with no manifest, which Chrome reports as "Failed to load extension" on
+// an extension that was working a second ago. A build that fails should change nothing.
+// Watch mode keeps writing in place: esbuild rebuilds incrementally there, and swapping a directory out
+// from under a browser that has it loaded is the thing being avoided, not a thing to do on every keystroke.
+const BUILD_DIR = watch ? OUTDIR : `${OUTDIR}.stage`;
 const DEFINES = Object.fromEntries(process.argv
     .map((a, i) => (a === "--define" ? process.argv[i + 1] : null))
     .filter(Boolean)
@@ -73,7 +80,7 @@ const DEFINES = Object.fromEntries(process.argv
 // it's minified.
 const { "sidebar-app": sidebarApp, ...coreEntries } = ENTRIES;
 const base = {
-    outdir: OUTDIR,
+    outdir: BUILD_DIR,
     bundle: true,
     format: "iife",      // classic scripts — required for content/injected scripts
     target: ["chrome114"],
@@ -85,7 +92,7 @@ const base = {
 };
 
 function copyAssets() {
-    for (const [src, dst] of ASSETS) cpSync(src, `${OUTDIR}/${dst}`);
+    for (const [src, dst] of ASSETS) cpSync(src, `${BUILD_DIR}/${dst}`);
 }
 
 // KaTeX web fonts → dist/fonts/. katex.min.css (bundled into sidebar-app as text, injected as a
@@ -94,8 +101,8 @@ function copyAssets() {
 function copyKatexFonts() {
     const dir = "node_modules/katex/dist/fonts";
     if (!existsSync(dir)) { console.warn("⚠ katex not installed — math rendering disabled (npm i)."); return; }
-    mkdirSync(`${OUTDIR}/fonts`, { recursive: true });
-    for (const f of readdirSync(dir)) if (f.endsWith(".woff2")) cpSync(`${dir}/${f}`, `${OUTDIR}/fonts/${f}`);
+    mkdirSync(`${BUILD_DIR}/fonts`, { recursive: true });
+    for (const f of readdirSync(dir)) if (f.endsWith(".woff2")) cpSync(`${dir}/${f}`, `${BUILD_DIR}/fonts/${f}`);
 }
 
 // Offline python_exec runtime → dist/pyodide/: the Pyodide CORE (from the `pyodide` npm
@@ -105,17 +112,19 @@ function copyKatexFonts() {
 const PYODIDE_CORE = ["pyodide.mjs", "pyodide.asm.mjs", "pyodide.asm.wasm", "python_stdlib.zip", "pyodide-lock.json"];
 function copyPyodide() {
     if (!existsSync("node_modules/pyodide")) { console.warn("⚠ pyodide not installed — python_exec disabled (npm i)."); return; }
-    mkdirSync(`${OUTDIR}/pyodide`, { recursive: true });
-    for (const f of PYODIDE_CORE) cpSync(`node_modules/pyodide/${f}`, `${OUTDIR}/pyodide/${f}`);
+    mkdirSync(`${BUILD_DIR}/pyodide`, { recursive: true });
+    for (const f of PYODIDE_CORE) cpSync(`node_modules/pyodide/${f}`, `${BUILD_DIR}/pyodide/${f}`);
     if (existsSync("pyodide-wheels")) {
-        for (const w of readdirSync("pyodide-wheels")) cpSync(`pyodide-wheels/${w}`, `${OUTDIR}/pyodide/${w}`);
+        for (const w of readdirSync("pyodide-wheels")) cpSync(`pyodide-wheels/${w}`, `${BUILD_DIR}/pyodide/${w}`);
     } else {
         console.warn("⚠ pyodide-wheels/ missing — run `npm run fetch-pyodide` to enable python_exec (numpy/Pillow).");
     }
 }
 
-rmSync(OUTDIR, { recursive: true, force: true });
-mkdirSync(OUTDIR, { recursive: true });
+// The STAGING dir is what gets cleared — never the live one. In watch mode these are the same path, which
+// is the pre-existing behaviour and is what watch wants.
+rmSync(BUILD_DIR, { recursive: true, force: true });
+mkdirSync(BUILD_DIR, { recursive: true });
 
 // api-docs.gen.ts — the agent_api_docs tool's payload, lifted from contract.ts. Generated
 // BEFORE bundling (tools.ts imports it) and gitignored, so the shipped reference can never
@@ -139,6 +148,7 @@ if (watch) {
     copyPyodide(); copyKatexFonts();   // once — static, not worth recopying on every rebuild
     console.log(`watching… (${OUTDIR}/)`);
 } else {
+    try {
     await esbuild.build({ ...base, entryPoints: coreEntries });
     await esbuild.build({ ...base, entryPoints: { "sidebar-app": sidebarApp }, minify: true });
     // NOTE: the pure modules (locate, readonly-exec, python-runtime, agent-loop, auto-approve,
@@ -154,5 +164,19 @@ if (watch) {
     // the latter so a failing legend case can be reviewed by eye). Open the HTMLs in a browser.
     await generatePreview();
     await generateLegendPreview();
+    // Everything succeeded, so the staged build replaces the live one. Anything that throws above leaves
+    // `dist/` exactly as it was — the whole point — and the stage is cleaned up on the way out.
+    rmSync(OUTDIR, { recursive: true, force: true });
+    renameSync(BUILD_DIR, OUTDIR);
     console.log(`built ${OUTDIR}/ (+ tools/annotate-preview.html, tools/legend-notebook.html)`);
+    } catch (err) {
+        // SAY that the old build is still there. Not keeping dist/ was its own failure mode — a loaded
+        // extension with no manifest — but "your last good build is still installed" is the sort of good
+        // news that misleads if it is silent: a silenced build now looks exactly like a successful one, and
+        // whatever you were about to test is the PREVIOUS bundle. Which is how this line got written.
+        rmSync(BUILD_DIR, { recursive: true, force: true });
+        console.error(`\n✗ build FAILED — ${OUTDIR}/ is untouched and still holds the PREVIOUS build.`);
+        console.error(`  Anything you run now tests that older bundle, not your current source.\n`);
+        throw err;
+    }
 }
