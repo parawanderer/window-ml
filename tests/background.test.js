@@ -3715,3 +3715,91 @@ test("PYTHON_EXEC: the watchdog is on unless asked otherwise", async () => {
     const run = bg.pyRuns.find(m => m.type === "PY_RUN");
     assert.ok(run && !run.noTimeout, "absent, not false — the offscreen doc treats missing as capped");
 });
+
+// THE ENGINE'S RUNNING COUNT (stream_options.continuous_usage_stats / native stream_metrics). The text
+// estimate froze while a model wrote a tool call — argument fragments carry no content or reasoning — so the
+// live count comes from the engine, on every chunk, and rides agent-stream as `tokens`.
+test("START_RUN (stream:true) asks for the engine's running count and carries it live, through a tool call", async () => {
+    let call = 0;
+    const bodies = [];
+    const u = (n) => `"usage":{"prompt_tokens":40,"completion_tokens":${n},"total_tokens":${40 + n}}`;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onTabMessage: (_tabId, msg) => (msg?.type === "RUN_TOOL_IN_PAGE" ? { result: "found: Step 1" } : undefined),
+        onFetch: ({ body }) => {
+            bodies.push(body);
+            if (++call === 1) return streamResponse([
+                `data: {"choices":[{"delta":{"reasoning_content":"Let me look."}}],${u(3)}}\n`,
+                `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"findByText","arguments":"{\\"text\\":"}}]}}],${u(9)}}\n`,
+                `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"Step\\"}"}}]}}],${u(14)}}\n`,
+                'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n',
+                `data: {"choices":[],${u(15)}}\n`,
+                'data: [DONE]\n',
+            ]);
+            return streamResponse([`data: {"choices":[{"delta":{"content":"All done."}}],${u(2)}}\n`, 'data: [DONE]\n']);
+        },
+    });
+    const panel = bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: 7 });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "tok", task: "find step 1", systemPrompt: "s",
+        tools: [{ name: "findByText", description: "", parameters: { type: "object", properties: { text: { type: "string" } } }, requiresApproval: false, capabilities: [] }],
+        model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools", stream: true,
+    } }, { tab: { id: 7 } });
+    assert.deepEqual(bodies[0].stream_options, { include_usage: true, continuous_usage_stats: true }, "the count is asked for");
+    const first = panel.messages.map((m) => m.__mlDebug).filter((e) => e?.kind === "agent-stream" && e.localStep === 1);
+    // The last live event of the turn carries the engine's newest count — reached during the tool call, whose
+    // chunks moved no text at all.
+    assert.equal(first.at(-1).tokens, 15, `live counts: ${first.map((e) => e.tokens)}`);
+    assert.equal(first.at(-1).reasoning, "Let me look.", "the text stood still while the count climbed");
+});
+
+test("START_RUN (stream:true): a server that refuses the count is asked once more without it, and then never again", async () => {
+    const bodies = [];
+    let answered = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onTabMessage: (_tabId, msg) => (msg?.type === "RUN_TOOL_IN_PAGE" ? { result: "ok" } : undefined),
+        onFetch: ({ body }) => {
+            bodies.push(body);
+            // A STRICT backend: an unfamiliar key is a 400, not something to ignore.
+            if (body.stream_options) return jsonResponse({ error: { message: "Unrecognized request argument supplied: continuous_usage_stats" } }, 400);
+            return ++answered === 1
+                ? streamResponse(['data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"findByText","arguments":"{\\"text\\":\\"a\\"}"}}]},"finish_reason":"tool_calls"}]}\n', "data: [DONE]\n"])
+                : streamResponse(['data: {"choices":[{"delta":{"content":"done"}}]}\n', "data: [DONE]\n"]);
+        },
+    });
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "strict", task: "t", systemPrompt: "s",
+        tools: [{ name: "findByText", description: "", parameters: { type: "object", properties: { text: { type: "string" } } }, requiresApproval: false, capabilities: [] }],
+        model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools", stream: true,
+    } }, { tab: { id: 7 } });
+    assert.equal(res.data.summary, "done", "a wire nicety never costs the answer");
+    assert.deepEqual(bodies.map((b) => !!b.stream_options), [true, false, false], "refused once, then not asked again");
+});
+
+test("START_RUN (stream:true) on ollama's native route asks with stream_metrics and reads eval_count", async () => {
+    const bodies = [];
+    const bg = loadBackground({
+        config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat" }),
+        onFetch: ({ body }) => {
+            bodies.push(body);
+            return streamResponse([
+                '{"message":{"role":"assistant","content":"one"},"done":false,"eval_count":1}\n',
+                '{"message":{"role":"assistant","content":" two"},"done":false,"eval_count":2}\n',
+                '{"message":{"role":"assistant","content":""},"done":true,"prompt_eval_count":5,"eval_count":3}\n',
+            ]);
+        },
+    });
+    const panel = bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: 7 });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "nat", task: "t", systemPrompt: "s", tools: [], model: "m", think: null, maxSteps: 2,
+        autoApprovePython: false, autoApproveReadonly: false, surface: "devtools", stream: true,
+    } }, { tab: { id: 7 } });
+    assert.equal(bodies[0].stream_metrics, true);
+    assert.equal(bodies[0].stream_options, undefined, "the OpenAI spelling is not sent to the native route");
+    const live = panel.messages.map((m) => m.__mlDebug).filter((e) => e?.kind === "agent-stream");
+    // The end-of-sequence token produces no text, so the final count exceeds what the text shows.
+    assert.equal(live.at(-1).tokens, 3, `live counts: ${live.map((e) => e.tokens)}`);
+});

@@ -22,6 +22,8 @@ interface ChatBody {
     tools?: unknown[];
     tool_ids?: string[];
     params?: Record<string, unknown>;       // OpenWebUI reads runtime params here (openai format)
+    stream_options?: { include_usage?: boolean; continuous_usage_stats?: boolean };   // see withLiveCount
+    stream_metrics?: boolean;               // the same ask on ollama's native route
 }
 
 interface ApiFormatHandler {
@@ -47,8 +49,34 @@ interface ApiFormatHandler {
     // OpenAI route reads it from `params` (same channel as num_ctx) — a top-level
     // `think` there is dropped, so `think:false` silently fails to disable it.
     applyThink(body: ChatBody, think: boolean): void;
-    streamChunk(line: string): { delta: string; reasoning?: string; toolCall: boolean; toolCallDelta?: unknown[] | null; sources?: unknown[] | null; usage?: TokenUsage | null } | null;
+    /** One streamed line. `tokens` is the ENGINE's running count of generated tokens up to and including this
+     *  chunk (see `withLiveCount`) — a running total, not a delta, and absent unless the request asked. */
+    streamChunk(line: string): { delta: string; reasoning?: string; toolCall: boolean; toolCallDelta?: unknown[] | null; sources?: unknown[] | null; usage?: TokenUsage | null; tokens?: number } | null;
 }
+
+const countOf = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+
+/**
+ * ASK THE ENGINE TO COUNT, on every streamed chunk, instead of estimating tokens from text (chars/4).
+ *
+ * The estimate is not just approximate, it FREEZES: a turn that is generating a tool call streams argument
+ * fragments, which carry no content or reasoning, so a count built from those two strings stands still for as
+ * long as the call takes to write. The count the engine keeps covers every token — thinking, answer, a call's
+ * arguments, and the end-of-sequence token that produces no text at all.
+ *
+ * `continuous_usage_stats` is vLLM's name and shape, so the same request works there; ollama's native route
+ * spells it `stream_metrics`. Opt-in everywhere, so a server that does not know it answers as it always did
+ * — except a STRICT one, which may refuse the unfamiliar key, and `streamAgentTurn` handles that by asking
+ * once more without it. A wire nicety must never cost an answer.
+ */
+function withLiveCount(body: ChatBody, apiFormat: string | undefined): ChatBody {
+    return (apiFormat || "openai") === "ollama"
+        ? { ...body, stream_metrics: true }
+        : { ...body, stream_options: { include_usage: true, continuous_usage_stats: true } };
+}
+/** Endpoints that refused the running-count request, so this worker never asks them again. Per URL, because a
+ *  refusal is a fact about the server at the far end. */
+const refusesLiveCount = new Set<string>();
 
 /** Normalize a server's token counts into TokenUsage, or null when absent.
  *  Handles every spelling we see from one place: OpenAI (`prompt_tokens`), the
@@ -196,6 +224,9 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
                 sources: Array.isArray(obj.sources) ? obj.sources : null,
                 // Usage rides the final SSE chunk (stream_options.include_usage / OpenWebUI).
                 usage: normalizeUsage(obj.usage),
+                // …and EVERY chunk, as a running total, when the request asked for continuous stats. On ollama's
+                // /v1 the finish chunk carries none; the usage chunk after it has the final figure.
+                ...(countOf(obj.usage?.completion_tokens) != null ? { tokens: countOf(obj.usage.completion_tokens) } : {}),
             };
         },
     },
@@ -248,7 +279,9 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
             return { delta: obj.message?.content || "", reasoning: obj.message?.thinking || "", toolCall: !!obj.message?.tool_calls,
                 // Ollama sends tool_calls WHOLE in a chunk (object args, no index/id) — not fragmented like OpenAI.
                 toolCallDelta: Array.isArray(obj.message?.tool_calls) ? obj.message.tool_calls : null,
-                usage: obj.done ? normalizeUsage(obj) : null };
+                usage: obj.done ? normalizeUsage(obj) : null,
+                // `stream_metrics: true` puts the running `eval_count` on every chunk, not just the last.
+                ...(countOf(obj.eval_count) != null ? { tokens: countOf(obj.eval_count) } : {}) };
         },
     },
 };
@@ -872,7 +905,7 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
  *  agent loop uses client-side `tools` (not `tool_ids`), so no SERVER_TOOL_MODES probe is needed here. */
 export async function streamAgentTurn(
     payload: FetchLlmPayload,
-    onDelta: (acc: { reasoning: string; content: string; phases: GenPhase[]; phaseChanged: boolean }) => void,
+    onDelta: (acc: { reasoning: string; content: string; phases: GenPhase[]; phaseChanged: boolean; tokens?: number }) => void,
     signal?: AbortSignal,
 ): Promise<{ content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null }> {
     const { config, format, body, send, protoAsked } = await prepareRequest(payload, signal);
@@ -893,10 +926,24 @@ export async function streamAgentTurn(
         phases.push({ kind, atMs: Date.now() - _t0 });
         return true;
     };
-    const res = await send(body, true);
+    const res = await (async () => {
+        if (refusesLiveCount.has(config.chatUrl)) return send(body, true);
+        try { return await send(withLiveCount(body, config.apiFormat), true); }
+        catch (e: any) {
+            // A STRICT server can refuse the unfamiliar key outright. Ask once more without it, and only
+            // remember the refusal if that one succeeds — a 400 for any other reason fails the same way twice
+            // and surfaces as the error it was.
+            if (!/^HTTP 4(00|22) /.test(String(e?.message))) throw e;
+            const plain = await send(body, true);
+            refusesLiveCount.add(config.chatUrl);
+            return plain;
+        }
+    })();
     const reader = res.body!.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+    // The engine's running count, when it sends one. The latest value is the figure — never a sum.
+    let tokens: number | undefined;
     /** One parsed chunk, whatever carried it. SSE and protobuf differ only in how a chunk is RECOVERED from
      *  the wire; everything after — the phase marks, the fragment accumulation, the throttled fan — is the
      *  same work, and having it once is what stops the two formats drifting into different behaviour. */
@@ -906,6 +953,9 @@ export async function streamAgentTurn(
         if (chunk.delta) { content += chunk.delta; changed = true; phaseChanged = mark("answer") || phaseChanged; }
         if (chunk.reasoning) { reasoning += chunk.reasoning; changed = true; phaseChanged = mark("think") || phaseChanged; }
         if (chunk.usage) usage = chunk.usage;
+        // A new count is news on its own: a chunk carrying only a tool call's argument fragment moves nothing
+        // else the caller watches, and that is exactly the stretch a count built from text used to freeze on.
+        if (chunk.tokens != null && chunk.tokens !== tokens) { tokens = chunk.tokens; changed = true; }
         if (Array.isArray(chunk.toolCallDelta)) {
             phaseChanged = mark("call") || phaseChanged;
             for (const tc of chunk.toolCallDelta as any[]) {
@@ -920,7 +970,7 @@ export async function streamAgentTurn(
         }
         // A phase change is reported even with no new TEXT: a turn that only calls a tool produces no content
         // or reasoning deltas at all, so a caller throttling on text alone would never hear that it started.
-        if (changed || phaseChanged) onDelta({ reasoning, content, phases, phaseChanged });
+        if (changed || phaseChanged) onDelta({ reasoning, content, phases, phaseChanged, ...(tokens != null ? { tokens } : {}) });
     };
     const handleLine = (line: string) => handleChunk(format.streamChunk(line));
     // THE SAME NEGOTIATION the one-shot stream does: we asked for protobuf where it costs nothing to ask, and
@@ -945,6 +995,8 @@ export async function streamAgentTurn(
                                                               function: { name: t.function?.name || undefined, arguments: t.function?.arguments ?? "" } }))
                             : null,
                         sources: null, usage: null,
+                        // `optional` on the wire: absent means the request did not ask, and 0 is a real count.
+                        ...(f.delta.completionTokens !== undefined ? { tokens: f.delta.completionTokens } : {}),
                     });
                 }
                 if (f.end) {

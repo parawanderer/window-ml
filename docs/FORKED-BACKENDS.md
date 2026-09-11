@@ -96,6 +96,16 @@ zeros for everything else, and Go's zero time parses to a deadline in the year 1
 two thousand years, which is what a probe on the box actually printed. Read `state` before reading
 anything else on an entry; its absence means resident.
 
+**The engine's running token count on every streamed chunk (`ollama-slop:streamusage`, plus an OpenWebUI
+`payload.py` overlay).** Asked for with `stream_options: {include_usage: true, continuous_usage_stats: true}`
+on `/v1/chat/completions` (SSE `usage` on every chunk; protobuf `Delta.completion_tokens`, field 6) and on
+OpenWebUI's `/api/chat/completions`, or `stream_metrics: true` on native `/api/chat` (`eval_count` on every
+chunk). Opt-in, so no other client's stream changes. A running total, thinking tokens included; on ollama's
+`/v1` SSE the finish chunk has none and the usage chunk after it holds the final figure. The same overlay
+fixed OpenWebUI dropping `max_tokens` on `/api/chat/completions` (it now arrives as `options.num_predict`);
+a response cut off by it still comes back from OpenWebUI's non-streamed route as `finish_reason: "stop"`
+where OpenAI's contract says `"length"`.
+
 **Which process on a card is whose (`processes` on `/api/info`, `ollama-slop:runnerpids2`).** Each card
 lists the processes the driver reports on it, joined by pid to ollama's runners: `{pid, used_memory, name,
 runner: {model, loading?}, ollama_helper?}`, plus `processes_scope` per card. The scope is the part to read

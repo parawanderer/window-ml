@@ -40,6 +40,14 @@ export interface Delta {
   toolCalls: ToolCall[];
   /** Present only when the request asked for logprobs. */
   logprobs: Logprob[];
+  /**
+   * The running count of generated tokens, up to and including this delta, as the engine
+   * counted them. Present only when the request set stream_options.continuous_usage_stats,
+   * so a client can show an exact count instead of estimating one from the text. A delta is
+   * not a token -- the thinking and tool-call parsers regroup text -- so read the count, do
+   * not count deltas. Thinking tokens are included.
+   */
+  completionTokens?: number | undefined;
 }
 
 export interface ToolCall {
@@ -176,7 +184,7 @@ export const Start: MessageFns<Start> = {
 };
 
 function createBaseDelta(): Delta {
-  return { content: "", reasoning: "", index: 0, toolCalls: [], logprobs: [] };
+  return { content: "", reasoning: "", index: 0, toolCalls: [], logprobs: [], completionTokens: undefined };
 }
 
 export const Delta: MessageFns<Delta> = {
@@ -233,6 +241,14 @@ export const Delta: MessageFns<Delta> = {
             message.logprobs.push(Logprob.decode(reader, reader.uint32()));
             continue;
           }
+          case 6: {
+            if (tag !== 48) {
+              break;
+            }
+
+            message.completionTokens = reader.uint32();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -255,6 +271,7 @@ export const Delta: MessageFns<Delta> = {
     message.index = object.index ?? 0;
     message.toolCalls = object.toolCalls?.map((e) => ToolCall.fromPartial(e)) || [];
     message.logprobs = object.logprobs?.map((e) => Logprob.fromPartial(e)) || [];
+    message.completionTokens = object.completionTokens ?? undefined;
     return message;
   },
 };

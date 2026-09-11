@@ -1905,6 +1905,20 @@ saving actually lands, since a turn re-sends a large prompt and streams a long r
 `handleChunk`, so the formats differ only in how a chunk is RECOVERED from the wire and cannot drift into
 different behaviour.
 
+**The live token count is the ENGINE's (`withLiveCount` in sw-llm.ts).** It was chars/4 over the streamed
+reasoning and content, which is not merely approximate: it FROZE for as long as a model took to write a tool
+call, because argument fragments carry neither. `streamAgentTurn` now asks for the running count on every
+chunk — `stream_options: {include_usage, continuous_usage_stats}` on the OpenAI route (vLLM's name and shape,
+so it works there too), `stream_metrics: true` on ollama's native one, `Delta.completion_tokens` (field 6) on
+protobuf — and carries it as `tokens` on `agent-stream` → `liveStream.tokens` → the orb, which shows it
+unrounded and without the `~` an estimate gets. Three facts about it: it is a RUNNING TOTAL, never summed; it
+includes thinking tokens and the end-of-sequence token that produces no text, so it can exceed what the text
+shows; and a new count is news on its own, so a chunk carrying only an argument fragment still fans a delta.
+**A strict backend may refuse the unfamiliar key** with a 400, so a refusal is retried once without it and
+the URL remembered for the worker's life (`refusesLiveCount`) — a wire nicety must never cost an answer. A
+stock server that ignores it simply sends no count, and the estimate stands in. `streamLLM` (`ml.chat`) does
+not ask: nothing there reads a live count, and on SSE every chunk would carry the usage object for nothing.
+
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,
 captured in `streamChunk`/`consume`). `fetchLLM`/`streamLLM` return
