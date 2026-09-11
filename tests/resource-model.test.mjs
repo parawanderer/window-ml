@@ -199,8 +199,8 @@ test("stackRefusal: stacking asserts a real total, so the false cases are refuse
     const byId = (id) => cat.find((s) => s.id === id);
 
     assert.equal(M.stackRefusal([byId("vram.0")], cudaCap), null, "one series always stacks");
-    assert.match(M.stackRefusal([byId("vram.0"), byId("vram.1")], cudaCap), /each card has its own capacity/i,
-        "two cards have no meaningful combined total — a model can only use one card's");
+    assert.match(M.stackRefusal([byId("vram.0"), byId("vram.1")], cudaCap), /each card has its own capacity.*ONE ceiling/i,
+        "a stack draws against one ceiling, and two cards have two");
     assert.match(M.stackRefusal([byId("vram.0"), byId("ram")], metalCap), /same silicon|double-count/i,
         "on unified memory the device and host totals describe the same pool");
     assert.match(M.stackRefusal([byId("vram.0"), byId("ram")], cudaCap), /different pools/i,
@@ -247,7 +247,7 @@ test("presetsFor: the default layout follows the hardware", () => {
     assert.equal(box.tracks[0].mode, "total");
     assert.deepEqual(box.tracks[0].series, ["vram.0", "vram.1", "ram"], "every pool, laid end to end");
     // A preset must never propose a layout `stackRefusal` would reject; `total` is judged separately because
-    // it does not claim a fungible sum — the walls between the pools are the point.
+    // it does not merge the pools into one — the walls between them are the point.
     assert.equal(M.presetRefusal(box, { t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] }), null);
     assert.ok(!multi.some((p) => p.id === "placement"));
 
@@ -1901,9 +1901,9 @@ test("placementFrom: the device name is carried through, never mapped", () => {
     assert.equal(p.devices[0].device, "ROCm1");
 });
 
-// THE WHOLE BOX ON ONE AXIS. Summing capacities into one denominator is the panel's oldest refusal — free
-// memory is not fungible — so the pools are laid END TO END instead: each owns a band the height of its own
-// capacity and fills it from its own floor, and the walls between them are what make that visible.
+// THE WHOLE BOX ON ONE AXIS. Pools combine only at a cost (a split pays per-card overhead, a spill into RAM
+// is slow), so they are laid END TO END rather than merged: each owns a band the height of its own capacity
+// and fills it from its own floor, and the walls between them are what make that visible.
 test("boxAxis: pools are laid end to end, and the total is real", () => {
     const a = M.boxAxis([{ id: "vram.0", ceiling: 96 }, { id: "vram.1", ceiling: 96 }, { id: "ram", ceiling: 128 }]);
     assert.equal(a.total, 320, "the axis total is the sum of real capacities");

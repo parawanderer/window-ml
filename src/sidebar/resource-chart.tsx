@@ -1024,14 +1024,20 @@ function PlotTip({ at, bands, ceiling, label, hidden, scope }: { at: ResourceSam
  *
  *  Each row carries the pool's own swatch, its occupancy and its share — the shares are what the lines plot,
  *  since the pools have different capacities and a common axis of bytes would compare nothing. */
-function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf }: {
+function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf, surface = "overlay", bandOf }: {
     pools: { id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] }[];
     latest: ResourceSample;
     at: ResourceSample | null;
     fracOf: (s: ResourceSample, p: any) => number;
     usedOf: (s: ResourceSample, p: any) => number;
+    /** The surface the view tracks its pointer as — the overlaid view's, or a whole-box track's own scope. */
+    surface?: string;
+    /** Where a pool OWNS the height, as [bottom, top] fractions of the plot. The whole-box view lays pools end
+     *  to end, so the pool you are pointing at is the band the pointer is inside, not the fill top nearest to
+     *  it — nearest-by-line would name a neighbour whenever you point low inside a tall band. */
+    bandOf?: (p: any) => [number, number];
 }) {
-    const cur = cursorOn("overlay");
+    const cur = cursorOn(surface);
     if (!cur || !pools.length) return null;
     const frame = hoverSample ?? latest;
     const { ref, style } = useTipPlacement(cur);
@@ -1046,7 +1052,8 @@ function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf }: {
     // A DELIBERATE hover wins over proximity: pointing at a line, or at its key in the legend, says which pool
     // you mean more precisely than the pointer's height can. Height decides only when the pointer is just
     // somewhere on the plot, which is the case the stacked reading exists for.
-    const picked = poolHover.value ? rows.find((r) => r.p.id === poolHover.value!.id) : null;
+    const inside = bandOf && cur.yFrac != null ? rows.find((r) => { const [lo, hi] = bandOf(r.p); const h = 1 - cur.yFrac!; return h >= lo && h <= hi; }) : null;
+    const picked = (poolHover.value ? rows.find((r) => r.p.id === poolHover.value!.id) : null) ?? inside;
     const near = picked ?? rows.reduce((a, b) => (b.dy < a.dy ? b : a), rows[0]);
     const hasNear = !!picked || near.dy < Infinity;
     return (
@@ -1231,9 +1238,10 @@ function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDe
  * give every pool the same height whatever its size, so a 12 GiB card and a 96 GiB one look alike and the
  * box's shape is invisible. Here a pool's height IS its share of the machine.
  *
- * What it must never do is imply the memory is FUNGIBLE. Adding the capacities into one denominator would —
- * 40 GiB free as 20+20 cannot hold a 30 GiB model — so the pools are concatenated rather than summed, and
- * the WALLS between them are drawn. The axis total is then a true total of capacity and every fill is a real
+ * What it must never do is draw the memory as ONE pool. Pools do combine — ollama splits a model across
+ * cards and spills the rest into RAM — but at a cost per boundary (a compute buffer and driver context per
+ * extra card, layers that do not divide, a RAM spill that is far slower), so the pools are concatenated
+ * rather than poured together, and the WALLS between them are drawn. The axis total is then a true total of capacity and every fill is a real
  * reading against a real ceiling. The header says what is HELD and never what is free, which is the one
  * sentence the walls exist to deny.
  */
@@ -1263,18 +1271,30 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
     const runs = noteRuns(segments(samples, sampleGapMs()).filter((r) => r.length > 1));
     const instants = useInstants(runs, events);
     const held = pools.reduce((n, p) => n + usedOf(latest, p), 0);
+    // THE SAME READING THE OVERLAID VIEW GIVES, because it is the same question asked of the same pools — this
+    // view had none, so pointing at it (or at a key) answered nothing. Colours are the ones the bands are drawn
+    // in; the pool you are pointing at is the band you are INSIDE, since the pools here own heights rather
+    // than drawing lines to be near.
+    const tipPools = pools.map((p) => {
+        const bi = axis.bands.findIndex((b) => b.id === p.id);
+        return { ...p, color: poolColor(bi < 0 ? 0 : bi, axis.bands.length) };
+    });
+    const bandOf = (p: { id: string }): [number, number] => {
+        const b = axis.bands.find((x) => x.id === p.id);
+        return b ? [b.base / axis.total, (b.base + b.ceiling) / axis.total] : [0, 0];
+    };
     return (
         <div class="rc-track">
             <div class="rc-head">
                 <HideTrack onHide={onHide} label={pools.map((p) => p.name).join(" · ")} />
                 <span class="rc-name">{pools.map((p) => p.name).join(" · ")}</span>
                 <span class="sp" />
-                {/* HELD, never FREE. Those bytes are genuinely held, so the figure is true; the difference
-                    between it and the total is NOT available to a model, which is the claim the walls deny
-                    and the one a "free" figure would make in passing. */}
+                {/* HELD, never FREE. Those bytes are measured, so the figure is true. A "free" total would
+                    overstate the room — per-card overheads and layer-sized leftovers mean the gap is not all
+                    usable — and would count a GiB of slow RAM the same as a GiB of VRAM. */}
                 <span class="rc-total tt">
                     {formatBytes(held)} of {formatBytes(axis.total)} held
-                    <span class="tt-pop wrap" role="tooltip">Every pool on one axis, laid end to end rather than added together — each band is one pool's own capacity, filled from its own floor. The total is real, but the space above a fill belongs to THAT pool only: a model can use one pool's room, never the sum. Switch a pool off in the legend to take it out of the axis.</span>
+                    <span class="tt-pop wrap" role="tooltip">Every pool on one axis, laid end to end — each band is one pool's own capacity, filled from its own floor. Pools do combine: a model too big for one card is split across several, and what still does not fit spills into System RAM. But not one-for-one: each extra card a model spans carries its own compute buffer and driver context, layers do not divide, and a spill into RAM runs far slower — so the room above the fills does not simply add up. Switch a pool off in the legend to take it out of the axis.</span>
                 </span>
             </div>
             <div class="rc-plot"
@@ -1287,6 +1307,8 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
                 }}>
                 <BrushOverlay runs={runs} />
                 <Crosshair runs={runs} />
+                <PoolsTip pools={tipPools} latest={latest} at={hoveredSample(runs, scope)} surface={scope} bandOf={bandOf}
+                    fracOf={(sm, p) => (p.ceiling > 0 ? Math.min(1, usedOf(sm, p) / p.ceiling) : 0)} usedOf={usedOf} />
                 <EventTip scope={scope} />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
@@ -1332,11 +1354,15 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
                     return (
                         <span class={`rc-key${off ? " off" : ""}${hoverPool.value && hoverPool.value !== p.id ? " away" : ""}`}
                             key={p.id} role="button" tabIndex={0} aria-pressed={!off}
-                            title={off ? `Show ${p.name}` : `Hide ${p.name}`}
+                            // A NAME, not an explanation: the reading is the pool tip this hover opens, exactly as
+                            // on the overlaid view's keys. A native `title` as well was a second tooltip, a second
+                            // late, for a hint the pressed state already carries.
+                            aria-label={off ? `Show ${p.name}` : `Hide ${p.name}`}
                             onClick={() => togglePool(p.id)}
                             onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); togglePool(p.id); } }}
-                            onPointerEnter={() => enterPool({ ...p, color })}
-                            onPointerLeave={() => leavePool()}>
+                            onPointerEnter={(e: PointerEvent) => { enterPool({ ...p, color }); trackCursor(scope)(e); }}
+                            onPointerMove={trackCursor(scope)}
+                            onPointerLeave={() => { leavePool(); hoverAt.value = null; }}>
                             <i class="rc-swatch" style={{ background: off ? "var(--fg-faint)" : color }} />
                             {p.name} {off ? "off" : formatShare(usedOf(latest, p), p.ceiling, "/")}
                         </span>
@@ -1347,8 +1373,9 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
     );
 }
 
-/** Several series in ONE track, drawn as independent lines rather than a stack: their sum is not a quantity
- *  anything is measured against (a model can only use one card's capacity), so the chart must not draw one. */
+/** Several series in ONE track, drawn as independent lines rather than a stack: each pool is measured against
+ *  its OWN ceiling, so the lines are shares of their own capacity, and one stacked ceiling would compare
+ *  nothing. (How much of the whole box is in use is the `total` view's question, answered with walls.) */
 function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[]; onHide?: () => void }) {
     const cap = latest.capacity!;
     // Each series is a POOL: a card, or the host. Including the host matters — a CPU-resident model holds no
@@ -1488,7 +1515,7 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
                     <span class={`rc-key${(hoverModel.value && !p.bandsOf(latest).some((b) => b.model === hoverModel.value))
                             || (hoverPool.value && hoverPool.value !== p.id) ? " away" : ""}${allHidden(p) || hiddenPools.value.has(p.id) ? " off" : ""}`} key={p.id}
                         role="button" tabIndex={0} aria-pressed={!hiddenPools.value.has(p.id)}
-                        title={hiddenPools.value.has(p.id) ? `Show ${p.name}` : `Hide ${p.name}`}
+                        aria-label={hiddenPools.value.has(p.id) ? `Show ${p.name}` : `Hide ${p.name}`}
                         onClick={() => togglePool(p.id)}
                         onKeyDown={(e: KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); togglePool(p.id); } }}
                         onPointerEnter={(e: PointerEvent) => { enterPool({ ...p, color: poolColor(pi, pools.length) }); trackCursor("overlay")(e); }} onPointerLeave={() => leavePool()}>

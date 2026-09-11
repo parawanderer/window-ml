@@ -83,6 +83,23 @@ test("a failed load is an error, and releases the span it would have closed", ()
     assert.equal(machineEventFrom({ kind: "load.complete", model: "m" }, 250_000), null);
 });
 
+test("a load ATTEMPT that fails and retries is not reported as the load failing", () => {
+    // The server ends a reason with "; retrying" when it evicted something or shrank the context and is trying
+    // again; the next attempt brings its own load.start. One request can read start → failed → start → complete,
+    // so the first failure must not read as the request failing.
+    reset();
+    machineEventFrom({ kind: "load.start", model: "m" }, 1000);
+    const attempt = machineEventFrom({ kind: "load.failed", model: "m", reason: "insufficient memory; retrying" }, 2000);
+    assert.match(attempt.label, /^m load attempt failed, retrying: insufficient memory$/);
+    assert.doesNotMatch(attempt.label, /failed to load/);
+    // …and the retry opens and closes its own span.
+    machineEventFrom({ kind: "load.start", model: "m" }, 3000);
+    assert.equal(machineEventFrom({ kind: "load.complete", model: "m" }, 9000)?.kind, "load");
+    // A disconnect is reported as what it is, verbatim, and is a real failure — no retry follows it.
+    const gone = machineEventFrom({ kind: "load.failed", model: "m", reason: "load abandoned: the request that started it was cancelled before llama-server finished loading: context canceled" }, 10_000);
+    assert.match(gone.label, /^m failed to load: load abandoned/);
+});
+
 test("frames that are not events in their own right produce none", () => {
     reset();
     for (const kind of ["sample", "heartbeat", "hello", "expires", "something.new"])

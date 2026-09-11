@@ -1130,21 +1130,31 @@ per device, in bytes.
   confident lie; and **link speed or width**, which are LIVE readings rather than capabilities (an idle
   Blackwell reads 2.5 GT/s under ASPM while perfectly healthy, and x8-of-x16 is by design on a board that
   splits its lanes).
-- **A THIRD MODE, `total`: THE WHOLE BOX ON ONE AXIS** (`boxAxis`, `BoxView`). Summing pools' CAPACITY into
-  one denominator is the panel's oldest refusal — 40 GiB free as 20+20 cannot hold a 30 GiB model — but the
-  question behind it is real, and it only lies when the pools are MIXED. So they are laid END TO END up the
-  axis: each owns a band the height of its own capacity and fills it from its own floor, with the WALLS drawn
-  between them. The axis total is then a true total, every fill is a real reading against a real ceiling, and
-  non-fungibility is visible rather than something the reader has to know. It also makes the box's SHAPE
-  visible, which the per-pool tracks cannot — they give every pool the same height whatever its size. The
-  header says what is HELD and never what is FREE, which is the one sentence the walls exist to deny; hiding
+- **A THIRD MODE, `total`: THE WHOLE BOX ON ONE AXIS** (`boxAxis`, `BoxView`). Pools DO combine — ollama
+  splits a model too big for one card across several and spills the rest into RAM — but not one-for-one:
+  each extra card a model spans carries its own compute buffer and driver context, layers do not divide (free
+  space smaller than the next layer is stranded), and a RAM spill is far slower. **This text used to say the
+  opposite** ("40 GiB free as 20+20 cannot hold a 30 GiB model", "a model can use one pool's room, never the
+  sum") while the same panel drew split models; it was wrong everywhere it appeared, the stack refusal's
+  tooltip included. So the pools are laid END TO END up the axis rather than merged: each owns a band the
+  height of its own capacity and fills it from its own floor, with the WALLS drawn between them. The axis
+  total is then a true total, every fill is a real reading against a real ceiling (which card is full is what
+  decides where the next load lands), and the boundaries a split pays to cross are visible. It also makes the
+  box's SHAPE visible, which the per-pool tracks cannot — they give every pool the same height whatever its
+  size. The header says what is HELD and never what is FREE — a free total would overstate the room and count
+  slow RAM as VRAM; hiding
   a pool shrinks the axis rather than leaving a hole. Offered only where there is more than one pool, and it
   has its OWN PRESET ("Whole box"). It had none for a while and could be reached only by hand-editing tracks,
   which made Custom carry a whole VIEW rather than what Custom should mean — a preset with something excluded
   or a mode changed. A mode nobody can find is a mode nobody uses. The three presets are three different
   QUESTIONS, not three scopes: how full is each pool (Overview), what is in each (GPU + RAM), what shape is
   this box (Whole box) — the last being the one the per-pool tracks cannot answer, since they give every pool
-  the same height whatever its capacity.
+  the same height whatever its capacity. **It answers a hover like every other view** (`PoolsTip`, the overlaid view's reading): it shipped
+  with none, so pointing at the plot or a legend key said nothing one preset away from a view where both did.
+  The pool it picks is the band the pointer is INSIDE (`bandOf`), not the overlaid view's nearest line —
+  that rule compares the pointer against each pool's own fill SHARE, which means nothing on this axis and
+  agrees with the band by coincidence at some heights, which is how a one-probe test passed with the band rule
+  removed. Its test probes one height per band.
 - **THE STACKING RULE JUDGES THE MODE, not only the series.** `stackRefusal` guarded the series CHECKBOXES —
   it stopped you adding a series that would make an unstackable track — and left the mode select unguarded, so
   a three-pool Overview track could simply be switched to "stack". `TrackView`'s stack branch reads
@@ -1253,6 +1263,13 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
 - **The lane and the model list each hide** (Settings live in the panel's own track editor, beside which
   tracks it draws — the same question). Both compete with the chart for whatever height the panel was
   dragged to, and which of the three you want depends on what you are doing.
+- **A load ATTEMPT is not the request.** The server ends a `load.failed` reason with `; retrying` when it
+  evicted something or shrank the context and is trying again, and the next attempt brings its own
+  `load.start` — so one request reads start → failed → start → complete. It is labelled "load attempt failed,
+  retrying", never "failed to load", or the lane reports a failure for a load that went on to succeed. Since
+  `ollama-slop:loadguard` every `load.start` is followed by exactly one `load.complete` or `load.failed`; before
+  it, an abandoned load (the requesting client disconnected — ollama ABANDONS a load then, it does not finish
+  it) left a `state: "loading"` row on `/api/ps` forever.
 - **A reconnect must not draw the lane twice.** `sinceFor(null, …)` asks for the FULL retained ring whenever
   the worker is fresh — which an MV3 respawn guarantees — so every span in that window arrives a second time.
   Caught on a real box, where four serving periods read as `serving 8` and two loads as three (one load's

@@ -807,17 +807,22 @@ export interface TrackDef {
 }
 
 /**
- * THE WHOLE BOX ON ONE AXIS, without pretending its memory is fungible.
+ * THE WHOLE BOX ON ONE AXIS, without pretending its memory is ONE pool.
  *
- * Summing several pools' CAPACITY into one denominator is the panel's oldest refusal (`stackRefusal`): 40 GiB
- * free as 20+20 cannot hold a 30 GiB model, so a combined "free" figure invites exactly the judgement it
- * cannot support. But the question behind it is real — how much of this machine is in use — and the answer
- * only lies when the pools are MIXED.
+ * Pools DO combine: ollama splits a model too big for one card across several (by layer), and spills what
+ * still does not fit into system RAM — the panel draws both. But not one-for-one, and that is what a single
+ * combined figure hides: every extra card a model spans carries its own compute buffer (flat per device, not
+ * pro-rated) and, on a card that held nothing, ~0.65 GiB of driver context; layers do not divide, so free
+ * space smaller than the next layer is stranded; and a spill into RAM runs far slower, since those weights
+ * cross PCIe on every token. So two cards with 20 GiB free each are not 40 GiB of room, and a GiB of RAM is
+ * not a GiB of VRAM. The question behind "add up my box" is real — how much of this machine is in use — and
+ * the answer only misleads when the pools are MERGED into one.
  *
- * So they are laid END TO END up the axis instead of added together: each pool owns a band whose height is
+ * So they are laid END TO END up the axis rather than poured into one: each pool owns a band whose height is
  * its own capacity, and fills that band from its own floor. The axis total is then a true total of capacity,
- * every fill is a real reading against a real ceiling, and the WALLS between the bands are drawn — so
- * non-fungibility is visible rather than something the reader has to know.
+ * every fill is a real reading against a real ceiling (which card is full is what decides where the next load
+ * lands), and the WALLS between the bands are drawn — so the boundaries a split has to pay to cross are
+ * visible rather than something the reader has to know.
  *
  * It also makes the box's SHAPE visible, which the per-pool tracks cannot: those give every pool the same
  * height whatever its size, so a 12 GiB laptop card and a 96 GiB card look alike. Here a pool's height IS its
@@ -847,8 +852,8 @@ export function stackRefusal(defs: SeriesDef[], cap: Capacity | null): string | 
     if (cap?.unified && scopes.size > 1)
         return "This device shares one pool of memory between the GPU and the system, so its VRAM and RAM figures describe the same silicon — stacking them would double-count. Overlay them instead.";
     if ([...pools].filter((p) => p.startsWith("device:")).length > 1)
-        return "Each card has its own capacity and a model can only use one card's, so a stack of several cards has no meaningful total. Show a track per card, or overlay them.";
-    return "These series measure different pools, so their sum isn't a real quantity. Overlay them instead.";
+        return "Each card has its own capacity, and a stack draws its parts against ONE ceiling — so several cards stacked would draw one card's models in memory another card does not have. (A model split across cards already shows on each card it uses.) Show a track per card, overlay them, or use Whole box, which lays each card's capacity end to end.";
+    return "These series measure different pools, each against its own ceiling, so one stack has no single ceiling to draw them against. Overlay them, or use Whole box.";
 }
 
 export interface Preset { id: string; label: string; description: string; tracks: TrackDef[] }

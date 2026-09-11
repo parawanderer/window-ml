@@ -312,10 +312,13 @@ one is refused at restore (`restoreLayout` → `presetRefusal`), which is what m
 sufficient — and is why a renderer-side fallback written for it was dead code and removed.
 
 **`total` is the honest version of the thing `stack` refuses.** The question behind "add up my box"
-is real; it only lies when the pools are MIXED. So `boxAxis()` lays them END TO END up one axis —
-each owns a band the height of its own capacity and fills it from its own floor, with the walls drawn
-between them. The axis total is then a true total of capacity, every fill is a real reading against a
-real ceiling, and non-fungibility is visible rather than something the reader has to know. It also
+is real. Pools do combine — ollama splits a model across cards and spills the rest into RAM — but not
+one-for-one: each extra card a model spans carries its own compute buffer and driver context, layers
+do not divide, and a RAM spill is far slower. So it only misleads when the pools are MERGED into one.
+`boxAxis()` lays them END TO END up one axis — each owns a band the height of its own capacity and
+fills it from its own floor, with the walls drawn between them. The axis total is then a true total of
+capacity, every fill is a real reading against a real ceiling, and the boundaries a split pays to
+cross are visible rather than something the reader has to know. It also
 shows the box's SHAPE, which a track per pool cannot: those give every pool the same height whatever
 its size, so a 12 GiB card and a 96 GiB one look alike.
 

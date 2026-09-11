@@ -2932,9 +2932,9 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* THE WHOLE BOX ON ONE AXIS: each pool's fill, in its own band. Flat and solid — this view is about how much
    is held, not about which model holds it, which the per-pool tracks already say. */
 .rc-boxfill { opacity: .72; }
-/* A WALL between two pools' bands, and the reason this axis is honest: the space above a fill belongs to that
-   pool only. Without them a reader sees one column and infers one pool — which is the fungibility claim the
-   whole view exists to avoid making. Solid, unlike an event rule's dash, because it is a property of the
+/* A WALL between two pools' bands, and the reason this axis is honest: each fill is its own pool's reading, and
+   a model crossing a wall pays for it (a split costs per-card overhead, a spill into RAM is slow). Without them
+   a reader sees one column and infers one pool — which is the claim the whole view exists to avoid making. Solid, unlike an event rule's dash, because it is a property of the
    axis rather than something that happened. */
 .rc-boxwall { position: absolute; left: 0; right: 0; height: 1px; background: var(--fg-faint);
               opacity: .55; pointer-events: none; z-index: 3; }

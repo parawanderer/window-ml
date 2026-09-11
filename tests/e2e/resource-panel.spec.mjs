@@ -3612,8 +3612,8 @@ test("resource panel: every view and every track mode draws something for the sa
             for (let i = 0; i < modes; i++) {
                 const sel = frame.locator(".rc-emode").nth(i);
                 for (const m of ["stack", "overlay"]) {
-                    // A MODE THE RULE REFUSES IS NOT OFFERED. Stacking several pools has no meaningful total
-                    // — a model can only use one card's capacity — and the guard used to cover only the
+                    // A MODE THE RULE REFUSES IS NOT OFFERED. A stack draws against ONE ceiling and several
+                    // pools have several — and the guard used to cover only the
                     // series checkboxes, so the mode itself could be switched to it. Skipped rather than
                     // asserted-on here: what it must never be is SELECTABLE and empty.
                     if (await sel.locator(`option[value=${m}]`).isDisabled()) continue;
@@ -3631,7 +3631,7 @@ test("resource panel: every view and every track mode draws something for the sa
     } finally { await ext.close(); await fake.stop(); }
 });
 
-// STACKING SEVERAL POOLS HAS NO MEANINGFUL TOTAL — a model can only use one card's capacity — and the rule
+// STACKING SEVERAL POOLS HAS NO SINGLE CEILING — a stack draws against one, and each pool has its own — and the rule
 // that says so guarded the series checkboxes while leaving the MODE unguarded. So a three-pool Overview track
 // could simply be switched to "stack", the renderer drew its FIRST series alone, and two were silently
 // dropped. On a card that happened to be empty, that reads as the panel rendering nothing at all.
@@ -3663,7 +3663,7 @@ test("resource panel: a track that cannot be stacked will not offer it, and neve
         await expect(sel.locator("option[value=stack]")).toBeDisabled();
         await sel.hover();
         await expect.poll(() => frame.locator(".tt-layer").textContent().catch(() => ""), { timeout: 5000 })
-            .toMatch(/no meaningful total|double-count|different pools/);
+            .toMatch(/ONE ceiling|double-count|different pools/);
 
     } finally { await ext.close(); await fake.stop(); }
 });
@@ -3760,9 +3760,9 @@ test("resource panel: in Overview the keys pick a line, and there is no depth to
     } finally { await ext.close(); await fake.stop(); }
 });
 
-// THE WHOLE BOX ON ONE AXIS, without claiming its memory is fungible. Summing capacities into one
-// denominator is the panel's oldest refusal — 40 GiB free as 20+20 cannot hold a 30 GiB model — so the pools
-// are laid END TO END, each filling a band the height of its own capacity, with the walls between them drawn.
+// THE WHOLE BOX ON ONE AXIS, without drawing its memory as one pool. Pools combine only at a cost (a split
+// pays per-card overhead, a spill into RAM is slow), so they are laid END TO END, each filling a band the
+// height of its own capacity, with the walls between them drawn.
 test("resource panel: the total view lays every pool end to end, with walls", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();
@@ -3781,7 +3781,7 @@ test("resource panel: the total view lays every pool end to end, with walls", as
         await sleep(3000);
 
         // A BAND PER POOL, and a WALL between each pair — without them a reader sees one column and infers
-        // one pool, which is the fungibility claim this view exists to avoid making.
+        // one pool, which is the claim this view exists to avoid making.
         await expect.poll(() => frame.locator(".rc-boxwall").count(), { timeout: 8000 }).toBe(2);
 
         // THE HEADER SAYS HELD, NEVER FREE. Those bytes are genuinely held, so the figure is true; the space
@@ -3804,6 +3804,53 @@ test("resource panel: the total view lays every pool end to end, with walls", as
         await expect.poll(() => frame.locator(".rc-boxwall").count(), { timeout: 8000 }).toBe(1);
         const head2 = (await frame.locator(".rc-track .rc-total").first().textContent()).replace(/\s+/g, " ");
         expect(head2, `the axis did not shrink: ${head2}`).toMatch(/191|192/);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// THE TOTAL VIEW ANSWERS A HOVER, as every other view does. It shipped with none: pointing at the plot or at a
+// legend key read nothing, while the same pools drawn as lines one preset over opened a reading of each.
+test("resource panel: the total view's plot and keys open the pool reading, picking the band you are inside", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE - 7 * GiB));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.8:27b", 7 * GiB, 1)]);
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_layout: { presetId: "custom", tracks: [
+            { id: "box", series: ["vram.0", "vram.1", "ram"], mode: "total", heightPx: 120 },
+        ] } }));
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-boxfill").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(3000);
+        const near = () => frame.locator(".rc-tip-pools .rc-tip-poolrow.near .rc-tip-label").textContent().catch(() => "");
+
+        // POINTING INSIDE A BAND NAMES THAT POOL. The axis stacks CUDA0 (bottom ~31%), CUDA1 (~31-61%) and
+        // System RAM (the top ~39%). The overlaid view's rule — nearest by each pool's OWN fill share — means
+        // nothing on this axis, and it happens to agree with the band at some heights (CUDA0 is ~19% full,
+        // which is where a pointer 20% up sits), so ONE probe can pass by coincidence; that is how the first
+        // version of this test passed with the band rule removed. Three heights, one per band, cannot all
+        // agree with a rule that is not reading the bands.
+        const plot = frame.locator(".rc-track .rc-plot").first();
+        const bb = await plot.boundingBox();
+        for (const [up, pool] of [[0.15, /CUDA0/], [0.46, /CUDA1/], [0.85, /System RAM/]]) {
+            await plot.hover({ position: { x: bb.width / 2, y: bb.height * (1 - up) } });
+            await expect.poll(() => frame.locator(".rc-tip-pools").count(), { timeout: 5000 }).toBe(1);
+            await expect.poll(near, { timeout: 5000, message: `${Math.round(up * 100)}% up is inside ${pool}` }).toMatch(pool);
+        }
+        expect(await frame.locator(".rc-tip-pools .rc-tip-poolrow").count(), "every pool on the axis gets a row").toBe(3);
+
+        // A LEGEND KEY OPENS THE SAME READING, for its own pool — the overlaid view's keys already did.
+        await frame.locator(".rc-legend").hover({ position: { x: 2, y: 2 } });
+        await frame.locator(".rc-legend .rc-key", { hasText: "CUDA1" }).hover();
+        await expect.poll(() => frame.locator(".rc-tip-pools").count(), { timeout: 5000 }).toBe(1);
+        await expect.poll(near, { timeout: 5000 }).toMatch(/CUDA1/);
+        // …and names the control for a screen reader rather than adding a SECOND, native tooltip to the hover.
+        const key = frame.locator(".rc-legend .rc-key", { hasText: "CUDA1" });
+        expect(await key.getAttribute("title")).toBeNull();
+        expect(await key.getAttribute("aria-label")).toBe("Hide CUDA1");
     } finally { await ext.close(); await fake.stop(); }
 });
 

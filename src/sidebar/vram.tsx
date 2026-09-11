@@ -448,9 +448,21 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
             if (model) { const next = { ...servingSince.value }; delete next[model]; servingSince.value = next; }
             return model && from ? { t: from, until: at, kind: "serve", label: `${model} serving`, model } : null;
         }
-        case "load.failed":
+        case "load.failed": {
             if (model) { openLoads.delete(model); noteLoading(); }
-            return model ? { t: at, kind: "error", label: `${model} failed to load${frame.reason ? `: ${frame.reason}` : ""}`, model } : null;
+            if (!model) return null;
+            // AN ATTEMPT IS NOT THE REQUEST. A reason ending "; retrying" means the scheduler evicted something
+            // or shrank the context and is trying again — its own `load.start` follows, so one request can read
+            // start → failed → start → complete. Labelled as the request failing, the lane would report a
+            // failure for a load that went on to succeed. The server's own words stay, minus the suffix the
+            // label now says in plain words.
+            const reason = frame.reason ?? "";
+            const retrying = /;\s*retrying\s*$/.test(reason);
+            const said = reason.replace(/;\s*retrying\s*$/, "");
+            return { t: at, kind: "error", model, label: retrying
+                ? `${model} load attempt failed, retrying${said ? `: ${said}` : ""}`
+                : `${model} failed to load${said ? `: ${said}` : ""}` };
+        }
         // EVICT and UNLOAD are different answers and the server draws the distinction: one made room for
         // something, the other simply expired. Inferring them by diffing polls could never tell them apart.
         case "evict":
