@@ -15,7 +15,7 @@ import {
     boxAxis, chartWindow, placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
-    OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
+    OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
     presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
@@ -120,9 +120,25 @@ const W = 300, H = 72;
  *  doesn't jump when one evicts and reloads), then the residual, then free. Without a fixed order the stack
  *  would reshuffle between samples and the areas would cross. */
 function bandOrder(frames: Band[][]): string[] {
-    const models = new Set<string>();
-    for (const bands of frames) for (const b of bands) if (b.kind === "model" || b.kind === "unknown") models.add(b.key);
-    return [...[...models].sort(), "other", "free"];
+    const models = new Set<string>(), rest = new Set<string>(), ctx = new Map<string, string>();
+    for (const bands of frames) for (const b of bands) {
+        if (b.kind === "model" || b.kind === "unknown") models.add(b.key);
+        // A runner's overhead rides directly on its own model, so the pair reads as what that model costs.
+        else if (b.key.startsWith("ctx:") && b.of) ctx.set(`m:${b.of}`, b.key);
+        else if (b.kind === "other" && b.key !== "other") rest.add(b.key);
+    }
+    const byRank = [...rest].sort((a, b) => residualRank(a) - residualRank(b) || a.localeCompare(b));
+    // An overhead whose model never appears in the window still has to be drawn — just not beside anything.
+    const orphans = [...ctx].filter(([m]) => !models.has(m)).map(([, k]) => k);
+    return [...[...models].sort().flatMap((k) => (ctx.has(k) ? [k, ctx.get(k)!] : [k])), ...orphans, ...byRank, "other", "free"];
+}
+
+/** Which model each residual band is TINTED with (`Band.of`) — a runner's overhead, a load in flight. Kept
+ *  apart from `bandIdentity` on purpose: identity makes a band hoverable, hideable and stepped as the model. */
+function bandTint(frames: Band[][]): Record<string, string | undefined> {
+    const by: Record<string, string | undefined> = {};
+    for (const bands of frames) for (const b of bands) if (b.of && !by[b.key]) by[b.key] = b.of;
+    return by;
 }
 
 /** Which model each band key belongs to, from ANY frame in the window. Read only from the LAST frame, a model
@@ -135,9 +151,12 @@ function bandIdentity(frames: Band[][]): Record<string, string | undefined> {
     return by;
 }
 
-const bandFill = (key: string, model: string | undefined): string => {
+const bandFill = (key: string, model: string | undefined, tint?: string): string => {
     if (key === "free") return "transparent";
     if (key === "other" || key === "unknown") return "var(--fg-faint)";
+    // A residual that BELONGS to a model (its runner's overhead, its load) takes a thin wash of that model's
+    // colour — related to the model at a glance, and never mistaken for the model's own memory.
+    if (!model && tint) return `color-mix(in srgb, ${colorFor(tint)} 30%, var(--fg-faint))`;
     return model ? colorFor(model) : "var(--fg-faint)";
 };
 
@@ -212,6 +231,7 @@ function KvFill({ run, bandsOf, deep, ev }: { run: ResourceSample[]; bandsOf: (s
 function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex = null, deep = null, loads = [] }: { frames: Band[][]; times: number[]; ceiling: number; hidden: Set<string>; scope: string; snapIndex?: number | null; deep?: { model: string; ceiling: number } | null; loads?: { t: number; until?: number }[] }) {
     const order = useMemo(() => bandOrder(frames), [frames]);
     const identity = useMemo(() => bandIdentity(frames), [frames]);
+    const tint = useMemo(() => bandTint(frames), [frames]);
     if (frames.length < 2 || ceiling <= 0) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
     // LINEAR IN TIME across the run (`runFrac`), the axis every other mapping on the chart uses.
     const tr = times.map((t) => ({ t }));
@@ -371,7 +391,7 @@ function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex = null, 
         const model = identity[key];
         const dim = hoverModel.value && model && hoverModel.value !== model;
         const hot = !!model && hoverModel.value === model;
-        return <polygon key={key} points={pts.join(" ")} fill={bandFill(key, model)}
+        return <polygon key={key} points={pts.join(" ")} fill={bandFill(key, model, tint[key])}
             class={model ? `rc-band${hot ? " hot" : ""}` : undefined} vector-effect="non-scaling-stroke"
             onPointerEnter={model ? (e: PointerEvent) => {
                 // THE KEYBOARD OWNS THE FOCUS while it has one. This fires without the reader touching
@@ -383,7 +403,7 @@ function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex = null, 
                 trackCursor(scope)(e);
             } : undefined}
             onPointerLeave={model ? () => { if (!kbFocus.value) { hoverModel.value = null; hoverAt.value = null; } } : undefined}
-            opacity={dim ? 0.18 : key === "other" ? 0.35 : 0.75} />;
+            opacity={dim ? 0.18 : key === "other" ? 0.35 : model ? 0.75 : 0.55} />;
     });
 
     /**
@@ -775,12 +795,10 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
             <div class="rc-legend">
                 {bands.filter((b) => b.kind === "other" && b.bytes > 0).map((b) => (
                     <span class="rc-key tt" key={b.key}>
-                        <i class="rc-swatch rc-swatch-other" /> {b.label} {formatBytes(b.bytes)}
+                        <i class="rc-swatch rc-swatch-other" style={b.of ? { background: bandFill(b.key, undefined, b.of) } : undefined} /> {b.label} {formatBytes(b.bytes)}
                         {/* The label is kept compact, so the SHARE of the pool — the thing that says whether a
                             figure matters — lives in the hover text. */}
-                        <span class="tt-pop left above" role="tooltip">{formatShare(b.bytes, ceiling)} — {b.label === DRIVER_BAND_LABEL
-                            ? "Ollama's own driver context, held on every visible card whether or not a model is loaded. Not another process."
-                            : OTHER_BAND_NOTE}</span>
+                        <span class="tt-pop left above" role="tooltip">{formatShare(b.bytes, ceiling)} — {b.note ?? OTHER_BAND_NOTE}</span>
                     </span>
                 ))}
                 {bands.filter((b) => b.kind === "free").map((b) => (
@@ -1125,6 +1143,13 @@ function PlotTip({ at, bands, ceiling, label, hidden, scope }: { at: ResourceSam
             {/* THE WAY IN. This is the tip you get by pointing anywhere on the plot, so it is where a reader
                 who does not know the keys exist is standing — and the models it just listed are exactly what
                 the key steps through. */}
+            {/* THE REST OF "IN USE", named — a runner's overhead, a tenant, what ollama cannot see. Only once the
+                server names processes: before that the residual is one guess, already in the legend. */}
+            {bands.some((b) => b.kind === "other" && (b.key !== "other" || b.label === OUTSIDE_VIEW_LABEL))
+                ? <div class="rc-tip-line rc-tip-dim rc-tip-holders">{bands.filter((b) => b.kind === "other" && b.bytes >= 1024 ** 2).map((b) => (
+                    <span class="rc-tip-consumer" key={b.key}>
+                        <i class="rc-tip-dot" style={{ background: bandFill(b.key, undefined, b.of) }} />{b.label} {formatBytes(b.bytes)}</span>))}</div>
+                : null}
             {models.length ? <div class="rc-tip-line rc-tip-keys"><span><kbd>↑↓</kbd> pick a model</span></div> : null}
         </div>
     );

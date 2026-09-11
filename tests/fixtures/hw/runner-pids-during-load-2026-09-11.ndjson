@@ -1,0 +1,13 @@
+{"pid":286,"used_memory":14680064,"name":"llama-server","ollama_helper":true}
+{"pid":286,"used_memory":576716800,"name":"llama-server","ollama_helper":true}
+{"pid":298,"used_memory":576716800,"name":"ollama","ollama_helper":true}
+{"pid":298,"used_memory":14680064,"name":"ollama","ollama_helper":true}
+{"pid":317,"used_memory":14680064,"name":"llama-server","runner":{"model":"qwen3.5:0.8b","loading":true}}
+{"pid":317,"used_memory":576716800,"name":"llama-server","runner":{"model":"qwen3.5:0.8b","loading":true}}
+{"pid":317,"used_memory":597688320,"name":"llama-server","runner":{"model":"qwen3.5:0.8b","loading":true}}
+{"pid":317,"used_memory":578813952,"name":"llama-server","runner":{"model":"qwen3.5:0.8b","loading":true}}
+{"pid":317,"used_memory":1379926016,"name":"llama-server","runner":{"model":"qwen3.5:0.8b","loading":true}}
+{"pid":317,"used_memory":5865734144,"name":"llama-server","runner":{"model":"qwen3.5:0.8b","loading":true}}
+{"pid":317,"used_memory":6178209792,"name":"llama-server","runner":{"model":"qwen3.5:0.8b","loading":true}}
+{"pid":317,"used_memory":6348079104,"name":"llama-server","runner":{"model":"qwen3.5:0.8b","loading":true}}
+{"pid":317,"used_memory":6348079104,"name":"llama-server","runner":{"model":"qwen3.5:0.8b"}}

@@ -86,6 +86,14 @@ export interface DeviceCapacity {
      *  HBM2e figures); `pcieMaxWidth` is the NARROWER of card and slot, since a link cannot train wider than its
      *  narrower end (x8 on a board that splits its lanes, though each card says x16). Each absent, never zero,
      *  where it could not be read. */
+    /** The processes the driver lists on this card, each joined by pid to ollama's own runners (`processes`
+     *  on a patched server). Absent on every build before it, and then the residual is named by magnitude. */
+    processes?: DeviceProcess[];
+    /** Which processes `processes` CAN contain — read it before trusting an empty list. `"all"`: ollama shares
+     *  the host's pid namespace and every process on the card is listed. `"pid_namespace"`: ollama is in a
+     *  container and the driver lists only its own namespace, so another container's or the host's process
+     *  holds memory that `free` counts and nothing names. Any other value is treated as the second. */
+    processesScope?: string;
     memoryBandwidth?: number;
     memoryBusWidthBits?: number;
     memoryClockMaxMhz?: number;
@@ -96,6 +104,21 @@ export interface DeviceCapacity {
      *  the second. `0` is idle; ABSENT is "not read" — and a missing reading is not a fault signal (a dead card
      *  and a card without the counter answer alike; faults come from `unavailable_gpus`). */
     utilization?: { gpuPercent?: number; memoryPercent?: number };
+}
+
+/** One process the driver lists on a card. The join to ollama's runners is by pid, which holds because NVML
+ *  reports pids in the CALLER's namespace. */
+export interface DeviceProcess {
+    pid: number;
+    usedBytes: number;
+    /** The executable (`/proc/<pid>/comm`). Absent when unreadable. */
+    name?: string;
+    /** One of ollama's runners, serving this model — named the way `/api/ps` names it. While `loading` its
+     *  memory is still climbing and `/api/ps` has no figures for it, so nothing is subtracted from it. */
+    runner?: { model: string; loading: boolean };
+    /** Started by ollama and serving no model: a fit probe, or device discovery (a process named `ollama`,
+     *  briefly holding ~550 MiB on EVERY card). Not a tenant, though for a second it looks exactly like one. */
+    helper: boolean;
 }
 
 export interface HostCapacity {
@@ -402,6 +425,27 @@ export function unavailableFrom(raw: unknown): UnavailableGpu[] {
     });
 }
 
+/** A card's `processes` and `processes_scope`, or nothing on a server that reports neither. A scope with no
+ *  list is an EMPTY list (the server omits an empty array), which is itself a reading; a list with no scope
+ *  is kept without claiming completeness. An entry without a pid or a byte count is dropped. */
+function processesOf(g: Record<string, unknown>): Partial<DeviceCapacity> {
+    const scope = typeof g.processes_scope === "string" && g.processes_scope ? g.processes_scope : undefined;
+    if (!Array.isArray(g.processes) && !scope) return {};
+    const processes: DeviceProcess[] = (Array.isArray(g.processes) ? g.processes : []).flatMap((x) => {
+        const p = (x ?? {}) as Record<string, unknown>;
+        const pid = Number(p.pid), used = Number(p.used_memory);
+        if (!Number.isFinite(pid) || !Number.isFinite(used) || used < 0) return [];
+        const r = p.runner && typeof p.runner === "object" ? p.runner as Record<string, unknown> : null;
+        return [{
+            pid, usedBytes: used,
+            ...(typeof p.name === "string" && p.name ? { name: p.name } : {}),
+            ...(r && typeof r.model === "string" && r.model ? { runner: { model: r.model, loading: r.loading === true } } : {}),
+            helper: p.ollama_helper === true,
+        }];
+    });
+    return { processes, ...(scope ? { processesScope: scope } : {}) };
+}
+
 /** A card's fixed ceilings and its utilization reading, each kept only when it is a real number — absent is
  *  "could not read", and `0` survives as a reading (idle), never collapsed into absent or vice versa. */
 function ceilingsOf(g: Record<string, unknown>): Partial<DeviceCapacity> {
@@ -442,6 +486,7 @@ export function parseInfo(raw: unknown): Capacity | null {
             ...(g.driver ? { driver: String(g.driver) } : {}),
             ...(typeof g.pci_id === "string" && g.pci_id.trim() ? { pciId: g.pci_id.trim() } : {}),
             ...ceilingsOf(g),
+            ...processesOf(g),
         }];
     });
     // The server's own stall bound, when it publishes one. Absent on every build before it and on every
@@ -938,6 +983,32 @@ export interface Band {
      *  device is known, because a split model's cards decompose differently and one average describes
      *  neither. */
     parts?: MemoryBreakdown;
+    /** What this band IS, in a sentence, for its legend entry. Set wherever the band is built, since that is
+     *  where the evidence for the claim is known. */
+    note?: string;
+    /** The model a residual band BELONGS to without being the model — a runner's own overhead, or a load in
+     *  flight — so it can be tinted with that model's colour. Never its identity: it is not the model's
+     *  reported memory, hides with nothing and hovers as nothing. */
+    of?: string;
+}
+
+/** The part of a card no process ollama can see accounts for, under `processes_scope: "pid_namespace"`.
+ *  Not "driver context" and not "nothing": another container's process holding 2.6 GB on a card was
+ *  measured exactly here, absent from the list and present in `free`. */
+export const OUTSIDE_VIEW_LABEL = "outside ollama's view";
+const OUTSIDE_VIEW_NOTE = "In use on this card by nothing ollama can see. It runs in a container, and the driver lists only "
+    + "the processes in its own namespace, so another container's or the host's process is counted here and never named.";
+const UNOWNED_NOTE = "In use on this card and owned by no listed process: the driver's own reservation.";
+const DRIVER_NOTE = "Ollama's own driver context, held on every visible card whether or not a model is loaded. Not another process.";
+
+/** A residual band's position in the stack. A runner's overhead sits directly on its own model, so the pair
+ *  reads as what that model costs; then loads in flight, ollama's helpers, other tenants, and the unlisted
+ *  remainder last. Exported for the chart, which must order EVERY key or a band silently drops out. */
+export function residualRank(key: string): number {
+    if (key.startsWith("load:") || key.startsWith("runner:")) return 1;
+    if (key === "helper") return 2;
+    if (key.startsWith("proc:")) return 3;
+    return 4;
 }
 
 /**
@@ -956,6 +1027,10 @@ export function pendingAllocation(frames: Band[][], times: number[], model: stri
     const residual = (bands: Band[]) => bands.filter((b) => b.kind === "other" || b.kind === "unknown").reduce((n, b) => n + b.bytes, 0);
     return frames.map((bands, i) => {
         if (bands.some((b) => b.model === model)) return 0;
+        // THE RUNNER ITSELF, when the driver lists it: the process's own memory is the allocation, measured
+        // rather than inferred from what else moved on the card.
+        const direct = bands.find((b) => b.key === `load:${model}`);
+        if (direct) return direct.bytes;
         const t = times[i];
         const load = loads.find((l) => l.until != null && t >= l.t && t <= l.until + graceMs);
         if (!load) return 0;
@@ -1011,16 +1086,75 @@ export function deviceBands(sample: ResourceSample, deviceId: string): Band[] {
     // whole model — the residual clamps to zero and the line COLLAPSES to the floor for one sample before
     // springing back, which looks like memory that was freed and re-taken. Attribution is a lower bound on
     // what is in use: what we can see resident is in use whatever the other sample says yet.
-    const used = Math.max(0, cap.totalBytes - cap.freeBytes, attributed + unknown);
-    const residual = Math.max(0, used - attributed - unknown);
-    // Name the residual by MAGNITUDE: under the floor it is the driver's own context (present even on an idle
-    // card), above it there is genuinely something else on the card worth telling the reader about — UNLESS a
-    // load is in flight, in which case we know what it is and "unattributed" is simply wrong. A loading model
-    // holds its allocation before any runner exists to report it, so the residual IS the load.
-    bands.push({ key: "other", bytes: residual, kind: "other",
-        label: residual < DRIVER_OVERHEAD_FLOOR ? DRIVER_BAND_LABEL : loadingLabel(sample) ?? OTHER_BAND_LABEL });
+    // THE DRIVER'S OWN LIST, when the server reports it: the residual is then named process by process instead
+    // of guessed from its size.
+    const named = cap.processes || cap.processesScope ? processBands(cap, bands) : [];
+    const listed = named.reduce((n, b) => n + b.bytes, 0);
+    bands.push(...named);
+    const used = Math.max(0, cap.totalBytes - cap.freeBytes, attributed + unknown + listed);
+    const residual = Math.max(0, used - attributed - unknown - listed);
+    if (cap.processesScope || cap.processes) {
+        // What no listed process accounts for. With every process listed it is the driver's own; in a
+        // container it is whatever ollama cannot see — which may be another tenant, and must not be called
+        // overhead just because it is small.
+        const all = cap.processesScope === "all";
+        bands.push({ key: "other", bytes: residual, kind: "other",
+            label: all ? DRIVER_BAND_LABEL : OUTSIDE_VIEW_LABEL, note: all ? UNOWNED_NOTE : OUTSIDE_VIEW_NOTE });
+    } else {
+        // Name the residual by MAGNITUDE: under the floor it is the driver's own context (present even on an
+        // idle card), above it there is genuinely something else on the card worth telling the reader about —
+        // UNLESS a load is in flight, in which case we know what it is and "unattributed" is simply wrong. A
+        // loading model holds its allocation before any runner exists to report it, so the residual IS the load.
+        const small = residual < DRIVER_OVERHEAD_FLOOR;
+        bands.push({ key: "other", bytes: residual, kind: "other",
+            label: small ? DRIVER_BAND_LABEL : loadingLabel(sample) ?? OTHER_BAND_LABEL, note: small ? DRIVER_NOTE : OTHER_BAND_NOTE });
+    }
     bands.push({ key: "free", label: "free", bytes: Math.max(0, cap.freeBytes), kind: "free" });
     return bands;
+}
+
+/**
+ * THE RESIDUAL, PROCESS BY PROCESS — one band per thing the driver lists on this card that is not already a
+ * model's reported memory.
+ *
+ * - A RUNNER's band is its process minus its model's share of this card: the CUDA context and whatever else
+ *   no buffer line reports. Measured per runner, and it is not a constant (444 MiB beside 633 MiB on the same
+ *   box), which is why it is drawn per runner rather than as a fixed allowance.
+ * - A LOADING runner is drawn whole, as the load: `/api/ps` has no figures for it yet, so there is nothing to
+ *   subtract, and its memory climbing IS the allocation curve.
+ * - A runner whose model this sample's `/api/ps` does not yet place here is drawn whole under its model's name,
+ *   rather than as a multi-gigabyte "overhead" that is really the model a poll behind.
+ * - Ollama's HELPERS (fit probes, device discovery) are one band: they are not tenants, and during a load they
+ *   appear on every card at once, which unnamed would read as a stranger arriving everywhere.
+ * - Anything else is a real TENANT, named by executable and pid.
+ */
+function processBands(cap: DeviceCapacity, models: Band[]): Band[] {
+    const out: Band[] = [];
+    let helpers = 0;
+    for (const p of cap.processes ?? []) {
+        const m = p.runner?.model;
+        if (m && p.runner!.loading) {
+            out.push({ key: `load:${m}`, label: `loading ${m}`, bytes: p.usedBytes, kind: "other", of: m,
+                note: `${m}'s runner, still loading: its memory is the allocation arriving, before the server reports any figures for it.` });
+        } else if (m) {
+            const share = models.filter((b) => b.model === m).reduce((n, b) => n + b.bytes, 0);
+            if (share > 0) {
+                out.push({ key: `ctx:${m}`, label: `${m} overhead`, bytes: Math.max(0, p.usedBytes - share), kind: "other", of: m,
+                    note: `What ${m}'s runner holds on this card beyond the model's reported buffers: its CUDA context and anything else no buffer line reports.` });
+            } else {
+                out.push({ key: `runner:${m}`, label: `${m} runner`, bytes: p.usedBytes, kind: "other", of: m,
+                    note: `${m}'s runner. The model's own figures for this card have not arrived yet.` });
+            }
+        } else if (p.helper) {
+            helpers += p.usedBytes;
+        } else {
+            out.push({ key: `proc:${p.pid}`, label: p.name ? `${p.name} (pid ${p.pid})` : `pid ${p.pid}`, bytes: p.usedBytes, kind: "other",
+                note: "Another process on this card. The driver lists it, and it is not one of ollama's." });
+        }
+    }
+    if (helpers > 0) out.push({ key: "helper", label: "ollama helper", bytes: helpers, kind: "other",
+        note: "A process ollama started that serves no model: a fit probe or device discovery. Brief, and not a tenant." });
+    return out;
 }
 
 /** What a large residual is, when a load explains it: `loading gemma4:31b`, or a count when several are.

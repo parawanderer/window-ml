@@ -96,6 +96,20 @@ zeros for everything else, and Go's zero time parses to a deadline in the year 1
 two thousand years, which is what a probe on the box actually printed. Read `state` before reading
 anything else on an entry; its absence means resident.
 
+**Which process on a card is whose (`processes` on `/api/info`, `ollama-slop:runnerpids2`).** Each card
+lists the processes the driver reports on it, joined by pid to ollama's runners: `{pid, used_memory, name,
+runner: {model, loading?}, ollama_helper?}`, plus `processes_scope` per card. The scope is the part to read
+first. `"all"` means ollama shares the host's pid namespace and every process is listed. `"pid_namespace"`
+(any Docker deployment, including the reference box) means the driver lists only ollama's own namespace:
+another container's process holding 2.6 GB on a card was absent from the list and present in
+`free_memory`. So under that scope a missing process proves nothing, and the unlisted remainder is drawn as
+"outside ollama's view" rather than as overhead. A runner's own overhead (its process minus its model's
+share of the card) is measured per runner and is not a constant: 444 MiB and 633 MiB on the same box. A
+loading runner is marked `loading` and has no `/api/ps` figures yet, so nothing is subtracted from it.
+Helpers (a fit probe, device discovery as a process named `ollama` briefly holding ~550 MiB on every card)
+are flagged so they are not read as tenants. Absent on every older build, where the residual is still named
+by its size. Captures: `tests/fixtures/hw/runner-pids-*-2026-09-11.*`.
+
 **Reachability, and a correction.** The extension finds Ollama through the same base discovery it uses for
 `/api/ps`: `<origin>/ollama` first (OpenWebUI's passthrough), then `<origin>`. This file used to say
 OpenWebUI proxies `/ollama/*` generically. **It does not** — it proxies NAMED ollama routes, so each new

@@ -4,6 +4,7 @@
 // docs/spec/RESOURCE_PANEL.md, which also lists the Metal samples still to be pinned down.
 import { test, describe } from "node:test";
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
 const M = await import("../src/resource-model.ts");
 // The machine shapes, shared with resource-demo.mjs — one copy, so a guard and a demo cannot disagree
 // about what a box looks like.
@@ -2468,4 +2469,87 @@ test("pendingAllocation: a loading model's memory is its own before the runner e
         "the growth above the pre-load residual, until the model's own band appears — never both");
     // No load of this model (the caller passes that model's loads only): nothing is attributed to it.
     assert.deepEqual(M.pendingAllocation(frames, times, "m", []), [0, 0, 0, 0, 0, 0]);
+});
+
+// RUNNER PIDS, against real captures off the box (`ollama-slop:runnerpids2`). The driver's list of processes
+// on each card, joined to ollama's runners by pid, is what lets the residual be NAMED rather than guessed.
+const hwJson = (name) => JSON.parse(readFileSync(new URL(`./fixtures/hw/${name}`, import.meta.url), "utf8"));
+
+test("parseInfo: a card's processes, and the scope that says what the list CAN contain", () => {
+    const cap = M.parseInfo(hwJson("runner-pids-other-processes-2026-09-11.json"));
+    const [c0, c1] = cap.devices;
+    assert.equal(c0.processesScope, "pid_namespace");
+    assert.deepEqual(c0.processes, [{ pid: 317, usedBytes: 6348079104, name: "llama-server", runner: { model: "qwen3.5:0.8b", loading: false }, helper: false }]);
+    // A llama-server started by hand inside ollama's container: listed and named, and neither a runner nor a helper.
+    assert.deepEqual(c1.processes, [{ pid: 417, usedBytes: 3164602368, name: "llama-server", helper: false }]);
+    // A scope with NO list is an empty list (the server omits an empty array) — a reading, not an absence.
+    const idle = M.parseInfo(hwJson("runner-pids-context-band-2026-09-11.json").info);
+    assert.ok(idle.devices.every((d) => Array.isArray(d.processes)));
+    const bare = M.parseInfo({ compute: { system_compute: { total_memory: 8e9 }, supported_gpus: [{ gpu_id: "0", runner: "CUDA", total_memory: 4e9, free_memory: 3e9, processes_scope: "pid_namespace" }] } });
+    assert.deepEqual([bare.devices[0].processes, bare.devices[0].processesScope], [[], "pid_namespace"]);
+    // An older build reports neither, and nothing is invented for it.
+    assert.equal("processes" in M.parseInfo(CUDA_INFO).devices[0], false);
+});
+
+test("deviceBands: a runner's overhead is measured per runner, and is not a constant", () => {
+    const { ps, info } = hwJson("runner-pids-context-band-2026-09-11.json");
+    const sample = { t: 1, capacity: M.parseInfo(info), models: ps.models.map(M.residencyFrom) };
+    const ctx = (id, model) => M.deviceBands(sample, id).find((b) => b.key === `ctx:${model}`);
+    // used_memory minus the model's size_vram on that card, both from the same instant.
+    assert.equal(ctx("0", "qwen3.5:0.8b").bytes, 6348079104 - 5883004189);
+    assert.equal(Math.round(ctx("0", "qwen3.5:0.8b").bytes / MiB), 444);
+    assert.equal(Math.round(ctx("1", "granite4.1:3b").bytes / MiB), 633);
+    assert.equal(ctx("1", "granite4.1:3b").of, "granite4.1:3b", "tinted with its model, never the model's identity");
+    assert.equal(ctx("1", "granite4.1:3b").model, undefined);
+    // Every byte in use is accounted for exactly once: the model, its runner's overhead, and what nothing lists.
+    const b0 = M.deviceBands(sample, "0");
+    const used = info.compute.supported_gpus[0].total_memory - info.compute.supported_gpus[0].free_memory;
+    assert.equal(b0.filter((b) => b.kind !== "free").reduce((n, b) => n + b.bytes, 0), used);
+    const rest = b0.find((b) => b.key === "other");
+    assert.equal(rest.label, M.OUTSIDE_VIEW_LABEL, "in a container, the unlisted remainder is not called overhead");
+    assert.equal(rest.bytes, used - 6348079104);
+});
+
+test("deviceBands: a process ollama cannot see is named as unseen, and one it can see as a tenant", () => {
+    const raw = hwJson("runner-pids-other-processes-2026-09-11.json");
+    const sample = { t: 1, capacity: M.parseInfo(raw), models: [] };
+    const bands = M.deviceBands(sample, "1");
+    const g = raw.compute.supported_gpus[1];
+    const tenant = bands.find((b) => b.key === "proc:417");
+    assert.deepEqual([tenant.label, tenant.bytes], ["llama-server (pid 417)", 3164602368]);
+    // The other container's torch process is NOT listed; the gap between the listed memory and what is in use
+    // is exactly it (~2.6 GB, measured on the host with nvidia-smi).
+    const unseen = bands.find((b) => b.key === "other");
+    assert.equal(unseen.label, M.OUTSIDE_VIEW_LABEL);
+    assert.equal(unseen.bytes, g.total_memory - g.free_memory - 3164602368);
+    assert.ok(unseen.bytes > 2.5 * 1024 ** 3);
+    // With every process listed (`all`), what is left owns no process: the driver's own.
+    const all = structuredClone(raw);
+    for (const d of all.compute.supported_gpus) d.processes_scope = "all";
+    assert.equal(M.deviceBands({ t: 1, capacity: M.parseInfo(all), models: [] }, "1").find((b) => b.key === "other").label, M.DRIVER_BAND_LABEL);
+});
+
+test("deviceBands: through a load, helpers are not tenants and the loading runner IS the allocation", () => {
+    // Every process entry one 100 ms poll saw across one load, each placed alone on a one-card box.
+    const lines = readFileSync(new URL("./fixtures/hw/runner-pids-during-load-2026-09-11.ndjson", import.meta.url), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    const TOTAL = 101972967424;
+    const at = (p) => ({ t: 1, models: [], capacity: M.parseInfo({ compute: { system_compute: { total_memory: 8e9 },
+        supported_gpus: [{ gpu_id: "0", runner: "CUDA", total_memory: TOTAL, free_memory: TOTAL - p.used_memory, processes_scope: "pid_namespace", processes: [p] }] } }) });
+    const kinds = lines.map((p) => M.deviceBands(at(p), "0").find((b) => b.kind === "other" && b.bytes > 0).key);
+    // The fit probe (`llama-server`) and device discovery (`ollama`) are ollama's own, and never read as a stranger.
+    assert.ok(!kinds.some((k) => k.startsWith("proc:")), `no helper drawn as a tenant: ${kinds}`);
+    assert.equal(kinds.filter((k) => k === "helper").length, lines.filter((p) => p.ollama_helper).length);
+    // The runner is the load until its load returns, drawn whole — /api/ps has no figures to subtract yet.
+    const loading = lines.filter((p) => p.runner?.loading);
+    assert.ok(loading.length >= 5);
+    for (const p of loading) {
+        const b = M.deviceBands(at(p), "0").find((x) => x.key === "load:qwen3.5:0.8b");
+        assert.equal(b.bytes, p.used_memory);
+    }
+    // …and pendingAllocation reads it directly: the process's memory, not the residual's growth.
+    const frames = loading.map((p) => M.deviceBands(at(p), "0"));
+    assert.deepEqual(M.pendingAllocation(frames, frames.map((_, i) => i), "qwen3.5:0.8b", []), loading.map((p) => p.used_memory));
+    // Once it is resident but /api/ps has not caught up, it is the model's runner — not gigabytes of "overhead".
+    const done = lines.at(-1);
+    assert.equal(M.deviceBands(at(done), "0").find((b) => b.kind === "other" && b.bytes > 0).key, "runner:qwen3.5:0.8b");
 });

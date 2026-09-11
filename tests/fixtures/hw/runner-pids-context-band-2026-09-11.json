@@ -1,0 +1,261 @@
+{
+  "ps": {
+    "models": [
+      {
+        "name": "granite4.1:3b",
+        "model": "granite4.1:3b",
+        "size": 13634507898,
+        "digest": "6fd349357287c7ffc9e38189a93b48ea175d24fc566b38f09cfc564fb7f303eb",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "granite",
+          "families": [
+            "granite"
+          ],
+          "parameter_size": "3.4B",
+          "quantization_level": "Q4_K_M"
+        },
+        "expires_at": "2026-09-11T21:22:18.470461046Z",
+        "size_vram": 13634507898,
+        "roofline": {
+          "basis": "dense_weights",
+          "bytes_per_token": 2095935651,
+          "ceiling_tokens_per_sec": 855.0491515066079,
+          "kv_bytes_per_context_token": 81920,
+          "devices": [
+            {
+              "gpu_id": "1",
+              "pci_id": "0000:03:00.0",
+              "bytes_per_token": 2095935651,
+              "kv_bytes_per_context_token": 81920,
+              "memory_bandwidth_bytes_per_sec": 1792128000000
+            }
+          ]
+        },
+        "context_length": 131072,
+        "memory": {
+          "weights": 2095935651,
+          "kv_cache": 10737418240,
+          "compute": 801154007
+        },
+        "weights_on_disk": 2099501664,
+        "placement": {
+          "num_layers": 41,
+          "devices": [
+            {
+              "device": "CUDA0",
+              "first_layer": 0,
+              "last_layer": 40,
+              "layers": 41
+            }
+          ]
+        },
+        "activity": {
+          "phase": "idle",
+          "slots": 1,
+          "slots_busy": 0,
+          "prompt_tokens": 9,
+          "prompt_cache": {
+            "entries": 0,
+            "tokens": 0,
+            "bytes": 0,
+            "limit_bytes": 8589934592
+          }
+        },
+        "gpus": [
+          {
+            "gpu_id": "1",
+            "runner": "CUDA",
+            "size_vram": 13634507898,
+            "memory": {
+              "weights": 2095935651,
+              "kv_cache": 10737418240,
+              "compute": 801154007
+            }
+          }
+        ]
+      },
+      {
+        "name": "qwen3.5:0.8b",
+        "model": "qwen3.5:0.8b",
+        "size": 5883004189,
+        "digest": "f3817196d142eaf72ce79dfebe53dcb20bd21da87ce13e138a8f8e10a866b3a4",
+        "details": {
+          "parent_model": "",
+          "format": "gguf",
+          "family": "qwen35",
+          "families": [
+            "qwen35"
+          ],
+          "parameter_size": "873.44M",
+          "quantization_level": "Q8_0"
+        },
+        "expires_at": "2026-09-11T21:22:16.913552765Z",
+        "size_vram": 5883004189,
+        "roofline": {
+          "basis": "dense_weights",
+          "bytes_per_token": 821087436,
+          "ceiling_tokens_per_sec": 2182.6274784211896,
+          "kv_bytes_per_context_token": 12288,
+          "devices": [
+            {
+              "gpu_id": "0",
+              "pci_id": "0000:01:00.0",
+              "bytes_per_token": 821087436,
+              "kv_bytes_per_context_token": 12288,
+              "memory_bandwidth_bytes_per_sec": 1792128000000
+            }
+          ]
+        },
+        "context_length": 262144,
+        "memory": {
+          "weights": 800881377,
+          "kv_cache": 3221225472,
+          "recurrent_state": 20206059,
+          "compute": 1410869493,
+          "projector": 429821788
+        },
+        "weights_on_disk": 1036034688,
+        "placement": {
+          "num_layers": 26,
+          "devices": [
+            {
+              "device": "CUDA0",
+              "first_layer": 0,
+              "last_layer": 25,
+              "layers": 26
+            }
+          ]
+        },
+        "activity": {
+          "phase": "idle",
+          "slots": 1,
+          "slots_busy": 0,
+          "prompt_tokens": 13,
+          "prompt_cache": {
+            "entries": 0,
+            "tokens": 0,
+            "bytes": 0,
+            "limit_bytes": 8589934592
+          }
+        },
+        "gpus": [
+          {
+            "gpu_id": "0",
+            "runner": "CUDA",
+            "size_vram": 5883004189,
+            "memory": {
+              "weights": 800881377,
+              "kv_cache": 3221225472,
+              "recurrent_state": 20206059,
+              "compute": 1410869493,
+              "projector": 429821788
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "info": {
+    "version": "0.0.0",
+    "models": {
+      "store": "/root/.ollama/models",
+      "count": 70,
+      "filesystem_used": 1359174418249,
+      "running": 2,
+      "vram_used": 19517512087
+    },
+    "compute": {
+      "system_compute": {
+        "cpu_cores": 32,
+        "total_memory": 130143772672,
+        "free_memory": 127317622784,
+        "free_swap": 6258073600
+      },
+      "supported_gpus": [
+        {
+          "gpu_id": "0",
+          "pci_id": "0000:01:00.0",
+          "name": "CUDA0",
+          "total_memory": 101972967424,
+          "processes": [
+            {
+              "pid": 727,
+              "used_memory": 6348079104,
+              "name": "llama-server",
+              "runner": {
+                "model": "qwen3.5:0.8b"
+              }
+            }
+          ],
+          "processes_scope": "pid_namespace",
+          "physical_memory": 102641958912,
+          "memory_bandwidth_bytes_per_sec": 1792128000000,
+          "memory_bus_width_bits": 512,
+          "memory_clock_max_mhz": 14001,
+          "pcie_max_generation": 5,
+          "pcie_max_width": 8,
+          "utilization": {
+            "gpu_percent": 0,
+            "memory_percent": 0
+          },
+          "free_memory": 95613616128,
+          "compute": "12.0",
+          "driver": "13.2",
+          "runner": "CUDA"
+        },
+        {
+          "gpu_id": "1",
+          "pci_id": "0000:03:00.0",
+          "name": "CUDA1",
+          "total_memory": 101972967424,
+          "processes": [
+            {
+              "pid": 818,
+              "used_memory": 14298382336,
+              "name": "llama-server",
+              "runner": {
+                "model": "granite4.1:3b"
+              }
+            }
+          ],
+          "processes_scope": "pid_namespace",
+          "physical_memory": 102641958912,
+          "memory_bandwidth_bytes_per_sec": 1792128000000,
+          "memory_bus_width_bits": 512,
+          "memory_clock_max_mhz": 14001,
+          "pcie_max_generation": 5,
+          "pcie_max_width": 8,
+          "utilization": {
+            "gpu_percent": 0,
+            "memory_percent": 0
+          },
+          "free_memory": 87665410048,
+          "compute": "12.0",
+          "driver": "13.2",
+          "runner": "CUDA"
+        }
+      ],
+      "topology": {
+        "status": "measured",
+        "gpus": [
+          "0000:01:00.0",
+          "0000:03:00.0"
+        ],
+        "links": [
+          {
+            "a": "0000:01:00.0",
+            "b": "0000:03:00.0",
+            "type": "pcie",
+            "path": "PHB",
+            "pcie_path": "PHB",
+            "bandwidth_bytes_per_sec": 31507692307,
+            "bandwidth_source": "derived_from_pcie_link"
+          }
+        ]
+      }
+    },
+    "load_stall_timeout_ms": 300000
+  }
+}

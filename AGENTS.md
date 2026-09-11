@@ -861,6 +861,15 @@ display rather than an obvious bug:
 - **A device decomposes into three bands, never two**: attributed per model, the residual, then free. The
   residual is named by MAGNITUDE — under ~1 GiB it is ollama's own driver context (an idle card holds ~0.55
   GiB), above it something genuinely else is there. Calling it "other processes" invents a process.
+- **Once the driver NAMES the processes, the residual is split by them instead** (`processes` +
+  `processes_scope` on `/api/info`, `processBands`): each runner's overhead (its process minus its model's
+  share of the card, 444 vs 633 MiB on one box, so never a constant) stacked directly on its model in a wash
+  of its colour, a loading runner drawn whole as its load (which `pendingAllocation` then reads directly),
+  ollama's helpers as one band, and any other listed process as a named tenant. **Read `processes_scope`
+  before trusting an empty list**: under `"pid_namespace"` (any container) another container's process is
+  not listed at all while its memory is still out of `free`, so the unlisted remainder is "outside ollama's
+  view" and never "overhead". Every residual key must be in `bandOrder`, or its band silently drops out of
+  the stack.
 - **Unified memory (Metal) is one pool**: `runner` is the discriminator, occupancy comes from the HOST (a
   Mac's device reported itself 11.84/11.84 GiB free while the system was 12.6 GiB deep in the same silicon),
   and a GPU-resident model is attributed in FULL there (`size == size_vram`, so attributing only the spill

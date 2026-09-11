@@ -2718,6 +2718,56 @@ test("resource panel: Esc with no tip up still leaves the zoom", async () => {
     } finally { await ext.close(); await fake.stop(); }
 });
 
+// THE RESIDUAL, NAMED BY PROCESS (`processes` + `processes_scope` on a patched /api/info). The arithmetic is
+// pinned against real captures in resource-model.test.mjs; what only the drawn panel shows is that every new
+// band is IN THE STACK — `bandOrder` has to name each key or a band silently drops out of the drawing — with a
+// runner's overhead directly on its own model, and the legend and the tip naming what the driver cannot see.
+test("resource panel: the residual is named process by process when the driver lists them", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const TOTAL = 101972967424, MODEL = 18 * GiB, RUNNER = MODEL + 0.6 * GiB, TENANT = 3 * GiB, UNSEEN = 2.5 * GiB;
+        const info = box(TOTAL - RUNNER - TENANT - UNSEEN, TOTAL - 589824);
+        const [c0, c1] = info.compute.supported_gpus;
+        Object.assign(c0, { processes_scope: "pid_namespace", processes: [
+            { pid: 317, used_memory: RUNNER, name: "llama-server", runner: { model: "gemma4:31b" } },
+            { pid: 990, used_memory: TENANT, name: "python3" },
+        ] });
+        c1.processes_scope = "pid_namespace";
+        fake.setCapacity(info);
+        fake.setResident([resident("gemma4:31b", MODEL, 0)]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+
+        const track = frame.locator(".rc-track").first();
+        const legend = track.locator(".rc-legend");
+        await expect.poll(async () => (await legend.textContent()) || "", { timeout: 25000 }).toMatch(/gemma4:31b overhead 614\.4 MiB/);
+        const text = await legend.textContent();
+        expect(text).toMatch(/python3 \(pid 990\) 3\.00 GiB/);
+        expect(text).toMatch(/outside ollama's view 2\.50 GiB/);
+        expect(text, "the size rule no longer guesses once processes are named").not.toMatch(/unattributed|driver overhead/);
+
+        // IN THE STACK, and the overhead sits directly on the model it belongs to, tinted with its colour.
+        await expect.poll(() => track.locator(".rc-area polygon").count(), { timeout: 10000 }).toBeGreaterThanOrEqual(4);
+        const fills = await track.locator(".rc-area").first().locator("polygon").evaluateAll((ps) => ps.map((p) => ({ band: p.classList.contains("rc-band"), fill: p.getAttribute("fill") })));
+        const at = fills.findIndex((f) => f.band);
+        expect(at, `the model's band is drawn: ${JSON.stringify(fills)}`).toBeGreaterThanOrEqual(0);
+        expect(fills[at + 1].fill, "its runner's overhead is the next band up, in a wash of its colour").toMatch(/^color-mix\(in srgb, .+ 30%/);
+        expect(fills.length, "model, overhead, tenant and the unseen remainder are all drawn").toBeGreaterThanOrEqual(4);
+
+        // Pointing at the plot away from the model names them at that instant too.
+        const plot = await track.locator(".rc-plot").boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.6, plot.y + 4);
+        const tip = frame.locator(".rc-tip-pool");
+        await expect(tip).toBeVisible({ timeout: 5000 });
+        expect(await tip.textContent()).toMatch(/python3 \(pid 990\).*outside ollama's view/);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
 // THE MARK IS DRAWN ON TOP OF THE LINE, and this is asserted in PIXELS because it is a pixel claim: the dot's
 // legibility over a band of any shade comes entirely from a 1.5px ring of the panel's own colour, and the
 // crosshair — one pixel of accent at 55% — was painted after it, cutting that ring at the top and bottom. It
