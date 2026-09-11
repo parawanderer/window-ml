@@ -16,7 +16,7 @@ import {
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
 import { capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
@@ -153,6 +153,65 @@ const partFill = (model: string, key: keyof MemoryBreakdown): string => {
     const mix = PART_MIX[key];
     return mix >= 100 ? c : `color-mix(in srgb, ${c} ${mix}%, transparent)`;
 };
+
+/**
+ * WHAT ONE GENERATION LEFT IN THE KV CACHE, drawn inside the drilled-in cache part while its lane span is
+ * hovered. The part is the cache's RESERVATION — allocated in full at load, so its height never moves — and
+ * this is the only view of how much of it a turn actually filled: bottom to top, the prefix reused from the
+ * cache (dotted), the prompt computed this turn (dense), the tokens decoded (light), and above that the part
+ * as it always looks, reserved and empty.
+ *
+ * Placed at the generation's own position on the axis and read from the sample at its end, where the counts
+ * describe the cache. Positioned HTML over the segment rather than SVG inside it: the plot's SVG is stretched
+ * to the track, and a dotted pattern drawn in it would smear into lines. A share of TOKENS, never bytes — see
+ * `kvFill` — and a composition rather than a ramp over time, since the engine reports counts, not a timeline.
+ */
+function KvFill({ run, bandsOf, deep, ev }: { run: ResourceSample[]; bandsOf: (s: ResourceSample) => Band[]; deep: { model: string; ceiling: number }; ev: ResourceEvent }) {
+    const n = run.length;
+    if (n < 2 || !ev.gen || ev.until == null) return null;
+    const t0 = run[0].t, t1 = run[n - 1].t;
+    // A generation outside this run belongs to another segment (or to a gap, where nothing was measured).
+    if (ev.until < t0 || ev.t > t1 + sampleGraceMs()) return null;
+    const idx = (t: number): number => {
+        if (t <= t0) return 0;
+        if (t >= t1) return n - 1;
+        let i = 0;
+        while (i < n - 2 && run[i + 1].t <= t) i++;
+        return i + (t - run[i].t) / Math.max(1, run[i + 1].t - run[i].t);
+    };
+    const a = idx(ev.t) / (n - 1), b = idx(ev.until) / (n - 1);
+    const at = run[Math.min(n - 1, Math.ceil(idx(ev.until)))];
+    const band = bandsOf(at).find((x) => x.model === deep.model);
+    const parts = band?.parts;
+    const r = at.models.find((x) => x.model === deep.model);
+    const fill = kvFill(ev.gen, r?.contextLength, r?.activity?.slots ?? 1);
+    if (!parts || !(parts.kvCache > 0) || !fill) return null;
+    // The cache part sits directly above the weights in the stack (MEMORY_PARTS order).
+    const floor = parts.weights, kv = parts.kvCache;
+    const pct = (bytes: number) => (bytes / Math.max(1, deep.ceiling)) * 100;
+    const layers = (fill.prompt != null
+        ? [{ k: "prompt", share: fill.prompt }]
+        : [{ k: "cached", share: fill.cached ?? 0 }, { k: "computed", share: fill.computed ?? 0 }])
+        .concat([{ k: "decoded", share: fill.decoded }]);
+    let acc = floor;
+    // A generation is often a few ms against a window of minutes, so it is WIDENED to stay visible; double-
+    // clicking its span frames the panel on it, which is the gesture for seeing it at its real width.
+    const w = Math.max(1.2, (b - a) * 100);
+    return (
+        <div class={`rc-kvfill${fill.overflow ? " overflow" : ""}`} aria-hidden="true"
+            style={{ left: `${Math.min(100 - w, a * 100)}%`, width: `${w}%`, "--model": colorFor(deep.model) }}>
+            {layers.map((l) => {
+                const h = l.share * kv;
+                const el = <i key={l.k} class={`rc-kvfill-${l.k}`} style={{ bottom: `${pct(acc)}%`, height: `${pct(h)}%` }} />;
+                acc += h;
+                return el;
+            })}
+            {/* The reservation's top edge, so the empty remainder above the fill reads as part of the SAME cache
+                rather than as whatever happens to be drawn over it. */}
+            <i class="rc-kvfill-cap" style={{ bottom: `${pct(floor + kv)}%` }} />
+        </div>
+    );
+}
 
 /** One device (or the host pool) as a stacked area over time. `frames` is one band list per sample. */
 function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = null }: { frames: Band[][]; ceiling: number; hidden: Set<string>; scope: string; snapIndex?: number | null; deep?: { model: string; ceiling: number } | null }) {
@@ -451,6 +510,35 @@ function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = 
  *    perfectly healthy, and `width < max_width` is by design wherever a board splits its lanes x8/x8.
  *  - **Any derived ceiling or grade.** `compute` and `driver` are printed verbatim as reference facts and
  *    nothing branches on them — a panel that did would be encoding hardware knowledge that rots. */
+/** This card's links to EACH OTHER card, from the server's topology — one line per peer, direct fabric first,
+ *  never a single "interconnect" value for the card. What it says when it cannot say that is the point:
+ *  unreported, unmeasured (with the driver's words) and a pair the server's list OMITTED are three different
+ *  answers, and none of them is "PCIe only" — on a bridged 4x3090 that would be a confident lie. */
+function DeviceLinks({ device }: { device: DeviceCapacity }) {
+    const cap = capacity.value;
+    const t = cap?.topology;
+    const peers = (cap?.devices ?? []).filter((d) => d.id !== device.id);
+    if (!t) return (
+        <span class="rc-df-row rc-df-dim">Link to the other {peers.length === 1 ? "card" : "cards"}: not reported by this server. It is a property of each PAIR rather than of a card — some pairs can be NVLinked while others fall back to PCIe — so nothing is assumed either way.</span>
+    );
+    if (t.status === "unavailable" || !device.pciId) return (
+        <span class="rc-df-row rc-df-dim">Links to the other {peers.length === 1 ? "card" : "cards"}: could not be measured{t.detail ? <> (<code>{t.detail}</code>)</> : null}. That is not the same as "no NVLink" — nothing is assumed either way.</span>
+    );
+    const rows = peers.map((p) => ({ p, l: linkBetween(t, device.pciId, p.pciId) }))
+        .sort((x, y) => Number(isBridge(y.l)) - Number(isBridge(x.l)));
+    return (
+        <>
+            {rows.map(({ p, l }) => (
+                <span class="rc-df-row" key={p.id}>to <b>{p.name}</b>: {l
+                    ? linkPhrase(l)
+                    : <span class="rc-df-dim">missing from the server's link list — a bug on one side, not a PCIe link</span>}</span>
+            ))}
+            {t.status !== "measured"
+                ? <span class="rc-df-row rc-df-dim">Only partly measured{t.detail ? <> (<code>{t.detail}</code>)</> : null}.</span> : null}
+        </>
+    );
+}
+
 function DeviceFacts({ device, label }: { device: DeviceCapacity; label: string }) {
     // How many OTHER devices there are — a single card has no pair to have a link with, so the
     // interconnect line is shown only where the question exists.
@@ -477,9 +565,17 @@ function DeviceFacts({ device, label }: { device: DeviceCapacity; label: string 
                         {device.driver ? <>driver {device.driver}</> : null}
                     </span>
                 ) : null}
-                {others > 0 ? (
-                    <span class="rc-df-row rc-df-dim">Link to the other {others === 1 ? "card" : "cards"}: not reported by this server. It is a property of each PAIR rather than of a card — some pairs can be NVLinked while others fall back to PCIe — so nothing is assumed either way.</span>
+                {/* THE CARD'S CEILINGS, fixed properties read once — never live readings. Bandwidth is what
+                    decode is bound by; the host link rules ITSELF out, since it governs load time and almost
+                    nothing about inference (cross-card traffic measured at 0.2% of a step), and the width is the
+                    narrower of card and slot, which is what the link can actually train at. */}
+                {device.memoryBandwidth ? (
+                    <span class="rc-df-row">memory bandwidth {(device.memoryBandwidth / 1e12).toFixed(2)} TB/s — the ceiling decode is bound by</span>
                 ) : null}
+                {device.pcieMaxGeneration || device.pcieMaxWidth ? (
+                    <span class="rc-df-row rc-df-dim">host link: PCIe{device.pcieMaxGeneration ? ` Gen ${device.pcieMaxGeneration}` : ""}{device.pcieMaxWidth ? ` x${device.pcieMaxWidth}` : ""} at most — this governs how fast a model LOADS, and almost nothing about how fast it runs</span>
+                ) : null}
+                {others > 0 ? <DeviceLinks device={device} /> : null}
             </span>
         </span>
     );
@@ -573,7 +669,13 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     // kept drawing the summary: they had subscribed to `hoverModel` (which the previous keypress also wrote)
     // and not to this, so the depth change reached exactly one of them.
     const kbNow = kbFocus.value;
-    const deepModel = kbNow && kbNow.depth > 0 ? kbNow.model : null;
+    // A GENERATION HOVERED IN THE LANE drills its model in too, so its cache fill has somewhere to be drawn —
+    // the same mode the keys enter, so it keeps the one scale across every card the model is on. The keyboard
+    // wins when both are set: it is the deliberate selection. Read here, unconditionally, for the same
+    // subscription reason as `kbFocus`.
+    const evNow = eventHover.value;
+    const laneGen = evNow?.scope === "lane" && evNow.p.event.gen && evNow.p.event.model ? evNow.p.event : null;
+    const deepModel = kbNow && kbNow.depth > 0 ? kbNow.model : laneGen?.model ?? null;
     const deep = (() => {
         if (!deepModel || hidden.has(deepModel)) return null;
         let mine = 0, most = 0;
@@ -639,6 +741,8 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                         <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} scope={scope}
                             deep={deep}
                             snapIndex={snapUnder(runs)?.run === i ? snapUnder(runs)!.index : null} />
+                        {deep && laneGen && laneGen.model === deep.model
+                            ? <KvFill run={run} bandsOf={bandsOf} deep={deep} ev={laneGen} /> : null}
                         <InstantRules instants={instants} run={i} scope={scope} />
                         <HoverSpan run={i} scope="lane" />
                     </div>
@@ -1024,7 +1128,7 @@ function PlotTip({ at, bands, ceiling, label, hidden, scope }: { at: ResourceSam
  *
  *  Each row carries the pool's own swatch, its occupancy and its share — the shares are what the lines plot,
  *  since the pools have different capacities and a common axis of bytes would compare nothing. */
-function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf, surface = "overlay", bandOf }: {
+function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf, surface = "overlay", bandOf, links = [] }: {
     pools: { id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] }[];
     latest: ResourceSample;
     at: ResourceSample | null;
@@ -1032,6 +1136,9 @@ function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf, surface = "o
     usedOf: (s: ResourceSample, p: any) => number;
     /** The surface the view tracks its pointer as — the overlaid view's, or a whole-box track's own scope. */
     surface?: string;
+    /** The BRIDGES between adjacent pools, said in words — the walls in the whole-box view are visuals and do
+     *  not open a tooltip of their own (a hover target inside the plot would stack a second tip on this one). */
+    links?: { label: string; phrase: string; note?: string }[];
     /** Where a pool OWNS the height, as [bottom, top] fractions of the plot. The whole-box view lays pools end
      *  to end, so the pool you are pointing at is the band the pointer is inside, not the fill top nearest to
      *  it — nearest-by-line would name a neighbour whenever you point low inside a tall band. */
@@ -1112,6 +1219,19 @@ function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf, surface = "o
                     </div>
                 );
             })}
+            {/* THE BRIDGES the walls are drawn for, in words: which pairs are directly linked and by what. A
+                section of its own, after the pools, because a link belongs to a PAIR and never to one row. */}
+            {links.length ? (
+                <div class="rc-tip-sect rc-tip-links">
+                    {links.map((l) => (
+                        <div class="rc-tip-row" key={l.label}>
+                            <span class="rc-tip-label">{l.label}</span>
+                            <span class="rc-tip-amt">{l.phrase}</span>
+                            {l.note ? <span class="rc-tip-note rc-tip-linknote">{l.note}</span> : null}
+                        </div>
+                    ))}
+                </div>
+            ) : null}
             {/* AT THE BOTTOM, where the other view puts it — a hint that moves between views is one more
                 thing to find. ONLY ↑↓: there is no depth here to descend into, since a pool has no memory
                 breakdown of its own (the decomposition is per MODEL), and naming a key that silently does
@@ -1201,6 +1321,10 @@ function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDe
     const deviceOf = (id: string) => cap.devices.find((d) => d.id === id.replace(/^vram\./, ""));
     const first = def.series[0] ?? "";
     const isHost = first === "ram" || first === "mem";
+    // HOW BUSY, not how full — its own view, since it is its own unit. The editor refuses a track that mixes it
+    // with memory series (`kindRefusal`), so a utilization track is all utilization.
+    if (def.series.length && def.series.every((id) => id.startsWith("util.")))
+        return <UtilView def={def} onHide={onHide} samples={samples} latest={latest} events={events} />;
 
     // `overlay` is meaningful even for ONE series — it is a LINE of that pool's occupancy rather than the
     // per-model bands, which is the compact-vs-detailed choice. Short-circuiting to the stacked view below two
@@ -1260,9 +1384,24 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
         return { id, name: d.name, ceiling: c?.displayBytes ?? d.totalBytes,
             bandsOf: (sm: ResourceSample) => deviceBands(sm, d.id) };
     }).filter(Boolean) as { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }[];
+    // CARDS THAT ARE DIRECTLY LINKED SIT SIDE BY SIDE (`bridgeOrder`), because a wall between two adjacent bands
+    // is the only place a bridge can be drawn on one axis. Only a MEASURED topology reorders; the host pool and
+    // anything that is not a card keep their place after the cards.
+    const devOrder = bridgeOrder(cap.devices, cap.topology).map((d) => `vram.${d.id}`);
+    const rank = (id: string) => { const i = devOrder.indexOf(id); return i < 0 ? 1e6 + def.series.indexOf(id) : i; };
+    all.sort((a, b) => rank(a.id) - rank(b.id));
     // A pool switched off leaves the axis entirely rather than sitting there empty: shrinking the total is
     // what makes "just my two cards" a view rather than arithmetic the reader has to do.
     const pools = all.filter((p) => !hiddenPools.value.has(p.id));
+    const pciOf = (id: string) => (id.startsWith("vram.") ? cap.devices.find((d) => d.id === id.slice(5))?.pciId : undefined);
+    // What each wall between two adjacent pools is: a bridge when THAT pair is directly linked, and whether the
+    // run of bridged cards it belongs to is a full mesh (see `bridgeWalls`). Walls between visible pools only —
+    // hiding a card re-adjoins its neighbours, and their wall is then about THEM.
+    const walls = bridgeWalls(pools.map((p) => ({ pciId: pciOf(p.id) })), cap.topology);
+    const links = walls.flatMap((w, i) => (w.bridge && w.link ? [{
+        label: `${pools[i].name} ═ ${pools[i + 1].name}`, phrase: linkPhrase(w.link),
+        note: w.mesh === "partial" ? `part of a PARTIAL mesh — not directly linked: ${w.unlinked.map(([a, b]) => `${pools[a].name}–${pools[b].name}`).join(", ")}` : undefined,
+    }] : []));
     if (!pools.length) return null;
     const axis = boxAxis(pools);
     if (!axis.total) return null;
@@ -1308,7 +1447,7 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
                 <BrushOverlay runs={runs} />
                 <Crosshair runs={runs} />
                 <PoolsTip pools={tipPools} latest={latest} at={hoveredSample(runs, scope)} surface={scope} bandOf={bandOf}
-                    fracOf={(sm, p) => (p.ceiling > 0 ? Math.min(1, usedOf(sm, p) / p.ceiling) : 0)} usedOf={usedOf} />
+                    fracOf={(sm, p) => (p.ceiling > 0 ? Math.min(1, usedOf(sm, p) / p.ceiling) : 0)} usedOf={usedOf} links={links} />
                 <EventTip scope={scope} />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
@@ -1333,8 +1472,11 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
                         {/* THE WALLS. Drawn per segment so they sit inside the same clipped box the fills do,
                             and they are the whole reason this axis is honest: without them a reader sees one
                             column and infers one pool. */}
-                        {axis.bands.slice(1).map((b) => (
-                            <i key={`w:${b.id}`} class="rc-boxwall" aria-hidden="true"
+                        {axis.bands.slice(1).map((b, wi) => (
+                            // A BRIDGE where that exact pair is directly linked (NVLink, xGMI): the wall a
+                            // model split across the two pays least to cross. Hatched, and lighter when the run
+                            // it belongs to is only a PARTIAL mesh, so a cube-mesh never reads as a switch.
+                            <i key={`w:${b.id}`} class={`rc-boxwall${walls[wi]?.bridge ? ` bridge${walls[wi].mesh === "partial" ? " partial" : ""}` : ""}`} aria-hidden="true"
                                 style={{ bottom: `${(b.base / axis.total) * 100}%` }} />
                         ))}
                     </div>
@@ -1369,6 +1511,117 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
                     );
                 })}
             </div>
+        </div>
+    );
+}
+
+/** The utilization figures a sample carries for one card, or undefined — "not read", never idle. */
+const utilOf = (s: ResourceSample, id: string) => s.capacity?.devices.find((d) => d.id === id)?.utilization;
+
+/**
+ * HOW BUSY EACH CARD IS, over time — the Activity preset. Two lines per card in its own colour: SOLID for the
+ * GPU, DASHED for its memory controller, which is the one to watch for decode (decode is bound by memory
+ * bandwidth, and 90% there is the controller saturating). A share of TIME, so it never shares a track with a
+ * share of memory (`kindRefusal`).
+ *
+ * Both figures are averages the DRIVER takes over its own window (1/6 s to 1 s by product, and the call does
+ * not say which), so a reading cannot show two cards of a split model taking turns within one token — the
+ * header says "averaged by the driver" rather than implying an instant. A missing reading BREAKS the line: it
+ * is "not reported", which is not idle (0 is idle) and not a fault either — a dead card and a card without the
+ * counter answer alike, and faults come from `unavailable_gpus`. The two figures are independent (an AMD iGPU
+ * has the first and no file for the second), so each is drawn on its own.
+ */
+function UtilView({ def, samples, latest, events = [], onHide }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; events?: ResourceEvent[]; onHide?: () => void }) {
+    const cap = latest.capacity!;
+    const scope = `util:${def.id}`;
+    const cards = def.series.map((id) => cap.devices.find((d) => d.id === id.slice("util.".length))).filter(Boolean) as DeviceCapacity[];
+    const runs = noteRuns(segments(samples, sampleGapMs()).filter((r) => r.length > 1));
+    const instants = useInstants(runs, events);
+    if (!cards.length) return null;
+    const color = (i: number) => poolColor(i, cards.length);
+    const names = cards.map((c) => c.name).join(" · ");
+    return (
+        <div class="rc-track">
+            <div class="rc-head">
+                <HideTrack onHide={onHide} label={names} />
+                <span class="rc-name">{names}</span>
+                <span class="sp" />
+                <span class="rc-total tt">
+                    % of time busy
+                    <span class="tt-pop wrap" role="tooltip">Solid: how busy each GPU was. Dashed: how busy its memory controller was — the one to watch while decoding, which is bound by memory bandwidth. Both are averages the driver takes over its own window (up to a second), so this cannot show two cards taking turns within one token. A card with no reading draws no line: that means not reported, which is neither idle nor a fault.</span>
+                </span>
+            </div>
+            <div class="rc-plot"
+                onPointerDown={startBrush(runs)}
+                onPointerMove={(e: PointerEvent) => { trackCursor(scope)(e); trackCrosshair(runs)(e); }}
+                onPointerLeave={() => { hoverAt.value = null; if (kbFocus.value || kbPool.value) return; crosshair.value = null; }}>
+                <BrushOverlay runs={runs} />
+                <Crosshair runs={runs} />
+                <UtilTip cards={cards} color={color} at={hoveredSample(runs, scope)} latest={latest} scope={scope} />
+                <EventTip scope={scope} />
+                {runs.map((run, ri) => (
+                    <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
+                        <InstantRules instants={instants} run={ri} scope={scope} />
+                        <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                            {cards.flatMap((c, ci) => (["gpuPercent", "memoryPercent"] as const).flatMap((k) => {
+                                // Split wherever the reading is ABSENT, so a gap in the counter is a gap in the
+                                // line and never a stroke drawn down to zero.
+                                const parts: string[][] = [];
+                                let cur: string[] = [];
+                                run.forEach((sm, i) => {
+                                    const v = utilOf(sm, c.id)?.[k];
+                                    if (v == null) { if (cur.length) parts.push(cur); cur = []; return; }
+                                    cur.push(`${((i / (run.length - 1)) * W).toFixed(1)},${(H - (v / 100) * H).toFixed(1)}`);
+                                });
+                                if (cur.length) parts.push(cur);
+                                return parts.filter((pts) => pts.length > 1).map((pts, pi) => (
+                                    <polyline key={`${c.id}:${k}:${pi}`} class={`rc-line ${k === "gpuPercent" ? "rc-util-gpu" : "rc-util-mem"}`}
+                                        points={pts.join(" ")} fill="none" vector-effect="non-scaling-stroke" stroke={color(ci)} stroke-width={1.5} />
+                                ));
+                            }))}
+                        </svg>
+                    </div>
+                ))}
+            </div>
+            <div class="rc-legend">
+                {cards.map((c, ci) => {
+                    const u = utilOf(latest, c.id);
+                    return (
+                        <span class="rc-key" key={c.id}>
+                            <i class="rc-swatch" style={{ background: color(ci) }} />
+                            {c.name} {u?.gpuPercent != null ? `${u.gpuPercent}%` : "—"}{u?.memoryPercent != null ? ` · memory ${u.memoryPercent}%` : ""}
+                        </span>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
+/** Every card's two figures at the datapoint under the cursor — the same Grafana reading the pools tip gives,
+ *  for utilization. A figure the card did not report says so rather than showing a 0. */
+function UtilTip({ cards, color, at, latest, scope }: { cards: DeviceCapacity[]; color: (i: number) => string; at: ResourceSample | null; latest: ResourceSample; scope: string }) {
+    const cur = cursorOn(scope);
+    const { ref, style } = useTipPlacement(cur);
+    if (!cur) return null;
+    const frame = at ?? latest;
+    const fig = (v: number | undefined) => (v != null ? `${v}%` : "not reported");
+    return (
+        <div class="rc-tip rc-tip-pools" role="tooltip" ref={ref} style={style}>
+            <SampleStamp at={at} />
+            {cards.map((c, ci) => {
+                const u = utilOf(frame, c.id);
+                return (
+                    <div class="rc-tip-sect" key={c.id}>
+                        <div class="rc-tip-row rc-tip-poolrow">
+                            <span class="rc-tip-label"><i class="rc-swatch" style={{ background: color(ci) }} />{c.name}</span>
+                            <span class="rc-tip-amt">GPU {fig(u?.gpuPercent)}</span>
+                            <span class="rc-tip-pct">memory {fig(u?.memoryPercent)}</span>
+                        </div>
+                    </div>
+                );
+            })}
+            <div class="rc-tip-note">averaged by the driver over its own window</div>
         </div>
     );
 }
@@ -1596,6 +1849,13 @@ const phaseFill = (kind: string, model?: string): string => {
         // being allocated before it will serve. Striped either way, because a load is a wait rather than
         // work; they LEAN OPPOSITE WAYS, because a difference in shade alone is invisible in a swatch and
         // nearly invisible in a thin bar (see loadStripes).
+        // A GENERATION's halves, by weight of the model's own colour like its channels: prefill is the dense
+        // one (the whole prompt read at once), decode lighter. The same two weights the KV fill uses, so a
+        // lane span and the cache it filled read as one legend. The remainder around them is not the model
+        // doing either, so it takes the faintest neutral, like dispatch.
+        : kind === "prefill" ? base
+        : kind === "decode" ? `color-mix(in srgb, ${base} 55%, transparent)`
+        : kind === "other" ? "color-mix(in srgb, var(--fg-faint) 20%, transparent)"
         : kind === "weights" ? halfStripes(base, 45)
         : kind === "context" ? halfStripes(`color-mix(in srgb, ${base} 55%, transparent)`, -45)
         : `color-mix(in srgb, ${base} 38%, transparent)`;
@@ -2069,6 +2329,61 @@ function modelWhere(model: string): string {
     return ollama.includes(model) ? "local · ollama" : (models.value.includes(model) ? "cloud" : "");
 }
 
+/** THE CACHE A GENERATION LEFT, as a bar in its lane tooltip — the same four textures as the drilled-in fill
+ *  (`KvFill`), so it reads in EVERY preset, including Overview, whose pool lines have no cache part to fill.
+ *  Left to right: reused (dotted), computed (dense), decoded (light), then the reserved remainder. The figure
+ *  beside it is tokens against the cache's token capacity, never bytes. */
+function KvBar({ gen, ctx, model }: { gen: NonNullable<ResourceEvent["gen"]>; ctx: NonNullable<ResourceEvent["genCtx"]>; model?: string }) {
+    const f = kvFill(gen, ctx.contextTokens, ctx.slots);
+    if (!f) return null;
+    const cap = ctx.contextTokens * Math.max(1, ctx.slots);
+    const held = (gen.promptTokens ?? 0) + (gen.decoded ?? 0);
+    const layers = (f.prompt != null ? [{ k: "prompt", share: f.prompt }]
+        : [{ k: "cached", share: f.cached ?? 0 }, { k: "computed", share: f.computed ?? 0 }]).concat([{ k: "decoded", share: f.decoded }]);
+    return (
+        <div class="rc-tip-kv sep">
+            <div class="rc-tip-line">
+                <span class="rc-tip-name">in the KV cache after this turn</span>
+                <span class="rc-tip-size">{Math.min(held, cap).toLocaleString()} of {cap.toLocaleString()} tokens ({percentOf(Math.min(held, cap), cap)})</span>
+            </div>
+            <div class="rc-kvbar" style={model ? { "--model": colorFor(model) } : undefined} aria-hidden="true">
+                {layers.map((l) => <i key={l.k} class={`rc-kvfill-${l.k}`} style={{ width: `${l.share * 100}%` }} />)}
+            </div>
+            {f.overflow ? <div class="rc-tip-note warn">More tokens than the cache holds — the context shifted, and older tokens were dropped to make room.</div> : null}
+        </div>
+    );
+}
+
+/** Why the server gave no decode ceiling, in words a reader acts on. */
+const CEILING_WHY: Record<string, string> = {
+    mixture_of_experts: "no ceiling: a mixture-of-experts model reads only its active experts per token",
+    partly_on_cpu: "no ceiling: part of this model runs from system RAM, which nothing here measures",
+    bandwidth_unknown: "no ceiling: the card's memory bandwidth could not be read",
+};
+
+/** A generation's measured DECODE rate against the ceiling AT ITS CONTEXT (`decodeCeiling` at the mean
+ *  occupancy over the decode, `prompt_tokens + decoded / 2`). Against the empty-context ceiling instead, a box
+ *  holding a steady 80% reads as collapsing to 53% as the context grows — so that figure is never shown. Over
+ *  100% on a dense model is a bug on one side, and is said rather than clamped. When there is no honest
+ *  ceiling the server's reason is shown instead. */
+function CeilingChip({ e }: { e: ResourceEvent }) {
+    const r = e.genRoofline, g = e.gen;
+    if (!r || !g || !g.decoded || !(g.evalMs > 0)) return null;
+    if ("unavailable" in r) return <span class="rc-chip rc-chip-dim">{CEILING_WHY[r.unavailable] ?? `no ceiling: ${r.unavailable}`}</span>;
+    const occ = (g.promptTokens ?? 0) + g.decoded / 2;
+    const ceil = decodeCeiling(r, occ);
+    if (ceil == null) return <span class="rc-chip rc-chip-dim">no ceiling at this context: the cache follows no single per-token rate</span>;
+    const measured = g.decoded / (g.evalMs / 1000);
+    const share = measured / ceil;
+    return (
+        <span class={`rc-chip ${share > 1.02 ? "rc-chip-warn" : "rc-chip-dim"}`}>
+            {share > 1.02
+                ? `above the computed ceiling (${ceil.toFixed(1)} tok/s) — one side's arithmetic is wrong`
+                : `${Math.round(share * 100)}% of the memory-bandwidth ceiling at this context (${ceil.toFixed(1)} tok/s)`}
+        </span>
+    );
+}
+
 function EventTip({ scope }: { scope: string }) {
     const h = eventHover.value, at = cursorAt(scope);
     if (!h || !at || h.scope !== scope) return null;
@@ -2126,6 +2441,11 @@ function EventTip({ scope }: { scope: string }) {
         // front of a one-line script needs to know it was not the script.
         boot: "starting the sandbox (cold start)",
         tool: () => e.tool || "tool",
+        // A generation's two halves, as the ENGINE timed them, and what lies around them. Said as what each
+        // is, since "prefill" is jargon a reader should not need to know to read a bar.
+        prefill: "reading the prompt (prefill)",
+        decode: "generating tokens (decode)",
+        other: "neither — scheduling and setup around the call",
     };
     const nameFor = (kind: string) => {
         const n = PHASE_NAMES[kind as PhaseKind];
@@ -2200,6 +2520,9 @@ function EventTip({ scope }: { scope: string }) {
             {e.cost ? (
                 <div class="rc-tip-chips">
                     <span class="rc-chip">{e.cost.inTokens.toLocaleString()} in</span>
+                    {/* How many of those the prefix cache served — the reason a long prompt can take no time.
+                        "cold" only when the server said 0; nothing when it said nothing. */}
+                    {e.cost.cachedTokens != null ? <span class="rc-chip rc-chip-dim">{e.cost.cachedTokens > 0 ? `${e.cost.cachedTokens.toLocaleString()} from cache` : "cold, none cached"}</span> : null}
                     <span class="rc-chip">{e.cost.outTokens.toLocaleString()} out</span>
                     {e.cost.tokPerSec != null ? <span class="rc-chip">{e.cost.tokPerSec.toFixed(1)} tok/s</span> : null}
                     {/* A rate's basis is part of the rate: generation-only and wall-clock measure different
@@ -2229,9 +2552,18 @@ function EventTip({ scope }: { scope: string }) {
                             cannot tell them apart. Only when the server measured it. */}
                         {phaseBytes(ph.kind) != null
                             ? <span class="rc-chip rc-chip-dim">{formatBytes(phaseBytes(ph.kind)!)}</span> : null}
+                        {/* WHAT EACH HALF OF A GENERATION DID, in the engine's own counts. The prompt count alone
+                            hides a cache hit completely — it is the same either way — so the cached share is said
+                            beside it, and "cold" only when the server said 0, never when it said nothing. */}
+                        {ph.kind === "prefill" && e.gen?.promptTokens != null ? <span class="rc-chip rc-chip-dim">{e.gen.promptTokens.toLocaleString()} tokens
+                            {e.gen.promptTokensCached != null ? (e.gen.promptTokensCached > 0 ? ` · ${e.gen.promptTokensCached.toLocaleString()} from cache` : " · cold, none cached") : ""}</span> : null}
+                        {ph.kind === "decode" && e.gen?.decoded != null ? <span class="rc-chip rc-chip-dim">{e.gen.decoded.toLocaleString()} tokens
+                            {e.gen.evalMs > 0 ? ` · ${(e.gen.decoded / (e.gen.evalMs / 1000)).toFixed(1)} tok/s` : ""}</span> : null}
+                        {ph.kind === "decode" ? <CeilingChip e={e} /> : null}
                         <span class="rc-tip-size">{ms(ph.until - ph.from)}</span></div>
                 </>
             ))}
+            {e.gen && e.genCtx ? <KvBar gen={e.gen} ctx={e.genCtx} model={e.model} /> : null}
             {/* An OPEN span has no end yet, so every duration in this tooltip is "so far". Said once, plainly,
                 because the alternative is a reader taking a number that is still growing as a measurement. */}
             {e.open ? <div class="rc-tip-note">still running — these durations are so far, not final</div> : null}
@@ -2259,6 +2591,9 @@ function EventTip({ scope }: { scope: string }) {
                     // Said plainly, because a bar in a run's lane that is not part of the run is exactly the
                     // sort of thing a reader would otherwise spend a minute misattributing.
                     e.kind === "aside" ? "you triggered this while reading — NOT part of the run, and not counted in its tokens" : null,
+                    // A generation the SERVER reported and no session of ours matched: another client's traffic.
+                    // Said, because a bar nobody here caused otherwise reads as something this browser did.
+                    e.kind === "gen" && e.via === "server" ? "reported by the server — not started from this browser" : null,
                     h.p.clipped ? "continues past what was measured" : null,
                     e.ref ? `click to open this ${e.ref.seq != null ? "step" : "run"}` : null,
                 ].filter(Boolean) as string[];
@@ -2267,7 +2602,7 @@ function EventTip({ scope }: { scope: string }) {
             {/* WHEN, exactly. The durations say how long each part took; this is what lets a block be lined up
                 against another one, or against a timestamped log. Milliseconds because an event's own timings
                 are exact — unlike the crosshair, which interpolates between samples. */}
-            <div class={`rc-tip-when${(e.kind === "load" || e.kind === "aside" || h.p.clipped || e.ref) ? "" : " sep"}`}>{hhmmssms(e.t)} → {hhmmssms(e.until ?? e.t)}</div>
+            <div class={`rc-tip-when${(e.kind === "load" || e.kind === "aside" || (e.kind === "gen" && e.via === "server") || h.p.clipped || e.ref) ? "" : " sep"}`}>{hhmmssms(e.t)} → {hhmmssms(e.until ?? e.t)}</div>
         </div>
     );
 }

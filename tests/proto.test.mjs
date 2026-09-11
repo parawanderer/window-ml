@@ -129,3 +129,13 @@ test("the decoder skips fields it does not know rather than failing on them", as
     const f = Frame.decode(bytes(0x12, deltaBody.length, ...deltaBody));
     assert.equal(f.delta?.content, "hi", "the known field still reads");
 });
+
+test("End.cached_tokens: `optional`, so a cold prefill's 0 survives the wire and absent stays absent", async () => {
+    // The generated decoder is decode-only, so the frames are written by hand: field 4, varint (tag 0x20).
+    // Without `optional`, proto3 has no presence and an encoder skips a zero — a cold prefill would vanish into
+    // "not reported", the bug `gen.end` had one field over.
+    const { End } = await import("../src/proto/chat.gen.ts");
+    assert.equal(End.decode(Uint8Array.from([0x20, 0x00])).cachedTokens, 0, "an explicit 0 is a cold prefill");
+    assert.equal(End.decode(Uint8Array.from([0x20, 0x10])).cachedTokens, 16);
+    assert.equal(End.decode(new Uint8Array()).cachedTokens, undefined, "absent is not reported");
+});

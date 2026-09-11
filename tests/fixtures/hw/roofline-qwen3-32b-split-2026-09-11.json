@@ -1,0 +1,81 @@
+{
+  "model": "qwen3:32b",
+  "num_ctx": 65536,
+  "context_length": 40960,
+  "devices": [
+    "0",
+    "1"
+  ],
+  "roofline": {
+    "basis": "dense_weights",
+    "bytes_per_token": 19757698907,
+    "ceiling_tokens_per_sec": 90.70529966245526,
+    "kv_bytes_per_context_token": 262144,
+    "devices": [
+      {
+        "gpu_id": "0",
+        "pci_id": "0000:01:00.0",
+        "bytes_per_token": 9841619763,
+        "kv_bytes_per_context_token": 135168,
+        "memory_bandwidth_bytes_per_sec": 1792128000000
+      },
+      {
+        "gpu_id": "1",
+        "pci_id": "0000:03:00.0",
+        "bytes_per_token": 9916079144,
+        "kv_bytes_per_context_token": 126976,
+        "memory_bandwidth_bytes_per_sec": 1792128000000
+      }
+    ]
+  },
+  "runs": [
+    {
+      "prompt_tokens": 53,
+      "decoded": 256,
+      "decode_tps": 69.67802763278155,
+      "load_ms": 1.473227,
+      "label": "short",
+      "occupancy": 181.0,
+      "ceiling_empty": 90.70529966245526,
+      "ceiling_at_occupancy": 90.48799297597498,
+      "of_ceiling_at_occupancy": 0.7700251198109944,
+      "of_ceiling_empty": 0.7681803366735658
+    },
+    {
+      "prompt_tokens": 53,
+      "decoded": 256,
+      "decode_tps": 69.79322122433668,
+      "load_ms": 2.232504,
+      "label": "short",
+      "occupancy": 181.0,
+      "ceiling_empty": 90.70529966245526,
+      "ceiling_at_occupancy": 90.48799297597498,
+      "of_ceiling_at_occupancy": 0.771298146074111,
+      "of_ceiling_empty": 0.7694503130915237
+    },
+    {
+      "prompt_tokens": 37623,
+      "decoded": 256,
+      "decode_tps": 48.614237856932476,
+      "load_ms": 2.852106,
+      "label": "long",
+      "occupancy": 37751.0,
+      "ceiling_empty": 90.70529966245526,
+      "ceiling_at_occupancy": 60.43482234115213,
+      "of_ceiling_at_occupancy": 0.8044077234563058,
+      "of_ceiling_empty": 0.535958075634415
+    },
+    {
+      "prompt_tokens": 37623,
+      "decoded": 256,
+      "decode_tps": 48.6198514473617,
+      "load_ms": 2.597494,
+      "label": "long",
+      "occupancy": 37751.0,
+      "ceiling_empty": 90.70529966245526,
+      "ceiling_at_occupancy": 60.43482234115213,
+      "of_ceiling_at_occupancy": 0.8045006101433475,
+      "of_ceiling_empty": 0.536019963864211
+    }
+  ]
+}

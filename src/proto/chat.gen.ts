@@ -76,6 +76,13 @@ export interface End {
   finishReason: string;
   promptTokens: number;
   completionTokens: number;
+  /**
+   * How much of the prompt the prefix cache served. `optional` for presence, and that is the
+   * point of the field: 0 is a cold prefill and absent is "not reported" -- a plain proto3
+   * uint32 would drop the 0 and make the two indistinguishable. Same distinction as
+   * gen.end's prompt_tokens_cached and the OpenAI usage.prompt_tokens_details.cached_tokens.
+   */
+  cachedTokens?: number | undefined;
 }
 
 export interface Frame {
@@ -522,7 +529,7 @@ export const Logprob: MessageFns<Logprob> = {
 };
 
 function createBaseEnd(): End {
-  return { finishReason: "", promptTokens: 0, completionTokens: 0 };
+  return { finishReason: "", promptTokens: 0, completionTokens: 0, cachedTokens: undefined };
 }
 
 export const End: MessageFns<End> = {
@@ -563,6 +570,14 @@ export const End: MessageFns<End> = {
             message.completionTokens = reader.uint32();
             continue;
           }
+          case 4: {
+            if (tag !== 32) {
+              break;
+            }
+
+            message.cachedTokens = reader.uint32();
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -583,6 +598,7 @@ export const End: MessageFns<End> = {
     message.finishReason = object.finishReason ?? "";
     message.promptTokens = object.promptTokens ?? 0;
     message.completionTokens = object.completionTokens ?? 0;
+    message.cachedTokens = object.cachedTokens ?? undefined;
     return message;
   },
 };

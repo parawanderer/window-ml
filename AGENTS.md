@@ -1008,15 +1008,37 @@ per device, in bytes.
   phase chip is kept SEPARATE from the keep-alive chip rather than folded into its "in use": they are
   different facts and they disagree exactly where it matters — a request in flight while the slot has not
   started reads `busy: true, phase: idle`.
-- **PHASE IS NOT DRAWN AS A SPAN, and that is a resolution fact rather than a preference.** In the real
-  capture (`tests/e2e/fixtures/runner-activity.json`) the event stream delivered ONE `prefill` frame and ZERO
-  `decode` frames across two generations that a 40 ms poll resolved completely; the 200 ms cache-hit
-  generation produced no non-idle frame at all. Our own poll is 2 s and stream sampling pulls to 1 s, against
-  a prefill that lasts ~400 ms. Inferring the boundary from two samples would be reconstructing an edge by
-  sampling — the same error the lane already avoids by MEASURING `dispatchMs` rather than subtracting it, and
-  worse here, because the invented timestamp would sit beside a memory trace that is measured. A span needs
-  the executor to stamp it (`gen.start`/`gen.phase`/`gen.end`, requested); until then phase is drawn as a
-  STATE, which is what a reading honestly is.
+- **PHASE IS NEVER DRAWN FROM SAMPLES — and now it is drawn from the ENGINE's durations** (`genSpan`,
+  `joinGens`). In the real capture (`tests/e2e/fixtures/runner-activity.json`) the event stream delivered ONE
+  `prefill` frame and ZERO `decode` frames across two generations that a 40 ms poll resolved completely; our
+  cadence is 1–2 s against a ~400 ms prefill, so a boundary inferred from samples would be an invented
+  timestamp beside a measured memory trace. The `activity` phase chip stays a STATE for that reason. The SPAN
+  comes from `gen.end.timings` instead — `prompt_ms`/`eval_ms` are the executor's own figures — anchored at
+  `gen.end` and built BACKWARDS (decode the last `eval_ms`, prefill the `prompt_ms` before it). `gen.start` is
+  OLLAMA's stamp, so what lies between it and the prefill is a third phase, `other`, named as neither rather
+  than folded into one; a load of the same model that ended inside the generation clips its start, since the
+  load is its own span (the real capture has one: granite's `gen.start` lands 1 ms before its own
+  `load.complete`). One stretch each — the engine reports one pair per request, so a context-shift re-entry is
+  unrecoverable. Keyed PER MODEL: generations interleave across models. **Our own calls arrive twice** with
+  the stream carrying — as the session's step block and as the server's span — so `joinGens` joins them (same
+  model, ends within `GEN_JOIN_TOLERANCE_MS`, nearest first, each once): the session block wins and takes the
+  figures, its pre-first-token stretch split `other | prefill` (the channel phases ARE the decode), a
+  non-streamed call's `model` phase split `other | prefill | decode`; a split that does not FIT is not drawn.
+  Unmatched spans are other clients' traffic and say so. A replay is deduped by the END and the figures, never
+  the start, which moves when a replay lost its `gen.start`.
+- **WHAT A GENERATION LEFT IN THE KV CACHE** (`kvFill`, `KvFill`, `KvBar`). The cache is reserved in full at
+  load and its bytes never move, so its FILL is visible nowhere else. Hovering a span that carries engine
+  figures shows it, bottom to top: the prefix REUSED from the cache (dotted), the prompt COMPUTED this turn
+  (dense), the tokens DECODED (light), then the reserved remainder. Two surfaces, one legend (the textures are
+  shared by class): a bar in the span's TOOLTIP, which works in every preset — Overview's pool lines have no
+  cache part, and a one-card box defaults to Overview — and a fill INSIDE the drilled-in cache part on the
+  per-card tracks, which the hover drills into (the mode the keys enter, so the scale is shared across cards).
+  Hover shows it; double-clicking the span frames the panel on it; nothing zooms on hover. Rules: shares of
+  TOKENS against `context_length × slots`, never bytes (sliding-window and recurrent layers do not grow per
+  token); a COMPOSITION, not a ramp, since the engine reports counts, not a token timeline; an unreported
+  cached count draws ONE hatched `prompt` layer rather than a guessed split; more tokens than the capacity is a
+  context SHIFT, scaled to fit and flagged. The capacity comes from the first sample at or after the
+  generation's end (`genCtx`, attached in `timeline()` where the history is).
 - **A HOLE THE SERVER REPORTS BREAKS THE LINE (`dropped` → `lostSince` → `ResourceSample.gapBefore`).** Every
   frame carries a cumulative count of what this subscriber lost when it fell behind, and nothing read it — so
   under a burst the panel drew a continuous line across frames that never arrived, which is exactly the claim
@@ -1123,13 +1145,69 @@ per device, in bytes.
   space is the TWO TOTALS: ollama places against `total_memory` while the header draws `physical_memory`,
   ~638 MiB apart, and a reader who notices the difference elsewhere has no way to learn it is expected. The
   trigger WRAPS `.rc-name` rather than being it — a `.tt-pop` inside the name element made the label's own
-  text "CUDA0" plus three sentences of prose, which every reader of that element then picked up. What it
-  deliberately does NOT say: **the interconnect, beyond admitting it is unknown** — interconnect is a property
-  of a PAIR (consumer NVLink is 2-way, so a four-card box has some NVLinked pairs and some on PCIe), the server
-  reports no topology yet, and an absent matrix must never render as "PCIe only", which on a 4x3090 is a
-  confident lie; and **link speed or width**, which are LIVE readings rather than capabilities (an idle
-  Blackwell reads 2.5 GT/s under ASPM while perfectly healthy, and x8-of-x16 is by design on a board that
-  splits its lanes).
+  text "CUDA0" plus three sentences of prose, which every reader of that element then picked up. **Its links
+  to every other card** (`DeviceLinks`), one line per PEER, direct fabric first — interconnect is a property of
+  a PAIR (consumer NVLink is 2-way, so a four-card box has some NVLinked pairs and some on PCIe), never one
+  value for a card. Three non-answers are kept apart and none of them says "PCIe only", which on a bridged
+  4x3090 is a confident lie: NOT REPORTED (no `topology` at all), COULD NOT BE MEASURED (`status:
+  "unavailable"`, with the driver's own `detail`), and a pair MISSING from a list the server promised was
+  complete (a bug on one side). What it still does NOT say: **link speed or width**, which are LIVE readings
+  rather than capabilities (an idle Blackwell reads 2.5 GT/s under ASPM while perfectly healthy, and x8-of-x16
+  is by design on a board that splits its lanes).
+- **A CARD'S CEILINGS, AND DECODE AGAINST THE CEILING AT ITS CONTEXT** (`ceilingsOf`, `rooflineFrom`,
+  `decodeCeiling`, `CeilingChip`; `ollama-slop:hwceil`). Each `supported_gpus[]` entry carries fixed ceilings
+  read once at discovery — memory bandwidth (derived by the server from bus width × clock, checked against
+  three memory types), and the PCIe generation and width, where the width is the NARROWER of card and slot (x8
+  on gpubox, whose cards each say x16 — a link cannot train wider than its narrower end). The card hover shows
+  bandwidth as "the ceiling decode is bound by" and the host link as governing LOAD time only. Each `/api/ps`
+  row carries `roofline`: the EMPTY-context decode ceiling, per-device bytes and KV rate, or `{unavailable:
+  reason}` (MoE, part on CPU, bandwidth unknown — a reason, so the tooltip can say why). **The measured decode
+  rate is compared against the ceiling AT ITS OCCUPANCY, never the empty one**: the cache is read every token,
+  and at 38k tokens a 32B model reads 9.9 GB of cache against 19.8 GB of weights — decode fell 30%, and against
+  the empty ceiling a box holding a steady 80% reads as collapsing to 53%. `decodeCeiling(r, prompt + decoded/2)`
+  = `1 / Σ_d ((bytes_d + occ × kv_d) / bw_d)`, per device — layer split is sequential, so a SUM, never an
+  average (identical split-vs-single speeds measured, as that predicts). A device with no KV rate (a
+  sliding-window cache) yields NO figure rather than the weights-only overstatement. It reproduces the
+  server's own `ceiling_at_occupancy` to 1e-9 off the real capture (`tests/fixtures/hw/`). Over 100% on a dense
+  model is said, not clamped.
+- **HOW BUSY, NOT HOW FULL: THE ACTIVITY PRESET** (`util.<id>` series, `UtilView`, `kindRefusal`;
+  `ollama-slop:util`). `supported_gpus[].utilization` is NVML's `gpu_percent` and `memory_percent` (AMD:
+  `gpu_busy_percent` / `mem_busy_percent`), drawn per card in its colour — SOLID GPU, DASHED memory controller,
+  the one to watch while decoding. A share of TIME, so it is its own series scope (`"util"`): never in a stack
+  (nothing to add up), never on the Whole-box axis (no capacity), and never in one track with memory series in
+  ANY mode (`kindRefusal` — a card "90% busy" beside one "90% full" compares nothing), enforced in the editor and
+  at restore. Both figures are driver averages over a window the call does not report, so the header says
+  "averaged by the driver" and never implies an instant (it cannot show two cards alternating within a token).
+  The two figures are INDEPENDENT (the AMD iGPU has no memory counter at all), `0` is idle, and ABSENT is "not
+  reported" — a gap in the line, "—" in the legend, never 0 — and not a fault signal either: a dead card and a
+  card without the counter answer alike; faults come from `unavailable_gpus`. Offered only where some card
+  reports a reading; `BOXES.cuda` (both figures) and `BOXES.amd` (GPU only) carry it for the six-shape guard.
+- **THE PREFIX-CACHE HIT ON OUR OWN CALLS** (`TokenUsage.cachedTokens`). OpenAI's standard
+  `usage.prompt_tokens_details.cached_tokens` (ollama's own `/v1` route), ollama-native
+  `prompt_eval_cached_count`, and the protobuf `End.cached_tokens` — `optional` on the wire, because proto3 has
+  no presence and an encoder skips a zero, which would turn every cold prefill into "not reported". `0` is cold,
+  absent is unreported, and the two are never collapsed. **OpenWebUI's `/api/chat/completions` drops it** (its
+  `convert_ollama_usage_to_openai` built a fixed dict); fixed in `parawanderer/open-webui@72ddabd1e`, deployment
+  pending (it needs the OpenWebUI container recreated). The schema pin moved to `parawanderer/ollama@2f5706f`
+  for it; the decoder was regenerated, not edited.
+- **TOPOLOGY: A PAIR LIST, BUILT AGAINST MOCKS** (`topologyFrom`, `linkBetween`, `bridgeOrder`, `bridgeWalls`,
+  `linkPhrase`). The server's shape (agreed with mlbox, `handover-interconnect-topology.md` §4): `status` /
+  `detail`, the `gpus` by `pci_id`, and every unordered pair exactly once, an unclassifiable one as `type:
+  "unknown"` with a `reason` — so coverage is checkable, and `missing` names any pair a `measured` list omits.
+  Keyed on `pci_id`, which `supported_gpus[]` now carries (`DeviceCapacity.pciId`); `gpu_id` is an index into
+  one enumeration and can change. Read from `compute.topology` — WHERE it sits is a GUESS until a capture.
+  **The NVLink-populated fixtures in `tests/fixtures/boxes.mjs` (`TOPOLOGIES`) are UNVERIFIED against real
+  hardware, by agreement**: the box that builds it has no NVLink PHY, so the client was written against the
+  design doc, and the first real capture replaces the matching mock — whichever side disagrees is wrong. In
+  the Whole-box view: cards are REORDERED so directly-linked pairs sit side by side (a wall between adjacent
+  bands is the only place a bridge can be drawn on one axis — bridges 0–2 and 1–3 lay out 0, 2, 1, 3), a wall
+  is a hatched BRIDGE only where that exact pair is linked, and fills are never merged (which card is full is
+  what decides where the next load goes). **Per-wall honesty is not enough**: on a DGX-1 cube-mesh (each card
+  linked to 4 of 7) the ordering finds a chain in which every ADJACENT pair is linked, which would draw exactly
+  like an all-to-all NVSwitch box — so `bridgeWalls` checks each RUN of bridged cards as a whole, and a run
+  that is not a full mesh is drawn lighter and its unlinked pairs named. The walls open no tooltip (a hover
+  target inside the plot stacks a second tip); what each bridge is, in words, is a section of the pool tip.
+  Nothing is reordered or bridged unless `status` is `measured`.
 - **A THIRD MODE, `total`: THE WHOLE BOX ON ONE AXIS** (`boxAxis`, `BoxView`). Pools DO combine — ollama
   splits a model too big for one card across several and spills the rest into RAM — but not one-for-one:
   each extra card a model spans carries its own compute buffer and driver context, layers do not divide (free

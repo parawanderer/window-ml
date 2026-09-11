@@ -109,6 +109,154 @@ test("a load span is drawn with its two halves, and named as them", async () => 
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+// PREFILL AND DECODE, from the engine's own durations. Replays a second recording off the real box
+// (fixtures/events-gen-timings.json): five generations across four models, one of them the same 2,223-token
+// prompt run twice — 99.6 ms of prefill cold, 5.5 ms with 2,222 tokens from the cache.
+test("a server generation is split into prefill and decode, and says what each did", async () => {
+    const recorded = JSON.parse(readFileSync(fileURLToPath(new URL("./fixtures/events-gen-timings.json", import.meta.url)), "utf8"));
+    // This recording was captured LIVE, so its offsets run forward from its hello (2.4 s to 43.4 s). The fake
+    // replays a ring as BACKFILL after its own hello, where a positive offset is the future — past the end of
+    // every window, so most of it was never drawn. Shifted, unaltered otherwise, to end a second before hello.
+    const last = Math.max(...recorded.map((f) => f.t));
+    const GEN_FRAMES = recorded.map((f) => ({ ...f, t: f.t - last - 1000 }));
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+        fake.setEvents(GEN_FRAMES);
+        const { frame } = await openPanel(fake, ext);
+
+        // One span per generation — none of them started here, so none is joined to a session of ours.
+        await expect.poll(() => frame.locator(".rc-ev-gen").count(), { timeout: 20000 }).toBe(5);
+        const models = await frame.locator(".rc-ev-gen").evaluateAll((els) => els.map((e) => e.getAttribute("data-model")));
+        expect(models.filter((m) => /registry\.ollama\.ai/.test(m)), "canonical names, like every other edge").toEqual([]);
+
+        // THE CACHE HIT, read off its tooltip: the second gemma4:e2b generation.
+        const gemma = frame.locator('.rc-ev-gen[data-model="gemma4:e2b"]');
+        await expect(gemma).toHaveCount(2);
+        await gemma.nth(1).hover();
+        const tip = frame.locator(".rc-tip-event");
+        await expect(tip).toBeVisible({ timeout: 5000 });
+        const text = (await tip.textContent()).replace(/\s+/g, " ");
+        expect(text).toMatch(/reading the prompt \(prefill\)/);
+        expect(text).toMatch(/2,223 tokens · 2,222 from cache/);
+        expect(text).toMatch(/generating tokens \(decode\)/);
+        expect(text).toMatch(/168 tokens · 317\.\d tok\/s/);
+        expect(text, "another client's traffic is said to be").toMatch(/not started from this browser/);
+
+        // The COLD one says so only because the server said nothing was cached — and this older capture did not
+        // say (it omitted the count), so it must not claim "cold" either.
+        await frame.locator(".rc-legend, .vram-head").first().hover();
+        await gemma.nth(0).hover();
+        const cold = (await tip.textContent()).replace(/\s+/g, " ");
+        expect(cold).toMatch(/2,223 tokens/);
+        expect(cold, "absent is not zero").not.toMatch(/from cache|cold, none cached/);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// WHAT A GENERATION LEFT IN THE CACHE, drawn when its lane span is hovered. The cache is reserved in full at load
+// and its bytes never move, so this is the only view of how much of it a turn filled.
+test("hovering a generation drills its model in and fills its KV cache part with what that turn left", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+        const GiB = 1024 ** 3, TOTAL = 101_959_499_776, VRAM = 20 * GiB, MODEL = "gemma4:31b";
+        // The parts sum to size_vram EXACTLY, or the panel refuses the split.
+        const memory = { weights: 16 * GiB, kv_cache: 3 * GiB, compute: 1 * GiB };
+        const info = () => ({
+            version: "0.0.0", models: { running: 1, vram_used: VRAM },
+            compute: {
+                system_compute: { cpu_cores: 32, total_memory: 130_142_785_536, free_memory: 100 * GiB },
+                supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: TOTAL,
+                    physical_memory: 102_641_958_912, free_memory: TOTAL - VRAM,
+                    memory_bandwidth_bytes_per_sec: 1_792_128_000_000, pcie_max_generation: 5, pcie_max_width: 8 }],
+            },
+        });
+        const ps = () => ({ models: [{
+            model: MODEL, name: MODEL, size: VRAM, size_vram: VRAM, context_length: 8192, memory,
+            expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+            gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: VRAM, memory }],
+            // The server's decode ceiling for this placement: the empty-context figure and the per-token KV
+            // rate the client needs to put a generation against the ceiling AT ITS CONTEXT.
+            roofline: { basis: "dense_weights", bytes_per_token: 16 * GiB, ceiling_tokens_per_sec: 104.3, kv_bytes_per_context_token: 262144,
+                devices: [{ gpu_id: "0", bytes_per_token: 16 * GiB, kv_bytes_per_context_token: 262144, memory_bandwidth_bytes_per_sec: 1_792_128_000_000 }] },
+        }] });
+        fake.setEvents([{ v: 1, kind: "hello", t: 0, box: "test", retainedMs: 60_000 },
+            { v: 1, kind: "sample", t: -2000, ps: ps(), info: info() }]);
+        // TWO TRACKS: the card as a stack, where the drilled-in fill is drawn, and the overlaid pools (what a
+        // one-card box shows by default), where there is no cache part and the tooltip has to carry it.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_layout: { presetId: "custom", tracks: [
+            { id: "card", series: ["vram.0"], mode: "stack", heightPx: 120 },
+            { id: "pools", series: ["vram.0", "ram"], mode: "overlay", heightPx: 90 },
+        ] } }));
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-seg").count(), { timeout: 25000 }).toBeGreaterThan(0);
+
+        // Paced to the wall clock, like every frame here: a frame's `t` is resolved against its hello, so
+        // pushing ahead of the clock puts it in the future, past the window.
+        const STEP = 350;
+        let t = 0;
+        const sample = async () => { t += STEP; fake.pushFrame({ v: 1, kind: "sample", t, ps: ps(), info: info() }); await sleep(STEP); };
+        for (let i = 0; i < 4; i++) await sample();
+        // A turn that reused 3,000 tokens of its prompt, computed 1,000 and decoded 500, in an 8,192 context.
+        fake.pushFrame({ v: 1, kind: "gen.start", t: t + 20, model: `registry.ollama.ai/library/${MODEL}` });
+        fake.pushFrame({ v: 1, kind: "gen.end", t: t + 300, model: `registry.ollama.ai/library/${MODEL}`,
+            timings: { prompt_tokens: 4000, prompt_tokens_cached: 3000, prompt_ms: 40, eval_ms: 6400, decoded: 500 } });
+        for (let i = 0; i < 4; i++) await sample();
+
+        const span = frame.locator(".rc-ev-gen").first();
+        await expect(span).toBeVisible({ timeout: 10000 });
+        expect(await frame.locator(".rc-kvfill").count(), "nothing is drawn until the span is hovered").toBe(0);
+        await span.hover();
+
+        // THE TOOLTIP CARRIES IT IN EVERY PRESET. The overlaid track below draws pool LINES and has no cache
+        // part to fill — a one-card box DEFAULTS to that view — so the bar in the tooltip is what a reader on
+        // the default layout sees. 3000 reused, 1000 computed, 500 decoded, of 8192.
+        const bar = frame.locator(".rc-tip-event .rc-kvbar");
+        await expect(bar).toHaveCount(1, { timeout: 5000 });
+        const w = await bar.evaluate((el) => Object.fromEntries([...el.children].map((c) => [c.className, parseFloat(c.style.width)])));
+        expect(w["rc-kvfill-cached"]).toBeCloseTo((3000 / 8192) * 100, 3);
+        expect(w["rc-kvfill-computed"]).toBeCloseTo((1000 / 8192) * 100, 3);
+        expect(w["rc-kvfill-decoded"]).toBeCloseTo((500 / 8192) * 100, 3);
+        expect((await frame.locator(".rc-tip-event .rc-tip-kv").textContent()).replace(/\s+/g, " ")).toMatch(/4,500 of 8,192 tokens \(55%\)/);
+        // DECODE AGAINST THE CEILING AT THIS CONTEXT: 500 tokens in 6.4 s is 78.1 tok/s, and at a mean occupancy
+        // of 4,250 tokens the ceiling is 1 / ((16 GiB + 4,250 × 256 KiB) / 1.792 TB/s) = 98.0 tok/s — 80%.
+        // Against the EMPTY-context ceiling it would read as 75%, and that figure is never shown.
+        expect((await frame.locator(".rc-tip-event").textContent()).replace(/\s+/g, " "))
+            .toMatch(/80% of the memory-bandwidth ceiling at this context \(98\.0 tok\/s\)/);
+        // The card's own ceilings, on its name: bandwidth, and the host link ruling itself out.
+        const facts = (await frame.locator(".rc-devfacts .tt-pop").first().textContent()).replace(/\s+/g, " ");
+        expect(facts).toMatch(/memory bandwidth 1\.79 TB\/s/);
+        expect(facts).toMatch(/host link: PCIe Gen 5 x8 at most — this governs how fast a model LOADS/);
+
+        // The hover DRILLS the model in — the same mode the keys enter — so the fill has a part to live in.
+        await expect.poll(() => frame.locator(".rc-track.deep").count(), { timeout: 5000 }).toBeGreaterThan(0);
+        const fill = frame.locator(".rc-kvfill");
+        await expect(fill).toHaveCount(1);
+        for (const k of ["cached", "computed", "decoded"]) await expect(fill.locator(`.rc-kvfill-${k}`)).toHaveCount(1);
+        // Proportions are the engine's counts over the context: 3000 : 1000 : 500 of 8192, stacked from the
+        // cache part's floor (the weights) — the heights, in the track's own shared scale, say exactly that.
+        const h = await fill.evaluate((el) => Object.fromEntries([...el.children].map((c) => [c.className, parseFloat(c.style.height)])));
+        expect(h["rc-kvfill-cached"] / h["rc-kvfill-computed"]).toBeCloseTo(3, 3);
+        expect(h["rc-kvfill-computed"] / h["rc-kvfill-decoded"]).toBeCloseTo(2, 3);
+        const bottom = await fill.locator(".rc-kvfill-cached").evaluate((el) => parseFloat(el.style.bottom));
+        expect(bottom, "the fill starts where the cache part does: on top of the weights").toBeCloseTo((16 / 20) * 100, 3);
+
+        // Leaving the lane takes it away again — it is a reading of the hovered turn, not a mode.
+        await frame.locator(".vram-head").first().hover();
+        await expect.poll(() => frame.locator(".rc-kvfill").count(), { timeout: 5000 }).toBe(0);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
 test("a frame that arrives while you watch lands without a poll", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();

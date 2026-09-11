@@ -140,6 +140,8 @@ export function loadedFrom(rows: unknown[]): LoadedModel[] {
             // What the runner is DOING, raw and parsed once downstream (`activityFrom`) like `memory` and
             // `placement`. Absent on every server that cannot ask its runner, which is not the same as idle.
             ...(m.activity ? { activity: m.activity } : {}),
+            // The decode ceiling for THIS placement, raw like `activity`, parsed once by `rooflineFrom`.
+            ...(m.roofline ? { roofline: m.roofline } : {}),
         };
     });
 }

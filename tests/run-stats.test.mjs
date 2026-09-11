@@ -71,3 +71,15 @@ test("normalizeUsage: no eval_duration → no evalMs (cloud / OpenWebUI-OpenAI s
     assert.equal(nu.evalMs, undefined);
     assert.equal(nu.genMs, undefined);   // genMs is stamped later at the call site, not by normalizeUsage
 });
+
+test("normalizeUsage: the prefix-cache hit, in every spelling a route uses — 0 kept, absent kept absent", () => {
+    // OpenAI's standard slot (ollama's own /v1 route; real capture: cold, then the same prompt again).
+    assert.equal(normalizeUsage({ prompt_tokens: 17, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 0 } }).cachedTokens, 0);
+    assert.equal(normalizeUsage({ prompt_tokens: 17, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 16 } }).cachedTokens, 16);
+    // ollama-native.
+    assert.equal(normalizeUsage({ prompt_eval_count: 30, eval_count: 5, prompt_eval_cached_count: 11 }).cachedTokens, 11);
+    // The protobuf End frame's optional field, as the decode path passes it.
+    assert.equal(normalizeUsage({ prompt_tokens: 17, completion_tokens: 12, cached_tokens: 16 }).cachedTokens, 16);
+    // Not reported is ABSENT, not 0 — a 0 would claim a cold prefill nobody measured.
+    assert.equal("cachedTokens" in normalizeUsage({ prompt_tokens: 17, completion_tokens: 12 }), false);
+});

@@ -7,7 +7,7 @@ import assert from "node:assert";
 const M = await import("../src/resource-model.ts");
 // The machine shapes, shared with resource-demo.mjs — one copy, so a guard and a demo cannot disagree
 // about what a box looks like.
-import { BOXES } from "./fixtures/boxes.mjs";
+import { BOXES, TOPOLOGIES, pci } from "./fixtures/boxes.mjs";
 
 const GB = 1e9;
 // Live gpubox: 2x ~102 GB CUDA cards, 130 GB system. Both cards idle here (~0.59 GB held by something else).
@@ -630,6 +630,8 @@ test("placeEvents: inside the run that holds it, dropped when it falls in a gap"
         at("in run 1", 9500),
         at("span inside run 0", 1500, 2500),
         at("span crossing the gap", 2000, 9500),
+        at("span over before any sample", 100, 900),
+        at("span ending inside run 0", 200, 1500),
     ]);
     const by = Object.fromEntries(got.map((p) => [p.event.label, p]));
     assert.equal(by["in the gap"], undefined, "nothing was measured then, so there is nowhere honest to draw it");
@@ -647,6 +649,13 @@ test("placeEvents: inside the run that holds it, dropped when it falls in a gap"
     // was closed is real, and the honest drawing of it stops where the measurements stop.
     assert.equal(by["span crossing the gap"].to, 1);
     assert.equal(by["span crossing the gap"].clipped, true);
+    // A span that was OVER before anything was measured has nowhere honest to go; one that began before the
+    // first sample and ended inside the run is drawn from the run's left edge — the load that started before
+    // you looked. (This used to be asserted in a jsdom test against the wall clock, where which of the two
+    // cases it was depended on how fast the machine ran the setup.)
+    assert.equal(by["span over before any sample"], undefined);
+    assert.equal(by["span ending inside run 0"].from, 0);
+    assert.equal(by["span ending inside run 0"].to, 0.25);
 });
 
 test("placeEvents: a run of one sample has no width to place within", () => {
@@ -2028,4 +2037,329 @@ test("a faulted card is an INCIDENT, not a different machine — the history sur
     assert.notEqual(M.boxChange(before, after), "switched");
     // And coming back is equally not a switch: nothing measured before is invalidated by a card returning.
     assert.equal(M.boxChange(after, before), "grew");
+});
+
+// ---- GENERATIONS: prefill and decode from the engine's own durations (gen.end.timings) ----
+
+test("genTimingsFrom: keeps the server's three cache states apart, and needs both durations", () => {
+    // Taken from the real capture (tests/e2e/fixtures/events-gen-timings.json).
+    const hit = M.genTimingsFrom({ prompt_tokens: 2223, prompt_tokens_cached: 2222, prompt_ms: 5.524, eval_ms: 528.904, decoded: 168 });
+    assert.deepEqual(hit, { promptTokens: 2223, promptTokensCached: 2222, promptMs: 5.524, evalMs: 528.904, decoded: 168 });
+    // `0` is a COLD prefill; ABSENT is "not reported". Collapsing them claims a measurement nobody made.
+    assert.equal(M.genTimingsFrom({ prompt_ms: 99.567, eval_ms: 471.354, prompt_tokens_cached: 0 }).promptTokensCached, 0);
+    assert.equal("promptTokensCached" in M.genTimingsFrom({ prompt_ms: 99.567, eval_ms: 471.354 }), false);
+    // One duration without the other is a boundary with one side.
+    assert.equal(M.genTimingsFrom({ prompt_ms: 5 }), null);
+    assert.equal(M.genTimingsFrom({ eval_ms: 5 }), null);
+    assert.equal(M.genTimingsFrom(null), null);
+    assert.equal(M.genTimingsFrom({ prompt_ms: -1, eval_ms: 5 }), null, "a negative duration is not a duration");
+});
+
+test("genSpan: anchored at gen.end and built backwards, the remainder named as neither phase", () => {
+    // The capture's first generation: gen.start at 14064, gen.end at 14648, prefill 99.567 ms, decode 471.354.
+    const e = M.genSpan({ model: "gemma4:e2b", startAt: 14064, endAt: 14648, timings: { promptMs: 99.567, evalMs: 471.354, promptTokens: 2223, decoded: 152 } });
+    assert.equal(e.kind, "gen");
+    assert.equal(e.via, "server");
+    assert.equal(e.t, 14064);
+    assert.equal(e.until, 14648);
+    const [other, prefill, decode] = e.phases;
+    assert.equal(other.kind, "other");
+    assert.equal(prefill.kind, "prefill");
+    assert.equal(decode.kind, "decode");
+    assert.ok(Math.abs(decode.until - 14648) < 1e-9, "decode ends at the end");
+    assert.ok(Math.abs((decode.until - prefill.until) - 471.354) < 1e-9, "decode is the engine's eval_ms, exactly");
+    assert.ok(Math.abs((prefill.until - other.until) - 99.567) < 1e-9, "prefill is the engine's prompt_ms, exactly");
+    // The remainder is what is LEFT — 13 ms here, which matches what both ends measured independently.
+    assert.ok(Math.abs((other.until - e.t) - 13.079) < 1e-6, `remainder ${other.until - e.t}`);
+    assert.equal(e.gen.promptTokens, 2223, "the figures travel with the span, for the tooltip and the cache fill");
+});
+
+test("genSpan: a load inside the generation is not drawn twice, and nothing is invented without a start", () => {
+    const timings = { promptMs: 161.6, evalMs: 115.7 };
+    // Their capture: 2056 ms from gen.start to gen.end on a generation that included a LOAD, against 277 ms of
+    // prefill + decode. The load is its own span, so the generation starts where the load ended.
+    const loaded = M.genSpan({ model: "m", startAt: 10_000, endAt: 12_056, timings, loadEnd: 11_700 });
+    assert.equal(loaded.t, 11_700, "starts where the load finished, not where the request took the runner");
+    assert.equal(loaded.phases[0].kind, "other");
+    // No gen.start (a reconnect mid-generation): prefill is the first thing drawn, and no remainder is made up.
+    const noStart = M.genSpan({ model: "m", endAt: 12_056, timings });
+    assert.deepEqual(noStart.phases.map((p) => p.kind), ["prefill", "decode"]);
+    assert.ok(Math.abs(noStart.t - (12_056 - 277.3)) < 1e-9);
+    // Two clocks disagreeing by more than the remainder (a start AFTER the prefill began): no remainder, and the
+    // span still starts where the measured prefill does.
+    const skew = M.genSpan({ model: "m", startAt: 11_900, endAt: 12_056, timings });
+    assert.deepEqual(skew.phases.map((p) => p.kind), ["prefill", "decode"]);
+    assert.ok(Math.abs(skew.t - (12_056 - 277.3)) < 1e-9);
+});
+
+test("sameMachineEvent: a generation is identified by its end and the engine's figures, never its start", () => {
+    const timings = { promptMs: 14.89, evalMs: 17.948, decoded: 3 };
+    const a = M.genSpan({ model: "g", startAt: 15_086, endAt: 15_121, timings });
+    // The same edge replayed without its gen.start, landing a few ms off (each connection anchors on its own
+    // hello): its START moved, and it is still the same generation.
+    const replay = M.genSpan({ model: "g", endAt: 15_140, timings });
+    assert.ok(M.sameMachineEvent(a, replay), "a replay that lost its start is still one generation");
+    assert.equal(M.addMachineEvent([a], replay, 100).length, 1, "and is not added twice");
+    // Two short generations of one model ending 40 ms apart (3-token calls take ~35 ms) are TWO.
+    const next = M.genSpan({ model: "g", startAt: 15_125, endAt: 15_161, timings: { promptMs: 12.1, evalMs: 18.2, decoded: 3 } });
+    assert.ok(!M.sameMachineEvent(a, next), "different figures, different generation");
+});
+
+test("joinGens: our own call is joined to its server generation, not drawn twice; other traffic stays", () => {
+    const timings = { promptMs: 200, evalMs: 800, promptTokens: 4000, promptTokensCached: 3990, decoded: 64 };
+    // A NON-STREAMED plain turn of ours: one `model` stretch, 1000..2400. Our finish stamp trails the server's
+    // gen.end by the return leg of the network.
+    const ours = { t: 1000, until: 2400, kind: "gen", label: "turn", model: "m", ref: { hash: "h1", seq: 1 } };
+    const theirs = M.genSpan({ model: "m", startAt: 1100, endAt: 2350, timings });
+    const other = M.genSpan({ model: "m", startAt: 9000, endAt: 10_000, timings: { promptMs: 50, evalMs: 500 } });
+    const otherModel = M.genSpan({ model: "q", startAt: 1100, endAt: 2350, timings });
+    const { session, server } = M.joinGens([ours], [theirs, other, otherModel]);
+    assert.equal(server.length, 2, "the matched generation is dropped; the unmatched and the other model's stay");
+    assert.ok(!server.includes(theirs));
+    const j = session[0];
+    assert.equal(j.ref.hash, "h1", "OUR block wins — it carries the click-through");
+    assert.deepEqual(j.gen, timings, "and takes the engine's figures");
+    // The single model stretch is split, anchored backwards from where the model work ended.
+    assert.deepEqual(j.phases.map((p) => p.kind), ["other", "prefill", "decode"]);
+    assert.equal(j.phases.at(-1).until, 2400);
+    assert.equal(j.phases[1].until, 2400 - 800, "decode is the last eval_ms of our stretch");
+    assert.equal(j.phases[0].until, 2400 - 800 - 200);
+});
+
+test("joinGens: a STREAMED call keeps its channels as the decode; only the pre-first-token stretch is split", () => {
+    const timings = { promptMs: 300, evalMs: 900 };
+    // model (pre-first-token) 0..500, then think and answer — the channels ARE the decode.
+    const ours = { t: 0, until: 1500, kind: "gen", label: "turn", model: "m",
+        phases: [{ kind: "model", until: 500 }, { kind: "think", until: 1000 }, { kind: "answer", until: 1500 }] };
+    const theirs = M.genSpan({ model: "m", startAt: 100, endAt: 1450, timings });
+    const j = M.joinGens([ours], [theirs]).session[0];
+    assert.deepEqual(j.phases.map((p) => p.kind), ["other", "prefill", "think", "answer"]);
+    assert.equal(j.phases[1].until, 500, "prefill ends where the first token arrived");
+    assert.equal(j.phases[0].until, 200);
+});
+
+test("joinGens: a split that does not FIT is not drawn, and a far-off generation is not ours", () => {
+    const timings = { promptMs: 900, evalMs: 900 };
+    // Our stretch is 1000 ms; the engine's figures need 1800. A mis-join or a skewed clock — the figures still
+    // attach, the phases are left alone rather than drawn outside the block.
+    const ours = { t: 1000, until: 2000, kind: "gen", label: "turn", model: "m" };
+    const j = M.joinGens([ours], [M.genSpan({ model: "m", endAt: 2000, timings })]).session[0];
+    assert.deepEqual(j.gen, timings);
+    assert.equal(j.phases, undefined, "no split drawn");
+    // Beyond the tolerance: not ours, drawn as the server's own.
+    const far = M.genSpan({ model: "m", endAt: 2000 + M.GEN_JOIN_TOLERANCE_MS + 1, timings: { promptMs: 10, evalMs: 10 } });
+    const r = M.joinGens([ours], [far]);
+    assert.equal(r.server.length, 1);
+    assert.equal(r.session[0].gen, undefined);
+    // Each side at most once: two of our turns cannot both claim one generation, and the NEAREST wins.
+    const g = M.genSpan({ model: "m", endAt: 5000, timings: { promptMs: 10, evalMs: 10 } });
+    const a = { t: 4000, until: 4990, kind: "gen", label: "a", model: "m" };
+    const b = { t: 4100, until: 5400, kind: "gen", label: "b", model: "m" };
+    const two = M.joinGens([a, b], [g]);
+    assert.ok(two.session[0].gen && !two.session[1].gen, "the nearer turn takes it, the other gets nothing");
+});
+
+test("kvFill: what a generation left in the cache, as shares of its token capacity", () => {
+    // The capture's cache hit: 2,223 prompt tokens, 2,222 of them reused, 168 decoded, in an 8,192 context.
+    const hit = M.kvFill({ promptTokens: 2223, promptTokensCached: 2222, promptMs: 5.5, evalMs: 528.9, decoded: 168 }, 8192);
+    assert.ok(Math.abs(hit.cached - 2222 / 8192) < 1e-12);
+    assert.ok(Math.abs(hit.computed - 1 / 8192) < 1e-12, "one token actually computed");
+    assert.ok(Math.abs(hit.decoded - 168 / 8192) < 1e-12);
+    assert.equal(hit.prompt, undefined);
+    assert.equal(hit.overflow, false);
+    // 0 cached is a COLD prefill and splits as such; ABSENT is unknown and draws ONE prompt layer, unsplit.
+    const cold = M.kvFill({ promptTokens: 4096, promptTokensCached: 0, promptMs: 99, evalMs: 400, decoded: 100 }, 8192);
+    assert.equal(cold.cached, 0);
+    assert.equal(cold.computed, 0.5);
+    const unknown = M.kvFill({ promptTokens: 4096, promptMs: 99, evalMs: 400, decoded: 100 }, 8192);
+    assert.equal(unknown.prompt, 0.5);
+    assert.equal("cached" in unknown, false, "no guessed split");
+    // The capacity covers every SLOT: the context is per slot, the reservation is for all of them.
+    assert.equal(M.kvFill({ promptTokens: 4096, promptMs: 1, evalMs: 1, decoded: 0 }, 8192, 2).prompt, 0.25);
+    // More tokens than the cache holds: the context SHIFTED. Scaled to fit and flagged, never drawn past the band.
+    const shifted = M.kvFill({ promptTokens: 7000, promptTokensCached: 6000, promptMs: 1, evalMs: 1, decoded: 3000 }, 8192);
+    assert.equal(shifted.overflow, true);
+    assert.ok(Math.abs(shifted.cached + shifted.computed + shifted.decoded - 1) < 1e-12, "fills the band exactly");
+    // Nothing to be a share OF, or no prompt count: nothing drawn.
+    assert.equal(M.kvFill({ promptTokens: 10, promptMs: 1, evalMs: 1 }, 0), null);
+    assert.equal(M.kvFill({ promptTokens: 10, promptMs: 1, evalMs: 1 }, null), null);
+    assert.equal(M.kvFill({ promptMs: 1, evalMs: 1, decoded: 5 }, 8192), null);
+});
+
+// ---- TOPOLOGY: how the cards connect to each other. Run against the MOCKS in tests/fixtures/boxes.mjs, which
+// are unverified against real NVLink hardware by agreement — see the note there. ----
+
+test("topologyFrom: a pair list, normalised, with coverage checked against the server's promise", () => {
+    const t = M.topologyFrom(TOPOLOGIES.rigAdjacent);
+    assert.equal(t.status, "measured");
+    assert.equal(t.links.length, 6, "4 cards → 6 unordered pairs");
+    assert.deepEqual(t.missing, [], "every pair present");
+    const nv = M.linkBetween(t, pci(1), pci(0));
+    assert.equal(nv.type, "nvlink", "looked up in either direction");
+    assert.equal(nv.linkCount, 4);
+    assert.equal(nv.pciePath, "PHB", "the PCIe route under the bridge is kept");
+    // A producer that emitted a pair from BOTH ends (KFD's io_links are directed) cannot double-count coverage.
+    const [ga, gb] = TOPOLOGIES.pcie2.gpus;
+    const doubled = M.topologyFrom({ ...TOPOLOGIES.pcie2, links: [...TOPOLOGIES.pcie2.links,
+        { a: gb, b: ga, type: "pcie", path: "PHB" }, { a: ga, b: ga, type: "nvlink" }] });
+    assert.equal(doubled.links.length, 1, "one pair, and no diagonal");
+    // A pair the server simply OMITTED from a "measured" list is its bug — named, never read as PCIe.
+    const gap = M.topologyFrom(TOPOLOGIES.missing);
+    assert.deepEqual(gap.missing, [[pci(0), pci(2)], [pci(1), pci(2)]]);
+    assert.equal(M.linkBetween(gap, pci(0), pci(2)), null);
+    // Absent or unshaped is "not measured", which is null — never an empty topology that reads as "no NVLink".
+    assert.equal(M.topologyFrom(undefined), null);
+    assert.equal(M.topologyFrom({ links: [] }), null, "no status, no claim");
+    // REAL (the server with NVML made unloadable): coverage STILL holds — the pair is there, `unknown`, with
+    // the driver's words — which is what keeps "could not look" from reading as "no link".
+    const un = M.topologyFrom(TOPOLOGIES.unavailable);
+    assert.equal(un.status, "unavailable");
+    assert.match(un.detail, /^NVML is not available: dlopen libnvidia-ml\.so\.1/, "the driver's own words");
+    assert.deepEqual(un.missing, []);
+    assert.equal(un.links[0].type, "unknown");
+    // REAL: one visible GPU — measured, and there are no pairs to have.
+    const one = M.topologyFrom(TOPOLOGIES.oneGpu);
+    assert.equal(one.status, "measured");
+    assert.deepEqual([one.links, one.missing], [[], []]);
+});
+
+test("the REAL /api/info capture: ceilings, pci_id and the PCIe pair, as gpubox serves them", async () => {
+    const { readFileSync } = await import("node:fs");
+    const info = JSON.parse(readFileSync(new URL("./fixtures/hw/info-ceilings-and-topology-2026-09-11.json", import.meta.url), "utf8"));
+    const cap = M.parseInfo(info);
+    const [c0, c1] = cap.devices;
+    assert.equal(c0.pciId, "0000:01:00.0");
+    assert.equal(c1.pciId, "0000:03:00.0");
+    assert.equal(c0.memoryBandwidth, 1792128000000);
+    assert.equal(c0.memoryBusWidthBits, 512);
+    // x8, not the card's own x16: the narrower of card and slot, on a board that splits its lanes.
+    assert.deepEqual([c0.pcieMaxGeneration, c0.pcieMaxWidth], [5, 8]);
+    assert.equal(c0.utilization, undefined, "this capture predates utilization — absent, never 0");
+    const l = M.linkBetween(cap.topology, c0.pciId, c1.pciId);
+    assert.equal(l.bandwidthSource, "derived_from_pcie_link");
+    // A DERIVED rate is a peak (measured peer-to-peer: 27.7 GB/s against 31.5 derived), and says so.
+    assert.equal(M.linkPhrase(l), "PCIe, through the CPU's host bridge (PHB) · 31.5 GB/s peak");
+    // Utilization, when present: each figure independent, 0 kept as idle, out-of-range dropped.
+    const u = M.parseInfo({ ...info, compute: { ...info.compute, supported_gpus: [
+        { ...info.compute.supported_gpus[0], utilization: { gpu_percent: 99, memory_percent: 90 } },
+        { ...info.compute.supported_gpus[1], utilization: { gpu_percent: 0 } }] } });
+    assert.deepEqual(u.devices.map((d) => d.utilization), [{ gpuPercent: 99, memoryPercent: 90 }, { gpuPercent: 0 }]);
+});
+
+test("rooflineFrom + decodeCeiling reproduce the server's own ceilings off the REAL split capture", async () => {
+    const { readFileSync } = await import("node:fs");
+    const cap = JSON.parse(readFileSync(new URL("./fixtures/hw/roofline-qwen3-32b-split-2026-09-11.json", import.meta.url), "utf8"));
+    const r = M.rooflineFrom(cap.roofline);
+    assert.equal(r.devices.length, 2);
+    assert.equal(r.kvBytesPerToken, 262144);
+    // Each run in the capture carries the ceiling the server computed at that occupancy; ours must match it.
+    for (const run of cap.runs) {
+        const c = M.decodeCeiling(r, run.occupancy);
+        assert.ok(Math.abs(c - run.ceiling_at_occupancy) < 1e-9, `occupancy ${run.occupancy}: ${c} vs ${run.ceiling_at_occupancy}`);
+    }
+    // At 38k the ceiling falls to 60.4 from 90.7 empty — measured decode 48.6 is 80% of it, not 54%.
+    const long = cap.runs.find((x) => x.label === "long");
+    assert.ok(Math.abs(long.decode_tps / M.decodeCeiling(r, long.occupancy) - 0.8045) < 0.001);
+    // The honest refusals: a reason instead of a number, and no number where a device has no KV rate.
+    const moe = JSON.parse(readFileSync(new URL("./fixtures/hw/roofline-moe-lfm2.5-2026-09-11.json", import.meta.url), "utf8"));
+    assert.deepEqual(M.rooflineFrom(moe.roofline), { unavailable: "mixture_of_experts" });
+    assert.equal(M.decodeCeiling(M.rooflineFrom(moe.roofline), 100), null);
+    const swa = M.rooflineFrom({ ...cap.roofline, devices: cap.roofline.devices.map(({ kv_bytes_per_context_token, ...d }) => d) });
+    assert.equal(M.decodeCeiling(swa, 1000), null, "no KV rate → no figure, never the weights-only overstatement");
+    assert.equal(M.rooflineFrom(undefined), null);
+});
+
+test("parseInfo: pci_id joins a drawn card to its links, and topology rides /api/info", () => {
+    const info = { compute: { system_compute: { total_memory: 1e11, free_memory: 5e10, cpu_cores: 8 },
+        supported_gpus: [
+            { gpu_id: "0", pci_id: pci(0), name: "CUDA0", runner: "CUDA", total_memory: 2.5e10, free_memory: 2e10 },
+            { gpu_id: "1", pci_id: pci(1), name: "CUDA1", runner: "CUDA", total_memory: 2.5e10, free_memory: 2e10 }],
+        topology: { status: "measured", gpus: [pci(0), pci(1)], links: [{ a: pci(0), b: pci(1), type: "pcie", path: "PHB" }] } } };
+    const cap = M.parseInfo(info);
+    assert.deepEqual(cap.devices.map((d) => d.pciId), [pci(0), pci(1)]);
+    assert.equal(M.linkBetween(cap.topology, cap.devices[0].pciId, cap.devices[1].pciId).type, "pcie");
+    assert.equal(M.parseInfo({ compute: { system_compute: { total_memory: 1 }, supported_gpus: [] } }).topology, null);
+});
+
+test("bridgeOrder: directly-linked cards sit side by side, and only a measured topology reorders", () => {
+    const cards = [0, 1, 2, 3].map((i) => ({ name: `CUDA${i}`, pciId: pci(i) }));
+    const names = (t) => M.bridgeOrder(cards, M.topologyFrom(t)).map((c) => c.name);
+    assert.deepEqual(names(TOPOLOGIES.rigAdjacent), ["CUDA0", "CUDA1", "CUDA2", "CUDA3"], "already adjacent");
+    assert.deepEqual(names(TOPOLOGIES.rigCrossed), ["CUDA0", "CUDA2", "CUDA1", "CUDA3"], "reordered so each bridge has a wall");
+    // Every wall of the reordered crossed rig: bridge, PCIe, bridge — the two pairs, and the line between them.
+    const t = M.topologyFrom(TOPOLOGIES.rigCrossed);
+    const order = M.bridgeOrder(cards, t);
+    assert.deepEqual(order.slice(1).map((c, i) => M.isBridge(M.linkBetween(t, order[i].pciId, c.pciId))), [true, false, true]);
+    // An all-to-all switch keeps the server's order, and every adjacent pair is a bridge.
+    const eight = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ name: `CUDA${i}`, pciId: pci(i) }));
+    const sw = M.topologyFrom(TOPOLOGIES.nvswitch8);
+    const swOrder = M.bridgeOrder(eight, sw);
+    assert.deepEqual(swOrder.map((c) => c.name), eight.map((c) => c.name));
+    assert.ok(swOrder.slice(1).every((c, i) => M.isBridge(M.linkBetween(sw, swOrder[i].pciId, c.pciId))));
+    // A PARTIAL MESH (DGX-1): the ordering finds a chain in which every ADJACENT pair is linked (0-1-2-3-7-4-5-6),
+    // so every wall is a bridge — true wall by wall, and drawn alone it would look exactly like the NVSwitch box.
+    // `bridgeWalls` checks the run as a whole: the switch is a FULL mesh, the cube-mesh is PARTIAL, with the
+    // pairs that are not linked named.
+    const mesh = M.topologyFrom(TOPOLOGIES.dgx1);
+    const meshWalls = M.bridgeWalls(M.bridgeOrder(eight, mesh), mesh);
+    assert.ok(meshWalls.every((w) => w.bridge), "every adjacent pair of the chosen chain IS linked");
+    assert.ok(meshWalls.every((w) => w.mesh === "partial"), "…and the run is marked partial, not a group of eight");
+    assert.equal(meshWalls[0].unlinked.length, 28 - 16, "the 12 pairs of 28 with no direct link are named");
+    const swWalls = M.bridgeWalls(swOrder, sw);
+    assert.ok(swWalls.every((w) => w.bridge && w.mesh === "full" && !w.unlinked.length), "the switch is a full mesh");
+    // Two bridged PAIRS are two full runs of two, with a solid wall between them.
+    const rigWalls = M.bridgeWalls(order, t);
+    assert.deepEqual(rigWalls.map((w) => w.mesh), ["full", null, "full"]);
+    // Not measured → no bridges anywhere, whatever the links say.
+    assert.ok(M.bridgeWalls(cards, M.topologyFrom(TOPOLOGIES.unavailable)).every((w) => !w.bridge && w.mesh === null));
+    // Nothing measured → the server's order, untouched.
+    assert.deepEqual(names(TOPOLOGIES.unavailable), cards.map((c) => c.name));
+    assert.deepEqual(M.bridgeOrder(cards, null), cards);
+});
+
+test("linkPhrase: a link said plainly, in the vendor's own vocabulary", () => {
+    const t = M.topologyFrom(TOPOLOGIES.rigAdjacent);
+    assert.equal(M.linkPhrase(M.linkBetween(t, pci(0), pci(1))), "NVLink ×4 (NV4) · 112.5 GB/s");
+    assert.equal(M.linkPhrase(M.linkBetween(t, pci(0), pci(2))), "PCIe, through the CPU's host bridge (PHB)");
+    const p = M.topologyFrom(TOPOLOGIES.partial);
+    assert.equal(M.linkPhrase(M.linkBetween(p, pci(1), pci(2))), "not classified: NVML did not report a path for this pair");
+    assert.equal(M.linkPhrase({ a: "x", b: "y", type: "xgmi", linkCount: 2 }), "xGMI ×2");
+});
+
+test("utilization: its own series, its own preset where a card reports it, and never mixed with memory", () => {
+    const sampleOf = (box) => ({ t: 1, capacity: M.parseInfo({ compute: {
+        system_compute: { total_memory: box.hostTotal, free_memory: box.hostTotal / 2, cpu_cores: 16 },
+        supported_gpus: box.devices.map((d) => ({ ...d, free_memory: d.total_memory / 2 })) } }), models: [] });
+    // CUDA reports both figures; the AMD shape reports only GPU busy — still a series, still the preset.
+    for (const name of ["cuda", "amd"]) {
+        const s = sampleOf(BOXES[name]);
+        const cat = M.seriesCatalog(s);
+        assert.deepEqual(cat.filter((d) => d.scope === "util").map((d) => d.id), ["util.0", "util.1"], name);
+        const act = M.presetsFor(s).find((p) => p.id === "activity");
+        assert.ok(act, `${name}: Activity is offered where a card reports`);
+        assert.deepEqual(act.tracks[0].series, ["util.0", "util.1"]);
+        assert.equal(M.presetRefusal(act, s), null, "and the rule accepts what the preset proposes");
+    }
+    assert.deepEqual(M.parseInfo({ compute: { system_compute: { total_memory: 1 },
+        supported_gpus: [{ ...BOXES.amd.devices[0], free_memory: 1 }] } }).devices[0].utilization, { gpuPercent: 40 }, "the absent figure stays absent");
+    // A machine whose cards report nothing gets no series and no preset — a preset of lines that are never
+    // drawn would read as an idle box.
+    for (const name of ["laptop", "rig", "lab", "metal"]) {
+        const s = sampleOf(BOXES[name]);
+        assert.equal(M.seriesCatalog(s).some((d) => d.scope === "util"), false, name);
+        assert.equal(M.presetsFor(s).some((p) => p.id === "activity"), false, name);
+    }
+    // THE RULES. A share of time never shares a track with a share of memory, in ANY mode; it never stacks;
+    // and it has no capacity to lay end to end.
+    const s = sampleOf(BOXES.cuda);
+    const cat = M.seriesCatalog(s);
+    const def = (id) => cat.find((d) => d.id === id);
+    assert.match(M.kindRefusal([def("util.0"), def("vram.0")]), /share of TIME/);
+    assert.equal(M.kindRefusal([def("util.0"), def("util.1")]), null);
+    assert.equal(M.kindRefusal([def("vram.0"), def("ram")]), null);
+    assert.match(M.stackRefusal([def("util.0")], s.capacity), /nothing here to add/);
+    const mixed = { id: "x", label: "x", description: "", tracks: [{ id: "t", series: ["util.0", "vram.0"], mode: "overlay", heightPx: 96 }] };
+    assert.match(M.presetRefusal(mixed, s), /share of TIME/, "a saved layout mixing them is refused at restore");
+    const total = { ...mixed, tracks: [{ id: "t", series: ["util.0", "util.1"], mode: "total", heightPx: 96 }] };
+    assert.match(M.presetRefusal(total, s), /no capacity to lay end to end/);
 });

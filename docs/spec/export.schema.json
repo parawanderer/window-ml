@@ -643,6 +643,10 @@
         "totalTokens": {
           "type": "number"
         },
+        "cachedTokens": {
+          "description": "How much of the prompt the server's prefix cache served — OpenAI's standard `usage.prompt_tokens_details.cached_tokens` (ollama's own OpenAI route, and OpenWebUI's once its fork is deployed), ollama-native `prompt_eval_cached_count`, or the protobuf `End.cached_tokens`. `0` is a COLD prefill; ABSENT is \"not reported\" — never collapsed, since a count of 0 is a measurement. A cache hit is invisible in `promptTokens`, which is the same either way; this and the prefill's duration are the evidence. Cheap in TIME, never in tokens — do not fold it into a spend figure.",
+          "type": "number"
+        },
         "genMs": {
           "description": "Wall-clock ms of THIS model call, measured at the source (around the fetch). ALWAYS available; it includes the call's own network/queue latency (TTFT) — the honest \"time spent waiting on the model\".",
           "type": "number"
@@ -2266,7 +2270,10 @@
                 "boot",
                 "dispatch",
                 "weights",
-                "context"
+                "context",
+                "prefill",
+                "decode",
+                "other"
               ]
             },
             {

@@ -1,0 +1,12 @@
+{
+  "model": "lfm2.5:8b",
+  "roofline": {
+    "unavailable": "mixture_of_experts"
+  },
+  "resident_weights": 5147333754,
+  "dense_ceiling_by_hand": 348.1662712481651,
+  "measured_decode_tps": [
+    569.3937513484178,
+    573.0428125657544
+  ]
+}

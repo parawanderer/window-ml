@@ -652,6 +652,13 @@ export interface TokenUsage {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    /** How much of the prompt the server's prefix cache served — OpenAI's standard
+     *  `usage.prompt_tokens_details.cached_tokens` (ollama's own OpenAI route, and OpenWebUI's once its fork is
+     *  deployed), ollama-native `prompt_eval_cached_count`, or the protobuf `End.cached_tokens`. `0` is a COLD
+     *  prefill; ABSENT is "not reported" — never collapsed, since a count of 0 is a measurement. A cache hit is
+     *  invisible in `promptTokens`, which is the same either way; this and the prefill's duration are the
+     *  evidence. Cheap in TIME, never in tokens — do not fold it into a spend figure. */
+    cachedTokens?: number;
     /** Wall-clock ms of THIS model call, measured at the source (around the fetch). ALWAYS available; it
      *  includes the call's own network/queue latency (TTFT) — the honest "time spent waiting on the model". */
     genMs?: number;
@@ -1773,6 +1780,10 @@ export interface LoadedModel {
      *  `activity3` build — so absent means "the runner could not be asked" (still loading, a backend with no
      *  `/slots`, a failed poll, or any older server), never "idle". Idle is a value it reports. */
     activity?: unknown;
+    /** The DECODE CEILING the server computed for this placement, raw, parsed once by `rooflineFrom` — or its
+     *  reason for not computing one (`{unavailable: "mixture_of_experts" | "partly_on_cpu" | …}`). Absent on a
+     *  model on no GPU and on every server that predates it. */
+    roofline?: unknown;
 }
 
 /** One accelerator the machine has, from `/api/info` `compute.supported_gpus[]`. All memory figures are raw
