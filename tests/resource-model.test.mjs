@@ -243,6 +243,20 @@ test("segments: history breaks at a hole instead of drawing across it", () => {
     assert.equal(M.segments([s(0), s(2000), s(4000)]).length, 1);
 });
 
+test("segments: a REPORTED hole breaks the line even when no time passed", () => {
+    const s = (t) => ({ t, models: [], capacity: null });
+    // The readings either side of a drop can be adjacent in time — the stream lost frames BETWEEN them, which
+    // is a hole nothing in the timestamps can see. Two seconds apart is an ordinary cadence, so this run is
+    // split by the flag alone; without it the line is drawn straight across the interval the server has just
+    // said it cannot account for, and drops happen when memory is moving fastest.
+    const runs = M.segments([s(0), s(2000), { ...s(4000), gapBefore: true }, s(6000)], M.MAX_SAMPLE_GAP_MS);
+    assert.equal(runs.length, 2, "the flag splits a run the interval would have kept whole");
+    assert.deepEqual(runs.map((r) => r.length), [2, 2]);
+    assert.deepEqual(runs[1].map((x) => x.t), [4000, 6000], "the marked sample STARTS the new run");
+    // The mark on the very first sample is about a hole before anything we hold, so there is nothing to break.
+    assert.equal(M.segments([{ ...s(0), gapBefore: true }, s(2000)]).length, 1);
+});
+
 test("eventsIn: only the window, in time order", () => {
     const ev = (t, label) => ({ t, kind: "note", label });
     const all = [ev(50, "late"), ev(10, "early"), ev(500, "outside"), ev(1, "before")];
@@ -1177,6 +1191,27 @@ test("scrubNudge: one notch moves the same VISIBLE distance at any zoom", () => 
     assert.equal(end.to, 600_000);
     // A window already covering everything has nowhere to go.
     assert.deepEqual(M.scrubNudge(ex, { from: 0, to: 600_000 }, 0.25), { from: 0, to: 600_000 });
+});
+
+test("scrubNudge: four small notches land exactly where one big one does", () => {
+    // The property the wheel handler exists to guarantee — a fixed step per EVENT is what made the same
+    // physical swipe travel wildly different distances depending on how the hardware chose to quantise it,
+    // so a trackpad emitting many small deltas has to arrive in the same place as a mouse emitting one large
+    // one. That is a claim about composition, and it is exact here in a way it can never be end to end: a
+    // browser test measures a window that a poll can pull toward live between two of the four events, which
+    // is a real behaviour and not a rounding artefact, so the exact form of the claim belongs at this layer.
+    const ex = { from: 0, to: 22_000 };
+    const win = { from: 9_000, to: 13_000 };
+    const plotPx = 400;
+    const one = M.scrubNudge(ex, win, M.wheelScrubFraction(0, 120, 0, plotPx));
+    let four = win;
+    for (let i = 0; i < 4; i++) four = M.scrubNudge(ex, four, M.wheelScrubFraction(0, 30, 0, plotPx));
+    assert.ok(Math.abs(four.from - one.from) < 1e-6, `4x30 landed at ${four.from}, 1x120 at ${one.from}`);
+    assert.ok(Math.abs(four.to - one.to) < 1e-6);
+    assert.equal(one.from - win.from, 1_200, "and it is the distance the fraction actually names");
+    // The same composition holds for a HORIZONTAL gesture, which reaches the same arithmetic by the other
+    // axis — `wheelScrubFraction` takes the larger of the two, so the axes cannot drift apart.
+    assert.equal(M.wheelScrubFraction(120, 0, 0, plotPx), M.wheelScrubFraction(0, 120, 0, plotPx));
 });
 
 // The chart scrubbing erratically under a trackpad was two bugs wearing one symptom: only `deltaY` was read,

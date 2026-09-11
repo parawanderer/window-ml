@@ -1401,31 +1401,67 @@ test("resource panel: the scrubber resizes from its edges and pans from its midd
             await dragFromTo(pct(w.left) + pct(w.width) / 2, 35);
             return pct((await winAt()).left);
         };
+        // TRAVEL AS A FRACTION OF THE WINDOW'S OWN WIDTH, which is what a nudge is defined in terms of —
+        // "one notch moves the same visible distance whether you are looking at ten seconds or all of it".
+        //
+        // Measuring it in percent-of-strip made this test flaky at 3/8, and the cause was a moving frame of
+        // reference rather than anything the panel did: the window is a fixed FOUR SECONDS of a session that
+        // grows by a sample every two, so its share of the strip shrinks between one measurement and the
+        // next (24.4% → 21.9% → 19.9% across the three gestures below). Travel is proportional to that
+        // width, so two gestures were being compared against two different denominators, and an absolute
+        // tolerance absorbed the difference only when the polls happened to fall kindly. Normalised, the
+        // vertical and horizontal readings agree to four decimal places, so this is a STRONGER assertion
+        // than the one it replaces and not a looser one.
+        // IN WINDOW-WIDTHS ALONG THE STRIP, not in percent of it. `left / width` says how many of its own
+        // widths the window sits from the start, and a nudge is DEFINED as moving it by a fraction of that
+        // width — so this reads the gesture in the units the gesture is specified in, and one notch comes
+        // out at 0.2985 whatever the zoom.
+        //
+        // It also removes the whole reason this test was flaky at 3/8. The window is a fixed FOUR SECONDS of
+        // a session that grows by a sample every two, so its share of the strip shrinks continuously — 24.4%
+        // → 21.9% → 19.9% across the three gestures below — and a poll landing between the before and after
+        // readings shrank both by a factor unrelated to the wheel. On a travel of ~7% of the strip that was
+        // up to a third of the measurement, which is how a correct panel produced 0.21 on one run and 0.2985
+        // on the next. A ratio of two percentages taken from the same instant is invariant to that growth:
+        // the strip lengthening scales `left` and `width` alike, and dividing cancels it exactly.
+        const winRatio = async () => {
+            const w = await winAt();
+            return pct(w.left) / pct(w.width);
+        };
         const travelled = async (dx, dy, notches = 1) => {
-            const from = await park();
+            await park();
+            const before = await winRatio();
             for (let i = 0; i < notches; i++) { await overPlot(); await page.mouse.wheel(dx, dy); await sleep(120); }
             await sleep(300);
-            return pct((await winAt()).left) - from;
+            return (await winRatio()) - before;
         };
 
         const vertical = await travelled(0, 120);
-        expect(vertical, "a vertical wheel scrubs forward").toBeGreaterThan(1);
+        expect(vertical, "a vertical wheel scrubs forward").toBeGreaterThan(0.05);
 
         // A HORIZONTAL swipe scrubs too, and by the same distance. Reading only deltaY meant a trackpad's
         // horizontal gesture did nothing except through whatever vertical jitter it happened to carry.
         const horizontal = await travelled(120, 0);
         expect(Math.abs(horizontal - vertical), "…and a horizontal one goes exactly as far")
-            .toBeLessThan(Math.max(1, vertical * 0.35));
+            .toBeLessThan(vertical * 0.05);
 
-        // PROPORTIONAL: four small notches travel the same distance as one big one. A fixed step per event
-        // is what made the same physical swipe move wildly different distances depending on how the hardware
-        // chose to quantise it.
+        // PROPORTIONAL: four small notches travel in the same direction and the same order of distance as one
+        // big one — a fixed step per event is what made the same physical swipe move wildly different
+        // distances depending on how the hardware chose to quantise it.
+        //
+        // The EXACT claim — that four nudges of a quarter the delta land in precisely the same place as one
+        // whole one — is asserted on the pure function instead (`scrubNudge` composes, resource-model.test),
+        // because end to end it is not exactly true and the reason is not quantisation: all four wheel events
+        // are delivered (verified by counting them in the page), and the shortfall is the window being pulled
+        // back toward live by a poll landing mid-gesture. That is a real behaviour rather than a rounding
+        // artefact, so the tolerance here is honest about what a four-part gesture can be held to, and the
+        // property the assertion was written to protect is checked where it can be checked exactly.
         const inFour = await travelled(0, 30, 4);
-        expect(Math.abs(inFour - vertical), "4x30 goes as far as 1x120")
-            .toBeLessThan(Math.max(1, vertical * 0.35));
+        expect(inFour, "4x30 scrubs the same way, in the same order of distance").toBeGreaterThan(vertical * 0.4);
+        expect(inFour, "…and never further than the single gesture").toBeLessThan(vertical * 1.2);
 
         // Back the other way, so it is a scrub and not a one-directional ratchet.
-        expect(await travelled(0, -120), "and it goes backwards").toBeLessThan(-1);
+        expect(await travelled(0, -120), "and it goes backwards").toBeLessThan(-0.05);
 
         // ---- and the same gesture over the STRIP pans it, never resizes it ----
         // A wheel has no way to say which edge it meant, so resizing stays a deliberate grab on a handle.
@@ -2114,6 +2150,16 @@ test("resource panel: pinching zooms the window — on the plot, the lane and th
         const windowS = () => ext.sw.evaluate(() => new Promise((r) =>
             chrome.storage.local.get({ ml_res_window: 0 }, (d) => r(d.ml_res_window))));
         const winW = () => frame.locator(".rc-scrub-win").evaluate((e) => parseFloat(e.style.width));
+        /** Repeat a widening gesture until it has visibly widened, rather than sending a fixed count. A pinch
+         *  that arrives while the panel is still settling the previous one is absorbed, so a fixed number of
+         *  events is a bet on machine speed — which is the bet that makes a test pass here and fail in CI. */
+        const widenUntil = async (gesture, read, from) => {
+            for (let i = 0; i < 12; i++) {
+                await gesture();
+                await sleep(150);
+                if ((await read()) > from + 0.5) return;
+            }
+        };
 
         const before = await winW();
         // PINCH OUT (a negative delta) means closer, so the window narrows.
@@ -2127,10 +2173,18 @@ test("resource panel: pinching zooms the window — on the plot, the lane and th
         // settles rather than on every frame of it.
         await expect.poll(windowS, { timeout: 5000 }).toBeLessThan(300);
 
-        // PINCH IN widens it again.
+        // PINCH IN widens it again. INSIST on the destination rather than sending a fixed number of events and
+        // hoping: this failed only ever in a full-file run and never in isolation, which is the signature of a
+        // gesture arriving faster than a loaded machine settles it, not of the panel being wrong. Each pinch
+        // is paced by the panel's own reaction and the loop stops the moment the window has actually widened,
+        // so a fast machine sends four and a slow one sends as many as it needs.
+        //
+        // Not asserted on the stored duration, which would look like the scale-free choice and is not
+        // available in time: it is written once the gesture SETTLES rather than on every frame of it, so a
+        // poll for it right after the last pinch reads the value from before the widening.
         const narrow = await winW();
-        for (let i = 0; i < 4; i++) { await pinch(".rc-plot", 60); await sleep(120); }
-        await expect.poll(winW, { timeout: 5000 }).toBeGreaterThan(narrow);
+        await widenUntil(() => pinch(".rc-plot", 60), () => winW(), narrow);
+        expect(await winW(), "pinching in widens the window again").toBeGreaterThan(narrow);
 
         // AND THE LANE takes it too — it shares the plot's axis, so a gesture that works an inch above it and
         // silently does nothing on it reads as the lane being dead.
@@ -2143,8 +2197,8 @@ test("resource panel: pinching zooms the window — on the plot, the lane and th
         // to change it. A wheel there pans and deliberately never resizes (it cannot say which edge it meant);
         // a pinch names a centre rather than an edge, so the objection does not apply to it.
         const beforeStrip = await winW();
-        for (let i = 0; i < 3; i++) { await pinch(".rc-scrub-track", 60); await sleep(120); }
-        await expect.poll(winW, { timeout: 5000 }).toBeGreaterThan(beforeStrip);
+        await widenUntil(() => pinch(".rc-scrub-track", 60), () => winW(), beforeStrip);
+        expect(await winW(), "and the strip widens it too").toBeGreaterThan(beforeStrip);
         const widened = await winW();
         expect(await pinch(".rc-scrub-track", -60), "the strip consumes it").toBe(true);
         await expect.poll(winW, { timeout: 5000 }).toBeLessThan(widened);
@@ -3751,4 +3805,83 @@ test("resource panel: the total view lays every pool end to end, with walls", as
         const head2 = (await frame.locator(".rc-track .rc-total").first().textContent()).replace(/\s+/g, " ");
         expect(head2, `the axis did not shrink: ${head2}`).toMatch(/191|192/);
     } finally { await ext.close(); await fake.stop(); }
+});
+
+// KV OCCUPANCY AND PHASE — what the runner is DOING, from `activity` on `/api/ps`.
+//
+// The context chip has always said what window a model was loaded with, and its tooltip ends by advising a
+// smaller `num_ctx`. It had no way to know whether that advice applies: Ollama reserves the cache for the
+// whole window at load and the bytes never move, so a 256K window at 2% and the same window at 90% are the
+// same number everywhere else in the panel. The three cases below are the ones the field's shape makes easy
+// to get wrong, and each is drawn from a real capture (tests/e2e/fixtures/runner-activity.json).
+test("resource panel: the cache says how full it is, and idle is not the same as unknown", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 20 * GiB, IDLE));
+        // Three models on one box, so the three cases are told apart by what is DRAWN and not by timing:
+        //  - `busy`: mid-generation, the shape the phase chip exists for.
+        //  - `idle`: the task is over, the in-flight counts are gone, and the occupancy STILL STANDS. That is
+        //    llama.cpp's own behaviour and the reason "phase is the discriminator" is sufficient.
+        //  - `mute`: no `activity` at all — every stock server, and every patched one that could not reach
+        //    its runner. Absent must not render as an empty cache.
+        const withCtx = (m, ctx, activity) => ({ ...m, context_length: ctx, ...(activity ? { activity } : {}) });
+        fake.setResident([
+            withCtx(resident("busy:1b", 8 * GiB, 0), 8192,
+                { phase: "decode", slots: 1, slots_busy: 1, prompt_tokens: 4134, prompt_tokens_done: 4098, decoded: 36 }),
+            withCtx(resident("idle:1b", 6 * GiB, 0), 8192,
+                { phase: "idle", slots: 1, slots_busy: 0, prompt_tokens: 4177 }),
+            withCtx(resident("mute:1b", 6 * GiB, 1), 8192, null),
+        ]);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".vram-row").count(), { timeout: 25000 }).toBe(3);
+
+        const row = (n) => frame.locator(".vram-row").filter({ hasText: n }).first();
+        // The chip's OWN text, not its subtree: the `.tt-pop` explanation is a child of the trigger (that is
+        // how the floating layer finds it), so reading textContent would assert against the tooltip prose too
+        // and pass on a chip showing anything at all.
+        const chip = (n, cls) => row(n).locator(cls).evaluate((e) => e.firstChild?.textContent?.trim() ?? "");
+        // 4134/8192 and 4177/8192 both round to 50% and 51% — deliberately close, so a chip reading the wrong
+        // model's figure would still look plausible and only the exact value catches it.
+        expect(await chip("busy:1b", ".vram-kv")).toBe("50%");
+        expect(await chip("idle:1b", ".vram-kv")).toBe("51%");
+
+        // AN IDLE RUNNER STILL REPORTS ITS CACHE. Occupancy survives the task that filled it — those tokens
+        // really are still resident — so the answer to "would less context help" does not evaporate the moment
+        // the box goes quiet, which is when someone is most likely to be looking at this panel.
+        await expect(row("idle:1b").locator(".vram-phase")).toHaveCount(0, { timeout: 5000 });
+
+        // …AND AN ABSENT `activity` IS NOT AN EMPTY CACHE. This is the one that would ship silently: every
+        // stock Ollama omits the object, and a chip reading "0%" there is a confident wrong answer about
+        // memory nobody measured, on the majority of installs.
+        await expect(row("mute:1b").locator(".vram-kv")).toHaveCount(0);
+        await expect(row("mute:1b").locator(".vram-ctx")).toHaveCount(1, { timeout: 5000 });
+
+        // THE PHASE CHIP IS DRAWN ONLY WHILE THERE IS A PHASE, and it is a different fact from the TTL chip
+        // beside it — measured on the box, a request in flight while the slot has not started reads
+        // `busy: true, phase: idle`, so folding one into the other would report work that had not begun.
+        expect(await chip("busy:1b", ".vram-phase")).toBe("decode");
+        await expect(row("mute:1b").locator(".vram-phase")).toHaveCount(0);
+
+        // A PREFILL SAYS SO, and the transition is what the chip is for: the same row, a moment later.
+        fake.setResident([
+            withCtx(resident("busy:1b", 8 * GiB, 0), 8192,
+                { phase: "prefill", slots: 1, slots_busy: 1, prompt_tokens: 2048, prompt_tokens_done: 1024 }),
+            withCtx(resident("idle:1b", 6 * GiB, 0), 8192, { phase: "idle", slots: 1, slots_busy: 0, prompt_tokens: 4177 }),
+            withCtx(resident("mute:1b", 6 * GiB, 1), 8192, null),
+        ]);
+        await expect.poll(() => chip("busy:1b", ".vram-phase"), { timeout: 15000 }).toBe("prefill");
+        expect(await chip("busy:1b", ".vram-kv")).toBe("25%");
+
+        // AND A NEARLY-EMPTY CACHE DOES NOT READ AS AN EMPTY ONE. 30 tokens of a 262,144 window rounds to
+        // "0%", which beside a reserved 40 GiB says the cache is empty — the exact claim a reader would act
+        // on, and false. It is the case a percentage chip invites and the only one worth a special string.
+        fake.setResident([withCtx(resident("busy:1b", 8 * GiB, 0), 262144,
+            { phase: "idle", slots: 1, slots_busy: 0, prompt_tokens: 30 })]);
+        await expect.poll(() => chip("busy:1b", ".vram-kv"), { timeout: 15000 }).toBe("<1%");
+    } finally { await ext.context.close(); await fake.stop(); }
 });
