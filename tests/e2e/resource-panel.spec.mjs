@@ -2639,13 +2639,17 @@ test("resource panel: in snap mode the selection box lands on datapoints, not be
         //
         // TOLERANCED IN SAMPLES, derived from this run's own data rather than written down. The anchor is a
         // fixed SCREEN position and the axis walks under it, so which sample sits there genuinely changes as
-        // polls land — by up to one spacing, which is 0.1 of the plot on a ten-sample window and would fail
-        // any fixed tolerance tight enough to be worth asserting. The spacing is the smallest gap between the
-        // distinct places the leading edge stopped, which is exactly one sample apart by construction.
+        // polls land — by up to one gap between samples, which would fail any fixed tolerance tight enough to be
+        // worth asserting. The axis is LINEAR IN TIME and polls are not evenly spaced, so the gaps differ: the
+        // bound is the WIDEST gap between the places the leading edge stopped (the smallest one undercounted
+        // it and failed on CI at 0.156 against a 0.104 gap, with the pointer 0.39 away). Capped at half the
+        // pointer's travel, so an anchor that followed the pointer still fails however sparse the samples.
         const stops = [...new Set(seen.map((e) => +e.right.toFixed(3)))].sort((a, b) => a - b);
-        const spacing = stops.length > 1 ? Math.min(...stops.slice(1).map((v, i) => v - stops[i])) : 0.1;
+        const gaps = stops.slice(1).map((v, i) => v - stops[i]);
+        const spacing = gaps.length ? Math.min(...gaps) : 0.1;
+        const travel = seen.at(-1).fx - 0.33;
         expect(Math.abs(seen.at(-1).left - seen[0].left), `the anchored edge moved with the pointer: ${JSON.stringify(seen)}`)
-            .toBeLessThan(spacing * 1.5);
+            .toBeLessThan(Math.min((gaps.length ? Math.max(...gaps) : 0.1) * 1.5, travel / 2));
         expect(seen.at(-1).right - seen.at(-1).left, "…while the leading edge covered the drag")
             .toBeGreaterThan(spacing);
     } finally { await ext.close(); await fake.stop(); }
