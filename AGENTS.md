@@ -1026,6 +1026,21 @@ per device, in bytes.
   non-streamed call's `model` phase split `other | prefill | decode`; a split that does not FIT is not drawn.
   Unmatched spans are other clients' traffic and say so. A replay is deduped by the END and the figures, never
   the start, which moves when a replay lost its `gen.start`.
+- **THE HOST-RAM PROMPT CACHE, AND THE SWAP NO OTHER TIMING CONTAINS** (`GenTimings.swap`, `SwapChips`,
+  `RunnerActivity.promptCache`; `ollama-slop:promptcache2`). Two conversations on one model share its single
+  slot; when they take turns, llama-server parks the outgoing one's KV cache in host RAM (`--cache-ram`, 8 GiB
+  per model by default) and reads the incoming one back — BEFORE the prefill, so it is in no engine timing: a
+  turn with a 24 ms prefill took 670 ms, 500 of them swapping. `gen.end.timings.prompt_cache_swap` is the
+  engine's own measure, drawn as a `swap` phase between `other` and `prefill` (striped, like a load — it is
+  memory being copied, not the model working), on server spans and on joined calls of ours alike. Its tooltip
+  row says whether THIS conversation was restored (`restored` is always present; `false` is information — a
+  full prefill follows) and warns on `evicted`: a conversation dropped from RAM pays a full prefill next time,
+  and when two conversations take turns under a limit too small for both, every turn evicts the one about to
+  be needed — the thrash, which reads as that warning turn after turn (real capture: 1.3 s of swap plus a 7 s
+  prefill, every turn). `activity.prompt_cache` is the per-model RAM cache (conversations, tokens, bytes,
+  limit) — a chip on the model row that turns to the warn colour near its limit. Host RAM, never VRAM; absent
+  until the model's first request. A swap is reported only on a one-slot model (the log cannot attribute it
+  otherwise). Real captures in `tests/fixtures/hw/prompt-cache-*.ndjson`.
 - **WHAT A GENERATION LEFT IN THE KV CACHE** (`kvFill`, `KvFill`, `KvBar`). The cache is reserved in full at
   load and its bytes never move, so its FILL is visible nowhere else. Hovering a span that carries engine
   figures shows it, bottom to top: the prefix REUSED from the cache (dotted), the prompt COMPUTED this turn
@@ -1325,7 +1340,11 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   gap is dropped (nothing was measured then), and the window admits a poll's grace past the last sample —
   without it the newest events, the ones you are watching for, were the only ones that never appeared.
 - **Instants rule through the plot** (dashed — a solid line reads as part of the chart), and one eviction is
-  drawn in every track, so hovering it anywhere thickens it everywhere.
+  drawn in every track, so hovering it anywhere thickens it everywhere. **So do a load's two internal edges**
+  (`loadEdges`): weights loaded, then KV cache and compute buffers allocated (ready to serve), each with the
+  bytes that half moved — they are exactly the two steps a load draws in the device trace, and with the lane
+  collapsed that ramp otherwise had nothing on the plot saying what either step was. Only for a load whose
+  boundary the server reported; an inferred load has no boundary, and a rule is a claim about when.
 - **A ROW is a claim that two bars OVERLAP**, so the lane spends one only when they do. Bars are packed at
   their DRAWN width (a very short event is widened to stay visible, so packing has to reserve the same
   width), with a hair of separation reserved after each — but that separation is dropped rather than

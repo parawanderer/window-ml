@@ -2363,3 +2363,72 @@ test("utilization: its own series, its own preset where a card reports it, and n
     const total = { ...mixed, tracks: [{ id: "t", series: ["util.0", "util.1"], mode: "total", heightPx: 96 }] };
     assert.match(M.presetRefusal(total, s), /no capacity to lay end to end/);
 });
+
+// ---- THE HOST-RAM PROMPT CACHE (`ollama-slop:promptcache2`), against the server's real captures ----
+const ndjson = async (name) => {
+    const { readFileSync } = await import("node:fs");
+    return readFileSync(new URL(`./fixtures/hw/${name}-2026-09-11.ndjson`, import.meta.url), "utf8")
+        .split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+};
+
+test("prompt-cache swap: parsed off real gen.end frames, and drawn as a measured phase before the prefill", async () => {
+    const restore = (await ndjson("prompt-cache-restore")).filter((f) => f.kind === "gen.end");
+    // The first request switched nothing: no swap, no field.
+    assert.equal(M.genTimingsFrom(restore[0].timings).swap, undefined);
+    // THE CACHE WORKING: 500 ms moving the other conversation out and this one back, then a 23 ms prefill with
+    // 6,515 of 6,537 tokens reused — the 500 ms is in no other timing.
+    const t = M.genTimingsFrom(restore[3].timings);
+    assert.deepEqual(t.swap, { ms: 499.75, restored: true, savedTokens: 6549, savedBytes: 1716860747 });
+    assert.equal(t.promptTokensCached, 6515);
+    const e = M.genSpan({ model: "qwen3:32b", endAt: 10_000, timings: t });
+    assert.deepEqual(e.phases.map((p) => p.kind), ["swap", "prefill", "decode"]);
+    const [swap, prefill, decode] = e.phases;
+    assert.ok(Math.abs((decode.until - prefill.until) - 123.127) < 1e-9);
+    assert.ok(Math.abs((prefill.until - swap.until) - 23.645) < 1e-9);
+    assert.ok(Math.abs((swap.until - e.t) - 499.75) < 1e-9, "the swap is the engine's own measure");
+    // THE THRASH: not restored, and conversations evicted to make room — every turn.
+    const thrash = (await ndjson("prompt-cache-thrash")).filter((f) => f.kind === "gen.end").map((f) => M.genTimingsFrom(f.timings));
+    assert.ok(thrash.slice(1).every((x) => x.swap.restored === false && x.swap.evicted > 0), "each later turn evicts");
+    assert.deepEqual(thrash[2].swap, { ms: 1344, restored: false, savedTokens: 21635, savedBytes: 5671746535, evicted: 3, evictedBytes: 7421117333 });
+    // `restored` is ALWAYS present on a swap; without it the object is not the swap this client understands.
+    assert.equal(M.genTimingsFrom({ prompt_ms: 1, eval_ms: 1, prompt_cache_swap: { ms: 5 } }).swap, undefined);
+});
+
+test("prompt-cache swap: a joined call of ours gets the swap before its prefill", () => {
+    const timings = { promptMs: 20, evalMs: 100, swap: { ms: 500, restored: true } };
+    const ours = { t: 0, until: 1000, kind: "gen", label: "turn", model: "m" };
+    const j = M.joinGens([ours], [M.genSpan({ model: "m", endAt: 990, timings })]).session[0];
+    assert.deepEqual(j.phases.map((p) => p.kind), ["other", "swap", "prefill", "decode"]);
+    assert.equal(j.phases[1].until, 1000 - 100 - 20);
+    assert.equal(j.phases[0].until, 1000 - 100 - 20 - 500);
+});
+
+test("activityFrom: the host-RAM prompt cache, off a real sample — and it survives idle", async () => {
+    const [sample] = (await ndjson("prompt-cache-occupancy-sample")).filter((f) => f.kind === "sample");
+    const row = sample.ps.models.find((m) => m.name === "qwen3:32b");
+    const a = M.activityFrom(row.activity);
+    assert.deepEqual(a.promptCache, { entries: 2, tokens: 6582, bytes: 1725513596, limitBytes: 8589934592 });
+    // The in-flight counts go at idle; the parked conversations do not — they really are still there.
+    assert.deepEqual(M.activityFrom({ phase: "idle", prompt_cache: { entries: 1, tokens: 10, bytes: 100 } }).promptCache,
+        { entries: 1, tokens: 10, bytes: 100 });
+    assert.equal(M.activityFrom({ phase: "idle" }).promptCache, undefined, "absent until the first request — not an empty cache");
+});
+
+test("loadEdges: a server-split load rules its two steps through the plot, with what each moved", () => {
+    const GiB = 1024 ** 3;
+    // gemma4:31b off the user's dump: weights in after 1.0 s (17.37 GiB), KV cache and compute after 1.5 s more.
+    const load = { t: 1000, until: 3517, kind: "load", label: "loading gemma4:31b", model: "gemma4:31b", via: "server",
+        phases: [{ kind: "weights", until: 2002 }, { kind: "context", until: 3517 }], weightsBytes: 18654282383, loadBytes: 46006565599 };
+    const [w, c] = M.loadEdges(load);
+    assert.deepEqual([w.t, c.t], [2002, 3517], "at the two steps the device trace draws");
+    assert.equal(w.until, undefined, "instants — rules, not spans");
+    assert.match(w.label, /^gemma4:31b weights loaded \(17\.37 GiB\)$/);
+    assert.match(c.label, /^gemma4:31b KV cache and compute buffers allocated \(25\.47 GiB\) — ready to serve$/);
+    assert.equal(w.via, "server");
+    // An inferred load has no boundary, so no rules: a rule is a claim about WHEN something happened.
+    assert.deepEqual(M.loadEdges({ t: 0, until: 5000, kind: "load", label: "x", model: "m" }), []);
+    assert.deepEqual(M.loadEdges({ t: 0, kind: "evict", label: "x", model: "m" }), []);
+    // Bytes unreported → the edges still say what they are.
+    assert.match(M.loadEdges({ ...load, weightsBytes: undefined, loadBytes: undefined })[1].label, /allocated — ready to serve$/);
+    void GiB;
+});

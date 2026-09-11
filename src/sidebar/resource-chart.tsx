@@ -16,7 +16,7 @@ import {
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
 import { capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
@@ -1856,6 +1856,9 @@ const phaseFill = (kind: string, model?: string): string => {
         : kind === "prefill" ? base
         : kind === "decode" ? `color-mix(in srgb, ${base} 55%, transparent)`
         : kind === "other" ? "color-mix(in srgb, var(--fg-faint) 20%, transparent)"
+        // A PROMPT-CACHE SWAP: memory being copied for this model before it can read the prompt — a wait, like a
+        // load, so it is striped the way a load is, in a lighter weight of the model's colour.
+        : kind === "swap" ? halfStripes(`color-mix(in srgb, ${base} 45%, transparent)`, 45)
         : kind === "weights" ? halfStripes(base, 45)
         : kind === "context" ? halfStripes(`color-mix(in srgb, ${base} 55%, transparent)`, -45)
         : `color-mix(in srgb, ${base} 38%, transparent)`;
@@ -1898,7 +1901,10 @@ function phaseGradient(phases: { kind: string; until: number }[], from: number, 
 function useInstants(runs: ResourceSample[][], events: ResourceEvent[]): EventPlacement[] {
     return useMemo(() => {
         const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
-        return placeEvents(runs, eventsIn(events.filter((e) => e.until == null), from, to + sampleGraceMs()), sampleGraceMs());
+        // The moments themselves, plus a server-split load's two internal edges (`loadEdges`) — the steps in the
+        // memory trace a load draws, which otherwise had nothing on the plot saying what they were.
+        const moments = [...events.filter((e) => e.until == null), ...events.flatMap(loadEdges)];
+        return placeEvents(runs, eventsIn(moments, from, to + sampleGraceMs()), sampleGraceMs());
     }, [runs, events]);
 }
 
@@ -2354,6 +2360,25 @@ function KvBar({ gen, ctx, model }: { gen: NonNullable<ResourceEvent["gen"]>; ct
     );
 }
 
+/** What a PROMPT-CACHE SWAP did, beside its duration: whether THIS conversation came back from RAM (the cache
+ *  working — a near-total cache hit follows) or was not there (a full prefill follows), what was moved out, and
+ *  what was thrown away to make room. An eviction is the one said as a warning: a conversation dropped from RAM
+ *  pays a full prefill next time, and when two conversations take turns on one model under a limit too small for
+ *  both, every turn evicts the one about to be needed — the thrash, which shows up as exactly this chip on turn
+ *  after turn. */
+function SwapChips({ swap }: { swap: NonNullable<NonNullable<ResourceEvent["gen"]>["swap"]> }) {
+    return (
+        <>
+            <span class="rc-chip rc-chip-dim">{swap.restored ? "this conversation restored from RAM" : "not in RAM — read from scratch"}</span>
+            {swap.savedTokens != null
+                ? <span class="rc-chip rc-chip-dim">{swap.savedTokens.toLocaleString()} tokens saved out{swap.savedBytes != null ? ` (${formatBytes(swap.savedBytes)})` : ""}</span> : null}
+            {swap.evicted
+                ? <span class="rc-chip rc-chip-warn">evicted {swap.evicted} {swap.evicted === 1 ? "conversation" : "conversations"}{swap.evictedBytes ? ` (${formatBytes(swap.evictedBytes)})` : ""} to make room — {swap.evicted === 1 ? "it" : "they"} will need a full prefill</span> : null}
+            {swap.tooLarge ? <span class="rc-chip rc-chip-warn">the outgoing conversation was larger than the whole cache, so it was not kept</span> : null}
+        </>
+    );
+}
+
 /** Why the server gave no decode ceiling, in words a reader acts on. */
 const CEILING_WHY: Record<string, string> = {
     mixture_of_experts: "no ceiling: a mixture-of-experts model reads only its active experts per token",
@@ -2446,6 +2471,9 @@ function EventTip({ scope }: { scope: string }) {
         prefill: "reading the prompt (prefill)",
         decode: "generating tokens (decode)",
         other: "neither — scheduling and setup around the call",
+        // Moving conversations' KV caches between the slot and host RAM before the prefill — the engine's own
+        // measure, and in no other timing.
+        swap: "swapping conversations through the RAM cache",
     };
     const nameFor = (kind: string) => {
         const n = PHASE_NAMES[kind as PhaseKind];
@@ -2560,6 +2588,7 @@ function EventTip({ scope }: { scope: string }) {
                         {ph.kind === "decode" && e.gen?.decoded != null ? <span class="rc-chip rc-chip-dim">{e.gen.decoded.toLocaleString()} tokens
                             {e.gen.evalMs > 0 ? ` · ${(e.gen.decoded / (e.gen.evalMs / 1000)).toFixed(1)} tok/s` : ""}</span> : null}
                         {ph.kind === "decode" ? <CeilingChip e={e} /> : null}
+                        {ph.kind === "swap" && e.gen?.swap ? <SwapChips swap={e.gen.swap} /> : null}
                         <span class="rc-tip-size">{ms(ph.until - ph.from)}</span></div>
                 </>
             ))}

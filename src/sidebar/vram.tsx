@@ -1092,6 +1092,20 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
                     {tips ? <span class="tt-pop left above" role="tooltip">The KV cache is holding {past.toLocaleString()} of {(m.contextLength ?? 0).toLocaleString()} tokens. The BYTES do not move with it — Ollama reserves the cache for the whole window when the model loads and it does not grow — so this is how much of what was reserved is being used{kv < 0.25 ? ", and at this level a smaller num_ctx would reclaim most of it" : ""}. It survives the request that filled it, so an idle model still says what its last task left behind.</span> : null}
                 </span>
             ) : null}
+            {/* THE HOST-RAM PROMPT CACHE: conversations parked in system RAM while another has the model's one
+                slot. It is where a second conversation on the same model lives between turns, and filling it is
+                the precondition for the thrash — two conversations that do not fit, each evicting the one about
+                to be needed — so it turns to a warning near its limit. RAM, never VRAM, and per model. */}
+            {act?.promptCache ? (() => {
+                const pc = act.promptCache;
+                const full = pc.limitBytes ? pc.bytes / pc.limitBytes : null;
+                return (
+                    <span class={`${tips ? "tt " : ""}vram-pcache${full != null && full >= 0.9 ? " warn" : ""}`} {...yieldTip}>
+                        {formatBytes(pc.bytes)}{pc.limitBytes ? ` / ${formatBytes(pc.limitBytes)}` : ""} RAM cache
+                        {tips ? <span class="tt-pop left above" role="tooltip">{pc.entries} {pc.entries === 1 ? "conversation" : "conversations"} ({pc.tokens.toLocaleString()} tokens) parked in SYSTEM RAM while another has this model's slot, so switching back reads them in instead of recomputing them.{pc.limitBytes ? <> The cache holds up to {formatBytes(pc.limitBytes)} for this model; past that, saving one conversation evicts another, and when two take turns each evicts the one about to be needed — every turn then pays a full prefill plus the copy.</> : null}</span> : null}
+                    </span>
+                );
+            })() : null}
             {/* WHAT THE RUNNER IS DOING, when it is doing something. Kept apart from the TTL chip beside it
                 rather than folded into its "in use": they are different facts and they can disagree — measured
                 on the box, a request in flight while the slot had not started reads `busy: true, phase: idle`.

@@ -565,6 +565,12 @@ export interface RunnerActivity {
     promptTokensCached?: number;
     /** Tokens generated so far for the task in flight. Absent once it ends. */
     decoded?: number;
+    /** The model's HOST-RAM PROMPT CACHE (`--cache-ram`): the conversations parked in system RAM while another
+     *  took the model's one slot, their combined length and size, and the limit (llama-server's default 8 GiB,
+     *  per model). Host RAM, never VRAM. Absent until the model's first request, since the engine only reports
+     *  it then — absent is "not reported", not an empty cache. Unlike the in-flight counts it survives idle:
+     *  those conversations really are still parked. */
+    promptCache?: { entries: number; tokens: number; bytes: number; limitBytes?: number };
 }
 
 /**
@@ -654,6 +660,12 @@ export function activityFrom(raw: unknown): RunnerActivity | null {
         if (cached !== undefined) out.promptTokensCached = cached;
         if (dec !== undefined) out.decoded = dec;
     }
+    const pc = a.prompt_cache && typeof a.prompt_cache === "object" ? a.prompt_cache as Record<string, unknown> : null;
+    const pn = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+    if (pc && pn(pc.entries) != null && pn(pc.bytes) != null) out.promptCache = {
+        entries: pn(pc.entries)!, tokens: pn(pc.tokens) ?? 0, bytes: pn(pc.bytes)!,
+        ...(pn(pc.limit_bytes) ? { limitBytes: pn(pc.limit_bytes) } : {}),
+    };
     return out;
 }
 
@@ -2144,7 +2156,7 @@ export function placeEvents(runs: { t: number }[][], events: ResourceEvent[], gr
 // `boot` is an executor's COLD START — a sandbox fetching its runtime before the code runs. Like a model
 // load it is the step's wall time and none of the work you asked for, so it is drawn apart from `tool`.
 export type PhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "boot" | "dispatch" | "weights" | "context"
-    | "prefill" | "decode" | "other";
+    | "prefill" | "decode" | "other" | "swap";
 
 /** What the ENGINE measured for one generation (`gen.end.timings`, patched Ollama). Every figure is the
  *  executor's own, which is what makes a prefill/decode boundary drawable at all: the event stream carries no
@@ -2161,6 +2173,14 @@ export interface GenTimings {
     promptMs: number;
     evalMs: number;
     decoded?: number;
+    /** A HOST-RAM PROMPT-CACHE SWAP this request paid for, before its prefill: the conversation in the slot was
+     *  saved to RAM (`savedTokens`/`savedBytes`) and this one read back if it was there (`restored`, always
+     *  present — `false` is information), with other conversations evicted to make room (`evicted`,
+     *  `evictedBytes`) or the outgoing one too large to keep (`tooLarge`). `ms` is the ENGINE's measure of the
+     *  copy, and it is in no other timing: a turn with a 24 ms prefill took 670 ms, 500 of them swapping.
+     *  Present only on a request that switched conversations, and only on a one-slot model (with more slots
+     *  the log cannot say whose swap is whose, so none is reported). */
+    swap?: { ms: number; restored: boolean; savedTokens?: number; savedBytes?: number; evicted?: number; evictedBytes?: number; tooLarge?: boolean };
 }
 
 /** Parse `gen.end.timings`. Null unless BOTH durations are present, since the split is built from the pair —
@@ -2176,6 +2196,16 @@ export function genTimingsFrom(raw: unknown): GenTimings | null {
         ...(n(o.prompt_tokens) != null ? { promptTokens: n(o.prompt_tokens) } : {}),
         ...(n(o.prompt_tokens_cached) != null ? { promptTokensCached: n(o.prompt_tokens_cached) } : {}),
         ...(n(o.decoded) != null ? { decoded: n(o.decoded) } : {}),
+        ...((() => {
+            const sw = o.prompt_cache_swap && typeof o.prompt_cache_swap === "object" ? o.prompt_cache_swap as Record<string, unknown> : null;
+            if (!sw || n(sw.ms) == null || typeof sw.restored !== "boolean") return {};
+            return { swap: { ms: n(sw.ms)!, restored: sw.restored,
+                ...(n(sw.saved_tokens) != null ? { savedTokens: n(sw.saved_tokens) } : {}),
+                ...(n(sw.saved_bytes) != null ? { savedBytes: n(sw.saved_bytes) } : {}),
+                ...(n(sw.evicted) ? { evicted: n(sw.evicted) } : {}),
+                ...(n(sw.evicted_bytes) ? { evictedBytes: n(sw.evicted_bytes) } : {}),
+                ...(sw.too_large === true ? { tooLarge: true } : {}) } };
+        })()),
     };
 }
 
@@ -2200,12 +2230,16 @@ export function genSpan(o: { model: string; startAt?: number; endAt: number; tim
     const { model, endAt, timings } = o;
     const decodeFrom = endAt - timings.evalMs;
     const prefillFrom = decodeFrom - timings.promptMs;
+    // A prompt-cache SWAP happens before the prefill and is the engine's own measure too, so it is a measured
+    // phase of its own rather than part of the remainder.
+    const swapFrom = prefillFrom - (timings.swap?.ms ?? 0);
     // The remainder begins at the later of the runner being taken and any load finishing; a start AFTER the
-    // prefill would mean the two clocks disagree by more than the gap, and then there is no remainder.
-    let t = Math.max(o.startAt ?? prefillFrom, o.loadEnd ?? -Infinity);
-    if (t > prefillFrom) t = prefillFrom;
+    // measured phases began would mean the two clocks disagree by more than the gap, and then there is none.
+    let t = Math.max(o.startAt ?? swapFrom, o.loadEnd ?? -Infinity);
+    if (t > swapFrom) t = swapFrom;
     const phases: { kind: PhaseKind; until: number }[] = [];
-    if (prefillFrom - t >= 1) phases.push({ kind: "other", until: prefillFrom });
+    if (swapFrom - t >= 1) phases.push({ kind: "other", until: swapFrom });
+    if (timings.swap?.ms) phases.push({ kind: "swap", until: prefillFrom });
     phases.push({ kind: "prefill", until: decodeFrom }, { kind: "decode", until: endAt });
     return { t, until: endAt, kind: "gen", label: `${model} generating`, model, via: "server", phases, gen: timings };
 }
@@ -2309,11 +2343,14 @@ function withGen(e: ResourceEvent, timings: GenTimings): ResourceEvent {
             // Followed by a channel phase → this is the stretch BEFORE the first token: prefill ends where it
             // ends. Otherwise it is the whole model call: decode ends where it ends, prefill before that.
             const streamed = !!next && ["think", "answer", "call"].includes(next.kind);
-            const need = timings.promptMs + (streamed ? 0 : timings.evalMs);
+            const swapMs = timings.swap?.ms ?? 0;
+            const need = swapMs + timings.promptMs + (streamed ? 0 : timings.evalMs);
             if (need <= len) {
                 const prefillEnd = streamed ? ph.until : ph.until - timings.evalMs;
                 const prefillFrom = prefillEnd - timings.promptMs;
-                if (prefillFrom - from >= 1) out.push({ kind: "other", until: prefillFrom });
+                const swapFrom = prefillFrom - swapMs;
+                if (swapFrom - from >= 1) out.push({ kind: "other", until: swapFrom });
+                if (swapMs) out.push({ kind: "swap", until: prefillFrom });
                 out.push({ kind: "prefill", until: prefillEnd });
                 if (!streamed) out.push({ kind: "decode", until: ph.until });
                 split = true;
@@ -2446,6 +2483,26 @@ export interface ResourceEvent {
          *  spend: shown beside the count, never subtracted from it. */
         cachedTokens?: number;
     };
+}
+
+/** A LOAD's two internal edges, as instants to rule through the PLOT: where the weights finished arriving, and
+ *  where the KV cache and compute buffers finished being allocated (the model can serve from there). Those are
+ *  exactly the two steps in the device's free-memory trace during a load, and the lane — where the load's
+ *  halves live as phases — is often collapsed, so without these the chart showed a two-step ramp with nothing
+ *  saying what either step was. Only for a load whose boundary the SERVER reported (it has `phases`); an
+ *  inferred load has no boundary and gets no rules, since a rule is a claim about when something happened.
+ *  Each carries the bytes that half moved, when reported. */
+export function loadEdges(e: ResourceEvent): ResourceEvent[] {
+    if (e.kind !== "load" || e.until == null || !e.model) return [];
+    const w = e.phases?.find((ph) => ph.kind === "weights");
+    if (!w) return [];
+    const ctx = e.loadBytes != null && e.weightsBytes != null ? e.loadBytes - e.weightsBytes : null;
+    return [
+        { t: w.until, kind: "load", model: e.model, ...(e.via ? { via: e.via } : {}),
+          label: `${e.model} weights loaded${e.weightsBytes != null ? ` (${formatBytes(e.weightsBytes)})` : ""}` },
+        { t: e.until, kind: "load", model: e.model, ...(e.via ? { via: e.via } : {}),
+          label: `${e.model} KV cache and compute buffers allocated${ctx != null ? ` (${formatBytes(ctx)})` : ""} — ready to serve` },
+    ];
 }
 
 /** Events inside a window, in time order — what the chart's event lane draws, and what a vertical rule
