@@ -565,6 +565,12 @@ export interface RunnerActivity {
     promptTokensCached?: number;
     /** Tokens generated so far for the task in flight. Absent once it ends. */
     decoded?: number;
+    /** The model's HOST-RAM PROMPT CACHE (`--cache-ram`): the conversations parked in system RAM while another
+     *  took the model's one slot, their combined length and size, and the limit (llama-server's default 8 GiB,
+     *  per model). Host RAM, never VRAM. Absent until the model's first request, since the engine only reports
+     *  it then — absent is "not reported", not an empty cache. Unlike the in-flight counts it survives idle:
+     *  those conversations really are still parked. */
+    promptCache?: { entries: number; tokens: number; bytes: number; limitBytes?: number };
 }
 
 /**
@@ -654,6 +660,12 @@ export function activityFrom(raw: unknown): RunnerActivity | null {
         if (cached !== undefined) out.promptTokensCached = cached;
         if (dec !== undefined) out.decoded = dec;
     }
+    const pc = a.prompt_cache && typeof a.prompt_cache === "object" ? a.prompt_cache as Record<string, unknown> : null;
+    const pn = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+    if (pc && pn(pc.entries) != null && pn(pc.bytes) != null) out.promptCache = {
+        entries: pn(pc.entries)!, tokens: pn(pc.tokens) ?? 0, bytes: pn(pc.bytes)!,
+        ...(pn(pc.limit_bytes) ? { limitBytes: pn(pc.limit_bytes) } : {}),
+    };
     return out;
 }
 
@@ -926,6 +938,34 @@ export interface Band {
      *  device is known, because a split model's cards decompose differently and one average describes
      *  neither. */
     parts?: MemoryBreakdown;
+}
+
+/**
+ * MEMORY BEING ALLOCATED FOR A MODEL THAT IS STILL LOADING — per sample, in bytes, or 0.
+ *
+ * For most of a load there is no runner object at all, so nothing attributes the memory arriving on the card:
+ * it shows up only as the card's unattributed residual, and the model's own band appears when the load ends.
+ * The drilled-in view draws only what IS attributed to the model, so it showed the model springing into
+ * existence at full size and dropped exactly the allocation curve a reader zoomed in to see. This attributes
+ * the residual's GROWTH during that model's load — above its level just before the load began, which is the
+ * driver context and anything else already there — to the load, for the samples where the model is not yet
+ * resident. After a load ends the runner takes it over within a sample, so a short grace covers the poll that
+ * has not caught up yet; a sample where the model's band already exists is 0, never double-counted.
+ */
+export function pendingAllocation(frames: Band[][], times: number[], model: string, loads: { t: number; until?: number }[], graceMs = 5000): number[] {
+    const residual = (bands: Band[]) => bands.filter((b) => b.kind === "other" || b.kind === "unknown").reduce((n, b) => n + b.bytes, 0);
+    return frames.map((bands, i) => {
+        if (bands.some((b) => b.model === model)) return 0;
+        const t = times[i];
+        const load = loads.find((l) => l.until != null && t >= l.t && t <= l.until + graceMs);
+        if (!load) return 0;
+        // The residual as it stood just BEFORE the load began: the last sample at or before its start, else the
+        // first sample of the run (a load that began before anything was measured).
+        let base = 0;
+        for (let j = 0; j < frames.length && times[j] <= load.t; j++) base = residual(frames[j]);
+        if (times[0] > load.t) base = residual(frames[0]);
+        return Math.max(0, residual(bands) - base);
+    });
 }
 
 /** How much of `device` this model holds, or null when the server couldn't attribute it. A single-device box
@@ -1340,9 +1380,9 @@ export function segments(samples: ResourceSample[], maxGapMs: number = MAX_SAMPL
 
 /** Where an event sits on the chart's x-axis — which SEGMENT, and how far across it.
  *
- *  The axis is not linear in time. The plot is split into contiguous runs of samples (a gap is drawn as a
- *  gap, never interpolated across), and each run is flex-weighted by how many samples it holds — so the same
- *  number of pixels means different durations in different segments. An event therefore has to be placed
+ *  The plot is split into contiguous runs of samples (a gap is drawn as a gap, never interpolated across),
+ *  and each run is linear in time and weighted by its duration (`runWeight`/`runFrac`) — but the GAPS
+ *  collapse, so a pixel is not a fixed duration across the whole axis. An event therefore has to be placed
  *  INSIDE the run that contains it, by time, and an event that falls in a gap has no x at all: nothing was
  *  measured then, and putting it at the edge would claim it happened at a moment the chart can't speak for.
  *
@@ -1620,8 +1660,8 @@ export function scrubNudge(
  * and back in by the same amount returns to where you started, where a linear step accumulates drift and a
  * `sign(delta) * step` moves in visible jumps.
  *
- * The anchor is read LINEARLY across the window, which the plot's own axis is not — it is segmented and
- * flex-weighted by sample counts. That is deliberate and matches `scrubNudge`, which slides by a fraction of
+ * The anchor is read LINEARLY across the window, which the plot's own axis is not quite — its runs are
+ * linear in time but the gaps between them collapse. That is deliberate and matches `scrubNudge`, which slides by a fraction of
  * the window's own width for the same reason: consistency between the two gestures on one axis matters more
  * than an exactness neither of them has, and the anchor is about the zoom FEELING fixed rather than about
  * naming an instant.
@@ -1685,7 +1725,7 @@ export function wheelScrubFraction(deltaX: number, deltaY: number, deltaMode: nu
 export function locateFraction<T extends { t: number }>(runs: T[][], frac: number): { run: T[]; within: number } | null {
     const live = runs.filter((r) => r.length > 0);
     if (!live.length) return null;
-    const weights = live.map((r) => Math.max(1, r.length));
+    const weights = live.map(runWeight);
     const total = weights.reduce((a, b) => a + b, 0);
     let acc = 0;
     const f = Math.min(1, Math.max(0, frac));
@@ -1698,30 +1738,59 @@ export function locateFraction<T extends { t: number }>(runs: T[][], frac: numbe
     return { run: live.at(-1)!, within: 1 };
 }
 
+/**
+ * THE CHART'S TIME AXIS IS LINEAR IN TIME, within each run of samples. One second is the same width wherever it
+ * falls; only a GAP (no samples at all) is collapsed, since there is nothing measured to draw there.
+ *
+ * It used to space samples EVENLY — sample i at i/(n-1) of its run, runs weighted by sample COUNT. That was
+ * harmless while the panel polled every 2 s, and it warped badly once the event stream sampled adaptively (250 ms
+ * during a load, 1 s while working, 15 s idle): busy stretches stretched, idle ones shrank, and scrolling changed
+ * the mix of samples in view and so the warp — which read as the chart compressing at random, and put an unload
+ * rule over a band that was still resident. So: a run's WIDTH is its duration (`runWeight`), and a time's
+ * position is linear across it (`runFrac`). Every mapping between the screen and time — drawing, events, the
+ * crosshair, the snap, the selection — goes through these two, so none of them can disagree.
+ */
+export const runWeight = (run: readonly { t: number }[]): number =>
+    run.length > 1 ? Math.max(1, run[run.length - 1].t - run[0].t) : 1;
+
+/** Where time `t` sits across its run, 0–1, linear in time. A run with no width (one sample) has no interior,
+ *  so everything in it sits at the middle. */
+export const runFrac = (run: readonly { t: number }[], t: number): number => {
+    const n = run.length;
+    if (n < 2) return 0.5;
+    const w = run[n - 1].t - run[0].t;
+    return w > 0 ? Math.min(1, Math.max(0, (t - run[0].t) / w)) : 0.5;
+};
+
+/** The index of the sample nearest in TIME to `t` within a run (binary search — runs can hold thousands). */
+const nearestIndex = (run: readonly { t: number }[], t: number): number => {
+    let lo = 0, hi = run.length - 1;
+    if (hi <= 0 || t <= run[0].t) return 0;
+    if (t >= run[hi].t) return hi;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (run[mid].t <= t) lo = mid; else hi = mid; }
+    return t - run[lo].t <= run[hi].t - t ? lo : hi;
+};
+
 export function timeAtFraction(runs: { t: number }[][], frac: number): number | null {
     const at = locateFraction(runs, frac);
     if (!at) return null;
-    // Interpolate along the INDEX axis, not between the segment's first and last stamps. A polyline places
-    // sample i at i/(n-1) of the width, so samples are evenly spaced by POSITION and not by time; reading the
-    // label off the elapsed time assumes a fixed cadence. The event stream's cadence is adaptive by design
-    // (1s while a load is in flight, 15s idle), so under it the two mappings diverge, and the crosshair would
-    // name an instant several seconds from the datapoint drawn beneath it.
+    // Linear across the run, the inverse of `runFrac` — the same mapping the bands are drawn with.
     const { run, within } = at;
     if (run.length === 1) return run[0].t;
-    const pos = within * (run.length - 1);
-    const i = Math.min(run.length - 2, Math.floor(pos));
-    return run[i].t + (run[i + 1].t - run[i].t) * (pos - i);
+    return run[0].t + (run[run.length - 1].t - run[0].t) * within;
 }
 
 /** The DATAPOINT under a fraction of the plot's width — what a Grafana-style hover reads, as opposed to the
  *  interpolated instant the crosshair labels. It snaps to a real sample rather than interpolating between
  *  two, because the values in the tooltip are measurements: a figure halfway between two polls was never
- *  observed, and presenting one as though it had been is the whole failure mode a memory panel must not have. */
+ *  observed, and presenting one as though it had been is the whole failure mode a memory panel must not have.
+ *  Nearest in TIME, since that is what the axis is. */
 export function sampleAtFraction<T extends { t: number }>(runs: T[][], frac: number): T | null {
     const at = locateFraction(runs, frac);
     if (!at) return null;
     const { run, within } = at;
-    return run[Math.round(within * (run.length - 1))] ?? null;
+    if (run.length === 1) return run[0];
+    return run[nearestIndex(run, run[0].t + (run[run.length - 1].t - run[0].t) * within)] ?? null;
 }
 
 /**
@@ -1731,11 +1800,10 @@ export function sampleAtFraction<T extends { t: number }>(runs: T[][], frac: num
  * The tooltip has always named a real measurement (a figure halfway between two polls was never observed),
  * but the line was drawn wherever the pointer happened to be, so the number and the mark disagreed by up to
  * half a sample gap. At a 15s idle cadence that is seven seconds of daylight between "here" and "the reading
- * you are being shown" — and on an adaptive cadence the gap itself changes width as you move, which reads as
- * the crosshair drifting.
+ * you are being shown".
  *
- * Returns null when there is nothing to snap to. The axis is segmented and flex-weighted by sample COUNT, so
- * this must invert exactly that mapping rather than interpolating over time — see `timeAtFraction`.
+ * Returns null when there is nothing to snap to. Inverts exactly the axis's own mapping (`runWeight`,
+ * `runFrac`), so the snapped fraction is where that sample is DRAWN.
  */
 export function snapFraction<T extends { t: number }>(runs: T[][], frac: number): { frac: number; index: number; run: number } | null {
     // The ORIGINAL indices, so a caller mapping over `runs` can ask "is the snapped sample in THIS segment?".
@@ -1744,7 +1812,7 @@ export function snapFraction<T extends { t: number }>(runs: T[][], frac: number)
     const liveAt = runs.map((r, i) => [r, i] as const).filter(([r]) => r.length > 0);
     const live = liveAt.map(([r]) => r);
     if (!live.length) return null;
-    const weights = live.map((r) => Math.max(1, r.length));
+    const weights = live.map(runWeight);
     const total = weights.reduce((a, b) => a + b, 0);
     const f = Math.min(1, Math.max(0, frac));
     let acc = 0;
@@ -1753,11 +1821,8 @@ export function snapFraction<T extends { t: number }>(runs: T[][], frac: number)
         if (f <= acc + share || i === live.length - 1) {
             const run = live[i];
             const within = share > 0 ? Math.min(1, Math.max(0, (f - acc) / share)) : 0;
-            const index = Math.round(within * (run.length - 1));
-            // A one-sample segment occupies its whole share and has no interior to place a point in, so it
-            // sits at the middle of that share rather than at an edge it does not own.
-            const at = run.length === 1 ? 0.5 : index / (run.length - 1);
-            return { frac: acc + at * share, index, run: liveAt[i][1] };
+            const index = run.length === 1 ? 0 : nearestIndex(run, run[0].t + (run[run.length - 1].t - run[0].t) * within);
+            return { frac: acc + runFrac(run, run[index].t) * share, index, run: liveAt[i][1] };
         }
         acc += share;
     }
@@ -2125,11 +2190,11 @@ export function placeEvents(runs: { t: number }[][], events: ResourceEvent[], gr
         let idx = spans.findIndex((r) => e.t >= r.from && e.t <= r.to);
         if (idx < 0) idx = spans.findIndex((r) => end >= r.from && e.t <= r.to);
         if (idx < 0) continue;   // entirely inside a gap (or outside every run): nothing measured, nothing drawn
-        const r = spans[idx];
-        // Width is the run's own span, NOT the graced one: the grace decides membership, and using it as a
-        // denominator would squash every bar toward the left by however long the poll happens to be.
-        const width = (runs[idx].at(-1)?.t ?? 0) - r.from;
-        const at = (t: number) => (width > 0 ? Math.min(1, Math.max(0, (t - r.from) / width)) : 0);
+        // On the SAME axis the bands are drawn on: linear in time across the run (`runFrac`). The run's own last
+        // sample bounds it — the grace decides membership, and a time past the last sample sits at the right
+        // edge rather than squashing every bar left by however long the poll happens to be.
+        const r = spans[idx], run = runs[idx];
+        const at = (t: number): number => (run.length < 2 ? 0 : runFrac(run, t));
         out.push({ event: e, run: idx, from: at(e.t), to: at(Math.min(end, r.to)), clipped: end > r.to });
     }
     return out;
@@ -2144,7 +2209,7 @@ export function placeEvents(runs: { t: number }[][], events: ResourceEvent[], gr
 // `boot` is an executor's COLD START — a sandbox fetching its runtime before the code runs. Like a model
 // load it is the step's wall time and none of the work you asked for, so it is drawn apart from `tool`.
 export type PhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "boot" | "dispatch" | "weights" | "context"
-    | "prefill" | "decode" | "other";
+    | "prefill" | "decode" | "other" | "swap";
 
 /** What the ENGINE measured for one generation (`gen.end.timings`, patched Ollama). Every figure is the
  *  executor's own, which is what makes a prefill/decode boundary drawable at all: the event stream carries no
@@ -2161,6 +2226,14 @@ export interface GenTimings {
     promptMs: number;
     evalMs: number;
     decoded?: number;
+    /** A HOST-RAM PROMPT-CACHE SWAP this request paid for, before its prefill: the conversation in the slot was
+     *  saved to RAM (`savedTokens`/`savedBytes`) and this one read back if it was there (`restored`, always
+     *  present — `false` is information), with other conversations evicted to make room (`evicted`,
+     *  `evictedBytes`) or the outgoing one too large to keep (`tooLarge`). `ms` is the ENGINE's measure of the
+     *  copy, and it is in no other timing: a turn with a 24 ms prefill took 670 ms, 500 of them swapping.
+     *  Present only on a request that switched conversations, and only on a one-slot model (with more slots
+     *  the log cannot say whose swap is whose, so none is reported). */
+    swap?: { ms: number; restored: boolean; savedTokens?: number; savedBytes?: number; evicted?: number; evictedBytes?: number; tooLarge?: boolean };
 }
 
 /** Parse `gen.end.timings`. Null unless BOTH durations are present, since the split is built from the pair —
@@ -2176,6 +2249,16 @@ export function genTimingsFrom(raw: unknown): GenTimings | null {
         ...(n(o.prompt_tokens) != null ? { promptTokens: n(o.prompt_tokens) } : {}),
         ...(n(o.prompt_tokens_cached) != null ? { promptTokensCached: n(o.prompt_tokens_cached) } : {}),
         ...(n(o.decoded) != null ? { decoded: n(o.decoded) } : {}),
+        ...((() => {
+            const sw = o.prompt_cache_swap && typeof o.prompt_cache_swap === "object" ? o.prompt_cache_swap as Record<string, unknown> : null;
+            if (!sw || n(sw.ms) == null || typeof sw.restored !== "boolean") return {};
+            return { swap: { ms: n(sw.ms)!, restored: sw.restored,
+                ...(n(sw.saved_tokens) != null ? { savedTokens: n(sw.saved_tokens) } : {}),
+                ...(n(sw.saved_bytes) != null ? { savedBytes: n(sw.saved_bytes) } : {}),
+                ...(n(sw.evicted) ? { evicted: n(sw.evicted) } : {}),
+                ...(n(sw.evicted_bytes) ? { evictedBytes: n(sw.evicted_bytes) } : {}),
+                ...(sw.too_large === true ? { tooLarge: true } : {}) } };
+        })()),
     };
 }
 
@@ -2200,12 +2283,16 @@ export function genSpan(o: { model: string; startAt?: number; endAt: number; tim
     const { model, endAt, timings } = o;
     const decodeFrom = endAt - timings.evalMs;
     const prefillFrom = decodeFrom - timings.promptMs;
+    // A prompt-cache SWAP happens before the prefill and is the engine's own measure too, so it is a measured
+    // phase of its own rather than part of the remainder.
+    const swapFrom = prefillFrom - (timings.swap?.ms ?? 0);
     // The remainder begins at the later of the runner being taken and any load finishing; a start AFTER the
-    // prefill would mean the two clocks disagree by more than the gap, and then there is no remainder.
-    let t = Math.max(o.startAt ?? prefillFrom, o.loadEnd ?? -Infinity);
-    if (t > prefillFrom) t = prefillFrom;
+    // measured phases began would mean the two clocks disagree by more than the gap, and then there is none.
+    let t = Math.max(o.startAt ?? swapFrom, o.loadEnd ?? -Infinity);
+    if (t > swapFrom) t = swapFrom;
     const phases: { kind: PhaseKind; until: number }[] = [];
-    if (prefillFrom - t >= 1) phases.push({ kind: "other", until: prefillFrom });
+    if (swapFrom - t >= 1) phases.push({ kind: "other", until: swapFrom });
+    if (timings.swap?.ms) phases.push({ kind: "swap", until: prefillFrom });
     phases.push({ kind: "prefill", until: decodeFrom }, { kind: "decode", until: endAt });
     return { t, until: endAt, kind: "gen", label: `${model} generating`, model, via: "server", phases, gen: timings };
 }
@@ -2309,11 +2396,14 @@ function withGen(e: ResourceEvent, timings: GenTimings): ResourceEvent {
             // Followed by a channel phase → this is the stretch BEFORE the first token: prefill ends where it
             // ends. Otherwise it is the whole model call: decode ends where it ends, prefill before that.
             const streamed = !!next && ["think", "answer", "call"].includes(next.kind);
-            const need = timings.promptMs + (streamed ? 0 : timings.evalMs);
+            const swapMs = timings.swap?.ms ?? 0;
+            const need = swapMs + timings.promptMs + (streamed ? 0 : timings.evalMs);
             if (need <= len) {
                 const prefillEnd = streamed ? ph.until : ph.until - timings.evalMs;
                 const prefillFrom = prefillEnd - timings.promptMs;
-                if (prefillFrom - from >= 1) out.push({ kind: "other", until: prefillFrom });
+                const swapFrom = prefillFrom - swapMs;
+                if (swapFrom - from >= 1) out.push({ kind: "other", until: swapFrom });
+                if (swapMs) out.push({ kind: "swap", until: prefillFrom });
                 out.push({ kind: "prefill", until: prefillEnd });
                 if (!streamed) out.push({ kind: "decode", until: ph.until });
                 split = true;
@@ -2446,6 +2536,26 @@ export interface ResourceEvent {
          *  spend: shown beside the count, never subtracted from it. */
         cachedTokens?: number;
     };
+}
+
+/** A LOAD's two internal edges, as instants to rule through the PLOT: where the weights finished arriving, and
+ *  where the KV cache and compute buffers finished being allocated (the model can serve from there). Those are
+ *  exactly the two steps in the device's free-memory trace during a load, and the lane — where the load's
+ *  halves live as phases — is often collapsed, so without these the chart showed a two-step ramp with nothing
+ *  saying what either step was. Only for a load whose boundary the SERVER reported (it has `phases`); an
+ *  inferred load has no boundary and gets no rules, since a rule is a claim about when something happened.
+ *  Each carries the bytes that half moved, when reported. */
+export function loadEdges(e: ResourceEvent): ResourceEvent[] {
+    if (e.kind !== "load" || e.until == null || !e.model) return [];
+    const w = e.phases?.find((ph) => ph.kind === "weights");
+    if (!w) return [];
+    const ctx = e.loadBytes != null && e.weightsBytes != null ? e.loadBytes - e.weightsBytes : null;
+    return [
+        { t: w.until, kind: "load", model: e.model, ...(e.via ? { via: e.via } : {}),
+          label: `${e.model} weights loaded${e.weightsBytes != null ? ` (${formatBytes(e.weightsBytes)})` : ""}` },
+        { t: e.until, kind: "load", model: e.model, ...(e.via ? { via: e.via } : {}),
+          label: `${e.model} KV cache and compute buffers allocated${ctx != null ? ` (${formatBytes(ctx)})` : ""} — ready to serve` },
+    ];
 }
 
 /** Events inside a window, in time order — what the chart's event lane draws, and what a vertical rule

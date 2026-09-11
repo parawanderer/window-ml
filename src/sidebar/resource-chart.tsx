@@ -16,7 +16,7 @@ import {
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL, SPILL_FLOOR, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
 import { capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
@@ -172,15 +172,10 @@ function KvFill({ run, bandsOf, deep, ev }: { run: ResourceSample[]; bandsOf: (s
     const t0 = run[0].t, t1 = run[n - 1].t;
     // A generation outside this run belongs to another segment (or to a gap, where nothing was measured).
     if (ev.until < t0 || ev.t > t1 + sampleGraceMs()) return null;
-    const idx = (t: number): number => {
-        if (t <= t0) return 0;
-        if (t >= t1) return n - 1;
-        let i = 0;
-        while (i < n - 2 && run[i + 1].t <= t) i++;
-        return i + (t - run[i].t) / Math.max(1, run[i + 1].t - run[i].t);
-    };
-    const a = idx(ev.t) / (n - 1), b = idx(ev.until) / (n - 1);
-    const at = run[Math.min(n - 1, Math.ceil(idx(ev.until)))];
+    // On the chart's axis — linear in time across the run — and read from the first sample at or after the
+    // generation's end, where the counts describe the cache.
+    const a = runFrac(run, ev.t), b = runFrac(run, ev.until);
+    const at = run.find((sm) => sm.t >= ev.until!) ?? run[n - 1];
     const band = bandsOf(at).find((x) => x.model === deep.model);
     const parts = band?.parts;
     const r = at.models.find((x) => x.model === deep.model);
@@ -214,11 +209,13 @@ function KvFill({ run, bandsOf, deep, ev }: { run: ResourceSample[]; bandsOf: (s
 }
 
 /** One device (or the host pool) as a stacked area over time. `frames` is one band list per sample. */
-function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = null }: { frames: Band[][]; ceiling: number; hidden: Set<string>; scope: string; snapIndex?: number | null; deep?: { model: string; ceiling: number } | null }) {
+function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex = null, deep = null, loads = [] }: { frames: Band[][]; times: number[]; ceiling: number; hidden: Set<string>; scope: string; snapIndex?: number | null; deep?: { model: string; ceiling: number } | null; loads?: { t: number; until?: number }[] }) {
     const order = useMemo(() => bandOrder(frames), [frames]);
     const identity = useMemo(() => bandIdentity(frames), [frames]);
     if (frames.length < 2 || ceiling <= 0) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
-    const x = (i: number) => (i / (frames.length - 1)) * W;
+    // LINEAR IN TIME across the run (`runFrac`), the axis every other mapping on the chart uses.
+    const tr = times.map((t) => ({ t }));
+    const x = (i: number) => runFrac(tr, times[i]) * W;
     const y = (v: number) => H - Math.min(1, v / ceiling) * H;
     /** One edge as points, left to right, against a given vertical mapping. A stepped edge emits the corner
      *  first: hold the previous value up to this sample's x, then drop to this sample's. Reversing the list
@@ -263,7 +260,11 @@ function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = 
             if (p) for (const q of memoryParts(p)) seen.add(q.key);
         }
         const keys = MEMORY_PARTS.filter((k) => seen.has(k.key));
-        if (!keys.length) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
+        // MEMORY ARRIVING FOR THIS MODEL BEFORE IT IS ATTRIBUTED — the allocation curve of a load in flight
+        // (`pendingAllocation`), which otherwise vanished from exactly the view a reader drilled into to see it.
+        const pending = pendingAllocation(frames, times, deep.model, loads).map((v) => Math.min(v, deep.ceiling));
+        const anyPending = pending.some((v) => v > 0);
+        if (!keys.length && !anyPending) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
         const tops = keys.map(() => new Array<number>(frames.length).fill(0));
         /**
          * A FRAME THE SERVER COULD NOT SPLIT IS NOT AN EMPTY ONE.
@@ -288,6 +289,15 @@ function StackedArea({ frames, ceiling, hidden, scope, snapIndex = null, deep = 
         const anyUnsplit = unsplit.some((v) => v > 0);
         return (
             <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                {/* LINES, not steps: memory really does arrive progressively while a load lands (the server calls
+                    it a continuous progress signal), the same reason the device's own bands are lines. Faint and
+                    dashed along its top, in the model's colour, because it is the model's load but not yet
+                    anything the server has said the model holds. */}
+                {anyPending ? (
+                    <polygon key="d:pending" class="rc-part rc-part-pending" vector-effect="non-scaling-stroke"
+                        points={[...stepEdge(pending, false, dy), ...stepEdge(zeros, false, dy).reverse()].join(" ")}
+                        fill={partFill(deep.model, "other")} style={{ "--model": colorFor(deep.model) }} />
+                ) : null}
                 {anyUnsplit ? (() => {
                     // ONE shape for the whole stretch, at the model's own height, in its own colour but
                     // deliberately flat and faint with a dashed top: it must not read as a part, because
@@ -737,9 +747,9 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                     hoverModel.value = null; eventHover.value = null; crosshair.value = null;
                 }}>
                 {runs.map((run, i) => (
-                    <div class="rc-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
-                        <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} scope={scope}
-                            deep={deep}
+                    <div class="rc-seg" key={i} style={{ flex: `${runWeight(run)} 1 0` }}>
+                        <StackedArea frames={run.map(bandsOf)} times={run.map((sm) => sm.t)} ceiling={ceiling} hidden={hidden} scope={scope}
+                            deep={deep} loads={deep ? events.filter((e) => e.kind === "load" && e.model === deep.model && e.until != null) : []}
                             snapIndex={snapUnder(runs)?.run === i ? snapUnder(runs)!.index : null} />
                         {deep && laneGen && laneGen.model === deep.model
                             ? <KvFill run={run} bandsOf={bandsOf} deep={deep} ev={laneGen} /> : null}
@@ -1450,19 +1460,19 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
                     fracOf={(sm, p) => (p.ceiling > 0 ? Math.min(1, usedOf(sm, p) / p.ceiling) : 0)} usedOf={usedOf} links={links} />
                 <EventTip scope={scope} />
                 {runs.map((run, ri) => (
-                    <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
+                    <div class="rc-seg" key={ri} style={{ flex: `${runWeight(run)} 1 0` }}>
                         <InstantRules instants={instants} run={ri} scope={scope} />
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {axis.bands.map((b, bi) => {
                                 const p = pools.find((x) => x.id === b.id)!;
                                 const y = (v: number) => H - (v / axis.total) * H;
                                 const pts: string[] = [];
-                                run.forEach((sm, i) => {
-                                    const x = run.length === 1 ? W / 2 : (i / (run.length - 1)) * W;
+                                run.forEach((sm) => {
+                                    const x = runFrac(run, sm.t) * W;
                                     pts.push(`${x.toFixed(1)},${y(b.base + Math.min(b.ceiling, usedOf(sm, p))).toFixed(1)}`);
                                 });
                                 for (let i = run.length - 1; i >= 0; i--) {
-                                    const x = run.length === 1 ? W / 2 : (i / (run.length - 1)) * W;
+                                    const x = runFrac(run, run[i].t) * W;
                                     pts.push(`${x.toFixed(1)},${y(b.base).toFixed(1)}`);
                                 }
                                 return <polygon key={b.id} points={pts.join(" ")} class="rc-boxfill"
@@ -1560,7 +1570,7 @@ function UtilView({ def, samples, latest, events = [], onHide }: { def: TrackDef
                 <UtilTip cards={cards} color={color} at={hoveredSample(runs, scope)} latest={latest} scope={scope} />
                 <EventTip scope={scope} />
                 {runs.map((run, ri) => (
-                    <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
+                    <div class="rc-seg" key={ri} style={{ flex: `${runWeight(run)} 1 0` }}>
                         <InstantRules instants={instants} run={ri} scope={scope} />
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {cards.flatMap((c, ci) => (["gpuPercent", "memoryPercent"] as const).flatMap((k) => {
@@ -1568,10 +1578,10 @@ function UtilView({ def, samples, latest, events = [], onHide }: { def: TrackDef
                                 // line and never a stroke drawn down to zero.
                                 const parts: string[][] = [];
                                 let cur: string[] = [];
-                                run.forEach((sm, i) => {
+                                run.forEach((sm) => {
                                     const v = utilOf(sm, c.id)?.[k];
                                     if (v == null) { if (cur.length) parts.push(cur); cur = []; return; }
-                                    cur.push(`${((i / (run.length - 1)) * W).toFixed(1)},${(H - (v / 100) * H).toFixed(1)}`);
+                                    cur.push(`${(runFrac(run, sm.t) * W).toFixed(1)},${(H - (v / 100) * H).toFixed(1)}`);
                                 });
                                 if (cur.length) parts.push(cur);
                                 return parts.filter((pts) => pts.length > 1).map((pts, pi) => (
@@ -1691,7 +1701,7 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
                 {/* This view has rules of its own now, so it needs the tip that explains them. */}
                 <EventTip scope="overlay" />
                 {runs.map((run, ri) => (
-                    <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
+                    <div class="rc-seg" key={ri} style={{ flex: `${runWeight(run)} 1 0` }}>
                         <InstantRules instants={instants} run={ri} scope="overlay" />
                         <HoverSpan run={ri} scope="lane" />
                         {/* ONE DOT PER LINE at the snapped sample — this view is literally lines, so it is the
@@ -1706,13 +1716,13 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
                             .filter(({ p }) => !poolHover.value || poolHover.value.id === p.id)
                             .map(({ p, color }) => {
                                 const i = Math.min(run.length - 1, Math.max(0, snapUnder(runs)!.index));
-                                const cx = run.length === 1 ? 50 : (i / (run.length - 1)) * 100;
+                                const cx = runFrac(run, run[i].t) * 100;
                                 return <i key={`sd:${p.id}`} class="rc-snapdot" aria-hidden="true"
                                     style={{ left: `${cx}%`, top: `${(1 - frac(run[i], p)) * 100}%`, background: color }} />;
                             }) : null}
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {pools.map((p, pi) => {
-                                const pts = run.map((s, i) => `${((i / (run.length - 1)) * W).toFixed(1)},${(H - frac(s, p) * H).toFixed(1)}`).join(" ");
+                                const pts = run.map((s) => `${(runFrac(run, s.t) * W).toFixed(1)},${(H - frac(s, p) * H).toFixed(1)}`).join(" ");
                                 // non-scaling-stroke keeps the width in DEVICE space: without it the
                                 // non-uniform viewBox scale makes diagonals visibly fatter than horizontals.
                                 // Two directions of the same question. Hovering this pool highlights it; and
@@ -1856,6 +1866,9 @@ const phaseFill = (kind: string, model?: string): string => {
         : kind === "prefill" ? base
         : kind === "decode" ? `color-mix(in srgb, ${base} 55%, transparent)`
         : kind === "other" ? "color-mix(in srgb, var(--fg-faint) 20%, transparent)"
+        // A PROMPT-CACHE SWAP: memory being copied for this model before it can read the prompt — a wait, like a
+        // load, so it is striped the way a load is, in a lighter weight of the model's colour.
+        : kind === "swap" ? halfStripes(`color-mix(in srgb, ${base} 45%, transparent)`, 45)
         : kind === "weights" ? halfStripes(base, 45)
         : kind === "context" ? halfStripes(`color-mix(in srgb, ${base} 55%, transparent)`, -45)
         : `color-mix(in srgb, ${base} 38%, transparent)`;
@@ -1898,7 +1911,10 @@ function phaseGradient(phases: { kind: string; until: number }[], from: number, 
 function useInstants(runs: ResourceSample[][], events: ResourceEvent[]): EventPlacement[] {
     return useMemo(() => {
         const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
-        return placeEvents(runs, eventsIn(events.filter((e) => e.until == null), from, to + sampleGraceMs()), sampleGraceMs());
+        // The moments themselves, plus a server-split load's two internal edges (`loadEdges`) — the steps in the
+        // memory trace a load draws, which otherwise had nothing on the plot saying what they were.
+        const moments = [...events.filter((e) => e.until == null), ...events.flatMap(loadEdges)];
+        return placeEvents(runs, eventsIn(moments, from, to + sampleGraceMs()), sampleGraceMs());
     }, [runs, events]);
 }
 
@@ -2354,6 +2370,25 @@ function KvBar({ gen, ctx, model }: { gen: NonNullable<ResourceEvent["gen"]>; ct
     );
 }
 
+/** What a PROMPT-CACHE SWAP did, beside its duration: whether THIS conversation came back from RAM (the cache
+ *  working — a near-total cache hit follows) or was not there (a full prefill follows), what was moved out, and
+ *  what was thrown away to make room. An eviction is the one said as a warning: a conversation dropped from RAM
+ *  pays a full prefill next time, and when two conversations take turns on one model under a limit too small for
+ *  both, every turn evicts the one about to be needed — the thrash, which shows up as exactly this chip on turn
+ *  after turn. */
+function SwapChips({ swap }: { swap: NonNullable<NonNullable<ResourceEvent["gen"]>["swap"]> }) {
+    return (
+        <>
+            <span class="rc-chip rc-chip-dim">{swap.restored ? "this conversation restored from RAM" : "not in RAM — read from scratch"}</span>
+            {swap.savedTokens != null
+                ? <span class="rc-chip rc-chip-dim">{swap.savedTokens.toLocaleString()} tokens saved out{swap.savedBytes != null ? ` (${formatBytes(swap.savedBytes)})` : ""}</span> : null}
+            {swap.evicted
+                ? <span class="rc-chip rc-chip-warn">evicted {swap.evicted} {swap.evicted === 1 ? "conversation" : "conversations"}{swap.evictedBytes ? ` (${formatBytes(swap.evictedBytes)})` : ""} to make room — {swap.evicted === 1 ? "it" : "they"} will need a full prefill</span> : null}
+            {swap.tooLarge ? <span class="rc-chip rc-chip-warn">the outgoing conversation was larger than the whole cache, so it was not kept</span> : null}
+        </>
+    );
+}
+
 /** Why the server gave no decode ceiling, in words a reader acts on. */
 const CEILING_WHY: Record<string, string> = {
     mixture_of_experts: "no ceiling: a mixture-of-experts model reads only its active experts per token",
@@ -2446,6 +2481,9 @@ function EventTip({ scope }: { scope: string }) {
         prefill: "reading the prompt (prefill)",
         decode: "generating tokens (decode)",
         other: "neither — scheduling and setup around the call",
+        // Moving conversations' KV caches between the slot and host RAM before the prefill — the engine's own
+        // measure, and in no other timing.
+        swap: "swapping conversations through the RAM cache",
     };
     const nameFor = (kind: string) => {
         const n = PHASE_NAMES[kind as PhaseKind];
@@ -2560,6 +2598,7 @@ function EventTip({ scope }: { scope: string }) {
                         {ph.kind === "decode" && e.gen?.decoded != null ? <span class="rc-chip rc-chip-dim">{e.gen.decoded.toLocaleString()} tokens
                             {e.gen.evalMs > 0 ? ` · ${(e.gen.decoded / (e.gen.evalMs / 1000)).toFixed(1)} tok/s` : ""}</span> : null}
                         {ph.kind === "decode" ? <CeilingChip e={e} /> : null}
+                        {ph.kind === "swap" && e.gen?.swap ? <SwapChips swap={e.gen.swap} /> : null}
                         <span class="rc-tip-size">{ms(ph.until - ph.from)}</span></div>
                 </>
             ))}
@@ -2745,7 +2784,7 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                         the axis being shared. */}
                     <BrushOverlay runs={runs} />
                     {runs.map((run, i) => (
-                        <div class="rc-lane-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
+                        <div class="rc-lane-seg" key={i} style={{ flex: `${runWeight(run)} 1 0` }}>
                             {row.filter((p) => p.run === i).map((p, k) => {
                                 const e = p.event;
                                 const w = Math.max(MIN_EV_SPAN * 100, (p.to - p.from) * 100);   // packed at this width too
@@ -2831,21 +2870,31 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
 
 /** What the lane is drawing, and what it is leaving out. Each kind is a chip with its count: a filter that
  *  makes you toggle blindly to find out what it hides is worse than none. */
+/** The KINDS of event the panel can hide, in the order the lane's chip row shows them — ONE set, obeyed by the
+ *  lane, the scrub strip's ticks AND the rules drawn through the plots, and offered in two places (the lane's
+ *  chips and the chart's gear, since the lane is collapsed by default). Two independent sets would let "loads"
+ *  be hidden in one surface and shown in another: the panel saying two things about one run. */
+export const LANE_KINDS: { kind: ResourceEvent["kind"]; label: string }[] = [
+    { kind: "run", label: "runs" }, { kind: "session", label: "sessions" },
+    { kind: "tool", label: "steps" }, { kind: "gen", label: "calls" },
+    { kind: "embed", label: "sub-calls" }, { kind: "load", label: "loads" }, { kind: "evict", label: "evictions" },
+    // What the BOX was doing, as opposed to what this browser asked for — a serving span covers traffic
+    // from any client, which is exactly why it is worth drawing and why it is separately hideable.
+    { kind: "serve", label: "serving" },
+];
+
+/** Show or hide one kind everywhere the panel draws events, and remember it. */
+export const toggleLaneKind = (k: string): void => {
+    const next = laneHidden.value.includes(k as ResourceEvent["kind"])
+        ? laneHidden.value.filter((x) => x !== k) : [...laneHidden.value, k as ResourceEvent["kind"]];
+    laneHidden.value = next;
+    try { chrome.storage.local.set({ [LANE_HIDDEN_KEY]: next }); } catch { /* opaque origin */ }
+};
+
 function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number>; shown: number; total: number }) {
     const hidden = new Set(laneHidden.value);
-    const KINDS: { kind: ResourceEvent["kind"]; label: string }[] = [
-        { kind: "run", label: "runs" }, { kind: "session", label: "sessions" },
-        { kind: "tool", label: "steps" }, { kind: "gen", label: "calls" },
-        { kind: "embed", label: "sub-calls" }, { kind: "load", label: "loads" }, { kind: "evict", label: "evictions" },
-        // What the BOX was doing, as opposed to what this browser asked for — a serving span covers traffic
-        // from any client, which is exactly why it is worth drawing and why it is separately hideable.
-        { kind: "serve", label: "serving" },
-    ];
-    const toggle = (k: string) => {
-        const next = hidden.has(k) ? laneHidden.value.filter((x) => x !== k) : [...laneHidden.value, k];
-        laneHidden.value = next;
-        try { chrome.storage.local.set({ [LANE_HIDDEN_KEY]: next }); } catch { /* opaque origin */ }
-    };
+    const KINDS = LANE_KINDS;
+    const toggle = toggleLaneKind;
     const open = showLane.value;
     // What is in there, on the header — the thing that makes the row worth opening. Counts only, no filter
     // state: a filter is about what is DRAWN, and nothing is drawn while it is closed. And ONLY while it is
@@ -3016,7 +3065,10 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     return (
         <>
             <div class="rc" onWheel={wheelScrub}>
-                {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} events={shown} />)}
+                {/* The plots' RULES obey the same kind filter as the lane and the strip: hiding "loads" takes the
+                    load steps off the chart too, rather than leaving them ruled through a trace whose lane bars
+                    are gone. */}
+                {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} events={stripEvents} />)}
             </div>
             {/* Directly under the tracks: where this window sits in the whole session. It sits ABOVE the lane
                 rather than below it because the lane RE-PACKS as the window moves — a step entering the view

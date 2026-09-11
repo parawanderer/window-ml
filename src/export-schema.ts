@@ -498,12 +498,13 @@ export interface ExportEvent {
  *
  * `prefill` / `decode` split a generation by the ENGINE's own durations (patched Ollama's `gen.end`), anchored
  * at its end; `other` is what lies between the request taking the runner and the prefill — neither phase, and
- * named as neither rather than folded into one.
+ * named as neither rather than folded into one. `swap` is a host-RAM prompt-cache swap the engine timed before
+ * the prefill — a conversation's KV cache moved out of the slot and, if it was there, this one's moved back.
  *
  * Switch on the kinds you know and fall through on the rest.
  */
 export type ExportPhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "boot" | "dispatch" | "weights" | "context"
-    | "prefill" | "decode" | "other";
+    | "prefill" | "decode" | "other" | "swap";
 
 export interface ExportEventPhase {
     kind: ExportPhaseKind;

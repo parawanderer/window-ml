@@ -742,24 +742,25 @@ test("lineageOf: an event, what spawned it, and what it spawned", () => {
 // sample count, so a fraction is spent across them in those proportions and interpolated inside the one it
 // lands in. Getting this wrong makes a zoom select a different stretch than the one you dragged over.
 test("timeAtFraction: the inverse of placeEvents, across weighted segments", () => {
-    // Two runs: four samples over 3s, then two samples over 1s after a gap. Weights 4 and 2 → 2/3 and 1/3.
+    // Two runs: 3 s of samples, then 1 s after a gap. The axis is LINEAR IN TIME within a run and each run is as
+    // wide as it is LONG (the gap collapses), so the weights are 3 and 1 → three quarters and one quarter.
     const runs = [
         [{ t: 1000 }, { t: 2000 }, { t: 3000 }, { t: 4000 }],
         [{ t: 10_000 }, { t: 11_000 }],
     ];
     assert.equal(M.timeAtFraction(runs, 0), 1000, "the left edge is the first sample");
     assert.equal(M.timeAtFraction(runs, 1), 11_000, "the right edge is the last");
-    // A third of the way is halfway through the FIRST segment (which owns two thirds of the width).
-    assert.equal(M.timeAtFraction(runs, 1 / 3), 2500);
-    // AT the boundary between segments the answer is the last measured moment before the gap, never a time
+    // Three eighths of the way is halfway through the FIRST run (which owns three quarters of the width).
+    assert.equal(M.timeAtFraction(runs, 3 / 8), 2500);
+    // AT the boundary between runs the answer is the last measured moment before the gap, never a time
     // interpolated across it — nothing was measured there, so there is no honest value inside it.
-    assert.equal(M.timeAtFraction(runs, 2 / 3), 4000);
-    assert.equal(M.timeAtFraction(runs, 0.7), 10_100, "past it, inside the second segment");
-    assert.equal(M.timeAtFraction(runs, 5 / 6), 10_500);
+    assert.equal(M.timeAtFraction(runs, 3 / 4), 4000);
+    assert.equal(M.timeAtFraction(runs, 0.8), 10_200, "past it, inside the second run");
+    assert.equal(M.timeAtFraction(runs, 7 / 8), 10_500);
     // It round-trips with placeEvents: an event placed at a fraction reads back as its own time.
     const ev = { t: 2500, kind: "note", label: "x" };
     const [p] = M.placeEvents(runs, [ev]);
-    const overall = (p.run === 0 ? 0 : 2 / 3) + p.from * (p.run === 0 ? 2 / 3 : 1 / 3);
+    const overall = (p.run === 0 ? 0 : 3 / 4) + p.from * (p.run === 0 ? 3 / 4 : 1 / 4);
     assert.ok(Math.abs(M.timeAtFraction(runs, overall) - 2500) < 1);
     // Out of range clamps rather than extrapolating into time that was never on screen.
     assert.equal(M.timeAtFraction(runs, -3), 1000);
@@ -2362,4 +2363,109 @@ test("utilization: its own series, its own preset where a card reports it, and n
     assert.match(M.presetRefusal(mixed, s), /share of TIME/, "a saved layout mixing them is refused at restore");
     const total = { ...mixed, tracks: [{ id: "t", series: ["util.0", "util.1"], mode: "total", heightPx: 96 }] };
     assert.match(M.presetRefusal(total, s), /no capacity to lay end to end/);
+});
+
+// ---- THE HOST-RAM PROMPT CACHE (`ollama-slop:promptcache2`), against the server's real captures ----
+const ndjson = async (name) => {
+    const { readFileSync } = await import("node:fs");
+    return readFileSync(new URL(`./fixtures/hw/${name}-2026-09-11.ndjson`, import.meta.url), "utf8")
+        .split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+};
+
+test("prompt-cache swap: parsed off real gen.end frames, and drawn as a measured phase before the prefill", async () => {
+    const restore = (await ndjson("prompt-cache-restore")).filter((f) => f.kind === "gen.end");
+    // The first request switched nothing: no swap, no field.
+    assert.equal(M.genTimingsFrom(restore[0].timings).swap, undefined);
+    // THE CACHE WORKING: 500 ms moving the other conversation out and this one back, then a 23 ms prefill with
+    // 6,515 of 6,537 tokens reused — the 500 ms is in no other timing.
+    const t = M.genTimingsFrom(restore[3].timings);
+    assert.deepEqual(t.swap, { ms: 499.75, restored: true, savedTokens: 6549, savedBytes: 1716860747 });
+    assert.equal(t.promptTokensCached, 6515);
+    const e = M.genSpan({ model: "qwen3:32b", endAt: 10_000, timings: t });
+    assert.deepEqual(e.phases.map((p) => p.kind), ["swap", "prefill", "decode"]);
+    const [swap, prefill, decode] = e.phases;
+    assert.ok(Math.abs((decode.until - prefill.until) - 123.127) < 1e-9);
+    assert.ok(Math.abs((prefill.until - swap.until) - 23.645) < 1e-9);
+    assert.ok(Math.abs((swap.until - e.t) - 499.75) < 1e-9, "the swap is the engine's own measure");
+    // THE THRASH: not restored, and conversations evicted to make room — every turn.
+    const thrash = (await ndjson("prompt-cache-thrash")).filter((f) => f.kind === "gen.end").map((f) => M.genTimingsFrom(f.timings));
+    assert.ok(thrash.slice(1).every((x) => x.swap.restored === false && x.swap.evicted > 0), "each later turn evicts");
+    assert.deepEqual(thrash[2].swap, { ms: 1344, restored: false, savedTokens: 21635, savedBytes: 5671746535, evicted: 3, evictedBytes: 7421117333 });
+    // `restored` is ALWAYS present on a swap; without it the object is not the swap this client understands.
+    assert.equal(M.genTimingsFrom({ prompt_ms: 1, eval_ms: 1, prompt_cache_swap: { ms: 5 } }).swap, undefined);
+});
+
+test("prompt-cache swap: a joined call of ours gets the swap before its prefill", () => {
+    const timings = { promptMs: 20, evalMs: 100, swap: { ms: 500, restored: true } };
+    const ours = { t: 0, until: 1000, kind: "gen", label: "turn", model: "m" };
+    const j = M.joinGens([ours], [M.genSpan({ model: "m", endAt: 990, timings })]).session[0];
+    assert.deepEqual(j.phases.map((p) => p.kind), ["other", "swap", "prefill", "decode"]);
+    assert.equal(j.phases[1].until, 1000 - 100 - 20);
+    assert.equal(j.phases[0].until, 1000 - 100 - 20 - 500);
+});
+
+test("activityFrom: the host-RAM prompt cache, off a real sample — and it survives idle", async () => {
+    const [sample] = (await ndjson("prompt-cache-occupancy-sample")).filter((f) => f.kind === "sample");
+    const row = sample.ps.models.find((m) => m.name === "qwen3:32b");
+    const a = M.activityFrom(row.activity);
+    assert.deepEqual(a.promptCache, { entries: 2, tokens: 6582, bytes: 1725513596, limitBytes: 8589934592 });
+    // The in-flight counts go at idle; the parked conversations do not — they really are still there.
+    assert.deepEqual(M.activityFrom({ phase: "idle", prompt_cache: { entries: 1, tokens: 10, bytes: 100 } }).promptCache,
+        { entries: 1, tokens: 10, bytes: 100 });
+    assert.equal(M.activityFrom({ phase: "idle" }).promptCache, undefined, "absent until the first request — not an empty cache");
+});
+
+test("loadEdges: a server-split load rules its two steps through the plot, with what each moved", () => {
+    const GiB = 1024 ** 3;
+    // gemma4:31b off the user's dump: weights in after 1.0 s (17.37 GiB), KV cache and compute after 1.5 s more.
+    const load = { t: 1000, until: 3517, kind: "load", label: "loading gemma4:31b", model: "gemma4:31b", via: "server",
+        phases: [{ kind: "weights", until: 2002 }, { kind: "context", until: 3517 }], weightsBytes: 18654282383, loadBytes: 46006565599 };
+    const [w, c] = M.loadEdges(load);
+    assert.deepEqual([w.t, c.t], [2002, 3517], "at the two steps the device trace draws");
+    assert.equal(w.until, undefined, "instants — rules, not spans");
+    assert.match(w.label, /^gemma4:31b weights loaded \(17\.37 GiB\)$/);
+    assert.match(c.label, /^gemma4:31b KV cache and compute buffers allocated \(25\.47 GiB\) — ready to serve$/);
+    assert.equal(w.via, "server");
+    // An inferred load has no boundary, so no rules: a rule is a claim about WHEN something happened.
+    assert.deepEqual(M.loadEdges({ t: 0, until: 5000, kind: "load", label: "x", model: "m" }), []);
+    assert.deepEqual(M.loadEdges({ t: 0, kind: "evict", label: "x", model: "m" }), []);
+    // Bytes unreported → the edges still say what they are.
+    assert.match(M.loadEdges({ ...load, weightsBytes: undefined, loadBytes: undefined })[1].label, /allocated — ready to serve$/);
+    void GiB;
+});
+
+test("the axis is LINEAR IN TIME on an adaptive cadence: an event, a sample and the crosshair agree", () => {
+    // The stream samples every 250 ms during a load and every 15 s idle. The axis used to space samples evenly,
+    // so the load's one second took four fifths of the run and the 15 s idle stretch one fifth — the chart
+    // compressed at random as the mix of samples in view changed, and an unload was ruled over a band that was
+    // still resident. Linear in time, 8 s into a 15.75 s run is 8/15.75 of the way, wherever the samples fall.
+    const run = [{ t: 0 }, { t: 250 }, { t: 500 }, { t: 750 }, { t: 15_750 }];
+    const [p] = M.placeEvents([run], [{ t: 8000, kind: "evict", label: "unloaded" }]);
+    assert.ok(Math.abs(p.from - 8000 / 15_750) < 1e-12, `placed at ${p.from}`);
+    // A sample's position is its time's position — the same mapping the bands are drawn with (`runFrac`).
+    assert.equal(M.runFrac(run, 750), 750 / 15_750);
+    // The crosshair's time and the placement round-trip exactly.
+    assert.ok(Math.abs(M.timeAtFraction([run], p.from) - 8000) < 1e-9);
+    // The DATAPOINT under a position is the one nearest in TIME — at 8 s, sample 750 (7.25 s away) rather than
+    // 15 750 (7.75 s away) — and snapping lands exactly on where that sample is drawn.
+    assert.equal(M.sampleAtFraction([run], p.from).t, 750);
+    const snap = M.snapFraction([run], p.from);
+    assert.deepEqual([snap.index, snap.frac], [3, 750 / 15_750]);
+    // A run is as wide as it is LONG: a 1 s run beside a 3 s one takes a quarter of the width.
+    assert.deepEqual([M.runWeight([{ t: 0 }, { t: 1000 }]), M.runWeight([{ t: 0 }, { t: 3000 }]), M.runWeight([{ t: 5 }])], [1000, 3000, 1]);
+});
+
+test("pendingAllocation: a loading model's memory is its own before the runner exists to say so", () => {
+    const GiB = 1024 ** 3;
+    const other = (b) => ({ key: "other", label: "driver overhead", kind: "other", bytes: b });
+    const model = (b) => ({ key: "model:m", label: "m", kind: "model", model: "m", bytes: b });
+    // Driver context 0.6 GiB; a load from t=1000 to t=3500 lands weights then context in the residual; at t=4000
+    // the runner exists and the model's band takes it over.
+    const times = [0, 1000, 2000, 3000, 3500, 4000];
+    const frames = [[other(0.6 * GiB)], [other(0.6 * GiB)], [other(4 * GiB)], [other(10 * GiB)], [other(12.6 * GiB)], [other(0.6 * GiB), model(12 * GiB)]];
+    const got = M.pendingAllocation(frames, times, "m", [{ t: 1000, until: 3500 }]);
+    assert.deepEqual(got.map((b) => b / GiB).map((x) => Math.round(x * 10) / 10), [0, 0, 3.4, 9.4, 12, 0],
+        "the growth above the pre-load residual, until the model's own band appears — never both");
+    // No load of this model (the caller passes that model's loads only): nothing is attributed to it.
+    assert.deepEqual(M.pendingAllocation(frames, times, "m", []), [0, 0, 0, 0, 0, 0]);
 });
