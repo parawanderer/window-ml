@@ -1723,6 +1723,11 @@ export interface LoadedModel {
      *  `expires_at` included, so every other field on it is "not yet known" rather than a measurement.
      *  Absent means resident. Both fields need a patched Ollama (see docs/FORKED-BACKENDS.md). */
     state?: string;
+    /** WHAT THE RUNNER IS DOING and how full its KV cache is, raw from the server and parsed once by
+     *  `activityFrom`. Read out of `llama-server`'s `/slots`, which ollama did not consult until the
+     *  `activity3` build — so absent means "the runner could not be asked" (still loading, a backend with no
+     *  `/slots`, a failed poll, or any older server), never "idle". Idle is a value it reports. */
+    activity?: unknown;
 }
 
 /** One accelerator the machine has, from `/api/info` `compute.supported_gpus[]`. All memory figures are raw

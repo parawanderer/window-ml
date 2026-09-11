@@ -647,6 +647,19 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-embed { color: var(--fg-dim); }
 .vram-chat { color: var(--fg-faint); }
 /* Live keep-alive countdown — same chip shape as the context badge, sat beside it. */
+/* HOW FULL THE KV CACHE IS, beside the window it was reserved for. Same chip shape as .vram-ctx because it is
+   the second half of that fact — what was reserved, and what is being used — and a different shape would read
+   as a different kind of thing. Its own glyph rather than a bar: the row is already a row of chips, and a
+   meter here would be the only graphic in it, reading as more important than the memory figure it qualifies. */
+.vram-kv { flex: 0 0 auto; color: var(--fg-faint); font-size: 0.9em; font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; line-height: 1.35; cursor: help; }
+.vram-kv::before { content: "▤"; opacity: 0.7; margin-right: 3px; }
+/* WHAT THE RUNNER IS DOING — prefill or decode, never idle. Filled rather than outlined, because unlike every
+   other chip in this row it is TRANSIENT: it appears for the seconds a generation lasts and then goes, and an
+   outlined chip arriving and leaving reads as the row reflowing rather than as something happening. */
+.vram-phase { flex: 0 0 auto; font-size: 0.82em; line-height: 1.35; padding: 0 4px; border-radius: 3px;
+  cursor: help; background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--fg-dim);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
 .vram-ttl { flex: 0 0 auto; color: var(--fg-faint); font-size: 0.9em; font-variant-numeric: tabular-nums;
   border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; line-height: 1.35; cursor: help; }
 .vram-ttl::before { content: "⏱"; opacity: 0.7; margin-right: 3px; }

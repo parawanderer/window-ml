@@ -341,6 +341,19 @@ and `segments()` breaks the line at any gap over `MAX_SAMPLE_GAP_MS` rather than
 An interpolated segment over a ten-minute hole is a confident claim about memory that was never
 measured — the same rule as never inventing a timestamp for an unmarked output line.
 
+**And some holes have no interval to notice.** The event stream reports, cumulatively per subscriber,
+how many frames it dropped when we stopped reading fast enough. Nothing read it, so under a burst the
+panel drew a straight line across frames that never arrived — the same claim `segments()` refuses to
+make about a sampling gap, and a worse one, because frames are dropped when the box is busiest and the
+interpolation therefore lands on the movement the chart exists to show. The two readings either side of
+a drop can be an ordinary two seconds apart, so `MAX_SAMPLE_GAP_MS` sees nothing wrong.
+`ResourceSample.gapBefore` carries the reported hole and `segments()` checks it separately from the
+interval. Three things about the counter decide the arithmetic and each is a way to be silently wrong:
+the news is the DELTA (read as a value, one hiccup leaves the chart in permanent pieces); it is PER
+SUBSCRIBER, so a `hello` resets it and the reconnect seam is covered by the backfill `sinceFor` already
+asks for; and a counter going BACKWARDS is a restart we did not see, where claiming a loss would invent
+a number and draw it as a hole somewhere specific.
+
 ## 4. UI
 
 The panel lives in the sidebar (~300px wide) and the DevTools panel (much wider). Mocks are drawn
@@ -616,6 +629,48 @@ whether an eviction made room or was an idle expiry). The instant tooltip was ha
 it said "nothing reports an eviction" about an edge the server had just reported WITH ITS REASON, on
 precisely the setup the stream exists for. `ResourceEvent.via` carries the distinction and a reported
 edge says what the server said.
+
+### 4.10 What the runner is doing, and how full its cache is
+
+`activity` on `/api/ps` (patched server, `activity3` and later) is read out of `llama-server`'s
+`/slots`, which ollama did not consult before. It answers two questions the memory figures cannot.
+
+**Occupancy.** `prompt_tokens` is `n_past` — tokens resident in the KV cache — against the model's own
+`context_length`, which the server has already divided by the parallel slot count, so it is a straight
+ratio. This is the missing half of the context chip: Ollama reserves the cache for the WHOLE window when
+the model loads and the bytes never move, so a 256K window at 2% and the same window at 90% are
+identical everywhere else in the panel, while only one of them is worth reloading with a smaller
+`num_ctx`. It is drawn as a chip beside that context chip, whose tooltip has always given that advice
+with no way to know whether it applied. `<1%` rather than `0%` for a nearly-empty cache: 30 tokens of a
+262,144 window rounds to zero, and "0%" beside a reserved 40 GiB is a wrong answer sitting exactly where
+the reader is about to act on it.
+
+**Two kinds of fact, one object.** Occupancy SURVIVES the task that filled it — those tokens really are
+still in the cache — while `phase`, `decoded` and `prompt_tokens_done` describe the task in flight and
+the server clears them when it ends. So an idle runner reports a full cache and no work, and `phase` is
+the discriminator for everything else. Reading the survivor as work in progress is the mistake the shape
+invites.
+
+**Absent is not idle.** The whole object is omitted when the runner could not be asked — still loading, a
+backend with no `/slots`, a failed poll, every build before this one — while `idle` is a positive answer
+with a figure attached. Collapsing the two draws a full cache as an empty one on the majority of installs.
+
+**A prefill too short to draw is a cache hit, not a broken clock.** `prompt_tokens_cached` is how much of
+the prompt came from the prefix cache and was never computed. Measured on the box: a repeat of the same
+4098-token prompt hit 4097 of them, leaving one token to compute, and the phase did not last long enough
+to be sampled at all.
+
+**Phase is drawn as a STATE, not as a span, and that is resolution rather than preference.** In the real
+capture the event stream delivered one `prefill` frame and zero `decode` frames across two generations
+that a 40 ms poll resolved completely; the 200 ms cache-hit generation produced no non-idle frame at all.
+Our own poll is 2 s, and stream sampling pulls to 1 s during a body change, against a prefill lasting
+~400 ms. Inferring the boundary from two samples would be reconstructing an edge by sampling — the error
+§4.5 already avoids by MEASURING `dispatchMs` rather than subtracting it, and worse here because the
+invented timestamp would be drawn beside a memory trace that is measured. A span needs the executor to
+stamp it (`gen.start`/`gen.phase`/`gen.end`, requested upstream); until then a reading is drawn as what
+it honestly is. The phase chip is also kept separate from the keep-alive chip rather than folded into its
+"in use": they are different facts and they disagree exactly where it matters, since a request in flight
+while the slot has not started reads `busy: true, phase: idle`.
 
 ## 5. Build order — SHIPPED
 

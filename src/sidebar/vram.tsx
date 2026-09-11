@@ -22,7 +22,7 @@ import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_H
 export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, dropInferredLoads, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, memorySplit, placementFrom, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
+import { parseInfo, holdCapacity, memorySplit, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -59,6 +59,7 @@ export function residencyOf(m: LoadedModel): ModelResidency {
         ...(typeof m.weightsOnDisk === "number" ? { weightsOnDisk: m.weightsOnDisk } : {}),
         ...(host ? { memoryHost: host } : {}),
         ...((() => { const pl = placementFrom(m.placement); return pl ? { placement: pl } : {}; })()),
+        ...((() => { const ac = activityFrom(m.activity); return ac ? { activity: ac } : {}; })()),
     };
 }
 import { RenderPanel, PyBenchOut } from "./render-panel";
@@ -232,6 +233,20 @@ export const streamLive = signal(false);
 /** What the stream told us when it could not carry: shown in the panel's own note rather than swallowed, so a
  *  box that has the route but is failing on it does not look like a box that never had it. */
 export const streamNote = signal<string | null>(null);
+/** Set when the stream reports it dropped frames for us; consumed by the NEXT reading, which then begins a new
+ *  run rather than continuing the line across the hole. A flag rather than a signal, and deliberately: it is
+ *  written while frames are being handled and read a moment later inside `applyLoaded`, which is a render path
+ *  — a signal written during render re-enters rendering, and this is not state anything draws from.
+ *
+ *  It is a PENDING mark rather than one applied to the frame that reported it, because the drop happened
+ *  BEFORE that frame: the hole sits between the last reading we recorded and whatever the next one turns out
+ *  to be, and the next one may arrive by the poll rather than by the stream. Either way it is the reading on
+ *  the far side of the hole, which is the one that must not be joined to what came before it. */
+let pendingGap = false;
+/** Frames the stream has told us it lost, this session. Read by the tests and by `ml.__events`; the panel
+ *  itself says so by BREAKING the line, which is the same thing it does for a sampling gap and needs no
+ *  second vocabulary. */
+export const framesLost = signal(0);
 
 /** How far apart two samples may be before the history is a HOLE rather than a quiet stretch. It depends on
  *  the transport, because a gap means a different thing on each — see the two constants. Read at render time
@@ -389,6 +404,9 @@ export function connectResourceStream(): () => void {
     port.onMessage.addListener((msg: any) => {
         if (msg?.unsupported) { streamLive.value = false; streamNote.value = null; return; }   // stock server: just poll
         if (msg?.interrupted) { streamLive.value = false; streamNote.value = String(msg.interrupted); return; }
+        // BEFORE the frame is used for anything: a drop is news about the interval that ENDS at this frame, so
+        // the mark has to be standing when this frame's own reading is recorded.
+        if (msg?.lost) { pendingGap = true; framesLost.value += msg.lost; }
         if (!msg?.frame) return;
         streamLive.value = true; streamNote.value = null;
         // A `sample` frame IS a poll's two answers, embedded verbatim by the server precisely so one parser
@@ -474,7 +492,9 @@ export function applyLoaded(raw: LoadedModel[], at: number = Date.now()): void {
     const sample: ResourceSample = {
         t: at, models: loaded.map((m) => residencyOf(m)), capacity: capacity.value,
         ...(inFlight.length ? { loading: inFlight } : {}),
+        ...(pendingGap ? { gapBefore: true as const } : {}),
     };
+    pendingGap = false;
     // CHRONOLOGICAL, not append-order. Everything downstream — segmenting on gaps, placing an event inside
     // the run that contains it, the scrub window — assumes the samples are in time order, and a bare push
     // holds that for a poll and breaks it for the stream: a connection BACKFILLS up to ten minutes of history
@@ -852,6 +872,15 @@ export function orphanedOn(m: LoadedModel, cap: Capacity | null): string[] {
 export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean }) {
     const ttl = fmtTTL(m.expiresAt, m.busy);
     const orphaned = orphanedOn(m, capacity.value);
+    // Parsed here rather than read raw: `activityFrom` is what turns an absent object into null instead of an
+    // idle runner, and `kvOccupancy` is what refuses a denominator it does not have. Both distinctions are the
+    // whole content of these two chips.
+    const act = activityFrom(m.activity);
+    // Derived THROUGH `act` rather than beside it, so "there is an occupancy to draw" implies "there is a
+    // reading it came from". The chip prints the exact token counts, and reading them off an object the
+    // percentage did not come from is how a row ends up showing one model's number with another's denominator.
+    const kv = act ? kvOccupancy({ activity: act, contextLength: m.contextLength }) : null;
+    const past = kv !== null ? act!.promptTokens! : 0;
     // Only the row's copy has its own tooltips to defer to; the chart tip renders these as plain text.
     const yieldTip = tips
         ? { onPointerEnter: () => (rowTipSuppressed.value = true), onPointerLeave: () => (rowTipSuppressed.value = false) }
@@ -883,6 +912,27 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
                         no way to know which one to trust. Saying both, in that order, is what reconciles them.
                         Same rule as the memory figures: the round number is the binary one. */}
                     {tips ? <span class="tt-pop left above" role="tooltip">Loaded with a {fmtCtx(m.contextLength)}-token context window — {m.contextLength.toLocaleString()} tokens exactly ({fmtCtx(m.contextLength)} is binary, like memory sizes). Ollama preallocates the KV cache for the FULL window, even when your prompts are short. Load with a smaller <code>num_ctx</code> to reclaim it.</span> : null}
+                </span>
+            ) : null}
+            {/* HOW MUCH OF THAT WINDOW IS ACTUALLY IN USE. The context chip above says what was RESERVED and its
+                tooltip ends by advising a smaller `num_ctx` — advice it has no way to know applies here. This
+                is the evidence for it: a 256K window at 2% is reclaimable, the same window at 90% is not, and
+                the two are indistinguishable from the byte figure on the right. It is a reading about traffic
+                this browser never started, which is the whole reason it has to come from the server. */}
+            {kv !== null ? (
+                <span class={tips ? "tt vram-kv" : "vram-kv"} {...yieldTip}>{fmtOccupancy(kv)}
+                    {tips ? <span class="tt-pop left above" role="tooltip">The KV cache is holding {past.toLocaleString()} of {(m.contextLength ?? 0).toLocaleString()} tokens. The BYTES do not move with it — Ollama reserves the cache for the whole window when the model loads and it does not grow — so this is how much of what was reserved is being used{kv < 0.25 ? ", and at this level a smaller num_ctx would reclaim most of it" : ""}. It survives the request that filled it, so an idle model still says what its last task left behind.</span> : null}
+                </span>
+            ) : null}
+            {/* WHAT THE RUNNER IS DOING, when it is doing something. Kept apart from the TTL chip beside it
+                rather than folded into its "in use": they are different facts and they can disagree — measured
+                on the box, a request in flight while the slot had not started reads `busy: true, phase: idle`.
+                Never drawn for `idle`, which would put a permanent chip on every row to say nothing. */}
+            {act && act.phase !== "idle" ? (
+                <span class={tips ? "tt vram-phase" : "vram-phase"} {...yieldTip}>{act.phase}
+                    {tips ? <span class="tt-pop left above" role="tooltip">{act.phase === "prefill"
+                        ? <>Reading the prompt — {act.promptTokensDone?.toLocaleString() ?? "?"} of {act.promptTokens?.toLocaleString() ?? "?"} tokens so far{act.promptTokensCached ? <>, with {act.promptTokensCached.toLocaleString()} of them served from the prefix cache and never computed</> : null}. No tokens are being generated yet.</>
+                        : <>Generating — {act.decoded?.toLocaleString() ?? "?"} tokens so far{act.promptTokensCached ? <>, after a prompt whose {act.promptTokensCached.toLocaleString()} cached tokens meant there was almost nothing to read</> : null}. Each one lands in the KV cache, which is why the occupancy beside this is climbing.</>}</span> : null}
                 </span>
             ) : null}
             {ttl ? (

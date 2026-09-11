@@ -984,6 +984,48 @@ per device, in bytes.
   `gpu_id`); a card whose name is not in the list shows nothing rather than being handed the entry at its
   ordinal. `devices` is a list of RUNS, so entries are summed by name and `devices.length` is never a card
   count. `swa_layers` is counted for THIS card, since the pattern is irregular.
+- **WHAT THE RUNNER IS DOING, AND HOW FULL ITS CACHE IS (`activity` on `/api/ps`).** Read out of
+  `llama-server`'s `/slots`, which ollama did not consult until the `activity3` build. `activityFrom` parses
+  it, `kvOccupancy` divides it. Two DIFFERENT KINDS of fact live in one object and reading them alike is the
+  mistake its shape invites: `prompt_tokens` is `n_past` — OCCUPANCY, which SURVIVES the task that filled it,
+  because those tokens really are still in the cache — while `phase`/`decoded`/`prompt_tokens_done` describe
+  the task IN FLIGHT and the server clears them the moment it ends. So an idle runner reports a full cache and
+  no work, and `phase` is the discriminator for everything else. **Absent is not idle**: the object is omitted
+  when the runner could not be asked (still loading, no `/slots`, a failed poll, every older build), and
+  `idle` is a positive answer with a figure attached — collapsing them draws a full cache as an empty one on
+  every stock server. The occupancy chip sits beside the CONTEXT chip because it is the second half of that
+  fact: that chip's tooltip has always advised a smaller `num_ctx` and had no way to know whether the advice
+  applied, since Ollama reserves the cache for the whole window at load and the bytes never move — a 256K
+  window at 2% and at 90% are identical everywhere else in the panel. `<1%` rather than `0%` for a
+  nearly-empty one, because "0%" beside a reserved 40 GiB is the claim the reader is about to act on.
+  **`prompt_tokens_cached` is the explanation for a prefill too short to draw** — measured on the box, a
+  repeat of the same 4098-token prompt hit 4097 of them, leaving one token to compute, so the phase did not
+  last long enough to be sampled at all. An impossibly fast prompt is a cache hit, not a broken clock. The
+  phase chip is kept SEPARATE from the keep-alive chip rather than folded into its "in use": they are
+  different facts and they disagree exactly where it matters — a request in flight while the slot has not
+  started reads `busy: true, phase: idle`.
+- **PHASE IS NOT DRAWN AS A SPAN, and that is a resolution fact rather than a preference.** In the real
+  capture (`tests/e2e/fixtures/runner-activity.json`) the event stream delivered ONE `prefill` frame and ZERO
+  `decode` frames across two generations that a 40 ms poll resolved completely; the 200 ms cache-hit
+  generation produced no non-idle frame at all. Our own poll is 2 s and stream sampling pulls to 1 s, against
+  a prefill that lasts ~400 ms. Inferring the boundary from two samples would be reconstructing an edge by
+  sampling — the same error the lane already avoids by MEASURING `dispatchMs` rather than subtracting it, and
+  worse here, because the invented timestamp would sit beside a memory trace that is measured. A span needs
+  the executor to stamp it (`gen.start`/`gen.phase`/`gen.end`, requested); until then phase is drawn as a
+  STATE, which is what a reading honestly is.
+- **A HOLE THE SERVER REPORTS BREAKS THE LINE (`dropped` → `lostSince` → `ResourceSample.gapBefore`).** Every
+  frame carries a cumulative count of what this subscriber lost when it fell behind, and nothing read it — so
+  under a burst the panel drew a continuous line across frames that never arrived, which is exactly the claim
+  `segments()` refuses to make about a sampling gap, and a worse one: frames are dropped when the box is
+  busiest, so the interpolation lands on the movement the chart exists to show. Three things about the
+  counter decide the arithmetic and each is a way to get it silently wrong. The news is the **DELTA**, not
+  the value — read as a value, one hiccup breaks the chart at every subsequent sample forever after, which
+  teaches a reader to ignore breaks. It is **PER SUBSCRIBER**, so a `hello` RESETS it rather than reading as a
+  recovery, and the seam across the reconnect is covered by the backfill `sinceFor` already asks for. And a
+  counter going **BACKWARDS** is a server restart we did not see: claiming a loss there would invent a number
+  and draw it as a hole in a specific place. It is resolved in `sw-events.ts` because the counter belongs to
+  the CONNECTION and one connection feeds every open panel. `gapBefore` is checked separately from the
+  interval because a drop leaves no interval to notice — the readings either side can be adjacent in time.
 - **AN EDGE SAYS WHERE IT CAME FROM** (`ResourceEvent.via`). A load or an eviction reaches the lane two ways:
   INFERRED by diffing `/api/ps` (a model was there and then was not — which is the most polling can say, since
   for most of a load there is no runner object at all and an eviction that made room is indistinguishable from
@@ -2136,6 +2178,14 @@ broken:
   the device's own step and must not be reconciled to it.
   Recorded fixtures come from `tests/e2e/capture-frames.mjs`; the fake backend replays them via
   `setEvents`/`pushFrame` and `tests/e2e/resource-stream.spec.mjs` is the coverage.
+- **`activity` on `/api/ps`** (the same branch, `ollama-slop:activity3`) is what the runner is DOING — phase,
+  KV occupancy, prefill progress, prefix-cache hits — read from `llama-server`'s `/slots`, which ollama did
+  not consult before. Absent on every stock server AND whenever the runner could not be asked, which is not
+  the same as idle. `tests/e2e/fixtures/runner-activity.json` is a real capture off the box (169 samples at
+  ~40 ms across a cold prefill, a decode, an idle stretch and a cache-hit repeat) and
+  `tests/runner-activity.test.mjs` asserts against it directly rather than against shapes written here —
+  two of its cases are ones nobody would have invented: an idle runner still reporting occupancy, and a
+  generation containing no prefill sample at all.
 - **`POST /api/v1/tools/id/{id}/execute`** comes from `parawanderer/open-webui`, branch
   `ml/tool-execute-api` — it runs the callable the chat pipeline would, so an external client can
   drive its own loop over OpenWebUI-configured tools. **The extension does not call it yet**: server

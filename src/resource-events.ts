@@ -133,6 +133,30 @@ export function loadedFrom(rows: unknown[]): LoadedModel[] {
             // Both need a patched Ollama; absent means "not known", never "idle" / "resident".
             ...(typeof m.busy === "boolean" ? { busy: m.busy } : {}),
             ...(m.state ? { state: String(m.state) } : {}),
+            // What the runner is DOING, raw and parsed once downstream (`activityFrom`) like `memory` and
+            // `placement`. Absent on every server that cannot ask its runner, which is not the same as idle.
+            ...(m.activity ? { activity: m.activity } : {}),
         };
     });
+}
+
+/** How many frames THIS connection lost since the frame we last read, from the cumulative `dropped` counter.
+ *
+ *  Three things about that counter decide the arithmetic, and getting any of them wrong turns a real hole into
+ *  a silent one. It is CUMULATIVE, so the news is the DELTA and not the value — a connection that dropped
+ *  frames once reports the same non-zero number forever after, and reading the value would break the trace at
+ *  every subsequent frame. It is PER SUBSCRIBER, so a reconnect starts a new count from zero: `hello` resets
+ *  rather than reading as a recovery, and the gap across the reconnect itself is covered by the backfill
+ *  `sinceFor` asks for. And a counter that goes BACKWARDS mid-stream is a server we did not see restart —
+ *  claiming a loss there would be inventing a number, so it resets and says nothing.
+ *
+ *  A non-zero `lost` means the record has a hole, which is the same claim a sampling gap makes and must be
+ *  drawn the same way: `segments()` breaks the line rather than interpolating across frames that never
+ *  arrived. Dropping frames is exactly when memory is moving fastest, so a line drawn across one is confidently
+ *  wrong about the interval it is least entitled to speak for. */
+export function lostSince(prev: number, frame: ResourceFrame): { lost: number; seen: number } {
+    const now = typeof frame.dropped === "number" && frame.dropped >= 0 ? Math.floor(frame.dropped) : prev;
+    if (frame.kind === "hello") return { lost: 0, seen: now };
+    if (now < prev) return { lost: 0, seen: now };
+    return { lost: now - prev, seen: now };
 }

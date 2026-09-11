@@ -216,6 +216,100 @@ export interface ModelResidency {
      *  default, exactly like `gpus[].memory` — the engine states the assignment only at a verbosity that also
      *  emits about a line per tensor, so it is opt-in. Treat missing as "not reported" and draw without it. */
     placement?: LayerPlacement;
+    /** WHAT THE RUNNER IS DOING, and how full its KV cache is. Absent means the runner could not be asked,
+     *  which is a different thing from `phase: "idle"` — and the difference matters, because idle is the
+     *  answer that carries the occupancy figure. */
+    activity?: RunnerActivity;
+}
+
+/** What the engine is doing with a model right now, from `llama-server`'s `/slots`.
+ *
+ *  Two DIFFERENT KINDS of fact live in here and must not be read alike. `promptTokens` is OCCUPANCY: it is
+ *  `n_past`, it survives the task that filled it, and it is the honest answer to "would less context help".
+ *  Everything else describes the task IN FLIGHT, and the server clears those the moment it ends — so on an
+ *  idle runner they are absent while `promptTokens` still stands, describing the LAST task. Reading a
+ *  `promptTokens` on an idle runner as work in progress is the one mistake this shape invites. */
+export interface RunnerActivity {
+    /** `prefill` reads the prompt, `decode` generates, `idle` is neither. The discriminator for everything
+     *  else here: while idle, the in-flight counts are gone and only the occupancy is meaningful. */
+    phase: "prefill" | "decode" | "idle";
+    /** Slots on this runner, and how many are working. `slots` is 1 on all hardware this has been seen on,
+     *  so a `slotsBusy` above 1 is untested rather than impossible. */
+    slots: number;
+    slotsBusy: number;
+    /** `n_past` — tokens resident in the KV cache. Against `contextLength` it is the occupancy, and that
+     *  denominator is the PER-SLOT context the server already divided, so no arithmetic is owed here. */
+    promptTokens?: number;
+    /** How much of the prompt has been read, in the engine's batch-sized steps. Prefill PROGRESS, so a
+     *  prefill can be drawn filling rather than as an opaque block. Absent once the task ends. */
+    promptTokensDone?: number;
+    /** How much of the prompt came from the prefix cache and was never computed. This is the explanation for
+     *  a prefill too short to draw: measured on the box, a repeat of the same 4098-token prompt hit 4097 of
+     *  them, leaving one token to compute — so the phase did not last long enough to be sampled at all. An
+     *  impossibly fast prompt is a cache hit, not a broken clock, and this is the field that says so. */
+    promptTokensCached?: number;
+    /** Tokens generated so far for the task in flight. Absent once it ends. */
+    decoded?: number;
+}
+
+/** Parse a server `activity` object, or null when it is absent or unusable.
+ *
+ *  Absent is NOT idle. The server omits the whole object when it could not ask the runner — a model still
+ *  loading, a backend with no `/slots`, a failed poll, any build before it read them — and `idle` is a
+ *  positive answer with an occupancy figure attached. Collapsing the two would draw a full cache as an empty
+ *  one on every unpatched server, which is the same "absent is never zero" rule `memory` follows.
+ *
+ *  The counts are `omitempty` on the wire, so a missing one is genuinely zero for an in-flight task and is
+ *  simply gone once the task ends. They are kept OPTIONAL rather than defaulted to 0 for that second case:
+ *  an idle runner reporting `decoded: 0` would read as a generation that has produced nothing yet. */
+export function activityFrom(raw: unknown): RunnerActivity | null {
+    if (!raw || typeof raw !== "object") return null;
+    const a = raw as Record<string, unknown>;
+    const phase = a.phase === "prefill" || a.phase === "decode" || a.phase === "idle" ? a.phase : null;
+    if (!phase) return null;   // an unrecognised phase is not a fourth state to invent a rendering for
+    const n = (k: string) => (typeof a[k] === "number" && Number.isFinite(a[k]) && (a[k] as number) >= 0
+        ? Math.floor(a[k] as number) : undefined);
+    const out: RunnerActivity = {
+        phase, slots: n("slots") ?? 1, slotsBusy: n("slots_busy") ?? 0,
+    };
+    const past = n("prompt_tokens"), done = n("prompt_tokens_done");
+    const cached = n("prompt_tokens_cached"), dec = n("decoded");
+    if (past !== undefined) out.promptTokens = past;
+    // The in-flight counts are meaningless once the task is over, and the server already drops them — but an
+    // older or oddly-behaved build that keeps them would have this UI drawing the last task as a live one.
+    // Phase is the discriminator the server intends, so it is applied here rather than trusted to hold.
+    if (phase !== "idle") {
+        if (done !== undefined) out.promptTokensDone = done;
+        if (cached !== undefined) out.promptTokensCached = cached;
+        if (dec !== undefined) out.decoded = dec;
+    }
+    return out;
+}
+
+/** KV cache occupancy as a fraction, or null when either half is unknown.
+ *
+ *  The denominator is the model's own `context_length`, which is the PER-SLOT window the server has already
+ *  divided by the parallel slot count — so this is a straight ratio and dividing again would be wrong. Null
+ *  rather than 0 when there is nothing to divide: a model whose runner cannot be asked has an UNKNOWN cache,
+ *  and an empty bar is a claim about memory nobody measured. */
+export function kvOccupancy(r: { activity?: RunnerActivity; contextLength: number | null }): number | null {
+    const past = r.activity?.promptTokens;
+    const ctx = r.contextLength;
+    if (past === undefined || !ctx || ctx <= 0) return null;
+    return Math.min(1, past / ctx);
+}
+
+/** A fraction as a percentage for a chip, where 0 and "nearly 0" must not read the same.
+ *
+ *  A cache holding 30 of 262,144 tokens rounds to 0%, and "0%" beside a reserved 40 GiB says the cache is
+ *  EMPTY — which is the answer the reader is about to act on, and it is wrong. `<1%` is the same
+ *  glance-width and says the true thing. Zero itself still prints `0%`: an empty cache is a real reading and
+ *  hedging it would throw away the one case the number is exactly right about. */
+export function fmtOccupancy(frac: number): string {
+    const pct = frac * 100;
+    if (pct > 0 && pct < 1) return "<1%";
+    if (pct < 100 && pct > 99) return ">99%";
+    return `${Math.round(pct)}%`;
 }
 
 /** Which layers a model put on which device. */
@@ -310,6 +404,15 @@ export interface ResourceSample {
      *  panel said exactly that: "unattributed 87.82 GiB", beside a model row calling the model off-box. Both
      *  claims came from treating an absence as a measurement. This is the evidence that it is neither. */
     loading?: string[];
+    /** The record has a HOLE immediately before this sample — the stream told us it dropped frames for us
+     *  (`lostSince`), so what happened between the previous reading and this one was never delivered.
+     *
+     *  It is a separate fact from a sampling gap and cannot be derived from the timestamps: the two readings
+     *  either side of a drop can be milliseconds apart, so `maxGapMs` sees nothing wrong and draws a straight
+     *  line across the interval the server has just said it cannot account for. Frames are dropped when a
+     *  subscriber falls behind, which is when the box is busiest — so the line would be interpolated over
+     *  exactly the movement it exists to show. */
+    gapBefore?: true;
 }
 
 /** Raw `/api/ps` entry → residency. `gpus` is ABSENT for a CPU-resident model — that is the contract, and it
@@ -791,7 +894,10 @@ export function segments(samples: ResourceSample[], maxGapMs: number = MAX_SAMPL
     let run: ResourceSample[] = [];
     for (const s of samples) {
         const prev = run[run.length - 1];
-        if (prev && s.t - prev.t > maxGapMs) { out.push(run); run = []; }
+        // A REPORTED hole breaks the run as surely as a measured one. `gapBefore` is the stream saying it lost
+        // frames on our behalf, and it is checked separately from the interval because a drop leaves no
+        // interval to notice: the readings either side can be adjacent in time.
+        if (prev && (s.gapBefore || s.t - prev.t > maxGapMs)) { out.push(run); run = []; }
         run.push(s);
     }
     if (run.length) out.push(run);

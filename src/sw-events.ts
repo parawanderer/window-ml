@@ -9,7 +9,7 @@
 // rather than fatal BECAUSE the server retains a ring: a reconnect asks `?since=<the gap>` and the
 // backfill closes it, so an eviction costs latency and not history. `sinceFor` is where that is decided.
 import { getConfig, authHeaders, findOllamaBase } from "./sw-llm";
-import { readFrames, sinceFor, loadedFrom, type ResourceFrame } from "./resource-events";
+import { readFrames, sinceFor, loadedFrom, lostSince, type ResourceFrame } from "./resource-events";
 
 /** What a subscriber receives. `at` is the frame's own wall clock, resolved from this connection's hello,
  *  so nothing downstream ever sees a relative offset. `loaded` is filled for a `sample` frame — the panel
@@ -24,6 +24,11 @@ export interface ResourceStreamMessage {
     unsupported?: string;
     /** The connection dropped and is being retried. The panel keeps what it has and marks nothing new. */
     interrupted?: string;
+    /** How many frames the server dropped for THIS subscriber immediately before this one — the delta of its
+     *  cumulative counter, resolved here because the counter belongs to the connection and one connection
+     *  feeds every open panel. Non-zero means the record has a hole and the trace must BREAK there rather
+     *  than interpolate across frames that never arrived. */
+    lost?: number;
 }
 
 /** What the connection has DONE, for anything that needs to ask from outside — a live probe, a future panel
@@ -38,12 +43,16 @@ export interface ResourceStreamStatus {
     /** Frame kinds seen, with counts — the quickest read on whether EDGES are arriving or only samples. */
     kinds: Record<string, number>;
     lastAt: number | null;
+    /** Frames the server dropped for us, summed across every connection this worker has held. A non-zero value
+     *  is the honest answer to "why does the chart have a hole there" — it says the record is incomplete rather
+     *  than that the box was quiet, which is the one thing a gap alone cannot distinguish. */
+    lost: number;
     /** Why it is not carrying, when it is not. `unsupported` is the ordinary stock-Ollama answer, not a fault. */
     note: string | null;
     unsupported: boolean;
 }
 const status: ResourceStreamStatus = {
-    connected: false, subscribers: 0, frames: 0, samples: 0, kinds: {}, lastAt: null, note: null, unsupported: false,
+    connected: false, subscribers: 0, frames: 0, samples: 0, kinds: {}, lastAt: null, lost: 0, note: null, unsupported: false,
 };
 export const resourceStreamStatus = (): ResourceStreamStatus => ({ ...status, kinds: { ...status.kinds } });
 
@@ -101,6 +110,9 @@ async function connect(): Promise<void> {
     const decoder = new TextDecoder();
     let buffer = "";
     let helloAt: number | null = null;
+    // Per CONNECTION, because `dropped` is per subscriber and restarts at zero on a reconnect. A module-level
+    // counter would read the new connection's 0 as the old one's count going backwards.
+    let seenDropped = 0;
     attempt = 0;   // a connection that produced a readable stream resets the backoff
     for (;;) {
         const { value, done } = await reader.read();
@@ -122,8 +134,12 @@ async function connect(): Promise<void> {
             if (frameRing.length > FRAME_RING) frameRing.splice(0, frameRing.length - FRAME_RING);
             status.kinds[frame.kind] = (status.kinds[frame.kind] || 0) + 1;
             if (frame.kind === "sample") status.samples++;
+            const { lost, seen } = lostSince(seenDropped, frame);
+            seenDropped = seen;
+            status.lost += lost;
             fan({
                 frame, at,
+                ...(lost ? { lost } : {}),
                 ...(frame.kind === "sample" ? {
                     loaded: loadedFrom((frame.ps?.models as unknown[]) || []),
                     info: frame.info ?? null,

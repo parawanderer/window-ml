@@ -543,3 +543,79 @@ test("the event lane is resizable, and its content never resizes the charts abov
         expect(scrolls || (await rowsH()) > 40, "the lane has content to bound").toBe(true);
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+// `dropped` — a hole in the record that no timestamp can see.
+//
+// The stream reports, cumulatively per subscriber, how many frames it lost when we stopped reading fast
+// enough. Nothing read it. So under a burst the panel drew a continuous line across frames that never
+// arrived, which is exactly the claim `segments()` refuses to make about a sampling gap — and a worse one:
+// frames are dropped when the subscriber is behind, which is when the box is busiest, so the interpolation
+// lands on the movement the chart exists to show. The two readings either side can be an ordinary two
+// seconds apart, so the interval alone says nothing is wrong.
+test("frames the server says it dropped break the line, not interpolate across it", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+
+        const TOTAL = 101_959_499_776, VRAM = 20 * 1024 ** 3, MODEL = "gemma4:31b";
+        const info = () => ({
+            version: "0.0.0", models: { running: 1, vram_used: VRAM },
+            compute: {
+                system_compute: { cpu_cores: 32, total_memory: 130_142_785_536, free_memory: 100 * 1024 ** 3 },
+                supported_gpus: [{
+                    gpu_id: "0", name: "CUDA0", runner: "CUDA", compute: "12.0", driver: "13.2",
+                    total_memory: TOTAL, physical_memory: 102_641_958_912, free_memory: TOTAL - VRAM,
+                }],
+            },
+        });
+        const ps = () => ({ models: [{
+            model: MODEL, name: MODEL, size: VRAM, size_vram: VRAM, context_length: 8192,
+            expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+            gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: VRAM }],
+        }] });
+
+        fake.setEvents([{ v: 1, kind: "hello", t: 0, box: "test", retainedMs: 60_000, dropped: 0 },
+            { v: 1, kind: "sample", t: -2000, ps: ps(), info: info(), dropped: 0 }]);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-seg").count(), { timeout: 25000 }).toBeGreaterThan(0);
+
+        // A run of ordinary samples FIRST, so the baseline is a single unbroken segment per track. Without
+        // this the test could not tell "the drop split the line" from "the line was already in pieces".
+        //
+        // Frame time is PACED to the wall clock. A frame's `t` is resolved against its connection's hello, so
+        // pushing 1s apart in frame time while sleeping 200ms puts every later sample in the FUTURE — outside
+        // a window that ends now, which silently drops exactly the samples the assertion is about.
+        const STEP = 350;
+        let t = 0;
+        const push = async (dropped) => {
+            t += STEP;
+            fake.pushFrame({ v: 1, kind: "sample", t, ps: ps(), info: info(), dropped });
+            await sleep(STEP);
+        };
+        const segs = () => frame.locator(".rc-plot").first().locator(".rc-seg").count();
+        for (let i = 0; i < 3; i++) await push(0);
+        expect(await segs(), "an ordinary cadence draws ONE run").toBe(1);
+
+        // …now a frame saying three went missing. Same cadence as every sample before it, well inside
+        // `maxGapMs`, so nothing about WHEN this one arrived is unusual. The only news is the counter, and
+        // the line must break on that alone.
+        await push(3);
+        await push(3);
+        expect(await segs(), "the reported hole splits the run").toBe(2);
+
+        // AND THE SAME COUNT IS NOT A SECOND HOLE. The counter is cumulative, so every frame after a drop
+        // carries it — read as a value rather than a delta, the chart would break at every subsequent
+        // sample and end up in permanent pieces after one hiccup, which teaches a reader to ignore breaks.
+        for (let i = 0; i < 3; i++) await push(3);
+        expect(await segs(), "the standing count must not break the line again").toBe(2);
+
+        // The worker counted it, which is what `ml.__events()` reports when the drawn picture is in question.
+        const lost = await ext.sw.evaluate(() => globalThis.__mlResourceStream?.status()?.lost);
+        expect(lost, "the connection reports what it lost").toBe(3);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
