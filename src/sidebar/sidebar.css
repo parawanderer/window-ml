@@ -2924,6 +2924,10 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    but flat, faint and dashed along the top, because reading it as any one part is the mistake it exists to
    avoid. */
 .rc-part-unsplit { stroke: var(--fg-faint); stroke-width: 1; stroke-dasharray: 3 3; opacity: .5; }
+/* A LOAD IN FLIGHT, inside the drilled-in view: memory arriving on the card for this model before any runner
+   exists to attribute it (`pendingAllocation`). Faint, with a dashed top in the model's colour — the model's
+   load, but nothing the server has yet said the model holds. */
+.rc-part-pending { stroke: var(--model); stroke-width: 1; stroke-dasharray: 3 3; opacity: .55; }
 /* WHAT ONE GENERATION LEFT IN THE KV CACHE (`KvFill`), over the drilled-in cache part while its lane span is
    hovered. The layers are told apart by TEXTURE and weight of the model's own colour, the same weights its lane
    phases use: the reused prefix DOTTED (it cost no prefill), the prompt computed this turn DENSE, the decode

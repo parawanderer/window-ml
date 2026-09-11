@@ -117,6 +117,18 @@ test("a load span is drawn with its two halves, and named as them", async () => 
         const ruleTip = frame.locator(".rc-tip-event");
         await expect(ruleTip).toBeVisible({ timeout: 5000 });
         expect(await ruleTip.textContent()).toMatch(/weights loaded/);
+
+        // ONE SET OF KIND TOGGLES, obeyed everywhere: unticking "loads" in the chart's gear takes the load
+        // steps off the plot AND the load bars out of the lane — the lane's chips and the gear are two views of
+        // the same switch, so neither surface can show what the other has hidden.
+        await frame.locator('[aria-label="Edit tracks"]').click();
+        const loadsBox = frame.locator(".rc-editor .rc-eopt", { hasText: /^\s*loads\s*$/ }).locator("input");
+        await expect(loadsBox).toBeChecked({ timeout: 5000 });
+        await loadsBox.uncheck();
+        await expect.poll(() => rules.count(), { timeout: 5000 }).toBe(0);
+        expect(await frame.locator(".rc-ev-load").count(), "the lane's load bars go with them").toBe(0);
+        await loadsBox.check();
+        await expect.poll(() => rules.count(), { timeout: 5000 }).toBeGreaterThanOrEqual(2);
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
@@ -324,6 +336,58 @@ test("a prompt-cache swap is drawn before the prefill, says what it did, and the
         const th = await text(0);
         expect(th).toMatch(/not in RAM — read from scratch/);
         expect(th).toMatch(/evicted 3 conversations \(6\.91 GiB\) to make room/);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// A LOAD'S ALLOCATION CURVE SURVIVES DRILLING IN. For most of a load there is no runner, so the memory arriving
+// is only the card's unattributed residual; the drilled-in view drew only what IS attributed, so it showed the
+// model appearing at full size and dropped the curve the reader zoomed in to see.
+test("drilled into a model, its load's allocation curve is still drawn before the runner exists", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false, ml_res_layout: { presetId: "custom", tracks: [
+            { id: "card", series: ["vram.0"], mode: "stack", heightPx: 140 }] } }));
+        const GiB = 1024 ** 3, TOTAL = 101_959_499_776, MODEL = "granite4.1:3b", FQ = `registry.ollama.ai/library/${MODEL}`;
+        const memory = { weights: 2 * GiB, kv_cache: 10 * GiB, compute: 1 * GiB };
+        const info = (used) => ({ version: "0.0.0", models: { running: 0, vram_used: 0 }, compute: {
+            system_compute: { cpu_cores: 32, total_memory: 130_142_785_536, free_memory: 100 * GiB },
+            supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: TOTAL, physical_memory: 102_641_958_912, free_memory: TOTAL - used }] } });
+        const ps = (resident) => ({ models: resident ? [{ model: MODEL, name: MODEL, size: 13 * GiB, size_vram: 13 * GiB, context_length: 131072, memory,
+            expires_at: new Date(Date.now() + 5 * 60_000).toISOString(), gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: 13 * GiB, memory }] }] : [] });
+        fake.setEvents([{ v: 1, kind: "hello", t: 0, box: "test", retainedMs: 60_000 }, { v: 1, kind: "sample", t: -2000, ps: ps(false), info: info(0.6 * GiB) }]);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-seg").count(), { timeout: 25000 }).toBeGreaterThan(0);
+
+        const STEP = 350;
+        let t = 0;
+        const sample = async (resident, used) => { t += STEP; fake.pushFrame({ v: 1, kind: "sample", t, ps: ps(resident), info: info(used) }); await sleep(STEP); };
+        for (let i = 0; i < 3; i++) await sample(false, 0.6 * GiB);
+        // THE LOAD: no runner, so /api/ps has no row while the card's free memory falls — weights, then context.
+        fake.pushFrame({ v: 1, kind: "load.start", t: t + 10, model: FQ });
+        for (const used of [2, 3, 7, 11, 13.6]) await sample(false, used * GiB);
+        fake.pushFrame({ v: 1, kind: "load.weights", t: t - 3 * STEP, model: FQ, size_vram: 2 * GiB });
+        fake.pushFrame({ v: 1, kind: "load.complete", t: t + 10, model: FQ, weights_ms: 3 * STEP, context_ms: 2 * STEP, size_vram: 13 * GiB });
+        for (let i = 0; i < 4; i++) await sample(true, 13.6 * GiB);
+
+        // DRILL IN with the keys: pick the model, then dig in.
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.9, plot.y + plot.height * 0.5);
+        await sleep(300);
+        await page.keyboard.press("ArrowDown");
+        await sleep(250);
+        await page.keyboard.press("ArrowRight");
+        await expect.poll(() => frame.locator(".rc-track.deep").count(), { timeout: 5000 }).toBeGreaterThan(0);
+        // The allocation is drawn — memory arriving for this model before any runner could say it was the model's.
+        await expect.poll(() => frame.locator(".rc-track.deep .rc-part-pending").count(), { timeout: 5000 }).toBeGreaterThan(0);
+        const pts = await frame.locator(".rc-track.deep .rc-part-pending").first().getAttribute("points");
+        const tops = pts.split(" ").map((p) => p.split(",").map(Number));
+        // The SVG's own height is 72 (the baseline); a point above it is memory drawn.
+        expect(Math.min(...tops.map(([, y]) => y)), "it rises above the baseline").toBeLessThan(72);
     } finally { await ext.context.close(); await fake.stop(); }
 });
 

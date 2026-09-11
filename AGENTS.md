@@ -1335,10 +1335,17 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   totals), and events carry a lineage (`id`/`parent`); hovering one lights its chain and dims the rest.
   Ancestors go all the way up; descendants come only from the hovered event, or one sub-call lights every
   sibling step.
-- **The axis is NOT linear in time** (`placeEvents`): the plot is segmented by gaps and each segment is
-  flex-weighted by sample count, so an event is placed inside the run that CONTAINS it, one that falls in a
-  gap is dropped (nothing was measured then), and the window admits a poll's grace past the last sample —
-  without it the newest events, the ones you are watching for, were the only ones that never appeared.
+- **The axis is LINEAR IN TIME within each run of samples; only GAPS collapse** (`runWeight`, `runFrac`). A
+  run is as wide as it is long and a time sits linearly across it, and EVERY mapping between the screen and
+  time goes through those two — the bands, the lines, the cache fill, event placement, the crosshair, the snap
+  and the selection — so none can disagree. It used to space samples EVENLY (sample i at i/(n-1), runs
+  weighted by sample count). Harmless under a fixed 2 s poll; under the stream's adaptive cadence (250 ms
+  during a load, 1 s working, 15 s idle) busy stretches stretched and idle ones shrank, scrolling changed the
+  mix of samples in view and so the warp — the chart "compressing at random" — and events, which `placeEvents`
+  placed linearly while the bands were drawn by index, landed at the right TIME and the wrong PLACE (an unload
+  ruled over a band still resident). A gap still breaks the line and takes no width, because nothing was
+  measured there. An event is placed inside the run that CONTAINS it, one in a gap is dropped, and the window
+  admits a poll's grace past the last sample — without it the newest events were the only ones never shown.
 - **Instants rule through the plot** (dashed — a solid line reads as part of the chart), and one eviction is
   drawn in every track, so hovering it anywhere thickens it everywhere. **So do a load's two internal edges**
   (`loadEdges`): weights loaded, then KV cache and compute buffers allocated (ready to serve), each with the
@@ -1360,6 +1367,11 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
 - **The lane and the model list each hide** (Settings live in the panel's own track editor, beside which
   tracks it draws — the same question). Both compete with the chart for whatever height the panel was
   dragged to, and which of the three you want depends on what you are doing.
+- **ONE set of event-kind toggles, obeyed everywhere** (`LANE_KINDS`, `toggleLaneKind`): the lane's bars, the
+  scrub strip's ticks and the rules ruled through the plots all read `laneHidden`, switched from the lane's
+  chip row OR the chart's gear (the lane is collapsed by default, which left the chart's lines with no control).
+  Unticking "loads" removes the load bars and the load-step rules together. Deliberately not a second,
+  chart-only set: that would let one surface show what another has hidden.
 - **A load ATTEMPT is not the request.** The server ends a `load.failed` reason with `; retrying` when it
   evicted something or shrank the context and is trying again, and the next attempt brings its own
   `load.start` — so one request reads start → failed → start → complete. It is labelled "load attempt failed,

@@ -2744,7 +2744,13 @@ test("resource panel: the crosshair does not cut the mark's ring", async () => {
         // the one this measures.
         await frame.locator(".rc-band").first().hover();
         await expect.poll(() => frame.locator(".rc-snapdot").count(), { timeout: 10000 }).toBe(1);
-        const dot = await frame.locator(".rc-snapdot").first().boundingBox();
+        // Then ONTO the sample it snapped to. The axis is linear in time, so the nearest sample can be tens of
+        // pixels from where the pointer landed — and the tip, placed against the POINTER, then sat over the
+        // line above the mark, hiding the premise below rather than failing the claim.
+        const snapped = await frame.locator(".rc-snapdot").first().boundingBox();
+        const bandBox = await frame.locator(".rc-band").first().boundingBox();
+        await page.mouse.move(snapped.x + snapped.width / 2, bandBox.y + bandBox.height / 2);
+        await sleep(200);
         expect(await frame.locator(".rc-cross").count(), "the line is drawn, or there is nothing to be cut BY")
             .toBeGreaterThan(0);
 

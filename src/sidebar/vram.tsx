@@ -26,7 +26,7 @@ export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, dropInferredLoads, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
 import { parseInfo, holdCapacity, memorySplit, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, joinGens, rooflineFrom, kindRefusal } from "../resource-model";
-import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay } from "./resource-chart";
+import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay, LANE_KINDS, toggleLaneKind } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
 /** Is this model resident right now? `undefined` when we have no `/api/ps` answer yet — the caller must not
@@ -1436,6 +1436,18 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
                         onChange={() => setSections(laneEnabled.value, !showModels.value)} />
                     model list
                 </label>
+            </div>
+            {/* WHICH EVENTS ARE DRAWN — the lane's bars, the strip's ticks and the lines ruled through the chart,
+                all at once, because it is the same set the lane's chip row switches. Here as well as there because
+                the lane is collapsed by default, which left the chart's lines with no control at all. */}
+            <div class="rc-erow rc-esections">
+                <span class="rc-esection-label">Events</span>
+                {LANE_KINDS.map(({ kind, label }) => (
+                    <label class="rc-eopt" key={kind}>
+                        <input type="checkbox" checked={!laneHidden.value.includes(kind)} onChange={() => toggleLaneKind(kind)} />
+                        {label}
+                    </label>
+                ))}
             </div>
             {/* HOW THE CHART BEHAVES UNDER THE POINTER, beside what it draws — the same question, answered in
                 the same place. It was in Settings → Appearance, which is a surface you have to LEAVE the chart

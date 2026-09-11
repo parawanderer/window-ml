@@ -742,24 +742,25 @@ test("lineageOf: an event, what spawned it, and what it spawned", () => {
 // sample count, so a fraction is spent across them in those proportions and interpolated inside the one it
 // lands in. Getting this wrong makes a zoom select a different stretch than the one you dragged over.
 test("timeAtFraction: the inverse of placeEvents, across weighted segments", () => {
-    // Two runs: four samples over 3s, then two samples over 1s after a gap. Weights 4 and 2 → 2/3 and 1/3.
+    // Two runs: 3 s of samples, then 1 s after a gap. The axis is LINEAR IN TIME within a run and each run is as
+    // wide as it is LONG (the gap collapses), so the weights are 3 and 1 → three quarters and one quarter.
     const runs = [
         [{ t: 1000 }, { t: 2000 }, { t: 3000 }, { t: 4000 }],
         [{ t: 10_000 }, { t: 11_000 }],
     ];
     assert.equal(M.timeAtFraction(runs, 0), 1000, "the left edge is the first sample");
     assert.equal(M.timeAtFraction(runs, 1), 11_000, "the right edge is the last");
-    // A third of the way is halfway through the FIRST segment (which owns two thirds of the width).
-    assert.equal(M.timeAtFraction(runs, 1 / 3), 2500);
-    // AT the boundary between segments the answer is the last measured moment before the gap, never a time
+    // Three eighths of the way is halfway through the FIRST run (which owns three quarters of the width).
+    assert.equal(M.timeAtFraction(runs, 3 / 8), 2500);
+    // AT the boundary between runs the answer is the last measured moment before the gap, never a time
     // interpolated across it — nothing was measured there, so there is no honest value inside it.
-    assert.equal(M.timeAtFraction(runs, 2 / 3), 4000);
-    assert.equal(M.timeAtFraction(runs, 0.7), 10_100, "past it, inside the second segment");
-    assert.equal(M.timeAtFraction(runs, 5 / 6), 10_500);
+    assert.equal(M.timeAtFraction(runs, 3 / 4), 4000);
+    assert.equal(M.timeAtFraction(runs, 0.8), 10_200, "past it, inside the second run");
+    assert.equal(M.timeAtFraction(runs, 7 / 8), 10_500);
     // It round-trips with placeEvents: an event placed at a fraction reads back as its own time.
     const ev = { t: 2500, kind: "note", label: "x" };
     const [p] = M.placeEvents(runs, [ev]);
-    const overall = (p.run === 0 ? 0 : 2 / 3) + p.from * (p.run === 0 ? 2 / 3 : 1 / 3);
+    const overall = (p.run === 0 ? 0 : 3 / 4) + p.from * (p.run === 0 ? 3 / 4 : 1 / 4);
     assert.ok(Math.abs(M.timeAtFraction(runs, overall) - 2500) < 1);
     // Out of range clamps rather than extrapolating into time that was never on screen.
     assert.equal(M.timeAtFraction(runs, -3), 1000);
@@ -2433,16 +2434,38 @@ test("loadEdges: a server-split load rules its two steps through the plot, with 
     void GiB;
 });
 
-test("placeEvents on an ADAPTIVE cadence: an event lands where the band it belongs to is drawn, and round-trips", () => {
-    // The stream samples every 250 ms during a load and every 15 s idle. Bands are drawn by sample INDEX, so the
-    // 15 s idle stretch is ONE interval wide while the load's second is four. An unload at 8 s sits a third of
-    // the way into that idle interval — between samples 3 and 4 — which is 87% across the run as drawn. Placed
-    // linearly in time it went to 51%: the right time, over a band that was still resident.
+test("the axis is LINEAR IN TIME on an adaptive cadence: an event, a sample and the crosshair agree", () => {
+    // The stream samples every 250 ms during a load and every 15 s idle. The axis used to space samples evenly,
+    // so the load's one second took four fifths of the run and the 15 s idle stretch one fifth — the chart
+    // compressed at random as the mix of samples in view changed, and an unload was ruled over a band that was
+    // still resident. Linear in time, 8 s into a 15.75 s run is 8/15.75 of the way, wherever the samples fall.
     const run = [{ t: 0 }, { t: 250 }, { t: 500 }, { t: 750 }, { t: 15_750 }];
     const [p] = M.placeEvents([run], [{ t: 8000, kind: "evict", label: "unloaded" }]);
-    assert.ok(Math.abs(p.from - (3 + 7250 / 15000) / 4) < 1e-12, `placed at ${p.from}`);
-    // The EXACT inverse of the crosshair's reading: a rule placed at a fraction reads back as its own time.
+    assert.ok(Math.abs(p.from - 8000 / 15_750) < 1e-12, `placed at ${p.from}`);
+    // A sample's position is its time's position — the same mapping the bands are drawn with (`runFrac`).
+    assert.equal(M.runFrac(run, 750), 750 / 15_750);
+    // The crosshair's time and the placement round-trip exactly.
     assert.ok(Math.abs(M.timeAtFraction([run], p.from) - 8000) < 1e-9);
-    // And a sample's own time lands exactly on that sample's drawn position.
-    assert.equal(M.placeEvents([run], [{ t: 750, kind: "note", label: "x" }])[0].from, 3 / 4);
+    // The DATAPOINT under a position is the one nearest in TIME — at 8 s, sample 750 (7.25 s away) rather than
+    // 15 750 (7.75 s away) — and snapping lands exactly on where that sample is drawn.
+    assert.equal(M.sampleAtFraction([run], p.from).t, 750);
+    const snap = M.snapFraction([run], p.from);
+    assert.deepEqual([snap.index, snap.frac], [3, 750 / 15_750]);
+    // A run is as wide as it is LONG: a 1 s run beside a 3 s one takes a quarter of the width.
+    assert.deepEqual([M.runWeight([{ t: 0 }, { t: 1000 }]), M.runWeight([{ t: 0 }, { t: 3000 }]), M.runWeight([{ t: 5 }])], [1000, 3000, 1]);
+});
+
+test("pendingAllocation: a loading model's memory is its own before the runner exists to say so", () => {
+    const GiB = 1024 ** 3;
+    const other = (b) => ({ key: "other", label: "driver overhead", kind: "other", bytes: b });
+    const model = (b) => ({ key: "model:m", label: "m", kind: "model", model: "m", bytes: b });
+    // Driver context 0.6 GiB; a load from t=1000 to t=3500 lands weights then context in the residual; at t=4000
+    // the runner exists and the model's band takes it over.
+    const times = [0, 1000, 2000, 3000, 3500, 4000];
+    const frames = [[other(0.6 * GiB)], [other(0.6 * GiB)], [other(4 * GiB)], [other(10 * GiB)], [other(12.6 * GiB)], [other(0.6 * GiB), model(12 * GiB)]];
+    const got = M.pendingAllocation(frames, times, "m", [{ t: 1000, until: 3500 }]);
+    assert.deepEqual(got.map((b) => b / GiB).map((x) => Math.round(x * 10) / 10), [0, 0, 3.4, 9.4, 12, 0],
+        "the growth above the pre-load residual, until the model's own band appears — never both");
+    // No load of this model (the caller passes that model's loads only): nothing is attributed to it.
+    assert.deepEqual(M.pendingAllocation(frames, times, "m", []), [0, 0, 0, 0, 0, 0]);
 });
