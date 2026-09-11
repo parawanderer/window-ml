@@ -2148,6 +2148,15 @@ BACKGROUND (`gh pr checks --watch`, ~5 minutes for a full run), read only the fa
 KNOWN-BAD failures that arrived from other branches, so a red check that is not yours is named in the PR
 body rather than chased or silently re-run.
 
+**And the `background-work` skill (`.claude/skills/background-work/SKILL.md`) is how to run ANY slow
+thing** — CI, an e2e suite (~10 min), a bench sweep — without stalling the session: start it with
+`run_in_background: true` and go and do other work, because the harness re-invokes you when it exits.
+The mistake it exists for is subtler than forgetting to background something: it is backgrounding it
+and then blocking on its output file anyway (`until [ -s "$OUT" ]; do sleep 20; done`), which is a
+foreground wait wearing a disguise and happened four times in one session. It also holds the
+`dist/`-rebuild hazard — never build while an e2e suite is running, since the suite loads the bundle
+you are replacing.
+
 ## Forked backends (two features need a patched server)
 
 Most of this runs against stock Ollama + stock OpenWebUI. Three capabilities do not, and

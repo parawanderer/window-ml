@@ -68,6 +68,13 @@ both traps because it never trusts an exit code.
 **Do not run it in the foreground and wait.** Use `run_in_background: true` and carry on; the result
 arrives as a task notification. A full run of this workflow is ~5 minutes (matrix + build + e2e).
 
+**And having backgrounded it, do not then poll its output file.** `until [ -s "$OUT" ]; do sleep 20;
+done` is a foreground wait wearing a disguise, and it is the commoner mistake by far — it happens
+within a minute of correctly backgrounding the thing. Go and do other work; the notification will
+come. For a mid-flight peek, one plain `gh pr checks <PR>` is a snapshot and exits immediately.
+The general discipline, and the `dist/`-rebuild hazard that goes with it, is the `background-work`
+skill.
+
 ## Reading a failure
 
 ```bash
