@@ -125,3 +125,54 @@ test("python bench: the editor upgrades, highlights, completes, and runs", async
         await fake.stop();
     }
 });
+
+test("python bench: once the sandbox is warm, completion comes from Jedi — imports resolved, never run", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const { frame } = await openBench(fake, ext);
+        await frame.locator(".ced-cm .cm-editor").waitFor({ timeout: 15000 });
+        const content = frame.locator(".cm-content");
+
+        // WARM the sandbox with a run: completion is never what starts Pyodide (a keystroke must not pay a cold
+        // start, nor push the first Run behind one), so before this the editor has only its static list.
+        await content.click();
+        await content.press(SELECT_ALL);
+        await content.pressSequentially("return 1", { delay: 20 });
+        await content.press(MOD_ENTER);
+        await expect.poll(async () => frame.locator(".bench-outpane").innerText(), { timeout: 120000 }).toContain("1");
+
+        await content.press(SELECT_ALL);
+        await content.pressSequentially("import numpy as np\nnp.ar", { delay: 30 });
+        // The first request after warming LOADS Jedi (1.6 MB), which is longer than the editor waits, so it
+        // falls back — deliberately. Keep typing the way a person would until Jedi is the one answering.
+        await expect.poll(async () => {
+            await content.press("Backspace");
+            await content.pressSequentially("r", { delay: 30 });
+            await new Promise((r) => setTimeout(r, 700));
+            return frame.locator(".cm-tooltip-autocomplete li").allTextContents();
+        }, { timeout: 30000, intervals: [500] }).toEqual(expect.arrayContaining([expect.stringContaining("arange")]));
+        // numpy's `arange` is a MEMBER of the module — no static list offers that; this came from the sandbox.
+        // And it carries NO kind label: Jedi calls it a "module" (numpy 2's stubs defeat it), which is wrong, so
+        // an unverified kind is shown as nothing rather than as that.
+        await expect(frame.locator(".cm-tooltip-autocomplete li", { hasText: "arange" }).first().locator(".cm-completionDetail")).toHaveCount(0);
+        // Where Jedi IS sure, it says so: a real, loaded submodule.
+        await content.press("Escape");
+        await content.pressSequentially("\nnp.linal", { delay: 40 });
+        await expect.poll(() => frame.locator(".cm-tooltip-autocomplete li", { hasText: "linalg" }).first().locator(".cm-completionDetail").innerText().catch(() => ""),
+            { timeout: 10000 }).toBe("module");
+
+        // A member that does not exist gets NO popup — not builtins offered as attributes of `np`.
+        await content.press("Escape");
+        await content.pressSequentially("\nnp.zzqx", { delay: 40 });
+        await new Promise((r) => setTimeout(r, 900));
+        await expect(frame.locator(".cm-tooltip-autocomplete")).toHaveCount(0);
+    } finally {
+        await ext.context.close();
+        await fake.stop();
+    }
+});

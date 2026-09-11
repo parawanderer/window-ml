@@ -3715,3 +3715,35 @@ test("PYTHON_EXEC: the watchdog is on unless asked otherwise", async () => {
     const run = bg.pyRuns.find(m => m.type === "PY_RUN");
     assert.ok(run && !run.noTimeout, "absent, not false — the offscreen doc treats missing as capped");
 });
+
+// ---------------------------------------------------------------------------------------------------------
+// CODE COMPLETION is the bench EDITOR's, and only ours. It never runs the code, but it loads a package and reads
+// the one interpreter, so a page is refused outright rather than handed a new kind of request to the sandbox.
+
+test("SECURITY (PYTHON_EXEC): a PAGE cannot ask the sandbox for completions", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    const res = await bg.send(
+        { type: "PYTHON_EXEC", payload: { code: "import numpy as np\nnp.", complete: { line: 2, column: 3 } } },
+        { tab: { id: 9 }, url: "https://evil.example/attack" });
+    assert.match(String(res?.error), /Refused: code completion is a workbench feature/);
+    assert.equal(bg.pyRuns.filter(m => m.type === "PY_RUN").length, 0, "nothing reaches the sandbox");
+});
+
+test("PYTHON_EXEC: the bench's completion request is forwarded, HARDENED whatever it asked for", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    await bg.send(
+        // `hardened: false` is the attempt: completion may import a compiled module to inspect it, so it must
+        // not reach the network even when the bench itself is in full mode.
+        { type: "PYTHON_EXEC", payload: { code: "np.", hardened: false, complete: { line: "2", column: 3.7 } } },
+        { tab: { id: 9 }, url: "chrome-extension://test/sidebar.html" });
+    const run = bg.pyRuns.find(m => m.type === "PY_RUN");
+    assert.equal(run?.hardened, true, "always the hardened sandbox");
+    assert.deepEqual(run?.complete, { line: 2, column: 3 }, "coerced to integers — they are spliced into a Python call");
+});
+
+test("PYTHON_EXEC: an ordinary run carries no completion field", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    await bg.send({ type: "PYTHON_EXEC", payload: { code: "1+1" } }, { url: "chrome-extension://test/sidebar.html" });
+    const run = bg.pyRuns.find(m => m.type === "PY_RUN");
+    assert.ok(run && !("complete" in run), "absent, so the worker takes the RUN path");
+});

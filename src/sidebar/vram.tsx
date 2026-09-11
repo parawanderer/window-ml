@@ -19,6 +19,7 @@ import { IconWarn, IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevr
 import { Disclosure, cursorTipOn, TipText } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { CodeEditor } from "./code-editor";
+import type { RemoteCompletion } from "./code-editor-api";
 import { hhmmss } from "./timestamps";
 import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, type BenchRun } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
@@ -2182,6 +2183,25 @@ function loadBenchEnv(onErr?: (m: string) => void) {
     });
 }
 
+/** Jedi in the sandbox, as the bench editor's completion backend — module attributes, pandas frames, the
+ *  script's own names, and (once the bench keeps state) live objects. ONLY ONCE THE SANDBOX IS WARM: a
+ *  completion starts Pyodide when it is cold, and a keystroke must not be what pays that start, nor push your
+ *  first Run behind it — the same reason the environment is not read on mount. Until something has started
+ *  the sandbox, the editor keeps its static list. Resolves null rather than rejecting, so the editor's
+ *  fallback is the only failure path. */
+function completeInSandbox(code: string, line: number, column: number): Promise<RemoteCompletion[] | null> {
+    if (!benchEnv.value) return Promise.resolve(null);
+    return new Promise((resolve) => {
+        try {
+            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code, hardened: true, complete: { line, column } } }, (resp: any) => {
+                void chrome.runtime.lastError;   // a torn-down sandbox is a fallback, not a console error
+                const r = resp?.data;
+                resolve(r?.ok && Array.isArray(r.completions) ? r.completions : null);
+            });
+        } catch { resolve(null); }
+    });
+}
+
 /** WHAT THE SANDBOX IS — the Python and Pyodide versions and the packages you can import, read from the
  *  running interpreter rather than from our manifest (the manifest says what we ASKED for; the wheel that
  *  installed is what the code will import, and a panel reporting the first while the second differs is
@@ -2460,7 +2480,7 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                     {/* NO `onRun`: the bench owns ⌘/Ctrl+↵ from anywhere in the panel (`onBenchKey`), so the
                         editor claims the chord — CodeMirror would otherwise read it as "insert a blank line" —
                         and lets it bubble up to that one handler. Handing it onRun too would run twice. */}
-                    <CodeEditor class="bench-code" value={code} onChange={setCode} placeholder="return 6 * 7" />
+                    <CodeEditor class="bench-code" value={code} onChange={setCode} complete={completeInSandbox} placeholder="return 6 * 7" />
                 </div>
                 {/* THE OUTPUT PANE ARRIVES WITH THE FIRST RUN and never leaves. Before that the editor has the
                     whole bench: an empty pane with a line of placeholder in it is chrome promising something

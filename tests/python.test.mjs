@@ -473,3 +473,76 @@ test("a frame of ordinary values gains no markers at all", { skip }, async () =>
     const r = await pyRun("import pandas as pd\nreturn pd.DataFrame({'s': ['x', 'y'], 'n': [1, 2]})");
     assert.deepEqual(r.table.rows, [["x", 1], ["y", 2]]);
 });
+
+// ── THE BENCH EDITOR'S COMPLETION (Jedi) ──────────────────────────────────────────────────────────────────
+// Against the SHIPPED helper in real CPython. Lazy tooling, so its wheel may be absent from an older fetch:
+// these skip with the reason rather than failing.
+const hasJedi = hasPyodide && fs.readdirSync(PYODIDE_DIR).some((f) => f.startsWith("jedi-"));
+const skipJedi = skip || (hasJedi ? false : "no jedi wheel in dist/pyodide — re-run `npm run fetch-pyodide`");
+let completerLoaded = false;
+async function complete(code, namespace) {
+    const { COMPLETE_HELPER, completeIn } = await import("../src/python-runtime.ts");
+    if (!completerLoaded) { await py.loadPackage(["jedi"]); py.runPython(COMPLETE_HELPER); completerLoaded = true; }
+    const lines = code.split("\n");
+    if (namespace) return JSON.parse(py.runPython(`_ml_complete(${JSON.stringify(code)}, ${lines.length}, ${lines.at(-1).length}, ${namespace})`));
+    return completeIn(py, code, lines.length, lines.at(-1).length);
+}
+const names = (cs) => cs.map((c) => c.name);
+
+test("completion: a module attribute completes by following the import, without running it", { skip: skipJedi }, async () => {
+    assert.ok(names(await complete("import numpy as np\nnp.ara")).includes("arange"));
+    assert.ok(names(await complete("from numpy import lin")).includes("linspace"));
+});
+
+test("completion: a pandas frame completes from pandas' own stubs — even read_csv of a file that is not there", { skip: skipJedi }, async () => {
+    // `x.csv` does not exist: if this were evaluated it would raise, so an answer means it was inferred.
+    assert.ok(names(await complete("import pandas as pd\ndf = pd.read_csv('x.csv')\ndf.he")).includes("head"));
+});
+
+test("completion: the script's own functions and classes complete", { skip: skipJedi }, async () => {
+    assert.ok(names(await complete("def row_sums(m):\n    return m.sum(axis=1)\nrow_")).includes("row_sums"));
+    assert.ok(names(await complete("class P:\n    def area(self): return 1\np = P()\np.ar")).includes("area"));
+});
+
+test("completion: it NEVER runs the script being typed", { skip: skipJedi }, async () => {
+    py.runPython("import builtins\nbuiltins._ml_ran = False");
+    await complete("import builtins\nbuiltins._ml_ran = True\nx = 1\nx.");
+    assert.equal(py.runPython("import builtins\nbuiltins._ml_ran"), false);
+});
+
+test("completion: the sandbox is hardened only for the call, and restored after", { skip: skipJedi }, async () => {
+    const fetchBefore = globalThis.fetch;
+    await complete("import numpy as np\nnp.");
+    assert.equal(globalThis.fetch, fetchBefore, "a completion must not leave the next run without its network globals");
+});
+
+test("completion: a script full of quotes cannot break out of the call", { skip: skipJedi }, async () => {
+    const { completeIn } = await import("../src/python-runtime.ts");
+    await complete("x = 1");   // loads Jedi and the helper if this runs alone
+    // A payload that DOES run when the script is spliced into the call's source — its triple quote closes the
+    // literal, the call completes, the payload executes, and a fresh literal soaks up the template's closing
+    // quote (verified: a naive `_ml_complete('''<script>''', 2, 4)` sets the flag). Handed over as a global,
+    // as the shipped helper does, it is an ordinary comment and the line above it still completes.
+    py.runPython("import builtins\nbuiltins._ml_pwned = False");
+    const hostile = "s = 'abc'\ns.up\n# ''', 1, 0); import builtins; builtins._ml_pwned = True; _ml_complete('''";
+    assert.ok(completeIn(py, hostile, 2, 4).map((c) => c.name).includes("upper"));
+    assert.equal(py.runPython("import builtins\nbuiltins._ml_pwned"), false, "nothing in the script was executed");
+});
+
+test("completion: a numpy ARRAY needs the live namespace — static analysis cannot infer it (the persisted-bench seam)", { skip: skipJedi }, async () => {
+    const code = "import numpy as np\ngrid = np.arange(24).reshape(4, 6)\ngrid.su";
+    // Known and documented (python-runtime.ts): Jedi 0.19 cannot resolve numpy 2's stubs. If this starts
+    // returning something, a newer Jedi fixed it — update that comment and the AGENTS.md note, don't just delete this.
+    assert.deepEqual(names(await complete(code)), [], "static analysis still cannot type a numpy call's result");
+    // With the object alive — what a persisted session will pass — the same call completes it.
+    py.runPython("import numpy as np\n_ml_test_ns = {'np': np, 'grid': np.arange(24).reshape(4, 6)}");
+    assert.ok(names(await complete("grid.su", "_ml_test_ns")).includes("sum"));
+});
+
+test("completion: a kind Jedi could not resolve is reported as UNKNOWN, never as a wrong 'module'", { skip: skipJedi }, async () => {
+    const byName = (cs) => Object.fromEntries(cs.map((c) => [c.name, c.type]));
+    // `arange` is a function that numpy 2's stubs re-export from a module Jedi cannot import, so Jedi says
+    // "module". That is believed only for a real, loaded module; otherwise the kind is "" (no label).
+    assert.equal(byName(await complete("import numpy as np\nnp.ara")).arange, "");
+    assert.equal(byName(await complete("import numpy as np\nnp.lina")).linalg, "module", "a real submodule keeps its kind");
+});
