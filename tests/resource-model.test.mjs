@@ -630,6 +630,8 @@ test("placeEvents: inside the run that holds it, dropped when it falls in a gap"
         at("in run 1", 9500),
         at("span inside run 0", 1500, 2500),
         at("span crossing the gap", 2000, 9500),
+        at("span over before any sample", 100, 900),
+        at("span ending inside run 0", 200, 1500),
     ]);
     const by = Object.fromEntries(got.map((p) => [p.event.label, p]));
     assert.equal(by["in the gap"], undefined, "nothing was measured then, so there is nowhere honest to draw it");
@@ -647,6 +649,13 @@ test("placeEvents: inside the run that holds it, dropped when it falls in a gap"
     // was closed is real, and the honest drawing of it stops where the measurements stop.
     assert.equal(by["span crossing the gap"].to, 1);
     assert.equal(by["span crossing the gap"].clipped, true);
+    // A span that was OVER before anything was measured has nowhere honest to go; one that began before the
+    // first sample and ended inside the run is drawn from the run's left edge — the load that started before
+    // you looked. (This used to be asserted in a jsdom test against the wall clock, where which of the two
+    // cases it was depended on how fast the machine ran the setup.)
+    assert.equal(by["span over before any sample"], undefined);
+    assert.equal(by["span ending inside run 0"].from, 0);
+    assert.equal(by["span ending inside run 0"].to, 0.25);
 });
 
 test("placeEvents: a run of one sample has no width to place within", () => {

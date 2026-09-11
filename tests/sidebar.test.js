@@ -7537,10 +7537,11 @@ test("event lane: spans render, a tool step is one phased block, and clicking op
     // so the lane reads against the model list without needing a legend of its own.
     assert.match(tool.getAttribute("style") || "", /linear-gradient/, "…drawn with a stop where the model handed over");
     assert.match(tool.getAttribute("style") || "", /--model:/, "…in that model's colour");
-    // The LOAD span in this fixture ran before the first sample, so it is correctly absent: nothing was
-    // measured then, and the lane never draws over a stretch the chart can't speak for. (Its placement is
-    // covered in resource-model.test.mjs, where the window is a fixture rather than the wall clock.)
-    assert.equal(w.shadow.querySelectorAll(".rc-ev-load").length, 0);
+    // NOTHING IS ASSERTED ABOUT THE LOAD SPAN HERE. It ends where the step starts, ~1.6 s before `now`, so
+    // whether it overlaps the sampled window depends on how long the setup above took on this machine — it
+    // was absent locally and drawn (correctly, clipped) on a slow CI runner, which failed an assertion that was
+    // measuring the runner. "A span that ended before anything was measured is not drawn" is pinned in
+    // resource-model.test.mjs (`placeEvents`), where the samples are a fixture rather than the wall clock.
 
     // Hovering names both halves, in the order they happened, with the rate's basis.
     tool.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
