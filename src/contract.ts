@@ -322,6 +322,46 @@ export function isBackendUnreachable(msg?: string | null): boolean {
     return /couldn't reach the server|could not reach|failed to fetch|networkerror|err_connection|err_name_not_resolved|econnrefused|enotfound|net::err/i.test(msg);
 }
 
+/** What the panel should SAY about the backend, given a failure and what else it knows.
+ *
+ *  "The request failed" and "the box is unreachable" are different claims, and we made the second from the
+ *  first. Measured on the box during a 64-second load of a 142 GB model: `/api/ps` answered every poll in
+ *  0.4–0.8 ms with zero failures, every endpoint stayed under 17 ms — while the request that TRIGGERED the
+ *  load produced no bytes, not even headers, for the whole 64 s. So the panel told a user to go and check
+ *  their Server URL about a server that was answering it a thousand times faster than the advice took to
+ *  read, and the one thing genuinely wrong was that we had nothing to say about a load in progress.
+ *
+ *  The rule is that a claim of unreachability needs the ABSENCE of evidence, not the presence of a failure.
+ *  Anything that proves the box is answering — a `/api/ps` poll that returned, a live event stream — vetoes
+ *  it, and a load in flight is reported as what it is. `aliveMs` is how long ago that proof was: it must be
+ *  bounded, because the evidence going stale is exactly what a box dying looks like.
+ *
+ *  Pure, so the decision is tested rather than inferred from a screenshot. */
+export type BackendState = "ok" | "loading" | "unreachable";
+export function backendStateFrom(input: {
+    /** The failure, if a request just failed. */
+    error?: string | null;
+    /** Ms since the last proof the box answered, or null when there has never been one. */
+    aliveMs?: number | null;
+    /** Models the server says are loading right now — from `/api/ps` `state: "loading"`, or a `load.start`
+     *  with no close yet. A load is the reason a request hangs, so it is the answer to give instead. */
+    loading?: string[];
+    /** How stale the proof of life may be before it stops vetoing. Defaults to a couple of poll intervals:
+     *  one missed poll is a blip, several in a row is a box. */
+    aliveWindowMs?: number;
+}): BackendState {
+    const { error, aliveMs, loading = [], aliveWindowMs = 15_000 } = input;
+    const proven = aliveMs != null && aliveMs <= aliveWindowMs;
+    // A LOAD OUTRANKS A FAILURE, and only while the box is also answering. Saying "loading" about a box that
+    // has gone silent would be the same mistake in the other direction — a reassuring label over a dead host.
+    if (proven && loading.length) return "loading";
+    // Nothing failed, or it failed for a reason that is not about reachability (an HTTP status is a server
+    // ANSWERING). Either way there is no unreachability to report.
+    if (!error || !isBackendUnreachable(error)) return "ok";
+    // The failure looks like unreachability. It only IS unreachability if nothing else says otherwise.
+    return proven ? "ok" : "unreachable";
+}
+
 /** Per-tool output truncation limits. The agent alone is capped at `default` (so it can't spam its own
  *  context); a human can unlock up to `ceiling` for one call, never past it. */
 export const OUTPUT_CAP = {

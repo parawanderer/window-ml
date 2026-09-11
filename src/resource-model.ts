@@ -87,6 +87,17 @@ export interface Capacity {
     host: HostCapacity;
     /** Any unified device → device and host memory overlap, so they can never be stacked or summed. */
     unified: boolean;
+    /** The server's OWN bound on a load making no progress (`OLLAMA_LOAD_TIMEOUT`, default 5 min), when it
+     *  publishes one. Read it rather than hardcoding a duration: it is configurable per host, so a constant
+     *  here would silently disagree with the machine it is describing.
+     *
+     *  It is a STALL bound, NOT a total. The server gives up when a load stops progressing for this long; a
+     *  load that keeps progressing runs as long as it needs and the server will not kill it. Measured on the
+     *  box, elapsed time cannot stand in for it in either direction: the SAME 142 GB model took 38.8 s warm
+     *  and 64.2 s cold with nothing observable differing, and `qwen3.8:27b` spent 1.0 s on weights and 4.3 s
+     *  building context — so four fifths of that load had nothing to do with model size, and a size-derived
+     *  timeout is wrong in the direction that bites. Null when the server does not publish it. */
+    loadStallTimeoutMs?: number | null;
 }
 
 /** Parse `/api/info`. Returns null for anything that isn't the expected JSON — a stock Ollama or unpatched
@@ -140,6 +151,9 @@ export function parseInfo(raw: unknown): Capacity | null {
             unified: !isDiscrete(runner),
         }];
     });
+    // The server's own stall bound, when it publishes one. Absent on every build before it and on every
+    // stock Ollama, so null means "this host states no bound", never "there is none".
+    const stall = Number((raw as { load_stall_timeout_ms?: unknown })?.load_stall_timeout_ms);
     return {
         devices,
         host: {
@@ -149,6 +163,7 @@ export function parseInfo(raw: unknown): Capacity | null {
             swapFreeBytes: sys.free_swap ? sys.free_swap : null,   // 0 → unknown (see HostCapacity)
         },
         unified: devices.some((d) => d.unified),
+        ...(Number.isFinite(stall) && stall > 0 ? { loadStallTimeoutMs: stall } : {}),
     };
 }
 

@@ -2017,6 +2017,22 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .backend-offline .bo-title { color: var(--warn); font-size: 0.9em; }
 .backend-offline .bo-detail { color: var(--fg-dim); font-size: 0.8em; line-height: 1.4; }
 .backend-offline .bo-detail code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+/* THE SAME SLOT, SAYING THE OPPOSITE THING: a model is loading and the box is fine. It reuses the offline
+   banner's layout (.bo-body/.bo-title/.bo-detail) because it occupies the same strip and a second geometry
+   there would make the two read as unrelated events rather than as one answer replacing another — but it is
+   deliberately NOT warm: this is a status, the box is answering in under a millisecond, and the warning
+   colour is what made the old message alarming about a machine that was working. */
+.backend-loading { display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.backend-loading > svg { flex: none; width: 15px; height: 15px; margin-top: 1px; color: var(--accent);
+    animation: bl-pulse 1.6s ease-in-out infinite; }
+.backend-loading .bo-title { color: var(--accent); font-size: 0.9em; }
+.backend-loading .bo-detail { color: var(--fg-dim); font-size: 0.8em; line-height: 1.4; }
+/* A load has no progress figure and elapsed time does not predict what is left, so the only honest motion is
+   "still working" — a pulse, never a bar that implies a fraction nobody measured. */
+@keyframes bl-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .backend-loading > svg { animation: none; opacity: .8; } }
 
 /* Staggered content entrance — the shell morphs the FRAME first, then the card's content slides up +
    fades in staggered, so a pill↔approval↔answer swap never snaps (the Jarvis feel). Runs once on mount

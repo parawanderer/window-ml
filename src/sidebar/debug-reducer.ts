@@ -3,7 +3,7 @@
 // (sessionMap + the rev signal): agent runs, chat turns, cross-page replay ordering (the orphan
 // queue), mid-run steers, live streaming. It also owns the lazy utility-model TITLE + per-task BLOCK
 // summaries and the run-block segmentation (buildRunBlocks). Pure logic, no JSX — extracted from app.tsx.
-import { sessionMap, rev, config, sidebarOpen, backendError } from "./store";
+import { sessionMap, rev, config, sidebarOpen, backendError, unreachableIfNothingSaysOtherwise } from "./store";
 import type { Session, Status, Turn, AgentStep } from "./store";
 import type { MlDebugEvent } from "../contract";
 import { isBackendUnreachable } from "../contract";
@@ -137,8 +137,11 @@ export function onDebug(ev: MlDebugEvent): void {
         s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined; s.cancelled = !!ev.cancelled;
         // Backend health: a run that couldn't reach the box flags the offline banner/card; any run that
         // finished (or failed for another reason) means the box answered → clear it.
-        if (ev.error && isBackendUnreachable(ev.error)) backendError.value = ev.error;
-        else if (!ev.error) backendError.value = "";
+        // Through the shared gate, never straight from the message: a request can fail with the network-level
+        // shape while the box is answering `/api/ps` in under a millisecond, which is what a large model
+        // loading cold looks like from here (the request produces no bytes at all for a minute).
+        if (ev.error) backendError.value = unreachableIfNothingSaysOtherwise(ev.error);
+        else backendError.value = "";
         // REPLACE (not merge): each turn's result carries THIS turn's answer media, so a new round that
         // designates nothing CLEARS the old answer (resets to 0) — the card never shows a stale prior answer.
         s.answerMedia = (ev.answerMedia && ev.answerMedia.length) ? ev.answerMedia : undefined;   // HUD card only
@@ -238,7 +241,7 @@ export function onDebug(ev: MlDebugEvent): void {
             : { ...prev, error: ev.error, status: "err", ts: ev.ts };
         // Backend health (mirror the agent-result path): a chat that couldn't reach the box flags offline; a
         // successful chat-result clears it.
-        if (ev.kind === "chat-error" && isBackendUnreachable(ev.error)) backendError.value = ev.error;
+        if (ev.kind === "chat-error") backendError.value = unreachableIfNothingSaysOtherwise(ev.error || "");
         else if (ev.kind === "chat-result") backendError.value = "";
         s.turns = s.turns.map((x, idx) => idx === i ? updated : x);
         s.lastTs = ev.ts; s.status = rollupStatus(s);

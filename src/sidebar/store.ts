@@ -4,7 +4,7 @@
 // live in their own files while still reading one source of truth.
 import { signal } from "@preact/signals";
 import type { DebugSessionConfig, DebugAgentConfig, MlConfig, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, TokenUsage, SubcallUsage, AnswerMedia, PersistGrant, ReusedGrant, GenPhase, RemoteTiming } from "../contract";
-import { DEFAULT_CONFIG } from "../contract";
+import { DEFAULT_CONFIG, backendStateFrom } from "../contract";
 
 export const FONT_KEY = "ml_debug_fontscale";   // storage.local: the panel's font scale
 export const BASE_FS = 12, MIN_FS = 0.8, MAX_FS = 1.6;   // font-scale bounds (× BASE_FS px)
@@ -188,6 +188,35 @@ export const sidebarOpen = signal(false);                 // is the shell slid o
 export const backendError = signal("");
 export const loadedModels = signal<LoadedModel[] | null>(null);   // OLLAMA_PS resident set (null until first poll)
 export const psError = signal<string | null>(null);               // OLLAMA_PS failure (no Ollama backend)
+/** WHEN THE BOX LAST PROVED IT WAS ANSWERING — the instant of the most recent reading that came back, from
+ *  either transport. It is the evidence that vetoes a claim of unreachability, and it has to be a TIMESTAMP
+ *  rather than a flag because the evidence going stale is exactly what a box dying looks like.
+ *
+ *  Measured during a 64-second load of a 142 GB model: `/api/ps` answered every poll in 0.4–0.8 ms with zero
+ *  failures, while the request that TRIGGERED the load produced no bytes at all — not even headers — for the
+ *  whole minute. So this is not a marginal witness: through the one failure mode that made the panel cry
+ *  wolf, it is a millisecond away from perfect. Null until something has answered, which is a different
+ *  thing from "answered long ago" and is why it is nullable rather than 0. */
+export const backendAliveAt = signal<number | null>(null);
+/** Models the server says are loading RIGHT NOW. Written by the resource panel (the one place a reading
+ *  becomes state) and read here so the health verdict does not have to import it — a load is the reason a
+ *  request hangs, so it is what the panel should say instead of claiming the box is gone. */
+export const backendLoading = signal<string[]>([]);
+
+/** A failure message, kept ONLY if nothing else proves the box is answering — otherwise the empty string.
+ *
+ *  The single gate every claim of unreachability goes through: the health probe's own timeout, a run that
+ *  failed, a chat that failed. Three writers deciding this separately is how one of them came to say the box
+ *  was unreachable while the panel beside it was drawing a reading taken half a second earlier. The decision
+ *  itself is pure and lives in contract.ts (`backendStateFrom`); this is the part that reads the signals. */
+export function unreachableIfNothingSaysOtherwise(msg: string): string {
+    const aliveAt = backendAliveAt.value;
+    return backendStateFrom({
+        error: msg,
+        aliveMs: aliveAt == null ? null : Date.now() - aliveAt,
+        loading: backendLoading.value,
+    }) === "unreachable" ? msg : "";
+}
 
 // --- cross-surface HUD signals (read by the answer-render provenance jump AND the HUD card) ---
 // "Show work" open-state, keyed by the run's HASH (not a global boolean). A new run's hash won't match, so

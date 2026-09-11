@@ -8,7 +8,7 @@ import { signal } from "@preact/signals";
 import type { ComponentChildren } from "preact";
 import {
     config, models, ollamaIds, modelKinds, loadedModels, psError, vramOpen, backendError, rev, sessionMap,
-    sidebarOpen, view, crosshair,
+    sidebarOpen, view, crosshair, backendAliveAt, backendLoading, unreachableIfNothingSaysOtherwise,
 } from "./store";
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
@@ -429,6 +429,10 @@ export function connectResourceStream(): () => void {
  *  transports feeding one function is what stops the polled panel and the streamed one drifting apart. */
 export function applyLoaded(raw: LoadedModel[], at: number = Date.now()): void {
     psError.value = null;
+    // A READING CAME BACK, so the box is answering. Stamped with the LOCAL clock and not with `at`: a
+    // backfilled frame carries a timestamp from minutes ago and would read as proof that went stale before it
+    // arrived, while what this records is "we heard from it just now".
+    backendAliveAt.value = Date.now();
     // NORMALISED HERE, at the one place a reading becomes state — the same rule `machineEventFrom` follows for
     // the stream, and for the same reason: match the two spellings late and every new comparison is a fresh
     // chance to forget.
@@ -489,6 +493,10 @@ export function applyLoaded(raw: LoadedModel[], at: number = Date.now()): void {
     psLoading.value = placeholders;
     const inFlight = [...new Set([...loadingModels.value, ...placeholders])]
         .filter((n) => !loaded.some((m) => m.model === n));
+    // Published to `store` so the two surfaces that judge backend health can read it without importing this
+    // module — the reducer is a leaf and pulling the whole VRAM panel into it for one list would be a cycle
+    // waiting to happen. Written HERE because this is the one place a reading becomes state.
+    backendLoading.value = inFlight;
     const sample: ResourceSample = {
         t: at, models: loaded.map((m) => residencyOf(m)), capacity: capacity.value,
         ...(inFlight.length ? { loading: inFlight } : {}),
@@ -549,18 +557,28 @@ export function pollBackendHealth(): void {
     const finish = (unreachable: string | null): void => {
         if (settled) return;
         settled = true; healthInFlight = false;
-        backendError.value = unreachable || "";
+        backendError.value = unreachable ? unreachableIfNothingSaysOtherwise(unreachable) : "";
     };
     const timer = setTimeout(
         () => finish(`Couldn't reach the server at ${config.value.chatUrl || "the configured URL"} — no response. Is it running?`),
         BACKEND_HEALTH_TIMEOUT_MS);
+    // NOTE the probe's own timeout is not exempt from the liveness veto — `finish` routes every verdict
+    // through `backendStateFrom`. A chat backend can be slow to list models for reasons that have nothing to
+    // do with the box being there, and `/api/ps` answering in under a millisecond is the better witness.
     try {
         chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: {} }, (resp: { error?: string } | undefined) => {
             clearTimeout(timer);
             const err = chrome.runtime.lastError?.message || resp?.error || "";
             // Only a NETWORK-level failure means "the box is gone". An HTTP / "no models installed" error means
             // the server ANSWERED → reachable (clear). Any data likewise → reachable.
-            finish(err && isBackendUnreachable(err) ? err : null);
+            const answered = !err || !isBackendUnreachable(err);
+            // AND THAT ANSWER IS PROOF OF LIFE, recorded for everything else that has to judge reachability.
+            // It cannot come from `/api/ps` alone: that poll is gated on the panel being OPEN, so the evidence
+            // would exist only for a user who happened to be looking at the chart — and the banner this feeds
+            // is shown to everyone. This probe runs whenever the app is mounted, which is the right scope for
+            // a fact about whether the box is there.
+            if (answered) backendAliveAt.value = Date.now();
+            finish(answered ? null : err);
         });
     } catch { clearTimeout(timer); finish(null); }   // extension context gone → don't nag
 }

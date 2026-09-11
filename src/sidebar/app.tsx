@@ -13,7 +13,7 @@ import {
     benchOpen, benchDock, benchH, benchSplit, viewReturn, markReturn, openBench, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY,
     benchEnv, BENCH_ENV_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
-    vramOpen, sidebarOpen, backendError, surface, atBottom, resWindowS, vramH } from "./store";
+    vramOpen, sidebarOpen, backendError, backendLoading, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
 import { ContextMenu, CursorTipLayer, Hash, highlightPos } from "./ui-kit";
 import type { InvocationInfo } from "../contract";
@@ -29,7 +29,7 @@ import {
 import { shownModel, sessionProfile } from "./model";
 import { exportSession, exportSessionJson, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, applyFocus, initThemeStyle } from "./prefs";
-import { IconWarn, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse } from "./icons";
+import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse } from "./icons";
 import { Settings, openSettingsAt } from "./settings";
 
 
@@ -165,6 +165,28 @@ function Root() {
 // while nothing on the backend answers.
 function BackendOfflineBanner() {
     const msg = backendError.value;
+    // A LOAD IS THE LOUDER FACT. A large model loading cold holds the request that triggered it open for a
+    // minute or more with no bytes at all, which is the one thing that made this banner lie — so when the
+    // server says a load is in flight, that is what the panel says, and it says it whether or not anything
+    // has failed yet. `backendError` is already empty in that case (the gate in store.ts saw the same
+    // evidence), so this is not overriding a warning, it is filling a silence the user was left in.
+    const loading = backendLoading.value;
+    if (!msg && loading.length) {
+        return (
+            <div class="backend-loading" role="status">
+                <IconTimer />
+                <div class="bo-body">
+                    <b class="bo-title">Loading {loading.length === 1 ? loading[0] : `${loading.length} models`}</b>
+                    {/* No countdown and no percentage. The server gives no progress figure, and the elapsed
+                        time does not predict the remaining: measured on the box, the SAME 142 GB model took
+                        38.8s warm and 64.2s cold with nothing observable differing, and one 27b spent 1.0s on
+                        weights and 4.3s building context. A bar that cannot know is worse than a sentence
+                        that says so. */}
+                    <span class="bo-detail">The server is answering — your request is waiting for the model to be in memory. A large model on a cold cache can take minutes.</span>
+                </div>
+            </div>
+        );
+    }
     if (!msg) return null;
     const url = config.value.chatUrl || "";
     return (

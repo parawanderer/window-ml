@@ -1815,6 +1815,44 @@ test("backend offline (panel): an unreachable run failure shows a top banner; a 
     assert.equal(w.shadow.querySelector(".backend-offline"), null, "a successful run clears the banner");
 });
 
+test("backend offline (panel): a hanging request during a LOAD is not a dead box", async () => {
+    // THE BUG. Measured on the box during a 64-second load of a 142 GB model: `/api/ps` answered every poll
+    // in 0.4-0.8 ms with zero failures and every endpoint stayed under 17 ms, while the request that TRIGGERED
+    // the load produced no bytes at all — not even headers — for the whole minute. From that one hanging
+    // request the panel concluded the box was down and told the user to go and check their Server URL.
+    //
+    // `/api/ps` is answering here (the world's OLLAMA_PS mock returns a resident set), which is the evidence
+    // that must veto the claim. The failure message is the genuine network-level shape, unchanged — what was
+    // wrong was never the classification of the message, it was the conclusion drawn from it alone.
+    const w = await loadSidebarWorld({
+        sync: { chatUrl: "http://gpubox:11434" },
+        vram: [{ model: "qwen3:235b", state: "loading" }],
+        // The CHAT backend is what hangs — `listModels` goes to IT, so it fails here exactly as the real
+        // request did, while `/api/ps` answers normally. That asymmetry IS the incident, and it is also what
+        // makes this test discriminating: with a healthy probe the probe itself clears the banner a moment
+        // later, so the assertion would pass with the fix reverted and prove nothing.
+        listModels: () => ({ error: "Failed to fetch" }),
+    });
+    // The panel OPEN, because that is what polls `/api/ps` — and the name of what is loading can only come
+    // from there. With it closed the fix still holds (no false alarm) but the panel has nothing to name, which
+    // is the honest outcome rather than a guess.
+    await w.raw({ __mlSidebarOpen: true });                     // shell reports slid-open → polling allowed
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+    await w.dispatch(agentStart("bl1", "ask the big model something"));
+    await w.dispatch(agentFail("bl1", UNREACHABLE));
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".backend-offline"), null,
+        "a box answering /api/ps in under a millisecond is not unreachable");
+    // …and the panel says the true thing instead of nothing, because the silence is what sent the user to
+    // Settings in the first place.
+    const loading = w.shadow.querySelector(".backend-loading");
+    assert.ok(loading, "the panel says a model is loading");
+    assert.match(loading.textContent, /qwen3:235b/, "and names it");
+    assert.doesNotMatch(loading.textContent, /unreachable/i);
+});
+
 test("backend offline (panel): an HTTP-status failure does NOT show the banner (the box answered)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("bo3", "x"));
