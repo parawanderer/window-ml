@@ -346,6 +346,23 @@ export const benchTimeout = signal<boolean>(lsGet("ml_bench_timeout") !== "off")
  *  (`showOutTimes`) still turns the gutter off everywhere, the bench included, so this never shows times that
  *  setting hid. */
 export const benchTimes = signal<boolean>(lsGet("ml_bench_times") !== "off");
+/** A kept-state bench namespace as the worker last reported it: its `id` (new whenever it is created afresh)
+ *  and the variables the user has in it. */
+export interface BenchKept { id: string; vars: { name: string; type: string }[] }
+/** The bench's KEPT STATE, per sandbox mode — readonly and full each keep their own variables, and nothing
+ *  crosses between them. Session-only: the namespace lives in the sandbox's worker, so this is a report of it,
+ *  never a copy that could outlive it. */
+export const benchKept = signal<Partial<Record<"readonly" | "full", BenchKept>>>({});
+/** Set when a run comes back in a namespace the bench did not reset — the worker restarted underneath it (a
+ *  runaway run was stopped, the extension reloaded), so the variables from earlier runs are gone. Said once,
+ *  where the result lands, rather than discovered as a NameError. Cleared when the next run starts. */
+export const benchLost = signal<boolean>(false);
+/** Record what a kept-state run reported, noticing when its namespace is not the one we last saw. */
+export function noteBenchKept(mode: "readonly" | "full", kept: BenchKept): void {
+    const prev = benchKept.value[mode];
+    if (prev && prev.id !== kept.id) benchLost.value = true;
+    benchKept.value = { ...benchKept.value, [mode]: kept };
+}
 
 /** Is a bench script in flight right now — what the header's ▶ spinner and the disabled Run button read. */
 export const benchRunning = signal(false);

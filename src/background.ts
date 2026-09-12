@@ -1268,9 +1268,18 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 sendResponse({ error: "Refused: code completion is a workbench feature." });
                 return;
             }
+            const benchMode = rawComplete?.bench === "full" ? "full" : rawComplete?.bench === "readonly" ? "readonly" : undefined;
             const complete = rawComplete
-                ? { line: Math.max(1, Number(rawComplete.line) | 0), column: Math.max(0, Number(rawComplete.column) | 0) }
+                ? { line: Math.max(1, Number(rawComplete.line) | 0), column: Math.max(0, Number(rawComplete.column) | 0), ...(benchMode ? { bench: benchMode } : {}) }
                 : null;
+            // The bench's KEPT STATE is ours alone, on the same unforgeable discriminator as the rest: a page's
+            // run always executes in the namespace every run resets, and a page cannot clear a person's variables.
+            if (message.payload?.benchReset && !ownSurface) {
+                sendResponse({ error: "Refused: the workbench's state is not a page's to reset." });
+                return;
+            }
+            const persist = !!message.payload?.persist && ownSurface;
+            const benchReset = !!message.payload?.benchReset;
             const wantsFull = !complete && message.payload?.hardened === false;
             if (wantsFull) {
                 const trust = await senderTrust(sender);
@@ -1300,7 +1309,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // watching it; in the bench a person chose it, is sitting in front of it, and can close the panel.
             const noTimeout = !!message.payload?.noTimeout
                 && (sender.url || "").startsWith(chrome.runtime.getURL(""));
-            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: complete ? true : message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(message.payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}) };
+            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: complete ? true : message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(message.payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };
             const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
             attempt()
                 .catch((err) => {
