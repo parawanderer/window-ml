@@ -320,6 +320,9 @@ export function fetchCapacity(): void {
     chrome.runtime.sendMessage({ type: "OLLAMA_INFO", payload: {} }, (resp: any) => {
         capacityAsked.value = true;
         if (chrome.runtime.lastError || !resp || resp.error) return;   // leave capacity unknown
+        // Asked before the stream went live and answered after: the stream's frames are newer, and a full
+        // body is authoritative — its absent `unavailable_gpus` would clear a fault the hello just reported.
+        if (streamLive.value) return;
         applyInfo(resp.data);
     });
 }
@@ -711,6 +714,10 @@ export function pollPs(): void {
     // draw a history at twice the true density.
     if (streamLive.value) return;
     chrome.runtime.sendMessage({ type: "OLLAMA_PS", payload: {} }, (resp: any) => {
+        // The guard above ran when the poll was SENT. The panel polls once on mount, before the stream has
+        // said anything, and when that reply lands after the stream's first sample it is an OLDER reading
+        // recorded on top of a newer one — against a box whose /api/ps lagged, a resident model read as evicted.
+        if (streamLive.value) return;
         if (chrome.runtime.lastError || (resp && resp.error)) {
             psError.value = (resp && resp.error) || chrome.runtime.lastError?.message || "unavailable";
             loadedModels.value = []; return;

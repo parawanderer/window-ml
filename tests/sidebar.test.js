@@ -6894,12 +6894,19 @@ test("a collapsed running step counts up, and stays quiet for the first half sec
 
     // …and one that has been going a while says how long, in the row you are looking at rather than only
     // inside the step you would have to open.
-    await w.dispatch(agentStep("tick", 1, { seq: 1, tool: "python_exec", pending: true, ts: Date.now() - 4200 }));
+    const stamp = Date.now() - 4200;
+    await w.dispatch(agentStep("tick", 1, { seq: 1, tool: "python_exec", pending: true, ts: stamp }));
     await w.tick();
     const el = w.shadow.querySelector(".astep-elapsed");
     assert.ok(el, "past the threshold it reports the elapsed time");
-    assert.match(el.textContent, /\(4\.[0-9]s\)/, `expected ~4.2s, got ${el.textContent}`);
-    assert.match(preview(), /running….*4\./, "beside the word, not instead of it");
+    // The figure is read against the component's last 100 ms tick, so on a starved event loop (Node 22 on a
+    // loaded CI runner showed 3.9s) it TRAILS the true elapsed time. It may trail; it may not run ahead, and it
+    // must clearly be the step's age rather than a fresh count.
+    const shown = Number(/\((\d+(?:\.\d+)?)s\)/.exec(el.textContent)?.[1]);
+    const actual = (Date.now() - stamp) / 1000;
+    assert.ok(shown <= actual + 0.05, `never ahead of the clock: showed ${shown}s after ${actual.toFixed(2)}s`);
+    assert.ok(shown >= 3, `the step's age, not a fresh count: showed ${el.textContent}`);
+    assert.match(preview(), /running….*\(\d+\.\d+s\)/, "beside the word, not instead of it");
 });
 
 test("the elapsed timer stops when the step lands, and the settled figure takes over", async () => {

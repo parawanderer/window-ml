@@ -82,9 +82,12 @@ _jv.dumps([{"name": _k, "type": type(_v).__name__} for _k, _v in sorted(_ml_v_ns
     } finally { try { py.globals.delete("_ml_v_ns"); } catch { /* */ } }
 }
 
-async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void, persist = false): Promise<RunResult> {
+async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void, persist = false, onStarted?: () => void): Promise<RunResult> {
     const py = await getPyodide();
     const boot = takeBootMs();
+    // The runtime is up: from here on the time is the SCRIPT's. Said out loud so the offscreen watchdog can time
+    // the script rather than the cold start and the queue in front of it (see runInWorker in offscreen.ts).
+    onStarted?.();
     // The script's own clock starts AFTER the runtime is up, so the two numbers add to the wall time
     // rather than overlapping — which is what lets the panel show them as one bar split in two.
     const t0 = Date.now();
@@ -226,8 +229,9 @@ self.onmessage = (e: MessageEvent) => {
     // offscreen → SW → page before anything renders it, so a timestamp taken downstream would be skewed
     // by those hops (the same reason a remote bash tool must stamp on its own server).
     const onStdout = msg.stream ? (chunk: string) => self.postMessage({ id: msg.id, partial: true, chunk, ts: Date.now() }) : undefined;
+    const onStarted = () => self.postMessage({ id: msg.id, started: true });
     runChain = runChain
-        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true))
+        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted))
         .then(
             (result: RunResult) => self.postMessage({ id: msg.id, ...result }),
             (err: unknown) => self.postMessage({ id: msg.id, ok: false, stdout: "", error: String(err) }),

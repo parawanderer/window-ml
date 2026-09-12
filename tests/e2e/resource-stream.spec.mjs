@@ -773,6 +773,46 @@ test("a self-contradicting ps frame does not make a resident model vanish", asyn
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+// A POLL SENT BEFORE THE STREAM WENT LIVE MUST NOT BE APPLIED AFTER IT. The panel polls /api/ps once on mount,
+// before the stream has delivered anything; `pollPs` checked `streamLive` only when SENDING, so a reply that
+// landed after the stream's first sample was recorded on top of it — an older reading over a newer one. Here
+// /api/ps is empty and slow, so without the check at reply time the resident model reads as evicted. It showed
+// up as a 1-in-24 flake of the test above once the suite ran in parallel.
+test("a poll answered after the stream went live does not overwrite the stream's reading", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const TOTAL = 101972967424, VRAM = 20 * 1024 ** 3, MODEL = "gemma4:31b";
+        const info = {
+            version: "0.0.0", models: { running: 1, vram_used: VRAM },
+            compute: {
+                system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 100 * 1024 ** 3 },
+                supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", compute: "12.0", driver: "13.2",
+                    total_memory: TOTAL, physical_memory: 102641958912, free_memory: TOTAL - VRAM }],
+            },
+        };
+        const ps = { models: [{
+            model: MODEL, name: MODEL, size: VRAM, size_vram: VRAM, context_length: 8192,
+            expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+            gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: VRAM }],
+        }] };
+        fake.setResident([]);          // what a lagging /api/ps says…
+        fake.setPsDelay(2500);         // …and it says it after the stream has spoken
+        fake.setEvents([{ v: 1, kind: "hello", t: 0, box: "test", retainedMs: 60000 },
+            { v: 1, kind: "sample", t: -1000, ps, info }]);
+        const { frame } = await openPanel(fake, ext);
+        const row = () => frame.locator(".vram-row").filter({ hasText: MODEL }).first();
+        await expect(row()).toContainText("GiB", { timeout: 25000 });
+        await sleep(3500);             // the mount-time poll's reply has landed by now
+        await expect(row(), "the stream's reading still stands").toContainText("GiB");
+        await expect(row(), "a stale empty poll did not evict it").not.toContainText("evicted");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
 // THE LANE HAS ITS OWN HEIGHT, and that is what stops the panel jumping. The lane RE-PACKS as the window
 // moves — a row is a claim that two bars overlap, so a step entering the view can add one — and unbounded
 // inside a fixed-height panel every row it gained came straight off the CHARTS above it, which visibly shrank

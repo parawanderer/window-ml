@@ -492,6 +492,18 @@ thing. The parts:
   so the REAL pipeline (background loop → tool delegation → page) runs **deterministically with
   no Ollama**. A script step is `{ content }`, `{ tool, args }`, or `(reqBody) => step` (reactive
   — the final answer can echo a value a real DOM tool read off the page). This is the CI gate.
+- **The suite is `fullyParallel`** (3 workers in CI, half the cores locally). Each test gets its own browser and
+  its own servers on port 0, so tests share nothing. A spec that DOES share state across its tests (one browser
+  from a `beforeAll`) must pin itself with `test.describe.configure({ mode: "default" })`, or its tests land on
+  different workers, each running its own `beforeAll`.
+- **RULE — a wait loop breaks on something that is on screen while a step is COLLAPSED.** Steps start collapsed,
+  so anything inside a step body (`.r-py-in`, `.code.tb`, `.r-df-table`) is not in the DOM until the step is
+  opened, and a `for (…; i < 60; …) { …; if (bodyThing) break; sleep(400) }` quietly runs to its cap and then
+  passes anyway, because the test opens the step next. Eleven tests did that for 24–30 s each. Wait for the RUN
+  TO FINISH instead (`fake.calls().length` has reached the script's length and no `.astep.tool.pending` is
+  left) — not merely for one step to land, or the test opens a step while the next is still arriving and the
+  sidebar re-renders under it, which only shows once CPU is contended. A test whose time is the same on a
+  laptop and on CI is waiting on a timer.
 - **`cross-page.spec.mjs`** — a `smoke` (extension loads + one-shot agent) + a `sanity` (agent
   reads a page value via a DOM tool and answers it) that run under BOTH the fake and a real
   backend, plus the skipped cross-page acceptance test (see `tmp/cross-page-agent.md`). Those two
@@ -569,13 +581,13 @@ runs per branch** so a fix supersedes the run it replaces instead of queueing be
 because every commit there keeps its result.
 
 **The `ci` skill (`.claude/skills/ci/SKILL.md`) is the playbook**: open the PR, watch it in the
-BACKGROUND (`gh pr checks --watch`, ~5 minutes for a full run), read only the failing steps
+BACKGROUND (`gh pr checks --watch`, ~10 minutes for a full run, the e2e job being the long pole), read only the failing steps
 (`gh run view <id> --log-failed`), fix forward on the branch, and — importantly — the list of
 KNOWN-BAD failures that arrived from other branches, so a red check that is not yours is named in the PR
 body rather than chased or silently re-run.
 
 **And the `background-work` skill (`.claude/skills/background-work/SKILL.md`) is how to run ANY slow
-thing** — CI, an e2e suite (~10 min), a bench sweep — without stalling the session: start it with
+thing** — CI, an e2e suite (minutes, even parallel), a bench sweep — without stalling the session: start it with
 `run_in_background: true` and go and do other work, because the harness re-invokes you when it exits.
 The mistake it exists for is subtler than forgetting to background something: it is backgrounding it
 and then blocking on its output file anyway (`until [ -s "$OUT" ]; do sleep 20; done`), which is a

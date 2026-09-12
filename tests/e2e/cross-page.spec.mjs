@@ -59,6 +59,9 @@ test.beforeEach(({}, testInfo) => {
         "scripted test: needs the fake-LLM, and E2E_BACKEND is set");
 });
 
+// One browser is shared by every test below (beforeAll), so they run in order in ONE worker even though the
+// suite is fullyParallel.
+test.describe.configure({ mode: "default" });
 test.beforeAll(async () => {
     fake = BACKEND ? null : await startFakeLlm({ model: "fake-model" });
     site = await startPageServer({});

@@ -12,6 +12,9 @@ import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
 let ext, fake, site;
 
+// One browser is shared by every test below (beforeAll), so they run in order in ONE worker even though the
+// suite is fullyParallel.
+test.describe.configure({ mode: "default" });
 test.beforeAll(async () => {
     fake = await startFakeLlm({ model: "fake-model" });
     site = await startPageServer({});

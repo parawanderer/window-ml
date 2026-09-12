@@ -62,3 +62,26 @@ test("python_exec streams print() output live (worker → page ctx.stream → st
         site.stop?.();
     }
 });
+
+// THE 15s CAP IS THE SCRIPT'S, NOT THE QUEUE'S OR THE COLD START'S. The watchdog used to run from when a run was
+// POSTED, so everything in front of the script — waiting behind another run, loading the runtime — was charged
+// to it. Two 8s scripts sent together: the second waits ~8s for the first, and from its post that put it past
+// 15s about three seconds into its own work, so it was killed ("simplify the computation") and took the worker
+// with it. The same arithmetic killed a first `time.sleep(4)` on a loaded CI runner, where the cold start alone
+// ran past 11s. The worker now says when a script STARTS, and its 15s is counted from there.
+test("a run queued behind another is not charged for the wait: each script gets its own 15s", async () => {
+    test.skip(!HAS_PYODIDE, "needs the bundled Pyodide (npm run fetch-pyodide) — self-skips without it");
+    test.setTimeout(90_000);
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model" });
+        const page = await ext.context.newPage();
+        await page.goto(`${fake.url}/api/version`);
+        await waitForMl(page);
+        const results = await page.evaluate(() => Promise.all(["a", "b"].map((v) =>
+            window.ml.pythonExec(`import time\ntime.sleep(8)\n'${v}'`).then((r) => ({ ok: r.ok, value: r.value, error: r.error || null })))));
+        expect(results[0], `the first run finishes (${results[0].error})`).toMatchObject({ ok: true, value: "a" });
+        expect(results[1], `the second, queued ~8s behind it, is not killed for waiting (${results[1].error})`).toMatchObject({ ok: true, value: "b" });
+    } finally { await ext.context.close(); await fake.stop(); }
+});
