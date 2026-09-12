@@ -639,7 +639,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     const gateT0 = Date.now();
                     const rawDecision = await deps.approve({ tool: call.name, arguments: args, seq: s, step });
                     lastApproveMs = Date.now() - gateT0;
-                    waited = "human";   // a person decided at the gate — the gap before the next call is theirs
+                    // A PERSON decided at the gate, so the gap before the next call is theirs — unless the decision
+                    // came through the external channel (a harness, an orchestrator): that is code, in
+                    // milliseconds, and there is no honest label for it, so it adds none.
+                    if (!(typeof rawDecision === "object" && rawDecision?.source === "external")) waited = "human";
                     const d = normalize(rawDecision, args);
                     // CANCELLED while the gate was open (Stop pressed) — two channels, either suffices:
                     // `signal.aborted` (CANCEL_RUN aborted the run's controller) OR `d.cancelled` (CANCEL_RUN

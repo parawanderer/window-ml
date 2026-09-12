@@ -17,7 +17,7 @@ import {
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, stepBands, bandEdge, runGap, type RunGap,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, stepBands, bandEdge, runGap, type RunGap, serverGenNote,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
 import { keysReach, resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
@@ -2916,7 +2916,8 @@ function EventTip({ scope }: { scope: string }) {
                     e.kind === "aside" ? "you triggered this while reading — NOT part of the run, and not counted in its tokens" : null,
                     // A generation the SERVER reported and no session of ours matched: another client's traffic.
                     // Said, because a bar nobody here caused otherwise reads as something this browser did.
-                    e.kind === "gen" && e.via === "server" ? "reported by the server — not started from this browser" : null,
+                    // With a hint the server echoed, it also says WHOSE and what kind of work (`serverGenNote`).
+                    e.kind === "gen" && e.via === "server" ? serverGenNote(e.hint) : null,
                     h.p.clipped ? "continues past what was measured" : null,
                     e.ref ? `click to open this ${e.ref.seq != null ? "step" : "run"}` : null,
                 ].filter(Boolean) as string[];

@@ -147,8 +147,12 @@ vision reader, grounding, OCR, a fetch's reader — are `agent` in the parent ru
 runs (`currentRunSession`); the sidebar's summaries, notes and titles are `utility` in the session they are about;
 `createChat` turns carry the chat's session and `use` only when the caller gave one; a one-shot `ml.chat` carries
 no session; the observe and bench harnesses set `ml_synthetic_traffic` so their requests say `synthetic: true`.
-A STRICT OpenAI-compatible backend may 400 on the unknown field: the request is retried once without it, and the
-refusal is remembered for that URL only if the retry succeeds. The agreement and the reasoning behind each value
+Every request also carries our own `request` id (`wml-r-…`, minted per request in the worker); it comes back on
+the call's usage (`TokenUsage.requestId`) and on the server's `gen.end`, which is how the panel joins the two
+exactly (`joinGens`). `after: "human"` is sent only for a gate a PERSON decided: one resolved through the external
+approval channel (a harness, an orchestrator) adds no `after`. A STRICT OpenAI-compatible backend may 400 on the
+unknown field: the request is retried once without it, and the refusal is remembered for that URL only if the
+retry succeeds. The agreement and the reasoning behind each value
 are in the two mlbox reports `handover-request-hints.md` and `handover-request-hints-answer.md`.
 
 **Reachability, and a correction.** The extension finds Ollama through the same base discovery it uses for

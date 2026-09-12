@@ -185,8 +185,10 @@ test("FETCH_LLM surfaces token usage — OpenWebUI `usage` block and Ollama-nati
     const rO = await bgO.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
     // usage now also carries genMs (the call's wall-clock, stamped source-side for the run's tok/s) — check
     // the token counts by subset and that the timing field is present.
-    const { genMs: gmO, ...tokO } = rO.usage;
+    // …and the request's own id (hint.request), which the panel matches the server's gen.end on.
+    const { genMs: gmO, requestId: ridO, ...tokO } = rO.usage;
     assert.deepEqual(tokO, { promptTokens: 18, completionTokens: 70, totalTokens: 88 });
+    assert.match(ridO, /^wml-r-/, "the request's id rides the usage back");
     assert.equal(typeof gmO, "number", "the call's wall-clock (genMs) is stamped onto usage");
 
     // Ollama-native puts prompt_eval_count/eval_count at the response root (no total).
@@ -195,7 +197,7 @@ test("FETCH_LLM surfaces token usage — OpenWebUI `usage` block and Ollama-nati
         onFetch: () => jsonResponse({ message: { content: "42" }, prompt_eval_count: 20, eval_count: 5 })
     });
     const rL = await bgL.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
-    const { genMs: gmL, ...tokL } = rL.usage;
+    const { genMs: gmL, requestId: _ridL, ...tokL } = rL.usage;
     assert.deepEqual(tokL, { promptTokens: 20, completionTokens: 5, totalTokens: 25 }, "total derived when absent");
     assert.equal(typeof gmL, "number", "genMs stamped on the Ollama-native path too");
 
@@ -3881,11 +3883,15 @@ test("FETCH_LLM carries the request's hint: trimmed to the server's limits, util
     const bg = loadBackground({ config: baseConfig({ utilityModel: "tiny" }), onFetch });
     const msg = (payload) => bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], ...payload } });
 
-    await msg({ hint: { use: "agent", session: "wml-abc12345", after: "tool" } });
-    assert.deepEqual(bodies[0].hint, { use: "agent", session: "wml-abc12345", after: "tool" }, "top-level, as sent");
+    // `request` is OUR id for each request, minted in the worker; compared apart from what the caller said.
+    const said = (h) => { const { request, ...rest } = h || {}; return rest; };
+    const r0 = await msg({ hint: { use: "agent", session: "wml-abc12345", after: "tool" } });
+    assert.deepEqual(said(bodies[0].hint), { use: "agent", session: "wml-abc12345", after: "tool" }, "top-level, as sent");
+    assert.match(bodies[0].hint.request, /^wml-r-[0-9a-f]{16}$/, "every request carries our own id");
 
     await msg({ extend: "utility", hint: { session: "wml-abc12345" } });
-    assert.deepEqual(bodies[1].hint, { use: "utility", session: "wml-abc12345" }, "the utility profile is a side task by construction");
+    assert.deepEqual(said(bodies[1].hint), { use: "utility", session: "wml-abc12345" }, "the utility profile is a side task by construction");
+    assert.notEqual(bodies[1].hint.request, bodies[0].hint.request, "an id per REQUEST, not per session");
 
     await msg({ hint: { session: "x".repeat(300), after: "lunch" } });
     assert.equal(bodies[2].hint.session.length, 128, "a session is trimmed to the server's 128");
@@ -3893,7 +3899,7 @@ test("FETCH_LLM carries the request's hint: trimmed to the server's limits, util
     assert.equal(bodies[2].hint.use, undefined, "no use when nobody said — absence means unknown");
 
     await msg({});
-    assert.equal(bodies[3].hint, undefined, "nothing to say → no field at all");
+    assert.deepEqual(said(bodies[3].hint), {}, "nothing said about the request — only our correlation id goes out");
 
     const synth = [];
     const bgS = loadBackground({ config: baseConfig(), local: { ml_synthetic_traffic: true }, onFetch: ({ body }) => { synth.push(body); return jsonResponse({ choices: [{ message: { content: "ok" } }] }); } });
@@ -3943,8 +3949,19 @@ test("START_RUN: every step is an agent request in the run's session, and says i
         model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
     } }, { tab: { id: 7 } });
     assert.equal(res.data.summary, "done");
-    assert.deepEqual(bodies.map((b) => b.hint), [
+    assert.deepEqual(bodies.map((b) => { const { request, ...rest } = b.hint; return rest; }), [
         { use: "agent", session: "wml-hr01" },
         { use: "agent", session: "wml-hr01", after: "tool" },
     ]);
+});
+
+test("FETCH_LLM: the request id sent as hint.request comes back on that call's usage", async () => {
+    let sent;
+    const bg = loadBackground({ config: baseConfig(), onFetch: ({ body }) => {
+        sent = body.hint?.request;
+        return jsonResponse({ choices: [{ message: { content: "ok" } }], usage: { prompt_tokens: 3, completion_tokens: 2 } });
+    } });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], raw: true, hint: { use: "agent" } } });
+    assert.ok(sent, "an id went out");
+    assert.equal(res.data.usage.requestId, sent, "and the call's usage names it, so the panel can match the server's gen.end to it");
 });

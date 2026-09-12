@@ -235,11 +235,18 @@ per device, in bytes.
   load is its own span (the real capture has one: granite's `gen.start` lands 1 ms before its own
   `load.complete`). One stretch each — the engine reports one pair per request, so a context-shift re-entry is
   unrecoverable. Keyed PER MODEL: generations interleave across models. **Our own calls arrive twice** with
-  the stream carrying — as the session's step block and as the server's span — so `joinGens` joins them (same
-  model, ends within `GEN_JOIN_TOLERANCE_MS`, nearest first, each once): the session block wins and takes the
+  the stream carrying — as the session's step block and as the server's span — so `joinGens` joins them. **By
+  request id first**: each request carries our `hint.request` (minted in the worker, back on the call's usage as
+  `requestId`, on the session event), a patched server echoes it on `gen.end` (`hintFrom` → the span's `hint`),
+  and an equal id is a match however the two clocks disagree — two calls of one model ending together cannot
+  swap. When BOTH sides carry an id and they differ, it is someone else's call (another tab, another browser),
+  however close. Only when either side has none does it fall back to TIMING (same model, ends within
+  `GEN_JOIN_TOLERANCE_MS`, nearest first, each once). The session block wins and takes the
   figures, its pre-first-token stretch split `other | prefill` (the channel phases ARE the decode), a
   non-streamed call's `model` phase split `other | prefill | decode`; a split that does not FIT is not drawn.
-  Unmatched spans are other clients' traffic and say so. A replay is deduped by the END and the figures, never
+  Unmatched spans are other clients' traffic and say so — WHOSE and what kind of work when the server echoed a
+  hint (`serverGenNote`: Open WebUI's `owui-` task calls, a window.ml session this panel is not showing, or
+  another client, with `use` in words). A replay is deduped by the END and the figures, never
   the start, which moves when a replay lost its `gen.start`.
 - **WHAT EACH CARD WAS DOING: the phase ribbon** (`ribbonSpans`, `PhaseRibbon`). A thin row per model along the
   top of a per-card track, drawing only TIMED phases — the engine's prefill/decode, our own streamed channels

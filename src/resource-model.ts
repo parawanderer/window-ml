@@ -2749,7 +2749,7 @@ export function ribbonSpans(events: ResourceEvent[], samples: ResourceSample[], 
  * of durations per request, so it is one stretch each. Without a `gen.start` (a reconnect mid-generation)
  * there is no remainder to draw, and none is invented.
  */
-export function genSpan(o: { model: string; startAt?: number; endAt: number; timings: GenTimings; loadEnd?: number }): ResourceEvent {
+export function genSpan(o: { model: string; startAt?: number; endAt: number; timings: GenTimings; loadEnd?: number; hint?: ServerHint | null }): ResourceEvent {
     const { model, endAt, timings } = o;
     const decodeFrom = endAt - timings.evalMs;
     const prefillFrom = decodeFrom - timings.promptMs;
@@ -2764,7 +2764,52 @@ export function genSpan(o: { model: string; startAt?: number; endAt: number; tim
     if (swapFrom - t >= 1) phases.push({ kind: "other", until: swapFrom });
     if (timings.swap?.ms) phases.push({ kind: "swap", until: prefillFrom });
     phases.push({ kind: "prefill", until: decodeFrom }, { kind: "decode", until: endAt });
-    return { t, until: endAt, kind: "gen", label: `${model} generating`, model, via: "server", phases, gen: timings };
+    return { t, until: endAt, kind: "gen", label: `${model} generating`, model, via: "server", phases, gen: timings,
+        ...(o.hint ? { hint: o.hint } : {}) };
+}
+
+/** What a request told a patched ollama it was for, as the server echoes it on `gen.end` (`ollama-slop:hints2`):
+ *  ours (RequestHint in contract.ts, plus the `request` id we minted) or any other client's — Open WebUI labels its
+ *  own task calls `use: "utility"` in an `owui-` session. Every field optional; absent means the request said
+ *  nothing, never a default. */
+export interface ServerHint {
+    use?: string;
+    session?: string;
+    request?: string;
+    after?: string;
+    synthetic?: boolean;
+}
+
+/** What the lane says about a SERVER generation no session of ours matched. It used to say only that it was not
+ *  started from this browser; with a hint it can say whose it was — Open WebUI's own calls are `owui-`, another
+ *  window.ml session is `wml-` (a tab or browser this panel is not showing, since ours would have matched) — and
+ *  what kind of work (`use`, in words). An unknown `use` is quoted as sent rather than translated. */
+export function serverGenNote(h?: ServerHint | null): string {
+    const base = "reported by the server — not started from this browser";
+    if (!h) return base;
+    const who = !h.session ? null
+        : h.session.startsWith("owui-") ? "Open WebUI"
+        : h.session.startsWith("wml-") ? "a window.ml session this panel isn't showing (another tab or browser)"
+        : "another client";
+    const what = !h.use ? null
+        : ({ interactive: "a person reading it", agent: "an agent step", utility: "a side task", batch: "bulk work" } as Record<string, string>)[h.use]
+            ?? `"${h.use}"`;
+    const parts = [who, what, h.synthetic ? "synthetic traffic" : null].filter(Boolean);
+    return parts.length ? `reported by the server: ${parts.join(", ")}` : base;
+}
+
+/** Read `gen.end.hint`. Unknown values are kept as sent (the server accepts any `use`); anything that is not a
+ *  string is dropped rather than coerced, and an empty result is null. */
+export function hintFrom(raw: unknown): ServerHint | null {
+    if (!raw || typeof raw !== "object") return null;
+    const o = raw as Record<string, unknown>;
+    const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+    const h: ServerHint = {
+        ...(str(o.use) ? { use: str(o.use) } : {}), ...(str(o.session) ? { session: str(o.session) } : {}),
+        ...(str(o.request) ? { request: str(o.request) } : {}), ...(str(o.after) ? { after: str(o.after) } : {}),
+        ...(o.synthetic === true ? { synthetic: true } : {}),
+    };
+    return Object.keys(h).length ? h : null;
 }
 
 /** WHAT ONE GENERATION LEFT IN THE KV CACHE, as shares of the cache's token capacity, bottom to top:
@@ -2834,11 +2879,23 @@ export function joinGens(sessionEvents: ResourceEvent[], serverEvents: ResourceE
     const gens = serverEvents.filter((e) => e.kind === "gen" && e.via === "server" && e.gen && e.model && e.until != null);
     if (!gens.length) return { session: sessionEvents, server: serverEvents };
     const pairs: { si: number; g: ResourceEvent; d: number }[] = [];
+    // EXACT FIRST. A generation the server records with OUR request id is that call's, wherever its end landed:
+    // no tolerance to tune, and two calls of one model finishing together cannot swap. `d: -1` sorts these ahead
+    // of every timing match below.
+    const byRequest = new Map<string, ResourceEvent>();
+    for (const g of gens) if (g.hint?.request) byRequest.set(g.hint.request, g);
     sessionEvents.forEach((s, si) => {
+        if (s.open || !s.model) return;
+        const g = s.requestId ? byRequest.get(s.requestId) : undefined;
+        if (g) { pairs.push({ si, g, d: -1 }); return; }
+        // By TIMING only when an id cannot settle it: either side has none (an older build, a route that dropped
+        // the hint). When both carry one and they differ, the generation is somebody else's call — another tab,
+        // another browser — however close its end is.
         const end = modelEndOf(s);
-        if (end == null || !s.model || s.open) return;
+        if (end == null) return;
         for (const g of gens) {
             if (g.model !== s.model) continue;
+            if (s.requestId && g.hint?.request) continue;
             const d = Math.abs(end - g.until!);
             if (d <= GEN_JOIN_TOLERANCE_MS) pairs.push({ si, g, d });
         }
@@ -2976,6 +3033,12 @@ export interface ResourceEvent {
      *  tokens decoded — when the server's event stream reported it (`gen.end.timings`). On a server `gen`
      *  span, and on a session block the server's generation was JOINED to (see `joinGens`). */
     gen?: GenTimings;
+    /** On a session model call: OUR id for its request (`hint.request`, from its usage), so the server's record of
+     *  the same generation joins to it exactly (see `joinGens`). */
+    requestId?: string;
+    /** On a SERVER generation: what the request said it was for (`gen.end.hint`, see `hintFrom`) — ours, when it
+     *  carries our request id, or another client's traffic, which the lane can then name. */
+    hint?: ServerHint;
     /** The model's KV-cache CAPACITY when a generation ended — its context (per slot) and slot count, read from
      *  the sample at that moment — so the cache fill can be drawn as shares wherever the span is shown, not only
      *  inside a drilled-in chart. Absent when no sample carried the model then. */

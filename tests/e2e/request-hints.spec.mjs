@@ -24,7 +24,8 @@ for (const [label, debugMode] of [["page-hosted (no debug surface)", "off"], ["b
             expect(res.summary).toBe("done");
             const hints = chatBodies(fake).map((b) => b.hint);
             const session = `wml-${res.hash}`;
-            expect(hints).toEqual([{ use: "agent", session }, { use: "agent", session, after: "tool" }]);
+            expect(hints.map(({ request, ...said }) => said)).toEqual([{ use: "agent", session }, { use: "agent", session, after: "tool" }]);
+            expect(new Set(hints.map((h) => h.request)).size, "a distinct request id on every request").toBe(2);
         } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
     });
 }
@@ -41,8 +42,8 @@ test("request hints: a one-shot ml.chat carries only what the caller said", asyn
         await waitForMl(page);
         await page.evaluate(() => window.ml.chat("hi"));
         await page.evaluate(() => window.ml.chat("hi", { use: "interactive" }));
-        const hints = chatBodies(fake).map((b) => b.hint);
-        expect(hints[0], "no use, no session: nothing to say, so no field at all").toBeUndefined();
+        const hints = chatBodies(fake).map(({ hint: { request, ...said } = {} }) => said);
+        expect(hints[0], "no use, no session: only our correlation id goes out").toEqual({});
         expect(hints[1]).toEqual({ use: "interactive" });
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });

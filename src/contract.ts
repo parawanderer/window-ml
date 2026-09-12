@@ -327,18 +327,20 @@ export const hintSession = (hash: string): string => `wml-${hash}`;
 
 /**
  * The `hint` object a request carries on the wire, from what the caller said plus what only the service worker
- * knows. Pure; the one place the server's limits are applied (`use`/`after` 32 characters, `session` 128), so a
+ * knows (our per-request `request` id, and whether this browser's traffic is synthetic). Pure; the one place the
+ * server's limits are applied (`use`/`after` 32 characters, `session` 128, `request` 64), so a
  * page cannot send more than the spec allows. `extend: "utility"` is a side task by construction, so it defaults
  * `use` to `utility`; anything else without a `use` stays unknown. `synthetic` marks generated traffic (benchmark
  * sweeps): served exactly like real traffic, kept out of what the server learns from.
  */
-export function wireHint(hint: RequestHint | null | undefined, opts: { extend?: string | null; synthetic?: boolean } = {}): Record<string, unknown> | null {
+export function wireHint(hint: RequestHint | null | undefined, opts: { extend?: string | null; synthetic?: boolean; request?: string } = {}): Record<string, unknown> | null {
     const str = (v: unknown, max: number): string | undefined => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined);
     const use = str(hint?.use, 32) ?? (opts.extend === "utility" ? "utility" : undefined);
     const session = str(hint?.session, 128);
     const after = hint?.after === "human" || hint?.after === "tool" ? hint.after : undefined;
+    const request = str(opts.request, 64);
     const out: Record<string, unknown> = {
-        ...(use ? { use } : {}), ...(session ? { session } : {}), ...(after ? { after } : {}),
+        ...(use ? { use } : {}), ...(session ? { session } : {}), ...(request ? { request } : {}), ...(after ? { after } : {}),
         ...(opts.synthetic ? { synthetic: true } : {}),
     };
     return Object.keys(out).length ? out : null;
@@ -693,6 +695,9 @@ export interface ToolCall {
  *  `promptTokens + completionTokens` of the LATEST call, never a sum across turns
  *  (summing would overcount quadratically). Only cumulative SPEND is a sum. */
 export interface TokenUsage {
+    /** OUR id for the request this usage came back from, sent as `hint.request` and echoed on a patched ollama's
+     *  `gen.end` — what lets the panel match the server's record of this generation to it exactly. */
+    requestId?: string;
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;

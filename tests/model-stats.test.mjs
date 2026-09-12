@@ -658,3 +658,15 @@ test("dropInferredLoads: a load the server reported is not also drawn from load_
         dropInferredLoads(inferred, [{ t: 20000, until: 21000, kind: "load", model: "qwen" }])
             .filter((e) => e.kind === "load").length, 2);
 });
+
+test("eventsFrom: a model call carries its request id, the one the server echoes on gen.end", () => {
+    const evs = M.eventsFrom([{
+        kind: "agent", hash: "rid", model: "m",
+        turns: [{ ts: 10_000, usage: usage(10, 5, { genMs: 1000, requestId: "wml-r-turn" }) }],
+        steps: [{ seq: 1, ts: 20_000, tool: "exec", toolMs: 500, usage: usage(10, 5, { genMs: 1000, requestId: "wml-r-step" }) }],
+    }]);
+    assert.equal(evs.find((e) => e.kind === "gen").requestId, "wml-r-turn", "a plain generation");
+    assert.equal(evs.find((e) => e.kind === "tool").requestId, "wml-r-step", "the model half of a tool step, which is what joinGens matches");
+    const bare = M.eventsFrom([{ kind: "agent", hash: "x", model: "m", turns: [{ ts: 1, usage: usage(1, 1, { genMs: 5 }) }] }]);
+    assert.equal(bare[0].requestId, undefined, "no id recorded, none invented");
+});

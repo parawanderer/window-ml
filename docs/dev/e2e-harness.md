@@ -23,6 +23,10 @@ as in AGENTS.md — they are all under `src/`.
     VRAM warm-up (a local model wants it warmed; the fake/API don't) · `FOLLOWUP="…"` runs a SECOND turn
     in the SAME session (createAgent + two run()s, same run hash) to reproduce multi-turn behaviour a
     single `ml.agent()` can't (a "…now show the work" follow-up; the cross-turn token-id collision).
+  - **`SYNTHETIC=0`** — every observe and bench run sets `ml_synthetic_traffic`, so its requests carry
+    `hint.synthetic: true` and a patched Ollama keeps them out of what it learns from (the timing is the
+    harness's: instant approvals, scripted follow-ups, a killed browser). `SYNTHETIC=0` is for a run a person
+    actually drives (`WATCH=1 APPROVE=hold`), which is real use. `runOnce({ synthetic })` underneath.
   - **`APPROVE=<policy>`** — how the built-in approval poller resolves a gate the run halts on (via the
     SW-only `__mlApprovals` channel; the run passes `approvalRouting:"both"`): `auto` (default, approve
     all), `deny`, `readonly` (approve exec + readonly python, deny the rest), `hold` (log but DON'T
