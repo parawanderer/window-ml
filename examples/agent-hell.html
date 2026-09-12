@@ -62,7 +62,7 @@
      a synthetic click handler, <b>identical markup</b>, and no text/role/aria. <code>findByText</code>
      finds nothing; <code>interactives</code> lists a hundred <em>"(no accessible name)"</em>. Only how
      they <em>look</em> tells them apart, so the agent has to actually SEE the target:</p>
-  <p><code>ml.agent("click the target icon to win", { tools: [ml.clickTool()], hints: "Use locate({ strategy: 'grid' }) — the target is a bright RED umbrella. Re-run with the returned cells to zoom." })</code></p>
+  <p><code>ml.agent("click the target icon to win", { tools: [ml.clickTool()], systemAppend: "Use locate({ strategy: 'grid' }) — the target is a bright RED umbrella. Re-run with the returned cells to zoom." })</code></p>
 
   <div id="grid" aria-hidden="false"></div>
 

@@ -41,7 +41,7 @@
      and finds a control there, instead of grounding across the whole busy window.</p>
   <p><b>Task:</b> turn <b>ON</b> the “Do&nbsp;Not&nbsp;Track” switch — it lives under <b>Privacy</b>
      (so you must open that section first).</p>
-  <p><code>ml.agent("Open Privacy and turn on Do Not Track", { extraTools: [ml.clickTool()], hints: "It's all one &lt;canvas&gt; — scope to it, then locate({ container: true }) to outline the nav or the content panel, locate a control inside (selector: '@box:…'), and click the @pt. Verify with look() first." })</code></p>
+  <p><code>ml.agent("Open Privacy and turn on Do Not Track", { extraTools: [ml.clickTool()], systemAppend: "It's all one &lt;canvas&gt; — scope to it, then locate({ container: true }) to outline the nav or the content panel, locate a control inside (selector: '@box:…'), and click the @pt. Verify with look() first." })</code></p>
 
   <canvas id="app"></canvas>
   <div id="log">Nothing done yet.</div>
@@ -213,8 +213,8 @@
     const ml = window.ml;
     if (!ml || !ml.agent) throw new Error('window.ml is not ready — load the extension and reload.');
     const task = opts.task ?? 'Open the Privacy section and turn on “Do Not Track”.';
-    const hints = opts.hints ?? "The whole app is one <canvas>. Scope to it, then locate({ container: true }) to outline the left nav or the content panel, locate a control inside it (selector: '@box:…'), and click the @pt. Verify with look() first. Do Not Track is under Privacy, so open that first.";
-    const agentOpts = { extraTools: [ml.clickTool()], hints, maxSteps: opts.maxSteps ?? 16, ...(opts.agent || {}) };
+    const systemAppend = opts.systemAppend ?? "The whole app is one <canvas>. Scope to it, then locate({ container: true }) to outline the left nav or the content panel, locate a control inside it (selector: '@box:…'), and click the @pt. Verify with look() first. Do Not Track is under Privacy, so open that first.";
+    const agentOpts = { extraTools: [ml.clickTool()], systemAppend, maxSteps: opts.maxSteps ?? 16, ...(opts.agent || {}) };
     const results = [];
     for (let i = 0; i < n; i++) {
       window.__settings.reset();

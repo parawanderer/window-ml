@@ -481,7 +481,7 @@ export function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: num
     );
 }
 
-// The agent run's setup (model, maxSteps, tools, env/vision/hints, + the resolved
+// The agent run's setup (model, maxSteps, tools, env/vision/systemAppend, + the resolved
 // system prompt) — a collapsed block at the top, the agent analogue of chat's
 // OptionsBlock.
 // A zero-dep collapsible JSON tree (DevTools-console style): objects/arrays fold with a one-line
@@ -589,7 +589,7 @@ export function ToolDefsView({ tools }: { tools: DebugAgentConfig["tools"] }) {
     return <div class="tooldefs">{tools.map((t, i) => <ToolDefCard key={i} t={t} />)}</div>;
 }
 
-/** WHAT THIS RUN WAS GIVEN — the system prompt, the toolset, maxSteps, vision, hints, streaming, and
+/** WHAT THIS RUN WAS GIVEN — the system prompt, the toolset, maxSteps, vision, systemAppend, streaming, and
  *  every option that shapes behaviour. The first thing to read when a run did something surprising:
  *  usually it was configured to. */
 export function AgentOptionsBlock({ s }: { s: Session }) {
@@ -614,7 +614,7 @@ export function AgentOptionsBlock({ s }: { s: Session }) {
     } else if (c.vision != null && c.vision !== true) {
         lines.push(`vision: ${JSON.stringify(c.vision)}`);
     }
-    if (c.hints) lines.push(`hints: ${truncate(c.hints, 140)}`);
+    if (c.systemAppend) lines.push(`systemAppend: ${truncate(c.systemAppend, 140)}`);
     // The full-defs viewer below lists every tool; only fall back to a one-line names summary when
     // those defs aren't available (older events), so the two don't duplicate.
     if (!hasToolDefs) lines.push(`tools (${c.tools.length}): ${c.tools.map(t => t.name + (t.requiresApproval ? " ⚠" : "")).join(", ")}`);

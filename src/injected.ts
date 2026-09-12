@@ -500,7 +500,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          *   (the default `domTools`, or `tools` if you overrode it). Use this to hand the
          *   agent an extra capability without losing the built-ins.
          * @param {string} [opts.system] System prompt (default the generic strategy preamble).
-         * @param {string} [opts.hints] Task-specific notes APPENDED to the system prompt
+         * @param {string} [opts.systemAppend] Task-specific notes APPENDED to the system prompt
          *   (keeps the built-in workflow + tool clauses — unlike `system`, which
          *   REPLACES them). Put site/task facts here for a minimal setup.
          * @param {number} [opts.maxSteps=10] Hard cap on tool-executing turns.
@@ -544,7 +544,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, images = [], _control = null }: {
+        agent: async function(task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, images = [], _control = null }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
             serverTools?: string[];
@@ -552,7 +552,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
              *  driven from the Commander bar has no code to name one; a scripted call said what it wanted. */
             commanderTools?: boolean;
             system?: string | null;
-            hints?: string | null;
+            systemAppend?: string | null;
             maxSteps?: number;
             model?: string | null;
             think?: boolean | null;
@@ -805,7 +805,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 // reports back instead of clicking a link and silently dying.
                 if (!navigate) systemPrompt += NAV_OFF_CLAUSE;
             }
-            if (hints) systemPrompt += `\n\nTask-specific notes:\n${hints}`;
+            if (systemAppend) systemPrompt += `\n\nTask-specific notes:\n${systemAppend}`;
             if (env) {
                 const ctx = pageContext(n => toolset.some(t => t.name === n));
                 if (ctx) systemPrompt += `\n\nCurrent page context:\n${ctx}`;
@@ -842,7 +842,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 system: systemPrompt, customSystem: !!system,
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary, ...(t.remote ? { remote: t.remote } : {}) })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null,
-                driverSees, visionModel: runVisionModel, hints: hints || null, silent: silent || undefined, unattended: unattended || undefined,
+                driverSees, visionModel: runVisionModel, systemAppend: systemAppend || null, silent: silent || undefined, unattended: unattended || undefined,
                 navigate, crossOrigin: crossOrigin || undefined, approvalRouting: approvalRouting !== "ui" ? approvalRouting : undefined,
                 stream: stream || undefined,
             } });
@@ -2887,7 +2887,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             createAgent: (o?: unknown) => MlAgentHandle & { run: (t?: string, images?: (string | HTMLImageElement)[]) => Promise<unknown> };
             clickTool: () => unknown; typeTool: () => unknown; pythonTool: () => unknown; chatMetaTool: () => unknown;
         };
-        // `hints` (appended to the system prompt) rather than `system` (which would REPLACE the
+        // `systemAppend` (appended to the system prompt) rather than `system` (which would REPLACE the
         // preamble): the run still needs the whole method, it just isn't a console call.
         // chatMetaTool: a HUD user often asks "which model am I / how much context have I used?" — give the
         // HUD agent the self-introspection tool by default (a scripted ml.agent still opts in via extraTools).
@@ -2897,7 +2897,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
         // Commander/HUD runs allow cross-origin navigation by default — a HUD user driving a real task often
         // needs to cross sites, and each crossing still hits the consent gate (a new origin prompts), so it's
         // safe. A scripted console `ml.agent()` still defaults to same-site only.
-        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool()], hints: HUD_HINT + proseClause, crossOrigin: true };
+        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool()], systemAppend: HUD_HINT + proseClause, crossOrigin: true };
         if (Number.isFinite(maxSteps) && maxSteps > 0) opts.maxSteps = maxSteps;   // the composer's step budget
         // The composer's per-call model pick (omitted ⇒ the configured default) + a per-call FORCE-NATIVE
         // vision override for a non-Ollama model (omitted ⇒ ml.agent's default vision routing). Same knobs a

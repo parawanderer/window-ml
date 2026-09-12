@@ -811,7 +811,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             config: {
                 system: p.systemPrompt, customSystem: false,
                 tools: p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, vision: t.capabilities.includes("vision"), description: t.description, parameters: t.parameters, summary: t.summary, ...(t.remote ? { remote: t.remote } : {}) })),
-                maxSteps: p.maxSteps, think: p.think, env: true, vision: null, hints: null, unattended: p.unattended, silent: p.silent,
+                maxSteps: p.maxSteps, think: p.think, env: true, vision: null, systemAppend: null, unattended: p.unattended, silent: p.silent,
                 stream: p.stream,
             },
         };

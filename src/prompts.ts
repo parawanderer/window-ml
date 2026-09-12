@@ -68,7 +68,7 @@ export const SELF_CLAUSE =
     "TOOLBOX: e.g. `await ml.chat(prompt)` for a sub-LLM call (summarise/classify a blob of text " +
     "you've gathered) or `await ml.read(el)` to OCR an image — each returns a `Promise<string>`; " +
     "`agent_api_docs` lists the rest.";
-// Invocation provenance for a UI-started run, passed as ml.agent's `hints` (SELF_CLAUSE
+// Invocation provenance for a UI-started run, passed as ml.agent's `systemAppend` (SELF_CLAUSE
 // says the user CAN drive you from the console — for a HUD run that's true but not how
 // they actually did it, and "how do I invoke you?" deserves the answer they're living in).
 export const HUD_HINT =

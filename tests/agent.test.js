@@ -45,9 +45,9 @@ test("__mlStartAgent (HUD composer relay) runs a REAL createAgent().run() in the
     const toolNames = (createdOpts?.extraTools || []).map(t => t.name);
     assert.ok(["click", "type", "python_exec", "chat_metadata"].every(n => toolNames.includes(n)), `composer run wires click/type/python/chat_metadata (got ${toolNames.join(",")})`);
     // Invocation provenance: SELF_CLAUSE tells the model the user CAN drive it from the console, which
-    // would be the wrong answer to "how did you start?" for a HUD run. `hints` APPENDS (system would
+    // would be the wrong answer to "how did you start?" for a HUD run. `systemAppend` APPENDS (system would
     // replace the whole preamble), so the method survives.
-    assert.match(createdOpts?.hints || "", /HUD/, "a UI-started run tells the model it came from the HUD");
+    assert.match(createdOpts?.systemAppend || "", /HUD/, "a UI-started run tells the model it came from the HUD");
     assert.equal(createdOpts?.system, undefined, "the HUD must not REPLACE the built-in system prompt");
 
     // A blank task is ignored (no empty run).
@@ -2691,7 +2691,7 @@ test("wait tool: fixed ms pause and wait-for-selector resolve", async () => {
     assert.match(await wait.run({ selector: "#later", timeout: 500 }), /appeared/);
 });
 
-test("hints append task facts while keeping the built-in workflow", async () => {
+test("systemAppend appends task facts while keeping the built-in workflow", async () => {
     const seen = [];
     const world = loadPageWorld({
         onRuntimeMessage: (m) => {
@@ -2700,10 +2700,10 @@ test("hints append task facts while keeping the built-in workflow", async () => 
         }
     });
     const plain = world.ml.defineTool({ name: "plain", run: () => "" });
-    await world.ml.agent("t", { tools: [plain], hints: "On amazon.nl sponsored = Gesponsord." });
+    await world.ml.agent("t", { tools: [plain], systemAppend: "On amazon.nl sponsored = Gesponsord." });
 
     assert.match(seen[0], /General method:/);                  // workflow still present
-    assert.match(seen[0], /Task-specific notes:\nOn amazon\.nl sponsored/);  // hints appended
+    assert.match(seen[0], /Task-specific notes:\nOn amazon\.nl sponsored/);  // systemAppend appended
 });
 
 test("logDebug installs a built-in console tracer and still forwards to onStep", async () => {

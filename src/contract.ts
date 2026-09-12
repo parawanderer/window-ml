@@ -1279,7 +1279,7 @@ export interface AgentOptions {
     /** REPLACES the built-in preamble */
     system?: string | null;
     /** APPENDED to the built-in preamble */
-    hints?: string | null;
+    systemAppend?: string | null;
     maxSteps?: number;
     model?: string | null;
     /** Toggle the model's separate reasoning pass: true = think before each step, false = don't;
@@ -1952,7 +1952,7 @@ export interface DebugAgentConfig {
     driverSees?: boolean;
     /** RESOLVED: the vision reader a delegated sub-call uses (equals the driver when native; null = none) */
     visionModel?: string | null;
-    hints: string | null;
+    systemAppend: string | null;
     /** scripting run: kept out of the in-page HUD (the card reads this to stay hidden) */
     silent?: boolean;
     /** headless run: approval-gated calls are refused (no human to approve) */

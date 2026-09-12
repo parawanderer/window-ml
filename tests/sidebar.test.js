@@ -1131,7 +1131,7 @@ test("step-cap stop (HUD card): the corner card offers 'Continue (+N steps)' →
     assert.ok(msg && msg.hash === "capC", "the card posts continueRun for its run");
 });
 
-const streamConfig = (over = {}) => ({ system: "s", customSystem: false, tools: [], maxSteps: 20, think: null, env: true, vision: null, hints: null, ...over });
+const streamConfig = (over = {}) => ({ system: "s", customSystem: false, tools: [], maxSteps: 20, think: null, env: true, vision: null, systemAppend: null, ...over });
 
 test("HUD card: a streaming answer renders as CLEAN text — no DevTools activity line or model chip", async () => {
     const w = await loadSidebarWorld();
@@ -2177,7 +2177,7 @@ test("debug In render of a click step is a hoverable element reference, not the 
 
 test("a tool step shows the tool's short summary as a hover tooltip on its name", async () => {
     const w = await loadSidebarWorld();
-    const cfg = { system: "", customSystem: false, maxSteps: 10, think: null, env: true, vision: null, hints: null,
+    const cfg = { system: "", customSystem: false, maxSteps: 10, think: null, env: true, vision: null, systemAppend: null,
         tools: [{ name: "look", requiresApproval: false, summary: "Screenshots the page so the agent can see it." }] };
     await w.dispatch(agentStart("tsum", "look at it", "m", 10, cfg));
     await w.dispatch(agentStep("tsum", 1, { tool: "look", arguments: {}, result: "a screenshot" }));
@@ -2619,7 +2619,7 @@ test("agent options: the tool definitions viewer renders a JSON tree of each too
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("tdv", "do stuff", "m", 10, {
         system: "you are an automation agent", customSystem: false, maxSteps: 10,
-        think: null, env: true, vision: null, hints: null,
+        think: null, env: true, vision: null, systemAppend: null,
         tools: [{
             name: "click", requiresApproval: true, vision: false,
             description: "Click an element by selector.",
@@ -3395,7 +3395,7 @@ test("agent options block renders the config + reveals the system prompt", async
     const cfg = {
         system: "You are an automation agent operating on the page.", customSystem: false,
         tools: [{ name: "look", requiresApproval: false }, { name: "click", requiresApproval: true }],
-        maxSteps: 8, think: null, env: true, vision: null, hints: null,
+        maxSteps: 8, think: null, env: true, vision: null, systemAppend: null,
     };
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("ao", "task", "gemma", 8, cfg));
@@ -3417,7 +3417,7 @@ test("agent options: warns when no vision model resolved (look/locate unavailabl
     const cfg = {
         system: "s", customSystem: false,
         tools: [{ name: "findByText", requiresApproval: false }],   // no vision tool
-        maxSteps: 10, think: null, env: true, vision: null, hints: null,
+        maxSteps: 10, think: null, env: true, vision: null, systemAppend: null,
     };
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("nv", "task", "text-model", 10, cfg));
@@ -3433,7 +3433,7 @@ test("agent options: no vision warning when a vision tool IS wired", async () =>
     const cfg = {
         system: "s", customSystem: false,
         tools: [{ name: "look", requiresApproval: false, vision: true }],
-        maxSteps: 10, think: null, env: true, vision: null, hints: null,
+        maxSteps: 10, think: null, env: true, vision: null, systemAppend: null,
     };
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("hv", "task", "qwen2.5vl", 10, cfg));
@@ -4759,7 +4759,7 @@ test("card concurrency: several runs merely WORKING stay a single orb — it nar
 });
 
 // --- Raw In args: schema-annotated JSON tree (hover a key for its description) -----------------------
-const agentCfg = (tools) => ({ system: "sys", customSystem: false, tools, maxSteps: 10, think: null, env: true, vision: null, hints: null, unattended: false, silent: false, driverSees: false, visionModel: null });
+const agentCfg = (tools) => ({ system: "sys", customSystem: false, tools, maxSteps: 10, think: null, env: true, vision: null, systemAppend: null, unattended: false, silent: false, driverSees: false, visionModel: null });
 const clickTool = { name: "click", requiresApproval: true, vision: false, description: "Click an element.", summary: "Clicks.",
     parameters: { type: "object", required: ["selector"], properties: {
         selector: { type: "string", description: "CSS selector or @pt token from locate." },
