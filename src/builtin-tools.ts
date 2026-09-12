@@ -11,6 +11,7 @@ import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleShee
 import { accessibleName } from "./a11y";
 import { regionLegend, formatLegend, type Box as LegendBox } from "./legend";
 import { outputCapParams, retryParams, citeParam } from "./tool-params";
+import { pyValueParts } from "./py-render";
 
 // python_exec output (stdout / value / error) fed to the model is capped per slot — default bigger than
 // exec's 500 (data output legitimately runs longer), the model can raise it per-call (gated). See run().
@@ -1533,10 +1534,10 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 return done(`${tableNote}Python error: ${err}${hint}${stdoutClipped ? `\n\nstdout:\n${stdoutClipped}` : ""}`, { error: err });
             }
             const v = r.value;
+            // HOW it is drawn is shared with the bench (py-render.ts); what the model is TOLD stays here.
+            const parts = pyValueParts(v, { render: r.render, table: r.resultTable }, stringify);
             // An image return is unambiguous → always shown (no cast needed).
-            if (typeof v === "string" && /^data:image\//.test(v)) {
-                return done(`${pre}Returned an image.`, { image: v });
-            }
+            if (parts.image) return done(`${pre}Returned an image.`, parts);
             // Coordinates are opt-in via `cast` (auto-detecting [x,y] would mangle a general
             // script that returns two numbers). A mismatch is an honest error, not a guess.
             if (cast === "pt") {
@@ -1588,19 +1589,16 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                                 : "";
             // A returned DataFrame/Series → render a real table (the sidebar draws PyDfTable); the model
             // still gets the text repr in `content` for reasoning. Applies to both the agent run and the bench.
-            if (r.resultTable) return done(`${pre}${text}`, { value: text, df: r.resultTable });
+            if (parts.df) return done(`${pre}${text}`, parts);
             // Returned None but PRINTED — a common miss: the model logs to stdout but returns nothing, so the
             // result is `null` and there's nothing meaningful to CITE. Nudge it to RETURN the value (a DataFrame
             // renders as a table). Gated on stdout so a script that legitimately returns nothing isn't nagged.
             const nullWarn = (v === null || v === undefined) && stdoutClipped
                 ? "\n\n⚠ Your code RETURNED null (None) — you printed to stdout but didn't RETURN a value, so there's nothing to cite. Whatever the user should SEE, RETURN it (a pandas DataFrame renders as a readable table; a dict/number is fine); stdout is just a debug log."
                 : "";
-            // Auto-typeset a LaTeX return, no `| latex` cast needed (`| raw` overrides). Two ways it's detected:
-            // (1) python-runtime saw a sympy TYPE and set r.render; (2) the value is a LaTeX STRING — a braced
-            // sub/superscript or a LaTeX command — which catches a model that returns `sympy.latex(expr)` (a
-            // string) rather than the expression. The pattern is specific enough to skip ordinary text.
-            const looksLatex = typeof v === "string" && /[\^_]\{|\\(frac|sqrt|left|right|cdot|times|div|sum|prod|int|sin|cos|tan|log|ln|exp|lim|infty|partial|nabla|alpha|beta|gamma|delta|theta|lambda|mu|sigma|pi|begin)\b/.test(v);
-            if (r.render === "latex" || looksLatex) return done(`${pre}${text}`, { value: text, latex: true });
+            // Auto-typeset a LaTeX return, no `| latex` cast needed (`| raw` overrides): a sympy TYPE, or a
+            // string that is LaTeX itself (`LOOKS_LATEX`, for a model that returns `sympy.latex(expr)`).
+            if (parts.latex) return done(`${pre}${text}`, parts);
             return done(`${pre}${text}${castHint}${nullWarn}`, { value: text });
         },
     });

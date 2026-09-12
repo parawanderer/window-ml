@@ -49,6 +49,13 @@ interface CodeEditorProps {
     complete?: CodeEditorOptions["complete"];
     /** Class for the field itself, so callers keep owning its size and border. */
     class?: string;
+    /** A line-number gutter (the log's "show line numbers" preference, for the bench). The textarea has none. */
+    lineNumbers?: boolean;
+    /** The line (1-based, in the current `value`) to mark as the one that failed; null or absent for none. */
+    markLine?: number | null;
+    /** Receives the live editor once CodeMirror is up (and null when it goes), for imperative calls such as
+     *  `flashLine`. Stays null for the textarea fallback, which has no lines to point at. */
+    handleRef?: { current: CodeEditorHandle | null };
 }
 
 /**
@@ -57,7 +64,7 @@ interface CodeEditorProps {
  * built bundle lands, so it is never NOT usable. Controlled by `value`/`onChange`; the caller owns its size.
  * Extracted for the Python bench; reach for it instead of a bare `<textarea class="code">`.
  */
-export function CodeEditor({ value, onChange, onRun, placeholder, complete, class: className = "" }: CodeEditorProps) {
+export function CodeEditor({ value, onChange, onRun, placeholder, complete, class: className = "", lineNumbers, markLine, handleRef }: CodeEditorProps) {
     const host = useRef<HTMLDivElement>(null);
     const editor = useRef<CodeEditorHandle | null>(null);
     const [upgraded, setUpgraded] = useState(false);
@@ -93,15 +100,28 @@ export function CodeEditor({ value, onChange, onRun, placeholder, complete, clas
                 // Cmd/Ctrl+Enter for a caller that has nothing to run.
                 onRun: onRun ? () => latest.current.onRun?.() : undefined,
                 complete: complete ? (code, line, column) => latest.current.complete?.(code, line, column) ?? Promise.resolve(null) : undefined,
+                lineNumbers: latestView.current.lineNumbers,
             });
+            editor.current.markLine(latestView.current.markLine ?? null);
+            if (handleRef) handleRef.current = editor.current;
             setUpgraded(true);
         });
         return () => {
             dropped = true;
             editor.current?.destroy();
             editor.current = null;
+            if (handleRef) handleRef.current = null;
         };
     }, []);
+
+    // What the editor should DRAW, read at mount through a ref (the bundle may land several renders after the
+    // first), then pushed whenever it changes.
+    const latestView = useRef({ lineNumbers: !!lineNumbers, markLine });
+    latestView.current = { lineNumbers: !!lineNumbers, markLine };
+    useEffect(() => { editor.current?.setLineNumbers(!!lineNumbers); }, [lineNumbers]);
+    // On `value` too: a document replaced from outside can drop the decoration, and the caller's number may
+    // not have changed with it.
+    useEffect(() => { editor.current?.markLine(markLine ?? null); }, [markLine, value]);
 
     // A value set from OUTSIDE — a reset, a restored script — is the only thing worth pushing in.
     useEffect(() => {
