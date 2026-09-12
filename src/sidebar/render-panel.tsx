@@ -4,7 +4,7 @@
 // Extracted from app.tsx; leans on the shared primitives in ./ui-kit.
 import type { ComponentChildren } from "preact";
 import { GLYPH, RESOLVED_LABEL, rungLabel, rungMeta } from "./fetch-ladder";
-import { IconChevron } from "./icons";
+import { IconChevron, IconEye, IconEyeOff } from "./icons";
 import { scrollToStepSeq } from "./answer-render";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
@@ -1159,11 +1159,12 @@ export function PyBenchOut({ d, running, marks }: { d: Extract<RenderDescriptor,
                 {!sections.length ? <span class="bench-tab dim" aria-hidden="true">output</span> : null}
                 {/* The produced-at gutter, switched off HERE rather than in Settings: it is usually worth having
                     and occasionally just noise, and the moment you want it gone you are looking at this pane.
-                    Struck through when off, the same convention as the header's run-watchdog toggle. */}
+                    Its eye is crossed out when off, which says the state without striking through the label. */}
                 {hasTimes ? (
                     <button class="tt bench-times" aria-pressed={times}
                         aria-label={times ? "Hide the time each line was printed" : "Show the time each line was printed"}
                         onClick={() => { benchTimes.value = !times; lsSet("ml_bench_times", benchTimes.value ? "on" : "off"); }}>
+                        <span class="bench-times-icon" aria-hidden="true">{times ? <IconEye /> : <IconEyeOff />}</span>
                         timestamps
                         <span class="tt-pop wrap left" role="tooltip"><TipText md={times
                             ? "The time each line was **printed**, stamped by the sandbox as it ran. Click to hide it when it is noise — remembered for the bench."

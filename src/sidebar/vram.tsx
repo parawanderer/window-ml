@@ -21,7 +21,7 @@ import { useTipPlacement } from "./use-tip";
 import { CodeEditor } from "./code-editor";
 import type { RemoteCompletion } from "./code-editor-api";
 import { hhmmss } from "./timestamps";
-import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, type BenchRun } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, benchKept, benchLost, noteBenchKept, type BenchRun } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
@@ -2289,6 +2289,30 @@ export function BenchVer() {
     return <span class="bench-ver" {...cursorTipOn(`Python ${env.python} on Pyodide ${env.pyodide}. Open **environment** for the packages.`)}>py {env.python}</span>;
 }
 
+/** The variables the bench is KEEPING between runs, for the mode it is in, and the one control that clears
+ *  them. Beside the packages because both answer "what is in this sandbox", and a person who reaches for a
+ *  name that is not there looks here first. Reset clears BOTH modes; it is offered only when there is
+ *  something to clear, because a button that visibly does nothing reads as broken. */
+function BenchVars() {
+    const mode = benchMode.value;
+    const vars = benchKept.value[mode]?.vars ?? [];
+    const any = Object.values(benchKept.value).some((k) => k?.vars.length);
+    return (
+        <div class="bench-env-vars">
+            <div class="bench-env-vars-head">
+                <span>Variables <span class="dim">· {mode}, kept between runs</span></span>
+                <button class="tt bench-env-reset" disabled={!any} onClick={resetBenchState} aria-label="Reset the variables">
+                    Reset
+                    <span class="tt-pop wrap left" role="tooltip"><TipText md="Forget every variable the bench is keeping, in **both** modes. Your script is untouched; the next run starts from an empty namespace." /></span>
+                </button>
+            </div>
+            {vars.length
+                ? <ul class="bench-env-list">{vars.map((v) => <li key={v.name}><code>{v.name}</code><span class="bench-env-pv">{v.type}</span></li>)}</ul>
+                : <div class="dim bench-env-vars-none">None yet. Anything a script defines at its top level is kept for the next run.</div>}
+        </div>
+    );
+}
+
 /** Ask the sandbox what it is. Costs a Pyodide start when it is cold, so callers pick their moment:
  *  the environment panel on open (you asked), or a bench run's completion (it is already warm). */
 function loadBenchEnv(onErr?: (m: string) => void) {
@@ -2310,13 +2334,24 @@ function completeInSandbox(code: string, line: number, column: number): Promise<
     if (!benchEnv.value) return Promise.resolve(null);
     return new Promise((resolve) => {
         try {
-            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code, hardened: true, complete: { line, column } } }, (resp: any) => {
+            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code, hardened: true, complete: { line, column, bench: benchMode.value } } }, (resp: any) => {
                 void chrome.runtime.lastError;   // a torn-down sandbox is a fallback, not a console error
                 const r = resp?.data;
                 resolve(r?.ok && Array.isArray(r.completions) ? r.completions : null);
             });
         } catch { resolve(null); }
     });
+}
+
+/** Throw away the bench's kept variables, in both modes. The worker drops its namespaces; the next run starts
+ *  from an empty one, and — because the bench cleared its own record first — without a "restarted" notice. */
+function resetBenchState() {
+    try {
+        chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code: "", benchReset: true } }, (resp: any) => {
+            void chrome.runtime.lastError;
+            if (resp?.data?.ok) { benchKept.value = {}; benchLost.value = false; }
+        });
+    } catch { /* no live channel: nothing kept to reset */ }
 }
 
 /** WHAT THE SANDBOX IS — the Python and Pyodide versions and the packages you can import, read from the
@@ -2394,6 +2429,7 @@ function BenchEnv() {
                                 <input class="bench-env-q" placeholder="Filter packages" spellcheck={false}
                                     value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} />
                             </div>
+                            <BenchVars />
                             <ul class="bench-env-list">
                                 {hits.map((p) => (
                                     <li key={p.name}><code>{p.name}</code>{p.version ? <span class="bench-env-pv">{p.version}</span> : <span class="dim">not installed</span>}</li>
@@ -2442,7 +2478,7 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
         const started = Date.now();
         // The id the SW keys this run's stdout by, and the id the listener below filters on.
         const requestId = `bench-${started.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-        setRunning(true); setResult(null); setLive(null);
+        setRunning(true); setResult(null); setLive(null); benchLost.value = false;
         // Each chunk carries the instant the WORKER produced it — Pyodide stamps it there, because anything
         // downstream would be measuring the message bus. `marks` is [offset in the accumulated text, epoch].
         const onChunk = (msg: { type?: string; requestId?: string; chunk?: string; ts?: number }) => {
@@ -2461,13 +2497,14 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
         try { chrome.runtime.onMessage.addListener(onChunk); streaming = true; } catch { /* no live channel */ }
         const stop = () => { if (streaming) try { chrome.runtime.onMessage.removeListener(onChunk); } catch { /* torn down */ } };
                 try {
-            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", requestId, payload: { code, hardened: mode === "readonly", image: null, tables: null, stream: streaming, ...(benchTimeout.value ? {} : { noTimeout: true }) } },
+            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", requestId, payload: { code, hardened: mode === "readonly", image: null, tables: null, stream: streaming, persist: true, ...(benchTimeout.value ? {} : { noTimeout: true }) } },
                 (resp: any) => {
                     stop();
                     // The background wraps the offscreen result: { data: PyResult } | { error }.
                     const r = resp?.data ?? (resp?.error ? { ok: false, stdout: "", error: resp.error } : null);
                     setResult(r || { ok: false, stdout: "", error: "No response from the sandbox." });
                     setRunning(false);
+                    if (r?.bench) noteBenchKept(mode, r.bench);
                     // The sandbox is up NOW, so the version chip is free. Doing this on mount instead would
                     // make every glance at the bench pay the cold start the env panel exists to defer.
                     loadBenchEnv();
@@ -2530,7 +2567,7 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                 {drag ? <><span class="bench-title">Python bench</span><BenchVer /></> : null}
                 <BenchEnvButton />
                 <span class="tt bench-info" aria-label="about the bench">ⓘ<span class="tt-pop wrap left" role="tooltip">
-                    <TipText md="Runs against the SAME sandbox `python_exec` uses (offscreen → worker → Pyodide). Code-only — no page image or tables. `return` a value (or end with a bare expression, Jupyter-style); `print()` is captured. 15s cap." />
+                    <TipText md="Runs against the SAME sandbox `python_exec` uses (offscreen → worker → Pyodide), but in its own namespace: **variables are kept between runs**, like a notebook, separately for readonly and full. Reset them in **environment**. Code-only — no page image or tables. `return` a value (or end with a bare expression, Jupyter-style); `print()` is captured. 15s cap." />
                 </span></span>
                 {/* THE GRAB PILL is centred on the ROW, which is the only place a drawer handle reads as one —
                     centred in the leftover space instead, it sat visibly off to one side, because the name and
@@ -2589,6 +2626,15 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                 {shape}
             </div>
             <BenchEnv />
+            {/* THE SANDBOX RESTARTED UNDER YOU — said where you are looking, once, instead of surfacing as a
+                NameError on a variable you defined three runs ago. A runaway run being stopped is the usual
+                cause (the watchdog kills the worker, and the kept namespace with it). */}
+            {benchLost.value ? (
+                <div class="bench-lost" role="status">
+                    The sandbox restarted, so variables from earlier runs are gone.
+                    <button class="bench-lost-x" aria-label="Dismiss" onClick={() => { benchLost.value = false; }}>✕</button>
+                </div>
+            ) : null}
             {/* THE SPLIT. Two panes and a divider, rather than the editor at a fixed height with the output
                 pushing down from under it: how much of each you want depends entirely on what you are doing,
                 and in a drawer they are competing for the same handful of pixels. The textarea's own corner
