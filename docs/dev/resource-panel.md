@@ -317,6 +317,11 @@ per device, in bytes.
   sloped: a flat band with diagonal lines across it, which reads as the breakdown disagreeing with the total
   it breaks down. One helper (`stepEdge`, taking the y-mapper since the drilled-in view draws against its own
   shared ceiling) serves all three, defined right after `x`/`y` because the drilled-in branch returns early.
+  **And so does what BELONGS to a model** (`isStep`: identity, or a tint that is not a `load:`): a runner's
+  overhead band is that runner's memory, constant while it lives and gone at the same eviction. Drawn as a line
+  on top of the stepped model it sloped from the last sample to the next — a `\` wedge beside the model's `|` at
+  every eviction, which snapped square only when a hover subdivided the band. A LOADING runner stays a line: its
+  memory really does climb as the weights land.
 - **THE SNAP MARK CARRIES THE MODEL'S COLOUR.** A model's colour is its identity across the whole panel, and
   a mark sitting ON that band was drawn in the panel's accent — saying "a reading" where every other surface
   says "this model", with nothing to tell several marks apart. It reads from `identity`, the same source
@@ -358,6 +363,12 @@ per device, in bytes.
     (a reset takes seconds), so `gpuFaultNote` says so; drawn like `reset_required` it sends someone to
     power-cycle a machine that is fixing itself. `detail` and `recovery` render verbatim — `detail` is the driver's
     own string and is only useful if it can be searched as shown.
+  **It says WHICH card, as an error.** A faulted card has left the enumeration, so it has no CUDA index today,
+  and the indices can shift once one drops out — so the banner names it by what its bus address was LAST SEEN
+  as ("CUDA1 · … — its label when last seen"): the server's `last_name` when it sends one, else `seenCards`, a
+  per-backend record the panel keeps in storage.local because the card is usually already down when the panel
+  opens. The banner is in the error tone (`--err`); only an AMD `reset_in_progress`, usually over in seconds,
+  stays amber.
 - **A CARD'S OWN FACTS ARE ON ITS NAME** (`DeviceFacts`, a hover on the track header). The part that earns the
   space is the TWO TOTALS: ollama places against `total_memory` while the header draws `physical_memory`,
   ~638 MiB apart, and a reader who notices the difference elsewhere has no way to learn it is expected. The
@@ -371,6 +382,10 @@ per device, in bytes.
   complete (a bug on one side). What it still does NOT say: **link speed or width**, which are LIVE readings
   rather than capabilities (an idle Blackwell reads 2.5 GT/s under ASPM while perfectly healthy, and x8-of-x16
   is by design on a board that splits its lanes).
+  **Laid out as a grid, not sentences**: a header with what the card IS (the driver's `description`, from a
+  patched server — never derived from `name`, which is the backend's enumeration label) and its bus address,
+  then label · figure · meaning rows, then one quiet footnote. It was a column of two-weight sentences with the
+  figures buried in them. The popup is `wide`, which the floating layer honours with a larger max-width.
 - **A CARD'S CEILINGS, AND DECODE AGAINST THE CEILING AT ITS CONTEXT** (`ceilingsOf`, `rooflineFrom`,
   `decodeCeiling`, `CeilingChip`; `ollama-slop:hwceil`). Each `supported_gpus[]` entry carries fixed ceilings
   read once at discovery — memory bandwidth (derived by the server from bus width × clock, checked against

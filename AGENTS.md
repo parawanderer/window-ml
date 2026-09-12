@@ -210,7 +210,8 @@ learned by shipping the wrong version first.
   not idle (`memory`, `activity`, `processes`, `gpus` all mean "not reported" when missing). Never pro-rate a split
   model across cards. The event stream names models fully-qualified and `/api/ps` short: `normModel` at the
   boundary. Screen↔time goes only through `runWeight`/`runFrac` (the axis is linear in time). A memo over the
-  lane's events keys on `events.length`, never `events`. Every residual band key must be in `bandOrder`. A
+  lane's events keys on `events.length`, never `events`. Every residual band key must be in `bandOrder`, and a band
+  that belongs to a model steps with it. A
   lane test seeds `ml_res_sections: { lane: true }` and a box (`setCapacity`/`setResident`) or nothing is drawn.
 - **Event lane.** Spans run BACKWARDS from a finish stamp; a tool step is ONE event with phases; a load is its own
   event. Phases are drawn only where something TIMED them.
@@ -352,16 +353,15 @@ the explanation of a design, the bug that shaped it, the measurement behind a th
 row in that table, not a section here. Before adding a paragraph, ask whether someone NOT touching that code needs
 it; if not, it belongs in the doc. (This file was 2,763 lines before the split — 257 KB in every session's context.)
 
-**RULE — self-tools get a skill + an AGENTS.md mention, and you keep both current — WITHOUT asking.**
-Any time you (or any model working on this repo) build a TOOL FOR YOURSELF — a harness, wrapper, driver,
-or script you'll re-use to develop/debug/benchmark the extension (e.g. `tests/e2e/observe.mjs`) — you MUST
-(1) write a **Claude skill** (`.claude/skills/<name>/SKILL.md`) documenting exactly how it's used (invocation,
-env knobs, when to reach for it, gotchas), and (2) add a **brief mention** of it in AGENTS.md so the next
-agent discovers it (its detail goes in `docs/dev/e2e-harness.md`). Keeping AGENTS.md, your skill files, and the
-scripts they describe **in sync and up to date is YOUR responsibility** — every time you change a self-tool's
-behaviour, update its skill + the AGENTS.md
-mention in the same change. Do this proactively, never ask the user whether to. (Skills live in
-`.claude/skills/`; the `observe` skill is the reference example.)
+**RULE — self-tools get a skill + an AGENTS.md mention, and you keep both current — WITHOUT asking.** Any time you
+(or any model working on this repo) build a TOOL FOR YOURSELF — a harness, wrapper, driver, or script you'll re-use
+to develop/debug/benchmark the extension (e.g. `tests/e2e/observe.mjs`) — you MUST (1) write a **Claude skill**
+(`.claude/skills/<name>/SKILL.md`) documenting exactly how it's used (invocation, env knobs, when to reach for it,
+gotchas), and (2) add a **brief mention** of it in AGENTS.md so the next agent discovers it (its detail goes in
+`docs/dev/e2e-harness.md`). Keeping AGENTS.md, your skill files, and the scripts they describe **in sync and up to
+date is YOUR responsibility** — every time you change a self-tool's behaviour, update its skill + the AGENTS.md
+mention in the same change. Do this proactively, never ask the user whether to. (Skills live in `.claude/skills/`;
+the `observe` skill is the reference example.)
 
 **RULE — never pad model-facing text for alignment.** Column-aligning a list with `padEnd` is a HUMAN
 scanning affordance. A model parses the fields either way and pays for every space, so padding is pure
