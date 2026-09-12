@@ -3,8 +3,8 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import { LOAD_RECORDS_KEY } from "./load-records";
-import type { NeutralMessage, ToolCall, TokenUsage, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, InjectMessagePayload, ApprovalDecision } from "./contract";
-import { modelFilterAllows, bgRunResumable, pushReplay, UI_OUT_CAP } from "./contract";   // single source of truth (see contract.ts)
+import type { NeutralMessage, ToolCall, TokenUsage, RequestHint, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, InjectMessagePayload, ApprovalDecision } from "./contract";
+import { modelFilterAllows, bgRunResumable, pushReplay, UI_OUT_CAP, hintSession } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
 import { externalSheetIds, googleSheetId, clipOut, isCurrentPage } from "./dom";
@@ -818,9 +818,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         if (!resumeMessages) emitLifecycle(startEvent);
         else if (resurrected) fanEvent(startEvent);   // resurrected: no page-side caller emitted a start → fan it ourselves
         runBackgroundAgent(
-            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images },
+            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images,
+              // A resumed turn follows a PERSON (a follow-up, Continue, Retry) — except a run resurrected after the
+              // worker was evicted, where nobody was waited on.
+              ...(resumeMessages && !resurrected ? { after: "human" as const } : {}) },
             {
                 callModel: async (messages, opts) => {
+                    // WHAT THIS REQUEST IS FOR: an agent step, in this run's session (see RequestHint).
+                    const hint: RequestHint = { use: "agent", session: hintSession(runId), ...(opts?.after ? { after: opts.after } : {}) };
                     // Thread the run's abort signal so a CANCEL_RUN kills a slow in-flight generation, not
                     // just stops at the next step boundary.
                     if (p.stream) {
@@ -838,7 +843,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                                 ...(acc.reasoning ? { reasoning: acc.reasoning } : {}), ...(acc.content ? { content: acc.content } : {}),
                                 ...(tokens != null ? { tokens } : {}) });
                         };
-                        const r = await streamAgentTurn({ messages, tools: toolDefs, model: p.model, think: p.think },
+                        const r = await streamAgentTurn({ messages, tools: toolDefs, model: p.model, think: p.think, hint },
                             (acc) => {
                                 // Kept even when this delta is throttled away, so the next one out — or the final
                                 // flush — carries the newest count rather than the last one that happened to fan.
@@ -852,7 +857,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         flush({ reasoning: r.reasoning || "", content: r.content || "" });   // final: land the last delta even if throttled
                         return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
                     }
-                    const r = await fetchLLM({ messages, tools: toolDefs, model: p.model, think: p.think, raw: true }, abortCtl.signal) as { content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null };
+                    const r = await fetchLLM({ messages, tools: toolDefs, model: p.model, think: p.think, raw: true, hint }, abortCtl.signal) as { content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null };
                     return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
                 },
                 delegateTool: async (name, args, onStream) => {

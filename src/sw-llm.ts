@@ -5,7 +5,7 @@
 // background.ts verbatim; it depends only on the shared contract (types + DEFAULT_CONFIG/modelFilterAllows)
 // and chrome/fetch. All server JSON is genuinely opaque, so it's typed `any`; our own data uses the contract.
 import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, GenPhase, ProtoMode } from "./contract";
-import { DEFAULT_CONFIG, modelFilterAllows, generatesText, producesEmbeddings, protoMode } from "./contract";   // single source of truth (see contract.ts)
+import { DEFAULT_CONFIG, modelFilterAllows, generatesText, producesEmbeddings, protoMode, wireHint } from "./contract";   // single source of truth (see contract.ts)
 import { loadedFrom } from "./resource-events";
 import { createFrameReader } from "./protostream";
 import { Frame } from "./proto/chat.gen";
@@ -24,6 +24,20 @@ interface ChatBody {
     params?: Record<string, unknown>;       // OpenWebUI reads runtime params here (openai format)
     stream_options?: { include_usage?: boolean; continuous_usage_stats?: boolean };   // see withLiveCount
     stream_metrics?: boolean;               // the same ask on ollama's native route
+    hint?: Record<string, unknown>;         // what the request is for (`wireHint`); see `refusesHint`
+}
+
+/** Endpoints that refused a request carrying `hint`, so this worker stops sending it there. A patched ollama and
+ *  Open WebUI take it and a stock one ignores it, but a STRICT OpenAI-compatible host can answer an unknown field
+ *  with a 400 — and a metadata field must never cost an answer. Per URL: a refusal is a fact about the far end. */
+const refusesHint = new Set<string>();
+
+/** `storage.local` flag marking every request from this browser as SYNTHETIC (`hint.synthetic`): set by the
+ *  benchmark and observe harnesses on their throwaway profiles, so generated traffic is served exactly like real
+ *  traffic but kept out of what the server learns from. Not a user setting. */
+export const SYNTHETIC_KEY = "ml_synthetic_traffic";
+async function isSynthetic(): Promise<boolean> {
+    try { return (await chrome.storage.local.get(SYNTHETIC_KEY))?.[SYNTHETIC_KEY] === true; } catch { return false; }
 }
 
 interface ApiFormatHandler {
@@ -628,6 +642,10 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
     // function_calling override that selects it is applied in the send loop
     // below (its label is version-dependent, so we probe SERVER_TOOL_MODES).
     if (payload.toolIds?.length) body.tool_ids = payload.toolIds;
+    // WHAT THIS REQUEST IS FOR (`wireHint`): top-level on every route, recorded by a patched ollama on `gen.end`.
+    // Dropped for an endpoint that has already refused it (see `send`).
+    const hint = refusesHint.has(config.chatUrl) ? null : wireHint(payload.hint, { extend: payload.extend, synthetic: await isSynthetic() });
+    if (hint) body.hint = hint;
 
     // Wait ms, but reject early if the run is aborted mid-pause (so a cancel during a rate-limit backoff
     // doesn't hang until the timer fires).
@@ -646,6 +664,9 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
         // mid-wait (a cold load of a large model has a ~50 s time to first byte) fails after a long, possibly
         // suspiciously ROUND, interval — which is what points at a timeout somewhere on the path.
         const failedAfterMs: number[] = [];
+        // Set once a 400/422 has been retried WITHOUT the hint; remembered for the URL only if that retry
+        // succeeds, so a 400 for any other reason fails the same way twice and surfaces as the error it was.
+        let hintDropped = false;
         for (let attempt = 0; ; attempt++) {
             let res: Response;
             const sentAt = Date.now();
@@ -681,6 +702,16 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
             }
             if (!res.ok) {
                 const text = await res.text().catch(() => "");
+                // A STRICT server refusing the unfamiliar `hint`: ask once more without it. Not when the refusal
+                // names the running-count keys instead — those have their own retry (streamAgentTurn), and blaming
+                // the hint first would spend a request on the wrong field.
+                if ((res.status === 400 || res.status === 422) && requestBody.hint && !hintDropped
+                    && !/stream_options|continuous_usage_stats|stream_metrics/.test(text)) {
+                    const { hint: _unsent, ...plain } = requestBody;
+                    requestBody = plain as ChatBody;
+                    hintDropped = true;
+                    continue;
+                }
                 let msg = `HTTP ${res.status} from ${config.chatUrl}: ${text.slice(0, 300)}`;
                 // Capability probe was inconclusive for this backend, so the images
                 // themselves are a plausible culprit — say so.
@@ -689,6 +720,7 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
                 }
                 throw new Error(msg);
             }
+            if (hintDropped) refusesHint.add(config.chatUrl);
             return stream ? res : res.json();
         }
     };

@@ -40,6 +40,7 @@ export interface RunAgentConfig {
     seqBase?: number;              // per-turn seq offset so a multi-turn run mints globally-unique token ids (see AgentLoopOptions.seqBase)
     tokenStore?: import("./token-pipe").TokenStore;
     labelMatch?: import("./contract").LexicalMetric;   // which lexical metric ranks a near-miss on a pointer label   // the SESSION's `@tool:` pointer store, so pointers span a handle's turns
+    after?: "human";               // this turn's first request follows a person (a follow-up, Continue, Retry) — see AgentLoopOptions.after
     resumeMessages?: NeutralMessage[];   // RESUME: continue this prior history (+ `task` as a new user turn) instead of a fresh system+task
     images?: string[];   // native-vision composer attachments (data URLs) → attached to THIS turn's user message. The OCR fallback for a text-only driver already folded into `task` page-side.
 }
@@ -48,7 +49,7 @@ export interface RunAgentHostDeps {
     // One model turn (background fetchLLM) → a normalized assistant message.
     callModel(
         messages: NeutralMessage[],
-        opts: { tools: ToolMeta[]; model?: string | null; think?: boolean | null; step: number },
+        opts: { tools: ToolMeta[]; model?: string | null; think?: boolean | null; step: number; after?: "human" | "tool" },
     ): Promise<{ content?: string | null; tool_calls?: ToolCall[]; usage?: unknown; reasoning?: unknown }>;
     // Delegate a tool call to the page (RUN_TOOL_IN_PAGE) → its serializable result string. Reached for
     // a requiresApproval tool ONLY after the gate — the untrusted execution point.
@@ -146,7 +147,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
     };
 
     const loopDeps: AgentLoopDeps = {
-        callModel: (messages, o) => deps.callModel(messages as NeutralMessage[], { tools: o.tools, model: cfg.model, think: cfg.think, step: o.step }),
+        callModel: (messages, o) => deps.callModel(messages as NeutralMessage[], { tools: o.tools, model: cfg.model, think: cfg.think, step: o.step, ...(o.after ? { after: o.after } : {}) }),
         // Live tool output on the background path: `onStream` rides to the PAGE tool as its ctx.stream
         // (RUN_TOOL_IN_PAGE `stream` → the page posts PAGE_TOOL_STREAM chunks back, correlated by runId).
         runTool: (name, args, onStream) => deps.delegateTool(name, args, onStream),
@@ -207,6 +208,6 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         chatMeta: deps.chatMeta,   // resolve model/caps/window SW-side (background provides the caches)
         subcallTokens: deps.subcallTokens,   // this turn's delegated vision sub-call tally (background-accumulated)
     };
-    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, stream: cfg.stream, tokenStore: cfg.tokenStore, labelMatch: cfg.labelMatch, tokenSink: deps.tokenSink }, loopDeps)
+    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, after: cfg.after, stream: cfg.stream, tokenStore: cfg.tokenStore, labelMatch: cfg.labelMatch, tokenSink: deps.tokenSink }, loopDeps)
         .then(result => ({ result, messages: built }));
 }

@@ -393,6 +393,10 @@ export async function runOnce(cfg = {}) {
         // before reaching the browser. It went unnoticed because the seed feature was only ever exercised
         // against the fake, which is exactly the configuration that hides it.
         const seedCfg = seed && fake ? { chatUrl: fake.url, apiKey: "", model: "fake-model" } : null;
+        // GENERATED TRAFFIC, said so on every request (`hint.synthetic`): a patched ollama serves it exactly like
+        // real traffic but keeps it out of what it learns keep-alive and placement from. Observe and the bench
+        // both drive this profile, and neither is a person using the box.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_synthetic_traffic: true }));
         await configureExtension(ext.sw, {
             ...(seedCfg || realCfg),
             apiFormat: backend?.apiFormat || "openai",

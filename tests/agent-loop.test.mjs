@@ -493,3 +493,39 @@ test("a renderFor that THROWS leaves the step pending on raw args rather than fa
     assert.equal(calls.emits.find((e) => e.pending)?.renderIn, undefined);
     assert.equal(res.summary, "done", "the run completed regardless");
 });
+
+// WHAT EACH MODEL CALL WAITED ON (RequestHint.after), which labels the gap before it for the server: a person
+// deciding is not a model that is no longer wanted. A person at the gate outranks the tool that ran after it.
+test("each model call says what it waited on: nothing, then a tool, then a person at the gate", async () => {
+    const seen = [];
+    const { deps } = makeDeps({ turns: [toolCall("plain"), toolCall("danger"), reply("done")], approve: () => true });
+    const call = deps.callModel;
+    deps.callModel = async (m, o) => { seen.push(o.after ?? null); return call(m, o); };
+    await runAgentLoop("x", { tools: [{ name: "plain" }, danger] }, deps);
+    assert.deepEqual(seen, [null, "tool", "human"]);
+});
+
+test("after: a gate a person DENIED still counts as waiting on them; an auto-approved call does not", async () => {
+    const denied = [];
+    const d1 = makeDeps({ turns: [toolCall("danger"), reply("ok")], approve: () => false });
+    const c1 = d1.deps.callModel;
+    d1.deps.callModel = async (m, o) => { denied.push(o.after ?? null); return c1(m, o); };
+    await runAgentLoop("x", { tools: [danger] }, d1.deps);
+    assert.deepEqual(denied, [null, "human"], "the gap was a person deciding, whatever they decided");
+
+    const auto = [];
+    const d2 = makeDeps({ turns: [toolCall("danger"), reply("ok")], autoApprove: () => "readonly" });
+    const c2 = d2.deps.callModel;
+    d2.deps.callModel = async (m, o) => { auto.push(o.after ?? null); return c2(m, o); };
+    await runAgentLoop("x", { tools: [danger] }, d2.deps);
+    assert.deepEqual(auto, [null, "tool"], "auto-approved: nobody was asked, so only the tool was waited on");
+});
+
+test("after: a follow-up turn's first call follows a person (the host says so)", async () => {
+    const seen = [];
+    const { deps } = makeDeps({ turns: [toolCall("plain"), reply("done")] });
+    const call = deps.callModel;
+    deps.callModel = async (m, o) => { seen.push(o.after ?? null); return call(m, o); };
+    await runAgentLoop("x", { tools: [{ name: "plain" }], after: "human" }, deps);
+    assert.deepEqual(seen, ["human", "tool"]);
+});

@@ -300,6 +300,50 @@ export function protoMode(v: unknown): ProtoMode {
     return "auto";
 }
 
+/** WHO WAITS FOR THE OUTPUT of a request, which is the rule the server's hints are built on: a person reading it
+ *  (`interactive`), a program that cannot continue without it (`agent`), nothing urgent (`utility`), throughput
+ *  with nobody waiting (`batch`). */
+export type RequestUse = "interactive" | "agent" | "utility" | "batch";
+
+/**
+ * WHAT A REQUEST IS FOR, told to a patched ollama (`ollama-slop:hints`, docs/FORKED-BACKENDS.md). It is recorded
+ * on the server's `gen.end` beside that request's measured timings, so placement and keep-alive can be learned
+ * from real usage; it never changes an answer, and a server that does not know it ignores it. Every field is
+ * optional, and an ABSENT `use` means unknown — nothing is guessed on the caller's behalf.
+ */
+export interface RequestHint {
+    use?: RequestUse;
+    /** Shared by every request of one conversation or agent run: `wml-` + the session hash ({@link hintSession}).
+     *  Never per message, which would make every request its own session. */
+    session?: string;
+    /** What this session waited on since its previous request: a person deciding (an approval gate, a follow-up
+     *  turn) or a tool running. Labels the gap before this request, so "a person is deciding" is not read as "the
+     *  model is no longer wanted". */
+    after?: "human" | "tool";
+}
+
+/** The `session` for a window.ml session hash. The prefix tells our traffic apart from Open WebUI's own `owui-`. */
+export const hintSession = (hash: string): string => `wml-${hash}`;
+
+/**
+ * The `hint` object a request carries on the wire, from what the caller said plus what only the service worker
+ * knows. Pure; the one place the server's limits are applied (`use`/`after` 32 characters, `session` 128), so a
+ * page cannot send more than the spec allows. `extend: "utility"` is a side task by construction, so it defaults
+ * `use` to `utility`; anything else without a `use` stays unknown. `synthetic` marks generated traffic (benchmark
+ * sweeps): served exactly like real traffic, kept out of what the server learns from.
+ */
+export function wireHint(hint: RequestHint | null | undefined, opts: { extend?: string | null; synthetic?: boolean } = {}): Record<string, unknown> | null {
+    const str = (v: unknown, max: number): string | undefined => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined);
+    const use = str(hint?.use, 32) ?? (opts.extend === "utility" ? "utility" : undefined);
+    const session = str(hint?.session, 128);
+    const after = hint?.after === "human" || hint?.after === "tool" ? hint.after : undefined;
+    const out: Record<string, unknown> = {
+        ...(use ? { use } : {}), ...(session ? { session } : {}), ...(after ? { after } : {}),
+        ...(opts.synthetic ? { synthetic: true } : {}),
+    };
+    return Object.keys(out).length ? out : null;
+}
+
 /** Build an `Accept-Language` header value from the browser's language list (navigator.languages), the way a
  *  real browser sends it: the first language at q=1.0, each later one at a descending q-weight (floored at
  *  0.1). ["en-US","en","fr"] → "en-US,en;q=0.9,fr;q=0.8". Dedupes, trims, drops empties. Pure (unit-tested);
@@ -1049,6 +1093,9 @@ export interface ToolContext {
      *  from inside one of its tool calls. An empty array narrows it to nothing, which is what a run that
      *  asked for no server tools must get; absent is treated the same way. */
     serverAllow?: readonly string[];
+    /** The run's hint session (`wml-` + its hash). Bound while a tool runs, so a model call the tool makes is
+     *  labelled as part of this run (`use: "agent"`, see RequestHint) rather than as an anonymous one-shot. */
+    session?: string;
     /** LIVE partial output — a GENERIC tool-streaming capability. A tool's `run` may call `ctx.stream(text)`
      *  to stream output AS IT WORKS (Jupyter-style: `exec`'s console.log, `python_exec`'s print), so the step's
      *  Out fills in live instead of only appearing at completion. Present ONLY when the run opted into
@@ -1258,6 +1305,9 @@ export interface StepOptions {
     think?: boolean | null;
     /** abort kills the in-flight model fetch and rejects the call */
     signal?: AbortSignal | null;
+    /** What this request is for ({@link RequestHint}). Default: an agent step (a program acts on the reply), in the
+     *  session of the run whose tool is executing, if any. */
+    hint?: RequestHint | null;
 }
 
 /** Options for ml.agent — the loop, whitelist, cap and approval gate. */
@@ -1386,6 +1436,10 @@ export interface ChatOptions {
     onToken?: (delta: string, full: string) => void;
     /** abort the request (streaming disconnects the Port; both kill the fetch) */
     signal?: AbortSignal | null;
+    /** Who waits for the output, told to a patched ollama so it can learn how models are used ({@link RequestUse}).
+     *  Omit it when you cannot tell — a script and a person at the console call this alike — and nothing is
+     *  guessed; `extend: "utility"` defaults to `"utility"`. Never changes the answer. */
+    use?: RequestUse;
 }
 
 /** A stateful multi-turn chat (the object ml.createChat returns). Its methods'
@@ -1713,6 +1767,9 @@ export interface FetchLlmPayload {
     tools?: unknown[];
     raw?: boolean;
     ocr?: boolean;
+    /** What this request is for ({@link RequestHint}); the service worker sanitizes it and adds what only it
+     *  knows (whether this browser's traffic is synthetic). */
+    hint?: RequestHint | null;
 }
 
 /** A model resident in Ollama, from OLLAMA_PS. `vramGB` is the portion in VRAM

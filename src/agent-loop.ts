@@ -30,7 +30,9 @@ export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?
 export interface AgentLoopDeps {
     // One model turn → the assistant message (content + normalized tool_calls + usage + the separate
     // reasoning/thinking channel, which the sidebar shows as a collapsible "think" section).
-    callModel(messages: unknown[], opts: { tools: ToolMeta[]; step: number }): Promise<{ content?: string | null; tool_calls?: ToolCall[]; usage?: unknown; reasoning?: unknown }>;
+    // `after` is what this call waited on since the previous one (see RequestHint.after): the host puts it on the
+    // request's hint, so the server can tell a person deciding from a model no longer wanted.
+    callModel(messages: unknown[], opts: { tools: ToolMeta[]; step: number; after?: "human" | "tool" }): Promise<{ content?: string | null; tool_calls?: ToolCall[]; usage?: unknown; reasoning?: unknown }>;
     // Execute a tool by name — LOCAL (page-side today) or DELEGATED (background → page, safe mode).
     // Reached for a requiresApproval tool ONLY after the gate. This is the untrusted delegation point.
     // `onStream`, when provided (opt-in `stream`), is handed to the tool as `ctx.stream` so it can stream live
@@ -205,6 +207,9 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
     // citation would resolve to the earlier step. The caller passes its running base (the same one it offsets the
     // stored step.seq by), so the minted id matches a session-unique step exactly.
     toolTokens?: boolean; runHash?: string; seqBase?: number;
+    /** What this turn's FIRST model call waited on: `"human"` for a follow-up a person sent (a new message,
+     *  Continue, Retry), absent for a fresh run. Later calls are labelled by the loop from what happened. */
+    after?: "human" | "tool";
     /** Called once at run start with a resolver for this run's `@tool:` pointers. The host binds it into the
      *  ToolContext so `ml.dereference` inside an approved exec reads THIS run's outputs — and only while a
      *  tool of this run is executing. The loop owns the store, so it is the only place that can hand this out. */
@@ -517,9 +522,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             if (name === DEREF_TOOL) return await derefLocally(a, step, seq);
             const l = lookArgs(name, a, step);
             return "error" in l ? { result: `Error: ${l.error}` } : await deps.runTool(name, l.args, push);
-        } finally { lastToolMs = Date.now() - t0; }
+        } finally { lastToolMs = Date.now() - t0; if (waited !== "human") waited = "tool"; }
     };
     let seq = 0;
+    // WHAT THE NEXT MODEL CALL WAITED ON, for the request hint: a person at an approval gate outranks a tool
+    // running, since the person is the long, unpredictable part of the gap. Cleared once a call carries it.
+    let waited: "human" | "tool" | undefined = opts.after;
     // Live token stats for the chat_metadata tool: promptLast = the last call's prompt tokens (current
     // context occupancy), genTotal = completion tokens summed across the run. Accurate on both worlds since
     // the loop is shared. `calls` = model turns so far.
@@ -536,8 +544,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // clean cancel (don't propagate as a run error), same as the boundary check. Re-throw a real error.
         let msg;
         deps.emitTurn?.({ step });   // the call is going out NOW — the only stamp for "the model started"
-        try { msg = await deps.callModel(messages, { tools, step }); }
+        try { msg = await deps.callModel(messages, { tools, step, ...(waited ? { after: waited } : {}) }); }
         catch (e) { if (signal?.aborted) return cancelled(step - 1); throw e; }
+        waited = undefined;
         turnReturnedAt = Date.now();
         if (signal?.aborted) return cancelled(step - 1);
         if (msg.usage) { const u = usageTokens(msg.usage); modelCalls++; if (u.prompt) promptLast = u.prompt; genTotal += u.completion; usages.push(msg.usage as TokenUsage); }
@@ -630,6 +639,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     const gateT0 = Date.now();
                     const rawDecision = await deps.approve({ tool: call.name, arguments: args, seq: s, step });
                     lastApproveMs = Date.now() - gateT0;
+                    waited = "human";   // a person decided at the gate — the gap before the next call is theirs
                     const d = normalize(rawDecision, args);
                     // CANCELLED while the gate was open (Stop pressed) — two channels, either suffices:
                     // `signal.aborted` (CANCEL_RUN aborted the run's controller) OR `d.cancelled` (CANCEL_RUN

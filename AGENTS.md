@@ -605,6 +605,14 @@ and OpenWebUI's tool execute route. **Read `docs/FORKED-BACKENDS.md` before assu
 broken** — it is the accounting of what needs which build, and how the client reads each. Every one of them is
 optional: absent means "this server does not report it", and the panel says so rather than inventing a value.
 
+**Request hints** (`hint` on every generation request) tell the patched Ollama WHO WAITS for each output
+(`use`), which run or conversation it belongs to (`session`, `wml-<hash>`) and what the session waited on
+(`after`), so placement and keep-alive can later be learned from real use; today they are only recorded on
+`gen.end`. `wireHint` (contract.ts) is the one place limits and defaults apply. **An absent `use` means unknown:
+never guess one for a caller that did not say.** A tool's own model calls inherit the running run's session
+(`currentRunSession`, bound while the tool runs), and the observe/bench harnesses mark their traffic
+`synthetic`. The full mapping is in `docs/FORKED-BACKENDS.md`.
+
 ## Security invariants (don't regress these)
 
 - **Config overrides (URL/key) are accepted only from the popup.** Page-relayed

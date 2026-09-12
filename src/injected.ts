@@ -33,7 +33,7 @@ import type {
     TablePreview,
     ServerToolResult
 } from "./contract";
-import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } from "./contract";
+import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated, hintSession } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { expandPointers } from "./pointer-macro";   // `@tool:` → a real dereference call, before the dialect sees it
 import { htmlToMarkdown } from "./html-to-md";
@@ -46,7 +46,7 @@ import { BUILD_INFO } from "./build-info.gen";
 import { accessibleName, roleOf, ariaState } from "./a11y";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, PIPE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
-import type { DerefValue, ShotBox, ServerTool, OllamaInfo, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer } from "./contract";
+import type { DerefValue, ShotBox, ServerTool, OllamaInfo, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer, RequestHint, RequestUse } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
@@ -62,13 +62,17 @@ import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyE
 import { buildServerTools, buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
-import { executeTool, toolContext, currentAnswer, currentDeref, currentServerAllow } from "./tool-exec";
+import { executeTool, toolContext, currentAnswer, currentDeref, currentServerAllow, currentRunSession } from "./tool-exec";
 import { runAgentLoop, shotTurnMessage, CITABLE_TOOLS } from "./agent-loop";
 import type { AgentLoopDeps } from "./agent-loop";
 import { installToolDelegation, registerRun, endRun, runAnswer } from "./run-delegation";
 import { descriptorFor } from "./render-descriptor";
 import { AgentHandle, sameOriginNav, sameOriginFetch, DerefText } from "./ml-agent";   // run-control object (createAgent/agent) + page-loop same-origin auto-approve predicates
 import type { AgentControl } from "./ml-agent";
+
+/** Histories `ml.chat` made for a single call. They have no conversation behind them, so their requests carry no
+ *  hint session — a new session per call is the "per message" case, from which the server learns nothing. */
+const oneShotChats = new WeakSet<object>();
 
 /** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
  *  builds a DataFrame from (rows or read_html html). Internal to injected.ts. */
@@ -248,9 +252,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @param {boolean} [options.save=false] Persist across reloads when debug sidebar is on.
          * @returns {{messages: Array<{role: string, content: string, images?: Array, sources?: Array}>, hash: string, model: string|null, think: boolean, schema: Object|null, toolIds: string[]|null, maxTokens: number|null, save: boolean, chat: Function, fork: Function}} Chat session object.
          */
-        createChat: function({ system = null, model = null, extend = null, numCtx = null, numGpu = null, think = false, schema = null, toolIds = null, maxTokens = null, save = false }: Pick<ChatOptions, "system" | "model" | "extend" | "numCtx" | "numGpu" | "think" | "schema" | "toolIds" | "maxTokens"> & { save?: boolean } = {}): MlHistory {
+        createChat: function({ system = null, model = null, extend = null, numCtx = null, numGpu = null, think = false, schema = null, toolIds = null, maxTokens = null, save = false, use = undefined }: Pick<ChatOptions, "system" | "model" | "extend" | "numCtx" | "numGpu" | "think" | "schema" | "toolIds" | "maxTokens" | "use"> & { save?: boolean } = {}): MlHistory {
             validateExtend(extend);
             const ml = this;
+            const chatUse = use;   // who waits for this conversation's replies, if the caller said (RequestHint)
             const history: MlHistory = {
                 messages: system ? [{ role: "system", content: system }] : [],
                 // Stable per-session id (see the debug sidebar). Read it off the
@@ -280,7 +285,8 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                  * @param {(delta: string, full: string) => void} [options.onToken=null] Streaming callback.
                  * @returns {Promise<string|Object>} The model's reply (parsed if schema set).
                  */
-                chat: async function(this: MlHistory, prompt: string, { images = [], model = this.model, extend = this.extend, numCtx = this.numCtx, numGpu = this.numGpu, think = this.think, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, save = this.save, onToken, signal = null }: {
+                chat: async function(this: MlHistory, prompt: string, { images = [], model = this.model, extend = this.extend, numCtx = this.numCtx, numGpu = this.numGpu, think = this.think, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, save = this.save, onToken, signal = null, use = chatUse }: {
+                    use?: RequestUse;
                     images?: (string | HTMLImageElement)[];
                     model?: string | null;
                     extend?: ExtendProfile | null;
@@ -302,7 +308,14 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         );
                     }
 
-                    const requestPayload: FetchLlmPayload = { "messages": [...this.messages, userMessage], "think": think, "model": model, "extend": extend, "numCtx": numCtx, "numGpu": numGpu, "schema": schema, "toolIds": toolIds, "maxTokens": maxTokens };
+                    // WHAT THIS REQUEST IS FOR (RequestHint). Inside a tool of a run, the run's: the loop waits on it. Else
+                    // what the caller said — no `use` when it did not (a person at the console and a script look the
+                    // same) — in this conversation's session, except for a one-shot `ml.chat`, which has none (a new id
+                    // per call would make every request its own session).
+                    const runSession = currentRunSession();
+                    const hint: RequestHint = runSession ? { use: "agent", session: runSession }
+                        : { ...(use ? { use } : {}), ...(oneShotChats.has(this) ? {} : { session: hintSession(this.hash) }) };
+                    const requestPayload: FetchLlmPayload = { "messages": [...this.messages, userMessage], "think": think, "model": model, "extend": extend, "numCtx": numCtx, "numGpu": numGpu, "schema": schema, "toolIds": toolIds, "maxTokens": maxTokens, "hint": hint };
                     // Debug sidebar: announce the request (no-op unless the sidebar is on).
                     const debug = debugId();
                     // Group turns of THIS conversation by the session hash; `turn` is
@@ -410,7 +423,9 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @returns {Promise<string|Object>} The model's reply.
          */
         chat: async function(prompt: string, options: ChatOptions = {}): Promise<string | unknown> {
-            return this.createChat(options).chat(prompt, options);
+            const history = this.createChat(options);
+            oneShotChats.add(history);   // no conversation behind it, so no hint session
+            return history.chat(prompt, options);
         },
         /**
          * Low-level single model turn WITH client-side tools.
@@ -427,16 +442,21 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @param {boolean} [options.think=null] Thinking flag; null omits it.
          * @returns {Promise<{content: string, tool_calls: Array<{id?: string, name: string, arguments: Object}>}>} The assistant message with tool calls.
          */
-        step: async function(messages: NeutralMessage[], { tools = [], model = null, think = null, signal = null }: {
+        step: async function(messages: NeutralMessage[], { tools = [], model = null, think = null, signal = null, hint = null }: {
             tools?: unknown[];
             model?: string | null;
             think?: boolean | null;
             signal?: AbortSignal | null;
+            /** What this request is for (RequestHint). Default: an agent step — a program that acts on the reply —
+             *  in the session of the run whose tool is executing, if any. */
+            hint?: RequestHint | null;
         } = {}): Promise<{ content: string; tool_calls: ToolCall[]; reasoning?: string | null; usage?: TokenUsage | null }> {
+            const runSession = currentRunSession();
             return makeBackgroundTaskPromise(
                 "LLM_REQUEST",
                 "LLM_RESPONSE",
-                { "messages": messages, "tools": tools, "model": model, "think": think, "raw": true },
+                { "messages": messages, "tools": tools, "model": model, "think": think, "raw": true,
+                  "hint": hint ?? { use: "agent", ...(runSession ? { session: runSession } : {}) } },
                 undefined,
                 signal,   // abort kills the in-flight fetch AND rejects here (the agent loop converts it to a clean cancel)
             );
@@ -1038,6 +1058,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // The runtime ToolContext for this run — built once from the finalised toolset (byName) + model,
             // so a tool's run(args, ctx) can adapt to which companion tools are wired (e.g. `locate`).
             const toolCtx = toolContext(byName, runModel, null, driverSees, runVisionModel);
+            toolCtx.session = hintSession(runHash);   // a tool's own model calls belong to this run (RequestHint)
             // `ml.dereference` inside an approved exec: the loop hands its pointer resolver to `tokenSink`
             // below, and this closure is what the ToolContext binds — so the primitive is live only while a
             // tool of THIS run is executing (see tool-exec's activeDeref), and resolves against this run.
@@ -1062,7 +1083,9 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             };
 
             const deps: AgentLoopDeps = {
-                callModel: (messages) => this.step(messages as NeutralMessage[], { tools: toolDefs, model, think, signal }),
+                // WHAT THIS REQUEST IS FOR: an agent step, in this run's session (see RequestHint).
+                callModel: (messages, o) => this.step(messages as NeutralMessage[], { tools: toolDefs, model, think, signal,
+                    hint: { use: "agent", session: hintSession(runHash), ...(o.after ? { after: o.after } : {}) } }),
                 runTool: runToolDep,
                 // The pending step's pretty In. Page-side the tool object is right here, so this is
                 // `descriptorFor` over an EMPTY envelope — the tool's own render(input, args), and nothing
@@ -1197,11 +1220,15 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // One turn of the run. `t` is appended to control.messages (empty → run over prior say()s);
             // buildMessages continues the live history, and maxSteps is read fresh each step (handle can
             // raise it mid-run). answered resets per turn; the seq base advances so steps stay session-unique.
+            // Turns this handle has run: a later one follows a PERSON (a follow-up, Continue, Retry), which is what its
+            // first request's hint says (`after: "human"`). Counted here rather than read off `seqBase`, which stays
+            // 0 after a turn that only answered.
+            let turnsRun = 0;
             const drive = async (t: string): Promise<AgentResult> => {
                 answerSet.clear();   // the answer set reflects THIS turn's designations only
                 enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
                 try {
-                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase, stream, tokenStore: (control.tokens ??= new TokenStore()), labelMatch, tokenSink: (fn) => { pageDeref = fn; } }, deps);
+                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase, ...(turnsRun++ > 0 ? { after: "human" as const } : {}), stream, tokenStore: (control.tokens ??= new TokenStore()), labelMatch, tokenSink: (fn) => { pageDeref = fn; } }, deps);
                     control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
                     control.stepBase += turnMaxStep; turnMaxStep = 0;   // …and its step numbers, so turn groups stay distinct
                     // The bottom-of-answer render: the outputs the model DESIGNATED into the answer set, minus

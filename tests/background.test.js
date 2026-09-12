@@ -3868,3 +3868,83 @@ test("PYTHON_EXEC: the bench's keep-state run, reset and mode-scoped completion 
     assert.equal(runs[2].complete.bench, "full");
     assert.ok(!("bench" in runs[3].complete), "an unknown namespace name is dropped, never forwarded");
 });
+
+// ---- Request hints (RequestHint → `hint` on the wire; a patched ollama records it on gen.end) ----
+test("FETCH_LLM carries the request's hint: trimmed to the server's limits, utility by profile, synthetic from storage", async () => {
+    const bodies = [];
+    // Only the CHAT requests: the utility profile first asks /api/ps what context the model is resident with.
+    const onFetch = ({ body }) => {
+        if (!body?.messages) return jsonResponse({ models: [] });
+        bodies.push(body);
+        return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+    };
+    const bg = loadBackground({ config: baseConfig({ utilityModel: "tiny" }), onFetch });
+    const msg = (payload) => bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], ...payload } });
+
+    await msg({ hint: { use: "agent", session: "wml-abc12345", after: "tool" } });
+    assert.deepEqual(bodies[0].hint, { use: "agent", session: "wml-abc12345", after: "tool" }, "top-level, as sent");
+
+    await msg({ extend: "utility", hint: { session: "wml-abc12345" } });
+    assert.deepEqual(bodies[1].hint, { use: "utility", session: "wml-abc12345" }, "the utility profile is a side task by construction");
+
+    await msg({ hint: { session: "x".repeat(300), after: "lunch" } });
+    assert.equal(bodies[2].hint.session.length, 128, "a session is trimmed to the server's 128");
+    assert.equal(bodies[2].hint.after, undefined, "only human / tool are meaningful afters");
+    assert.equal(bodies[2].hint.use, undefined, "no use when nobody said — absence means unknown");
+
+    await msg({});
+    assert.equal(bodies[3].hint, undefined, "nothing to say → no field at all");
+
+    const synth = [];
+    const bgS = loadBackground({ config: baseConfig(), local: { ml_synthetic_traffic: true }, onFetch: ({ body }) => { synth.push(body); return jsonResponse({ choices: [{ message: { content: "ok" } }] }); } });
+    await bgS.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], hint: { use: "agent", synthetic: false } } });
+    assert.equal(synth[0].hint.synthetic, true, "synthetic comes from this browser's harness flag, never from a page");
+});
+
+test("FETCH_LLM: a strict server that refuses the hint is asked once more without it, and then never again", async () => {
+    const bodies = [];
+    const bg = loadBackground({ config: baseConfig(), onFetch: ({ body }) => {
+        bodies.push(body);
+        if (body.hint) return jsonResponse({ error: { message: "Unrecognized request argument supplied: hint" } }, 400);
+        return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+    } });
+    const hinted = { messages: [{ role: "user", content: "hi" }], hint: { use: "agent", session: "wml-s" } };
+    assert.equal((await bg.send({ type: "FETCH_LLM", payload: hinted })).data, "ok", "a metadata field never costs an answer");
+    assert.equal((await bg.send({ type: "FETCH_LLM", payload: hinted })).data, "ok");
+    assert.deepEqual(bodies.map((b) => !!b.hint), [true, false, false], "refused once, then not sent to that server again");
+});
+
+test("FETCH_LLM: a 400 for some other reason is not blamed on the hint", async () => {
+    const bodies = [];
+    const bg = loadBackground({ config: baseConfig(), onFetch: ({ body }) => { bodies.push(body); return jsonResponse({ error: { message: "context too long" } }, 400); } });
+    const hinted = { messages: [{ role: "user", content: "hi" }], hint: { use: "agent" } };
+    const r1 = await bg.send({ type: "FETCH_LLM", payload: hinted });
+    assert.match(r1.error, /HTTP 400.*context too long/, "the real error surfaces");
+    await bg.send({ type: "FETCH_LLM", payload: hinted });
+    assert.deepEqual(bodies.map((b) => !!b.hint), [true, false, true, false], "the retry failed too, so the server is not marked as refusing it");
+});
+
+test("START_RUN: every step is an agent request in the run's session, and says it followed a tool", async () => {
+    const bodies = [];
+    let answered = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onTabMessage: (_tabId, msg) => (msg?.type === "RUN_TOOL_IN_PAGE" ? { result: "ok" } : undefined),
+        onFetch: ({ body }) => {
+            bodies.push(body);
+            return ++answered === 1
+                ? jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "findByText", arguments: "{\"text\":\"a\"}" } }] }, finish_reason: "tool_calls" }] })
+                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+    });
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "hr01", task: "t", systemPrompt: "s",
+        tools: [{ name: "findByText", description: "", parameters: { type: "object", properties: { text: { type: "string" } } }, requiresApproval: false, capabilities: [] }],
+        model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 7 } });
+    assert.equal(res.data.summary, "done");
+    assert.deepEqual(bodies.map((b) => b.hint), [
+        { use: "agent", session: "wml-hr01" },
+        { use: "agent", session: "wml-hr01", after: "tool" },
+    ]);
+});

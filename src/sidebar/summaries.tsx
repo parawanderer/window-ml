@@ -5,6 +5,7 @@
 import { config, rev, noteAside } from "./store";
 import type { AgentStep } from "./store";
 import { stepKey } from "./ui-kit";
+import { hintSession } from "../contract";
 import { truncate } from "./format";
 import { NOTES_SCHEMA, notesMessages, parseNotes, type LineNote } from "./annotate";
 
@@ -81,7 +82,8 @@ export function fetchLineNotes(key: string, lang: string, src: string, output?: 
     const [hash, seqStr] = key.split(":");
     const started = Date.now();
     chrome.runtime.sendMessage(
-        { type: "FETCH_LLM", payload: { messages: notesMessages(lang, src, output), extend: "utility", schema: NOTES_SCHEMA, maxTokens: 700, think: false } },
+        // A side task about THIS session (RequestHint: `use: "utility"` from the profile, the session's id).
+        { type: "FETCH_LLM", payload: { messages: notesMessages(lang, src, output), extend: "utility", schema: NOTES_SCHEMA, maxTokens: 700, think: false, hint: { session: hintSession(hash) } } },
         (resp: any) => {
             const notes = chrome.runtime.lastError || !resp || resp.error ? [] : parseNotes(String(resp.data ?? ""), lineCount);
             notesState.delete(key);
@@ -119,7 +121,8 @@ export function ensureActionSummary(hash: string, seq: number, tool: string, arg
 export function fetchUtilityLine(messages: { role: string; content: string }[], key: string): void {
     const started = Date.now();
     chrome.runtime.sendMessage(
-        { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 70, think: false } },
+        // `key` is a stepKey (`<hash>:<seq>`): the gloss is a side task about that session (RequestHint).
+        { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 70, think: false, hint: { session: hintSession(key.split(":")[0]) } } },
         (resp: any) => {
             if (chrome.runtime.lastError || !resp || resp.error) return;
             const line = String(resp.data || "").trim().split("\n").map(s => s.trim()).filter(Boolean)[0] || "";

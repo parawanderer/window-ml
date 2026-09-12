@@ -193,6 +193,11 @@ Options (all optional, both for `chat` and `createChat`):
     onToken: (tok) => { out.textContent += tok; }   // paints as it generates
   });
   ```
+- `use` — who waits for the reply: `"interactive"` (a person reading it), `"agent"` (a program that acts on it),
+  `"utility"` (a side task), `"batch"` (nobody waiting). Sent as a request hint that a patched Ollama records to
+  learn how its models are used; it never changes the answer, and a stock server ignores it. Omit it when you
+  can't tell — nothing is guessed — except that `extend: "utility"` implies `"utility"`. A `createChat`
+  conversation also tells the server which requests belong together; a one-shot `ml.chat` does not.
 - `signal` — an `AbortSignal`. `controller.abort()` cancels the request and
   **kills the in-flight fetch** (streaming disconnects its port; both stop a slow
   generation), rejecting the call with an `AbortError`.
