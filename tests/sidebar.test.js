@@ -6884,6 +6884,10 @@ test("a collapsed running step counts up, and stays quiet for the first half sec
     await w.dispatch(agentStep("tick", 1, { seq: 1, tool: "python_exec", pending: true, ts: Date.now() }));
     w.shadow.querySelector(".row").click();
     await w.tick();
+    // Opening the detail view can itself take longer than half a second on a loaded CI runner, and then the
+    // counter is right to appear. So the step is re-stamped as just started immediately before the read.
+    await w.dispatch(agentStep("tick", 1, { seq: 1, tool: "python_exec", pending: true, ts: Date.now() }));
+    await w.tick();
     const preview = () => w.shadow.querySelector(".astep-preview").textContent;
     assert.match(preview(), /running…/);
     assert.equal(w.shadow.querySelector(".astep-elapsed"), null, "silent under half a second");
