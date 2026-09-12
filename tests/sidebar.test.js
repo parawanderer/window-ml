@@ -6884,6 +6884,10 @@ test("a collapsed running step counts up, and stays quiet for the first half sec
     await w.dispatch(agentStep("tick", 1, { seq: 1, tool: "python_exec", pending: true, ts: Date.now() }));
     w.shadow.querySelector(".row").click();
     await w.tick();
+    // Opening the detail view can itself take longer than half a second on a loaded CI runner, and then the
+    // counter is right to appear. So the step is re-stamped as just started immediately before the read.
+    await w.dispatch(agentStep("tick", 1, { seq: 1, tool: "python_exec", pending: true, ts: Date.now() }));
+    await w.tick();
     const preview = () => w.shadow.querySelector(".astep-preview").textContent;
     assert.match(preview(), /running…/);
     assert.equal(w.shadow.querySelector(".astep-elapsed"), null, "silent under half a second");
@@ -8630,8 +8634,13 @@ test("out footer: while the step is RUNNING it counts up instead", async () => {
     const elapsed = (Date.now() - startedAt) / 1000;
     assert.ok(Number.isFinite(shown), `the footer shows a figure — got ${JSON.stringify(foot.textContent)}`);
     assert.ok(shown >= 2.4, `counted from the STEP's start, not from when the panel opened (${shown}s)`);
-    assert.ok(Math.abs(shown - elapsed) < 1.5,
-        `and it is that clock's elapsed time, whatever the machine's speed (showed ${shown}s, actual ${elapsed.toFixed(1)}s)`);
+    // The footer repaints on a one-second tick, so what it shows is the elapsed time at its LAST paint — read at an
+    // arbitrary moment after that, it trails the clock by up to the tick plus however late a loaded runner paints
+    // (CI measured 1.6s behind on Node 26). So: never AHEAD of the clock, and not frozen — within the tick and a
+    // generous lag — rather than a tolerance that measures the runner's speed again.
+    assert.ok(shown <= elapsed + 0.05, `never ahead of the clock it counts from (showed ${shown}s, actual ${elapsed.toFixed(1)}s)`);
+    assert.ok(elapsed - shown < 3,
+        `and it is that clock's elapsed time, not a frozen figure (showed ${shown}s, actual ${elapsed.toFixed(1)}s)`);
 });
 
 // An EMBED wraps a whole rendered output, and a DataFrame render brings its own controls — copy CSV, hide

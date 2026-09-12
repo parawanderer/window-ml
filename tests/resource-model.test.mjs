@@ -351,7 +351,7 @@ test("the residual band is named by MAGNITUDE, so an idle card shows no phantom 
     assert.equal(foreign.label, M.OTHER_BAND_LABEL);
     assert.equal(foreign.label, "unattributed");
     assert.ok(!/other process/i.test(foreign.label), "still never claims to be a process we can point at");
-    assert.match(M.OTHER_BAND_NOTE, /CUDA context/);
+    assert.match(foreign.note, /CUDA context/, "on a CUDA card, the context is named as a CUDA one (and only there — see the per-backend test)");
 });
 
 // Three totals exist and all are correct: nominal (no API reports it), the driver framebuffer total
@@ -2696,4 +2696,53 @@ test("naming a card: its description, the label a faulted one had, and what each
     // After CUDA1 faults, the survivor is still CUDA0 — and the faulted address keeps what it was last seen as.
     const after = M.noteSeenCards(seen, { ...cap, devices: [cap.devices[0]] });
     assert.equal(after["0000:03:00.0"].name, "CUDA1");
+});
+
+test("a residual is explained in ITS backend's terms — CUDA on NVIDIA, HIP on AMD, and neither on RAM or a Mac", () => {
+    // Every machine shape, per the rule: a note that names another vendor's context is a fact about another box.
+    for (const [key, shape] of Object.entries(BOXES)) {
+        const d0 = shape.devices[0];
+        const cap = M.parseInfo({ compute: {
+            system_compute: { total_memory: shape.hostTotal, free_memory: Math.round(shape.hostTotal * 0.6) },
+            supported_gpus: shape.devices.map((d, i) => ({ ...d, free_memory: d.total_memory - (i === 0 ? 3 * GB : 0.2 * GB) })) } });
+        const sample = { t: 1, capacity: cap, models: [] };
+        const notes = [...(cap.unified ? [] : M.deviceBands(sample, d0.gpu_id)), ...M.hostBands(sample)]
+            .filter((b) => b.kind === "other").map((b) => b.note);
+        const card = cap.unified ? null : M.deviceBands(sample, d0.gpu_id).find((b) => b.key === "other").note;
+        const host = M.hostBands(sample).find((b) => b.key === "other").note;
+        if (card) {
+            if (shape.runner === "CUDA") assert.match(card, /CUDA context/, key);
+            else assert.doesNotMatch(card, /CUDA/, `${key}: a ${shape.runner} card is not described in CUDA's terms`);
+            if (shape.runner === "ROCm") assert.match(card, /HIP \(ROCm\) context/, key);
+        }
+        assert.doesNotMatch(host, /CUDA|HIP|card/, `${key}: RAM holds the OS and other programs, not a GPU context`);
+        assert.equal(host, cap.unified ? M.UNIFIED_NOTE : M.HOST_RAM_NOTE, key);
+        assert.ok(notes.every(Boolean), `${key}: every residual carries its own note, so the legend never falls back`);
+    }
+});
+
+test("stepBands: models and what belongs to them step — but only from the bottom, never above a climbing load", () => {
+    const identity = { "m:a": "a", "m:b": "b" };
+    const tint = { "ctx:a": "a", "load:c": "c", "runner:d": "d" };
+    // A model, its overhead, a second model: all piecewise-constant, all at the bottom — they step.
+    assert.deepEqual([...M.stepBands(["m:a", "ctx:a", "m:b", "other", "free"], identity, tint)], ["m:a", "ctx:a", "m:b"]);
+    // A LOADING runner climbs, so it is a line — and a runner stacked on it must not step, or its held top sits
+    // below its rising floor and the inverted polygon fills as a wedge.
+    assert.deepEqual([...M.stepBands(["m:a", "ctx:a", "load:c", "runner:d", "other", "free"], identity, tint)], ["m:a", "ctx:a"]);
+    // A plain residual at the bottom (no model on the card) stops the run at once.
+    assert.deepEqual([...M.stepBands(["other", "free"], identity, tint)], []);
+});
+
+test("bandEdge: a line band on stepped ones turns their corners — a constant residual is the model's step, shifted up", () => {
+    // A model of 4 that becomes 10 at sample 2 (another model arrived below), with a constant 1 of residual on top.
+    const model = [4, 4, 10, 10], residual = model.map((v) => v + 1);
+    // The SHAPE, compared with repeated vertices dropped: a stepped edge emits a corner at every sample, even a flat one.
+    const shape = (e) => e.filter((q, k) => k === 0 || q[0] !== e[k - 1][0] || q[1] !== e[k - 1][1]);
+    const floor = shape(M.bandEdge(model, true));
+    const top = shape(M.bandEdge(residual, false, model));
+    assert.deepEqual(top, floor.map(([i, v]) => [i, v + 1]), "exactly the stepped floor plus the residual's own thickness");
+    // Interpolating the cumulative value instead is what drew the wedge: no corner, a diagonal from 5 to 11.
+    assert.deepEqual(M.bandEdge(residual, false), [[0, 5], [1, 5], [2, 11], [3, 11]]);
+    // A line with no stepped base below is just a line — the device's own progressive growth stays one.
+    assert.deepEqual(M.bandEdge([1, 2, 3], false, null), [[0, 1], [1, 2], [2, 3]]);
 });

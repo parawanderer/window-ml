@@ -1121,11 +1121,11 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
                 identically and read identically in a list of names, so the row says which — and says NOTHING
                 when the server never reported capabilities, since "chat" would then be a guess. */}
             {isEmbedding(m.model) ? (
-                <span class={tips ? "tt vram-embed" : "vram-embed"} {...yieldTip}>embed
+                <span class={tips ? "tt vram-embed" : "vram-embed"} {...yieldTip}><span class="vram-badge-t">embed</span>
                     {tips ? <span class="tt-pop left above" role="tooltip">An EMBEDDING model — it turns text into vectors for search and retrieval; it doesn't chat. It holds its VRAM like any other resident model, and evicts the same way.</span> : null}
                 </span>
             ) : isChatModel(m.model) ? (
-                <span class={tips ? "tt vram-chat" : "vram-chat"} {...yieldTip}>chat
+                <span class={tips ? "tt vram-chat" : "vram-chat"} {...yieldTip}><span class="vram-badge-t">chat</span>
                     {tips ? <span class="tt-pop left above" role="tooltip">A generating model — what <code>ml.chat</code> and <code>ml.agent</code> run on. Shown beside the embedding badge so a row you did not expect to be holding a card says which kind it is.</span> : null}
                 </span>
             ) : null}
@@ -1136,7 +1136,7 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
                 // it. An unknown code is shown as itself rather than guessed at.
                 const plain = quantPlain(m.quant);
                 return (
-                    <span class={tips ? "tt vram-quant" : "vram-quant"} {...yieldTip}>{plain?.short ?? m.quant}
+                    <span class={tips ? "tt vram-quant" : "vram-quant"} {...yieldTip}><span class="vram-badge-t">{plain?.short ?? m.quant}</span>
                         {tips ? <span class="tt-pop left above" role="tooltip"><code>{m.quant}</code>: {plain?.detail ?? "the precision its weights are stored at."} A lower precision is smaller and faster and answers somewhat worse; the same model at another quantization is a different download.{m.paramSize ? <> {m.paramSize} parameters{m.family ? <>, {m.family} family</> : null}.</> : null}</span> : null}
                     </span>
                 );

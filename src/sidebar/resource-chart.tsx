@@ -16,7 +16,7 @@ import {
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, stepBands, bandEdge,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
 import { resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
@@ -101,7 +101,7 @@ const trackCursor = (surface: string) => (e: PointerEvent) => {
     // anything — and it is a real move that ends it. See releaseFocus.
     releaseFocus(e.target);
     releasePool(e.target);
-    readingOverlay = surface === "overlay";
+    readingSurface = surface;
     // `yFrac` is the pointer's height within the PLOT (0 = top, 1 = bottom), which is the only thing that can
     // say which of several overlaid lines the pointer is nearest. Read off the plot element rather than the
     // event target: the hit targets are strokes inside it, so measuring against those would give the pointer's
@@ -385,12 +385,31 @@ function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex = null, 
     // the same eviction. Drawn as lines, the overhead stacked on a stepped model sloped from the last sample to
     // the next — a `\\` wedge beside the model's `|` at every eviction. A LOADING runner (`load:`) stays a line:
     // its memory really does climb as the weights land, which is the device-band rule, not the model one.
-    const isStep = (k: string | null): boolean => !!k && (!!identity[k] || (!!tint[k] && !k.startsWith("load:")));
+    //
+    // AND ONLY ON A STEPPED STACK. Cumulative tops are what the edges draw, so a band's floor is the top of the band
+    // below. A stepped band holds its previous top until the next sample; stacked on a band drawn as a LINE (a
+    // loading runner, climbing) its floor rose with that line while its top waited — for that stretch the floor
+    // was above the top, and the inverted polygon filled as a wedge in the wrong colour. So step-ness runs up from
+    // the bottom and stops at the first band that is a line: models and their overhead sit at the bottom and keep
+    // stepping, and whatever is stacked on a climbing load is drawn as a line with it.
+    const stepKeys = stepBands(order, identity, tint);
+    const isStep = (k: string | null): boolean => !!k && stepKeys.has(k);
+    /**
+     * A LINE BAND RIDES ON THE STEPS BELOW IT. Above the stepped run, a band's top is the stepped BASE (the top of
+     * the highest stepped band, held until the next sample) plus the band's own thickness above it, interpolated —
+     * so it turns the same corner the steps turn and only its thickness varies smoothly. Interpolating the
+     * CUMULATIVE top instead climbed toward a model's arrival before it happened (a pale wedge just ahead of each
+     * step up) and fell below its floor at an eviction (an inverted one) — "its base jumps, its thickness varies
+     * smoothly" was the stated rule, and the edge did not implement it.
+     */
+    const baseKey = [...stepKeys].at(-1) ?? null;
+    const base = baseKey ? (tops[baseKey] || zeros) : zeros;
+    const edgeOf = (k: string | null): string[] =>
+        bandEdge(k ? (tops[k] || zeros) : zeros, isStep(k), k && !isStep(k) && baseKey ? base : null)
+            .map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
     const areas = order.filter((k) => k !== "free").map((key, ki, keys) => {
         const below = ki === 0 ? null : keys[ki - 1];
-        const top = tops[key] || [];
-        const floor = below ? (tops[below] || []) : zeros;
-        const pts: string[] = [...stepEdge(top, isStep(key), y), ...stepEdge(floor, isStep(below), y).reverse()];
+        const pts: string[] = [...edgeOf(key), ...edgeOf(below).reverse()];
         // The band knows which model it is, so hovering it can name it — and dim its neighbours, so a stack of
         // similar colours resolves into one identifiable shape.
         const model = identity[key];
@@ -1301,7 +1320,7 @@ function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf, surface = "o
                 thing to find. ONLY ↑↓: there is no depth here to descend into, since a pool has no memory
                 breakdown of its own (the decomposition is per MODEL), and naming a key that silently does
                 nothing is worse than naming none. */}
-            {rows.length > 1 ? <div class="rc-tip-row rc-tip-keys"><span><kbd>↑↓</kbd> pick a line</span></div> : null}
+            {rows.length > 1 ? <div class="rc-tip-row rc-tip-keys"><span><kbd>↑↓</kbd> pick a {bandOf ? "pool" : "line"}</span></div> : null}
         </div>
     );
 }
@@ -1319,22 +1338,25 @@ type PoolRef = { id: string; name: string; ceiling: number; color: string; bands
  * render, and "which pools are on screen" is a fact about what was just drawn. A plain ref for the same
  * reason `liveRuns` is one: written DURING render, and a signal written during render re-enters rendering.
  */
-let poolRefs: PoolRef[] = [];
-/** Publish the lines the arrow keys step through — call it from the render that DRAWS them. */
-export const notePools = (pools: PoolRef[]): void => { poolRefs = pools; };
-/** Is the reading currently in the overlaid view? Decides which list the arrow keys step through. */
-export const readingIsOverlay = (): boolean => readingOverlay;
+// PER SURFACE: the overlaid view and a whole-box track both draw POOLS, and a layout can hold both — one shared
+// list meant whichever rendered last owned the keys, and the whole-box view published none at all, so ↑↓ there
+// fell through to stepping MODELS (nothing, on an idle box) under a tip that said "↑↓ pick a line".
+const poolRefs = new Map<string, PoolRef[]>();
+/** Publish the pools the arrow keys step through on `surface` — call it from the render that DRAWS them. */
+export const notePools = (surface: string, pools: PoolRef[]): void => { poolRefs.set(surface, pools); };
+/** Does the view being read draw POOLS (the overlaid lines, a whole-box track)? Decides which list the keys step. */
+export const readingIsOverlay = (): boolean => readingSurface != null && poolRefs.has(readingSurface);
 /**
- * WHICH VIEW THE READING IS IN, so one key can mean "the thing this view draws" in both. Recorded from the
- * pointer's own surface rather than from the layout, because a layout may hold tracks of both kinds and the
- * answer is about where the reader is pointing. It OUTLIVES a pointerleave deliberately: the keyboard keeps
+ * WHICH SURFACE THE READING IS ON, so one key can mean "the thing this view draws" in every view. Recorded from
+ * the pointer's own surface rather than from the layout, because a layout may hold tracks of several kinds and
+ * the answer is about where the reader is pointing. It OUTLIVES a pointerleave deliberately: the keyboard keeps
  * reading after the pointer wanders off, and it has to keep reading the same view.
  */
-let readingOverlay = false;
-/** Cycle the focused LINE in the overlaid view, wrapping through "nothing picked out" at index 0. Hidden
- *  pools are skipped: switching a line off takes it off the chart, so there is nothing left to point at. */
+let readingSurface: string | null = null;
+/** Cycle the focused POOL in the view being read, wrapping through "nothing picked out" at index 0. Hidden
+ *  pools are skipped: switching one off takes it off the chart, so there is nothing left to point at. */
 export function stepPool(dir: number): void {
-    const shown = poolRefs.filter((p) => !hiddenPools.value.has(p.id));
+    const shown = (poolRefs.get(readingSurface ?? "") ?? []).filter((p) => !hiddenPools.value.has(p.id));
     const list: (PoolRef | null)[] = [null, ...shown];
     const cur = kbPool.value ? kbPool.value.id : poolHover.value?.id ?? null;
     const at = list.findIndex((p) => (p?.id ?? null) === (cur ?? null));
@@ -1502,6 +1524,8 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
         const bi = axis.bands.findIndex((b) => b.id === p.id);
         return { ...p, color: poolColor(bi < 0 ? 0 : bi, axis.bands.length) };
     });
+    // ↑↓ step through THESE pools while the pointer is on this track, in the order they are stacked.
+    notePools(scope, tipPools);
     const bandOf = (p: { id: string }): [number, number] => {
         const b = axis.bands.find((x) => x.id === p.id);
         return b ? [b.base / axis.total, (b.base + b.ceiling) / axis.total] : [0, 0];
@@ -1734,7 +1758,7 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
     // WHAT THE ARROW KEYS STEP THROUGH HERE. Published with the colours the lines are actually drawn in, so a
     // keyboard focus lights the same key the pointer would — `poolColor` is keyed by index among ALL pools,
     // so colouring after any filtering renumbers them.
-    notePools(pools.map((p, pi) => ({ ...p, color: poolColor(pi, pools.length) })));
+    notePools("overlay", pools.map((p, pi) => ({ ...p, color: poolColor(pi, pools.length) })));
 
     const runs = noteRuns(segments(samples, sampleGapMs()).filter((r) => r.length > 1));
     const usedOf = (s: ResourceSample, p: typeof pools[number]) =>

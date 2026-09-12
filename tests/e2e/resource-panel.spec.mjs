@@ -4049,6 +4049,73 @@ test("resource panel: a partial NVLink mesh is drawn as partial, never as one gr
     } finally { await ext.close(); await fake.stop(); }
 });
 
+// ONE CHIP HEIGHT ON A MODEL ROW. The kind badges (embed / chat / the quantization) set smaller type, and with the
+// box sized from it they stood shorter than the context, cache and TTL chips beside them; the quantization badge
+// also took the brighter shade reserved for `embed`. Measured, since a class name cannot show either.
+test("resource panel: a model row's chips are one height and one shade", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([{ ...resident("gemma4:31b", 18 * GiB, 0), details: { quantization_level: "Q4_K_M", parameter_size: "31.3B", family: "gemma4" } }]);
+        // At a LARGER font scale, where the difference was reported: at the default it is well under a pixel.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_debug_fontscale: 1.6 }));
+        const { page, frame } = await openPanel(fake, ext);
+        const row = frame.locator(".vram-row").first();
+        await expect(row.locator(".vram-quant")).toBeVisible({ timeout: 25000 });
+        const [quant, ctx] = await Promise.all([".vram-quant", ".vram-ctx"].map((sel) => row.locator(sel).evaluate((el) => {
+            const r = el.getBoundingClientRect();
+            return { h: r.height, top: r.top, color: getComputedStyle(el).color };
+        })));
+        expect(Math.abs(quant.h - ctx.h), `same box height: quant ${quant.h}px, context ${ctx.h}px`).toBeLessThan(0.25);
+        expect(Math.abs(quant.top - ctx.top), "and on the same line").toBeLessThan(0.75);
+        expect(quant.color, "the same shade as its neighbours").toBe(ctx.color);
+        await row.screenshot({ path: "test-results/chip-row.png" });
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// ↑↓ PICK A POOL IN THE WHOLE-BOX VIEW, as they pick a line in the overlaid one. The tip has always said "↑↓ pick
+// a line" here, and the keys did nothing: the view published no pool list, so they fell through to stepping
+// MODELS — nothing at all on an idle box — while the pointer sat still under a hint promising otherwise.
+test("resource panel: the arrow keys step through the pools in the whole-box view", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE, IDLE));
+        fake.setResident([]);   // an idle box: stepping MODELS would find nothing, which is how the bug hid
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_layout: { presetId: "box", tracks: [
+            { id: "box", series: ["vram.0", "vram.1", "ram"], mode: "total", heightPx: 160 }] } }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-boxfill").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(2500);
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.5, { steps: 4 });
+        const tip = frame.locator(".rc-tip-pools");
+        await expect(tip).toBeVisible({ timeout: 5000 });
+        expect(await tip.textContent()).toMatch(/↑↓\s*pick a pool/);
+        const picked = async () => (await tip.locator(".rc-tip-poolrow.near .rc-tip-label").allTextContents()).join("|");
+        const order = (await tip.locator(".rc-tip-poolrow .rc-tip-label").allTextContents());
+        expect(order).toEqual(["CUDA0", "CUDA1", "System RAM"]);
+
+        // With the pointer held STILL, the keys walk the pools in the order the tip lists them, and back.
+        const seen = [];
+        for (const k of ["ArrowDown", "ArrowDown", "ArrowDown", "ArrowUp"]) {
+            await page.keyboard.press(k);
+            await sleep(150);
+            seen.push(await picked());
+        }
+        expect(seen, "↓ ↓ ↓ ↑ from nothing picked").toEqual(["CUDA0", "CUDA1", "System RAM", "CUDA1"]);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
 // A FULL MESH is one fact, said once: eight cards every pair of which is directly linked — AMD's MI300X over
 // Infinity Fabric (xGMI) here, a MOCK like every fabric topology. Listing its seven adjacent walls instead read as a
 // chain, which is exactly the shape it is not.
@@ -4314,10 +4381,15 @@ test("resource panel: a model's band steps, and the device's own bands do not", 
         // same error pointed the other way. The residual is the polygon with no `.rc-band` class — it belongs
         // to no model. Its FLOOR is stepped, because it sits on the models and a shared edge has to match on
         // both sides or the stack opens a seam; only its own top is checked here.
+        // …but it RIDES on the model: its top is the stepped base plus its own thickness, so it turns a corner
+        // exactly where the model below steps and nowhere else. Interpolating the cumulative top instead ran
+        // ahead of a step (a pale wedge before each arrival) and under its floor at an eviction.
         const plain = frame.locator(".rc-plot").first().locator("polygon:not(.rc-band)");
         if (await plain.count()) {
-            expect(stepsIn(await plain.first().getAttribute("points")),
-                "a device band's own edge is still a line").toBe(0);
+            const cornersAt = (pts) => topEdge(pts).filter((q, i, a) => i > 0 && q[0] === a[i - 1][0]).map((q) => q[0]);
+            const modelCorners = new Set(cornersAt(await band.getAttribute("points")));
+            const own = cornersAt(await plain.first().getAttribute("points")).filter((cx) => !modelCorners.has(cx));
+            expect(own, "a device band turns no corner of its own — only the model's, beneath it").toEqual([]);
         }
     } finally { await ext.context.close(); await fake.stop(); }
 });
