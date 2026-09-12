@@ -4043,6 +4043,45 @@ test("resource panel: a partial NVLink mesh is drawn as partial, never as one gr
         const bb = await plot.boundingBox();
         await plot.hover({ position: { x: bb.width / 2, y: bb.height * 0.5 } });
         await expect(frame.locator(".rc-tip-pools .rc-tip-links")).toContainText("PARTIAL mesh", { timeout: 5000 });
+        // Said ONCE, for the run — the same list under each of seven bridges buried the reading it qualifies.
+        const text = await frame.locator(".rc-tip-pools .rc-tip-links").textContent();
+        expect(text.split("PARTIAL mesh").length - 1, text).toBe(1);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// A FULL MESH is one fact, said once: eight cards every pair of which is directly linked — AMD's MI300X over
+// Infinity Fabric (xGMI) here, a MOCK like every fabric topology. Listing its seven adjacent walls instead read as a
+// chain, which is exactly the shape it is not.
+test("resource panel: a full mesh is said as one — every pair linked — and AMD's xGMI draws as a bridge", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const ids = [0, 1, 2, 3, 4, 5, 6, 7];
+        fake.setCapacity({ compute: {
+            system_compute: { cpu_cores: 64, total_memory: 2199023255552, free_memory: 1800 * GiB },
+            supported_gpus: ids.map((i) => ({ gpu_id: String(i), pci_id: pci(i), name: `ROCm${i}`, runner: "ROCm",
+                total_memory: 205520896000, physical_memory: 206158430208, free_memory: 150 * GiB })),
+            topology: TOPOLOGIES.xgmi8 } });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_layout: { presetId: "custom", tracks: [
+            { id: "box", series: [0, 1, 2, 3, 4, 5, 6, 7].map((i) => `vram.${i}`), mode: "total", heightPx: 160 },
+        ] } }));
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-boxfill").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(2500);
+        const walls = await frame.locator(".rc-seg").first().locator(".rc-boxwall")
+            .evaluateAll((els) => els.map((e) => e.className.replace("rc-boxwall", "").trim()));
+        expect(walls.length).toBe(7);
+        expect(walls.every((w) => w === "bridge"), `a full mesh draws every wall as a bridge: ${walls}`).toBe(true);
+        const plot = frame.locator(".rc-plot").first();
+        const bb = await plot.boundingBox();
+        await plot.hover({ position: { x: bb.width / 2, y: bb.height * 0.5 } });
+        const links = frame.locator(".rc-tip-pools .rc-tip-links");
+        await expect(links).toContainText("all 8 cards, every pair directly linked (28 pairs) · xGMI ×1 (XGMI) · 64.0 GB/s", { timeout: 5000 });
+        expect(await links.locator(".rc-tip-row").count(), "one line for the mesh, not seven adjacent walls").toBe(1);
     } finally { await ext.close(); await fake.stop(); }
 });
 

@@ -2667,3 +2667,15 @@ test("ribbonSpans: a card's timed generation phases, on every card the model is 
     // A model no sample places anywhere (off-box, or not loaded) draws on no card.
     assert.deepEqual(M.ribbonSpans([{ ...gen, model: "cloud:xl" }], samples, "0", 2), []);
 });
+
+test("AMD's fabric (xGMI) is a bridge like NVLink: a pair, a full mesh, and said in AMD's own words", () => {
+    // MOCKS (tests/fixtures/boxes.mjs): no AMD topology has been captured yet.
+    const pair = M.topologyFrom(TOPOLOGIES.amdBridged);
+    const link = M.linkBetween(pair, pci(0), pci(1));
+    assert.equal(M.isBridge(link), true);
+    assert.equal(M.linkPhrase(link), "xGMI ×1 (XGMI) · 64.0 GB/s", "the AMD driver's rate is not a PCIe peak, so it is not marked as one");
+    // Eight MI300X, every pair linked with no switch: one fully bridged group, every wall a bridge.
+    const mesh = M.topologyFrom(TOPOLOGIES.xgmi8);
+    const walls = M.bridgeWalls([0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ pciId: pci(i) })), mesh);
+    assert.ok(walls.every((w) => w.bridge && w.mesh !== "partial"), JSON.stringify(walls));
+});

@@ -1442,10 +1442,29 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
     // run of bridged cards it belongs to is a full mesh (see `bridgeWalls`). Walls between visible pools only —
     // hiding a card re-adjoins its neighbours, and their wall is then about THEM.
     const walls = bridgeWalls(pools.map((p) => ({ pciId: pciOf(p.id) })), cap.topology);
-    const links = walls.flatMap((w, i) => (w.bridge && w.link ? [{
-        label: `${pools[i].name} ═ ${pools[i + 1].name}`, phrase: linkPhrase(w.link),
-        note: w.mesh === "partial" ? `part of a PARTIAL mesh — not directly linked: ${w.unlinked.map(([a, b]) => `${pools[a].name}–${pools[b].name}`).join(", ")}` : undefined,
-    }] : []));
+    // SAID PER RUN of bridged cards, not per wall — the facts are about the run. A FULL MESH of more than two is
+    // one line ("every pair directly linked"): listing its adjacent walls read as a chain, which is exactly the
+    // shape it is not. A PARTIAL mesh keeps its bridge lines and names what is NOT linked ONCE, after the last:
+    // the same twelve-pair list under each of seven bridges buried the reading it was there to qualify.
+    const links: { label: string; phrase: string; note?: string }[] = [];
+    for (let i = 0; i < walls.length;) {
+        if (!walls[i].bridge || !walls[i].link) { i++; continue; }
+        let j = i;
+        while (j + 1 < walls.length && walls[j + 1].bridge && walls[j + 1].link) j++;
+        const run = walls.slice(i, j + 1), cards = j - i + 2;
+        const phrases = new Set(run.map((w) => linkPhrase(w.link!)));
+        if (run[0].mesh === "full" && cards > 2 && phrases.size === 1) {
+            links.push({ label: `${pools[i].name} … ${pools[j + 1].name}`,
+                phrase: `all ${cards} cards, every pair directly linked (${(cards * (cards - 1)) / 2} pairs) · ${[...phrases][0]}` });
+        } else {
+            run.forEach((w, k) => links.push({
+                label: `${pools[i + k].name} ═ ${pools[i + k + 1].name}`, phrase: linkPhrase(w.link!),
+                note: k === run.length - 1 && w.mesh === "partial"
+                    ? `these ${cards} cards are a PARTIAL mesh — not directly linked: ${w.unlinked.map(([a, b]) => `${pools[a].name}–${pools[b].name}`).join(", ")}` : undefined,
+            }));
+        }
+        i = j + 1;
+    }
     if (!pools.length) return null;
     const axis = boxAxis(pools);
     if (!axis.total) return null;
@@ -2450,7 +2469,7 @@ function PredictionRows({ e }: { e: ResourceEvent }) {
             </div>
             {trace?.peak ? <div class="rc-tip-line"><span class="rc-tip-name">peak during the load</span>{diff(trace.peak.bytes, target)}<span class="rc-tip-size">{formatBytes(trace.peak.bytes)}</span></div> : null}
             {trace?.final ? <div class="rc-tip-line"><span class="rc-tip-name">settled at</span>{diff(trace.final.bytes, target)}<span class="rc-tip-size">{formatBytes(trace.final.bytes)}</span></div> : null}
-            {e.loadBytes != null ? <div class="rc-tip-line"><span class="rc-tip-name">resident, as the server counts it</span>{diff(e.loadBytes, target)}<span class="rc-tip-size">{formatBytes(e.loadBytes)}</span></div> : null}
+            {e.loadBytes != null ? <div class="rc-tip-line"><span class="rc-tip-name">resident (the server's count)</span>{diff(e.loadBytes, target)}<span class="rc-tip-size">{formatBytes(e.loadBytes)}</span></div> : null}
             {est.weights != null && e.measured ? <div class="rc-tip-line"><span class="rc-tip-name">weights: {formatBytes(est.weights)} predicted</span>{diff(e.measured.weights, est.weights)}<span class="rc-tip-size">{formatBytes(e.measured.weights)}</span></div> : null}
             {est.kvCache != null && e.measured ? <div class="rc-tip-line"><span class="rc-tip-name">KV cache: {formatBytes(est.kvCache)} predicted</span>{diff(e.measured.kvCache, est.kvCache)}<span class="rc-tip-size">{formatBytes(e.measured.kvCache)}</span></div> : null}
             {trace ? <div class="rc-tip-note">peak and settled are {basis}{trace.basis === "device" ? " — an eviction making room at the same time reads as negative growth" : ""}. The weights/KV split is the metadata model's, whatever the source.</div> : null}
