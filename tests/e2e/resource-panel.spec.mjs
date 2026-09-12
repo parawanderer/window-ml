@@ -3501,6 +3501,60 @@ test("resource panel: a model switched off is skipped by the keys", async () => 
     } finally { await ext.close(); await fake.stop(); }
 });
 
+// THE KEYS WORK FROM A HOVER. Hovering does not move focus and the browser delivers keys only to the focused
+// document, so with the page focused the hint offered ↑↓ and the keys scrolled the page until you clicked into the
+// panel. The overlay's shell now relays them while the pointer is on a plot, without taking focus from the page —
+// and never out of a text field, where the key is the page's.
+test("resource panel: the keys work from a hover, with no click into the panel, and never out of a text field", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE - 7 * GiB));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.8:27b", 7 * GiB, 1)]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".vram-row:not(.ghost)").count(), { timeout: 25000 }).toBe(2);
+        await sleep(3000);
+
+        // A text field on the page, recording what reached it and whether anything took it.
+        await page.evaluate(() => {
+            const i = document.createElement("input");
+            i.id = "probe";
+            i.style.cssText = "position:fixed;left:20px;top:20px;width:200px";
+            document.body.append(i);
+            window.__probe = [];
+            i.addEventListener("keydown", (e) => window.__probe.push({ key: e.key, prevented: e.defaultPrevented }));
+        });
+        // Focus goes back to the PAGE (openPanel clicked inside the frame, which is what hid this bug).
+        await page.mouse.click(300, 700);
+        expect(await frame.evaluate(() => document.hasFocus()), "the panel does not have focus").toBe(false);
+
+        const focused = async () => {
+            const n = await frame.locator(".rc-tip-model .rc-tip-name").allTextContents();
+            return n.length ? n[0] : null;
+        };
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.06);
+        await expect.poll(() => frame.locator(".rc-cross").count(), { timeout: 5000 }).toBeGreaterThan(0);
+        await sleep(300);   // the frame tells the shell the pointer is on a plot: one postMessage
+        await page.keyboard.press("ArrowDown");
+        await expect.poll(focused, { message: "↓ from a hover reads the first model", timeout: 5000 }).toBe("gemma4:31b");
+        expect(await frame.locator(".rc-tip-click").count(), "the hint promises the keys without a click").toBe(0);
+        expect(await frame.evaluate(() => document.hasFocus()), "…and the panel never took focus to do it").toBe(false);
+
+        // Typing into the page's field is the page's, even with the pointer on the chart.
+        await page.focus("#probe");
+        await page.keyboard.press("ArrowDown");
+        await sleep(400);
+        expect(await page.evaluate(() => window.__probe.at(-1)), "the field got the key, untouched").toEqual({ key: "ArrowDown", prevented: false });
+        expect(await focused(), "and the chart did not move").toBe("gemma4:31b");
+    } finally { await ext.close(); await fake.stop(); }
+});
+
 // A ROW THAT IS DRAWN NEEDS A WORKING SWITCH. A ghost's only presence may be the LANE, and its dot was inert
 // there — a control on a row that IS on screen, which could not remove the one thing it drew.
 test("resource panel: a ghost row's dot switches it off everywhere", async () => {

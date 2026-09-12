@@ -1239,3 +1239,66 @@ test("a faulted card is named by the server's own memory of it, with when", asyn
             .toMatch(/CUDA1 · NVIDIA RTX PRO 6000 Blackwell Workstation Edition at 0000:03:00\.0 — its label when last seen, 3h ago/);
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+// A BREAK SAYS WHAT IT CUT OUT. The plot collapses a gap to 3px whatever its length, so a minute and ten hours
+// look the same; pointing at one says how long, from when to when, and whether nobody was sampling or the server
+// dropped frames. While it is hovered the plot's own reading and crosshair stand down (one tip per surface), the
+// same break lights in every track, and the scrub strip — linear in clock time — shows the hole at its width.
+test("a break in the plot says how long it was and why, and the strip shows the hole to scale", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+        const TOTAL = 101_959_499_776, VRAM = 20 * 1024 ** 3, MODEL = "gemma4:31b";
+        const info = () => ({
+            version: "0.0.0", models: { running: 1, vram_used: VRAM },
+            compute: {
+                system_compute: { cpu_cores: 32, total_memory: 130_142_785_536, free_memory: 100 * 1024 ** 3 },
+                supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", compute: "12.0", driver: "13.2",
+                    total_memory: TOTAL, physical_memory: 102_641_958_912, free_memory: TOTAL - VRAM }],
+            },
+        });
+        const ps = () => ({ models: [{
+            model: MODEL, name: MODEL, size: VRAM, size_vram: VRAM, context_length: 8192,
+            expires_at: new Date(Date.now() + 5 * 60_000).toISOString(),
+            gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: VRAM }],
+        }] });
+        const at = (t, dropped = 0) => ({ v: 1, kind: "sample", t, ps: ps(), info: info(), dropped });
+        // Two runs 64s apart in the retained ring: past the stream's 45s threshold, so the line breaks there.
+        fake.setEvents([{ v: 1, kind: "hello", t: 0, box: "test", retainedMs: 300_000, dropped: 0 },
+            at(-120_000), at(-118_000), at(-116_000),
+            at(-52_000), at(-30_000), at(-8_000), at(-2_000)]);
+        const { frame } = await openPanel(fake, ext);
+        const plot = frame.locator(".rc-plot").first();
+        await expect.poll(() => plot.locator(".rc-seg").count(), { timeout: 25000 }).toBe(2);
+        await expect(plot.locator(".rc-gap"), "one break between the two runs").toHaveCount(1);
+
+        await plot.locator(".rc-gap").first().hover();
+        const tip = frame.locator(".rc-tip-gap");
+        await expect(tip).toBeVisible();
+        await expect(tip).toContainText("not measured");
+        await expect(tip).toContainText("1m 4s");
+        await expect(tip, "why the chart has nothing there").toContainText("panel was closed");
+        expect(await frame.locator(".rc-cross").count(), "the crosshair stands down while a break is the mark").toBe(0);
+        expect(await frame.locator(".rc-tip").count(), "one tip: the break's, not the plot's reading under it").toBe(1);
+        const tracks = await frame.locator(".rc-plot").count();
+        expect(await frame.locator(".rc-gap.hot").count(), "the same break lights in every track").toBe(tracks);
+        // The strip is linear in clock time: the hole is drawn there at its width, hatched.
+        await expect(frame.locator(".rc-scrub-gap")).toHaveCount(1);
+
+        // …and a REPORTED drop, at an ordinary cadence: a different cause, said differently. Paced to the wall
+        // clock, since frame time resolves against the hello (see the dropped-frames test above).
+        await frame.locator(".rc-plot").first().hover({ position: { x: 5, y: 5 } });
+        let t = 0;
+        for (const dropped of [0, 0, 3, 3]) { t += 350; fake.pushFrame(at(t, dropped)); await sleep(350); }
+        await expect(plot.locator(".rc-gap"), "the drop is a second break").toHaveCount(2);
+        await expect(plot.locator(".rc-gap.reported")).toHaveCount(1);
+        await plot.locator(".rc-gap.reported").hover();
+        await expect(tip).toContainText("frames dropped");
+        await expect(tip).toContainText("fell behind its event stream");
+    } finally { await ext.context.close(); await fake.stop(); }
+});

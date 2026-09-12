@@ -9,6 +9,7 @@
 //     ~0.55 GiB of ollama's discovery context and calling that "other processes" invents a process.
 //   • HONEST GAPS. Polling is gated on the panel being open, so history is discontinuous. A line drawn across
 //     a ten-minute hole is a confident claim about memory nobody measured; `segments` breaks it instead.
+import { Fragment } from "preact";
 import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
@@ -16,10 +17,10 @@ import {
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, stepBands, bandEdge,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, stepBands, bandEdge, runGap, type RunGap,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
-import { resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
+import { keysReach, resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
 import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot, predictView, timeGrid } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
@@ -58,7 +59,7 @@ const snapUnder = (runs: ResourceSample[][]) => {
     // pixel or two from the crosshair and never on the same x — it names an INSTANT, the crosshair names the
     // nearest SAMPLE — so drawn together they read as one thing that cannot decide where it is. The same rule
     // the reading tooltips already follow (`cursorOn`), applied to the mark.
-    if (eventHover.value) return null;
+    if (eventHover.value || gapHover.value) return null;   // …and so does a gap: there is no sample in one
     return snapFraction(runs, c.frac);
 };
 /**
@@ -92,7 +93,7 @@ const cursorAt = (surface: string) => (tipMuted.value || hoverAt.value?.surface 
  *  as everywhere else in this panel, applied to two things sharing ONE surface. `cursorAt` is the unguarded
  *  read, and only EventTip wants it. */
 const cursorOn = (surface: string) =>
-    (eventHover.value?.scope === surface ? null : cursorAt(surface));
+    (eventHover.value?.scope === surface || gapHover.value?.scope === surface ? null : cursorAt(surface));
 /** Track a pointer against the viewport, tagged with the surface it is over. */
 const trackCursor = (surface: string) => (e: PointerEvent) => {
     tipMuted.value = false;   // moving is the ask for it back — see tipMuted
@@ -811,8 +812,8 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                     if (kbFocus.value) return;
                     hoverModel.value = null; eventHover.value = null; crosshair.value = null;
                 }}>
-                {runs.map((run, i) => (
-                    <div class="rc-seg" key={i} style={{ flex: `${runWeight(run)} 1 0` }}>
+                {withGaps(runs, samples, scope, (run, i) => (
+                    <div class="rc-seg" style={{ flex: `${runWeight(run)} 1 0` }}>
                         <TimeGrid runs={runs} run={run} />
                         {!deep && ribbon.length ? <PhaseRibbon run={run} spans={ribbon} /> : null}
                         <StackedArea frames={run.map(bandsOf)} times={run.map((sm) => sm.t)} ceiling={ceiling} hidden={hidden} scope={scope}
@@ -840,6 +841,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                     ? <PlotTip at={hoverSample} bands={bandsOf(hoverSample)} ceiling={ceiling} label={label} hidden={hidden} scope={scope} />
                     : null}
                 <EventTip scope={scope} />
+                <GapTip scope={scope} />
             </div>
             <div class="rc-legend">
                 {bands.filter((b) => b.kind === "other" && b.bytes > 0).map((b) => (
@@ -1145,7 +1147,7 @@ function BandTip({ bands, frame, history, samples, ceiling, scope, label, hidden
                 through the OVERVIEW, and a reader told half of what a key does stops pressing before finding
                 the rest. */}
             <div class="rc-tip-line rc-tip-keys">
-                <span><kbd>↑↓</kbd> models &amp; overview</span>
+                <span><ClickFirst /><kbd>↑↓</kbd> models &amp; overview</span>
                 <span>{deep ? <><kbd>←</kbd> back</> : <><kbd>→</kbd> details</>}</span>
             </div>
         </div>
@@ -1199,7 +1201,7 @@ function PlotTip({ at, bands, ceiling, label, hidden, scope }: { at: ResourceSam
                     <span class="rc-tip-consumer" key={b.key}>
                         <i class="rc-tip-dot" style={{ background: bandFill(b.key, undefined, b.of) }} />{b.label} {formatBytes(b.bytes)}</span>))}</div>
                 : null}
-            {models.length ? <div class="rc-tip-line rc-tip-keys"><span><kbd>↑↓</kbd> pick a model</span></div> : null}
+            {models.length ? <div class="rc-tip-line rc-tip-keys"><span><ClickFirst /><kbd>↑↓</kbd> pick a model</span></div> : null}
         </div>
     );
 }
@@ -1320,7 +1322,7 @@ function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf, surface = "o
                 thing to find. ONLY ↑↓: there is no depth here to descend into, since a pool has no memory
                 breakdown of its own (the decomposition is per MODEL), and naming a key that silently does
                 nothing is worse than naming none. */}
-            {rows.length > 1 ? <div class="rc-tip-row rc-tip-keys"><span><kbd>↑↓</kbd> pick a {bandOf ? "pool" : "line"}</span></div> : null}
+            {rows.length > 1 ? <div class="rc-tip-row rc-tip-keys"><span><ClickFirst /><kbd>↑↓</kbd> pick a {bandOf ? "pool" : "line"}</span></div> : null}
         </div>
     );
 }
@@ -1557,8 +1559,9 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
                 <PoolsTip pools={tipPools} latest={latest} at={hoveredSample(runs, scope)} surface={scope} bandOf={bandOf}
                     fracOf={(sm, p) => (p.ceiling > 0 ? Math.min(1, usedOf(sm, p) / p.ceiling) : 0)} usedOf={usedOf} links={links} />
                 <EventTip scope={scope} />
-                {runs.map((run, ri) => (
-                    <div class="rc-seg" key={ri} style={{ flex: `${runWeight(run)} 1 0` }}>
+                <GapTip scope={scope} />
+                {withGaps(runs, samples, scope, (run, ri) => (
+                    <div class="rc-seg" style={{ flex: `${runWeight(run)} 1 0` }}>
                         <TimeGrid runs={runs} run={run} />
                         <InstantRules instants={instants} run={ri} scope={scope} />
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
@@ -1668,8 +1671,9 @@ function UtilView({ def, samples, latest, events = [], onHide }: { def: TrackDef
                 <Crosshair runs={runs} />
                 <UtilTip cards={cards} color={color} at={hoveredSample(runs, scope)} latest={latest} scope={scope} />
                 <EventTip scope={scope} />
-                {runs.map((run, ri) => (
-                    <div class="rc-seg" key={ri} style={{ flex: `${runWeight(run)} 1 0` }}>
+                <GapTip scope={scope} />
+                {withGaps(runs, samples, scope, (run, ri) => (
+                    <div class="rc-seg" style={{ flex: `${runWeight(run)} 1 0` }}>
                         <TimeGrid runs={runs} run={run} />
                         <InstantRules instants={instants} run={ri} scope={scope} />
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
@@ -1800,8 +1804,9 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
                     latest={latest} at={hoveredSample(runs, "overlay")} fracOf={frac} usedOf={usedOf} />
                 {/* This view has rules of its own now, so it needs the tip that explains them. */}
                 <EventTip scope="overlay" />
-                {runs.map((run, ri) => (
-                    <div class="rc-seg" key={ri} style={{ flex: `${runWeight(run)} 1 0` }}>
+                <GapTip scope="overlay" />
+                {withGaps(runs, samples, "overlay", (run, ri) => (
+                    <div class="rc-seg" style={{ flex: `${runWeight(run)} 1 0` }}>
                         <TimeGrid runs={runs} run={run} />
                         <InstantRules instants={instants} run={ri} scope="overlay" />
                         <HoverSpan run={ri} scope="lane" />
@@ -2038,6 +2043,59 @@ function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; ru
     ))}</>;
 }
 
+/**
+ * A BREAK in the plot, and what it cut out. The axis collapses a gap to these few pixels whatever its length, so a
+ * minute and ten hours look the same; pointing at one says which it was and why the chart knows. A flex item in
+ * place of the plot's old 3px `gap`, so the geometry — and the lane's, which mirrors it — did not move. Keyed by
+ * its start, so the same break lights in every track, the way a ruled instant does.
+ */
+function GapMark({ prev, next, samples, scope }: { prev: ResourceSample[]; next: ResourceSample[]; samples: ResourceSample[]; scope: string }) {
+    const gap = runGap(prev, next, samples);
+    const hot = gapHover.value?.gap.from === gap.from;
+    return <div class={`rc-gap${gap.reported ? " reported" : ""}${hot ? " hot" : ""}`}
+        onPointerEnter={(e: PointerEvent) => { gapHover.value = { gap, scope }; trackCursor(scope)(e); }}
+        onPointerLeave={() => { gapHover.value = null; }} />;
+}
+
+/** "click, then" in front of a key hint whenever the keys cannot reach the chart from where the keyboard is — the
+ *  DevTools panel with focus in another pane, which nothing can relay from. A hint must never offer keys that go
+ *  somewhere else; in the overlay the shell relays them, so this says nothing there. */
+function ClickFirst() {
+    const reach = keysReach();   // read unconditionally, so the component subscribes (the minify gotcha)
+    return reach ? null : <span class="rc-tip-click">click, then </span>;
+}
+
+/** The plot's segments with a {@link GapMark} between each pair — the one loop every view draws its runs in. */
+function withGaps(runs: ResourceSample[][], samples: ResourceSample[], scope: string, seg: (run: ResourceSample[], i: number) => preact.JSX.Element) {
+    return runs.map((run, i) => (
+        <Fragment key={i}>
+            {i > 0 ? <GapMark prev={runs[i - 1]} next={run} samples={samples} scope={scope} /> : null}
+            {seg(run, i)}
+        </Fragment>
+    ));
+}
+
+/** What a hovered break stands for: how long nothing was drawn, from when to when, and why. */
+function GapTip({ scope }: { scope: string }) {
+    const h = gapHover.value, at = cursorAt(scope);
+    const { ref, style } = useTipPlacement(at);
+    if (!h || !at || h.scope !== scope) return null;
+    const { from, to, reported, isolated } = h.gap;
+    return (
+        <div class="rc-tip rc-tip-event rc-tip-gap" role="tooltip" ref={ref} style={style}>
+            <div class="rc-tip-line">
+                <span class="rc-tip-name">{reported ? "frames dropped" : "not measured"}</span>
+                <span class="rc-tip-size">{fmtDur(to - from)}</span>
+            </div>
+            <div class="rc-tip-line"><span>{hhmmss(from)} → {hhmmss(to)}</span></div>
+            <div class="rc-tip-note">{reported
+                ? "The server dropped frames here: this panel fell behind its event stream. The line breaks rather than draw across readings that never arrived."
+                : "Nothing was sampled here: the panel was closed, or the box did not answer. The chart cuts the stretch out instead of drawing a line across it."}
+                {isolated ? ` ${isolated === 1 ? "One isolated reading" : `${isolated} isolated readings`} fell inside it, too few to draw.` : ""}</div>
+        </div>
+    );
+}
+
 /** The SCRUB strip: the whole session compressed into one bar, with a box showing which slice the chart above
  *  is drawing. Drag the box to move through the session; drag it back to the right edge — or press the live
  *  button — to re-pin to the tail.
@@ -2197,6 +2255,15 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
                     return <div class="rc-scrub-run" key={i}
                         style={{ left: `${a * 100}%`, width: `${Math.max(0.4, (b - a) * 100)}%` }} />;
                 })}
+                {/* The HOLES, at their true width — this axis is linear in clock time, so a missing minute takes a
+                    minute here even though the plot cuts it to a 3px break. Hatched rather than left blank, so
+                    "nothing was measured" reads as a fact about the session, not as empty strip. They ignore the
+                    pointer: dragging across one still scrubs. */}
+                {runs.slice(1).map((run, i) => {
+                    const a = (runs[i].at(-1)!.t - ex.from) / span, b = (run[0].t - ex.from) / span;
+                    return b > a ? <i class={`rc-scrub-gap${run[0].gapBefore ? " reported" : ""}`} key={`g${i}`} aria-hidden="true"
+                        style={{ left: `${a * 100}%`, width: `${(b - a) * 100}%` }} /> : null;
+                })}
                 {/* WHERE the work is, so scrubbing is aimed rather than swept: the strip is the only view of
                     the whole session, and without this it says which stretch you are looking at but nothing
                     about which stretch is worth looking at. Carries each event's model colour, the same one
@@ -2264,7 +2331,7 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
 function Crosshair({ runs }: { runs?: ResourceSample[][] } = {}) {
     const c = crosshair.value;
     if (!c) return null;
-    if (eventHover.value) return null;   // the rule you are pointing at is the mark — see snapUnder
+    if (eventHover.value || gapHover.value) return null;   // the rule or gap you are pointing at is the mark — see snapUnder
     // RECOMPUTED, never the stored fraction, whenever we are snapped to a known sample. The stored one is a
     // fact about the sample COUNT at the instant the pointer moved; one poll later the same sample sits at a
     // different fraction, and a line holding the old number drifts off the dots that were recomputed — by a
@@ -2437,6 +2504,9 @@ const hotEvent = signal<string | null>(null);
  *  in the plot, where its meaning is) and so does the lane — all driven by this one signal, so without an
  *  owner every one of them rendered the same tooltip at once, four deep on a three-track panel. */
 const eventHover = signal<{ p: EventPlacement; scope: string } | null>(null);
+/** The hovered GAP between two runs, and which surface owns it — the same arrangement as `eventHover`, and for the
+ *  same reason: the plot's own reading stands down while it is pointed at (see `cursorOn`). */
+const gapHover = signal<{ gap: RunGap; scope: string } | null>(null);
 
 /** "local (ollama)" or "cloud" for a model, or "" when the server never told us. Provenance comes from the
  *  ollama id list; without it an absence is not evidence of anything, so nothing is said. */

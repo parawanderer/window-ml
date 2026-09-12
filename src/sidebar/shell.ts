@@ -260,6 +260,9 @@ let shellHost: HTMLElement | null = null;   // shadow host in the page's light D
 let shadowRoot: ShadowRoot | null = null;
 let panel: HTMLElement | null = null;       // the sliding container, inside the shadow root
 let frame: HTMLIFrameElement | null = null;
+/** The keys the frame's chart would use right now — non-empty only while the pointer is over one of its plots
+ *  (the app says so, `__mlSidebarApp: "chartKeys"`). What `relayChartKey` takes from the page. */
+let chartKeys: string[] = [];
 let lightbox: HTMLElement | null = null;
 
 // --- off-mode approval card (see CARD_CSS) ---
@@ -966,7 +969,14 @@ function onWindowMessage(e: MessageEvent): void {
     // tell it it's the card surface and flush the events buffered while its iframe loaded — do NOT
     // re-handshake injected here (in off mode its bus is fed by the background stream; in devtools it was
     // already handshaked by attach(true)). OVERLAY: handshake injected.js + hand it the open state.
+    if (d.__mlSidebarApp === "chartKeys" && frame && e.source === frame.contentWindow) {
+        chartKeys = Array.isArray(d.keys) ? d.keys.filter((k: unknown) => typeof k === "string") : [];
+        return;
+    }
     if (d.__mlSidebarApp === "ready" && frame && e.source === frame.contentWindow) {
+        // Either surface can hold the chart, and this shell relays its keys in both — say so, so the chart's
+        // key hints can promise them without a click.
+        frame.contentWindow?.postMessage({ __mlSidebarKeyRelay: true }, "*");
         if (hudActive()) {
             cardReady = true;
             frame.contentWindow?.postMessage({ __mlSidebarSurface: "card" }, "*");
@@ -1022,12 +1032,31 @@ function handshake(): void {
     if (mode === "devtools") window.postMessage({ __mlSidebar: "ready" }, "*");
 }
 
+/**
+ * THE CHART'S KEYS, RELAYED FROM THE PAGE. Hovering the panel's chart does not move focus, and the browser
+ * delivers keys only to the focused document — so the chart's hint offered ↑↓ and the keys scrolled the page
+ * until you clicked into the panel. While the pointer is on a plot the app tells us which keys it would use, and
+ * this takes exactly those from the page and hands them in. The page keeps its focus: taking focus on hover
+ * would blur whatever the page had focused, closing its open menus and pulling the caret out of a text field
+ * just because the mouse crossed the panel. A key typed INTO an editable field is never taken.
+ */
+function relayChartKey(e: KeyboardEvent): void {
+    if (!chartKeys.length || !frame || !chartKeys.includes(e.key) || e.isComposing) return;
+    if (e.key !== "Escape" && (e.altKey || e.ctrlKey || e.metaKey)) return;
+    const t = (e.composedPath()[0] ?? e.target) as HTMLElement | null;
+    if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName ?? ""))) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    frame.contentWindow?.postMessage({ __mlSidebarChartKey: e.key }, "*");
+}
+
 // Start listening on the page window. `handshakeInjected` is true for the overlay/devtools surfaces
 // (bring injected.js live + clear the stale DevTools-panel buffer); false for OFF mode, whose card is
 // fed by the background stream, not injected's bus — so injected stays dormant and off keeps its
 // near-zero footprint (just this idle listener, waiting for a background run).
 function attach(handshakeInjected: boolean): void {
     window.addEventListener("message", onWindowMessage);
+    window.addEventListener("keydown", relayChartKey, true);
     if (handshakeInjected) {
         try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_RESET" }).catch(() => {}); } catch { /* context gone */ }
         handshake();
@@ -1168,6 +1197,8 @@ function teardown(): void {
     if (shellHost) { shellHost.remove(); shellHost = panel = frame = shadowRoot = null; }
     unmountCard();
     window.removeEventListener("message", onWindowMessage);
+    window.removeEventListener("keydown", relayChartKey, true);
+    chartKeys = [];
     // Only overlay/devtools handshook injected; off left its bus dormant, so there's nothing to switch
     // off. `mode` is still the OLD surface here (applyMode tears down before advancing).
     if (mode !== "off") window.postMessage({ __mlSidebar: "gone" }, "*");

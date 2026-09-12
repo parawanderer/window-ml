@@ -172,7 +172,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* NO overflow clip here: the hover tip lives in this box and must be able to escape it (the panel is narrow
    and the plot is short, so a tip confined to it is cut off). The clip lives on each SEGMENT instead, which is
    what actually needed rounding. */
-.rc-plot { position: relative; display: flex; gap: 3px; flex: 1 1 auto; min-height: 44px; height: 72px;
+.rc-plot { position: relative; display: flex; flex: 1 1 auto; min-height: 44px; height: 72px;
            background: var(--panel-2); border-radius: 3px; }
 /* Once a height is chosen, `height` becomes the FLOOR the flex box grows from rather than a fixed size. */
 .vram[style*="height"] .rc-plot { height: auto; }
@@ -182,6 +182,15 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    own min-height never got a say. Now the plot's min-height IS the limit, with no min-height:0 anywhere (that
    lets the chart spill over the rows below instead of stopping). */
 .rc-seg { position: relative; min-width: 2px; height: 100%; overflow: hidden; border-radius: 3px; }
+/* A BREAK between two runs: the stretch the chart cut out (nothing sampled, or frames the server dropped). A 3px
+   flex item standing in for the plot's old `gap: 3px`, so the geometry did not move and the event lane (its own
+   3px gap) still lines up. The hit area is wider than the mark, like a ruled instant's; hovering says how long
+   the stretch was and why (`GapTip`). A reported drop is dashed in the warning colour, since it is the server
+   saying it lost readings rather than nobody watching. */
+.rc-gap { flex: 0 0 3px; position: relative; z-index: 3; cursor: inherit; }
+.rc-gap::after { content: ""; position: absolute; top: 0; bottom: 0; left: -3px; right: -3px; }
+.rc-gap.reported { background: repeating-linear-gradient(to bottom, color-mix(in srgb, var(--warn) 65%, transparent) 0 3px, transparent 3px 6px); }
+.rc-gap.hot { background: color-mix(in srgb, var(--fg-dim) 45%, transparent); }
 .rc-area { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 /* The soft ceiling on unified memory: the recommended working set INSIDE the system total. */
 /* Only the fixed-width hit target is interactive; the visible line (which changes width on hover) must never
@@ -315,6 +324,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-scrub-track { position: relative; flex: 1 1 auto; height: 14px; cursor: ew-resize;
                   background: var(--panel-2); border-radius: 3px; overflow: hidden; }
 .rc-scrub-run { position: absolute; top: 3px; bottom: 3px; background: var(--fg-faint); opacity: .5; border-radius: 2px; }
+/* A HOLE on the scrub strip, at its true width (the strip is linear in clock time; the plot cuts the same
+   stretch to a 3px `.rc-gap`). Hatched so "not measured" reads as a fact about the session rather than as empty
+   strip; never a pointer target, so a drag across it still scrubs. */
+.rc-scrub-gap { position: absolute; top: 3px; bottom: 3px; pointer-events: none; border-radius: 2px; opacity: .55;
+                background: repeating-linear-gradient(135deg, var(--fg-faint) 0 1px, transparent 1px 4px); }
+.rc-scrub-gap.reported { background: repeating-linear-gradient(135deg, var(--warn) 0 1px, transparent 1px 4px); }
 .rc-scrub-win { position: absolute; top: 0; bottom: 0; border: 1px solid var(--accent); border-radius: 3px;
                 background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .rc-scrub-live { flex: 0 0 auto; padding: 1px 6px; font-size: 0.72em; cursor: pointer; color: var(--fg-dim);

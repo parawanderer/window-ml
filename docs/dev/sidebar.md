@@ -53,8 +53,9 @@ can't double-emit.
 a new debug **event kind** (the transport forwards any `__mlDebug` payload), a new
 `RenderPanel` descriptor, session UI, export, or anything using `chrome.runtime`/
 `chrome.storage` renders identically in both — it's the same app. *Two things don't:*
-(1) a **new message the app posts to its parent** (the app→parent protocol is just
-`__mlSidebarApp:"ready"` + `__mlLightbox`, both mirrored in `panel.ts`) must be handled in
+(1) a **new message the app posts to its parent** (the app→parent protocol is
+`__mlSidebarApp:"ready"`, `__mlLightbox` and the chart's `"chartKeys"`, all handled in `panel.ts` — the last
+deliberately as a no-op, since DevTools cannot relay page keys) must be handled in
 `panel.ts` too; (2) anything that **acts back on the page** or **sends input into the
 agent** (the session composer) needs a **reverse channel** — the debug transport itself
 is one-way (page→panel). The overlay can reach the page (its parent is a content script);

@@ -149,6 +149,17 @@ per device, in bytes.
   root. The keys answer only while the pointer is on the chart (`crosshair` is set), and `preventDefault` is
   called only when one was used, so the panel never eats scrolling it had no use for. **Esc unwinds one rung
   at a time** — tip, then keyboard focus, then zoom.
+- **THE KEYS WORK FROM A HOVER, with no click** (`chartKey`, `chartKeysWanted`, the shell's `relayChartKey`).
+  Hovering does not move focus and the browser delivers keys only to the focused document, so with the page
+  focused the hint offered `↑↓` and the keys went to the page until you clicked into the panel. While the
+  pointer is over a plot (`pointerOnChart`, which unlike `crosshair` does not outlive the pointer), the app posts
+  `__mlSidebarApp: "chartKeys"` naming exactly the keys `chartKey` would use; the overlay's shell takes those from
+  the page (capture phase, `preventDefault` + `stopImmediatePropagation`) and posts them in as
+  `__mlSidebarChartKey`. It never takes focus: focus on hover would blur the page's focused element, closing its
+  menus and pulling the caret out of a field because the mouse crossed the panel. A key typed into an editable
+  field is never taken. The DevTools panel cannot relay (keys typed in another DevTools pane never reach an
+  extension panel), so there the hints say "click, then ↑↓" (`ClickFirst`, from `keysReach`) instead of
+  promising keys that go elsewhere.
 - **THE SAME KEY STEPS THROUGH WHAT THE VIEW DRAWS.** Overview draws pool LINES, the stacked view draws model
   bands, so `↑↓` cycles pools there (`kbPool`/`stepPool`, its own signal — the two views focus genuinely
   different kinds of thing, and unifying them would be a wrapper over two two-element enums). Leaving the keys
@@ -586,6 +597,15 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   round LOCAL-clock interval (`gridStep` picks the smallest that keeps them 48 px apart at a track's 300 px
   minimum; `gridTimes` places them inside each run), the same on every track, the interval captioned in each
   plot's corner. Vertical only — memory gridlines would mean a different amount on every card.
+  **A BREAK SAYS WHAT IT CUT OUT** (`runGap`, `GapMark`, `GapTip`). Collapsed to 3px, a missing minute and a
+  missing ten hours looked the same. Each break is a 3px flex item where the plot's `gap: 3px` used to be (so
+  nothing moved, and the lane's own 3px gap still lines up), with a wider hit area like a ruled instant's.
+  Hovering it says how long, from when to when, and why: nothing sampled (the panel was closed, or the box did
+  not answer) or frames the server reported dropping (`gapBefore`, drawn dashed in the warning colour). A lone
+  reading inside the stretch, too few to draw, is counted rather than the stretch called empty. While a break is
+  hovered the plot's reading, crosshair and snap mark stand down (`gapHover`, the same owner rule as
+  `eventHover`), and the same break lights in every track. The scrub strip, linear in clock time, hatches the
+  hole at its true width (`.rc-scrub-gap`) and lets a drag pass straight through it.
 - **Instants rule through the plot** (dashed — a solid line reads as part of the chart), and one eviction is
   drawn in every track, so hovering it anywhere thickens it everywhere. **So do a load's two internal edges**
   (`loadEdges`): weights loaded, then KV cache and compute buffers allocated (ready to serve), each with the
