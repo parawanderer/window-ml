@@ -10,7 +10,12 @@ import { PY_PRELUDE_IMPORTS } from "./python-env";
 // `img` (PIL.Image) + `img_np` (H×W×3 uint8) decoded from the injected screenshot, a `to_base64()`
 // helper, and the injected tables as named DataFrames (+ a `tables` dict). Reads the JS-injected
 // globals INJECTED_IMAGE_B64 / INJECTED_TABLES_JSON (set before this runs).
-export const PRELUDE = /* python */ `
+// The prelude in three parts, so the persistent BENCH can take only the first. BASE: imports + helpers.
+// DATA: the injected image/tables for a `python_exec` (resets `img`/`df`/`tables` to None each run, so it
+// would wipe a bench user's `df` between runs). LOADERS: the redirects that serve those injected objects —
+// defined in, and reading, the namespace that runs them, so a second namespace would patch on top of the
+// first. The bench has no injected data, so it needs neither. `PRELUDE` is the three joined, unchanged.
+export const PRELUDE_BASE = /* python */ `
 import io, base64, sys, contextlib
 ${PY_PRELUDE_IMPORTS}
 
@@ -20,6 +25,8 @@ def to_base64(x):
     _b = io.BytesIO(); x.save(_b, format="PNG")
     return "data:image/png;base64," + base64.b64encode(_b.getvalue()).decode()
 
+`;
+const PRELUDE_DATA = /* python */ `
 img = None
 img_np = None
 H = W = 0
@@ -58,6 +65,8 @@ if _tsj:
         if _alias and _alias != _entry["name"]:
             tables[_alias] = _df
 
+`;
+const PRELUDE_LOADERS = /* python */ `
 # --- Loader interception (DX, not a security boundary) ---------------------------------------
 # Models have strong pre-training habits — Image.open(path), pd.read_csv(name), pd.read_html(
 # selector) — and reach for them with the SELECTOR/name they passed to the tool (observed:
@@ -104,6 +113,7 @@ if "_ml_orig_read_html" not in globals():
         return _ml_orig_read_html(_fp, *_a, **_k)
     pd.read_html = _ml_read_html
 `;
+export const PRELUDE = PRELUDE_BASE.slice(0, -1) + PRELUDE_DATA.slice(0, -1) + PRELUDE_LOADERS;
 
 // Network policy. pandas' read_csv/read_html and urllib all funnel through
 // `urllib.request.OpenerDirector.open`, so patch THAT (robust to however urlopen was imported). The
@@ -179,11 +189,21 @@ for _k in list(globals().keys()):
 // (traceback + partial stdout survive). The result is JSON-serialized in Python (leak-proof — no JsProxy
 // to destroy; numpy scalars coerced via `.item()`), null when unserializable. Reads: `_stdout`, `_err`,
 // `_json_result`, `result`.
-export const wrapUserCode = (code: string, hardened = true): string => /* python */ `
-${RESET}${PRELUDE}
+/**
+ * The script the sandbox runs: prelude, network policy, and the user's code wrapped so a top-level `return`,
+ * a trailing expression and a traceback all come back.
+ *
+ * @param persist the bench's KEEP-STATE mode. No per-run reset and only `PRELUDE_BASE`, and the script's own
+ *   top-level names are declared `global` in the wrapper, so they land in the namespace it runs in (the
+ *   worker hands it a bench-only one) and are still there next run. Without that the wrapper's function
+ *   scope would swallow them: `x = 1` is a LOCAL of `_user` and disappears when the run ends.
+ */
+export const wrapUserCode = (code: string, hardened = true, persist = false): string => /* python */ `
+${persist ? PRELUDE_BASE : RESET + PRELUDE}
 ${netPolicy(hardened)}
 result = None
 _ml_src = ${JSON.stringify(code)}
+_ml_persist = ${persist ? "True" : "False"}
 # stdout capture that ALSO tees each write to a JS callback (\`_ml_stdout_cb\`, set by the worker ONLY when
 # the run opted into live streaming) so print() output streams live (Jupyter-style) — while _out still holds
 # the byte-exact full stdout for the final result. No callback set → pure capture, unchanged.
@@ -204,8 +224,9 @@ with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
         # Parse the code AS _user's body (a top-level \`return\` is only legal inside a function), then
         # Jupyter-style: a bare trailing EXPRESSION becomes the return value. A leading \`pass\` keeps the
         # body non-empty (empty code) without ever being the trailing statement of real code.
+        _ml_def_src = "def _user():\\n    global result\\n    pass\\n" + _tw.indent(_ml_src, "    ")
         try:
-            _ml_tree = _ast.parse("def _user():\\n    global result\\n    pass\\n" + _tw.indent(_ml_src, "    "), filename="<python_exec>")
+            _ml_tree = _ast.parse(_ml_def_src, filename="<python_exec>")
         except SyntaxError as _ml_se:
             # A SyntaxError is raised BY THE PARSE, so the correction below never runs for it — and it
             # carries the prefixed line number in its own fields, which is what gets printed. Shift it here
@@ -216,6 +237,22 @@ with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
                 _ml_se.end_lineno = max(1, _ml_se.end_lineno - 3)
             raise
         _ml_body = _ml_tree.body[0].body
+        # KEEP-STATE (the bench): every name the script binds at its own top level becomes a global of the
+        # namespace it runs in. Python's own scope analysis decides which names those are — imports, defs,
+        # classes, loop targets, walrus, with/except targets — rather than a list of statement shapes that
+        # would miss one. A name a nested function declares \`nonlocal\` stays local: made global, the
+        # nonlocal would have no binding to refer to and the script would not compile.
+        if _ml_persist:
+            import symtable as _ml_st
+            _ml_fn = next(_c for _c in _ml_st.symtable(_ml_def_src, "<python_exec>", "exec").get_children() if _c.get_name() == "_user")
+            def _ml_nonlocals(_t):
+                _out_nl = set()
+                for _c in _t.get_children():
+                    _out_nl |= {_sym.get_name() for _sym in _c.get_symbols() if _sym.is_nonlocal()} | _ml_nonlocals(_c)
+                return _out_nl
+            _ml_keep = sorted(set(_ml_fn.get_locals()) - _ml_nonlocals(_ml_fn))
+            if _ml_keep:
+                _ml_body[0].names.extend(_ml_keep)
         # LINE NUMBERS THE USER CAN USE. The code is indented into \`def _user():\` after a three-line prefix,
         # so without this every traceback points three lines past the statement that actually failed — on a
         # ten-line script, at somebody else's line. Corrected HERE rather than in the UI so the MODEL gets
@@ -393,16 +430,19 @@ export interface PyCompletion { name: string; type: string; complete: string; }
  * compiled module to inspect it, and that import must not reach the network even when the user picked `full`.
  *
  * @param line 1-based, as Jedi counts. @param column 0-based, in characters.
+ * @param namespace a LIVE namespace (the bench's kept state, a Python dict) to complete real objects from;
+ *   absent, Jedi analyses the script alone.
  * @returns at most 200 completions, best first as Jedi ranks them.
  */
-export function completeIn(py: any, code: string, line: number, column: number): PyCompletion[] {
+export function completeIn(py: any, code: string, line: number, column: number, namespace?: any): PyCompletion[] {
     const saved = harden(py);
     try {
-        // Handed over as a global rather than spliced into the source, so no script can break out of a quote.
+        // Handed over as globals rather than spliced into the source, so no script can break out of a quote.
         py.globals.set("_ml_c_code", code);
-        return JSON.parse(py.runPython(`_ml_complete(_ml_c_code, ${Math.max(1, line | 0)}, ${Math.max(0, column | 0)})`) as string);
+        if (namespace) py.globals.set("_ml_c_ns", namespace);
+        return JSON.parse(py.runPython(`_ml_complete(_ml_c_code, ${Math.max(1, line | 0)}, ${Math.max(0, column | 0)}${namespace ? ", _ml_c_ns" : ""})`) as string);
     } finally {
-        try { py.globals.delete("_ml_c_code"); } catch { /* already gone */ }
+        for (const k of ["_ml_c_code", "_ml_c_ns"]) { try { py.globals.delete(k); } catch { /* absent */ } }
         unharden(py, saved);
     }
 }

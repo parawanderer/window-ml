@@ -1715,10 +1715,11 @@ Static analysis of the script being typed — it is never RUN — so the statele
 anything reached through an import or written in the script: module attributes (`np.ara`), pandas frames
 (`pd.read_csv(...).he`, via pandas' own stubs), literals, and the script's own functions all complete. It
 **cannot** type an array returned by a numpy call (`grid = np.arange(24).reshape(4, 6)` → `grid.` offers
-nothing): Jedi 0.19 cannot resolve numpy 2's stub layout. That is the case a PERSISTED bench fixes, and why
-`namespace` is the helper's one moving part — `None` is Jedi's `Script`, a live namespace is its
-`Interpreter`, which completes the real object (`grid.su` → `sum`, pinned in `tests/python.test.mjs` along with
-the gap, so a Jedi that fixes it announces itself). Five things are load-bearing:
+nothing): Jedi 0.19 cannot resolve numpy 2's stub layout. The bench's KEPT STATE fixes it: completion passes
+the current mode's namespace (`complete.bench`), and `namespace` is the helper's one moving part — `None` is
+Jedi's `Script`, a live namespace is its `Interpreter`, which completes the real object (`grid.su` → `sum` once
+a run has defined `grid`; the static gap stays pinned in `tests/python.test.mjs`, so a Jedi that fixes it
+announces itself). Five things are load-bearing:
 - **Lazy** (`PyPackage.lazy`, `PY_LAZY_LOADS`): the 1.6 MB of wheels are fetched with the rest but loaded on
   the first completion, never at start-up and never offered to the model.
 - **Only once the sandbox is WARM** (`completeInSandbox` returns null until `benchEnv` is set): a completion
@@ -1737,6 +1738,29 @@ the gap, so a Jedi that fixes it announces itself). Five things are load-bearing
   call 35 of numpy's functions "module" (`np.arange` among them), so "module" is believed only when the name
   really is a loaded module (`sys.modules`); otherwise it is `""`. Only module/class/function/property/keyword
   are printed beside a name at all — `statement`/`instance`/`param` are Jedi's internals, not a reader's.
+
+**The bench KEEPS ITS VARIABLES between runs, like a notebook** (`wrapUserCode(..., persist)`, the worker's
+`benchNs`). `python_exec` stays stateless; the bench does not, and six things make that safe:
+- **Its own namespace, not main.** Main belongs to the model's `python_exec`, which wipes it every run — so the
+  first agent run would have erased a person's variables, and could have read them.
+- **One namespace per MODE.** A `full` run can keep a live handle to the browser's network functions in a
+  variable; carried into a `readonly` run it would quietly end the sandbox. Nothing crosses between them.
+- **Top-level names are declared `global`** in the wrapper, chosen by Python's own `symtable` rather than a
+  list of statement shapes. Without it `x = 1` is a local of `_user` and vanishes at the end of the run. A name
+  a nested function declares `nonlocal` stays local, or the script would not compile.
+- **Only `PRELUDE_BASE`** (imports + helpers). The injected-data part resets `img`/`df`/`tables` every run — it
+  would wipe a bench user's `df` — and the loader redirects are defined in, and read, the namespace that runs
+  them, so a second namespace would patch on top of the first and read the other's data.
+- **After a `python_exec`, main is reset** (worker `finally`): its injected screenshot and tables otherwise
+  linger until the next run, where a bench script's `pd.read_csv("sales")` could reach them through the
+  redirect.
+- **A namespace has an `id`**, new whenever it is created afresh. When a run comes back in one the bench did
+  not reset — the watchdog killed the worker, the extension reloaded — it says the variables are gone
+  (`benchLost`) instead of leaving it to surface as a NameError. A reset arms no watchdog, for the same reason a
+  completion does not.
+Keep-state and reset are ours alone at the `PYTHON_EXEC` choke point: a page's `persist` is dropped and its
+`benchReset` refused. The environment panel lists the current mode's variables (`BenchVars`) with the one Reset,
+which clears both modes.
 
 **One `openBench(code?)`.** There were two openers and they disagreed: a code block's ▶ went straight to the
 FULL page, which is precisely the trip the drawer exists to stop — you press it FROM a step in order to

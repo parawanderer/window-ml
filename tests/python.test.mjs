@@ -546,3 +546,58 @@ test("completion: a kind Jedi could not resolve is reported as UNKNOWN, never as
     assert.equal(byName(await complete("import numpy as np\nnp.ara")).arange, "");
     assert.equal(byName(await complete("import numpy as np\nnp.lina")).linalg, "module", "a real submodule keeps its kind");
 });
+
+// ── THE BENCH'S KEPT STATE (`wrapUserCode(..., persist = true)`) ─────────────────────────────────────────
+// Driven the way the worker drives it: the shipped wrapper, run with a SEPARATE dict as its globals.
+async function benchRun(code, ns, { hardened = true } = {}) {
+    const { wrapUserCode } = await import("../src/python-runtime.ts");
+    await py.runPythonAsync(wrapUserCode(code, hardened, true), { globals: ns });
+    const err = ns.get("_err");
+    if (err) return { error: String(err) };
+    const r = ns.get("_json_result");
+    return { value: typeof r === "string" ? JSON.parse(r) : r };
+}
+const freshNs = () => py.globals.get("dict")();
+
+test("bench: what one run defines, the next can use — values, functions, imports", { skip }, async () => {
+    const ns = freshNs();
+    await benchRun("x = 41\ngrid = np.arange(24).reshape(4, 6)\ndef f():\n    return x + 1\nimport math as m", ns);
+    // f closes over x as a GLOBAL of the namespace, so it still resolves a run later.
+    assert.deepEqual(await benchRun("return f() + int(grid.sum()) + int(m.floor(0.5))", ns), { value: 318 });
+});
+
+test("bench: `df` survives a run — the injected-data prelude that resets it is not run here", { skip }, async () => {
+    const ns = freshNs();
+    await benchRun("df = pd.DataFrame({'a': [1, 2]})", ns);
+    assert.deepEqual(await benchRun("int(df['a'].sum())", ns), { value: 3 });
+});
+
+test("bench: `return`, a trailing expression and a loop variable all behave as they do elsewhere", { skip }, async () => {
+    const ns = freshNs();
+    assert.deepEqual(await benchRun("for i in range(3): pass\nreturn 'r'", ns), { value: "r" });
+    assert.deepEqual(await benchRun("i", ns), { value: 2 }, "a top-level loop variable is kept, as at a notebook's top level");
+});
+
+test("bench: a name a nested function declares nonlocal stays local, so the script still compiles", { skip }, async () => {
+    // Made global, `nonlocal n` would have no binding to refer to and the whole script would be a SyntaxError.
+    assert.deepEqual(await benchRun("n = 0\ndef inc():\n    nonlocal n\n    n += 1\ninc()\nreturn n", freshNs()), { value: 1 });
+});
+
+test("bench: one namespace cannot see another's, and the model's namespace sees neither", { skip }, async () => {
+    const a = freshNs();
+    await benchRun("secret = 7", a);
+    assert.match((await benchRun("secret", freshNs())).error, /NameError/, "a different bench namespace");
+    // The model's path: the ordinary wrapper, in the interpreter's main namespace, with its per-run reset.
+    const { error } = await pyRun("return secret");
+    assert.match(String(error), /NameError/, "a python_exec never sees a person's bench variables");
+});
+
+test("bench: completion from a LIVE namespace types what static analysis cannot (grid.)", { skip: skipJedi }, async () => {
+    const { completeIn } = await import("../src/python-runtime.ts");
+    await complete("x = 1");   // loads Jedi and the helper if this runs alone
+    const ns = freshNs();
+    await benchRun("grid = np.arange(24).reshape(4, 6)", ns);
+    const code = "grid.su";
+    assert.deepEqual(completeIn(py, code, 1, code.length).map((c) => c.name), [], "without the namespace: nothing");
+    assert.ok(completeIn(py, code, 1, code.length, ns).map((c) => c.name).includes("sum"), "with it: the live ndarray's methods");
+});

@@ -881,3 +881,63 @@ test("the bench header fits at every panel width down to the 280px minimum, and 
         }
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+test("the bench KEEPS its variables between runs — per mode, listed, completable, and resettable", async () => {
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await runInBench(frame, "grid = np.arange(24).reshape(4, 6)");
+        // Through the real worker: the second run sees what the first defined.
+        await runInBench(frame, "int(grid.sum())");
+        await expect(frame.locator(".bench-outbody")).toContainText("276");
+
+        // The environment panel lists it, with its type.
+        await frame.locator(".bench-env-btn").click();
+        await expect(frame.locator(".bench-env-vars li", { hasText: "grid" })).toContainText("ndarray");
+
+        // Completion from the LIVE object — static analysis alone cannot type a numpy call's result. The first
+        // request may load Jedi and fall back, so keep typing the way a person would.
+        const content = frame.locator(".bench-code .cm-content");
+        await content.fill("grid.s");
+        await expect.poll(async () => {
+            await content.press("Backspace"); await content.pressSequentially("s", { delay: 30 });
+            await sleep(700);
+            return frame.locator(".cm-tooltip-autocomplete li").allTextContents();
+        }, { timeout: 30000, intervals: [500] }).toEqual(expect.arrayContaining([expect.stringContaining("sum")]));
+        await content.press("Escape");
+
+        // FULL mode keeps its own variables: nothing crosses the sandbox boundary.
+        // The WHITELIST is needed because `senderTrust` keys on `sender.tab`, which the overlay bench HAS (it
+        // is an extension iframe inside the page's tab), so the bench's full mode is refused on any page not
+        // whitelisted. A known, separate issue — not what this test is about — so the page is whitelisted
+        // rather than the gate changed in passing.
+        await configureExtension(ext.sw, { pageApprovalDomains: [new URL(fake.url).hostname] });
+        await frame.locator(".bench-mode select").selectOption("full");
+        await runInBench(frame, "grid");
+        await expect(frame.locator(".bench-outbody")).toContainText("NameError");
+        await frame.locator(".bench-mode select").selectOption("readonly");
+
+        // Reset forgets them; the next run starts empty and says nothing about a restart (it was asked for).
+        await frame.locator(".bench-env-btn").click();
+        await frame.locator(".bench-env-reset").click();
+        await expect(frame.locator(".bench-env-vars li")).toHaveCount(0);
+        await runInBench(frame, "grid");
+        await expect(frame.locator(".bench-outbody")).toContainText("NameError");
+        await expect(frame.locator(".bench-lost")).toHaveCount(0);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+test("when the sandbox restarts under the bench, it says the kept variables are gone", async () => {
+    test.setTimeout(90000);
+    const { fake, ext, frame } = await setup();
+    try {
+        await frame.locator('[aria-label="Python bench"]').click();
+        await runInBench(frame, "kept = 'something'");
+        // A runaway run: the 15s watchdog kills the worker, and the kept namespace goes with it.
+        await runInBench(frame, "while True:\n    pass");
+        await expect(frame.locator(".bench-outbody")).toContainText("exceeded");
+        await runInBench(frame, "kept");
+        await expect(frame.locator(".bench-lost"), "said where the result lands, not left as a bare NameError").toBeVisible();
+        await expect(frame.locator(".bench-outbody")).toContainText("NameError");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
