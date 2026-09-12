@@ -837,3 +837,47 @@ test("the bench's timestamps toggle hides the gutter, and remembers it", async (
         await expect(frame.locator(".bench-outbody .r-ts").first()).toBeVisible();
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+test("the bench header fits at every panel width down to the 280px minimum, and the default gives up only the title and version", async () => {
+    const { fake, ext, page, frame } = await setup();
+    try {
+        const setWidth = (w) => page.evaluate((w) => {
+            const host = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host");
+            host.style.width = `${w}px`;
+        }, w);
+        await setWidth(760);
+        await frame.locator('[aria-label="Python bench"]').click();
+        // A run, so the version chip is drawn — the widest the header ever gets.
+        await runInBench(frame, "return 1");
+        await expect(frame.locator(".bench-ver")).toBeVisible();
+
+        const measure = () => frame.evaluate(() => {
+            const top = document.querySelector(".bench-top");
+            const shown = [...top.children].filter((e) => getComputedStyle(e).display !== "none");
+            const at = (s) => document.querySelector(s)?.getBoundingClientRect();
+            return {
+                vw: document.documentElement.clientWidth,
+                right: Math.max(...shown.map((e) => e.getBoundingClientRect().right)),
+                run: at(".bench-play").right,
+                select: at(".bench-mode select").width,
+                send: getComputedStyle(document.querySelector(".bench-send")).display !== "none",
+            };
+        });
+        const wide = await measure();
+        // 280 is the panel's MIN_W (shell.ts), 400 its DEFAULT_W. The header used to overflow below ~570px, and
+        // ▶ Run was the first thing pushed off the edge.
+        for (const w of [760, 600, 560, 480, 400, 360, 320, 280]) {
+            await setWidth(w);
+            await expect.poll(async () => (await measure()).vw, { timeout: 3000 }).toBeLessThan(w);
+            const m = await measure();
+            expect(m.right, `${w}px: the header stays inside the panel`).toBeLessThanOrEqual(m.vw + 0.5);
+            expect(m.run, `${w}px: ▶ Run is on screen`).toBeLessThanOrEqual(m.vw);
+            if (w === 400) {
+                // At the DEFAULT width nothing is squeezed: the last stage is reserved for a panel someone dragged
+                // narrower, so the width almost everyone sees keeps the full mode picker and every control.
+                expect(m.select, "the mode picker is not clipped at the default width").toBeCloseTo(wide.select, 0);
+                expect(m.send, "and no control is hidden").toBe(true);
+            }
+        }
+    } finally { await ext.context.close(); await fake.stop(); }
+});

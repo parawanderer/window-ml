@@ -2340,15 +2340,14 @@ const benchEnvErr = signal("");
 /** The `environment` disclosure's BUTTON — what the sandbox is, on demand. In the header row. */
 function BenchEnvButton() {
     const open = benchEnvOpen.value;
-    const env = benchEnv.value;
     return (
         <button class={`bench-env-btn${open ? " on" : ""}`} aria-expanded={open}
             onClick={() => { benchEnvOpen.value = !open; if (!benchEnvErr.value) loadBenchEnv((m) => (benchEnvErr.value = m)); }}>
             <span class="tri" aria-hidden="true"><IconChevron /></span>
-            {/* ONE element for the whole label, because an ellipsis needs one: as separate flex items the name
-                and the version wrapped onto two lines when the header got tight, and the button grew a
-                second row. */}
-            <span class="bench-env-label">environment{env ? <span class="bench-env-ver"> · {env.python}</span> : null}</span>
+            {/* In its own element because an ellipsis needs one. It carried the Python version too, which
+                the `py` chip beside it already shows (and the app header in full-page mode), so a tight row paid
+                ~35px to say the same thing twice. */}
+            <span class="bench-env-label">environment</span>
         </button>
     );
 }
@@ -2544,8 +2543,11 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                     the middle of the header as a handle for nothing — and it is the one control in the row
                     that says "grab me", which makes an inert one worse than absent. */}
                 {drag ? <i class="bench-grip-pill" aria-hidden="true" /> : null}
-                <label class="bench-mode">mode
-                    <select value={mode} onChange={e => setMode((e.target as HTMLSelectElement).value === "full" ? "full" : "readonly")}>
+                {/* No visible "mode" word: the options already say what they are ("readonly (sandboxed)",
+                    "full (network)"), and the word cost 40px of a row that runs out of room. It stays the
+                    control's accessible NAME, which is what a label is for. */}
+                <label class="bench-mode">
+                    <select aria-label="Sandbox mode" value={mode} onChange={e => setMode((e.target as HTMLSelectElement).value === "full" ? "full" : "readonly")}>
                         <option value="readonly">readonly (sandboxed)</option>
                         <option value="full">full (network)</option>
                     </select>
