@@ -12,6 +12,7 @@ import { codeLineNumbers } from "./store";
 import { beautifyJs, highlight, htmlLines, shortStamp, fullStamp, pretty, truncate, mdInline } from "./format";
 import { lineMapBetween } from "../line-map";
 import { useTipPlacement } from "./use-tip";
+import { watchTrigger } from "./tooltip-layer";
 import { IconCopy, IconCheck, IconSheet, IconChevron } from "./icons";
 
 export const DOT_TIP: Record<Status, string> = {
@@ -377,14 +378,38 @@ export const cursorTipOn = (content: string | ComponentChildren) => ({
         cursorTip.value = typeof content === "string"
             ? { x: e.clientX, y: e.clientY, text: content }
             : { x: e.clientX, y: e.clientY, node: content };
+        // A trigger that UNMOUNTS under a still pointer raises no pointer-leave, so the tip would stay up over
+        // nothing. Watched the same way the anchored layer watches its triggers.
+        const el = e.currentTarget as Element | null;
+        if (el && el !== tipTrigger) {
+            unwatchTip?.();
+            tipTrigger = el;
+            unwatchTip = watchTrigger(el, () => { if (tipTrigger === el) clearCursorTip(); });
+        }
     },
-    onPointerLeave: () => { cursorTip.value = null; },
+    onPointerLeave: () => { clearCursorTip(); },
 });
+let tipTrigger: Element | null = null;
+let unwatchTip: (() => void) | null = null;
+/** Take the cursor tip down, and stop watching whatever summoned it. */
+function clearCursorTip(): void {
+    cursorTip.value = null;
+    tipTrigger = null;
+    unwatchTip?.(); unwatchTip = null;
+}
 
 /** The single layer. Mounted once per surface, beside the context menu. */
 export function CursorTipLayer() {
     const t = cursorTip.value;
     const { ref, style } = useTipPlacement(t ? { x: t.x, y: t.y, w: typeof window !== "undefined" ? window.innerWidth : 1e4 } : null);
+    // Esc dismisses it without moving the pointer, as it does the anchored layer's.
+    const up = !!t;
+    useEffect(() => {
+        if (!up) return;
+        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") clearCursorTip(); };
+        document.addEventListener("keydown", onKey, true);
+        return () => document.removeEventListener("keydown", onKey, true);
+    }, [up]);
     if (!t) return null;
     // A NODE renders as itself; a STRING goes through the inline markdown renderer — a tip explaining code
     // says `df['total']` and *why*, and a tip is exactly where backticks-as-literal-backticks look like a
