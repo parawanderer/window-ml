@@ -59,6 +59,15 @@ export const PY_RESERVED_NAMES: string[] = [
     ...PY_PACKAGES.map(p => preludeBinding(p.prelude)).filter((n): n is string => !!n),
 ];
 
+/** What the persistent bench's OWN prelude binds (`PRELUDE_BASE`): the stdlib imports, the library aliases and
+ *  `to_base64`, plus `result`. Everything else in a bench namespace is the user's, which is how the bench
+ *  lists "your variables". Narrower than PY_RESERVED_NAMES on purpose: the bench injects no image or tables,
+ *  so `img`/`df`/`tables`/`H`/`W` are ordinary names a user may bind there. */
+export const PY_BENCH_BASE_NAMES: string[] = [
+    "io", "base64", "sys", "contextlib", "to_base64", "result",
+    ...PY_PACKAGES.map(p => preludeBinding(p.prelude)).filter((n): n is string => !!n),
+];
+
 const PY_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const PY_RESERVED = new Set(PY_RESERVED_NAMES);
 /** Validate a user-supplied `python_exec` `tables` variable name (it becomes a sandbox global):

@@ -184,6 +184,15 @@ as in AGENTS.md — they are all under `src/`.
   Screenshots land in `tests/e2e/artifacts/stream-demo/`; `HOLD=0` exits instead of holding the browser
   open. Deterministic (fake-LLM, approvals resolved via the SW `__mlApprovals` channel). The automated
   assertions are `python-stream.spec.mjs` (the reverse channel) and `output-scroll.spec.mjs` (tail-follow).
+- **`bench-completion-demo.mjs`** — a **narrated demo, not a test** of what the bench's completion knows:
+  `npm run build && node --import tsx tests/e2e/bench-completion-demo.mjs`. Real Pyodide and real Jedi, no
+  model. It starts the sandbox through the environment panel WITHOUT running anything, shows the prelude's
+  `np`/`pd`/`to_base64` completing with nothing kept, a pandas call typed from stubs, a Run that keeps `grid`,
+  the live array completing beside the stubs, and a Reset that takes `grid` away and leaves the prelude. `PACE`,
+  `LINGER` (how long each popup stays up), `HOLD=0`, `HEADLESS=1`; screenshots in
+  `tests/e2e/artifacts/bench-completion-demo/`. Its first headless run caught the worker's per-run inputs being
+  listed as kept variables, which is what a demo is for. The assertions are `tests/python.test.mjs` and
+  `bench-dock.spec.mjs`.
 - **`bench-editor-demo.mjs`** — a **narrated demo, not a test** of the Python bench's editor:
   `npm run build && node --import tsx tests/e2e/bench-editor-demo.mjs` opens a headful browser, switches
   to the bench, and types numpy into it so you can watch the plain textarea upgrade to CodeMirror, the

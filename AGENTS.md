@@ -507,7 +507,7 @@ thing. The parts:
   backends (never in CI): `server-tool-live.mjs`, `md-ladder-live.mjs`, `proto-stream-live.mjs`,
   `capture-frames.mjs` (records real event-stream fixtures). Narrated demos (watched, never asserting):
   `approval-demo`, `resource-demo` (`BOX=`), `line-map-demo`, `cursor-demo`, `panel-news-demo`, `whole-box-demo`,
-  `stream-demo`, `bench-editor-demo`.
+  `stream-demo`, `bench-editor-demo`, `bench-completion-demo`.
 - **RULE — a demo says what it is doing, on screen: `narrate(page, "…", { sub: "…" })`** (harness.mjs). A
   demo is WATCHED, and a watcher who cannot tell which beat is running infers it from what moved — which is
   exactly backwards when the point of a beat is that something did NOT move. It draws a banner in the PAGE

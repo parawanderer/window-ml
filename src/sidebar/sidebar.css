@@ -973,12 +973,17 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
     padding: 3px 9px; cursor: pointer; white-space: nowrap; }
 .bench-tab:hover { color: var(--fg-dim); }
 /* The bench output's timestamps toggle: pushed to the far end of the tab row and set in the tabs' own type, so
-   it reads as a property of the pane rather than a fourth tab. Struck through when off, like `.bench-timer`. */
-.bench-times { margin-left: auto; align-self: center; flex: 0 0 auto; cursor: pointer;
-    font: inherit; font-size: 0.74em; color: var(--fg-dim); background: transparent;
-    border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
+   it reads as a property of the pane rather than a fourth tab. An eye before the label, crossed out when off.
+   Centred on the tabs' TEXT line rather than the strip's (the 2px margin cancels the tabs' underline, which the
+   strip's midpoint includes), and inset from the edge by the tabs' own 9px padding. */
+.bench-times { margin: 0 9px 2px auto; align-self: center; flex: 0 0 auto; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 4px;
+    font: inherit; font-size: 0.74em; line-height: 1.4; color: var(--fg-dim); background: transparent;
+    border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px 1px 6px; }
 .bench-times:hover { color: var(--fg); border-color: var(--fg-dim); }
-.bench-times[aria-pressed="false"] { color: var(--fg-faint); text-decoration: line-through; }
+.bench-times[aria-pressed="false"] { color: var(--fg-faint); }
+.bench-times-icon { display: inline-flex; }
+.bench-times-icon svg { width: 1.25em; height: 1.25em; }
 .bench-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
 /* A failure is MARKED, not just selected — the strip has to say a run went wrong even once you have
    clicked away to look at what it printed on the way there. */
@@ -2929,6 +2934,21 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    worse than an absent one, because you cannot tell it from a bug. */
 .bench-env-soon { margin-top: 7px; padding-top: 6px; border-top: 1px solid var(--border);
                   font-size: 0.82em; font-style: italic; color: var(--fg-faint); }
+/* The variables the bench is KEEPING between runs: a section of the environment panel, ruled off from the
+   packages below it, with the one control that clears them at its right. */
+.bench-env-vars { margin-top: 7px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.bench-env-vars-head { display: flex; align-items: center; gap: 8px; font-size: 0.86em; color: var(--fg-dim); }
+.bench-env-vars-none { margin-top: 4px; font-size: 0.82em; }
+.bench-env-reset { margin-left: auto; font: inherit; font-size: 0.92em; cursor: pointer; padding: 1px 9px; border-radius: 999px;
+    color: var(--fg-dim); background: transparent; border: 1px solid var(--border); }
+.bench-env-reset:hover:not(:disabled) { color: var(--fg); border-color: var(--fg-dim); }
+.bench-env-reset:disabled { opacity: 0.45; cursor: default; }
+/* The bench's KEPT STATE was lost under it (the worker restarted): one line where the result lands, warm rather
+   than red — nothing the user did failed, something was taken away — and dismissable. */
+.bench-lost { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; margin: 2px 0; padding: 4px 8px;
+    font-size: 0.84em; color: var(--fg); background: color-mix(in srgb, var(--warn, #d97706) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--warn, #d97706) 40%, transparent); border-radius: 5px; }
+.bench-lost-x { margin-left: auto; font: inherit; cursor: pointer; color: var(--fg-dim); background: none; border: 0; padding: 0 2px; }
 
 /* A KEYBOARD-READ TIP IS ANCHORED TO ITS TRACK, not to the cursor. The reader is not moving the mouse, so an
    answer that follows it has nothing to follow — and a model split across cards shows one of these on EVERY

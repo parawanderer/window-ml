@@ -3835,3 +3835,36 @@ test("PYTHON_EXEC: an ordinary run carries no completion field", async () => {
     const run = bg.pyRuns.find(m => m.type === "PY_RUN");
     assert.ok(run && !("complete" in run), "absent, so the worker takes the RUN path");
 });
+
+// ---------------------------------------------------------------------------------------------------------
+// THE BENCH'S KEPT STATE is ours alone. A page's run always executes in the namespace every run resets, and a
+// page cannot throw away a person's variables.
+
+test("SECURITY (PYTHON_EXEC): a PAGE cannot ask to keep state — its run stays in the namespace that resets", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    await bg.send({ type: "PYTHON_EXEC", payload: { code: "x = 1", persist: true } }, { tab: { id: 9 }, url: "https://evil.example/attack" });
+    const run = bg.pyRuns.find(m => m.type === "PY_RUN");
+    assert.ok(run, "the run still goes");
+    assert.ok(!("persist" in run), "…but the flag is dropped, so it cannot read or plant a person's bench variables");
+});
+
+test("SECURITY (PYTHON_EXEC): a PAGE cannot reset the bench's variables", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    const res = await bg.send({ type: "PYTHON_EXEC", payload: { code: "", benchReset: true } }, { tab: { id: 9 }, url: "https://evil.example/attack" });
+    assert.match(String(res?.error), /Refused: the workbench's state is not a page's to reset/);
+    assert.equal(bg.pyRuns.filter(m => m.type === "PY_RUN").length, 0);
+});
+
+test("PYTHON_EXEC: the bench's keep-state run, reset and mode-scoped completion all reach the sandbox", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    const own = { tab: { id: 9 }, url: "chrome-extension://test/sidebar.html" };
+    await bg.send({ type: "PYTHON_EXEC", payload: { code: "x = 1", persist: true } }, own);
+    await bg.send({ type: "PYTHON_EXEC", payload: { code: "", benchReset: true } }, own);
+    await bg.send({ type: "PYTHON_EXEC", payload: { code: "x.", complete: { line: 1, column: 2, bench: "full" } } }, own);
+    await bg.send({ type: "PYTHON_EXEC", payload: { code: "x.", complete: { line: 1, column: 2, bench: "../etc" } } }, own);
+    const runs = bg.pyRuns.filter(m => m.type === "PY_RUN");
+    assert.equal(runs[0].persist, true);
+    assert.equal(runs[1].benchReset, true);
+    assert.equal(runs[2].complete.bench, "full");
+    assert.ok(!("bench" in runs[3].complete), "an unknown namespace name is dropped, never forwarded");
+});
