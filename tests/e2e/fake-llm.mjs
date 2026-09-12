@@ -95,6 +95,9 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
     // route at all — the case the panel must degrade for.
     /** @type {any[]} */
     let resident = [];
+    // How long /api/ps takes to answer. A slow reply is how a poll sent BEFORE the event stream went live
+    // lands AFTER it, which is the race the panel must not lose.
+    let psDelayMs = 0;
     /** @type {any} */
     let boxInfo = null;
     // The event stream (a PATCHED ollama only — docs/FORKED-BACKENDS.md). `frames` is what a new subscriber
@@ -194,7 +197,11 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
             return json(res, 200, { data: [{ id: model, name: model, owned_by: "ollama", connection_type: "local" }] });
         }
         // Both bases findOllamaBase tries: `${origin}/ollama` first, then the origin itself.
-        if (req.method === "GET" && (path === "/api/ps" || path === "/ollama/api/ps")) return json(res, 200, { models: resident });
+        if (req.method === "GET" && (path === "/api/ps" || path === "/ollama/api/ps")) {
+            const body = { models: resident };
+            if (psDelayMs) { setTimeout(() => json(res, 200, body), psDelayMs); return; }
+            return json(res, 200, body);
+        }
         if (req.method === "GET" && (path === "/api/info" || path === "/ollama/api/info")) {
             // A server without the patch answers this route with the SPA's HTML, not a 404 — reproduce THAT,
             // since "unknown capacity" arriving as unparseable HTML is the case worth exercising.
@@ -331,6 +338,8 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
                 setSide: (/** @type {(body: any) => any} */ fn) => { sideAnswer = fn; },
                 /** What /api/ps reports as resident — raw ollama ps rows (size / size_vram / gpus / …). */
                 setResident: (/** @type {any[]} */ models) => { resident = models; },
+                /** Delay every /api/ps reply by `ms` (0 = immediate). */
+                setPsDelay: (/** @type {number} */ ms) => { psDelayMs = ms; },
                 /** What /api/info reports as capacity; null = a server that doesn't serve the route at all. */
                 setCapacity: (/** @type {any} */ info) => { boxInfo = info; },
                 /**
