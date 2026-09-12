@@ -20,7 +20,7 @@ import { Disclosure, cursorTipOn, TipText } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { CodeEditor } from "./code-editor";
 import type { RemoteCompletion } from "./code-editor-api";
-import { hhmmss } from "./timestamps";
+import { fmtAge, hhmmss } from "./timestamps";
 import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, type BenchRun } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
@@ -228,7 +228,7 @@ function GpuFaults() {
                         {/* The PCI address is the IDENTITY — two cards in one machine share a name — and it is
                             also the only thing present under `not_reported_by_driver`, where the driver
                             describes nothing and neither name nor uuid can be read. */}
-                        <span class="rc-gpufault-id">{was ? <><b class="rc-gpufault-was">{was}</b> · </> : null}{g.name ?? seenCards.value[g.pciId]?.description ?? "GPU"} at <code>{g.pciId}</code>{was ? <span class="rc-gpufault-dim"> — its label when last seen</span> : null}</span>
+                        <span class="rc-gpufault-id">{was ? <><b class="rc-gpufault-was">{was}</b> · </> : null}{g.name ?? seenCards.value[g.pciId]?.description ?? "GPU"} at <code>{g.pciId}</code>{was ? <span class="rc-gpufault-dim"> — its label when last seen{g.lastName && g.lastSeen ? `, ${fmtAge(Date.now() - g.lastSeen)} ago` : ""}</span> : null}</span>
                         {g.detail ? <span class="rc-gpufault-detail">{g.detail}</span> : null}
                         {gpuFaultNote(g) ? <span class="rc-gpufault-detail">{gpuFaultNote(g)}</span> : null}
                         {g.recovery ? <span class="rc-gpufault-fix"><b>Fix:</b> {g.recovery}</span> : null}

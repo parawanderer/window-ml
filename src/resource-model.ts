@@ -152,6 +152,9 @@ export interface UnavailableGpu {
     /** The label (`CUDA1`) this bus address had in the last enumeration that included it — `last_name` on a server
      *  that remembers it. A faulted card has no label TODAY, and the indices can shift once it drops out. */
     lastName?: string;
+    /** When the server last saw that address healthy (`last_seen`, epoch ms) — exact within one run, within ten
+     *  minutes across a restart (the server keeps its record in a file beside the models). */
+    lastSeen?: number;
     /** A stable token to branch on. `not_offered_by_backend` is HEALTHY — a card that answers every query
      *  which no backend claimed, usually `CUDA_VISIBLE_DEVICES` — so it must never draw a warning. */
     reason: string;
@@ -442,6 +445,7 @@ export function unavailableFrom(raw: unknown): UnavailableGpu[] {
             ...(g.name ? { name: String(g.name) } : {}),
             ...(g.uuid ? { uuid: String(g.uuid) } : {}),
             ...(g.last_name ? { lastName: String(g.last_name) } : {}),
+            ...(g.last_seen && Number.isFinite(Date.parse(String(g.last_seen))) ? { lastSeen: Date.parse(String(g.last_seen)) } : {}),
             ...(g.detail ? { detail: String(g.detail) } : {}),
             ...(g.recovery ? { recovery: String(g.recovery) } : {}),
             ...(bus ? { bus: {

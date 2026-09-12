@@ -2746,3 +2746,19 @@ test("bandEdge: a line band on stepped ones turns their corners — a constant r
     // A line with no stepped base below is just a line — the device's own progressive growth stays one.
     assert.deepEqual(M.bandEdge([1, 2, 3], false, null), [[0, 1], [1, 2], [2, 3]]);
 });
+
+test("the REAL capture with one card faulted: the healthy card's product name, and a fault with no remembered label", () => {
+    // `ollama-slop:devicenames`, off the box with GPU1 faulted. The fault predates the first build that remembers
+    // names, so `last_name` is correctly ABSENT — the server never saw that address healthy, and never guesses.
+    const raw = JSON.parse(readFileSync(new URL("./fixtures/hw/gpu-description-one-card-faulted-2026-09-12.json", import.meta.url), "utf8"));
+    const cap = M.parseInfo(raw);
+    assert.equal(cap.devices.length, 1, "the faulted card is not a device");
+    assert.equal(cap.devices[0].description, "NVIDIA RTX PRO 6000 Blackwell Workstation Edition");
+    assert.equal(cap.devices[0].name, "CUDA0", "`name` is still the backend's label");
+    const [fault] = M.unavailableFrom(raw.compute.unavailable_gpus);
+    assert.equal(fault.pciId, "0000:03:00.0");
+    assert.ok(!("lastName" in fault) && !("lastSeen" in fault));
+    // The shape as built, when the server did see it healthy: the label AND when.
+    const known = M.unavailableFrom([{ ...raw.compute.unavailable_gpus[0], last_name: "CUDA1", last_seen: "2026-09-12T08:22:22Z" }])[0];
+    assert.deepEqual([known.lastName, known.lastSeen], ["CUDA1", Date.parse("2026-09-12T08:22:22Z")]);
+});
