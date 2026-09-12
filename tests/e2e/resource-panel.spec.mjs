@@ -1391,7 +1391,9 @@ test("resource panel: the scrubber resizes from its edges and pans from its midd
         await sleep(400);
         const nudged = await winAt();
         expect(pct(nudged.left), "the window moved along the session").toBeGreaterThan(pct(panned.left) + 1);
-        expect(Math.abs(pct(nudged.width) - pct(panned.width)), "…without resizing").toBeLessThan(3);
+        // The same growing denominator as the drags above (a loaded CI runner moved it 3.2 points between the two
+        // readings), so the same tolerance. The exact claim, width preserved in TIME, is scrubNudge's unit test.
+        expect(Math.abs(pct(nudged.width) - pct(panned.width)), "…without resizing").toBeLessThan(held(panned.width));
         expect(await frame.evaluate(() => document.querySelector(".view")?.scrollTop ?? 0),
             "and the transcript underneath did NOT scroll — the chart claimed the gesture").toBe(scrolled);
         // Measured from a FIXED starting position each time. The window clamps against the end of the
@@ -1473,7 +1475,7 @@ test("resource panel: the scrubber resizes from its edges and pans from its midd
         await sleep(400);
         const strip = await winAt();
         expect(pct(strip.left), "the strip scrolls the window along").toBeGreaterThan(parked + 1);
-        expect(Math.abs(pct(strip.width) - parkedW), "…without resizing it").toBeLessThan(3);
+        expect(Math.abs(pct(strip.width) - parkedW), "…without resizing it").toBeLessThan(held(`${parkedW}%`));
     } finally {
         await ext.close();
         await fake.stop();
