@@ -578,7 +578,7 @@ runs per branch** so a fix supersedes the run it replaces instead of queueing be
 because every commit there keeps its result.
 
 **The `ci` skill (`.claude/skills/ci/SKILL.md`) is the playbook**: open the PR, watch it in the
-BACKGROUND (`gh pr checks --watch`, ~5 minutes for a full run), read only the failing steps
+BACKGROUND (`gh pr checks --watch`, ~10 minutes for a full run, the e2e job being the long pole), read only the failing steps
 (`gh run view <id> --log-failed`), fix forward on the branch, and — importantly — the list of
 KNOWN-BAD failures that arrived from other branches, so a red check that is not yours is named in the PR
 body rather than chased or silently re-run.

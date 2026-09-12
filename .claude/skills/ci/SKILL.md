@@ -66,7 +66,7 @@ This is the "confirm with a real poll" step above, done once instead of after th
 both traps because it never trusts an exit code.
 
 **Do not run it in the foreground and wait.** Use `run_in_background: true` and carry on; the result
-arrives as a task notification. A full run of this workflow is ~5 minutes (matrix + build + e2e).
+arrives as a task notification. A full run of this workflow is ~10 minutes; the e2e job (3 parallel workers) is the long pole.
 
 **And having backgrounded it, do not then poll its output file.** `until [ -s "$OUT" ]; do sleep 20;
 done` is a foreground wait wearing a disguise, and it is the commoner mistake by far — it happens
