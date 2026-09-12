@@ -380,7 +380,12 @@ function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex = null, 
      * and the stack opens a seam. It also means a residual sitting on models is exactly right: its base jumps
      * when a model goes, while its own thickness still varies smoothly.
      */
-    const isStep = (k: string | null): boolean => !!k && !!identity[k];
+    // A RESIDUAL THAT BELONGS TO A MODEL steps with it: a runner's overhead (`ctx:`) and a runner `/api/ps` has not
+    // caught up with (`runner:`) are that runner's memory, piecewise-constant like the model's, and they leave at
+    // the same eviction. Drawn as lines, the overhead stacked on a stepped model sloped from the last sample to
+    // the next — a `\\` wedge beside the model's `|` at every eviction. A LOADING runner (`load:`) stays a line:
+    // its memory really does climb as the weights land, which is the device-band rule, not the model one.
+    const isStep = (k: string | null): boolean => !!k && (!!identity[k] || (!!tint[k] && !k.startsWith("load:")));
     const areas = order.filter((k) => k !== "free").map((key, ki, keys) => {
         const below = ki === 0 ? null : keys[ki - 1];
         const top = tops[key] || [];
@@ -544,69 +549,85 @@ function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex = null, 
  *  never a single "interconnect" value for the card. What it says when it cannot say that is the point:
  *  unreported, unmeasured (with the driver's words) and a pair the server's list OMITTED are three different
  *  answers, and none of them is "PCIe only" — on a bridged 4x3090 that would be a confident lie. */
+/** The links from this card to every OTHER card, as rows of the facts grid — one per peer, direct fabric first.
+ *  A link belongs to a PAIR, never to one card, so there is no single "interconnect" line. */
 function DeviceLinks({ device }: { device: DeviceCapacity }) {
     const cap = capacity.value;
     const t = cap?.topology;
     const peers = (cap?.devices ?? []).filter((d) => d.id !== device.id);
-    if (!t) return (
-        <span class="rc-df-row rc-df-dim">Link to the other {peers.length === 1 ? "card" : "cards"}: not reported by this server. It is a property of each PAIR rather than of a card — some pairs can be NVLinked while others fall back to PCIe — so nothing is assumed either way.</span>
-    );
+    const cards = peers.length === 1 ? "card" : "cards";
+    if (!t) return <span class="rc-df-note">Links to the other {cards}: not reported by this server — nothing is assumed either way.</span>;
     if (t.status === "unavailable" || !device.pciId) return (
-        <span class="rc-df-row rc-df-dim">Links to the other {peers.length === 1 ? "card" : "cards"}: could not be measured{t.detail ? <> (<code>{t.detail}</code>)</> : null}. That is not the same as "no NVLink" — nothing is assumed either way.</span>
+        <span class="rc-df-note">Links to the other {cards}: could not be measured{t.detail ? <> (<code>{t.detail}</code>)</> : null} — that is not "no NVLink".</span>
     );
     const rows = peers.map((p) => ({ p, l: linkBetween(t, device.pciId, p.pciId) }))
         .sort((x, y) => Number(isBridge(y.l)) - Number(isBridge(x.l)));
     return (
         <>
-            {rows.map(({ p, l }) => (
-                <span class="rc-df-row" key={p.id}>to <b>{p.name}</b>: {l
-                    ? linkPhrase(l)
-                    : <span class="rc-df-dim">missing from the server's link list — a bug on one side, not a PCIe link</span>}</span>
-            ))}
-            {t.status !== "measured"
-                ? <span class="rc-df-row rc-df-dim">Only partly measured{t.detail ? <> (<code>{t.detail}</code>)</> : null}.</span> : null}
+            <span class="rc-df-grid">
+                {rows.map(({ p, l }) => (
+                    <>
+                        <span class="rc-df-k" key={`k:${p.id}`}>to {p.name}</span>{" "}
+                        <span class={`rc-df-v rc-df-wide${l ? "" : " rc-df-miss"}`} key={`v:${p.id}`}>{l
+                            ? linkPhrase(l)
+                            : "missing from the server's link list — a bug on one side, not a PCIe link"}</span>{" "}
+                    </>
+                ))}
+            </span>
+            {t.status !== "measured" ? <span class="rc-df-note">Only partly measured{t.detail ? <> (<code>{t.detail}</code>)</> : null}.</span> : null}
         </>
     );
 }
 
+/**
+ * A CARD'S OWN FACTS, behind its name on the track header: what the card IS, then a grid of short label/value
+ * rows, then the one explanation that is always needed, in a quiet line. It was a column of sentences in two
+ * weights, and the figures sat in the middle of them — hard to read, and the explanation of each number was as
+ * loud as the number.
+ *
+ * The header says what the card is in the driver's own words (`description`, from a patched server) beside the
+ * backend's label and the bus address — the same identity the fault banner uses, so a card can be recognised
+ * before and after it fails.
+ */
 function DeviceFacts({ device, label }: { device: DeviceCapacity; label: string }) {
     // How many OTHER devices there are — a single card has no pair to have a link with, so the
-    // interconnect line is shown only where the question exists.
+    // interconnect rows are shown only where the question exists.
     const others = (capacity.value?.devices.length ?? 1) - 1;
+    const two = device.physicalBytes && device.physicalBytes !== device.totalBytes;
+    const row = (k: string, v: preact.ComponentChildren, note?: string) => (
+        <>
+            <span class="rc-df-k">{k}</span>{" "}<span class="rc-df-v">{v}</span>{" "}
+            {note ? <span class="rc-df-n">{note}</span> : <span />}{" "}
+        </>
+    );
     return (
         // THE NAME STAYS THE NAME. A `.tt-pop` only works inside an element carrying `tt`, so the trigger is a
         // WRAPPER around `.rc-name` rather than `.rc-name` itself — put the tooltip inside the name element
-        // and the name's own text content becomes the name plus three sentences of prose, which every reader
-        // of that element then picks up. The panel reads `.rc-name` as a label in several places.
+        // and the name's own text content becomes the name plus the whole tooltip, which every reader of that
+        // element then picks up. The panel reads `.rc-name` as a label in several places.
         <span class="tt rc-devfacts">
             <span class="rc-name">{label}</span>
-            <span class="tt-pop wrap" role="tooltip">
-                <span class="rc-df-row"><b>{device.name}</b> · {device.runner}{device.unified ? " · unified memory" : ""}</span>
-                {/* THE TWO TOTALS, and which decides what. This is the counter-intuitive one and the reason
-                    the hover exists at all. */}
-                <span class="rc-df-row">{formatBytes(device.totalBytes)} usable — what placement decides against</span>
-                {device.physicalBytes && device.physicalBytes !== device.totalBytes ? (
-                    <span class="rc-df-row rc-df-dim">{formatBytes(device.physicalBytes)} on the card — what the driver and nvidia-smi report. The difference is reserved before anything loads; neither figure is wrong.</span>
-                ) : null}
-                {device.compute || device.driver ? (
-                    <span class="rc-df-row rc-df-dim">
-                        {device.compute ? <>compute {device.compute}</> : null}
-                        {device.compute && device.driver ? " · " : null}
-                        {device.driver ? <>driver {device.driver}</> : null}
-                    </span>
-                ) : null}
-                {/* THE CARD'S CEILINGS, fixed properties read once — never live readings. Bandwidth is what
-                    decode is bound by; the host link rules ITSELF out, since it governs load time and almost
-                    nothing about inference (cross-card traffic measured at 0.2% of a step), and the width is the
-                    narrower of card and slot, which is what the link can actually train at. */}
-                {device.memoryBandwidth ? (
-                    <span class="rc-df-row">memory bandwidth {(device.memoryBandwidth / 1e12).toFixed(2)} TB/s — the ceiling decode is bound by</span>
-                ) : null}
-                {device.pcieMaxGeneration || device.pcieMaxWidth ? (
-                    <span class="rc-df-row rc-df-dim">host link: PCIe{device.pcieMaxGeneration ? ` Gen ${device.pcieMaxGeneration}` : ""}{device.pcieMaxWidth ? ` x${device.pcieMaxWidth}` : ""} at most — this governs how fast a model LOADS, and almost nothing about how fast it runs</span>
-                ) : null}
+            <span class="tt-pop wide" role="tooltip"><span class="rc-df">
+                <span class="rc-df-head"><b>{device.name}</b>{device.description ? <> · {device.description}</> : null}</span>{" "}
+                <span class="rc-df-sub">{device.runner}{device.unified ? " · unified memory" : ""}{device.pciId ? <> · <code>{device.pciId}</code></> : null}</span>{" "}
+                <span class="rc-df-grid">
+                    {/* THE TWO TOTALS, and which decides what — the counter-intuitive one, and the reason the hover
+                        exists at all. */}
+                    {row("usable", formatBytes(device.totalBytes), "what placement decides against")}
+                    {two ? row("on the card", formatBytes(device.physicalBytes!), "what the driver and nvidia-smi report") : null}
+                    {/* THE CARD'S CEILINGS, fixed properties read once — never live readings. Bandwidth is what decode
+                        is bound by; the host link rules ITSELF out (it sets load time, and almost nothing about
+                        inference), and the width is the narrower of card and slot. */}
+                    {device.memoryBandwidth ? row("bandwidth", `${(device.memoryBandwidth / 1e12).toFixed(2)} TB/s`, "the ceiling decode is bound by") : null}
+                    {device.pcieMaxGeneration || device.pcieMaxWidth
+                        ? row("host link", `PCIe${device.pcieMaxGeneration ? ` Gen ${device.pcieMaxGeneration}` : ""}${device.pcieMaxWidth ? ` x${device.pcieMaxWidth}` : ""}`, "at most — sets how fast a model loads, not how fast it runs")
+                        : null}
+                    {device.compute ? row("compute", device.compute, device.driver ? `driver ${device.driver}` : undefined)
+                        : device.driver ? row("driver", device.driver) : null}
+                </span>
+                {two ? <span class="rc-df-note">The two totals differ by what the driver reserves before anything loads; neither figure is wrong.</span> : null}
                 {others > 0 ? <DeviceLinks device={device} /> : null}
-            </span>
+            </span></span>
         </span>
     );
 }

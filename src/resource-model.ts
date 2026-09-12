@@ -59,6 +59,11 @@ export interface DeviceCapacity {
     id: string;
     /** The server's label ("CUDA0"), not a marketing name. */
     name: string;
+    /** What the card IS, in the driver's own words ("NVIDIA RTX PRO 6000 Blackwell Workstation Edition") —
+     *  `description` on a patched server, the same string `unavailable_gpus[].name` carries for a card that has
+     *  faulted. Absent on every build that does not send it; never derived from `name`, which is the backend's
+     *  enumeration label. */
+    description?: string;
     runner: Runner;
     /** `total_memory` — cuDeviceTotalMem, ollama's own view. The FIT figure: what placement decides against
      *  (ollama actually reserves a little more still). Sits ~638 MiB below the driver's framebuffer total. */
@@ -144,6 +149,9 @@ export interface UnavailableGpu {
      *  describe it, so there is nothing to read and nothing is invented. */
     name?: string;
     uuid?: string;
+    /** The label (`CUDA1`) this bus address had in the last enumeration that included it — `last_name` on a server
+     *  that remembers it. A faulted card has no label TODAY, and the indices can shift once it drops out. */
+    lastName?: string;
     /** A stable token to branch on. `not_offered_by_backend` is HEALTHY — a card that answers every query
      *  which no backend claimed, usually `CUDA_VISIBLE_DEVICES` — so it must never draw a warning. */
     reason: string;
@@ -158,6 +166,25 @@ export interface UnavailableGpu {
      *  are the part worth having — non-zero points at the SLOT rather than the card, and a card blamed for a
      *  bad slot gets replaced while the fault stays put. */
     bus?: { present?: boolean; fatalErrors?: number; nonFatalErrors?: number };
+}
+
+/**
+ * WHAT A BUS ADDRESS WAS LAST SEEN AS, so a card that has faulted can be named: once a card fails it is absent
+ * from the enumeration, so the server cannot say which "CUDA1" it was — and the indices can shift when a card drops
+ * out, so today's CUDA1 may be a different card. What the panel CAN say honestly is what it last saw at that
+ * address. Kept per backend, merged from each capacity reading.
+ */
+export type SeenCards = Record<string, { name: string; description?: string }>;
+export function noteSeenCards(seen: SeenCards, cap: Capacity | null): SeenCards {
+    if (!cap) return seen;
+    let out = seen;
+    for (const d of cap.devices) {
+        if (!d.pciId) continue;
+        const was = seen[d.pciId];
+        if (was?.name === d.name && was?.description === d.description) continue;
+        out = { ...out, [d.pciId]: { name: d.name, ...(d.description ? { description: d.description } : {}) } };
+    }
+    return out;
 }
 
 /** Whether this entry is a FAULT worth telling someone about. `not_offered_by_backend` is a healthy card
@@ -414,6 +441,7 @@ export function unavailableFrom(raw: unknown): UnavailableGpu[] {
             // and "" would render as a nameless card rather than as a card whose name is unknown.
             ...(g.name ? { name: String(g.name) } : {}),
             ...(g.uuid ? { uuid: String(g.uuid) } : {}),
+            ...(g.last_name ? { lastName: String(g.last_name) } : {}),
             ...(g.detail ? { detail: String(g.detail) } : {}),
             ...(g.recovery ? { recovery: String(g.recovery) } : {}),
             ...(bus ? { bus: {
@@ -485,6 +513,7 @@ export function parseInfo(raw: unknown): Capacity | null {
             ...(g.compute ? { compute: String(g.compute) } : {}),
             ...(g.driver ? { driver: String(g.driver) } : {}),
             ...(typeof g.pci_id === "string" && g.pci_id.trim() ? { pciId: g.pci_id.trim() } : {}),
+            ...(typeof g.description === "string" && g.description.trim() ? { description: g.description.trim() } : {}),
             ...ceilingsOf(g),
             ...processesOf(g),
         }];

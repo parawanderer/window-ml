@@ -1429,6 +1429,8 @@ details.io[open] > summary .io-preview { display: none; }
    clipped by the layer's own box, so the end of the very thing being explained is the part you cannot read. */
 .tt-layer.wrap { white-space: normal; overflow-wrap: anywhere; }
 .tt-layer[hidden] { display: none; }
+/* A tooltip whose content is laid out (a grid of facts) rather than a sentence gets room for it. */
+.tt-layer.wide { max-width: min(440px, calc(100vw - 24px)); }
 
 
 /* Left-anchored (extends rightward) — for triggers at the panel's left edge,
@@ -2066,20 +2068,37 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
    two totals in particular have to be told apart at a glance — they differ by a few hundred MiB and a reader
    who cannot separate them learns nothing from seeing both. */
 .rc-devfacts { cursor: help; min-width: 0; display: inline-flex; }
-.rc-df-row { display: block; }
-.rc-df-row + .rc-df-row { margin-top: 3px; }
-/* Reference facts and caveats recede; the first two rows are what the hover is for. */
-.rc-df-dim { color: var(--fg-faint); }
+/* The tooltip itself: what the card IS on top, then a grid — label (dim) · figure (bright, aligned) · what the
+   figure means (faint, small) — then a quiet footnote. One weight per ROLE, so figures read as figures. */
+.rc-df { display: flex; flex-direction: column; gap: 5px; min-width: 280px; }
+.rc-df-head { font-size: 1.02em; }
+.rc-df-sub { color: var(--fg-faint); font-size: 0.9em; margin-top: -3px; }
+.rc-df-sub code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.95em; }
+.rc-df-grid { display: grid; grid-template-columns: max-content max-content 1fr; column-gap: 10px; row-gap: 3px;
+  align-items: baseline; }
+.rc-df-k { color: var(--fg-faint); white-space: nowrap; }
+.rc-df-v { color: var(--fg); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* A link's phrase takes the value AND note columns: it is one fact ("NVLink ×4 (NV4) · 112.5 GB/s"). */
+.rc-df-wide { grid-column: span 2; white-space: normal; }
+.rc-df-miss { color: var(--warn); }
+.rc-df-n { color: var(--fg-faint); font-size: 0.88em; line-height: 1.35; }
+.rc-df-note { color: var(--fg-faint); font-size: 0.88em; line-height: 1.4; }
+.rc-df-note code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* A GPU THE SERVER CAN SEE AND CANNOT USE — machine-level, inside the resource panel, because the question
    it answers ("why does this box have fewer GPUs than I expect?") is asked while looking at the chart and
    attaches to no single card: a faulted GPU is ABSENT from the device list, so there is nothing to badge. */
-.rc-gpufault { display: flex; align-items: flex-start; gap: 7px; margin: 0 0 6px; padding: 6px 8px;
-    border-radius: 4px; background: color-mix(in srgb, var(--warn) 12%, transparent);
-    border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); }
-.rc-gpufault > svg { flex: none; width: 14px; height: 14px; margin-top: 2px; color: var(--warn); }
+.rc-gpufault { --tone: var(--err); display: flex; align-items: flex-start; gap: 7px; margin: 0 0 6px; padding: 6px 8px;
+    border-radius: 4px; background: color-mix(in srgb, var(--tone) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--tone) 40%, transparent); }
+/* An ERROR by default — a card is out of service. Amber only when every fault is a reset already under way. */
+.rc-gpufault.transient { --tone: var(--warn); }
+.rc-gpufault > svg { flex: none; width: 14px; height: 14px; margin-top: 2px; color: var(--tone); }
 .rc-gpufault-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 0.82em; }
-.rc-gpufault-body > b { color: var(--warn); }
+.rc-gpufault-body > b { color: var(--tone); }
+/* WHICH card, in the panel's own terms ("CUDA1") — what that address was last seen as; the dim note says so. */
+.rc-gpufault-was { color: var(--fg); }
+.rc-gpufault-dim { color: var(--fg-faint); }
 /* One block per faulted card, because a two-card fault is two different addresses and two different fixes. */
 .rc-gpufault-one { display: flex; flex-direction: column; gap: 1px; }
 .rc-gpufault-id code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.95em; }

@@ -50,6 +50,8 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         layer.textContent = "";
         for (const n of Array.from(src.childNodes)) layer.appendChild(n.cloneNode(true));
         layer.classList.toggle("wrap", src.classList.contains("wrap") || src.classList.contains("wide") || src.classList.contains("left"));
+        // `wide` is a width INTENT: content laid out as a grid (a card's facts) needs more than the default cap.
+        layer.classList.toggle("wide", src.classList.contains("wide"));
         return true;
     };
 
