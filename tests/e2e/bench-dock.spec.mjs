@@ -826,15 +826,22 @@ test("the bench's timestamps toggle hides the gutter, and remembers it", async (
         // The precondition: the gutter really is drawn, or hiding it proves nothing.
         expect(await frame.locator(".bench-outbody .r-ts").count(), "streamed lines carry a produced-at gutter").toBeGreaterThan(0);
 
-        // CENTRED IN ITS STRIP: the same space above it as between it and the strip's bottom border. It was
-        // once centred on the tabs' text line instead, which sits high (their underline takes the bottom 2px),
-        // and the pill hugged the top edge — 1.5px above, 4.5px below.
-        const gaps = await frame.evaluate(() => {
-            const s = document.querySelector(".bench-tabs"), p = document.querySelector(".bench-times").getBoundingClientRect();
-            const sb = s.getBoundingClientRect(), border = parseFloat(getComputedStyle(s).borderBottomWidth) || 0;
-            return { above: p.top - sb.top, below: sb.bottom - border - p.bottom };
+        // CENTRED IN THE BAND YOU SEE — from the editor's edge down to the strip's separator, the divider
+        // included, since the eye counts its empty 11px as part of the header — and LEVEL with the tab labels.
+        // Two wrong answers came first: centred on the labels' text while those sat low (1.5px above the strip,
+        // 4.5px below), then centred in the strip alone, which ignored the divider (13.5px above, 2.5px below).
+        const band = await frame.evaluate(() => {
+            const edge = document.querySelector(".bench-code").getBoundingClientRect().bottom;
+            const s = document.querySelector(".bench-tabs");
+            const sep = s.getBoundingClientRect().bottom - (parseFloat(getComputedStyle(s).borderBottomWidth) || 0);
+            const p = document.querySelector(".bench-times").getBoundingClientRect();
+            const tab = document.querySelector(".bench-tab"), rg = document.createRange();
+            rg.selectNodeContents(tab.firstChild);
+            const t = rg.getBoundingClientRect();
+            return { above: p.top - edge, below: sep - p.bottom, pillMid: (p.top + p.bottom) / 2, labelMid: (t.top + t.bottom) / 2 };
         });
-        expect(Math.abs(gaps.above - gaps.below), `above ${gaps.above}px, below ${gaps.below}px`).toBeLessThanOrEqual(1);
+        expect(Math.abs(band.above - band.below), `above ${band.above}px, below ${band.below}px`).toBeLessThanOrEqual(1.5);
+        expect(Math.abs(band.pillMid - band.labelMid), "level with the tab labels").toBeLessThanOrEqual(1.5);
         // The eye says the state: IconEye is two paths (the lid and the pupil), IconEyeOff one struck-through path.
         await expect(toggle.locator(".bench-times-icon svg path")).toHaveCount(2);
         await toggle.click();

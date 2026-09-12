@@ -960,7 +960,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    The pill's 4px offset is SET, not left to fall out of centring: centred, it read as sitting ON the
    editor's border, and the space above it read as padding the textarea had grown. Stated as a padding it is
    one number, and a test can name it. */
-.bench-div { flex: 0 0 auto; height: 11px; position: relative; cursor: ns-resize; touch-action: none;
+/* The divider's height is ALSO the output strip's (see `.bench-tab` / `.bench-times`): it reads as part of the
+   strip's header band, so the strip balances it. One variable, so the two cannot drift apart. */
+.bench-split { --bench-div-h: 11px; }
+.bench-div { flex: 0 0 auto; height: var(--bench-div-h); position: relative; cursor: ns-resize; touch-action: none;
     display: flex; align-items: flex-start; justify-content: center; padding-top: 4px; box-sizing: border-box; }
 .bench-div-pill { width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2);
     opacity: .55; transition: width .12s ease, opacity .12s ease; pointer-events: none; }
@@ -974,17 +977,20 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .bench-tabs { flex: 0 0 auto; display: flex; align-items: flex-end; gap: 2px; overflow-x: auto;
     border-bottom: 1px solid var(--border); }
 .bench-tabs::-webkit-scrollbar { height: 0; }
+/* CENTRED IN THE BAND YOU SEE, not in the strip's own box. The divider above adds an empty
+   `--bench-div-h` of white between the editor's edge and the strip, and the eye counts it as part of the header,
+   so a label centred in the strip alone looked low. The same height again BELOW the label (less the 2px
+   underline) puts it at the middle of editor-edge → separator. */
 .bench-tab { font: inherit; font-size: 0.8em; color: var(--fg-faint); background: transparent;
     border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
-    padding: 3px 9px; cursor: pointer; white-space: nowrap; }
+    padding: 0 9px calc(var(--bench-div-h, 11px) - 2px); cursor: pointer; white-space: nowrap; }
 .bench-tab:hover { color: var(--fg-dim); }
 /* The bench output's timestamps toggle: pushed to the far end of the tab row and set in the tabs' own type, so
    it reads as a property of the pane rather than a fourth tab. An eye before the label, crossed out when off.
-   Centred in the STRIP, equal space above and below. Not on the tabs' text line: that sits high, because the
-   tabs' underline takes the bottom 2px, and a bordered pill centred on it hugged the top edge (1.5px above,
-   4.5px below). A pill is read against the edges around it, not against the text beside it. Inset from the
-   edge by the tabs' own 9px padding. */
-.bench-times { margin: 0 9px 0 auto; align-self: center; flex: 0 0 auto; cursor: pointer;
+   Centred in the same band as the labels: the bottom margin of one divider-height lifts it from the strip's
+   middle to the band's (editor edge → separator), level with the labels. Centred in the strip alone it sat
+   13.5px below the editor's edge and 2.5px above the separator. Inset from the edge by the tabs' own 9px. */
+.bench-times { margin: 0 9px var(--bench-div-h, 11px) auto; align-self: center; flex: 0 0 auto; cursor: pointer;
     display: inline-flex; align-items: center; gap: 4px;
     font: inherit; font-size: 0.74em; line-height: 1.4; color: var(--fg-dim); background: transparent;
     border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px 1px 6px; }

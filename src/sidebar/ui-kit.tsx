@@ -98,7 +98,11 @@ export const Code = ({ text, lang, format, marks, lineIds, markLine, markTitle, 
     // wanting numbers in general, not about wanting them withheld when something is referring to one.
     // Notes turn the gutter on for the same reason a `markLine` does: a margin note is keyed to a line,
     // and a line the reader cannot number is one they have to count to.
-    if (!codeLineNumbers.value && markLine == null && !notes?.size)
+    // And ONE line is never numbered by the preference alone: the gutter is there so you can find a line that
+    // something else names, and nothing names line 1 of `23`. A lone "1" beside a one-line value or snippet is
+    // noise. A mark or a note still numbers it, since those do name the line.
+    const oneLine = !src.replace(/\n+$/, "").includes("\n");
+    if ((!codeLineNumbers.value || oneLine) && markLine == null && !notes?.size)
         return <pre class="code"><code class="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>;
     return (
         <pre class="code numbered"><code class="hljs">

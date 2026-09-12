@@ -2920,6 +2920,22 @@ test("code line-number gutter: off by default, toggled on via settings, applied 
     assert.deepEqual(nos, ["1", "2", "3"], "one right-aligned number per source line");
 });
 
+test("code line-number gutter: a ONE-line block is not numbered by the preference alone", async () => {
+    // The gutter exists so you can find a line something else names; nothing names line 1 of `23`, so a lone
+    // "1" beside a one-line value or snippet is noise. (A mark still numbers it — pinned by the traceback tests.)
+    const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
+    await w.dispatch(agentStart("ln1", "x"));
+    await w.dispatch(agentStep("ln1", 1, { tool: "exec", arguments: { js: "document.title" }, result: "ok", renderIn: { type: "code", text: "document.title", lang: "javascript" } }));
+    await w.dispatch(agentResult("ln1", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep.tool .astep-head").click();
+    await w.tick();
+    const inB = w.shadow.querySelector(".astep.tool details.io");
+    assert.ok(inB.querySelector(".code"), "the block is there");
+    assert.equal(inB.querySelectorAll(".code.numbered").length, 0, "…and draws no gutter for its single line");
+});
+
 test("numbered gutter preserves line content — no spurious span-reopen prefix", async () => {
     // Regression: a text token starting with " s" was misread as a <span> open and
     // re-emitted on every following line (e.g. "searchResults = " leaking downward).
