@@ -156,3 +156,162 @@ If you are pointing at a machine whose Ollama is stock, that is a supported conf
 resource panel to say capacity is unknown, and expect multi-GPU attribution to be unavailable. If you
 see either of those on a machine you believe is patched, check that `/api/info` is reachable through
 the passthrough (`curl -s <origin>/ollama/api/info | head -c 200` — HTML means the route isn't there).
+
+## How the extension reads these (moved from AGENTS.md, 2026-09-12)
+
+Most of this runs against stock Ollama + stock OpenWebUI. Three capabilities do not, and
+**`docs/FORKED-BACKENDS.md`** is the accounting — read it before assuming a resource-panel field is
+broken:
+
+- **`GET /api/info`** (machine capacity) and **`gpus[]` on `/api/ps`** (which card a model is on, and how
+  a split is divided) come from `parawanderer/ollama`, branch `slop` (the old `local/ps-gpu-attribution`
+  name is stale). Stock Ollama
+  doesn't serve `/api/info` at all — OpenWebUI answers with its SPA's HTML, which is why a non-JSON body
+  is read as "unknown", never as an error. Without them `ml.info()` is `null`, the panel draws no ceiling
+  and says so, and a multi-GPU box cannot attribute a model to a card.
+- **`GET /api/events`** (the same branch) is an NDJSON stream of the scheduler's own transitions, and it
+  is the one thing polling cannot approximate: for most of a load there is no runner object in Ollama at
+  all, so `/api/ps` is not coarse during a load, it is EMPTY (measured: `load.start` t=4102,
+  `load.complete` t=48053, every poll across it empty). It also tells `evict` (made room) from `unload`
+  (idle expiry), which diffing polls sees as one disappearance either way. `sw-events.ts` holds ONE
+  connection per worker while a panel is open, `resource-events.ts` is the pure frame model + NDJSON
+  reader, and `machineEventFrom` (vram.tsx) turns edges into lane spans. Everything falls back to polling
+  when the route answers with HTML. Three protocol details: `t` is ms from THAT CONNECTION'S hello and is
+  negative for backfill; `?since=` is a DURATION, not an offset; and **the stream names models
+  fully-qualified while `/api/ps` names them short**, which `normModel` reconciles at the
+  `machineEventFrom` boundary — miss it and every model is drawn twice, once as a phantom "off-box" row.
+  A load is SAMPLED while it happens now (250 ms, and events wake the sampler), and its two halves each
+  carry a `size_vram` — but **`vram_used` stays flat through a load** (it counts registered runners, and the
+  runner does not exist yet), so the two steps show in the per-device free memory and nowhere else. See
+  `docs/FORKED-BACKENDS.md` for the rest, including why an event's `size_vram` is ~0.69 GiB per card below
+  the device's own step and must not be reconciled to it.
+  Recorded fixtures come from `tests/e2e/capture-frames.mjs`; the fake backend replays them via
+  `setEvents`/`pushFrame` and `tests/e2e/resource-stream.spec.mjs` is the coverage.
+- **`activity` on `/api/ps`** (the same branch, `ollama-slop:activity3`) is what the runner is DOING — phase,
+  KV occupancy, prefill progress, prefix-cache hits — read from `llama-server`'s `/slots`, which ollama did
+  not consult before. Absent on every stock server AND whenever the runner could not be asked, which is not
+  the same as idle. `tests/e2e/fixtures/runner-activity.json` is a real capture off the box (169 samples at
+  ~40 ms across a cold prefill, a decode, an idle stretch and a cache-hit repeat) and
+  `tests/runner-activity.test.mjs` asserts against it directly rather than against shapes written here —
+  two of its cases are ones nobody would have invented: an idle runner still reporting occupancy, and a
+  generation containing no prefill sample at all.
+- **`POST /api/v1/tools/id/{id}/execute`** comes from `parawanderer/open-webui`, branch
+  `ml/tool-execute-api` — it runs the callable the chat pipeline would, so an external client can
+  drive its own loop over OpenWebUI-configured tools. **The extension does not call it yet**: server
+  tools go through upstream's `tool_ids` + `function_calling` loop (hence the `SERVER_TOOL_MODES` probe).
+  It now also STREAMS its output (NDJSON delta frames) and reports its own `durationMs`/`queuedMs`, which
+  is what makes a remote tool's span attributable instead of "the tool plus the network" as one number.
+  `docs/spec/REMOTE_TOOL_EXECUTION.md` is the contract, corrected against what was built. Expect little
+  output: OpenWebUI has no streaming tool protocol, so frames come from `__event_emitter__` and a tool that
+  only `print()`s streams nothing.
+
+**Remote tool execution — `src/tool-protocol.ts`.** Two things that must not be confused. A PUBLISHED MCP
+EXTENSION: one `_meta` key (`dev.wander.windowml/timing` → `{durationMs, queuedMs?}`) that anyone can
+implement, because MCP results carry no timing at all and a client's own wall clock is the tool plus the
+network as one unattributable number. Documented here rather than by forking MCP's schema — MCP's own rules
+say a vendor extension is specified in its owner's docs, and a fork would be a large surface we do not
+control, going stale every revision, published as something that looks like MCP and is not. And OUR
+NORMALIZED MODEL (`ToolFrame`: `output`/`event`/`result`), which every source is adapted into — MCP
+notifications, OpenWebUI's NDJSON, a local container over IPC. Typed and schema-generated so a consumer gets
+real models, NOT advertised as a wire format: inventing a rival to MCP is the mistake the shape avoids.
+`anchorFor`/`anchorOffset` are shared because a remote host's clock is not the user's, so frames carry
+OFFSETS and the client anchors at the first frame's arrival — two adapters each inventing that rule is the
+drift a normalized model exists to prevent. **The schema pins frame SHAPES, never sequencing**: "result is
+last and mandatory", "output frames are deltas", "a closed connection means cancel" live in the spec.
+The generator is now TABLE-DRIVEN (`SCHEMAS` in `scripts/gen-export-schema.mjs`) — three documents from one
+line scanner, because two copies of a scanner drift exactly the way a generated schema is meant to prevent.
+**`createToolStream`** is the contract's reference reader: NDJSON chunks in, `{output, marks, events,
+result}` out, shared so the OpenWebUI reader and a future MCP one differ only in where frames come FROM.
+It buffers a partial trailing line (a frame split across two network reads is the failure that only shows
+up on a slow link), accepts a final line with no newline (a server ending without one is not malformed, and
+dropping its `result` would turn a completed call into a failure), ignores an unreadable or UNKNOWN line
+rather than abandoning the rest, and treats **a stream that ends with no `result` frame as a TRANSPORT
+FAILURE** — partial output reported as a tool that returned nothing is a wrong answer dressed as an empty
+one, and the model cannot tell the difference. **`ml.execServerTool(toolId, name, args, {onOutput, signal})`**
+runs ONE OpenWebUI-configured tool in OUR loop with OUR arguments — the other shape from `toolIds` +
+`function_calling`, which hands the whole loop to the model. The usual three files (`SERVER_TOOL_REQUEST` →
+`SERVER_TOOL_EXEC`), with `sw-tools.ts` doing the privileged fetch and `SERVER_TOOL_STREAM` as the reverse
+channel for live frames (the twin of `PYTHON_STREAM`). **CHOKE POINT, and a real escalation if missed**: the
+fetch spends the user's API key and the tool is caller-chosen, so a hostile page reaching the handler could
+otherwise invoke any tool the user has configured — "send an email" is a different capability from spending
+tokens. An untrusted page therefore needs a per-call grant (`TabGrants.serverTools`), minted in
+`delegateTool` when a run APPROVED that exact call; `serverToolKey` hashes the bundle, the function AND the
+arguments, because approving "search for THIS" must not authorise searching for something else. A
+non-streaming endpoint degrades to one `result` frame rather than failing, so a server without the patch
+still works, just without liveness. **Agent-facing:** `ml.agent({ serverTools: ["srv1"] })` exposes a bundle as ONE TOOL PER FUNCTION
+(`buildServerTools`), named `<bundle>__<fn>` and carrying that function's own JSON Schema — a generic
+`run_server_tool(tool, fn, args)` would hand the model an opaque `arguments` object to guess at, which is
+the difference between a tool it uses and one it fumbles. Opt-in BY ID, never "all of them", and always
+`requiresApproval`: this is the first gate where the risk is not "this might change your page" but "this
+sends your data somewhere", and there is no read-only version of that to auto-approve. An unresolvable
+bundle is skipped rather than failing the run. **The tool declares `remote: {via, toolId, fn}`** and BOTH
+the approval card and the background's grant read THAT rather than the tool's name — so a page choosing a
+friendly name cannot make the card say `search_web` while the grant authorises `send_email`. Its `render`
+is an `action` descriptor whose note says the arguments leave the machine, styled like a navigation because
+something is departing. **Settings → Advanced → "Server-side tools"** is the read-only browser for what the backend exposes, since
+discovery otherwise meant calling `ml.serverTools()` and reading JSON. It renders through the SAME
+`ToolDefsView` an agent run's "agent options" block uses for the LOCAL toolset, so a remote tool and a local
+one are read the same way rather than in two dialects, and it lists ONE ENTRY PER FUNCTION under the name
+`ml.agent({serverTools})` would expose — what a run would actually be given, not a bundle to unpack.
+Fetched on EXPAND, not on mount: a settings panel opening should not call the backend for a section nobody
+looked at. An empty list SAYS it is empty (a bare-Ollama endpoint has no such concept) rather than
+rendering blank, which would read as a failure.
+
+**`ml.dynamicTools.<bundle>.<fn>(args)`** is the same tools as a callable NAMESPACE (`dynamic-tools.ts`).
+Namespaced by BUNDLE, not flattened: function names come from the server and two bundles can both expose
+`search`, so flattening would silently call the wrong one. Each callable carries **`.schema`** (the
+function's JSON Schema) and `.spec` — the SAME object the call is validated against by `validateArgs`
+BEFORE dispatch, so a console typo fails with the reason instead of as a 400 from the far end or a call that
+succeeded with an argument dropped; a second copy for humans to read would drift from the one that checks.
+It is a **Proxy AND real keys**, because `window.ml` is defined synchronously at document_start while the
+list needs a fetch: the Proxy dispatches by name immediately (so a call works before any list arrived, and
+an unlisted one dispatches without validating rather than refusing a tool that may exist), and `load()`
+fills in enumerable keys so the console can complete them. A run-scoped `allow` list makes an
+out-of-whitelist bundle THROW with the reason rather than being `undefined`, since "undefined is not a
+function" sends the reader hunting for a typo.
+
+**The `@tool:` POINTER MACRO (`pointer-macro.ts`).** Models write `@tool:abc1234` inline as though it were
+JS, because that is how a reference is spelled everywhere else they meet it. `exec` makes it real: in CODE
+position it expands to `ml.dereference("@tool:abc1234")` — the same accommodate-don't-fight tack as the
+`read_csv` redirect and the `tables['name']` alias.
+**LEXICAL, not AST, and that is forced** — `@tool:abc` is not valid JavaScript, so a parser cannot find it;
+a parser only finds syntax it accepts. Which is why the C preprocessor is a separate pass, and why this
+inherits its central rule: **a macro does not expand inside a string or a comment**, the single likeliest
+place a model writes a pointer being a line it is logging. Template `${…}` re-enters code, regex literals
+are skipped, and pointer-free source comes back BYTE-IDENTICAL (exec already works; rewriting code that
+contains no macros would be pure downside). The AST still gets a job — the EXPANDED source parses, so acorn
+can verify what the un-expanded source never could.
+**And the pointers are SYNCHRONOUS**, which is the point of the macro rather than a detail of it. The
+lexical pass knows every handle before a line runs, so `exec` resolves them all up front (concurrently) and
+shadows `ml` with a shim whose `dereference` is an ordinary call — `@tool:abc.length` is a number, not
+`undefined` on a promise, which is the plausible-wrong-answer shape this codebase keeps designing out. It
+also deletes a line of prompt surface. `DerefRead` is a String subclass, so a sync return needs no further
+explanation. Three rules make it safe: a FAILED pre-read is stored and thrown only when READ (a bad handle
+in a branch the script never reaches must not fail a working program — eager fetch, lazy failure); a
+COMPUTED handle or a `pipe` falls through to the real async method, so nothing loses a capability; and the
+`ml` parameter is introduced ONLY when there is something to substitute, since passing it unconditionally
+would shadow the page's real `ml` with `undefined` whenever the lookup failed and break every other `ml.*`
+call in exec.
+**And it is expanded BEFORE the read-only dialect sees the source too**, which is not an optimisation but a
+correction: `@tool:abc` is not JavaScript, so the tokenizer rejects it and the whole survey falls through to
+the approval gate — while the same read spelled `ml.dereference("@tool:abc")` is FREE, since `dereference`
+is in `ML_READONLY_METHODS`. Without expanding first, the macro would have taught the model the more
+expensive spelling of a read it is allowed to do for nothing. Nothing is pre-hydrated on that path: the
+dialect auto-awaits a facade call, so a pointer is a value there too — same semantics, reached differently.
+Adversarial tests per the dialect rule: a crafted quoted label cannot break out of the generated string
+literal, introduce a template, or name a method other than `dereference` (the expansion is a fixed template
+around a `JSON.stringify`d match). The In render shows the EXPANDED source (`@tool:` is not JS, so a highlighter mangles the line or
+gives up) with a `note` saying how many expanded and `marks` for where; the model's own text stays in
+`arguments.js` for the raw view, and the note is what stops the two reading as a contradiction.
+
+**The timeline splits a remote step** into `net` / `queue` / `tool` phases — but ONLY because the executor
+reports its own numbers (`ToolResult.remoteMs` → the step → `model-stats`). Our `toolMs` is wall clock
+around the whole dispatch, so it contains the network and the far end's overhead; `tool` is what the
+executor said it spent evaluating, `queue` what it spent getting started, and `net` is the REMAINDER, drawn
+first because the request has to arrive before anything happens (the return leg is folded in with it, since
+nothing measures the two halves apart). A local tool is all `tool`, which is exactly true rather than a
+fallback. An executor claiming MORE time than we measured is ignored rather than drawn backwards, and a
+queue longer than what remains is clamped.
+
+A patched Ollama behind a STOCK OpenWebUI is fine — the `/ollama/*` passthrough is generic, so the
+OpenWebUI fork is not needed for the capacity work.
