@@ -7,8 +7,14 @@ export default defineConfig({
     testDir: "./tests/e2e",
     testMatch: /.*\.spec\.mjs$/,
     timeout: 60_000,
-    fullyParallel: false,
-    workers: 1,        // one shared extension + servers → serialize
+    // Every test launches its own browser (a fresh temp profile) and its own fake servers on port 0, so
+    // nothing is shared across tests and they run in parallel. The few specs that share one browser across
+    // their tests (a beforeAll) pin themselves with `test.describe.configure({ mode: "default" })`. Serial
+    // was 26 minutes in CI, most of it waiting on timers rather than CPU.
+    fullyParallel: true,
+    // A CI runner has 4 vCPUs: 3 workers leaves one for the server processes the tests start. Locally,
+    // Playwright's default (half the cores).
+    workers: process.env.CI ? 3 : undefined,
     retries: 0,
     reporter: "list",
     use: { actionTimeout: 15_000 },

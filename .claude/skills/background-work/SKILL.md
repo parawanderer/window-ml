@@ -5,8 +5,8 @@ description: Run anything slow (CI, an e2e suite, a bench sweep, a build-and-tes
 
 # Background work: start it, leave it, keep going
 
-Everything in this repo that tells you something useful is slow. The full e2e suite is ~10 minutes,
-a CI run ~5, the fast suite ~50s, a bench sweep longer than any of them. A session that waits for
+Everything in this repo that tells you something useful is slow. The full e2e suite is ~5 minutes locally (parallel),
+a CI run ~10, the fast suite ~50s, a bench sweep longer than any of them. A session that waits for
 each one in turn spends most of its life doing nothing while the user watches it do nothing.
 
 The harness already solves this: a command started with `run_in_background: true` keeps running

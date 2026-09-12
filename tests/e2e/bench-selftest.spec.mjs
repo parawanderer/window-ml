@@ -116,7 +116,7 @@ test("a REAL backend needs no fake — the seed path must not dereference it", a
     const run = await runOnce({
         ...base, task: "anything",
         backend: { chatUrl: "http://127.0.0.1:9/v1/chat/completions", model: "nope", key: "" },
-        timeoutMs: 20000,
+        timeoutMs: 6000,
     });
     expect(String(run.error || "")).not.toMatch(/Cannot read properties of null/);
     expect(run.error, "a dead backend must surface as a run error").toBeTruthy();
@@ -128,7 +128,7 @@ test("capture: a failed run snapshots the BROWSER; a clean one does not", async 
     const failed = await runOnce({
         ...base, task: "anything",
         backend: { chatUrl: "http://127.0.0.1:9/v1/chat/completions", model: "nope", key: "" },
-        timeoutMs: 20000, artDir: mkdtempSync(join(tmpdir(), "cap-fail-")),
+        timeoutMs: 6000, artDir: mkdtempSync(join(tmpdir(), "cap-fail-")),
     });
     expect(failed.captured.some((f) => f.endsWith(".png")), "a screenshot of the page it died on").toBe(true);
     expect(failed.captured.some((f) => f.endsWith(".html")), "and the DOM, for the text a screenshot cannot show").toBe(true);

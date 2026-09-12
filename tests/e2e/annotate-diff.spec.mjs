@@ -92,7 +92,9 @@ const setup = async () => {
     for (let i = 0; i < 60; i++) {
         const pending = await ext.sw.evaluate(() => (globalThis.__mlApprovals?.list?.() || []).map((d) => d.key));
         for (const k of pending) await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), k);
-        if (await frame.locator(".r-py-in").count() >= 2) break;
+        // Wait on the step ROWS, which are there collapsed: `.r-py-in` lives inside a step's body, every step
+        // starts collapsed, and waiting on it ran this loop to its cap — 24s of every test in this file.
+        if (await frame.locator(".astep.tool:not(.pending)").count() >= 2) break;
         await sleep(400);
     }
     return { fake, ext, frame, asked: () => asked };
