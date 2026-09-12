@@ -110,3 +110,63 @@ test("a shown tooltip follows its source's numbers", async () => {
     assert.equal(w.layer().hidden, true);
     assert.equal(w.layer().textContent, "");
 });
+
+// A TIP WHOSE TRIGGER GOES AWAY GOES WITH IT. The layer hides on pointer-out, and a trigger that is REMOVED under
+// a pointer that has not moved never raises one — so pressing Esc in the find bar (which unmounts its ✕) left
+// "Close (Esc)" floating over the panel with nothing under it. Any tooltip whose trigger unmounts or is hidden
+// while hovered had the same bug; this is the layer's job, not each call site's.
+const settle = (w) => new Promise((r) => w.dom.window.setTimeout(r, 0));
+
+test("a tip whose trigger is REMOVED while hovered is hidden", async () => {
+    const w = world(`<div class="bar"><button class="tt">✕<span class="tt-pop">Close (Esc)</span></button></div>`);
+    hover(w.document, w.document.querySelector(".tt"));
+    assert.equal(w.layer().hidden, false);
+    w.document.querySelector(".bar").remove();   // the find bar closing, with the pointer still parked
+    await settle(w);
+    assert.equal(w.layer().hidden, true, "no tooltip left pointing at nothing");
+    assert.equal(w.layer().textContent, "");
+    w.stop();
+});
+
+test("a tip whose trigger is HIDDEN while hovered is hidden", async () => {
+    const w = world(`<div class="bar"><button class="tt">✕<span class="tt-pop">Close (Esc)</span></button></div>`);
+    hover(w.document, w.document.querySelector(".tt"));
+    w.document.querySelector(".bar").hidden = true;
+    await settle(w);
+    assert.equal(w.layer().hidden, true);
+    w.stop();
+});
+
+test("Esc dismisses a tip without moving the pointer", () => {
+    const w = world(`<span class="tt">?<span class="tt-pop">the explanation</span></span>`);
+    hover(w.document, w.document.querySelector(".tt"));
+    w.document.dispatchEvent(new w.dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.equal(w.layer().hidden, true);
+    w.stop();
+});
+
+test("a tip whose trigger merely RE-RENDERS its text stays up", async () => {
+    // The guard against over-correcting: the resource panel rewrites numbers under an open tip every poll.
+    const w = world(`<span class="tt">?<span class="tt-pop">old</span></span>`);
+    hover(w.document, w.document.querySelector(".tt"));
+    w.document.querySelector(".tt-pop").textContent = "new";
+    await settle(w);
+    assert.equal(w.layer().hidden, false);
+    w.stop();
+});
+
+test("the CURSOR tip is cleared when its trigger is removed, too", async () => {
+    const dom = new JSDOM(`<body><div class="row">a line of code</div></body>`, { pretendToBeVisual: true });
+    const g = globalThis;
+    const saved = { window: g.window, document: g.document, MutationObserver: g.MutationObserver };
+    Object.assign(g, { window: dom.window, document: dom.window.document, MutationObserver: dom.window.MutationObserver });
+    try {
+        const { cursorTipOn, cursorTip } = await import("../src/sidebar/ui-kit.tsx");
+        const row = dom.window.document.querySelector(".row");
+        cursorTipOn("why this line").onPointerMove({ clientX: 10, clientY: 10, currentTarget: row });
+        assert.equal(cursorTip.value?.text, "why this line");
+        row.remove();
+        await new Promise((r) => dom.window.setTimeout(r, 0));
+        assert.equal(cursorTip.value, null);
+    } finally { Object.assign(g, saved); }
+});

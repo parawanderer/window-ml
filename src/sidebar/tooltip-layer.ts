@@ -19,6 +19,27 @@ import { tipStyle } from "./tip";
 
 const MARGIN = 6;
 
+/**
+ * Call `onGone` once a tooltip's TRIGGER is no longer on the page: removed, inside something `hidden`, or not
+ * rendered. The tips hide on pointer-out, and a trigger that disappears under a pointer that has not moved never
+ * raises one — Esc in the find bar unmounts its ✕ and left "Close (Esc)" floating over nothing. Watches the
+ * trigger's whole root while the tip is up (the trigger's own subtree cannot see its removal), and checks once
+ * per mutation batch, which is cheap: a tip is showing at most one at a time.
+ * @returns a function that stops watching.
+ */
+export function watchTrigger(el: Element, onGone: () => void): () => void {
+    const MO = el.ownerDocument?.defaultView?.MutationObserver;
+    if (!MO) return () => {};
+    const gone = (): boolean => !el.isConnected || !!el.closest("[hidden]")
+        // Real browsers answer "is this rendered" for any CSS reason; jsdom has no layout and no such method.
+        || (typeof (el as { checkVisibility?: () => boolean }).checkVisibility === "function" && !(el as { checkVisibility: () => boolean }).checkVisibility());
+    const obs = new MO(() => { if (gone()) { obs.disconnect(); onGone(); } });
+    // `class`/`hidden`, not `style`: an animated chart rewrites inline styles every frame, and a trigger hidden
+    // by one of those is rare enough not to pay for.
+    obs.observe(el.getRootNode(), { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden", "class"] });
+    return () => obs.disconnect();
+}
+
 /** Install the layer on a root (the sidebar's shadow root, or a document). Idempotent. */
 export function installTooltipLayer(root: Document | ShadowRoot, doc: Document = document): () => void {
     const host = (root as ShadowRoot).host ? (root as ShadowRoot) : (root as Document);
@@ -38,9 +59,11 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
     const watcher = doc.defaultView?.MutationObserver
         ? new (doc.defaultView.MutationObserver)(() => { if (current) fill(current); })
         : null;
+    let unwatch: (() => void) | null = null;
     const hide = (): void => {
         current = null; layer.hidden = true; layer.textContent = "";
         watcher?.disconnect();
+        unwatch?.(); unwatch = null;
     };
 
     /** Copy the trigger's tooltip content into the layer. Returns false when it has none (any more). */
@@ -75,6 +98,9 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         // may replace the .tt-pop node itself rather than editing its text.
         watcher?.disconnect();
         watcher?.observe(trigger, { childList: true, subtree: true, characterData: true });
+        // …and hide when the trigger itself goes, which that observer cannot see.
+        unwatch?.();
+        unwatch = watchTrigger(trigger, hide);
 
         // Measure AFTER content is in, then place against the viewport — the only box that never scrolls out
         // from under it.
@@ -105,13 +131,19 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
     // A tooltip anchored to something that has scrolled away is worse than none.
     root.addEventListener("scroll", hide, true);
     doc.defaultView?.addEventListener("blur", hide);
+    // Esc dismisses hover content without moving the pointer (WCAG 1.4.13) — and is usually the very key that is
+    // closing whatever the trigger was in.
+    const onKey = (e: Event): void => { if ((e as KeyboardEvent).key === "Escape" && current) hide(); };
+    root.addEventListener("keydown", onKey, true);
 
     return () => {
         root.removeEventListener("pointerover", over, true);
         root.removeEventListener("pointerout", out, true);
         root.removeEventListener("pointerdown", hide, true);
         root.removeEventListener("scroll", hide, true);
+        root.removeEventListener("keydown", onKey, true);
         watcher?.disconnect();
+        unwatch?.();
         layer.remove();
         (host as { __mlTipLayer?: boolean }).__mlTipLayer = false;
     };

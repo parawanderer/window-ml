@@ -607,3 +607,60 @@ test("tooltips: a dashed event rule answers alone, not under the plot's own read
         expect(await frame.locator(".rc-tip-event").count(), "the event tip goes with the pointer").toBe(0);
     } finally { await ext.close(); await fake.stop(); }
 });
+
+// A TOOLTIP DOES NOT OUTLIVE ITS TRIGGER. Type in an output cell's find bar, hover its ✕, press Esc: the bar
+// closes under a pointer that never moved, so no pointer-leave fires, and "Close (Esc)" stayed floating over the
+// panel with nothing under it. Fixed in both tooltip layers (`watchTrigger` in tooltip-layer.ts), so it holds for
+// any tooltip whose trigger unmounts or is hidden while hovered. The Python bench is the quickest cell to reach.
+test("tooltips: a tip whose trigger disappears under a still pointer disappears with it", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1280, height: 900 });
+        await page.goto(`${fake.url}/api/version`);
+        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });
+        await page.evaluate(() => {
+            const root = document.getElementById("ml-sb-root").shadowRoot;
+            const host = root.getElementById("ml-sb-host");
+            host.style.width = "560px";
+            host.classList.add("open");
+            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+        });
+        let frame = null;
+        for (let i = 0; i < 80 && !frame; i++) {
+            frame = page.frames().find((f) => /sidebar\.html/.test(f.url()));
+            if (!frame) await sleep(100);
+        }
+        await frame.locator('button[aria-label="Python bench"]').dispatchEvent("click");
+        await frame.locator(".bench-code .cm-editor").waitFor({ timeout: 15000 });
+        // The panel slides in on a transition outside the iframe, which Playwright's stability check cannot see;
+        // wait for it to stop, or the click on Run lands where the button was.
+        for (let i = 0, last = null; i < 40; i++) {
+            const x = (await frame.locator(".bench").boundingBox())?.x;
+            if (x != null && x === last) break;
+            last = x;
+            await sleep(100);
+        }
+        await frame.locator(".bench-code .cm-content").fill("for i in range(5):\n    print('line', i)");
+        await frame.locator(".bench-play").click();
+        await expect(frame.locator(".bench-outbody")).toContainText("line 4", { timeout: 60000 });
+
+        await frame.locator(".bench-outbody .r-outscroll").click({ position: { x: 20, y: 10 } });
+        await page.keyboard.press("Control+f");
+        await expect(frame.locator(".r-find")).toHaveCount(1);
+        await page.keyboard.type("line 3");
+        await frame.locator(".r-find-x").hover();
+        await expect(frame.locator(".cursor-tip"), "the precondition: the ✕'s tooltip is up").toHaveText("Close (Esc)");
+        await page.keyboard.press("Escape");
+        await expect(frame.locator(".r-find"), "the find bar closed").toHaveCount(0);
+        await expect(frame.locator(".cursor-tip"), "…and its tooltip went with it").toHaveCount(0);
+    } finally {
+        await ext.context.close();
+        await fake.stop();
+    }
+});
