@@ -2579,6 +2579,46 @@ export function genTimingsFrom(raw: unknown): GenTimings | null {
     };
 }
 
+/** The phases a CARD's ribbon draws: the two halves of a generation as the engine timed them, our own streamed
+ *  calls' channels (which ARE the decode, per `joinGens`), and the prompt-cache swap. Everything else in a block
+ *  — a tool running, a person at the gate, the undifferentiated `model` stretch — is not the card doing a known
+ *  kind of work, so it is not drawn rather than drawn as a guess. */
+export const RIBBON_KINDS: ReadonlySet<string> = new Set(["prefill", "decode", "swap", "think", "answer", "call"]);
+
+/**
+ * WHAT A CARD WAS DOING, as spans for its ribbon: every timed generation phase of every model that was ON this
+ * card at the time. Which card is read from the sample nearest the span (a split model is on several, and its
+ * work shows on each; a one-card box needs no attribution at all). A span whose model no sample places on the
+ * card is not drawn here — it may be off-box, or on another card.
+ *
+ * Absence is NOT idle: an unpatched server times no phases at all, so an empty ribbon claims nothing.
+ */
+export function ribbonSpans(events: ResourceEvent[], samples: ResourceSample[], deviceId: string, deviceCount: number): { t: number; until: number; kind: PhaseKind; model: string }[] {
+    const sorted = [...samples].sort((a, b) => a.t - b.t);
+    const nearest = (t: number): ResourceSample | undefined => {
+        let best: ResourceSample | undefined, d = Infinity;
+        for (const s of sorted) { const dd = Math.abs(s.t - t); if (dd < d) { d = dd; best = s; } if (s.t > t && dd > d) break; }
+        return best;
+    };
+    const onCard = (model: string, t: number): boolean => {
+        const m = nearest(t)?.models.find((x) => normModel(x.model) === normModel(model));
+        if (!m || m.vramBytes <= 0) return false;
+        return deviceCount <= 1 || (m.perDevice[deviceId] ?? 0) > 0 || m.perDevice[deviceId] === null;
+    };
+    const out: { t: number; until: number; kind: PhaseKind; model: string }[] = [];
+    for (const e of events) {
+        if (!e.model || !e.phases?.length || e.until == null) continue;
+        if (!e.phases.some((p) => RIBBON_KINDS.has(p.kind))) continue;
+        if (!onCard(e.model, (e.t + e.until) / 2)) continue;
+        let from = e.t;
+        for (const p of e.phases) {
+            if (RIBBON_KINDS.has(p.kind) && p.until > from) out.push({ t: from, until: p.until, kind: p.kind, model: normModel(e.model) });
+            from = p.until;
+        }
+    }
+    return out;
+}
+
 /**
  * ONE GENERATION as the lane draws it, from the server's own edges — split into PREFILL and DECODE.
  *

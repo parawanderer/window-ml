@@ -2971,6 +2971,10 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .rc-grid-step { position: absolute; right: 3px; bottom: 2px; font-size: 0.72em; color: var(--fg-faint); line-height: 1.3;
   background: color-mix(in srgb, var(--bg) 80%, transparent); border-radius: 2px; padding: 0 3px;
   pointer-events: none; z-index: 4; font-variant-numeric: tabular-nums; }
+/* WHAT A CARD WAS DOING — its phase ribbon along the plot's top edge: a 3px row per model, each timed phase in the
+   lane's own fill (prefill dense, decode lighter, a swap striped). Above the bands, below the tips. */
+.rc-ribbon { position: absolute; top: 0; left: 0; right: 0; pointer-events: none; z-index: 3; }
+.rc-ribbon-seg { position: absolute; height: 3px; }
 /* WHAT ONE GENERATION LEFT IN THE KV CACHE (`KvFill`), over the drilled-in cache part while its lane span is
    hovered. The layers are told apart by TEXTURE and weight of the model's own colour, the same weights its lane
    phases use: the reused prefix DOTTED (it cost no prefill), the prompt computed this turn DENSE, the decode

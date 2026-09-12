@@ -2645,3 +2645,25 @@ test("gridTimes: on the LOCAL clock's round multiples, and only inside the run i
     assert.ok(times.every((t) => t >= run[0].t && t <= run[1].t));
     assert.deepEqual(M.gridTimes([{ t: start }], 30_000), [], "one sample is not a stretch of time");
 });
+
+test("ribbonSpans: a card's timed generation phases, on every card the model is on and no other", () => {
+    const res = (model, perDevice) => ({ model, vramBytes: 10 * GB, ramBytes: 0, perDevice, contextLength: 8192, expiresAt: null });
+    const samples = [{ t: 0, models: [res("split:70b", { 0: 6 * GB, 1: 4 * GB }), res("small:3b", { 1: 3 * GB })] },
+                     { t: 10_000, models: [res("split:70b", { 0: 6 * GB, 1: 4 * GB }), res("small:3b", { 1: 3 * GB })] }];
+    // A server generation (engine-timed) and one of OUR agent steps (streamed channels + a tool running).
+    const gen = { t: 1000, until: 3000, kind: "gen", label: "", model: "registry.ollama.ai/library/split:70b",
+        phases: [{ kind: "other", until: 1100 }, { kind: "prefill", until: 1500 }, { kind: "decode", until: 3000 }] };
+    const step = { t: 4000, until: 9000, kind: "tool", label: "", model: "small:3b",
+        phases: [{ kind: "model", until: 4500 }, { kind: "think", until: 6000 }, { kind: "call", until: 6500 }, { kind: "tool", until: 9000 }] };
+    const on0 = M.ribbonSpans([gen, step], samples, "0", 2);
+    assert.deepEqual(on0, [{ t: 1100, until: 1500, kind: "prefill", model: "split:70b" }, { t: 1500, until: 3000, kind: "decode", model: "split:70b" }],
+        "the split model's work on its first card; the small model is not on this card");
+    const on1 = M.ribbonSpans([gen, step], samples, "1", 2);
+    assert.equal(on1.filter((s) => s.model === "split:70b").length, 2, "…and on its second, since a split model works on both");
+    assert.deepEqual(on1.filter((s) => s.model === "small:3b").map((s) => s.kind), ["think", "call"],
+        "our own streamed channels ARE the decode; the undifferentiated stretch and the tool running are not drawn");
+    // One card needs no attribution: the model's whole footprint is on it.
+    assert.equal(M.ribbonSpans([step], [{ t: 5000, models: [res("small:3b", {})] }], "0", 1).length, 2);
+    // A model no sample places anywhere (off-box, or not loaded) draws on no card.
+    assert.deepEqual(M.ribbonSpans([{ ...gen, model: "cloud:xl" }], samples, "0", 2), []);
+});

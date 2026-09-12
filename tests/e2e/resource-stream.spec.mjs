@@ -1121,3 +1121,35 @@ test("load predictions: the worker keeps one record per load while the toggle is
         expect(await page.evaluate(() => window.ml.__loads())).toEqual([]);
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+// WHAT EACH CARD WAS DOING: the phase ribbon along the top of a per-card track, from the engine's own prefill and
+// decode timings (the real five-generation capture, four models on one card), a row per model — and it obeys the
+// same kind toggles as the lane, so hiding "calls" takes it away.
+test("the phase ribbon draws each model's prefill and decode along its card, and follows the kind toggles", async () => {
+    const recorded = JSON.parse(readFileSync(fileURLToPath(new URL("./fixtures/events-gen-timings.json", import.meta.url)), "utf8"));
+    const last = Math.max(...recorded.map((f) => f.t));
+    const GEN_FRAMES = recorded.map((f) => ({ ...f, t: f.t - last - 1000 }));
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false, ml_res_layout: { presetId: "memory", tracks: [
+            { id: "dev-0", series: ["vram.0"], mode: "stack", heightPx: 96 }] } }));
+        fake.setEvents(GEN_FRAMES);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-ev-gen").count(), { timeout: 20000 }).toBe(5);
+
+        const track = frame.locator(".rc-track").first();
+        await expect.poll(() => track.locator(".rc-ribbon-seg.k-prefill").count(), { timeout: 5000 }).toBeGreaterThan(0);
+        expect(await track.locator(".rc-ribbon-seg.k-decode").count()).toBeGreaterThan(0);
+        const rows = await track.locator(".rc-ribbon-seg").evaluateAll((els) => new Set(els.map((e) => e.style.top)).size);
+        expect(rows, "a row per model, since two models on one card can generate at once").toBeGreaterThan(1);
+
+        // ONE set of kind toggles: "calls" off in the lane's chips takes the ribbon away with the lane's bars.
+        await frame.locator(".rc-lane-filter .rc-lane-chip", { hasText: /^calls/ }).first().click();
+        await expect.poll(() => track.locator(".rc-ribbon-seg").count(), { timeout: 5000 }).toBe(0);
+    } finally { await ext.context.close(); await fake.stop(); }
+});

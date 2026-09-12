@@ -16,7 +16,7 @@ import {
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
 import { resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
@@ -680,6 +680,11 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     const runs = noteRuns(useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]));
     // Only the instants: a span is a duration and belongs in the lane, where its length can be read.
     const instants = useInstants(runs, events);
+    // WHAT THIS CARD WAS DOING — its phase ribbon, from the same (kind-filtered) events the rules come from.
+    // Keyed on the COUNTS, never the arrays: `timeline()` rebuilds `events` every render (see AGENTS.md).
+    const deviceCount = capacity.value?.devices.length ?? 1;
+    const ribbon = useMemo(() => (device ? ribbonSpans(events, samples, device.id, deviceCount) : []),
+        [events.length, samples.length, samples.at(-1)?.t, device?.id, deviceCount]);
     // The DATAPOINT under the pointer, resolved through the same segmented geometry the crosshair uses, so
     // the tooltip's figures and the instant the crosshair names are the same sample and cannot drift apart.
     const hoverSample = hoveredSample(runs, scope);
@@ -769,6 +774,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${runWeight(run)} 1 0` }}>
                         <TimeGrid runs={runs} run={run} />
+                        {!deep && ribbon.length ? <PhaseRibbon run={run} spans={ribbon} /> : null}
                         <StackedArea frames={run.map(bandsOf)} times={run.map((sm) => sm.t)} ceiling={ceiling} hidden={hidden} scope={scope}
                             deep={deep} loads={deep ? events.filter((e) => e.kind === "load" && e.model === deep.model && e.until != null) : []}
                             snapIndex={snapUnder(runs)?.run === i ? snapUnder(runs)!.index : null} />
@@ -2474,6 +2480,29 @@ function PredictLines({ run, loads, deviceId, ceiling }: { run: ResourceSample[]
                              bottom: `${Math.min(100, (level / ceiling) * 100)}%`, "--model": e.model ? colorFor(e.model) : undefined }} />;
             })}
         </>
+    );
+}
+
+/**
+ * WHAT A CARD WAS DOING, along the top edge of its track: one thin row per model that generated on it, each
+ * timed phase in the lane's own fill for that kind — prefill dense, decode lighter, a cache swap striped — so the
+ * ribbon and the lane read as one legend. Nothing is drawn for time nobody timed (an unpatched server, a tool
+ * running), which is why an empty stretch claims nothing, idle included. Rows are per MODEL because two models
+ * on one card do generate at once.
+ */
+function PhaseRibbon({ run, spans }: { run: { t: number }[]; spans: { t: number; until: number; kind: string; model: string }[] }) {
+    if (run.length < 2) return null;
+    const first = run[0].t, last = run[run.length - 1].t;
+    const rows = [...new Set(spans.map((s) => s.model))].sort();
+    return (
+        <div class="rc-ribbon" aria-hidden="true" style={{ height: `${Math.min(rows.length, 3) * 3}px` }}>
+            {spans.filter((s) => s.until > first && s.t < last && rows.indexOf(s.model) < 3).map((s) => {
+                const from = runFrac(run, Math.max(first, s.t)), to = runFrac(run, Math.min(last, s.until));
+                return <i key={`${s.model}:${s.t}:${s.kind}`} class={`rc-ribbon-seg k-${s.kind}`}
+                    style={{ left: `${from * 100}%`, width: `max(1px, ${(to - from) * 100}%)`, top: `${rows.indexOf(s.model) * 3}px`,
+                             background: phaseFill(s.kind, s.model) }} />;
+            })}
+        </div>
     );
 }
 

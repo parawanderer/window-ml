@@ -1056,6 +1056,13 @@ per device, in bytes.
   non-streamed call's `model` phase split `other | prefill | decode`; a split that does not FIT is not drawn.
   Unmatched spans are other clients' traffic and say so. A replay is deduped by the END and the figures, never
   the start, which moves when a replay lost its `gen.start`.
+- **WHAT EACH CARD WAS DOING: the phase ribbon** (`ribbonSpans`, `PhaseRibbon`). A thin row per model along the
+  top of a per-card track, drawing only TIMED phases — the engine's prefill/decode, our own streamed channels
+  (which ARE the decode), a prompt-cache swap — in the lane's own fills, so the two read as one legend. So the
+  card tracks answer "reading the prompt or generating?" with the lane collapsed. A span goes to the cards the
+  nearest sample places its model on (a split model's work shows on each). Empty ribbon claims nothing, idle
+  included: an unpatched server times no phases. It follows the lane's kind toggles ("calls" off removes it).
+  Rows are per model because two models on one card generate at once (the real capture has four).
 - **THE HOST-RAM PROMPT CACHE, AND THE SWAP NO OTHER TIMING CONTAINS** (`GenTimings.swap`, `SwapChips`,
   `RunnerActivity.promptCache`; `ollama-slop:promptcache2`). Two conversations on one model share its single
   slot; when they take turns, llama-server parks the outgoing one's KV cache in host RAM (`--cache-ram`, 8 GiB
