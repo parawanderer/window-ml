@@ -1178,9 +1178,34 @@ export const DRIVER_BAND_LABEL = "driver overhead";
 /** Below this, a difference between the whole model and what reached the device is bookkeeping rather than a
  *  spill — the two figures are taken independently, so they are not expected to agree to the byte. */
 export const SPILL_FLOOR = 8 * 1024 * 1024;
-export const OTHER_BAND_NOTE =
-    "In use but not accounted for by a model's reported buffers — mostly each loaded model's CUDA context "
-    + "(0.7-1.8 GiB per model, which no buffer line reports), plus anything else on the card.";
+/** The fallback a legend uses for a residual band with no note of its own — backend-NEUTRAL, since it can be
+ *  read under any pool; every band `deviceBands`/`hostBands` builds now carries its own, backend-specific note. */
+export const OTHER_BAND_NOTE = "In use but not accounted for by a model's reported buffers.";
+
+/**
+ * WHAT A RESIDUAL IS, IN THIS BACKEND'S TERMS. The unattributed part of a card is mostly each runner's own GPU
+ * context, which no buffer line reports — but that is a CUDA context on NVIDIA, a HIP context under ROCm on AMD,
+ * and something else again on Vulkan, and the 0.7–1.8 GiB range was measured on CUDA only. Host RAM is a
+ * different question altogether (the operating system and every other program), and on unified memory (a Mac)
+ * the GPU and the system share one pool. Saying "CUDA context" under System RAM, a Mac or an AMD card was a fact
+ * about a different machine.
+ */
+export function residualNotes(runner: string): { context: string; unattributed: string; driver: string } {
+    const context = runner === "CUDA" ? "CUDA context" : runner === "ROCm" ? "HIP (ROCm) context" : "GPU backend's own context";
+    return {
+        context,
+        unattributed: `In use but not accounted for by a model's reported buffers — mostly each loaded model's ${context}`
+            + (runner === "CUDA" ? " (0.7-1.8 GiB per model, which no buffer line reports)" : ", which no buffer line reports")
+            + ", plus anything else on the card.",
+        driver: `Ollama's own ${context}, held on a card whether or not a model is loaded. Not another process.`,
+    };
+}
+/** Host RAM's residual on a machine with separate GPUs: everything that is not a model. */
+export const HOST_RAM_NOTE = "In use by everything that is not a model's weights or cache — the operating system, other "
+    + "programs and ollama's own processes. Expected; the part of a model that spilled into RAM is drawn as that model.";
+/** A unified-memory machine's residual (a Mac): the GPU and the system share ONE pool. */
+export const UNIFIED_NOTE = "In use by everything that is not a model — the operating system, other apps and GPU work "
+    + "outside ollama. The GPU and the system share this one pool, so this is memory a model competes with.";
 export interface Band {
     key: string;
     label: string;
@@ -1209,7 +1234,39 @@ export const OUTSIDE_VIEW_LABEL = "outside ollama's view";
 const OUTSIDE_VIEW_NOTE = "In use on this card by nothing ollama can see. It runs in a container, and the driver lists only "
     + "the processes in its own namespace, so another container's or the host's process is counted here and never named.";
 const UNOWNED_NOTE = "In use on this card and owned by no listed process: the driver's own reservation.";
-const DRIVER_NOTE = "Ollama's own driver context, held on every visible card whether or not a model is loaded. Not another process.";
+
+/**
+ * WHICH BANDS OF A STACK ARE DRAWN AS STEPS: a model's own band, and a residual that belongs to a model (its
+ * runner's overhead, a runner `/api/ps` has not caught up with) — but only in an unbroken run from the BOTTOM of
+ * the stack. Tops are cumulative, so a band's floor is the top of the band below; a stepped band stacked on a band
+ * drawn as a line (a loading runner, whose memory climbs) would hold its top while its floor rose, and the
+ * inverted polygon fills as a wedge of the wrong colour. The first band that is a line ends the run.
+ */
+export function stepBands(order: string[], identity: Record<string, string | undefined>, tint: Record<string, string | undefined>): Set<string> {
+    const out = new Set<string>();
+    for (const k of order) {
+        if (k === "free" || !(identity[k] || (tint[k] && !k.startsWith("load:")))) break;
+        out.add(k);
+    }
+    return out;
+}
+
+/**
+ * ONE EDGE OF A STACKED BAND, as `[sample index, value]` vertices in draw order. `stepped`: hold the previous value
+ * up to each sample, then drop to its own (a model's memory is piecewise-constant). A line with a `base` — a band
+ * stacked above stepped ones — turns the base's corners and interpolates only its own thickness above it: the top
+ * of a constant residual on a model that arrives is that model's step, shifted up by the residual. Interpolating
+ * the cumulative value instead climbed before the step and fell under its floor after an eviction.
+ */
+export function bandEdge(series: number[], stepped: boolean, base: number[] | null = null): [number, number][] {
+    const out: [number, number][] = [];
+    for (let i = 0; i < series.length; i++) {
+        if (i > 0 && stepped) out.push([i, series[i - 1] ?? 0]);
+        else if (i > 0 && base && base[i - 1] !== base[i]) out.push([i, (base[i - 1] ?? 0) + (series[i] ?? 0) - (base[i] ?? 0)]);
+        out.push([i, series[i] ?? 0]);
+    }
+    return out;
+}
 
 /** A residual band's position in the stack. A runner's overhead sits directly on its own model, so the pair
  *  reads as what that model costs; then loads in flight, ollama's helpers, other tenants, and the unlisted
@@ -1319,7 +1376,8 @@ export function deviceBands(sample: ResourceSample, deviceId: string): Band[] {
         // loading model holds its allocation before any runner exists to report it, so the residual IS the load.
         const small = residual < DRIVER_OVERHEAD_FLOOR;
         bands.push({ key: "other", bytes: residual, kind: "other",
-            label: small ? DRIVER_BAND_LABEL : loadingLabel(sample) ?? OTHER_BAND_LABEL, note: small ? DRIVER_NOTE : OTHER_BAND_NOTE });
+            label: small ? DRIVER_BAND_LABEL : loadingLabel(sample) ?? OTHER_BAND_LABEL,
+            note: small ? residualNotes(cap.runner).driver : residualNotes(cap.runner).unattributed });
     }
     bands.push({ key: "free", label: "free", bytes: Math.max(0, cap.freeBytes), kind: "free" });
     return bands;
@@ -1352,7 +1410,7 @@ function processBands(cap: DeviceCapacity, models: Band[]): Band[] {
             const share = models.filter((b) => b.model === m).reduce((n, b) => n + b.bytes, 0);
             if (share > 0) {
                 out.push({ key: `ctx:${m}`, label: `${m} overhead`, bytes: Math.max(0, p.usedBytes - share), kind: "other", of: m,
-                    note: `What ${m}'s runner holds on this card beyond the model's reported buffers: its CUDA context and anything else no buffer line reports.` });
+                    note: `What ${m}'s runner holds on this card beyond the model's reported buffers: its ${residualNotes(cap.runner).context} and anything else no buffer line reports.` });
             } else {
                 out.push({ key: `runner:${m}`, label: `${m} runner`, bytes: p.usedBytes, kind: "other", of: m,
                     note: `${m}'s runner. The model's own figures for this card have not arrived yet.` });
@@ -1401,7 +1459,8 @@ export function hostBands(sample: ResourceSample): Band[] {
             ...(unified && m.memory ? { parts: m.memory } : {}) });
     }
     const used = Math.max(0, host.totalBytes - host.freeBytes);
-    bands.push({ key: "other", label: OTHER_BAND_LABEL, bytes: Math.max(0, used - attributed), kind: "other" });
+    bands.push({ key: "other", label: OTHER_BAND_LABEL, bytes: Math.max(0, used - attributed), kind: "other",
+        note: unified ? UNIFIED_NOTE : HOST_RAM_NOTE });
     bands.push({ key: "free", label: "free", bytes: Math.max(0, host.freeBytes), kind: "free" });
     return bands;
 }

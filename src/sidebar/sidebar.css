@@ -657,11 +657,17 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    is the notable case and `chat` the ordinary one, which is a colour difference, not a shape one. Giving
    `chat` a capsule while `embed` and the context chip stayed rectangles made the odd one out the common
    case, and read as two unrelated kinds of thing on the same line. */
-.vram-embed, .vram-chat, .vram-quant { padding: 0 4px; font-size: 0.72em; border: 1px solid var(--border); border-radius: 3px;
-    line-height: 1.6; }
+/* ONE BOX HEIGHT FOR EVERY CHIP ON THE ROW. The kind badges use smaller type, and with the box sized from that
+   type they stood shorter than the context/cache/TTL chips beside them — so the BOX takes the chips' own size
+   (0.9em at line-height 1.35, the geometry of .vram-ctx) and the smaller text is centred inside it. */
+.vram-embed, .vram-chat, .vram-quant { flex: 0 0 auto; padding: 0 4px; font-size: 0.9em; line-height: 1.35; min-height: 1.35em;
+    border: 1px solid var(--border); border-radius: 3px; display: inline-flex; align-items: center; justify-content: center;
+    box-sizing: content-box; }
+/* The badge's own label, smaller than the chips' figures (it names a KIND, it is not a reading). */
+.vram-badge-t { font-size: 0.8em; line-height: 1; }
 /* WHICH BUILD of the model — its quantization, in words ("4-bit weights"; the code is in its tooltip). A kind
    badge like the two above, since it says what the model IS rather than what it is doing. */
-.vram-quant { color: var(--fg-dim); }
+.vram-quant { color: var(--fg-faint); }
 .vram-embed { color: var(--fg-dim); }
 .vram-chat { color: var(--fg-faint); }
 /* Live keep-alive countdown — same chip shape as the context badge, sat beside it. */
