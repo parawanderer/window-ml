@@ -24,6 +24,8 @@ export interface CodeEditorOptions {
      * past its budget for this, and a late answer is dropped.
      */
     complete?(code: string, line: number, column: number): Promise<RemoteCompletion[] | null>;
+    /** Draw a line-number gutter. Later changes go through {@link CodeEditorHandle.setLineNumbers}. */
+    lineNumbers?: boolean;
 }
 
 /** One candidate from a `complete` source: the whole `name` and its kind (`module`/`function`/…). */
@@ -35,6 +37,16 @@ export interface CodeEditorHandle {
     setValue(value: string): void;
     getValue(): string;
     focus(): void;
+    /** Show or hide the line-number gutter. */
+    setLineNumbers(on: boolean): void;
+    /** Mark a line (1-based, in the CURRENT document) as the one that failed, or clear it with null. */
+    markLine(line: number | null): void;
+    /**
+     * Scroll a line (1-based, current document) into view and pulse it — red for the line that failed, green
+     * for a line on the way there. The same flash the log's code blocks use.
+     * @returns false when there is no such line.
+     */
+    flashLine(line: number, fail: boolean): boolean;
     /** Tear down the view. Safe to call twice. */
     destroy(): void;
 }

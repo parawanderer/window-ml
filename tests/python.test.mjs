@@ -566,6 +566,16 @@ test("bench: what one run defines, the next can use — values, functions, impor
     assert.deepEqual(await benchRun("return f() + int(grid.sum()) + int(m.floor(0.5))", ns), { value: 318 });
 });
 
+test("bench: a traceback names the line the user wrote, as a per-run script's does", { skip }, async () => {
+    // The bench's editor marks and jumps to these numbers, and the kept-state wrapper edits the script's AST
+    // (its `global` statement) — so the correction has to survive that path too.
+    const ns = freshNs();
+    const { error } = await benchRun("def inner():\n    return 1 / 0\n\nx = 5\ninner()", ns);
+    assert.deepEqual([...error.matchAll(/File "<python_exec>", line (\d+)/g)].map((m) => Number(m[1])), [5, 2]);
+    const syntax = await benchRun("ok = 1\ndef (:\nmore = 2", freshNs());
+    assert.match(syntax.error, /File "<python_exec>", line 2/);
+});
+
 test("bench: `df` survives a run — the injected-data prelude that resets it is not run here", { skip }, async () => {
     const ns = freshNs();
     await benchRun("df = pd.DataFrame({'a': [1, 2]})", ns);

@@ -3,7 +3,7 @@
 // algorithm works: it is the elision, which decides what the reader ACTUALLY sees.
 import { test } from "node:test";
 import assert from "node:assert";
-import { diffLines, collapse, codeDiff, diffStat, DIFF_MAX_LINES } from "../src/diff.ts";
+import { diffLines, collapse, codeDiff, diffStat, mapLine, DIFF_MAX_LINES } from "../src/diff.ts";
 
 const kinds = (rows) => rows.map((r) => r.kind).join(" ");
 const texts = (rows) => rows.map((r) => (r.kind === "gap" ? `…${r.skipped}` : `${r.kind[0]} ${r.text}`));
@@ -113,4 +113,17 @@ test("the new-side numbers stay in step with the after-text, across an unbalance
     assert.deepEqual([last.a, last.b], [4, 3], "the tail line is 4 in the old text and 3 in the new");
     assert.deepEqual(rows.filter(r => r.kind === "del").map(r => r.a), [2, 3]);
     assert.deepEqual(rows.filter(r => r.kind === "add").map(r => r.b), [2]);
+});
+
+// mapLine: a traceback names a line of the code that RAN; the bench's editor holds the code as it is NOW.
+test("mapLine follows a line that moved, and refuses one that changed", () => {
+    const ran = "a = 1\nb = 2\nraise ValueError(b)";
+    assert.equal(mapLine(ran, ran, 3), 3, "nothing edited: the same line");
+    assert.equal(mapLine(ran, "import x\n# note\n" + ran, 3), 5, "two lines added above: it moved down two");
+    assert.equal(mapLine(ran, "b = 2\nraise ValueError(b)", 3), 2, "a line removed above: it moved up one");
+    assert.equal(mapLine(ran, "a = 1\nb = 2\nraise TypeError(b)", 3), null, "the line itself was edited: no longer the line that failed");
+    assert.equal(mapLine(ran, "a = 1\nb = 2", 3), null, "deleted");
+    assert.equal(mapLine(ran, ran, 9), null, "a line the script never had");
+    const huge = Array.from({ length: DIFF_MAX_LINES + 1 }, (_, i) => `x${i}`).join("\n");
+    assert.equal(mapLine(huge, huge + "\ny", 2), null, "too big to align is said, not guessed");
 });

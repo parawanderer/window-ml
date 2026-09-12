@@ -106,3 +106,19 @@ export function codeDiff(before: string, after: string, context = DIFF_CONTEXT):
     if (a > DIFF_MAX_LINES || b > DIFF_MAX_LINES) return null;
     return collapse(diffLines(before, after), context);
 }
+
+/**
+ * Where a line of `before` is in `after` — for a traceback written against the code that RAN, read beside an
+ * editor the user has kept typing in. A line moves when lines are added or removed above it; that is followed.
+ *
+ * @returns the 1-based line in `after`, or null when that line is not there any more (edited or deleted) or
+ *   the texts are too big to align. Never the nearest line instead: a traceback pointing confidently at code
+ *   that did not fail is worse than one that says it cannot point.
+ */
+export function mapLine(before: string, after: string, line: number): number | null {
+    if (before === after) return line >= 1 && line <= before.split("\n").length ? line : null;
+    const a = before.split("\n").length, b = after.split("\n").length;
+    if (a > DIFF_MAX_LINES || b > DIFF_MAX_LINES) return null;
+    const row = diffLines(before, after).find((r) => r.kind === "same" && r.a === line);
+    return row && row.kind === "same" ? row.b : null;
+}

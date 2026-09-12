@@ -211,6 +211,20 @@ as in AGENTS.md — they are all under `src/`.
   - **A stale `value` prop is an echo, not an edit.** Preact replays props several keystrokes behind, and
     pushing one back in rewrote the document under a moved cursor ("pri" landed as "rip"); echoes are
     consumed as a queue.
+  - **A traceback frame jumps into the EDITOR, the log's gesture.** `jumpToLine` (render-panel.tsx) hands
+    the jump to the bench with a synchronous `BENCH_JUMP_EVENT` when the frame is inside `.bench` (it cannot
+    import vram.tsx), and the editor pulses the line with the log's own `.cline-pulse`/`.cline-pulse-fail`.
+    The last failure's line is marked (`markLine`) with its number red, like a failing step's block. The
+    traceback's numbers are about the code that RAN (`BenchRun.code`) and you keep typing after a failure, so
+    both go through `mapLine` (diff.ts): a line that moved is followed, a line that was EDITED is refused, and
+    the frame says "changed since this ran" rather than pulsing whatever slid into that number.
+  - **Line numbers follow the log's preference** (`codeLineNumbers`, Settings → Appearance) and come on while
+    the last run's failure is shown. Keyed on the FAILURE, not the mark: the mark goes when you edit the
+    failing line, and the gutter going with it shifted every line sideways under the cursor.
+  - **A spec clicking in the bench must wait for the panel to stop SLIDING** (`openBench` in
+    bench-editor.spec.mjs). The transition is on the shadow host outside the iframe, which Playwright's
+    stability check does not see, so an early click lands where the button was and the frame receives
+    nothing — a run that silently never started, 3 times in 4.
   **`.bench-code` is the FRAME, not the field** — it sizes the editor in its pane. A test drives
   `.bench-code textarea` under jsdom (the bundle never loads there, so that is the fallback it gets) and
   `.bench-code .cm-content` in a real browser, where `inputValue()`/`toHaveValue()` no longer apply: read

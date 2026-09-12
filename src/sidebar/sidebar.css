@@ -2468,6 +2468,9 @@ html[data-surface="card"] .appr-btn.no:hover {
 .code.tb .tb-line { font: inherit; color: inherit; background: none; border: 0; padding: 0;
     border-bottom: 1px dotted currentColor; cursor: pointer; }
 .code.tb .tb-line:hover { background: color-mix(in srgb, currentColor 16%, transparent); border-radius: 2px; }
+/* Beside a bench traceback frame whose line has since been EDITED in the editor: the click cannot point at it,
+   and saying so beats a link that visibly does nothing. */
+.code.tb .tb-changed { color: var(--fg-faint); font-style: italic; }
 /* WHERE IT BROKE, on the code itself. The traceback gives you a number; this is the line it names — which is
    the thing you were going to go looking for. */
 .cline.cline-fail { background: color-mix(in srgb, var(--err) 13%, transparent); cursor: help; }

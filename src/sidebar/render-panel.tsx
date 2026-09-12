@@ -870,7 +870,24 @@ export const shownLine = (map: number[] | null | undefined, line: number): numbe
  *  citation makes, because it is the same intent: show me the thing this is about. Lifted out of the python
  *  traceback so a JS failure, which reports exactly one line and has no traceback to render, lands
  *  identically instead of growing a second near-copy of this. */
-const jumpToLine = (line: number, isFail: boolean, from: Element) => {
+/** What a jump did: landed on the line, found nothing to land on, or found the line CHANGED since the code ran
+ *  (the bench's editor, where you keep typing after a run). */
+export type JumpResult = "shown" | "missing" | "changed";
+/** The event a traceback in the BENCH sends, since the code it names is in an editor this renderer does not
+ *  own (and cannot import — vram.tsx imports this file). Dispatched synchronously, so the bench's handler
+ *  writes `result` before `dispatchEvent` returns. */
+export const BENCH_JUMP_EVENT = "ml-bench-jumpline";
+export interface BenchJumpDetail { line: number; fail: boolean; result: JumpResult }
+
+const jumpToLine = (line: number, isFail: boolean, from: Element): JumpResult => {
+    // IN THE BENCH the code is a live editor, not a rendered block: hand the jump to it. The line a traceback
+    // names is in the code that RAN, and only the bench knows how that maps onto what is in the editor now.
+    const bench = from.closest(".bench");
+    if (bench) {
+        const detail: BenchJumpDetail = { line, fail: isFail, result: "missing" };
+        bench.dispatchEvent(new CustomEvent(BENCH_JUMP_EVENT, { detail }));
+        return detail.result;
+    }
     // The map lives on the In block, published by the renderer that reflowed the code — so a line number
     // written against the ORIGINAL source lands on the line that is actually on screen.
     // Scoped from the CLICKED BUTTON, not from a ref on the block: the ref is null at click time here
@@ -882,7 +899,7 @@ const jumpToLine = (line: number, isFail: boolean, from: Element) => {
     let shown = line;
     if (raw) { try { const m = JSON.parse(raw) as number[]; if (m[line]) shown = m[line]; } catch { /* unmapped */ } }
     const el = holder?.querySelector(`.cline[data-line="${shown}"]`);
-    if (!el) return;
+    if (!el) return "missing";
     // MARK FIRST, then scroll. The mark is the answer; the scroll is a convenience — and doing it the
     // other way round means any environment where `scrollIntoView` is missing (jsdom, and anything
     // embedding this in a stripped DOM) loses the answer to a failed nicety.
@@ -893,6 +910,7 @@ const jumpToLine = (line: number, isFail: boolean, from: Element) => {
     el.classList.add(cls);
     setTimeout(() => el.classList.remove(cls), 1400);
     try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch { /* not every DOM has it */ }
+    return "shown";
 };
 
 function Traceback({ text, map }: { text: string; map?: number[] | null }) {
@@ -904,7 +922,10 @@ function Traceback({ text, map }: { text: string; map?: number[] | null }) {
     // Which rows name a user line, so the last of them can be called out as the failure.
     const userRows = rows.map((r, i) => (/File "<python_exec>", line (\d+)/.test(r) ? i : -1)).filter((i) => i >= 0);
     const deepest = userRows.length ? userRows[userRows.length - 1] : -1;
-    const jump = jumpToLine;
+    // The frame whose line is no longer in the editor, said beside it (the bench only — a step's code never
+    // changes). Silence there would read as the link being broken.
+    const [changed, setChanged] = useState<number | null>(null);
+    const jump = (line: number, fail: boolean, from: Element, row: number) => setChanged(jumpToLine(line, fail, from) === "changed" ? row : null);
     return (
         <pre class="code tb"><code class="hljs">{rows.map((r, i) => {
             // `_user` is the name of the wrapper the sandbox indents the code into — an implementation
@@ -930,13 +951,15 @@ function Traceback({ text, map }: { text: string; map?: number[] | null }) {
                         appears, which on something you are hovering to decide whether to click is long
                         enough to have moved on. */}
                     <span class="tt tb-line-wrap">
-                        <button class="tb-line" onClick={(e: MouseEvent) => jump(line, i === deepest, e.currentTarget as Element)}>{m[2]}{at}</button>
+                        <button class="tb-line" onClick={(e: MouseEvent) => jump(line, i === deepest, e.currentTarget as Element, i)}>{m[2]}{at}</button>
                         <span class="tt-pop wrap" role="tooltip">{(i === deepest
                             ? `Line ${at} — where it failed. Click to show it in the code above.`
                             : `Line ${at}. Click to show it in the code above.`)
                             + (at !== line ? ` The model wrote it as line ${line}; the code is reflowed for reading here.` : "")}</span>
                     </span>
-                    {m[4]}{"\n"}
+                    {m[4]}
+                    {changed === i ? <span class="tb-changed" role="status"> — that line has changed since this ran</span> : null}
+                    {"\n"}
                 </span>
             );
         })}</code></pre>

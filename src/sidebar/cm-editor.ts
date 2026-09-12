@@ -11,8 +11,8 @@ import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap, t
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { globalCompletion, localCompletionSource, python } from "@codemirror/lang-python";
 import { HighlightStyle, bracketMatching, indentUnit, syntaxHighlighting, syntaxTree } from "@codemirror/language";
-import { EditorState } from "@codemirror/state";
-import { EditorView, drawSelection, highlightActiveLine, keymap, placeholder, rectangularSelection } from "@codemirror/view";
+import { Compartment, EditorState, RangeSet, StateEffect, type StateEffectType, StateField } from "@codemirror/state";
+import { Decoration, type DecorationSet, EditorView, GutterMarker, drawSelection, gutterLineClass, highlightActiveLine, keymap, lineNumbers, placeholder, rectangularSelection } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import type { CodeEditorHandle, CodeEditorOptions } from "./code-editor-api";
 
@@ -58,6 +58,13 @@ const THEME = EditorView.theme({
     ".cm-tooltip-autocomplete > ul > li": { padding: "2px 7px" },
     ".cm-tooltip-autocomplete > ul > li[aria-selected]": { background: "var(--accent)", color: "var(--accent-fg)" },
     ".cm-completionIcon": { opacity: 0.55, paddingRight: "0.6em" },
+    // The gutter drawn the way the log's code blocks draw theirs (`.cline .lno`), so a line number reads the
+    // same in the editor as in the step the script came from.
+    ".cm-gutters": { backgroundColor: "var(--panel)", color: "var(--fg-faint)", borderRight: "1px solid var(--border)" },
+    ".cm-lineNumbers .cm-gutterElement": { minWidth: "2.2em", padding: "0 8px 0 4px", opacity: 0.75 },
+    // WHERE IT BROKE — the log's `.cline-fail`, on the editor's line and its number.
+    ".cm-ml-fail": { backgroundColor: "color-mix(in srgb, var(--err) 13%, transparent)" },
+    ".cm-lineNumbers .cm-gutterElement.cm-ml-fail-lno": { color: "var(--err)", fontWeight: "600", opacity: 1 },
     ".cm-completionDetail": { color: "var(--fg-faint)", fontStyle: "normal", marginLeft: "0.7em" },
     ".cm-placeholder": { color: "var(--fg-faint)" },
 });
@@ -127,6 +134,49 @@ function withRemote(remote: NonNullable<CodeEditorOptions["complete"]>) {
     };
 }
 
+// LINE NUMBERS, in a compartment so the preference can flip without rebuilding the editor (and losing the
+// cursor and history with it).
+const numbering = new Compartment();
+const gutterFor = (on: boolean) => (on ? lineNumbers() : []);
+
+// THE LINE THAT FAILED, and the FLASH a traceback frame sends. Both are line decorations whose classes are
+// the log's own (`.cline-pulse` / `.cline-pulse-fail` are global in sidebar.css), so a jump looks identical
+// whether it lands in a step's code block or in this editor. The caller works out WHICH line (the traceback
+// names the code that ran, and the document may have moved on); these only draw it.
+const setMark = StateEffect.define<number | null>();
+const setFlash = StateEffect.define<{ line: number; cls: string } | null>();
+
+/** A decoration field driven by one effect: set to a line (1-based) or cleared, and carried through edits. */
+function lineField<T extends number | { line: number }>(effect: StateEffectType<T | null>, deco: (v: T) => Decoration) {
+    return StateField.define<DecorationSet>({
+        create: () => Decoration.none,
+        update(set, tr) {
+            set = set.map(tr.changes);
+            for (const e of tr.effects) {
+                if (!e.is(effect)) continue;
+                const v = e.value;
+                const line = v == null ? null : typeof v === "number" ? v : v.line;
+                set = v == null || line == null || line < 1 || line > tr.state.doc.lines
+                    ? Decoration.none
+                    : Decoration.set([deco(v).range(tr.state.doc.line(line).from)]);
+            }
+            return set;
+        },
+        provide: (f) => EditorView.decorations.from(f),
+    });
+}
+const markField = lineField(setMark, () => Decoration.line({ class: "cm-ml-fail" }));
+const flashField = lineField(setFlash, (v: { cls: string }) => Decoration.line({ class: v.cls }));
+
+/** The failing line's NUMBER in red too, as the log's `.cline-fail .lno` is. */
+class FailNumber extends GutterMarker { override elementClass = "cm-ml-fail-lno"; }
+const failNumber = new FailNumber();
+const failGutter = gutterLineClass.compute([markField], (state) => {
+    const at: number[] = [];
+    state.field(markField).between(0, state.doc.length, (from) => { at.push(from); });
+    return RangeSet.of(at.map((from) => failNumber.range(from)));
+});
+
 /**
  * Build the extension list for one editor.
  *
@@ -148,6 +198,10 @@ function extensions(options: CodeEditorOptions, onChange: (view: EditorView) => 
     const run = () => { onRun?.(); return true; };
     const runKey = ["Mod-Enter", "Ctrl-Enter"].map(key => ({ key, run, preventDefault: true, stopPropagation: !!onRun }));
     return [
+        numbering.of(gutterFor(!!options.lineNumbers)),
+        markField,
+        flashField,
+        failGutter,
         history(),
         drawSelection(),
         rectangularSelection(),
@@ -175,6 +229,7 @@ const factory = {
         // Guards a setValue that would otherwise be reported straight back as an edit, which turns
         // one keystroke into a loop between the editor and the component holding its value.
         let echoing = false;
+        let flashTimer: ReturnType<typeof setTimeout> | undefined;
         const view = new EditorView({
             parent,
             state: EditorState.create({
@@ -194,7 +249,22 @@ const factory = {
                 }
             },
             focus: () => view.focus(),
-            destroy: () => view.destroy(),
+            setLineNumbers: (on: boolean) => view.dispatch({ effects: numbering.reconfigure(gutterFor(on)) }),
+            markLine: (line: number | null) => view.dispatch({ effects: setMark.of(line) }),
+            flashLine(line: number, fail: boolean) {
+                if (line < 1 || line > view.state.doc.lines) return false;
+                // MARK FIRST, then scroll, as the log's jump does: the mark is the answer, the scroll a nicety.
+                view.dispatch({ effects: [
+                    setFlash.of({ line, cls: fail ? "cline-pulse-fail" : "cline-pulse" }),
+                    EditorView.scrollIntoView(view.state.doc.line(line).from, { y: "center" }),
+                ] });
+                // The animation's own length. Cleared so the NEXT click on the same line animates again — a
+                // class that is still present does not restart its animation.
+                clearTimeout(flashTimer);
+                flashTimer = setTimeout(() => { try { view.dispatch({ effects: setFlash.of(null) }); } catch { /* destroyed */ } }, 1400);
+                return true;
+            },
+            destroy: () => { clearTimeout(flashTimer); view.destroy(); },
         };
     },
 };

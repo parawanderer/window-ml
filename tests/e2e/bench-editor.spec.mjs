@@ -43,6 +43,17 @@ async function openBench(fake, ext) {
     // dispatchEvent, not click(): the button's own tooltip span covers its centre.
     await frame.locator('button[aria-label="Python bench"]').dispatchEvent("click");
     await frame.locator(".bench").waitFor({ timeout: 10000 });
+    // THE PANEL IS STILL SLIDING IN. Its transition is on the shadow host OUTSIDE the iframe, which Playwright's
+    // stability check does not see, so a click in the first ~300ms lands where the button WAS (measured: the
+    // Run button at x=1510, then 1172, then 1170) and nothing in the frame receives it — a run that silently
+    // never started, 3 times in 4. Wait for the bench to stop moving.
+    let last = null;
+    for (let i = 0; i < 40; i++) {
+        const x = (await frame.locator(".bench").boundingBox())?.x;
+        if (x != null && x === last) break;
+        last = x;
+        await sleep(100);
+    }
     return { page, frame };
 }
 
@@ -171,6 +182,94 @@ test("python bench: once the sandbox is warm, completion comes from Jedi — imp
         await content.pressSequentially("\nnp.zzqx", { delay: 40 });
         await new Promise((r) => setTimeout(r, 900));
         await expect(frame.locator(".cm-tooltip-autocomplete")).toHaveCount(0);
+    } finally {
+        await ext.context.close();
+        await fake.stop();
+    }
+});
+
+/** Run whatever is in the editor and wait for the result to land. */
+async function runBench(frame) {
+    await frame.locator(".bench-play").click();
+    for (let i = 0; i < 30 && !(await frame.locator(".bench-outpane").count()); i++) await sleep(100);
+    for (let i = 0; i < 150; i++) {
+        if (!(await frame.locator(".bench-outpane .r-ranfor.live").count())
+            && await frame.locator(".bench-play:not([disabled])").count()) return;
+        await sleep(400);
+    }
+    throw new Error("the bench never produced a result");
+}
+
+// THE LOG'S TRACEBACK GESTURE, IN THE BENCH. In a step, clicking `File "<python_exec>", line N` pulses that
+// line in the step's code block. The bench's code is a live editor, so the frame hands the jump to it — and
+// since you keep typing after a failure, the number (which is about the code that RAN) is followed through
+// lines added above it and refused once the line itself is edited, never pointed at whatever slid into place.
+test("python bench: a traceback frame shows its line in the editor, and follows the script as you edit", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "overlay" });
+        const { frame } = await openBench(fake, ext);
+        await frame.locator(".bench-code .cm-editor").waitFor({ timeout: 15000 });
+        const content = frame.locator(".bench-code .cm-content");
+        // The preference is off by default, so no gutter yet.
+        await expect(frame.locator(".bench-code .cm-lineNumbers")).toHaveCount(0);
+
+        await content.fill("def inner():\n    return 1 / 0\nx = 1\ninner()");
+        await runBench(frame);
+        await expect(frame.locator(".bench-outbody")).toContainText("ZeroDivisionError");
+
+        // WHERE IT BROKE, marked on the editor's line and its number — and the gutter comes on for it,
+        // preference or not, because a traceback names a number.
+        const fail = frame.locator(".bench-code .cm-line.cm-ml-fail");
+        await expect(fail).toHaveCount(1);
+        await expect(fail).toHaveText("    return 1 / 0");
+        await expect(frame.locator(".bench-code .cm-lineNumbers")).toHaveCount(1);
+        await expect(frame.locator(".bench-code .cm-ml-fail-lno")).toHaveText("2");
+
+        // The deepest frame pulses RED on the failing line; a call-path frame pulses GREEN on its own line.
+        await frame.locator(".bench-outbody .tb-fail .tb-line").click();
+        await expect(frame.locator(".bench-code .cm-line.cline-pulse-fail")).toHaveText("    return 1 / 0");
+        const callSite = frame.locator(".bench-outbody .tbline:not(.tb-fail) .tb-line").first();
+        await expect(callSite).toContainText("line 4");
+        await callSite.click();
+        await expect(frame.locator(".bench-code .cm-line.cline-pulse")).toHaveText("inner()");
+
+        // Two lines added ABOVE after the run: the mark and the jump follow the line to its new number.
+        await content.fill("# first\n# second\ndef inner():\n    return 1 / 0\nx = 1\ninner()");
+        await expect(fail).toHaveText("    return 1 / 0");
+        await expect(frame.locator(".bench-code .cm-ml-fail-lno")).toHaveText("4");
+        await frame.locator(".bench-outbody .tb-fail .tb-line").click();
+        await expect(frame.locator(".bench-code .cm-line.cline-pulse-fail")).toHaveText("    return 1 / 0");
+
+        // The failing line itself EDITED: it is no longer the line that failed, so nothing is marked and the
+        // frame says why instead of pulsing whatever now sits at that number.
+        await content.fill("# first\n# second\ndef inner():\n    return 1 / 1\nx = 1\ninner()");
+        await expect(fail).toHaveCount(0);
+        // …but the GUTTER stays until the next run: dropping it with the mark shifted every line sideways under
+        // the cursor that was fixing the failure.
+        await expect(frame.locator(".bench-code .cm-lineNumbers")).toHaveCount(1);
+        await frame.locator(".bench-outbody .tb-fail .tb-line").click();
+        await expect(frame.locator(".bench-outbody .tb-changed")).toContainText("changed since this ran");
+        await expect(frame.locator(".bench-code .cm-line.cline-pulse-fail")).toHaveCount(0);
+    } finally {
+        await ext.context.close();
+        await fake.stop();
+    }
+});
+
+test("python bench: the line-number preference draws the editor's gutter", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "overlay" });
+        // Settings → Appearance → line numbers, the same key the log's code blocks read.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_debug_codelines: true }));
+        const { frame } = await openBench(fake, ext);
+        await frame.locator(".bench-code .cm-editor").waitFor({ timeout: 15000 });
+        await frame.locator(".bench-code .cm-content").fill("a = 1\nb = 2\nc = 3");
+        await expect(frame.locator(".bench-code .cm-lineNumbers")).toHaveCount(1);
+        await expect(frame.locator(".bench-code .cm-lineNumbers .cm-gutterElement", { hasText: /^3$/ })).toHaveCount(1);
     } finally {
         await ext.context.close();
         await fake.stop();

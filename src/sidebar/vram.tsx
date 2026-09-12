@@ -19,9 +19,9 @@ import { IconWarn, IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconChevr
 import { Disclosure, cursorTipOn, TipText } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { CodeEditor } from "./code-editor";
-import type { RemoteCompletion } from "./code-editor-api";
+import type { CodeEditorHandle, RemoteCompletion } from "./code-editor-api";
 import { fmtAge, hhmmss } from "./timestamps";
-import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, benchKept, benchLost, noteBenchKept, type BenchRun } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, benchKept, benchLost, noteBenchKept, codeLineNumbers, type BenchRun } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
@@ -68,7 +68,9 @@ export function residencyOf(m: LoadedModel): ModelResidency {
         ...((() => { const rf = rooflineFrom(m.roofline); return rf ? { roofline: rf } : {}; })()),
     };
 }
-import { RenderPanel, PyBenchOut } from "./render-panel";
+import { RenderPanel, PyBenchOut, BENCH_JUMP_EVENT, type BenchJumpDetail } from "./render-panel";
+import { deepestUserLine } from "../py-format";
+import { mapLine } from "../diff";
 
 // Fetch the server's model list via the background worker (privileged fetch);
 // degrade silently if unreachable. Populates the datalists.
@@ -2509,14 +2511,14 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                     stop();
                     // The background wraps the offscreen result: { data: PyResult } | { error }.
                     const r = resp?.data ?? (resp?.error ? { ok: false, stdout: "", error: resp.error } : null);
-                    setResult(r || { ok: false, stdout: "", error: "No response from the sandbox." });
+                    setResult({ ...(r || { ok: false, stdout: "", error: "No response from the sandbox." }), code });
                     setRunning(false);
                     if (r?.bench) noteBenchKept(mode, r.bench);
                     // The sandbox is up NOW, so the version chip is free. Doing this on mount instead would
                     // make every glance at the bench pay the cold start the env panel exists to defer.
                     loadBenchEnv();
                 });
-        } catch (e) { stop(); setResult({ ok: false, stdout: "", error: String(e) }); setRunning(false); }
+        } catch (e) { stop(); setResult({ ok: false, stdout: "", error: String(e), code }); setRunning(false); }
     };
     // ⌘/Ctrl+Enter runs, from ANYWHERE in the bench — not just the textarea. It used to be bound to the
     // field alone, so clicking the mode picker or the environment list silently disarmed the only shortcut
@@ -2560,8 +2562,31 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
     // Has this bench produced anything yet? Sticky — `result` is cleared at the start of every run, and a
     // pane that vanished and came back between runs would throw the editor's height around each time.
     const hasOut = running || result != null;
+    // WHERE THE LAST RUN FAILED, in the code as it is NOW. The traceback's numbers are about the script that
+    // ran (kept on the result), and you usually go on typing after a failure — so the line is followed through
+    // lines added or removed above it, and dropped once the line itself is edited, rather than left marking
+    // whatever text has since slid under that number. The same mapping answers a traceback frame's click.
+    const failRan = result && !result.ok && result.error ? deepestUserLine(result.error) : null;
+    const markAt = useMemo(() => (failRan != null && result?.code != null ? mapLine(result.code, code, failRan) : null), [failRan, result, code]);
+    const editorRef = useRef<CodeEditorHandle | null>(null);
+    const rootRef = useRef<HTMLDivElement>(null);
+    // A frame in the output was clicked (render-panel's jumpToLine, which cannot import this file). Reads the
+    // SIGNALS rather than this render's closure: the listener is bound once and the script moves under it.
+    useEffect(() => {
+        const el = rootRef.current;
+        if (!el) return;
+        const onJump = (e: Event) => {
+            const d = (e as CustomEvent<BenchJumpDetail>).detail;
+            const ran = benchResult.value?.code;
+            const at = ran == null ? d.line : mapLine(ran, benchCode.value, d.line);
+            if (at == null) { d.result = "changed"; return; }
+            d.result = editorRef.current?.flashLine(at, d.fail) ? "shown" : "missing";
+        };
+        el.addEventListener(BENCH_JUMP_EVENT, onJump);
+        return () => el.removeEventListener(BENCH_JUMP_EVENT, onJump);
+    }, []);
     return (
-        <div class={`bench${drag ? "" : " bench-full"}`} onKeyDown={onBenchKey}>
+        <div ref={rootRef} class={`bench${drag ? "" : " bench-full"}`} onKeyDown={onBenchKey}>
             {/* ONE HEADER, both shapes. It used to be two: the drawer drew a title strip and PythonBench drew
                 a control bar at the BOTTOM — so the controls sat as far from the name of the thing as the
                 layout allowed, and moving them up naively would have deleted them from full-page mode, where
@@ -2652,7 +2677,13 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
                     {/* NO `onRun`: the bench owns ⌘/Ctrl+↵ from anywhere in the panel (`onBenchKey`), so the
                         editor claims the chord — CodeMirror would otherwise read it as "insert a blank line" —
                         and lets it bubble up to that one handler. Handing it onRun too would run twice. */}
-                    <CodeEditor class="bench-code" value={code} onChange={setCode} complete={completeInSandbox} placeholder="return 6 * 7" />
+                    {/* Line numbers follow the log's own preference (Settings → Appearance), and come on regardless
+                        while the last run's traceback is on screen, as a failing step's block does: a traceback
+                        names a number, and you cannot find line 14 by counting. Keyed on the FAILURE, not on the
+                        mark — the mark goes the moment you edit the failing line, and a gutter going with it would
+                        shift every line sideways under the cursor you are fixing it with. */}
+                    <CodeEditor class="bench-code" value={code} onChange={setCode} complete={completeInSandbox} placeholder="return 6 * 7"
+                        lineNumbers={codeLineNumbers.value || failRan != null} markLine={markAt} handleRef={editorRef} />
                 </div>
                 {/* THE OUTPUT PANE ARRIVES WITH THE FIRST RUN and never leaves. Before that the editor has the
                     whole bench: an empty pane with a line of placeholder in it is chrome promising something
