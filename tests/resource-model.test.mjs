@@ -2679,3 +2679,21 @@ test("AMD's fabric (xGMI) is a bridge like NVLink: a pair, a full mesh, and said
     const walls = M.bridgeWalls([0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ pciId: pci(i) })), mesh);
     assert.ok(walls.every((w) => w.bridge && w.mesh !== "partial"), JSON.stringify(walls));
 });
+
+test("naming a card: its description, the label a faulted one had, and what each address was last seen as", () => {
+    const cap = M.parseInfo({ compute: { system_compute: { total_memory: 8e9 }, supported_gpus: [
+        { gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 4e9, free_memory: 4e9, pci_id: "0000:01:00.0", description: "NVIDIA RTX PRO 6000 Blackwell Workstation Edition" },
+        { gpu_id: "1", name: "CUDA1", runner: "CUDA", total_memory: 4e9, free_memory: 4e9, pci_id: "0000:03:00.0" }] } });
+    assert.equal(cap.devices[0].description, "NVIDIA RTX PRO 6000 Blackwell Workstation Edition");
+    assert.equal("description" in cap.devices[1], false, "absent stays absent — never derived from `name`");
+    // The server's own memory of a faulted card's label, when it sends it.
+    assert.equal(M.unavailableFrom([{ pci_id: "0000:03:00.0", reason: "reset_required", last_name: "CUDA1" }])[0].lastName, "CUDA1");
+    assert.equal("lastName" in M.unavailableFrom([{ pci_id: "0000:03:00.0", reason: "reset_required" }])[0], false);
+    // What each bus address was last seen as — the same object back when nothing changed, so it can gate a write.
+    const seen = M.noteSeenCards({}, cap);
+    assert.deepEqual(seen, { "0000:01:00.0": { name: "CUDA0", description: "NVIDIA RTX PRO 6000 Blackwell Workstation Edition" }, "0000:03:00.0": { name: "CUDA1" } });
+    assert.equal(M.noteSeenCards(seen, cap), seen);
+    // After CUDA1 faults, the survivor is still CUDA0 — and the faulted address keeps what it was last seen as.
+    const after = M.noteSeenCards(seen, { ...cap, devices: [cap.devices[0]] });
+    assert.equal(after["0000:03:00.0"].name, "CUDA1");
+});

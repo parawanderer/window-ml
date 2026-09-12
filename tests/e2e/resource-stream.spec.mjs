@@ -258,8 +258,8 @@ test("hovering a generation drills its model in and fills its KV cache part with
             .toMatch(/80% of the memory-bandwidth ceiling at this context \(98\.0 tok\/s\)/);
         // The card's own ceilings, on its name: bandwidth, and the host link ruling itself out.
         const facts = (await frame.locator(".rc-devfacts .tt-pop").first().textContent()).replace(/\s+/g, " ");
-        expect(facts).toMatch(/memory bandwidth 1\.79 TB\/s/);
-        expect(facts).toMatch(/host link: PCIe Gen 5 x8 at most — this governs how fast a model LOADS/);
+        expect(facts).toMatch(/bandwidth 1\.79 TB\/s the ceiling decode is bound by/);
+        expect(facts).toMatch(/host link PCIe Gen 5 x8 at most — sets how fast a model loads, not how fast it runs/);
 
         // The hover DRILLS the model in — the same mode the keys enter — so the fill has a part to live in.
         await expect.poll(() => frame.locator(".rc-track.deep").count(), { timeout: 5000 }).toBeGreaterThan(0);
@@ -939,17 +939,26 @@ test("a GPU that faulted before we connected is reported on the hello frame", as
             version: "0.0.0", models: { running: 1, vram_used: VRAM },
             compute: {
                 system_compute: { cpu_cores: 32, total_memory: 130_142_785_536, free_memory: 100 * 1024 ** 3 },
-                supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", compute: "12.0", driver: "13.2",
+                supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", compute: "12.0", driver: "13.2", pci_id: "0000:01:00.0",
+                    description: "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
                     total_memory: TOTAL, physical_memory: 102_641_958_912, free_memory: TOTAL - VRAM }],
                 ...(faulted ? { unavailable_gpus: FAULT } : {}),
             },
         });
+        // Before the fault: BOTH cards healthy, so the panel saw which label each bus address carried.
+        const healthy = () => { const i = info(false);
+            i.compute.supported_gpus.push({ ...i.compute.supported_gpus[0], gpu_id: "1", name: "CUDA1", pci_id: "0000:03:00.0", free_memory: TOTAL });
+            return i; };
         const ps = () => ({ models: [{ model: MODEL, name: MODEL, size: VRAM, size_vram: VRAM,
             context_length: 8192, expires_at: new Date(Date.now() + 300_000).toISOString(),
             gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: VRAM }] }] });
 
+        // A per-card track, so the healthy card has a header to hover.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_layout: { presetId: "custom", tracks: [
+            { id: "dev-0", series: ["vram.0"], mode: "stack", heightPx: 96 }] } }));
         fake.setEvents([
             { v: 1, kind: "hello", t: 0, box: "test", retainedMs: 60_000, unavailable_gpus: FAULT },
+            { v: 1, kind: "sample", t: -3000, ps: ps(), info: healthy() },
             { v: 1, kind: "sample", t: -1000, ps: ps(), info: info(true) },
         ]);
         const { frame } = await openPanel(fake, ext);
@@ -969,6 +978,17 @@ test("a GPU that faulted before we connected is reported on the hello frame", as
         // Zero error counters say nothing rather than saying "0 errors" — the line exists to implicate a
         // SLOT when there is something to implicate.
         expect(text, "no link errors, so no line about them").not.toMatch(/link errors/);
+        // WHICH CARD, in the panel's terms: a faulted card has left the enumeration, so the label is what that bus
+        // address was LAST SEEN as — and the banner says that is what it is.
+        expect(text).toMatch(/CUDA1 · NVIDIA RTX PRO 6000 Blackwell Workstation Edition at 0000:03:00\.0 — its label when last seen/);
+        // AN ERROR, not a warning: a card is out of service (only a reset already under way stays amber).
+        expect(await banner.evaluate((b) => b.classList.contains("transient"))).toBe(false);
+        const tone = await banner.evaluate((b) => [getComputedStyle(b).getPropertyValue("--tone").trim(),
+            getComputedStyle(b).getPropertyValue("--err").trim()]);
+        expect(tone[0], `the banner is in the error tone: ${tone}`).toBe(tone[1]);
+        // …and the HEALTHY card says what it is, in the driver's words, on its name.
+        const facts = (await frame.locator(".rc-devfacts .tt-pop").first().textContent()).replace(/\s+/g, " ");
+        expect(facts).toMatch(/^CUDA0 · NVIDIA RTX PRO 6000 Blackwell Workstation Edition CUDA · 0000:01:00\.0/);
 
         // AND THE FAULTED CARD IS NOT A POOL. It holds nothing and can hold nothing, so it must never
         // appear as a track or be summed into a capacity — the chart still shows exactly one card.
