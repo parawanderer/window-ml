@@ -184,6 +184,13 @@ as in AGENTS.md — they are all under `src/`.
   Screenshots land in `tests/e2e/artifacts/stream-demo/`; `HOLD=0` exits instead of holding the browser
   open. Deterministic (fake-LLM, approvals resolved via the SW `__mlApprovals` channel). The automated
   assertions are `python-stream.spec.mjs` (the reverse channel) and `output-scroll.spec.mjs` (tail-follow).
+- **`bench-traceback-demo.mjs`** — a **narrated demo, not a test** of a bench traceback pointing into the
+  editor: `npm run build && node --import tsx tests/e2e/bench-traceback-demo.mjs`. Real Pyodide, no model.
+  A script fails inside a function (the line is marked and the gutter comes on), the call-site frame pulses
+  green and the failing frame red, two lines typed above move the mark and the jump with the line, editing the
+  failing line drops the mark and the frame says it changed, a fixed re-run clears it, and Settings →
+  Appearance → Show line numbers draws the gutter on its own. `PACE`, `LINGER`, `HOLD=0`, `HEADLESS=1`;
+  screenshots in `tests/e2e/artifacts/bench-traceback-demo/`. The assertions are `bench-editor.spec.mjs`.
 - **`bench-completion-demo.mjs`** — a **narrated demo, not a test** of what the bench's completion knows:
   `npm run build && node --import tsx tests/e2e/bench-completion-demo.mjs`. Real Pyodide and real Jedi, no
   model. It starts the sandbox through the environment panel WITHOUT running anything, shows the prelude's
