@@ -826,8 +826,11 @@ test("the bench's timestamps toggle hides the gutter, and remembers it", async (
         // The precondition: the gutter really is drawn, or hiding it proves nothing.
         expect(await frame.locator(".bench-outbody .r-ts").count(), "streamed lines carry a produced-at gutter").toBeGreaterThan(0);
 
+        // The eye says the state: IconEye is two paths (the lid and the pupil), IconEyeOff one struck-through path.
+        await expect(toggle.locator(".bench-times-icon svg path")).toHaveCount(2);
         await toggle.click();
         await expect(toggle).toHaveAttribute("aria-pressed", "false");
+        await expect(toggle.locator(".bench-times-icon svg path"), "crossed out when off").toHaveCount(1);
         await expect(frame.locator(".bench-outbody .r-ts")).toHaveCount(0);
         await expect(frame.locator(".bench-outbody"), "the output itself stays").toContainText("tick 4");
         // Remembered: the bench reads this key when it loads.
