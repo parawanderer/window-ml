@@ -45,7 +45,9 @@ test("a real traceback names the user's line, and the render points at it", asyn
         for (let i = 0; i < 60; i++) {
             const pending = await ext.sw.evaluate(() => (globalThis.__mlApprovals?.list?.() || []).map((d) => d.key));
             for (const k of pending) await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), k);
-            if (await frame.locator(".astep.tool:not(.pending)").count()) break;   // the ROW, not its collapsed body
+            // The run FINISHED (both turns served, no step pending), told from outside the collapsed step body.
+            if (fake.calls().length >= 2 && await frame.locator(".astep.tool").count()
+                && !(await frame.locator(".astep.tool.pending").count())) break;
             await sleep(500);
         }
         const step = frame.locator(".astep").first();
@@ -212,7 +214,9 @@ test("a JS failure names the row on screen, tells the model its own line, and cl
         for (let i = 0; i < 60; i++) {
             const pending = await ext.sw.evaluate(() => (globalThis.__mlApprovals?.list?.() || []).map((d) => d.key));
             for (const k of pending) await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), k);
-            if (await frame.locator(".astep.tool:not(.pending)").count()) break;   // the ROW, not its collapsed body
+            // The run FINISHED (both turns served, no step pending), told from outside the collapsed step body.
+            if (fake.calls().length >= 2 && await frame.locator(".astep.tool").count()
+                && !(await frame.locator(".astep.tool.pending").count())) break;
             await sleep(500);
         }
         const step = frame.locator(".astep").first();
@@ -284,7 +288,9 @@ test("a cell we cannot render says what it is, and never shows as an empty objec
         for (let i = 0; i < 60; i++) {
             const pending = await ext.sw.evaluate(() => (globalThis.__mlApprovals?.list?.() || []).map((d) => d.key));
             for (const k of pending) await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), k);
-            if (await frame.locator(".astep.tool:not(.pending)").count()) break;   // the ROW, not its collapsed body
+            // The run FINISHED (both turns served, no step pending), told from outside the collapsed step body.
+            if (fake.calls().length >= 2 && await frame.locator(".astep.tool").count()
+                && !(await frame.locator(".astep.tool.pending").count())) break;
             await sleep(500);
         }
         const step = frame.locator(".astep").first();

@@ -92,9 +92,11 @@ const setup = async () => {
     for (let i = 0; i < 60; i++) {
         const pending = await ext.sw.evaluate(() => (globalThis.__mlApprovals?.list?.() || []).map((d) => d.key));
         for (const k of pending) await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), k);
-        // Wait on the step ROWS, which are there collapsed: `.r-py-in` lives inside a step's body, every step
-        // starts collapsed, and waiting on it ran this loop to its cap — 24s of every test in this file.
-        if (await frame.locator(".astep.tool:not(.pending)").count() >= 2) break;
+        // Wait for the RUN TO FINISH, told from outside the step bodies: every scripted turn served and no tool
+        // step pending. Waiting on `.r-py-in` (inside a collapsed body) ran this loop to its cap, 24s of every
+        // test here; waiting on only two landed steps let a test open step 2 while step 3 was still arriving.
+        if (fake.calls().length >= 4 && await frame.locator(".astep.tool").count() >= 3
+            && !(await frame.locator(".astep.tool.pending").count())) break;
         await sleep(400);
     }
     return { fake, ext, frame, asked: () => asked };
@@ -203,8 +205,12 @@ test("a diff, a failure and an annotation compose on ONE block without colliding
         await expect(step.locator(".cline-fail")).toHaveCount(1);
         expect(await step.locator(".r-py-in .cline .lcode").allTextContents()).toEqual(linesBefore);
         // The diff is drawn ABOVE the code, so the reader meets "what changed" before "what it says".
-        const diffY = (await step.locator(".r-diff").boundingBox()).y;
-        const codeY = (await step.locator(".code-block pre.code").boundingBox()).y;
+        // Both read in ONE frame: two `boundingBox()` calls are viewport positions taken at different moments,
+        // and anything scrolling the panel between them (likelier on a loaded CI runner) flips the comparison.
+        const { diffY, codeY } = await step.evaluate((el) => ({
+            diffY: el.querySelector(".r-diff").getBoundingClientRect().top,
+            codeY: el.querySelector(".code-block pre.code").getBoundingClientRect().top,
+        }));
         expect(diffY).toBeLessThan(codeY);
     } finally { await ext.context.close(); await fake.stop(); }
 });

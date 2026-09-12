@@ -193,9 +193,14 @@ announces itself). Six things are load-bearing:
   the first completion, never at start-up and never offered to the model.
 - **Only once the sandbox is WARM** (`completeInSandbox` returns null until `benchEnv` is set): a completion
   starts Pyodide when it is cold, and a keystroke must not pay that start, nor push your first Run behind it.
-- **A completion arms NO watchdog** (offscreen.ts). The kill timer starts when a message is POSTED, and a
+- **A completion arms NO watchdog** (offscreen.ts). Every armed call gets a timer when it is POSTED, and a
   completion queued behind a long run would fire it mid-run and kill the worker — your script with it —
-  because you typed. A hung completion is still cleared by the next run's own watchdog.
+  because you typed. A hung completion is still cleared by the next run's own start bound.
+- **The 15s cap is the SCRIPT's** (`PY_TIMEOUT_MS`). The timer armed at the post is the generous START bound
+  (`PY_START_TIMEOUT_MS`, 120s: the queue ahead plus the cold start), and the worker's `started` message
+  (runtime up, this run's turn) swaps in the 15s. Armed from the post, the cold start and any queue were charged
+  to the script: a run queued behind an 8s one was killed three seconds into its own work, and on a loaded CI
+  runner a first `time.sleep(4)` was killed by the boot alone, both with "simplify the computation".
 - **Always hardened, and only from our own surfaces** (the `PYTHON_EXEC` choke point, `sender.url`): analysis
   can import a compiled module to inspect it, which must not reach the network even in `full` mode, and a
   page is refused rather than handed a new kind of request to the one sandbox.

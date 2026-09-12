@@ -12,6 +12,11 @@
 // WASM instance, then the next call respawns a fresh one. Rare enough that paying re-init on the
 // next run is fine.
 const PY_TIMEOUT_MS = 15000;
+// The bound on everything BEFORE a script runs: waiting behind the runs ahead of it, and the cold start (loading
+// the runtime and its packages, several seconds and far more on a loaded machine). The 15s cap is the script's,
+// so it is armed only once the worker says the script has started; this one exists so something hung AHEAD of a
+// run (an unarmed completion, a boot that never finishes) is still cleared.
+const PY_START_TIMEOUT_MS = 120000;
 
 // `bootMs`/`runMs` come from the WORKER, which is the executor — anything measured downstream of it is
 // measuring the message bus as well. See python-worker.ts.
@@ -22,7 +27,19 @@ type PyResult = { ok: boolean; env?: PyEnv; completions?: { name: string; type: 
 // web_accessible_resources entry; it inherits this page's 'wasm-unsafe-eval' CSP.
 let worker: Worker | null = null;
 let nextId = 1;
-const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string }>();
+const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string; armOnStart?: boolean }>();
+
+/** Arm a kill for run `id`: when it fires, that run fails with `error` and the (still-busy) worker is terminated,
+ *  failing anything queued behind it. */
+function killAfter(id: number, ms: number, error: string): ReturnType<typeof setTimeout> {
+    return setTimeout(() => {
+        const entry = pending.get(id);
+        if (!entry) return;   // already resolved
+        pending.delete(id);
+        entry.resolve({ ok: false, stdout: "", error });
+        killWorker("timeout");   // nuke the (still-busy) instance + fail any others queued behind it
+    }, ms);
+}
 
 // Terminate the worker and fail every still-pending run with `reason`. Used on a worker crash and
 // on a timeout kill (after the timed-out run itself has been resolved + removed from `pending`).
@@ -41,6 +58,15 @@ function ensureWorker(): Worker {
         if (e.data?.partial) {
             const entry = pending.get(e.data.id);
             if (entry?.streamId) chrome.runtime.sendMessage({ type: "PY_STDOUT", streamId: entry.streamId, chunk: String(e.data.chunk ?? ""), ts: e.data.ts }).catch(() => { /* no receiver → drop */ });
+            return;
+        }
+        // The script is starting (the runtime is up and it is this run's turn): its own 15s begins now.
+        if (e.data?.started) {
+            const entry = pending.get(e.data.id);
+            if (entry?.armOnStart) {
+                clearTimeout(entry.timer);
+                entry.timer = killAfter(e.data.id, PY_TIMEOUT_MS, `Python run exceeded ${PY_TIMEOUT_MS / 1000}s and was terminated — simplify the computation or reduce the input size.`);
+            }
             return;
         }
         const { id, ...result } = e.data as { id: number } & PyResult;
@@ -69,14 +95,14 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         // because you typed. The editor already gives up on a slow answer by itself, and a completion that
         // somehow hung is still cleared by the next run's own watchdog, which kills whatever is ahead of it.
         // A bench RESET is instant but may likewise queue behind a run, so the same reasoning keeps it unarmed.
-        const timer = noTimeout || complete || bench?.reset ? (0 as unknown as ReturnType<typeof setTimeout>) : setTimeout(() => {
-            const entry = pending.get(id);
-            if (!entry) return;   // already resolved
-            pending.delete(id);
-            entry.resolve({ ok: false, stdout: "", error: `Python run exceeded ${PY_TIMEOUT_MS / 1000}s and was terminated — simplify the computation or reduce the input size.` });
-            killWorker("timeout");   // nuke the (still-busy) instance + fail any others queued behind it
-        }, PY_TIMEOUT_MS);
-        pending.set(id, { resolve, timer, streamId });   // streamId → the background can key live stdout chunks
+        //
+        // And the 15s is the SCRIPT's. It used to run from the post, so a cold start (and any queue ahead) was
+        // charged to it: under load a first `time.sleep(4)` was killed with "simplify the computation", and a
+        // run queued behind a 10s one could expire 5s into its own work. So the post arms only the generous
+        // START bound, and the worker's `started` (runtime up, script about to run) swaps in the script's cap.
+        const timer = noTimeout || complete || bench?.reset ? (0 as unknown as ReturnType<typeof setTimeout>)
+            : killAfter(id, PY_START_TIMEOUT_MS, `The Python sandbox did not start within ${PY_START_TIMEOUT_MS / 1000}s and was terminated.`);
+        pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset) });   // streamId → the background can key live stdout chunks
         w.postMessage({ id, code, image, hardened, tables, stream, ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}) });
     });
 }
