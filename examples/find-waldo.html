@@ -47,7 +47,7 @@
   <p>The entire scene is painted on <b>one <code>&lt;canvas&gt;</code></b> — there are <b>no DOM elements</b>
      to find or click. <code>findByText</code>, <code>interactives</code>, and <code>exec</code> surveys all
      come up empty. The agent has to SEE the target and click its <em>pixel</em>:</p>
-  <p><code>ml.agent("click the target to win", { tools: [ml.clickTool()], hints: "It's all on a canvas — use locate({ strategy: 'grounding' }) (or 'grid', zooming in), then click the @pt:… token it returns." })</code></p>
+  <p><code>ml.agent("click the target to win", { tools: [ml.clickTool()], systemAppend: "It's all on a canvas — use locate({ strategy: 'grounding' }) (or 'grid', zooming in), then click the @pt:… token it returns." })</code></p>
 
   <canvas id="scene"></canvas>
 

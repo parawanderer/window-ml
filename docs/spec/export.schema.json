@@ -336,7 +336,7 @@
             "null"
           ]
         },
-        "hints": {
+        "systemAppend": {
           "type": [
             "string",
             "null"
@@ -380,7 +380,7 @@
         "think",
         "env",
         "vision",
-        "hints"
+        "systemAppend"
       ],
       "additionalProperties": true
     },

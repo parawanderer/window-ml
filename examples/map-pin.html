@@ -42,7 +42,7 @@
      kind of surface Google/Mapbox/Leaflet paint. There is <b>no DOM element</b> for the pin, so
      <code>findByText</code>/<code>interactives</code>/<code>exec</code> can't reach it. The agent must SEE it
      and click its pixel:</p>
-  <p><code>ml.agent("click the location pin on the map", { tools: [ml.clickTool()], hints: "It's a canvas map — use locate({ strategy: 'grounding' }), then click the @pt:… token it returns." })</code></p>
+  <p><code>ml.agent("click the location pin on the map", { tools: [ml.clickTool()], systemAppend: "It's a canvas map — use locate({ strategy: 'grounding' }), then click the @pt:… token it returns." })</code></p>
 
   <canvas id="map"></canvas>
 

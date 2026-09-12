@@ -389,13 +389,13 @@ model, and call `ml.agent`. What's built in:
 
 Returns `{ summary, steps, transcript, elements, hash }` (`elements` holds any DOM
 nodes the agent designated as its answer; `hash` identifies the session for
-`{ resume }`; a `hitCap`/`cancelled` flag marks a run that stopped early). Nudge it without rewriting the prompt via `hints`, cancel it
+`{ resume }`; a `hitCap`/`cancelled` flag marks a run that stopped early). Nudge it without rewriting the prompt via `systemAppend`, cancel it
 with `signal`, and watch every thought and tool call in the console with
 `logDebug` (or pass your own `onStep`):
 
 ```js
 const res = await ml.agent("Hide items that can't be delivered today.", {
-  hints: "On amazon.nl the delivery line reads 'Wordt vandaag bezorgd'.",
+  systemAppend: "On amazon.nl the delivery line reads 'Wordt vandaag bezorgd'.",
   logDebug: true          // one console line per step — thoughts, tool calls, live nodes
   maxSteps: 45
 });

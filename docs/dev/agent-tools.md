@@ -131,7 +131,7 @@ by `INVOCATION_TIMEOUT_MS` and falls back to generic advice — a docs call must
 The **context-menu** line is gated on the manifest declaring `contextMenus`, so it turns itself on
 when that feature ships rather than advertising an affordance that doesn't exist yet. A
 **HUD-started** run additionally gets `HUD_HINT` via `ml.agent`'s
-`hints` (which APPENDS; `system` would replace the preamble) at the `__mlStartAgent` handler —
+`systemAppend` (which APPENDS; `system` would replace the preamble) at the `__mlStartAgent` handler —
 SELF_CLAUSE's "the user can drive you from the console" is true but isn't how *that* user
 actually invoked it. It's a **line scanner, not a real parser**: `typescript@7` is the
 Go port and exports only `version` — no JS compiler API — so TypeDoc/ts-morph would each mean a
@@ -231,7 +231,7 @@ already there, this just tees it to `emitDebug`. A depth counter (`inAgentRun`)
 suppresses `chat*` events while a run is in flight, so the auto-wired `look`
 tool's internal `ml.chat` doesn't spawn orphan chat sessions (its result already
 shows as the tool step). `agent` also carries the run's resolved `config`
-(system prompt, tools, maxSteps, env/vision/hints) for the sidebar's "agent
+(system prompt, tools, maxSteps, env/vision/systemAppend) for the sidebar's "agent
 options" block, and each tool step carries `argIssues` — a minimal page-side
 JSON-Schema check (`validateArgs`: required/type/enum/unknown-prop) of the args
 against the tool's `parameters`, rendered as a red strip. It is also APPENDED to

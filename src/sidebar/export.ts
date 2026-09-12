@@ -273,7 +273,7 @@ function writeAgent(s: Session, d: Sink): void {
         if (c.think != null) lines.push(`think: ${c.think}`);
         if (!c.env) lines.push("env: false");
         if (c.vision != null && c.vision !== true) lines.push(`vision: ${JSON.stringify(c.vision)}`);
-        if (c.hints) lines.push(`hints: ${c.hints}`);
+        if (c.systemAppend) lines.push(`systemAppend: ${c.systemAppend}`);
         lines.push(`tools (${c.tools.length}): ${c.tools.map(t => t.name + (t.requiresApproval ? " ⚠" : "")).join(", ")}`);
         d.head("Agent options");
         d.code(lines.join("\n"));

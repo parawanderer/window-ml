@@ -13,7 +13,7 @@
 //      models drive the loop more reliably — loop reliability scales with size.
 //
 // The generic devtools *workflow* is built into ml.agent's default prompt, so all
-// we supply is task FACTS (`hints`) + ONE custom action tool (hideElements) — the
+// we supply is task FACTS (`systemAppend`) + ONE custom action tool (hideElements) — the
 // "minimal setup" the agent is designed for. The loop, step cap, and action all
 // live HERE, on your side; window.ml stays a primitive.
 
@@ -30,7 +30,7 @@
 
     // Task-specific FACTS only. The generic devtools workflow (orient → locate →
     // walk up → verify → act → confirm → iterate) is built into ml.agent's default
-    // system prompt — we pass these as `hints`, which APPEND to it (vs `system`,
+    // system prompt — we pass these as `systemAppend`, which APPEND to it (vs `system`,
     // which would replace the whole thing). This is the "minimal setup" the agent
     // is designed for: the model already knows *how*; we supply the *facts*.
     const HINTS = [
@@ -82,7 +82,7 @@
     const result = await ml.agent(TASK, {
         model: 'qwen3.5:122b',
         think: true,                       // surface the model's reasoning (below)
-        hints: HINTS,                      // task FACTS; the workflow is built in
+        systemAppend: HINTS,                      // task FACTS; the workflow is built in
         // ml.domTools (read-only probes) + your action + eyes. lookTool lets the
         // model screenshot the page (no selector) to ORIENT when the task is
         // vague, or an element to judge how it *looks* (sponsored/greyed-out).
