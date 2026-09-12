@@ -88,5 +88,5 @@ Written to `tests/e2e/artifacts/<RUN_LABEL|timestamp>/` (gitignored):
   console. `res.elements` holds live DOM nodes and can't structured-clone back to Node; a run that designates
   elements will fail to return them (read them from the artifacts instead).
 
-**Keep this skill + the AGENTS.md `observe.mjs` bullet in sync with the script** whenever you change its
+**Keep this skill, the `observe.mjs` notes in docs/dev/e2e-harness.md and its one-line mention in AGENTS.md in sync with the script** whenever you change its
 behaviour — that's the repo rule (AGENTS.md → Conventions → "self-tools get a skill").
