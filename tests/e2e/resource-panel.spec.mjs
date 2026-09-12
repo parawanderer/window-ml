@@ -4553,12 +4553,12 @@ test("resource panel: a card's facts are on its name, and the interconnect is no
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
         await seedStacked(ext);
         const { frame } = await openPanel(fake, ext);
-        await expect.poll(() => frame.locator(".rc-name").count(), { timeout: 25000 }).toBeGreaterThan(0);
-
         // THE NAME IS STILL THE NAME. The tooltip is a SIBLING inside the trigger, not a child of `.rc-name`
         // — put it inside and the label's own text becomes the label plus three sentences of prose, which
         // every reader of that element then picks up. Several tests and the panel itself read this as a label.
-        expect(await frame.locator(".rc-name").first().textContent()).toBe("CUDA0");
+        // Polled, not read once: the seeded per-card layout applies only once capacity is known, and until then
+        // the default Overview draws ONE track named after every pool ("CUDA0 · CUDA1 · System RAM").
+        await expect.poll(() => frame.locator(".rc-name").first().textContent(), { timeout: 25000 }).toBe("CUDA0");
 
         const tip = frame.locator(".rc-devfacts").first().locator(".tt-pop");
         const text = (await tip.textContent()).replace(/\s+/g, " ");
