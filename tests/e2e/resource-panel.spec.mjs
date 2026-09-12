@@ -3471,14 +3471,21 @@ test("resource panel: a model switched off is skipped by the keys", async () => 
             return n.length ? n[0] : null;
         };
         const plot = await frame.locator(".rc-plot").first().boundingBox();
-        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.06);
-        await sleep(300);
+        // The keys answer only while the pointer is on the chart, and the tip renders a frame after the key. Both
+        // are waited for rather than slept on: a loaded CI runner took longer than the fixed 300/250 ms.
+        const onChart = async () => {
+            await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.06);
+            await expect.poll(() => frame.locator(".rc-cross").count(), { timeout: 5000 }).toBeGreaterThan(0);
+        };
+        const press = async (expected, message) => {
+            await page.keyboard.press("ArrowDown");
+            await expect.poll(focused, { message, timeout: 5000 }).toBe(expected);
+        };
+        await onChart();
 
         // Both are reachable to begin with.
-        await page.keyboard.press("ArrowDown"); await sleep(250);
-        expect(await focused()).toBe("gemma4:31b");
-        await page.keyboard.press("ArrowDown"); await sleep(250);
-        expect(await focused()).toBe("qwen3.8:27b");
+        await press("gemma4:31b");
+        await press("qwen3.8:27b");
         await page.keyboard.press("Escape"); await page.keyboard.press("Escape"); await sleep(250);
 
         // Switch the first one off by its colour dot — the same control that takes it out of the totals.
@@ -3486,12 +3493,9 @@ test("resource panel: a model switched off is skipped by the keys", async () => 
         await sleep(600);
 
         // …and the keys walk straight past it.
-        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.06);
-        await sleep(250);
-        await page.keyboard.press("ArrowDown"); await sleep(300);
-        expect(await focused(), "the switched-off model is not a place the keys can land").toBe("qwen3.8:27b");
-        await page.keyboard.press("ArrowDown"); await sleep(300);
-        expect(await focused(), "…and the list wraps back to the overview past it").toBeNull();
+        await onChart();
+        await press("qwen3.8:27b", "the switched-off model is not a place the keys can land");
+        await press(null, "…and the list wraps back to the overview past it");
     } finally { await ext.close(); await fake.stop(); }
 });
 

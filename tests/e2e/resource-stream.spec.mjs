@@ -1173,3 +1173,29 @@ test("the phase ribbon draws each model's prefill and decode along its card, and
         await expect.poll(() => track.locator(".rc-ribbon-seg").count(), { timeout: 5000 }).toBe(0);
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+// THE SERVER REMEMBERS WHICH CARD IT WAS (`last_name`/`last_seen`, `ollama-slop:devicenames`), across restarts —
+// so a panel that never saw the card healthy can still name it. The real capture has the field ABSENT (the fault
+// predates the build); this is its shape as built, on top of that capture.
+test("a faulted card is named by the server's own memory of it, with when", async () => {
+    const raw = JSON.parse(readFileSync(fileURLToPath(new URL("../fixtures/hw/gpu-description-one-card-faulted-2026-09-12.json", import.meta.url)), "utf8"));
+    const seen = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
+    raw.compute.unavailable_gpus = raw.compute.unavailable_gpus.map((u) => ({ ...u, last_name: "CUDA1", last_seen: seen }));
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setEvents([
+            { v: 1, kind: "hello", t: 0, box: "test", retainedMs: 60_000, unavailable_gpus: raw.compute.unavailable_gpus },
+            { v: 1, kind: "sample", t: -1000, ps: { models: [] }, info: raw },
+        ]);
+        const { frame } = await openPanel(fake, ext);
+        const banner = frame.locator(".rc-gpufault");
+        await expect(banner).toHaveCount(1, { timeout: 25000 });
+        expect((await banner.textContent()).replace(/\s+/g, " "))
+            .toMatch(/CUDA1 · NVIDIA RTX PRO 6000 Blackwell Workstation Edition at 0000:03:00\.0 — its label when last seen, 3h ago/);
+    } finally { await ext.context.close(); await fake.stop(); }
+});

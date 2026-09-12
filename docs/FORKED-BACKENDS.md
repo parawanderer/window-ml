@@ -120,6 +120,19 @@ Helpers (a fit probe, device discovery as a process named `ollama` briefly holdi
 are flagged so they are not read as tenants. Absent on every older build, where the residual is still named
 by its size. Captures: `tests/fixtures/hw/runner-pids-*-2026-09-11.*`.
 
+**What a card IS, and which card a faulted one was (`ollama-slop:devicenames`, 2026-09-12).**
+`supported_gpus[].description` is the driver's product string ("NVIDIA RTX PRO 6000 Blackwell Workstation
+Edition"), from `ml.DeviceInfo.Description` — the same string the fault path already carried; `name` stays the
+backend's label (`CUDA0`). Verified live on CUDA only; HIP/ROCm and Vulkan read their driver's device name by the
+same code path, Metal is unchecked, and a CUDA card split into virtual devices gets ` (dev pN/vM)` appended, so the
+string is shown, never matched. `unavailable_gpus[].last_name` / `last_seen` say what that bus address was called
+when the server last saw it healthy, kept in `device-names.json` beside the models so they survive a restart
+(`last_seen` exact within a run, within ten minutes across one). ABSENT means the server never saw that address
+healthy — it never guesses from enumeration order, which shifts when a card drops out. The panel's fault banner
+prefers `last_name`, then its own per-backend record. Capture:
+`tests/fixtures/hw/gpu-description-one-card-faulted-2026-09-12.json` (the fault predates the build, so `last_name`
+is absent there).
+
 **Reachability, and a correction.** The extension finds Ollama through the same base discovery it uses for
 `/api/ps`: `<origin>/ollama` first (OpenWebUI's passthrough), then `<origin>`. This file used to say
 OpenWebUI proxies `/ollama/*` generically. **It does not** — it proxies NAMED ollama routes, so each new
