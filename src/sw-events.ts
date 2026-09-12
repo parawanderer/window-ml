@@ -10,6 +10,7 @@
 // backfill closes it, so an eviction costs latency and not history. `sinceFor` is where that is decided.
 import { getConfig, authHeaders, findOllamaBase } from "./sw-llm";
 import { readFrames, sinceFor, loadedFrom, lostSince, type ResourceFrame } from "./resource-events";
+import { LoadRecorder, addRecords, PREDICT_KEY, LOAD_RECORDS_KEY, type LoadRecord } from "./load-records";
 
 /** What a subscriber receives. `at` is the frame's own wall clock, resolved from this connection's hello,
  *  so nothing downstream ever sees a relative offset. `loaded` is filled for a `sample` frame — the panel
@@ -67,6 +68,23 @@ export const resourceStreamStatus = (): ResourceStreamStatus => ({ ...status, ki
 const FRAME_RING = 400;
 const frameRing: { frame: ResourceFrame; at: number }[] = [];
 export const recentFrames = (): { frame: ResourceFrame; at: number }[] => frameRing.slice();
+
+// ONE RECORD PER LOAD, for tuning the server's VRAM predictor — kept only while the panel's "load predictions"
+// toggle is on, and in storage.local so a worker eviction does not lose what it collected. `ml.__loads()`.
+const recorder = new LoadRecorder();
+// Serialized: two loads settling on one sample would otherwise race the read-modify-write and drop one.
+let keeping: Promise<void> = Promise.resolve();
+function keepRecords(fresh: LoadRecord[]): Promise<void> {
+    if (!fresh.length) return keeping;
+    return (keeping = keeping.then(() => storeRecords(fresh)));
+}
+async function storeRecords(fresh: LoadRecord[]): Promise<void> {
+    try {
+        const got = await chrome.storage.local.get({ [PREDICT_KEY]: false, [LOAD_RECORDS_KEY]: [] });
+        if (!got[PREDICT_KEY]) return;
+        await chrome.storage.local.set({ [LOAD_RECORDS_KEY]: addRecords(got[LOAD_RECORDS_KEY] as LoadRecord[], fresh) });
+    } catch { /* storage unavailable: nothing to keep them in */ }
+}
 
 const RETRY_MS = [1000, 2000, 5000, 10_000, 30_000];
 /** The server's retained ring. A first connection asks for all of it: on a fresh open that is history the
@@ -135,6 +153,7 @@ async function connect(): Promise<void> {
             if (frame.t >= 0) lastFrameAt = Math.max(lastFrameAt ?? 0, at);
             status.frames++; status.lastAt = at;
             frameRing.push({ frame, at });
+            void keepRecords(recorder.push(frame as ResourceFrame & Record<string, unknown>, at));
             if (frameRing.length > FRAME_RING) frameRing.splice(0, frameRing.length - FRAME_RING);
             status.kinds[frame.kind] = (status.kinds[frame.kind] || 0) + 1;
             if (frame.kind === "sample") status.samples++;

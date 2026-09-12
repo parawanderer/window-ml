@@ -2553,3 +2553,78 @@ test("deviceBands: through a load, helpers are not tenants and the loading runne
     const done = lines.at(-1);
     assert.equal(M.deviceBands(at(done), "0").find((b) => b.kind === "other" && b.bytes > 0).key, "runner:qwen3.5:0.8b");
 });
+
+test("deviceBands: a process list with no scope is an EARLIER build's, and names nothing", () => {
+    // tests/e2e/fixtures/events-load-lifecycle.json was recorded on a build that listed bare `{pid, used_memory}`
+    // entries — no scope, no runner marks — so pid 956 is ollama's own runner and must not become a tenant.
+    const frames = JSON.parse(readFileSync(new URL("./e2e/fixtures/events-load-lifecycle.json", import.meta.url), "utf8"));
+    const f = frames.filter((x) => x.kind === "sample" && x.info).at(-1);
+    const sample = { t: 1, capacity: M.parseInfo(f.info), models: (f.ps?.models || []).map(M.residencyFrom) };
+    const bands = M.deviceBands(sample, "0");
+    assert.ok(!bands.some((b) => b.key.startsWith("proc:")), `no tenant invented: ${bands.map((b) => b.key)}`);
+    assert.notEqual(bands.find((b) => b.key === "other").label, M.OUTSIDE_VIEW_LABEL, "and the size rule still names the residual");
+});
+
+test("estimateFrom: the predictor's figures off a real estimate frame, and nothing without a total", () => {
+    const frames = JSON.parse(readFileSync(new URL("./e2e/fixtures/events-gen-timings.json", import.meta.url), "utf8"));
+    const f = frames.find((x) => x.kind === "estimate" && x.estimate.source === "calibration" && /gemma4:e2b/.test(x.model));
+    assert.deepEqual(M.estimateFrom(f.estimate), {
+        predicted: 4639812484, forLoad: 6787296132, source: "calibration", numCtx: 131072, numGpu: 1, numBatch: 2048,
+        metadataComplete: false, weights: 2448863116, kvCache: 9395240960,
+    });
+    // `compute: 0` in the breakdown is "not modelled", so it is not carried as a prediction of nothing.
+    assert.equal("compute" in M.estimateFrom(f.estimate), false);
+    assert.equal(M.estimateFrom({ source: "metadata" }), null);
+    assert.equal(M.estimateFrom(null), null);
+});
+
+test("quantPlain: a quantization code in words, integer and float kept apart, unknown left alone", () => {
+    assert.equal(M.quantPlain("Q4_K_M").short, "4-bit weights");
+    assert.match(M.quantPlain("Q4_K_M").detail, /4-bit integers with a scale per block \(a K-quant, medium mix/);
+    assert.equal(M.quantPlain("q8_0").short, "8-bit weights");
+    assert.match(M.quantPlain("Q4_1").detail, /and an offset/);
+    // A float is a float: MXFP4 is not "4-bit weights" in the integer sense, and BF16 is not quantized at all.
+    assert.equal(M.quantPlain("MXFP4").short, "4-bit floats");
+    assert.match(M.quantPlain("BF16").detail, /unquantized/);
+    assert.equal(M.quantPlain("IQ4_XS").short, "~4-bit weights");
+    assert.equal(M.quantPlain("TQ1_0"), null, "a code it does not know is shown as itself, not guessed at");
+});
+
+test("loadTrace: through a real load, the runner's peak beside where it settled", () => {
+    // Every runner reading a 100 ms poll saw across one load (fixtures/hw), each on card 0 of a box that
+    // lists processes, after a baseline reading from before the load began.
+    const lines = readFileSync(new URL("./fixtures/hw/runner-pids-during-load-2026-09-11.ndjson", import.meta.url), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    const TOTAL = 101972967424, BASE = 600 * MiB;
+    const cap = (procs, used) => M.parseInfo({ compute: { system_compute: { total_memory: 8e9 },
+        supported_gpus: [{ gpu_id: "0", runner: "CUDA", total_memory: TOTAL, free_memory: TOTAL - used, processes_scope: "pid_namespace", processes: procs }] } });
+    const samples = [{ t: 0, models: [], capacity: cap([], BASE) },
+        ...lines.map((p, i) => ({ t: 100 * (i + 1), models: [], capacity: cap([p], BASE + p.used_memory) }))];
+    const end = 100 * lines.length - 50;   // the edge lands between the last loading reading and the resident one
+    const tr = M.loadTrace(samples, { t: 50, until: end, model: "registry.ollama.ai/library/qwen3.5:0.8b" });
+    assert.equal(tr.basis, "runner", "the runner is listed, so its own memory is the measure");
+    assert.deepEqual(tr.cards, ["0"]);
+    assert.equal(tr.baseline["0"], BASE);
+    assert.equal(tr.peak.bytes, 6348079104);
+    assert.equal(tr.final.bytes, 6348079104);
+    // Helpers are not the runner: the fit probe's and discovery's memory is not counted as this load's.
+    assert.ok(tr.points.slice(0, 4).every((p) => p.bytes === 0), `before the runner exists: ${tr.points.slice(0, 4).map((p) => p.bytes)}`);
+    // No sample before the load: nothing to measure growth from.
+    assert.equal(M.loadTrace(samples.slice(1), { t: 50, until: end, model: "qwen3.5:0.8b" }), null);
+});
+
+test("loadTrace: with no runner to read, the cards' growth — peak above where it settled", () => {
+    const cap = (used0) => M.parseInfo({ compute: { system_compute: { total_memory: 8e9 },
+        supported_gpus: [{ gpu_id: "0", runner: "CUDA", total_memory: 100 * GB, free_memory: 100 * GB - used0 }, { gpu_id: "1", runner: "CUDA", total_memory: 100 * GB, free_memory: 100 * GB }] } });
+    const s = (t, used) => ({ t, models: [], capacity: cap(used) });
+    // 1 GB before; the load overshoots to 14 GB (a transient buffer) and settles at 11.
+    const tr = M.loadTrace([s(0, 1 * GB), s(1000, 5 * GB), s(2000, 15 * GB), s(3000, 12 * GB)], { t: 500, until: 2500, model: "m" });
+    assert.equal(tr.basis, "device");
+    assert.deepEqual(tr.cards, ["0"], "only the card that grew");
+    assert.deepEqual([tr.peak.bytes, tr.final.bytes], [14 * GB, 11 * GB]);
+    // A box that LISTS processes but not this model's runner (another tenant only) is still measured, by the
+    // cards' growth — reading the absent runner as zero bytes would record a load that took nothing.
+    const scoped = (used0) => { const c = cap(used0); c.devices[0].processesScope = "pid_namespace"; c.devices[0].processes = [{ pid: 9, usedBytes: 1 * GB, helper: false }]; return c; };
+    const t2 = M.loadTrace([0, 1000, 2000, 3000].map((t, i) => ({ t, models: [], capacity: scoped([1, 5, 15, 12][i] * GB) })), { t: 500, until: 2500, model: "m" });
+    assert.equal(t2.basis, "device");
+    assert.equal(t2.peak.bytes, 14 * GB);
+});

@@ -2736,6 +2736,29 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             return dump;
         },
         /**
+         * One record per model LOAD, for tuning the server's VRAM predictor — collected in the service worker
+         * while the resource panel's "load predictions" toggle is on (off by default), and kept across worker
+         * restarts. Each has the server's prediction (`estimate`, verbatim), the load's own figures
+         * (`complete`, verbatim), and the measured `trace`: where it peaked, where it settled, and every sample
+         * between as `[ms since the load began, bytes]`. The panel must be OPEN while loads happen — the stream
+         * is only connected then. Underscored: a debugging aid, not API.
+         *
+         * @param opts.download Save them as `ml-loads-<time>.json` instead of only returning them.
+         * @param opts.clear Empty the store after reading it.
+         * @returns {Promise<object[]>} The records, oldest first.
+         */
+        __loads: async function(opts?: { download?: boolean; clear?: boolean }): Promise<unknown[]> {
+            const records = await makeBackgroundTaskPromise("DUMP_LOADS_REQUEST", "DUMP_LOADS_RESPONSE", { clear: !!opts?.clear }) as unknown[];
+            if (opts?.download) {
+                const url = URL.createObjectURL(new Blob([JSON.stringify(records, null, 1)], { type: "application/json" }));
+                const a = document.createElement("a");
+                a.href = url; a.download = `ml-loads-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(url), 10_000);
+            }
+            return records;
+        },
+        /**
          * Evict a model from VRAM (keep_alive: 0).
          * No argument = evict all. Returns the list of models that were told to unload.
          *

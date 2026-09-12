@@ -1581,7 +1581,9 @@ test("VRAM monitor shows each model's quantization, with its size and family beh
     const rows = [...w.shadow.querySelectorAll(".vram-row")];
     const badge = rows[0].querySelector(".vram-quant");
     assert.ok(badge, "the quantization is on the row");
-    assert.equal(badge.firstChild.textContent.trim(), "Q4_K_M");
+    // In WORDS on the chip; the code, and what it means, behind it.
+    assert.equal(badge.firstChild.textContent.trim(), "4-bit weights");
+    assert.match(badge.querySelector(".tt-pop").textContent, /Q4_K_M: Weights stored as 4-bit integers/);
     assert.match(badge.querySelector(".tt-pop").textContent, /31\.3B parameters, gemma4 family/);
     assert.equal(rows[1].querySelector(".vram-quant"), null, "nothing reported, nothing drawn — never a guess");
 });

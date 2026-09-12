@@ -684,6 +684,164 @@ export function decodeCeiling(r: Roofline | null | undefined, occupancy: number)
  *  The counts are `omitempty` on the wire, so a missing one is genuinely zero for an in-flight task and is
  *  simply gone once the task ends. They are kept OPTIONAL rather than defaulted to 0 for that second case:
  *  an idle runner reporting `decoded: 0` would read as a generation that has produced nothing yet. */
+// A model pulled from elsewhere (`hf.co/user/model`) keeps its prefix, because ps keeps it too, and stripping to
+// the last path segment would collide two genuinely different models that happen to share a name.
+const DEFAULT_REGISTRY = "registry.ollama.ai/";
+const DEFAULT_NAMESPACE = "library/";
+/** ONE CANONICAL NAME for a model. The event stream names them fully-qualified
+ *  (`registry.ollama.ai/library/gemma4:31b`) while `/api/ps` names them short, in the same frame — so
+ *  without this every streamed model is drawn TWICE, once as a phantom "off-box" row. The inverse of
+ *  Ollama's own ShortName: default registry, default `library` namespace, implicit `:latest`. */
+export const normModel = (m: string): string => {
+    let s = m.startsWith(DEFAULT_REGISTRY) ? m.slice(DEFAULT_REGISTRY.length) : m;
+    if (s.startsWith(DEFAULT_NAMESPACE)) s = s.slice(DEFAULT_NAMESPACE.length);
+    return s.replace(/:latest$/, "");
+};
+
+/**
+ * A QUANTIZATION CODE IN WORDS — "Q4_K_M" is a code, "4-bit weights" is what it means.
+ *
+ * `short` is the chip, `detail` the sentence behind it. The two families are kept apart because they are
+ * different things: `Q4_*` is a 4-bit INTEGER with a scale per block of weights, not a 4-bit float, while
+ * `MXFP4` (gpt-oss) and `F16`/`BF16` really are floats. The K-quant suffix says how the precision is MIXED —
+ * `_S`/`_M`/`_L` keep progressively more tensors at a higher precision, so a "4-bit" model averages somewhat
+ * above four bits per weight. Null for a code this does not know; the caller shows the code itself rather
+ * than a guess about it.
+ */
+export function quantPlain(code: string): { short: string; detail: string } | null {
+    const q = code.trim().toUpperCase();
+    const floats: Record<string, [string, string]> = {
+        F32: ["32-bit floats", "full precision, unquantized"],
+        F16: ["16-bit floats", "half precision, unquantized"],
+        BF16: ["bfloat16", "16-bit brain-float, unquantized — the precision most models are trained in"],
+        MXFP4: ["4-bit floats", "MXFP4: 4-bit floating point with a shared scale per block of 32"],
+        NVFP4: ["4-bit floats", "NVFP4: 4-bit floating point with a scale per block of 16"],
+    };
+    if (floats[q]) return { short: floats[q][0], detail: `Weights stored as ${floats[q][0]} (${floats[q][1]}).` };
+    const mix: Record<string, string> = { S: "small", M: "medium", L: "large", XS: "extra small", XXS: "extra extra small" };
+    const k = /^Q(\d)_K(?:_(S|M|L))?$/.exec(q);
+    if (k) return { short: `${k[1]}-bit weights`, detail: `Weights stored as ${k[1]}-bit integers with a scale per block (a K-quant${k[2] ? `, ${mix[k[2]]} mix: some tensors are kept at a higher precision, so it averages somewhat above ${k[1]} bits` : ""}).` };
+    const legacy = /^Q(\d)_([01])$/.exec(q);
+    if (legacy) return { short: `${legacy[1]}-bit weights`, detail: `Weights stored as ${legacy[1]}-bit integers with a scale per block of 32${legacy[2] === "1" ? " and an offset" : ""} (a legacy quant).` };
+    const iq = /^IQ(\d)_(XXS|XS|S|M|NL)$/.exec(q);
+    if (iq) return { short: `~${iq[1]}-bit weights`, detail: `Weights stored at about ${iq[1]} bits each (an i-quant, ${iq[2] === "NL" ? "non-linear" : mix[iq[2]] + " mix"}: packed with an importance matrix, smaller than a K-quant of the same bit count).` };
+    return null;
+}
+
+/**
+ * WHAT THE SERVER'S PREDICTOR EXPECTED A LOAD TO HOLD — an `estimate` frame, sent as a load is being placed.
+ *
+ * For tuning the predictor, not for a user: it is the input the placement decision was made on. `predicted` is
+ * the predictor's own figure and `forLoad` adds the generation-batch surcharge, and it is `forLoad` that
+ * placement fits against — so comparing the bare figure with a finished load makes the predictor look ~15% low
+ * across the board. `source` says which predictor answered: `calibration` (a fit over this model's measured
+ * loads), `metadata` (derived from the model file alone, when there is nothing to fit yet) or `probe`.
+ *
+ * `weights`/`kvCache` are the METADATA model's split whatever `source` says, and only those two are populated:
+ * they do not sum to either total and are compared term by term with the load's measured `memory`, never
+ * summed and never drawn as a stack.
+ */
+export interface LoadEstimate {
+    predicted: number;
+    forLoad?: number;
+    source?: string;
+    numCtx?: number;
+    numGpu?: number;
+    numBatch?: number;
+    metadataComplete?: boolean;
+    weights?: number;
+    kvCache?: number;
+}
+
+/** Parse `estimate` off an `estimate` frame, or null when there is no predicted total to compare. */
+export function estimateFrom(raw: unknown): LoadEstimate | null {
+    const e = raw && typeof raw === "object" ? raw as Record<string, unknown> : null;
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+    const predicted = num(e?.predicted);
+    if (!e || predicted == null) return null;
+    const b = e.breakdown && typeof e.breakdown === "object" ? e.breakdown as Record<string, unknown> : {};
+    const out: LoadEstimate = { predicted };
+    const set = <K extends keyof LoadEstimate>(k: K, v: LoadEstimate[K] | undefined) => { if (v !== undefined) out[k] = v; };
+    set("forLoad", num(e.predicted_for_load));
+    set("source", typeof e.source === "string" && e.source ? e.source : undefined);
+    set("numCtx", num(e.num_ctx));
+    set("numGpu", num(e.num_gpu));
+    set("numBatch", num(e.num_batch));
+    set("metadataComplete", typeof e.metadata_complete === "boolean" ? e.metadata_complete : undefined);
+    // A 0 in the breakdown is "not modelled" (compute is always 0 there), never a prediction of nothing.
+    set("weights", num(b.weights) || undefined);
+    set("kvCache", num(b.kv_cache) || undefined);
+    return out;
+}
+
+/**
+ * WHAT A LOAD ACTUALLY TOOK, over time — the ground truth a prediction is checked against.
+ *
+ * VRAM does not rise monotonically through a load: a fit probe and device discovery come and go, the weights
+ * land, then the context allocates, and it settles below its peak. A fit decision has to cover the PEAK, so
+ * the trace reports the peak beside where it settled, and every point in between for anyone fitting a model
+ * to it.
+ *
+ * Two bases, and the trace says which it used. `runner`: the loading model's own process memory, summed over
+ * the cards the driver lists it on — exact, and blind to anything else on the card. `device`: the growth of
+ * each card's used memory over its level just before the load began — the fallback on a server that lists no
+ * processes, and wrong whenever something else moves at the same time (an eviction making room does exactly
+ * that, and reads here as negative growth).
+ */
+export interface LoadTrace {
+    basis: "runner" | "device";
+    /** Each card's used memory in the last sample at or before the load began. */
+    baseline: Record<string, number>;
+    /** The cards the load landed on: the runner's, or on the device basis the ones that grew. */
+    cards: string[];
+    points: { t: number; bytes: number }[];
+    peak: { t: number; bytes: number } | null;
+    /** The first reading at or after the load ended, or null while it has not arrived. */
+    final: { t: number; bytes: number } | null;
+}
+
+/** Trace one load through the samples. Null when no sample precedes it, since growth needs a starting level. */
+export function loadTrace(samples: ResourceSample[], load: { t: number; until?: number; model?: string }, settleWithinMs = 30_000): LoadTrace | null {
+    const sorted = [...samples].sort((a, b) => a.t - b.t);
+    const before = [...sorted].reverse().find((s) => s.t <= load.t && s.capacity);
+    if (!before?.capacity) return null;
+    const baseline: Record<string, number> = {};
+    for (const d of before.capacity.devices) baseline[d.id] = Math.max(0, d.totalBytes - d.freeBytes);
+    const end = load.until ?? Infinity;
+    // Every reading during the load, and the first one after it — which is where it SETTLED, however long the
+    // stream's cadence made us wait for it (15 s when idle), up to a bound past which it is a different moment.
+    const after = sorted.find((s) => s.t >= end && s.capacity && s.t <= end + settleWithinMs);
+    const within = sorted.filter((s) => s.t > load.t && s.t < end && s.capacity).concat(after ? [after] : []);
+    // The runner basis needs the model's runner to actually be FOUND: a list with no marks (an earlier server
+    // build) or with the runner absent would otherwise trace a load of zero bytes.
+    const runnerOn = (s: ResourceSample): Record<string, number> => {
+        const by: Record<string, number> = {};
+        for (const d of s.capacity!.devices)
+            for (const p of d.processes ?? []) if (p.runner && load.model && normModel(p.runner.model) === normModel(load.model)) by[d.id] = (by[d.id] ?? 0) + p.usedBytes;
+        return by;
+    };
+    const basis: LoadTrace["basis"] = load.model && within.some((s) => Object.keys(runnerOn(s)).length) ? "runner" : "device";
+    const cards = new Set<string>();
+    const points = within.map((s) => {
+        if (basis === "runner") {
+            const by = runnerOn(s);
+            Object.keys(by).forEach((c) => cards.add(c));
+            return { t: s.t, bytes: Object.values(by).reduce((n, v) => n + v, 0) };
+        }
+        let grown = 0;
+        for (const d of s.capacity!.devices) {
+            const g = Math.max(0, d.totalBytes - d.freeBytes) - (baseline[d.id] ?? 0);
+            if (g > 64 * 1024 ** 2) cards.add(d.id);
+            grown += g;
+        }
+        return { t: s.t, bytes: grown };
+    });
+    const during = points.filter((p) => p.t <= end);
+    const peak = during.length ? during.reduce((m, p) => (p.bytes > m.bytes ? p : m)) : null;
+    const final = points.find((p) => p.t >= end) ?? null;
+    return { basis, baseline, cards: [...cards].sort(), points, peak, final };
+}
+
 export function activityFrom(raw: unknown): RunnerActivity | null {
     if (!raw || typeof raw !== "object") return null;
     const a = raw as Record<string, unknown>;
@@ -1088,12 +1246,14 @@ export function deviceBands(sample: ResourceSample, deviceId: string): Band[] {
     // what is in use: what we can see resident is in use whatever the other sample says yet.
     // THE DRIVER'S OWN LIST, when the server reports it: the residual is then named process by process instead
     // of guessed from its size.
-    const named = cap.processes || cap.processesScope ? processBands(cap, bands) : [];
+    // Only a list WITH a scope: an earlier server build listed bare `{pid, used_memory}` entries with neither the
+    // scope nor the runner marks, and read as authoritative that list names ollama's own runner as a stranger.
+    const named = cap.processesScope ? processBands(cap, bands) : [];
     const listed = named.reduce((n, b) => n + b.bytes, 0);
     bands.push(...named);
     const used = Math.max(0, cap.totalBytes - cap.freeBytes, attributed + unknown + listed);
     const residual = Math.max(0, used - attributed - unknown - listed);
-    if (cap.processesScope || cap.processes) {
+    if (cap.processesScope) {
         // What no listed process accounts for. With every process listed it is the driver's own; in a
         // container it is whatever ollama cannot see — which may be another tenant, and must not be called
         // overhead just because it is small.
@@ -2631,6 +2791,11 @@ export interface ResourceEvent {
      *  load does not fail — it quietly runs the remainder on the CPU and is merely slow. There is no error
      *  and no other signal, so this difference is the only way to know a load was degraded. */
     totalBytes?: number;
+    /** What the server's PREDICTOR expected this load to hold (the last `estimate` frame before it completed),
+     *  and what the load actually held by kind (`load.complete`'s `memory`). For tuning the predictor, so the
+     *  panel shows them only when asked (`predictView`). */
+    estimate?: LoadEstimate;
+    measured?: MemoryBreakdown;
     /** The ENGINE's own figures for a generation — prompt and cached tokens, prefill and decode durations,
      *  tokens decoded — when the server's event stream reported it (`gen.end.timings`). On a server `gen`
      *  span, and on a session block the server's generation was JOINED to (see `joinGens`). */

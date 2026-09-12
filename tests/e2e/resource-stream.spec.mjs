@@ -10,7 +10,7 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { launchExtension, configureExtension } from "./harness.mjs";
+import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1022,5 +1022,102 @@ test("no fault, and a card merely not claimed by a backend, both draw nothing", 
         ]) });
         await sleep(1500);
         await expect(frame.locator(".rc-gpufault")).toHaveCount(0);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+// THE PREDICTOR'S FIGURES, for whoever is tuning it — OFF by default, and a load then says nothing about it. With
+// the gear toggle on, the load's tooltip sets the prediction against what the load took, the card it landed on
+// carries a dashed line where the prediction said it would land, and `ml.__loads()` hands the same comparison
+// back as data. The recording is the real load of gemma4:31b onto CUDA1, with an estimate frame added in front of
+// its start (this capture predates the frame).
+const ESTIMATE = { v: 1, kind: "estimate", t: -62600, model: "registry.ollama.ai/library/gemma4:31b",
+    estimate: { predicted: 40 * 1024 ** 3, predicted_for_load: 42 * 1024 ** 3, source: "calibration", num_ctx: 262144,
+                num_gpu: 1, num_batch: 512, metadata_complete: true, breakdown: { weights: 18 * 1024 ** 3, kv_cache: 20 * 1024 ** 3, compute: 0 } } };
+// …and the fields today's `load.complete` carries, which this capture predates (it was recorded while the ring
+// still stripped edge payloads), so the record's verbatim copy has something to be verbatim about.
+const COMPLETE = { size_vram: 45_995_000_000, size_total: 45_995_000_000, memory: { weights: 19_853_132_208, kv_cache: 25_000_000_000, compute: 1_141_867_792 } };
+const WITH_ESTIMATE = [...FRAMES.filter((f) => f.t < ESTIMATE.t), ESTIMATE, ...FRAMES.filter((f) => f.t >= ESTIMATE.t)]
+    .map((f) => (f.kind === "load.complete" ? { ...f, ...COMPLETE } : f));
+const PER_CARD = { presetId: "memory", tracks: [
+    { id: "dev-0", series: ["vram.0"], mode: "stack", heightPx: 96 },
+    { id: "dev-1", series: ["vram.1"], mode: "stack", heightPx: 96 },
+] };
+
+test("load predictions: off by default, and with the toggle on the load is set against its prediction", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate((layout) => chrome.storage.local.set({ ml_lane_scope: false, ml_res_layout: layout }), PER_CARD);
+        fake.setEvents(WITH_ESTIMATE);
+        const { page, frame } = await openPanel(fake, ext);
+        const load = frame.locator(".rc-ev-load").first();
+        await expect(load).toBeVisible({ timeout: 20000 });
+
+        // OFF BY DEFAULT: no line, the load's tooltip says nothing about a predictor, and the worker — which has
+        // seen the whole load by now, since the lane drew it — collected nothing.
+        expect(await frame.locator(".rc-predict").count()).toBe(0);
+        await waitForMl(page);
+        await sleep(500);
+        expect(await page.evaluate(() => window.ml.__loads()), "nothing is collected while the toggle is off").toEqual([]);
+        await load.hover();
+        await expect(frame.locator(".rc-tip-event")).toBeVisible({ timeout: 5000 });
+        expect(await frame.locator(".rc-tip-event").textContent()).not.toMatch(/predicted/);
+
+        // ON, from the gear.
+        await frame.locator(".vram-head").first().hover();
+        await frame.locator('[aria-label="Edit tracks"]').click();
+        const box = frame.locator(".rc-editor .rc-eopt", { hasText: /load predictions/ }).locator("input");
+        await expect(box).not.toBeChecked();
+        await box.check();
+        await frame.locator('[aria-label="Edit tracks"]').click();
+
+        // The dashed line sits on the card the load LANDED on — CUDA1, the second track — and only there.
+        const tracks = frame.locator(".rc-track");
+        await expect.poll(() => tracks.nth(1).locator(".rc-predict").count(), { timeout: 5000 }).toBe(1);
+        expect(await tracks.nth(0).locator(".rc-predict").count(), "a card the load did not land on draws none").toBe(0);
+
+        await load.hover();
+        const tip = frame.locator(".rc-tip-event");
+        await expect(tip).toBeVisible({ timeout: 5000 });
+        const text = await tip.textContent();
+        expect(text).toMatch(/predicted, for placement\s*42\.00 GiB/);
+        expect(text).toMatch(/calibration/);
+        expect(text).toMatch(/40\.00 GiB before the batch surcharge/);
+        expect(text, "where it settled, measured on the card").toMatch(/settled at/);
+        expect(text, "this capture lists no runner, so it says which measure it used").toMatch(/the cards' growth/);
+        // Term by term, never summed: weights near the prediction, the KV cache over it — flagged, since more
+        // than predicted is the direction that breaks a fit.
+        expect(text).toMatch(/weights: 18\.00 GiB predicted/);
+        expect(text).toMatch(/KV cache: 20\.00 GiB predicted/);
+        expect(await tip.locator(".rc-chip-warn").count(), "a load that took more than predicted is flagged").toBeGreaterThan(0);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
+test("load predictions: the worker keeps one record per load while the toggle is on, for ml.__loads()", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false, ml_res_predict: true }));
+        fake.setEvents(WITH_ESTIMATE);
+        const { page } = await openPanel(fake, ext);
+        await waitForMl(page);
+        await expect.poll(async () => (await page.evaluate(() => window.ml.__loads())).length, { timeout: 20000 }).toBe(1);
+        const [rec] = await page.evaluate(() => window.ml.__loads());
+        expect(rec.model).toBe("gemma4:31b");
+        expect(rec.estimate, "the server's estimate, verbatim").toEqual(ESTIMATE.estimate);
+        expect(rec.complete, "the load's own figures, verbatim").toEqual(COMPLETE);
+        expect(rec.trace.cards).toEqual(["1"]);
+        expect(rec.trace.final.bytes).toBeGreaterThan(30 * 1024 ** 3);
+        // `clear` empties the store once read.
+        await page.evaluate(() => window.ml.__loads({ clear: true }));
+        expect(await page.evaluate(() => window.ml.__loads())).toEqual([]);
     } finally { await ext.context.close(); await fake.stop(); }
 });

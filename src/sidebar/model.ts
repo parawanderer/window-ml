@@ -61,17 +61,9 @@ export function sessionProfile(s: Session): "utility" | "default" | null {
 // default `library` namespace, then the implicit `:latest` tag. Deliberately only the DEFAULTS — a model
 // pulled from elsewhere (`hf.co/user/model`) keeps its prefix, because ps keeps it too, and stripping to the
 // last path segment would collide two genuinely different models that happen to share a name.
-const DEFAULT_REGISTRY = "registry.ollama.ai/";
-const DEFAULT_NAMESPACE = "library/";
-/** ONE CANONICAL NAME for a model. The event stream names them fully-qualified
- *  (`registry.ollama.ai/library/gemma4:31b`) while `/api/ps` names them short, in the same frame — so
- *  without this every streamed model is drawn TWICE, once as a phantom "off-box" row. The inverse of
- *  Ollama's own ShortName: default registry, default `library` namespace, implicit `:latest`. */
-export const normModel = (m: string): string => {
-    let s = m.startsWith(DEFAULT_REGISTRY) ? m.slice(DEFAULT_REGISTRY.length) : m;
-    if (s.startsWith(DEFAULT_NAMESPACE)) s = s.slice(DEFAULT_NAMESPACE.length);
-    return s.replace(/:latest$/, "");
-};
+// `normModel` lives in resource-model (pure, and needed by the service worker's load records too); re-exported
+// here so the sidebar's imports keep reading it from where they always have.
+export { normModel } from "../resource-model";
 // The context window we last OBSERVED each model loaded with (from /api/ps). A model's window is a
 // property of the model, not of whether it's resident right now — so the usage gauge keeps measuring
 // occupancy after the model is evicted from VRAM instead of flipping to a different metric. Overwritten
