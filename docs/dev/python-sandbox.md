@@ -97,6 +97,10 @@ encoded to a `data:image/png;base64,…` value with `render:"img"`, which rides 
 this keeps **base64 OUT of the model's context** — the model returns the OBJECT (`return img`), WE convert it, and
 the tool's model-facing `content` stays a short `"Returned an image."` while the base64 lives only in the UI
 descriptor (never re-fed to the model). The debug render is the two-slot `python-in`/`python-out` (above).
+**Which of those a return draws as is ONE decision, `pyValueParts` (`src/py-render.ts`)**, shared by the tool and
+the Python bench (`pyBenchDescriptor`). The bench had its own copy and it drifted: it ignored `render`, so a sympy
+return showed as raw LaTeX source there while the log typeset it. What stays in each caller is what differs — the
+tool's model-facing text (hints, clipping, `cast`) and the bench's pretty-printed JSON.
 
 **Two capability modes (agent-declared) + auto-approve.** The tool takes `mode`:
 `"readonly"` (default) **hardens** the offscreen sandbox for that run — unregisters *and*

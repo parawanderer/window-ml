@@ -5,6 +5,8 @@
  *   npm run build && node --import tsx tests/e2e/bench-traceback-demo.mjs
  *
  * Opens a headful window with the bench as a drawer and walks it against the real Pyodide sandbox:
+ *   0. the log's own renderers, in the bench: a sympy result comes back TYPESET, and a Mandelbrot computed in
+ *      numpy comes back as a PIL image (the decision is shared with the model's python_exec, py-render.ts);
  *   1. a script that fails inside a function — the failing line is marked red, its number too, and the gutter
  *      comes on (the line-number preference is off, but a traceback names a number);
  *   2. clicking the call-site frame pulses its line GREEN, the failing frame pulses RED — the log's own flash;
@@ -49,6 +51,31 @@ const SCRIPT = [
     "grid = np.arange(24).reshape(4, 6)",
     "print(grid.shape)",
     "corner(grid)",
+].join("\n");
+
+const SYMPY = [
+    "import sympy as sp",
+    "x = sp.symbols('x')",
+    "",
+    "# the Gaussian against a cosine, over the whole line",
+    "sp.integrate(sp.exp(-x**2) * sp.cos(x), (x, -sp.oo, sp.oo))",
+].join("\n");
+
+const FRACTAL = [
+    "import numpy as np",
+    "from PIL import Image",
+    "",
+    "w, h = 330, 220",
+    "c = np.linspace(-2.2, 0.8, w)[None, :] + 1j * np.linspace(-1.1, 1.1, h)[:, None]",
+    "z = np.zeros_like(c)",
+    "n = np.zeros(c.shape)",
+    "for _ in range(80):",
+    "    z = np.where(np.abs(z) <= 2, z * z + c, z)",
+    "    n += np.abs(z) <= 2",
+    "t = np.log1p(n) / np.log1p(n.max())",
+    "t[n == n.max()] = 0   # the set itself: black",
+    "rgb = np.stack([t ** 0.7 * 255, t ** 2 * 200, np.sin(t * np.pi) * 180], axis=-1)",
+    "Image.fromarray(rgb.astype('uint8'))",
 ].join("\n");
 
 try {
@@ -110,6 +137,28 @@ try {
         }
     };
     const failingFrame = frame.locator(".bench-outbody .tb-fail .tb-line");
+
+    // ── 0. THE LOG'S RENDERERS ─────────────────────────────────────────────────────────────────────────────
+    await beat(page, "A sympy expression comes back TYPESET",
+        "Return the expression itself; the sandbox tells the UI it is maths, as it does for the model's steps.");
+    await content.click();
+    await content.press(selectAll);
+    await content.press("Backspace");
+    await content.fill(SYMPY);
+    await sleep(LINGER / 2);
+    await run();
+    await frame.locator(".bench-outbody .katex").first().waitFor({ timeout: 30000 });
+    await sleep(LINGER);
+    await shot(page, "0a-latex");
+
+    await beat(page, "A PIL image comes back DRAWN — a Mandelbrot, computed in numpy",
+        "Return the Image; the bench shows it, and the base64 never reaches a model's context.");
+    await content.fill(FRACTAL);
+    await sleep(LINGER / 2);
+    await run();
+    await frame.locator(".bench-outbody img").first().waitFor({ timeout: 30000 });
+    await sleep(LINGER * 1.5);
+    await shot(page, "0b-image");
     const callFrame = frame.locator(".bench-outbody .tbline:not(.tb-fail) .tb-line").first();
 
     // ── 1. A FAILURE ───────────────────────────────────────────────────────────────────────────────────────

@@ -327,6 +327,8 @@ export const markReturn = (): void => {
 /** What a bench run came back with — the offscreen sandbox's result, plus the timings the worker measured. */
 export interface BenchRun {
     ok: boolean; value?: unknown; stdout: string; error?: string; bootMs?: number; runMs?: number; table?: { columns: string[]; rows: (string | number | null)[][] };
+    /** The sandbox's render hint from the return TYPE: `latex` for a sympy expression, `img` for a PIL image. */
+    render?: "latex" | "img";
     /** The script as it was when it RAN. A traceback's line numbers are about this text, and the editor may
      *  have moved on since; the bench maps between the two rather than trusting them to agree. */
     code?: string;

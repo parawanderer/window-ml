@@ -275,3 +275,32 @@ test("python bench: the line-number preference draws the editor's gutter", async
         await fake.stop();
     }
 });
+
+// THE LOG'S RENDERERS, IN THE BENCH. A sympy return is typeset and a PIL image is drawn — the same decision the
+// model's python_exec step makes (py-render.ts). The bench used to decide on its own and showed a sympy result
+// as its raw LaTeX source.
+test("python bench: a sympy return is typeset and a PIL image is drawn, as in the log", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "overlay" });
+        const { frame } = await openBench(fake, ext);
+        await frame.locator(".bench-code .cm-editor").waitFor({ timeout: 15000 });
+        const content = frame.locator(".bench-code .cm-content");
+
+        await content.fill("import sympy as sp\nx = sp.symbols('x')\nsp.integrate(sp.exp(-x**2), (x, -sp.oo, sp.oo))");
+        await runBench(frame);
+        await expect(frame.locator(".bench-tab.on")).toHaveText("value (LaTeX)");
+        await expect(frame.locator(".bench-outbody .katex").first()).toBeVisible();
+        await expect(frame.locator(".bench-outbody"), "typeset, not the raw source").not.toContainText("\\sqrt");
+
+        await content.fill("import numpy as np\nfrom PIL import Image\nImage.fromarray(np.zeros((8, 12, 3), dtype='uint8'))");
+        await runBench(frame);
+        await expect(frame.locator(".bench-tab.on")).toHaveText("image");
+        const src = await frame.locator(".bench-outbody img").first().getAttribute("src");
+        expect(src).toMatch(/^data:image\/png;base64,/);
+    } finally {
+        await ext.context.close();
+        await fake.stop();
+    }
+});

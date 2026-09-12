@@ -186,7 +186,8 @@ as in AGENTS.md — they are all under `src/`.
   assertions are `python-stream.spec.mjs` (the reverse channel) and `output-scroll.spec.mjs` (tail-follow).
 - **`bench-traceback-demo.mjs`** — a **narrated demo, not a test** of a bench traceback pointing into the
   editor: `npm run build && node --import tsx tests/e2e/bench-traceback-demo.mjs`. Real Pyodide, no model.
-  A script fails inside a function (the line is marked and the gutter comes on), the call-site frame pulses
+  It opens with the log's renderers in the bench (a sympy integral typeset, a numpy Mandelbrot returned as a PIL
+  image). Then a script fails inside a function (the line is marked and the gutter comes on), the call-site frame pulses
   green and the failing frame red, two lines typed above move the mark and the jump with the line, editing the
   failing line drops the mark and the frame says it changed, a fixed re-run clears it, and Settings →
   Appearance → Show line numbers draws the gutter on its own. `PACE`, `LINGER`, `HOLD=0`, `HEADLESS=1`;

@@ -71,6 +71,7 @@ export function residencyOf(m: LoadedModel): ModelResidency {
 import { RenderPanel, PyBenchOut, BENCH_JUMP_EVENT, type BenchJumpDetail } from "./render-panel";
 import { deepestUserLine } from "../py-format";
 import { mapLine } from "../diff";
+import { pyValueParts } from "../py-render";
 
 // Fetch the server's model list via the background worker (privileged fetch);
 // degrade silently if unreachable. Populates the datalists.
@@ -2224,14 +2225,14 @@ export function VramPanel() {
 }
 
 // Shape a raw PYTHON_EXEC response into a `python-out` descriptor for RenderPanel.
-export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] } }): Extract<RenderDescriptor, { type: "python-out" }> {
+export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" }): Extract<RenderDescriptor, { type: "python-out" }> {
     const stdout = r.stdout || undefined;
     if (!r.ok) return { type: "python-out", stdout, error: r.error || "error" };
-    if (r.table) return { type: "python-out", stdout, df: r.table };   // a returned DataFrame → real table
-    const v = r.value;
-    if (typeof v === "string" && /^data:image\//.test(v)) return { type: "python-out", stdout, image: v };
-    const value = v == null ? undefined : (typeof v === "string" ? v : JSON.stringify(v, null, 2));
-    return { type: "python-out", stdout, value };
+    // The SAME decision the model's python_exec step makes (py-render.ts), so a return draws identically on
+    // both surfaces. Only the text differs: pretty-printed here, and no value section for a script that
+    // returned nothing (the tool writes "null" because the model must be told).
+    return { type: "python-out", stdout, ...pyValueParts(r.value, { render: r.render, table: r.table },
+        (v) => (v == null ? undefined : typeof v === "string" ? v : JSON.stringify(v, null, 2))) };
 }
 // A standalone Python workbench: run scripts against the SAME sandbox the python_exec tool uses
 // (offscreen → worker → Pyodide) with a readonly/full mode selector, for debugging. Code-only — no
