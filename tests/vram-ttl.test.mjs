@@ -29,7 +29,8 @@ test("fmtTTL: BUSY stops the clock — the stamp it holds is the one from the la
     assert.equal(fmtTTL(inMs(120_000), true), "in use", "even a stamp that still reads plausibly is stale");
     assert.equal(fmtTTL(null, true), "in use", "busy is a fact about the runner, not about the stamp");
     // Absent on a stock server, which means "not known", never "idle" — so undefined must behave as today.
-    assert.equal(fmtTTL(inMs(44_000), undefined), "44s");
+    // Floors like the first test's countdown, so the same one-second allowance applies (CI caught 43s).
+    assert.match(fmtTTL(inMs(44_000), undefined), /^4[34]s$/);
 });
 
 // `keep_alive: -1` pins a model in memory, and Ollama expresses that as an `expires_at` about a century out.
