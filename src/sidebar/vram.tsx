@@ -27,7 +27,7 @@ import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KE
 export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, dropInferredLoads, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, memorySplit, estimateFrom, quantPlain, type LoadEstimate, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, joinGens, rooflineFrom, kindRefusal } from "../resource-model";
+import { parseInfo, holdCapacity, memorySplit, estimateFrom, quantPlain, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, joinGens, rooflineFrom, kindRefusal } from "../resource-model";
 import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay, LANE_KINDS, toggleLaneKind } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -159,6 +159,35 @@ export const capacity = signal<Capacity | null>(null);
 // flashed the legacy chart for a moment before the tracks replaced it. Until the first answer lands the plot
 // is simply empty.
 export const capacityAsked = signal(false);
+/** What each bus address was last seen as, per backend (`SeenCards`) — so a card that has faulted, and so left the
+ *  enumeration, can still be named. Kept in storage.local: the card is usually already down when the panel opens. */
+export const seenCards = signal<SeenCards>({});
+const SEEN_CARDS_KEY = "ml_res_seen_cards";
+const backendKey = (): string => { try { return new URL(config.value.chatUrl || "").origin; } catch { return ""; } };
+let seenLoaded = false;
+function noteSeen(cap: Capacity | null): void {
+    const key = backendKey();
+    const next = noteSeenCards(seenCards.value, cap);
+    if (next === seenCards.value) return;
+    seenCards.value = next;
+    try {
+        chrome.storage.local.get({ [SEEN_CARDS_KEY]: {} }, (d: any) => {
+            const all = (d && d[SEEN_CARDS_KEY]) || {};
+            chrome.storage.local.set({ [SEEN_CARDS_KEY]: { ...all, [key]: { ...(all[key] || {}), ...next } } });
+        });
+    } catch { /* opaque origin: session memory only */ }
+}
+/** Load what this backend's cards were last seen as, once, before the first reading needs it. */
+export function loadSeenCards(): void {
+    if (seenLoaded) return;
+    seenLoaded = true;
+    try {
+        chrome.storage.local.get({ [SEEN_CARDS_KEY]: {} }, (d: any) => {
+            const mine = ((d && d[SEEN_CARDS_KEY]) || {})[backendKey()] || {};
+            seenCards.value = { ...mine, ...seenCards.value };
+        });
+    } catch { /* opaque origin */ }
+}
 /** A machine-level banner for GPUs the server can see and cannot use.
  *
  *  MACHINE-LEVEL, NOT A PER-CARD BADGE, because there is no card to badge: a faulted GPU is absent from
@@ -176,20 +205,30 @@ export const capacityAsked = signal(false);
  *  is NVIDIA's wording, not ours — and its value is that it can be searched in vendor documentation exactly
  *  as shown, which paraphrasing would destroy. */
 function GpuFaults() {
+    loadSeenCards();
     const faults = unavailableGpus.value.filter(isGpuFault);
     if (!faults.length) return null;
     const total = faults.length + (capacity.value?.devices.length ?? 0);
+    // AN ERROR, not a warning: a card is out of service. The one exception is AMD's `reset_in_progress`, which
+    // usually clears within seconds (`gpuFaultNote`) — when every fault is that, it stays amber.
+    const transient = faults.every((g) => g.reason === "reset_in_progress");
     return (
-        <div class="rc-gpufault" role="alert">
+        <div class={`rc-gpufault${transient ? " transient" : ""}`} role="alert">
             <IconWarn />
             <div class="rc-gpufault-body">
                 <b>{faults.length} of {total} GPUs unavailable</b>
-                {faults.map((g) => (
+                {faults.map((g) => {
+                    // WHICH CARD, in the panel's own terms. A faulted card has left the enumeration, so it has no
+                    // CUDA index today — and the indices can shift once one drops out. The server's own memory
+                    // of the label comes first (`lastName`); failing that, what THIS panel last saw at that
+                    // address. Always "last seen as", never "is": it is a claim about the past.
+                    const was = g.lastName ?? seenCards.value[g.pciId]?.name;
+                    return (
                     <div class="rc-gpufault-one" key={g.pciId}>
                         {/* The PCI address is the IDENTITY — two cards in one machine share a name — and it is
                             also the only thing present under `not_reported_by_driver`, where the driver
                             describes nothing and neither name nor uuid can be read. */}
-                        <span class="rc-gpufault-id">{g.name ?? "GPU"} at <code>{g.pciId}</code></span>
+                        <span class="rc-gpufault-id">{was ? <><b class="rc-gpufault-was">{was}</b> · </> : null}{g.name ?? seenCards.value[g.pciId]?.description ?? "GPU"} at <code>{g.pciId}</code>{was ? <span class="rc-gpufault-dim"> — its label when last seen</span> : null}</span>
                         {g.detail ? <span class="rc-gpufault-detail">{g.detail}</span> : null}
                         {gpuFaultNote(g) ? <span class="rc-gpufault-detail">{gpuFaultNote(g)}</span> : null}
                         {g.recovery ? <span class="rc-gpufault-fix"><b>Fix:</b> {g.recovery}</span> : null}
@@ -200,7 +239,8 @@ function GpuFaults() {
                             ? <span class="rc-gpufault-bus">PCIe link errors on this slot ({g.bus.fatalErrors ?? 0} fatal, {g.bus.nonFatalErrors ?? 0} non-fatal) — that points at the slot or riser rather than the card.</span>
                             : null}
                     </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
     );
@@ -243,6 +283,7 @@ export function applyInfo(raw: unknown): void {
     }
     {
         const next = holdCapacity(capacity.value, parseInfo(raw));
+        noteSeen(next);
         if (!next || next === capacity.value) return;   // this poll learned nothing new
         // Pointing at a DIFFERENT machine (a CUDA server, then a Metal Mac) invalidates the history: those
         // samples were measured against another ceiling, on devices whose ids mean different hardware. Drawing

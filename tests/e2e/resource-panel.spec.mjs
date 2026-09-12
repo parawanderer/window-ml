@@ -3959,8 +3959,8 @@ test("resource panel: whole box bridges directly-linked cards, reordered so each
         // the original is present and hidden by design.
         const facts = frame.locator(".rc-devfacts .tt-pop").first();
         const ft = (await facts.textContent()).replace(/\s+/g, " ");
-        expect(ft).toMatch(/to CUDA2: NVLink ×4 \(NV4\)/);
-        expect(ft).toMatch(/to CUDA1: PCIe, through the CPU's host bridge \(PHB\)/);
+        expect(ft).toMatch(/to CUDA2 NVLink ×4 \(NV4\)/);
+        expect(ft).toMatch(/to CUDA1 PCIe, through the CPU's host bridge \(PHB\)/);
         expect(ft.indexOf("CUDA2"), "the bridged peer is listed first").toBeLessThan(ft.indexOf("CUDA1"));
 
         // NOTHING MEASURED IS NOT "NO NVLINK": the same box, with the driver refusing the NVLink calls.
@@ -4043,6 +4043,45 @@ test("resource panel: a partial NVLink mesh is drawn as partial, never as one gr
         const bb = await plot.boundingBox();
         await plot.hover({ position: { x: bb.width / 2, y: bb.height * 0.5 } });
         await expect(frame.locator(".rc-tip-pools .rc-tip-links")).toContainText("PARTIAL mesh", { timeout: 5000 });
+        // Said ONCE, for the run — the same list under each of seven bridges buried the reading it qualifies.
+        const text = await frame.locator(".rc-tip-pools .rc-tip-links").textContent();
+        expect(text.split("PARTIAL mesh").length - 1, text).toBe(1);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+// A FULL MESH is one fact, said once: eight cards every pair of which is directly linked — AMD's MI300X over
+// Infinity Fabric (xGMI) here, a MOCK like every fabric topology. Listing its seven adjacent walls instead read as a
+// chain, which is exactly the shape it is not.
+test("resource panel: a full mesh is said as one — every pair linked — and AMD's xGMI draws as a bridge", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const ids = [0, 1, 2, 3, 4, 5, 6, 7];
+        fake.setCapacity({ compute: {
+            system_compute: { cpu_cores: 64, total_memory: 2199023255552, free_memory: 1800 * GiB },
+            supported_gpus: ids.map((i) => ({ gpu_id: String(i), pci_id: pci(i), name: `ROCm${i}`, runner: "ROCm",
+                total_memory: 205520896000, physical_memory: 206158430208, free_memory: 150 * GiB })),
+            topology: TOPOLOGIES.xgmi8 } });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_layout: { presetId: "custom", tracks: [
+            { id: "box", series: [0, 1, 2, 3, 4, 5, 6, 7].map((i) => `vram.${i}`), mode: "total", heightPx: 160 },
+        ] } }));
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-boxfill").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(2500);
+        const walls = await frame.locator(".rc-seg").first().locator(".rc-boxwall")
+            .evaluateAll((els) => els.map((e) => e.className.replace("rc-boxwall", "").trim()));
+        expect(walls.length).toBe(7);
+        expect(walls.every((w) => w === "bridge"), `a full mesh draws every wall as a bridge: ${walls}`).toBe(true);
+        const plot = frame.locator(".rc-plot").first();
+        const bb = await plot.boundingBox();
+        await plot.hover({ position: { x: bb.width / 2, y: bb.height * 0.5 } });
+        const links = frame.locator(".rc-tip-pools .rc-tip-links");
+        await expect(links).toContainText("all 8 cards, every pair directly linked (28 pairs) · xGMI ×1 (XGMI) · 64.0 GB/s", { timeout: 5000 });
+        expect(await links.locator(".rc-tip-row").count(), "one line for the mesh, not seven adjacent walls").toBe(1);
     } finally { await ext.close(); await fake.stop(); }
 });
 
@@ -4283,6 +4322,45 @@ test("resource panel: a model's band steps, and the device's own bands do not", 
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+// …AND SO DOES WHAT BELONGS TO IT. A runner's own overhead (its process minus its model's share, stacked on the
+// model in a wash of its colour) is the same runner's memory: constant while it lives, gone at the same eviction.
+// Drawn as a line it sloped from the last sample before the eviction to the first after — a `\` wedge beside the
+// model's `|` at every eviction, which snapped square only when a hover subdivided the band.
+test("resource panel: a runner's overhead steps with its model at an eviction, never a wedge", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const TOTAL = 101972967424, MODEL = 18 * GiB, OVERHEAD = 0.6 * GiB;
+        const info = (on) => { const b = box(TOTAL - (on ? MODEL + OVERHEAD : 0), TOTAL);
+            b.compute.supported_gpus[0].processes_scope = "pid_namespace";
+            b.compute.supported_gpus[1].processes_scope = "pid_namespace";
+            if (on) b.compute.supported_gpus[0].processes = [{ pid: 317, used_memory: MODEL + OVERHEAD, name: "llama-server", runner: { model: "gemma4:31b" } }];
+            return b; };
+        const ps = (on) => ({ models: on ? [resident("gemma4:31b", MODEL, 0)] : [] });
+        // Resident for 12 s, then evicted: every sample carries its own ps and info, as the real stream's do.
+        fake.setEvents([...[-14000, -12000, -10000, -8000, -6000, -4000].map((t) => ({ v: 1, kind: "sample", t, ps: ps(true), info: info(true) })),
+                        ...[-2000, -1000].map((t) => ({ v: 1, kind: "sample", t, ps: ps(false), info: info(false) }))]);
+        fake.setCapacity(info(false)); fake.setResident([]);
+        await seedStacked(ext);
+        const { frame } = await openPanel(fake, ext);
+        const overhead = frame.locator(".rc-track").first().locator('.rc-area polygon[fill*="30%, var(--fg-faint)"]');
+        await expect.poll(() => overhead.count(), { timeout: 20000 }).toBeGreaterThan(0);
+        const pts = (await overhead.first().getAttribute("points")).trim().split(/\s+/).map((q) => q.split(",").map(Number));
+        // The top edge runs left to right until the polygon turns back along its floor.
+        let turn = pts.length;
+        for (let i = 1; i < pts.length; i++) if (pts[i][0] < pts[i - 1][0]) { turn = i; break; }
+        const top = pts.slice(0, turn);
+        const maxX = Math.max(...top.map((q) => q[0]));
+        const edge = top.slice(0, top.findIndex((q) => q[0] === maxX) + 1);
+        const corners = edge.filter((q, i) => i > 0 && q[0] === edge[i - 1][0]).length;
+        expect(corners, `the overhead drops square, like its model: ${JSON.stringify(edge)}`).toBeGreaterThan(0);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
 // THE WAY BACK FROM A RESIZED WINDOW, produced by a real gesture — which is the half of this a jsdom test
 // cannot make. The rule and the reset are asserted there; what is only true in a browser is that a pinch
 // actually lands on the quantity the chip watches. The bug was precisely "I resized it and nothing appeared",
@@ -4351,10 +4429,10 @@ test("resource panel: a card's facts are on its name, and the interconnect is no
         expect(await frame.locator(".rc-name").first().textContent()).toBe("CUDA0");
 
         const tip = frame.locator(".rc-devfacts").first().locator(".tt-pop");
-        const text = await tip.textContent();
+        const text = (await tip.textContent()).replace(/\s+/g, " ");
         // THE TWO TOTALS, and which decides what — the reason this hover exists.
-        expect(text, "what placement decides against").toMatch(/94\.97 GiB usable/);
-        expect(text, "…and what the driver reports, named as such").toMatch(/95\.59 GiB on the card/);
+        expect(text, "what placement decides against").toMatch(/usable 94\.97 GiB what placement decides against/);
+        expect(text, "…and what the driver reports, named as such").toMatch(/on the card 95\.59 GiB/);
         expect(text).toMatch(/nvidia-smi/);
         expect(text, "neither figure is presented as the wrong one").toMatch(/neither figure is wrong/);
         expect(text, "reference facts, verbatim").toMatch(/compute 12\.0/);

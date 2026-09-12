@@ -16,7 +16,7 @@ import {
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
 import { resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
@@ -380,7 +380,12 @@ function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex = null, 
      * and the stack opens a seam. It also means a residual sitting on models is exactly right: its base jumps
      * when a model goes, while its own thickness still varies smoothly.
      */
-    const isStep = (k: string | null): boolean => !!k && !!identity[k];
+    // A RESIDUAL THAT BELONGS TO A MODEL steps with it: a runner's overhead (`ctx:`) and a runner `/api/ps` has not
+    // caught up with (`runner:`) are that runner's memory, piecewise-constant like the model's, and they leave at
+    // the same eviction. Drawn as lines, the overhead stacked on a stepped model sloped from the last sample to
+    // the next — a `\\` wedge beside the model's `|` at every eviction. A LOADING runner (`load:`) stays a line:
+    // its memory really does climb as the weights land, which is the device-band rule, not the model one.
+    const isStep = (k: string | null): boolean => !!k && (!!identity[k] || (!!tint[k] && !k.startsWith("load:")));
     const areas = order.filter((k) => k !== "free").map((key, ki, keys) => {
         const below = ki === 0 ? null : keys[ki - 1];
         const top = tops[key] || [];
@@ -544,69 +549,85 @@ function StackedArea({ frames, times, ceiling, hidden, scope, snapIndex = null, 
  *  never a single "interconnect" value for the card. What it says when it cannot say that is the point:
  *  unreported, unmeasured (with the driver's words) and a pair the server's list OMITTED are three different
  *  answers, and none of them is "PCIe only" — on a bridged 4x3090 that would be a confident lie. */
+/** The links from this card to every OTHER card, as rows of the facts grid — one per peer, direct fabric first.
+ *  A link belongs to a PAIR, never to one card, so there is no single "interconnect" line. */
 function DeviceLinks({ device }: { device: DeviceCapacity }) {
     const cap = capacity.value;
     const t = cap?.topology;
     const peers = (cap?.devices ?? []).filter((d) => d.id !== device.id);
-    if (!t) return (
-        <span class="rc-df-row rc-df-dim">Link to the other {peers.length === 1 ? "card" : "cards"}: not reported by this server. It is a property of each PAIR rather than of a card — some pairs can be NVLinked while others fall back to PCIe — so nothing is assumed either way.</span>
-    );
+    const cards = peers.length === 1 ? "card" : "cards";
+    if (!t) return <span class="rc-df-note">Links to the other {cards}: not reported by this server — nothing is assumed either way.</span>;
     if (t.status === "unavailable" || !device.pciId) return (
-        <span class="rc-df-row rc-df-dim">Links to the other {peers.length === 1 ? "card" : "cards"}: could not be measured{t.detail ? <> (<code>{t.detail}</code>)</> : null}. That is not the same as "no NVLink" — nothing is assumed either way.</span>
+        <span class="rc-df-note">Links to the other {cards}: could not be measured{t.detail ? <> (<code>{t.detail}</code>)</> : null} — that is not "no NVLink".</span>
     );
     const rows = peers.map((p) => ({ p, l: linkBetween(t, device.pciId, p.pciId) }))
         .sort((x, y) => Number(isBridge(y.l)) - Number(isBridge(x.l)));
     return (
         <>
-            {rows.map(({ p, l }) => (
-                <span class="rc-df-row" key={p.id}>to <b>{p.name}</b>: {l
-                    ? linkPhrase(l)
-                    : <span class="rc-df-dim">missing from the server's link list — a bug on one side, not a PCIe link</span>}</span>
-            ))}
-            {t.status !== "measured"
-                ? <span class="rc-df-row rc-df-dim">Only partly measured{t.detail ? <> (<code>{t.detail}</code>)</> : null}.</span> : null}
+            <span class="rc-df-grid">
+                {rows.map(({ p, l }) => (
+                    <>
+                        <span class="rc-df-k" key={`k:${p.id}`}>to {p.name}</span>{" "}
+                        <span class={`rc-df-v rc-df-wide${l ? "" : " rc-df-miss"}`} key={`v:${p.id}`}>{l
+                            ? linkPhrase(l)
+                            : "missing from the server's link list — a bug on one side, not a PCIe link"}</span>{" "}
+                    </>
+                ))}
+            </span>
+            {t.status !== "measured" ? <span class="rc-df-note">Only partly measured{t.detail ? <> (<code>{t.detail}</code>)</> : null}.</span> : null}
         </>
     );
 }
 
+/**
+ * A CARD'S OWN FACTS, behind its name on the track header: what the card IS, then a grid of short label/value
+ * rows, then the one explanation that is always needed, in a quiet line. It was a column of sentences in two
+ * weights, and the figures sat in the middle of them — hard to read, and the explanation of each number was as
+ * loud as the number.
+ *
+ * The header says what the card is in the driver's own words (`description`, from a patched server) beside the
+ * backend's label and the bus address — the same identity the fault banner uses, so a card can be recognised
+ * before and after it fails.
+ */
 function DeviceFacts({ device, label }: { device: DeviceCapacity; label: string }) {
     // How many OTHER devices there are — a single card has no pair to have a link with, so the
-    // interconnect line is shown only where the question exists.
+    // interconnect rows are shown only where the question exists.
     const others = (capacity.value?.devices.length ?? 1) - 1;
+    const two = device.physicalBytes && device.physicalBytes !== device.totalBytes;
+    const row = (k: string, v: preact.ComponentChildren, note?: string) => (
+        <>
+            <span class="rc-df-k">{k}</span>{" "}<span class="rc-df-v">{v}</span>{" "}
+            {note ? <span class="rc-df-n">{note}</span> : <span />}{" "}
+        </>
+    );
     return (
         // THE NAME STAYS THE NAME. A `.tt-pop` only works inside an element carrying `tt`, so the trigger is a
         // WRAPPER around `.rc-name` rather than `.rc-name` itself — put the tooltip inside the name element
-        // and the name's own text content becomes the name plus three sentences of prose, which every reader
-        // of that element then picks up. The panel reads `.rc-name` as a label in several places.
+        // and the name's own text content becomes the name plus the whole tooltip, which every reader of that
+        // element then picks up. The panel reads `.rc-name` as a label in several places.
         <span class="tt rc-devfacts">
             <span class="rc-name">{label}</span>
-            <span class="tt-pop wrap" role="tooltip">
-                <span class="rc-df-row"><b>{device.name}</b> · {device.runner}{device.unified ? " · unified memory" : ""}</span>
-                {/* THE TWO TOTALS, and which decides what. This is the counter-intuitive one and the reason
-                    the hover exists at all. */}
-                <span class="rc-df-row">{formatBytes(device.totalBytes)} usable — what placement decides against</span>
-                {device.physicalBytes && device.physicalBytes !== device.totalBytes ? (
-                    <span class="rc-df-row rc-df-dim">{formatBytes(device.physicalBytes)} on the card — what the driver and nvidia-smi report. The difference is reserved before anything loads; neither figure is wrong.</span>
-                ) : null}
-                {device.compute || device.driver ? (
-                    <span class="rc-df-row rc-df-dim">
-                        {device.compute ? <>compute {device.compute}</> : null}
-                        {device.compute && device.driver ? " · " : null}
-                        {device.driver ? <>driver {device.driver}</> : null}
-                    </span>
-                ) : null}
-                {/* THE CARD'S CEILINGS, fixed properties read once — never live readings. Bandwidth is what
-                    decode is bound by; the host link rules ITSELF out, since it governs load time and almost
-                    nothing about inference (cross-card traffic measured at 0.2% of a step), and the width is the
-                    narrower of card and slot, which is what the link can actually train at. */}
-                {device.memoryBandwidth ? (
-                    <span class="rc-df-row">memory bandwidth {(device.memoryBandwidth / 1e12).toFixed(2)} TB/s — the ceiling decode is bound by</span>
-                ) : null}
-                {device.pcieMaxGeneration || device.pcieMaxWidth ? (
-                    <span class="rc-df-row rc-df-dim">host link: PCIe{device.pcieMaxGeneration ? ` Gen ${device.pcieMaxGeneration}` : ""}{device.pcieMaxWidth ? ` x${device.pcieMaxWidth}` : ""} at most — this governs how fast a model LOADS, and almost nothing about how fast it runs</span>
-                ) : null}
+            <span class="tt-pop wide" role="tooltip"><span class="rc-df">
+                <span class="rc-df-head"><b>{device.name}</b>{device.description ? <> · {device.description}</> : null}</span>{" "}
+                <span class="rc-df-sub">{device.runner}{device.unified ? " · unified memory" : ""}{device.pciId ? <> · <code>{device.pciId}</code></> : null}</span>{" "}
+                <span class="rc-df-grid">
+                    {/* THE TWO TOTALS, and which decides what — the counter-intuitive one, and the reason the hover
+                        exists at all. */}
+                    {row("usable", formatBytes(device.totalBytes), "what placement decides against")}
+                    {two ? row("on the card", formatBytes(device.physicalBytes!), "what the driver and nvidia-smi report") : null}
+                    {/* THE CARD'S CEILINGS, fixed properties read once — never live readings. Bandwidth is what decode
+                        is bound by; the host link rules ITSELF out (it sets load time, and almost nothing about
+                        inference), and the width is the narrower of card and slot. */}
+                    {device.memoryBandwidth ? row("bandwidth", `${(device.memoryBandwidth / 1e12).toFixed(2)} TB/s`, "the ceiling decode is bound by") : null}
+                    {device.pcieMaxGeneration || device.pcieMaxWidth
+                        ? row("host link", `PCIe${device.pcieMaxGeneration ? ` Gen ${device.pcieMaxGeneration}` : ""}${device.pcieMaxWidth ? ` x${device.pcieMaxWidth}` : ""}`, "at most — sets how fast a model loads, not how fast it runs")
+                        : null}
+                    {device.compute ? row("compute", device.compute, device.driver ? `driver ${device.driver}` : undefined)
+                        : device.driver ? row("driver", device.driver) : null}
+                </span>
+                {two ? <span class="rc-df-note">The two totals differ by what the driver reserves before anything loads; neither figure is wrong.</span> : null}
                 {others > 0 ? <DeviceLinks device={device} /> : null}
-            </span>
+            </span></span>
         </span>
     );
 }
@@ -680,6 +701,11 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     const runs = noteRuns(useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]));
     // Only the instants: a span is a duration and belongs in the lane, where its length can be read.
     const instants = useInstants(runs, events);
+    // WHAT THIS CARD WAS DOING — its phase ribbon, from the same (kind-filtered) events the rules come from.
+    // Keyed on the COUNTS, never the arrays: `timeline()` rebuilds `events` every render (see AGENTS.md).
+    const deviceCount = capacity.value?.devices.length ?? 1;
+    const ribbon = useMemo(() => (device ? ribbonSpans(events, samples, device.id, deviceCount) : []),
+        [events.length, samples.length, samples.at(-1)?.t, device?.id, deviceCount]);
     // The DATAPOINT under the pointer, resolved through the same segmented geometry the crosshair uses, so
     // the tooltip's figures and the instant the crosshair names are the same sample and cannot drift apart.
     const hoverSample = hoveredSample(runs, scope);
@@ -769,6 +795,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${runWeight(run)} 1 0` }}>
                         <TimeGrid runs={runs} run={run} />
+                        {!deep && ribbon.length ? <PhaseRibbon run={run} spans={ribbon} /> : null}
                         <StackedArea frames={run.map(bandsOf)} times={run.map((sm) => sm.t)} ceiling={ceiling} hidden={hidden} scope={scope}
                             deep={deep} loads={deep ? events.filter((e) => e.kind === "load" && e.model === deep.model && e.until != null) : []}
                             snapIndex={snapUnder(runs)?.run === i ? snapUnder(runs)!.index : null} />
@@ -1436,10 +1463,29 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
     // run of bridged cards it belongs to is a full mesh (see `bridgeWalls`). Walls between visible pools only —
     // hiding a card re-adjoins its neighbours, and their wall is then about THEM.
     const walls = bridgeWalls(pools.map((p) => ({ pciId: pciOf(p.id) })), cap.topology);
-    const links = walls.flatMap((w, i) => (w.bridge && w.link ? [{
-        label: `${pools[i].name} ═ ${pools[i + 1].name}`, phrase: linkPhrase(w.link),
-        note: w.mesh === "partial" ? `part of a PARTIAL mesh — not directly linked: ${w.unlinked.map(([a, b]) => `${pools[a].name}–${pools[b].name}`).join(", ")}` : undefined,
-    }] : []));
+    // SAID PER RUN of bridged cards, not per wall — the facts are about the run. A FULL MESH of more than two is
+    // one line ("every pair directly linked"): listing its adjacent walls read as a chain, which is exactly the
+    // shape it is not. A PARTIAL mesh keeps its bridge lines and names what is NOT linked ONCE, after the last:
+    // the same twelve-pair list under each of seven bridges buried the reading it was there to qualify.
+    const links: { label: string; phrase: string; note?: string }[] = [];
+    for (let i = 0; i < walls.length;) {
+        if (!walls[i].bridge || !walls[i].link) { i++; continue; }
+        let j = i;
+        while (j + 1 < walls.length && walls[j + 1].bridge && walls[j + 1].link) j++;
+        const run = walls.slice(i, j + 1), cards = j - i + 2;
+        const phrases = new Set(run.map((w) => linkPhrase(w.link!)));
+        if (run[0].mesh === "full" && cards > 2 && phrases.size === 1) {
+            links.push({ label: `${pools[i].name} … ${pools[j + 1].name}`,
+                phrase: `all ${cards} cards, every pair directly linked (${(cards * (cards - 1)) / 2} pairs) · ${[...phrases][0]}` });
+        } else {
+            run.forEach((w, k) => links.push({
+                label: `${pools[i + k].name} ═ ${pools[i + k + 1].name}`, phrase: linkPhrase(w.link!),
+                note: k === run.length - 1 && w.mesh === "partial"
+                    ? `these ${cards} cards are a PARTIAL mesh — not directly linked: ${w.unlinked.map(([a, b]) => `${pools[a].name}–${pools[b].name}`).join(", ")}` : undefined,
+            }));
+        }
+        i = j + 1;
+    }
     if (!pools.length) return null;
     const axis = boxAxis(pools);
     if (!axis.total) return null;
@@ -2444,7 +2490,7 @@ function PredictionRows({ e }: { e: ResourceEvent }) {
             </div>
             {trace?.peak ? <div class="rc-tip-line"><span class="rc-tip-name">peak during the load</span>{diff(trace.peak.bytes, target)}<span class="rc-tip-size">{formatBytes(trace.peak.bytes)}</span></div> : null}
             {trace?.final ? <div class="rc-tip-line"><span class="rc-tip-name">settled at</span>{diff(trace.final.bytes, target)}<span class="rc-tip-size">{formatBytes(trace.final.bytes)}</span></div> : null}
-            {e.loadBytes != null ? <div class="rc-tip-line"><span class="rc-tip-name">resident, as the server counts it</span>{diff(e.loadBytes, target)}<span class="rc-tip-size">{formatBytes(e.loadBytes)}</span></div> : null}
+            {e.loadBytes != null ? <div class="rc-tip-line"><span class="rc-tip-name">resident (the server's count)</span>{diff(e.loadBytes, target)}<span class="rc-tip-size">{formatBytes(e.loadBytes)}</span></div> : null}
             {est.weights != null && e.measured ? <div class="rc-tip-line"><span class="rc-tip-name">weights: {formatBytes(est.weights)} predicted</span>{diff(e.measured.weights, est.weights)}<span class="rc-tip-size">{formatBytes(e.measured.weights)}</span></div> : null}
             {est.kvCache != null && e.measured ? <div class="rc-tip-line"><span class="rc-tip-name">KV cache: {formatBytes(est.kvCache)} predicted</span>{diff(e.measured.kvCache, est.kvCache)}<span class="rc-tip-size">{formatBytes(e.measured.kvCache)}</span></div> : null}
             {trace ? <div class="rc-tip-note">peak and settled are {basis}{trace.basis === "device" ? " — an eviction making room at the same time reads as negative growth" : ""}. The weights/KV split is the metadata model's, whatever the source.</div> : null}
@@ -2474,6 +2520,29 @@ function PredictLines({ run, loads, deviceId, ceiling }: { run: ResourceSample[]
                              bottom: `${Math.min(100, (level / ceiling) * 100)}%`, "--model": e.model ? colorFor(e.model) : undefined }} />;
             })}
         </>
+    );
+}
+
+/**
+ * WHAT A CARD WAS DOING, along the top edge of its track: one thin row per model that generated on it, each
+ * timed phase in the lane's own fill for that kind — prefill dense, decode lighter, a cache swap striped — so the
+ * ribbon and the lane read as one legend. Nothing is drawn for time nobody timed (an unpatched server, a tool
+ * running), which is why an empty stretch claims nothing, idle included. Rows are per MODEL because two models
+ * on one card do generate at once.
+ */
+function PhaseRibbon({ run, spans }: { run: { t: number }[]; spans: { t: number; until: number; kind: string; model: string }[] }) {
+    if (run.length < 2) return null;
+    const first = run[0].t, last = run[run.length - 1].t;
+    const rows = [...new Set(spans.map((s) => s.model))].sort();
+    return (
+        <div class="rc-ribbon" aria-hidden="true" style={{ height: `${Math.min(rows.length, 3) * 3}px` }}>
+            {spans.filter((s) => s.until > first && s.t < last && rows.indexOf(s.model) < 3).map((s) => {
+                const from = runFrac(run, Math.max(first, s.t)), to = runFrac(run, Math.min(last, s.until));
+                return <i key={`${s.model}:${s.t}:${s.kind}`} class={`rc-ribbon-seg k-${s.kind}`}
+                    style={{ left: `${from * 100}%`, width: `max(1px, ${(to - from) * 100}%)`, top: `${rows.indexOf(s.model) * 3}px`,
+                             background: phaseFill(s.kind, s.model) }} />;
+            })}
+        </div>
     );
 }
 

@@ -70,6 +70,16 @@ const BOXES = {
         models: { a: ["gemma4:31b", 18 * GiB], b: ["qwen3.5:35b", 22 * GiB], c: ["phi5:14b", 9 * GiB],
                   d: ["coder:7b", 5 * GiB], big: ["deepseek:671b", 70 * GiB], cpu: ["util:2b", 7 * GiB] },
     },
+    // AMD's big node: eight Instinct MI300X (192 GB HBM3 each) and 2 TiB of RAM, every card linked to every other
+    // by Infinity Fabric (xGMI) with no switch. The AMD twin of `lab` + NVSwitch: all bridges, but a MESH of
+    // direct links rather than a switch — and on a vendor tool that is not nvidia-smi.
+    mi300x: {
+        runner: "ROCm", hostTotal: 2199023255552, idleHeld: 0.5 * GiB,
+        devices: [0, 1, 2, 3, 4, 5, 6, 7].map((id) => gpu({ gpu_id: String(id), name: `ROCm${id}`, runner: "ROCm",
+            total_memory: 205520896000, physical_memory: 206158430208, utilization: { gpu_percent: 0 } })),
+        models: { a: ["gemma4:31b", 18 * GiB], b: ["qwen3.5:35b", 22 * GiB], c: ["phi5:14b", 9 * GiB],
+                  d: ["coder:7b", 5 * GiB], big: ["deepseek:671b", 160 * GiB], cpu: ["util:2b", 7 * GiB] },
+    },
     // A Mac: ONE unified pool. `total_memory` is the advised working set (~75% of the system), NOT a second
     // pool — and there is no physical_memory and no vendor tool to point at.
     metal: {
@@ -100,6 +110,8 @@ const PHB = { type: "pcie", path: "PHB", pcie_path: "PHB" };
 // RTX 3090 NVLink 3.0 bridge: 4 links. The rate is a MOCK figure — the server reads it or omits it.
 const NV4 = { type: "nvlink", path: "NV4", nvlink_count: 4, pcie_path: "PHB", bandwidth_bytes_per_sec: 112_500_000_000 };
 const NV12 = { type: "nvlink", path: "NV12", nvlink_count: 12, pcie_path: "SYS", bandwidth_bytes_per_sec: 600_000_000_000 };
+// AMD Infinity Fabric (xGMI): the rate is the AMD driver's own figure where it reads one (`kfd_io_link`). MOCK.
+const XGMI = { type: "xgmi", path: "XGMI", link_count: 1, pcie_path: "SYS", bandwidth_bytes_per_sec: 64_000_000_000, bandwidth_source: "kfd_io_link" };
 const hw = (name) => JSON.parse(readFileSync(new URL(`./hw/${name}-2026-09-11.json`, import.meta.url), "utf8"));
 const TOPOLOGIES = {
     // REAL: gpubox's two cards across the CPU's host bridge — no NVLink PHY on either — with the link's PEAK
@@ -121,6 +133,11 @@ const TOPOLOGIES = {
     dgx1: { status: "measured", detail: "", gpus: [0, 1, 2, 3, 4, 5, 6, 7].map(pci),
         links: pairs(8, (i, j) => (Math.floor(i / 4) === Math.floor(j / 4) || j - i === 4
             ? { type: "nvlink", path: "NV2", nvlink_count: 2, pcie_path: "SYS" } : { type: "pcie", path: "SYS", pcie_path: "SYS" })) },
+    // AMD, 2x Instinct MI210 joined by an Infinity Fabric Link bridge — the direct analogue of a consumer NVLink
+    // bridge, reported as `xgmi`. MOCK, like every NVLink shape above: no captured AMD topology exists yet.
+    amdBridged: { status: "measured", detail: "", gpus: [0, 1].map(pci), links: pairs(2, () => XGMI) },
+    // AMD MI300X x8: every pair a direct xGMI link, with no switch — drawn as one fully bridged group. MOCK.
+    xgmi8: { status: "measured", detail: "", gpus: [0, 1, 2, 3, 4, 5, 6, 7].map(pci), links: pairs(8, () => XGMI) },
     // REAL: the server with NVML made unloadable. Coverage still holds — the one pair is present, `unknown`,
     // carrying the driver's own words — which is what keeps "could not look" from reading as "no link".
     unavailable: hw("topology-nvml-unavailable"),

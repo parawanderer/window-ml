@@ -1056,6 +1056,13 @@ per device, in bytes.
   non-streamed call's `model` phase split `other | prefill | decode`; a split that does not FIT is not drawn.
   Unmatched spans are other clients' traffic and say so. A replay is deduped by the END and the figures, never
   the start, which moves when a replay lost its `gen.start`.
+- **WHAT EACH CARD WAS DOING: the phase ribbon** (`ribbonSpans`, `PhaseRibbon`). A thin row per model along the
+  top of a per-card track, drawing only TIMED phases — the engine's prefill/decode, our own streamed channels
+  (which ARE the decode), a prompt-cache swap — in the lane's own fills, so the two read as one legend. So the
+  card tracks answer "reading the prompt or generating?" with the lane collapsed. A span goes to the cards the
+  nearest sample places its model on (a split model's work shows on each). Empty ribbon claims nothing, idle
+  included: an unpatched server times no phases. It follows the lane's kind toggles ("calls" off removes it).
+  Rows are per model because two models on one card generate at once (the real capture has four).
 - **THE HOST-RAM PROMPT CACHE, AND THE SWAP NO OTHER TIMING CONTAINS** (`GenTimings.swap`, `SwapChips`,
   `RunnerActivity.promptCache`; `ollama-slop:promptcache2`). Two conversations on one model share its single
   slot; when they take turns, llama-server parks the outgoing one's KV cache in host RAM (`--cache-ram`, 8 GiB
@@ -1251,7 +1258,10 @@ per device, in bytes.
   linked to 4 of 7) the ordering finds a chain in which every ADJACENT pair is linked, which would draw exactly
   like an all-to-all NVSwitch box — so `bridgeWalls` checks each RUN of bridged cards as a whole, and a run
   that is not a full mesh is drawn lighter and its unlinked pairs named. The walls open no tooltip (a hover
-  target inside the plot stacks a second tip); what each bridge is, in words, is a section of the pool tip.
+  target inside the plot stacks a second tip); what each bridge is, in words, is a section of the pool tip,
+  said PER RUN of bridged cards — a full mesh of more than two is one line ("all 8 cards, every pair directly linked"; listing its adjacent
+  walls read as a chain), and a partial mesh names its unlinked pairs once, not under each of its bridges. AMD's
+  fabric is `xgmi` and draws exactly like NVLink (`TOPOLOGIES.amdBridged`, `.xgmi8`, MOCKS).
   Nothing is reordered or bridged unless `status` is `measured`.
 - **A THIRD MODE, `total`: THE WHOLE BOX ON ONE AXIS** (`boxAxis`, `BoxView`). Pools DO combine — ollama
   splits a model too big for one card across several and spills the rest into RAM — but not one-for-one:
@@ -2429,6 +2439,20 @@ rate includes the network; that whole matrix (openai/ollama x streamed/not) is p
   sets the beat. Screenshots land in `tests/e2e/artifacts/cursor-demo/`. The assertions are in
   `resource-panel.spec.mjs`. It also walks the KEYBOARD reading — ↑↓ picking a model without the pointer
   moving, → drilling into what its memory is holding, and a real 3:1 split answering on both cards at once.
+- **`panel-news-demo.mjs`** — a **narrated demo, not a test** of the resource panel's 2026-09-11/12 features in one run:
+  `npm run build && node --import tsx tests/e2e/panel-news-demo.mjs`. A fake box drives the panel over the EVENT
+  STREAM the way a patched Ollama does (samples at the stream's cadence, edges between), so it walks: the quant in
+  words, the residual named by process (a tenant, "outside ollama's view", a runner's overhead), the gear's time grid
+  and load predictions, a LIVE load that overshoots and settles against its dashed prediction, `ml.__loads()`, the
+  phase ribbon from engine timings, the drilled-in load curve, the shared kind toggles, and the engine's token count
+  climbing through a streamed tool call. `HEADLESS=1` checks the script unseen; `PACE`/`HOLD` as elsewhere. It parks
+  the pointer INSIDE the panel between beats (`park()`): a one-step jump out of the iframe never tells the chart the
+  pointer left, and the last hover stays up.
+- **`whole-box-demo.mjs`** — a **narrated demo, not a test** of the Whole box view across `tests/fixtures/boxes.mjs`'s
+  shapes and their links: gpubox over PCIe (REAL capture), 4×3090 bridged two ways (the reorder), 8×A100 NVSwitch,
+  a DGX-1 partial mesh, AMD MI210s over an Infinity Fabric Link and 8×MI300X all-to-all over xGMI (both MOCKS), and a
+  Mac, where Whole box is not offered. Each beat opens a fresh tab, picks the view from the header, and hovers a card
+  for the links section.
 - **`stream-demo.mjs`** — a **narrated demo, not a test** of LIVE tool-output streaming: `npm run build &&
   node --import tsx tests/e2e/stream-demo.mjs` opens a headful browser, slides the overlay open on a real
   (background-hosted) run, and drives a deliberately SLOW `exec` (paced `console.log`) and `python_exec`
