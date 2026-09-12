@@ -657,8 +657,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    is the notable case and `chat` the ordinary one, which is a colour difference, not a shape one. Giving
    `chat` a capsule while `embed` and the context chip stayed rectangles made the odd one out the common
    case, and read as two unrelated kinds of thing on the same line. */
-.vram-embed, .vram-chat { padding: 0 4px; font-size: 0.72em; border: 1px solid var(--border); border-radius: 3px;
+.vram-embed, .vram-chat, .vram-quant { padding: 0 4px; font-size: 0.72em; border: 1px solid var(--border); border-radius: 3px;
     line-height: 1.6; }
+/* WHICH BUILD of the model — its quantization (Q4_K_M, Q8_0). A kind badge like the two above, since it says
+   what the model IS rather than what it is doing; monospace, because quant names are codes. */
+.vram-quant { color: var(--fg-dim); font-family: var(--mono, ui-monospace, monospace); }
 .vram-embed { color: var(--fg-dim); }
 .vram-chat { color: var(--fg-faint); }
 /* Live keep-alive countdown — same chip shape as the context badge, sat beside it. */

@@ -1074,6 +1074,13 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
                     {tips ? <span class="tt-pop left above" role="tooltip">A generating model — what <code>ml.chat</code> and <code>ml.agent</code> run on. Shown beside the embedding badge so a row you did not expect to be holding a card says which kind it is.</span> : null}
                 </span>
             ) : null}
+            {/* WHICH BUILD it is. The name rarely says which quantization was pulled, and it is the one choice
+                a user makes about a model that changes its size, its speed and its answers at once. */}
+            {m.quant ? (
+                <span class={tips ? "tt vram-quant" : "vram-quant"} {...yieldTip}>{m.quant}
+                    {tips ? <span class="tt-pop left above" role="tooltip">Quantization {m.quant}: the precision its weights are stored at. A lower one is smaller and faster and answers somewhat worse; the same model at another quantization is a different download.{m.paramSize ? <> {m.paramSize} parameters{m.family ? <>, {m.family} family</> : null}.</> : null}</span> : null}
+                </span>
+            ) : null}
             {m.contextLength ? (
                 <span class={tips ? "tt vram-ctx" : "vram-ctx"} {...yieldTip}>{fmtCtx(m.contextLength)}
                     {/* The chip's figure LEADS, then the exact count. They are the same number — 262,144 tokens

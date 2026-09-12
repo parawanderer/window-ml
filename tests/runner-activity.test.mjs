@@ -111,6 +111,19 @@ test("loadedFrom carries activity through, and absence stays absent", () => {
         "no key at all when the server said nothing — absence is the server's own signal");
 });
 
+test("loadedFrom carries which BUILD a model is, and a loading row's empty details stay absent", async () => {
+    // A real /api/ps body off the box: two resident models, each with its `details`.
+    const { readFileSync } = await import("node:fs");
+    const { ps } = JSON.parse(readFileSync(new URL("./fixtures/hw/runner-pids-context-band-2026-09-11.json", import.meta.url), "utf8"));
+    const by = Object.fromEntries(loadedFrom(ps.models).map((m) => [m.model, m]));
+    assert.deepEqual([by["granite4.1:3b"].quant, by["granite4.1:3b"].paramSize, by["granite4.1:3b"].family], ["Q4_K_M", "3.4B", "granite"]);
+    assert.equal(by["qwen3.5:0.8b"].quant, "Q8_0");
+    // A `loading` row reports every detail as "" — not reported, never a model with no quantization.
+    const loading = loadedFrom([{ name: "m", model: "m", state: "loading", size: 0, size_vram: 0,
+        details: { parent_model: "", format: "", family: "", families: null, parameter_size: "", quantization_level: "" } }])[0];
+    assert.ok(!("quant" in loading) && !("paramSize" in loading) && !("family" in loading));
+});
+
 test("fmtOccupancy: nearly-empty and nearly-full never round to the answer's opposite", () => {
     // The failure this exists for: 30 tokens of a 262,144 window rounds to "0%", which beside a reserved
     // 40 GiB says the cache is EMPTY — the exact claim the reader is about to act on, and false.

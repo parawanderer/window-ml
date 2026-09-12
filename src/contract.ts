@@ -1784,6 +1784,13 @@ export interface LoadedModel {
      *  reason for not computing one (`{unavailable: "mixture_of_experts" | "partly_on_cpu" | …}`). Absent on a
      *  model on no GPU and on every server that predates it. */
     roofline?: unknown;
+    /** WHICH BUILD of the model this is: its quantization (`"Q4_K_M"`), parameter size (`"27B"`) and family,
+     *  from `details` on `/api/ps` — which stock Ollama sends too. The quant is the one users choose between
+     *  (the same model at Q8_0 and Q4_K_M differs in size, speed and quality), and the name usually does not
+     *  say which was pulled. Absent on a `loading` row, which reports every one of them as "". */
+    quant?: string;
+    paramSize?: string;
+    family?: string;
 }
 
 /** One accelerator the machine has, from `/api/info` `compute.supported_gpus[]`. All memory figures are raw
