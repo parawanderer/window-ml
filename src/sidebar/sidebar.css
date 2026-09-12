@@ -2772,6 +2772,24 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    a hand goes for a drawer. */
 .bench-top { position: relative; display: flex; align-items: center; gap: 6px; padding: 5px 4px 1px; flex: 0 0 auto;
     cursor: ns-resize; touch-action: none; background: var(--panel); }
+/* A NARROW BENCH SHEDS WHAT IT CAN SPARE, in order, rather than running its controls off the edge — below
+   ~570px the header used to overflow and ▶ Run was the first thing lost. The title goes first (the drawer is
+   plainly the bench without it), then the version chip (the environment panel still has it). Measured against
+   the BENCH's own width, since the drawer and full-page mode sit in panels of any size. */
+.bench { container: bench / inline-size; }
+@container bench (max-width: 560px) { .bench-top .bench-title { display: none; } }
+@container bench (max-width: 470px) { .bench-top .bench-ver { display: none; } }
+/* Below the panel's DEFAULT width (400px, a ~366px bench) — never at it: the default is what almost everyone sees,
+   and it fits with the two stages above. The panel can be dragged down to 280px; there the disabled "send to
+   model" placeholder goes (it does nothing
+   yet), the grip pill goes (the whole header row is still the drag target; the pill only points at it), and
+   the mode picker gives up width, clipping its option text rather than pushing ▶ Run off the edge. */
+@container bench (max-width: 355px) {
+    .bench-top .bench-send, .bench-top .bench-grip-pill { display: none; }
+    .bench-top .bench-mode, .bench-top .bench-mode select { min-width: 0; }
+    .bench-top .bench-mode { flex: 0 1 auto; overflow: hidden; }
+    .bench-top .bench-mode select { max-width: 100%; text-overflow: ellipsis; }
+}
 /* The controls in the strip are CONTROLS, not part of the drag target. Without this they inherit the
    resize cursor and read as somewhere to grab. */
 .bench-top > .hbtn, .bench-top > .bench-play, .bench-top .bench-env-btn,
@@ -2875,7 +2893,6 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    read off the BUTTON. The old selector reached down from `.bench-env`, which no longer contains it, and the
    chevron simply stopped turning. */
 .bench-env-btn.on .tri { transform: rotate(90deg); }
-.bench-env-ver { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
 /* Plain content now: the BOX is `.bench-env` around it, which is what hangs off the header. This used to
    carry the positioning itself, from when the button lived in a bar at the bottom and the panel had to open
    upward out of it. */

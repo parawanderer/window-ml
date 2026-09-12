@@ -114,6 +114,12 @@ gh run list --branch main --limit 3             # does MAIN fail it too? then it
 - **`cross-page.spec.mjs` › `fetch_url rendered: the DOM-quiet settle…`** — timing-sensitive, carries
   `retries: 2`, and usually passes on retry. Reported as *flaky*, not failed. A **flaky** line is not a
   red check; a **failed** one is.
+- **`resource-stream.spec.mjs` › `a self-contradicting ps frame does not make a resident model vanish`** —
+  INTERMITTENT on main itself: 1 of 10 locally against a build of `4e2a385`, and it failed #43's CI, whose
+  diff never touches the resource panel. Always the same assertion — `t=100: the row lost the model's
+  memory`, the row reading "evicted" — right after the first `loading` frame, and it has no `retries`, so it
+  reports as *failed*. Unconfirmed lead: the test seeds only the event stream, so the fake box's `/api/ps`
+  reports nothing resident, and a poll landing in the 150ms window disagrees with the stream.
 
 Recently removed, recorded so nobody re-adds them from memory:
 
