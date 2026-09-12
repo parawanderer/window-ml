@@ -529,3 +529,12 @@ test("after: a follow-up turn's first call follows a person (the host says so)",
     await runAgentLoop("x", { tools: [{ name: "plain" }], after: "human" }, deps);
     assert.deepEqual(seen, ["human", "tool"]);
 });
+
+test("after: a gate an ORCHESTRATOR resolved (the external channel) is not a person deciding", async () => {
+    const seen = [];
+    const { deps } = makeDeps({ turns: [toolCall("danger"), reply("ok")], approve: () => ({ approved: true, source: "external" }) });
+    const call = deps.callModel;
+    deps.callModel = async (m, o) => { seen.push(o.after ?? null); return call(m, o); };
+    await runAgentLoop("x", { tools: [danger] }, deps);
+    assert.deepEqual(seen, [null, "tool"], "code decided in milliseconds; only the tool was waited on");
+});

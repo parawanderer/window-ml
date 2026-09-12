@@ -634,6 +634,10 @@
       "type": "object",
       "description": "Token accounting for ONE request, when the server reports it (OpenWebUI returns a `usage` block; Ollama-native returns prompt_eval_count/eval_count). IMPORTANT: `promptTokens` already covers the WHOLE conversation — every turn re-sends the full history — so live context occupancy is `promptTokens + completionTokens` of the LATEST call, never a sum across turns (summing would overcount quadratically). Only cumulative SPEND is a sum.",
       "properties": {
+        "requestId": {
+          "description": "OUR id for the request this usage came back from, sent as `hint.request` and echoed on a patched ollama's `gen.end` — what lets the panel match the server's record of this generation to it exactly.",
+          "type": "string"
+        },
         "promptTokens": {
           "type": "number"
         },

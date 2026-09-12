@@ -611,7 +611,9 @@ optional: absent means "this server does not report it", and the panel says so r
 `gen.end`. `wireHint` (contract.ts) is the one place limits and defaults apply. **An absent `use` means unknown:
 never guess one for a caller that did not say.** A tool's own model calls inherit the running run's session
 (`currentRunSession`, bound while the tool runs), and the observe/bench harnesses mark their traffic
-`synthetic`. The full mapping is in `docs/FORKED-BACKENDS.md`.
+`synthetic` (`SYNTHETIC=0` for a run a person drives). Each request also carries our own `request` id, back on
+the call's usage and echoed on `gen.end`, so `joinGens` matches the server's record of a generation to our call
+exactly instead of by model and end time. The full mapping is in `docs/FORKED-BACKENDS.md`.
 
 ## Security invariants (don't regress these)
 

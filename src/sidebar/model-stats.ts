@@ -226,7 +226,8 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
         if (genMs > 0) {
             out.push({ t: ts - genMs, until: ts, kind: "gen", label: model || "generation",
                        model: model || undefined, ...(id ? { id } : {}), ...(parent ? { parent } : {}), ref,
-                       phases: genPhases(ts - genMs, genMs, u.genPhases), cost: costOf(u) });
+                       phases: genPhases(ts - genMs, genMs, u.genPhases), cost: costOf(u),
+                       ...(u.requestId ? { requestId: u.requestId } : {}) });
         }
         // The load happened at the START of the call, before a token was generated — drawn as its own span so
         // "the turn was slow" and "the model wasn't there yet" are visibly different answers.
@@ -318,6 +319,7 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
                     id: stepId, parent: runIdOf(st.step),
                     ref: { hash: s.hash, seq: st.seq },
                     ...(turnU ? { cost: costOf(turnU) } : {}),
+                    ...(turnU?.requestId ? { requestId: turnU.requestId } : {}),
                 });
                 // Delegated sub-calls (a vision reader today, a background embedding when that lands) are
                 // spawned BY this step and are drawn as their own spans under it — a different model doing

@@ -27,7 +27,7 @@ import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KE
 export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, dropInferredLoads, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, memorySplit, estimateFrom, quantPlain, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, joinGens, rooflineFrom, kindRefusal } from "../resource-model";
+import { parseInfo, holdCapacity, memorySplit, estimateFrom, quantPlain, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, joinGens, rooflineFrom, kindRefusal } from "../resource-model";
 import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay, LANE_KINDS, toggleLaneKind } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -535,7 +535,9 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
             // say; a bare "generating" bar would be a second copy of it.
             if (!timings) return null;
             const loadEnd = loadEndedAt.get(model);
-            return genSpan({ model, endAt: at, timings, ...(startAt != null ? { startAt } : {}),
+            // What the request said it was for, echoed by a patched server — ours carry our request id, which is
+            // what `joinGens` matches on; anyone else's the lane can name.
+            return genSpan({ model, endAt: at, timings, hint: hintFrom((frame as { hint?: unknown }).hint), ...(startAt != null ? { startAt } : {}),
                 ...(loadEnd != null && startAt != null && loadEnd > startAt && loadEnd <= at ? { loadEnd } : {}) });
         }
         case "load.failed": {

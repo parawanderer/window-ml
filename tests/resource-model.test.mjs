@@ -2779,3 +2779,41 @@ test("the REAL capture with one card faulted: the healthy card's product name, a
     const known = M.unavailableFrom([{ ...raw.compute.unavailable_gpus[0], last_name: "CUDA1", last_seen: "2026-09-12T08:22:22Z" }])[0];
     assert.deepEqual([known.lastName, known.lastSeen], ["CUDA1", Date.parse("2026-09-12T08:22:22Z")]);
 });
+
+// ---- Request hints read back (gen.end.hint) ----
+test("joinGens: a request id settles the match exactly — two calls of one model finishing together cannot swap", () => {
+    // Two of our calls on one model, ending 200ms apart: well inside the timing tolerance of each other.
+    const a = { t: 1000, until: 2000, kind: "gen", label: "a", model: "m", requestId: "wml-r-a", ref: { hash: "h", seq: 1 } };
+    const b = { t: 1100, until: 2200, kind: "gen", label: "b", model: "m", requestId: "wml-r-b", ref: { hash: "h", seq: 2 } };
+    // The server's records, with its clock skewed so that by TIMING each lands nearer the OTHER call's end. Each
+    // carries its OWN figures, or "joined the right one" could not be told from "joined the wrong one".
+    const gb = M.genSpan({ model: "m", endAt: 2010, timings: { promptMs: 100, evalMs: 400, decoded: 2 }, hint: { request: "wml-r-b" } });
+    const ga = M.genSpan({ model: "m", endAt: 2190, timings: { promptMs: 100, evalMs: 400, decoded: 1 }, hint: { request: "wml-r-a" } });
+    const { session, server } = M.joinGens([a, b], [gb, ga]);
+    assert.equal(server.length, 0, "both matched");
+    assert.equal(session[0].gen, ga.gen, "a joined its own record despite gb ending nearer");
+    assert.equal(session[1].gen, gb.gen);
+});
+
+test("joinGens: when both sides carry a request id and they differ, it is somebody else's call, however close", () => {
+    const ours = { t: 1000, until: 2000, kind: "gen", label: "turn", model: "m", requestId: "wml-r-ours" };
+    const theirs = M.genSpan({ model: "m", endAt: 2000, timings: { promptMs: 100, evalMs: 400 }, hint: { request: "wml-r-other-tab" } });
+    const { session, server } = M.joinGens([ours], [theirs]);
+    assert.equal(server.length, 1, "left standing as another client's generation");
+    assert.equal(session[0].gen, undefined);
+    // …but an id on ONE side only (an older build, a route that dropped the hint) falls back to timing.
+    const plain = M.genSpan({ model: "m", endAt: 2000, timings: { promptMs: 100, evalMs: 400 } });
+    assert.equal(M.joinGens([ours], [plain]).server.length, 0, "no id on the server's record: matched by timing, as before");
+});
+
+test("hintFrom / serverGenNote: whose a generation was, and what kind of work, in words", () => {
+    assert.equal(M.hintFrom(null), null);
+    assert.equal(M.hintFrom({ use: 3, synthetic: "yes" }), null, "nothing coerced");
+    assert.deepEqual(M.hintFrom({ use: "agent", session: "wml-1", request: "r", after: "tool", synthetic: true }),
+        { use: "agent", session: "wml-1", request: "r", after: "tool", synthetic: true });
+    assert.equal(M.serverGenNote(null), "reported by the server — not started from this browser", "no hint: what it always said");
+    assert.equal(M.serverGenNote({ use: "utility", session: "owui-42" }), "reported by the server: Open WebUI, a side task");
+    assert.match(M.serverGenNote({ use: "agent", session: "wml-ab" }), /window\.ml session this panel isn't showing.*an agent step/);
+    assert.equal(M.serverGenNote({ use: "interactive" }), "reported by the server: a person reading it");
+    assert.equal(M.serverGenNote({ use: "speculative", session: "x", synthetic: true }), `reported by the server: another client, "speculative", synthetic traffic`, "an unknown use is quoted as sent");
+});

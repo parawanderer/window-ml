@@ -358,7 +358,7 @@ export async function runOnce(cfg = {}) {
         python = false, toolTokens = false, agentOptions = {},
         backend = null, script = DEFAULT_SCRIPT, warm = true, warmAll = false,
         dist = null, artDir = null, approve = "auto", capture = "failure",
-        focusSidebar = true, hold = false,
+        focusSidebar = true, hold = false, synthetic = true,
         timeoutMs = followup ? 240000 : 120000,
         log = () => {}, onEvent = null,
     } = cfg;
@@ -396,7 +396,8 @@ export async function runOnce(cfg = {}) {
         // GENERATED TRAFFIC, said so on every request (`hint.synthetic`): a patched ollama serves it exactly like
         // real traffic but keeps it out of what it learns keep-alive and placement from. Observe and the bench
         // both drive this profile, and neither is a person using the box.
-        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_synthetic_traffic: true }));
+        // `synthetic: false` is for a run a PERSON drives (watching, clicking the approvals), which is real use.
+        if (synthetic) await ext.sw.evaluate(() => chrome.storage.local.set({ ml_synthetic_traffic: true }));
         await configureExtension(ext.sw, {
             ...(seedCfg || realCfg),
             apiFormat: backend?.apiFormat || "openai",
