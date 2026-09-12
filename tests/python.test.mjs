@@ -532,7 +532,7 @@ test("completion: a script full of quotes cannot break out of the call", { skip:
 test("completion: a numpy ARRAY needs the live namespace — static analysis cannot infer it (the persisted-bench seam)", { skip: skipJedi }, async () => {
     const code = "import numpy as np\ngrid = np.arange(24).reshape(4, 6)\ngrid.su";
     // Known and documented (python-runtime.ts): Jedi 0.19 cannot resolve numpy 2's stubs. If this starts
-    // returning something, a newer Jedi fixed it — update that comment and the AGENTS.md note, don't just delete this.
+    // returning something, a newer Jedi fixed it — update that comment and the note in docs/dev/python-sandbox.md, don't just delete this.
     assert.deepEqual(names(await complete(code)), [], "static analysis still cannot type a numpy call's result");
     // With the object alive — what a persisted session will pass — the same call completes it.
     py.runPython("import numpy as np\n_ml_test_ns = {'np': np, 'grid': np.arange(24).reshape(4, 6)}");
