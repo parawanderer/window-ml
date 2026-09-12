@@ -1719,7 +1719,13 @@ nothing): Jedi 0.19 cannot resolve numpy 2's stub layout. The bench's KEPT STATE
 the current mode's namespace (`complete.bench`), and `namespace` is the helper's one moving part — `None` is
 Jedi's `Script`, a live namespace is its `Interpreter`, which completes the real object (`grid.su` → `sum` once
 a run has defined `grid`; the static gap stays pinned in `tests/python.test.mjs`, so a Jedi that fixes it
-announces itself). Five things are load-bearing:
+announces itself). Six things are load-bearing:
+- **The prelude is read IN FRONT of the script, never run** (`COMPLETE_CONTEXT` = `PRELUDE_BASE`, which every
+  bench run executes first). So `np`/`pd`/`Image`/`to_base64` complete with NOTHING kept — before the first
+  run, after a reset, after a restart — where the script alone completed none of them unless it imported them
+  itself. It also serves the kept state, and is not redundant with it: a name the namespace holds is a LIVE
+  module, which has no stubs to type a call's result, so through the namespace's `pd` alone
+  `pd.read_csv(...).he` and `df.groupby('a').su` completed nothing. The namespace is for what the USER kept.
 - **Lazy** (`PyPackage.lazy`, `PY_LAZY_LOADS`): the 1.6 MB of wheels are fetched with the rest but loaded on
   the first completion, never at start-up and never offered to the model.
 - **Only once the sandbox is WARM** (`completeInSandbox` returns null until `benchEnv` is set): a completion

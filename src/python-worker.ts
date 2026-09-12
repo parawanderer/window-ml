@@ -179,7 +179,8 @@ async function complete(code: string, line: number, column: number, bench?: "rea
         .catch((err: unknown) => { completerReady = null; throw err; });
     await completerReady;
     // The bench's kept namespace for the mode it is in, when there is one: Jedi then completes the LIVE objects
-    // (`grid.` after `grid = np.arange(...)`), which static analysis alone cannot type.
+    // (`grid.` after `grid = np.arange(...)`), which static analysis alone cannot type. With none, the prelude's
+    // names still complete: `completeIn` reads the prelude in front of the script.
     return completeIn(py, code, line, column, bench ? benchNs.get(bench)?.ns : undefined);
 }
 

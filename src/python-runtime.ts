@@ -384,13 +384,16 @@ export function unharden(py: any, saved: Hardened): void {
 // completion is static analysis, so the stateless sandbox is no limit for anything reached through an
 // import or written in the script — measured in Pyodide: module attributes (`np.ara`, `np.linalg.i`,
 // `from numpy import lin`), pandas frames (`pd.read_csv(...).he` → `head`, via pandas' own stubs), literals,
-// and the script's own functions and classes all complete.
+// and the script's own functions and classes all complete. The prelude's own names (`np`, `pd`, `Image`,
+// `to_base64`) complete with no import, because `completeIn` reads the prelude in front of the script.
 //
 // What it CANNOT infer is an array returned by a numpy call (`np.arange(24).reshape(4, 6)`, `np.zeros(3)`):
 // Jedi 0.19 cannot resolve numpy 2's stub layout, so `grid.` offers nothing. That is exactly the case a
 // persisted session fixes, and why `namespace` is the one parameter that changes when the bench keeps its
 // state: `None` is Jedi's `Script`, a namespace is its `Interpreter`, which completes the LIVE object
 // (`grid.su` → `sum`, verified). The same `complete(line, column)` either way, so the editor never changes.
+// The namespace is for what the USER kept; the prelude's modules still come from the text in front, since a
+// name found in the namespace is a live module and a live module has no stubs to type a call's result.
 //
 // `InterpreterEnvironment`: the default environment looks for a Python executable to introspect compiled
 // modules in a SUBPROCESS, and there is no subprocess in Pyodide.
@@ -420,6 +423,10 @@ def _ml_complete(code, line, column, namespace=None):
     return json.dumps(out)
 `;
 
+/** What every bench script runs after (`wrapUserCode(..., persist = true)`), so what completion reads in front of it. */
+const COMPLETE_CONTEXT = PRELUDE_BASE.replace(/^\n/, "");
+const COMPLETE_CONTEXT_LINES = COMPLETE_CONTEXT.split("\n").length - 1;   // ends in "\n", so the script starts on the next line
+
 /** One completion Jedi offered: the whole `name`, its kind (`module`/`function`/`instance`/…), and the part
  *  still to type (`complete`). */
 export interface PyCompletion { name: string; type: string; complete: string; }
@@ -429,7 +436,9 @@ export interface PyCompletion { name: string; type: string; complete: string; }
  * once, after loading the lazy wheels). Always HARDENED, whatever mode the bench is in: analysis can import a
  * compiled module to inspect it, and that import must not reach the network even when the user picked `full`.
  *
- * @param line 1-based, as Jedi counts. @param column 0-based, in characters.
+ * The script is analysed as if `PRELUDE_BASE` came before it, which is what a bench run does.
+ *
+ * @param line 1-based, in the script, as Jedi counts. @param column 0-based, in characters.
  * @param namespace a LIVE namespace (the bench's kept state, a Python dict) to complete real objects from;
  *   absent, Jedi analyses the script alone.
  * @returns at most 200 completions, best first as Jedi ranks them.
@@ -438,9 +447,14 @@ export function completeIn(py: any, code: string, line: number, column: number, 
     const saved = harden(py);
     try {
         // Handed over as globals rather than spliced into the source, so no script can break out of a quote.
-        py.globals.set("_ml_c_code", code);
+        // The prelude goes IN FRONT, as text Jedi reads and never runs: bench code always runs after it, so
+        // `np`/`pd`/`Image`/`to_base64` are in scope whether or not anything is kept. Without it, a bench with
+        // nothing kept (before the first run, after a reset or a restart) completed none of them — static
+        // analysis knew only what the script itself imported. It also beats the kept namespace's LIVE `pd`:
+        // a live module has no stubs to type a call's result, so `pd.read_csv(...).he` completed nothing.
+        py.globals.set("_ml_c_code", COMPLETE_CONTEXT + code);
         if (namespace) py.globals.set("_ml_c_ns", namespace);
-        return JSON.parse(py.runPython(`_ml_complete(_ml_c_code, ${Math.max(1, line | 0)}, ${Math.max(0, column | 0)}${namespace ? ", _ml_c_ns" : ""})`) as string);
+        return JSON.parse(py.runPython(`_ml_complete(_ml_c_code, ${Math.max(1, line | 0) + COMPLETE_CONTEXT_LINES}, ${Math.max(0, column | 0)}${namespace ? ", _ml_c_ns" : ""})`) as string);
     } finally {
         for (const k of ["_ml_c_code", "_ml_c_ns"]) { try { py.globals.delete(k); } catch { /* absent */ } }
         unharden(py, saved);

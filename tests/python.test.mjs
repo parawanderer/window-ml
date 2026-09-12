@@ -592,6 +592,33 @@ test("bench: one namespace cannot see another's, and the model's namespace sees 
     assert.match(String(error), /NameError/, "a python_exec never sees a person's bench variables");
 });
 
+test("completion: the prelude's names complete with NOTHING kept — no import, no namespace", { skip: skipJedi }, async () => {
+    // Before a bench's first run, after a reset, after a restart: no namespace exists, but the prelude still
+    // binds these for the run. Static analysis of the script alone offered none of them.
+    const { completeIn } = await import("../src/python-runtime.ts");
+    await complete("x = 1");   // loads Jedi and the helper if this runs alone
+    const at = (code) => completeIn(py, code, 1, code.length).map((c) => c.name);
+    assert.ok(at("np.ara").includes("arange"));
+    assert.ok(at("pd.read_").includes("read_csv"));
+    assert.ok(at("Image.ope").includes("open"));
+    assert.ok(at("to_ba").includes("to_base64"));
+    // The line and column are the SCRIPT's, whatever is read in front of it.
+    const two = "import math\nmath.flo";
+    assert.ok(completeIn(py, two, 2, 8).map((c) => c.name).includes("floor"));
+});
+
+test("completion: kept state does not cost the prelude's stubs — a call through `pd` is still typed", { skip: skipJedi }, async () => {
+    // A live `pd` from the namespace has no stubs for a call's result; the prelude read in front of the script
+    // does, so both halves answer: the stubs for `pd.read_csv(...)`, the live object for `grid`.
+    const { completeIn } = await import("../src/python-runtime.ts");
+    await complete("x = 1");
+    const ns = freshNs();
+    await benchRun("grid = np.arange(24).reshape(4, 6)", ns);
+    const read = "df = pd.read_csv('x.csv')\ndf.he";
+    assert.ok(completeIn(py, read, 2, 5, ns).map((c) => c.name).includes("head"), "stubs, through the prelude's pd");
+    assert.ok(completeIn(py, "grid.su", 1, 7, ns).map((c) => c.name).includes("sum"), "the live object, from the namespace");
+});
+
 test("bench: completion from a LIVE namespace types what static analysis cannot (grid.)", { skip: skipJedi }, async () => {
     const { completeIn } = await import("../src/python-runtime.ts");
     await complete("x = 1");   // loads Jedi and the helper if this runs alone
