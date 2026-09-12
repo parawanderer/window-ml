@@ -1787,6 +1787,27 @@ export function segments(samples: ResourceSample[], maxGapMs: number = MAX_SAMPL
     return out;
 }
 
+/** A BREAK the chart cut out between two drawn runs. The plot collapses it to a few pixels whatever its length,
+ *  so a missing minute and a missing ten hours look the same unless something says which it was. */
+export interface RunGap {
+    /** The last reading before the break and the first after it. */
+    from: number;
+    to: number;
+    /** The server said it dropped frames on our behalf here (`gapBefore`), as opposed to nothing sampling. */
+    reported: boolean;
+    /** Readings inside the stretch that were too few to draw (a lone sample draws no line). */
+    isolated: number;
+}
+
+/** What the break between run `prev` and run `next` stands for. `samples` is the full history, so a lone
+ *  reading the plot skipped is counted rather than the stretch being called unmeasured. */
+export function runGap(prev: readonly { t: number }[], next: readonly { t: number; gapBefore?: true }[],
+    samples: readonly { t: number; gapBefore?: true }[] = []): RunGap {
+    const from = prev[prev.length - 1].t, to = next[0].t;
+    const inside = samples.filter((s) => s.t > from && s.t < to);
+    return { from, to, reported: !!next[0].gapBefore || inside.some((s) => s.gapBefore), isolated: inside.length };
+}
+
 /** Where an event sits on the chart's x-axis — which SEGMENT, and how far across it.
  *
  *  The plot is split into contiguous runs of samples (a gap is drawn as a gap, never interpolated across),

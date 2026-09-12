@@ -287,6 +287,23 @@ test("segments: a REPORTED hole breaks the line even when no time passed", () =>
     assert.equal(M.segments([{ ...s(0), gapBefore: true }, s(2000)]).length, 1);
 });
 
+test("runGap: what a break stands for — how long, and whether the server said so", () => {
+    const s = (t, extra = {}) => ({ t, models: [], capacity: null, ...extra });
+    // A minute with nothing sampled: the panel was closed, or the box did not answer.
+    const all = [s(0), s(2000), s(64000), s(66000)];
+    const [a, b] = M.segments(all, M.MAX_SAMPLE_GAP_MS);
+    assert.deepEqual(M.runGap(a, b, all), { from: 2000, to: 64000, reported: false, isolated: 0 });
+    // A REPORTED drop, on the first reading after it: the stream lost frames, a different cause to name.
+    const dropped = [s(0), s(2000), s(4000, { gapBefore: true }), s(6000)];
+    const [c, d] = M.segments(dropped, M.MAX_SAMPLE_GAP_MS);
+    assert.equal(M.runGap(c, d, dropped).reported, true);
+    // A lone reading inside the hole is too few to draw, but it WAS measured, so it is counted rather than the
+    // stretch being called empty — and a drop reported on it still counts as reported.
+    const lone = [s(0), s(2000), s(40000, { gapBefore: true }), s(90000), s(92000)];
+    const runs = M.segments(lone, M.MAX_SAMPLE_GAP_MS).filter((r) => r.length > 1);
+    assert.deepEqual(M.runGap(runs[0], runs[1], lone), { from: 2000, to: 90000, reported: true, isolated: 1 });
+});
+
 test("eventsIn: only the window, in time order", () => {
     const ev = (t, label) => ({ t, kind: "note", label });
     const all = [ev(50, "late"), ev(10, "early"), ev(500, "outside"), ev(1, "before")];
