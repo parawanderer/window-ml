@@ -894,6 +894,9 @@ test("the bench KEEPS its variables between runs — per mode, listed, completab
         // The environment panel lists it, with its type.
         await frame.locator(".bench-env-btn").click();
         await expect(frame.locator(".bench-env-vars li", { hasText: "grid" })).toContainText("ndarray");
+        // …and ONLY it: the worker's per-run inputs (INJECTED_IMAGE_B64/INJECTED_TABLES_JSON) were set in the
+        // bench namespace too, and listed as two kept variables no script had defined.
+        await expect(frame.locator(".bench-env-vars li")).toHaveCount(1);
 
         // Completion from the LIVE object — static analysis alone cannot type a numpy call's result. The first
         // request may load Jedi and fall back, so keep typing the way a person would.

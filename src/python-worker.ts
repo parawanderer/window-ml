@@ -92,8 +92,12 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     // Where this run executes: the bench's kept namespace for its mode, or the main one a `python_exec` resets.
     const bench = persist ? benchNamespace(py, hardened) : null;
     const ns = bench ? bench.ns : py.globals;
-    ns.set("INJECTED_IMAGE_B64", image);
-    ns.set("INJECTED_TABLES_JSON", Array.isArray(tables) && tables.length ? JSON.stringify(tables) : null);
+    // Read only by PRELUDE_DATA, which a kept-state run does not execute — so never put into a bench namespace,
+    // where they were listed as two variables no script had defined (and offered by completion).
+    if (!bench) {
+        ns.set("INJECTED_IMAGE_B64", image);
+        ns.set("INJECTED_TABLES_JSON", Array.isArray(tables) && tables.length ? JSON.stringify(tables) : null);
+    }
     // LIVE stdout tee (opt-in streaming): the prelude's _MlTee calls this per print(). Set only when the
     // caller wants live output; cleared in finally so a later non-streaming run doesn't reuse a stale cb (it
     // survives the per-run RESET — a leading-underscore global). No callback → pure capture, unchanged.
@@ -131,8 +135,10 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     } catch (e: any) {
         return timed({ ok: false, stdout: "", error: String((e && e.message) || e) });   // wrapper didn't run (syntax error)
     } finally {
-        ns.set("INJECTED_IMAGE_B64", null);
-        ns.set("INJECTED_TABLES_JSON", null);
+        if (!bench) {
+            ns.set("INJECTED_IMAGE_B64", null);
+            ns.set("INJECTED_TABLES_JSON", null);
+        }
         if (onStdout) { try { ns.delete("_ml_stdout_cb"); } catch { /* ignore */ } }   // don't leak the cb into the next run
         // A `python_exec` leaves its injected screenshot and tables in main until the NEXT run's reset — and
         // main is where the loader redirects live, reading `img`/`tables` at call time. So a bench script's
