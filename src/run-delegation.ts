@@ -11,8 +11,8 @@
 // background reports the run finished. This is the transport half of design A; the loop that drives it
 // is `runAgentLoop` (agent-loop.ts), assembled background-side in a later slice.
 import type { MlTool, PageToolEnvelope, SubcallUsage, AnswerMedia } from "./contract";
-import { outputCapEscalated } from "./contract";
-import { executeTool, toolContext, answerSetFor } from "./tool-exec";
+import { outputCapEscalated, hintSession } from "./contract";
+import { executeTool, toolContext, answerSetFor, withRunSession } from "./tool-exec";
 import { derefViaBackground } from "./ml-agent";
 import { captureVerify, captureVerifyElement } from "./builtin-tools";
 import { htmlToMarkdown } from "./html-to-md";
@@ -86,7 +86,14 @@ export function getRun(runId: string): PageRun | undefined { return runs.get(run
  *  executeTool already validates args + catches errors (never throws), so this only reduces the
  *  envelope: real nodes → a count, and an answer-capable tool's nodes are stashed page-side. */
 const VERIFY_TEXT_MAX = 8000;   // cap the navigate verify:"text" Markdown so a big page can't flood the turn
+/** A tool of a BACKGROUND-hosted run, executed in the page. Every model call made on its behalf — the tool's
+ *  own, and the verify captures below that call vision directly — is labelled as part of the run that caused it
+ *  (RequestHint: `use: "agent"`, the run's session). */
 export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
+    return withRunSession(hintSession(runId), () => runDelegatedToolIn(runId, name, args, opts));
+}
+
+async function runDelegatedToolIn(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
     // navigate({ verify: "text" / "text-all" }): after the destination page re-adopts, the background rings

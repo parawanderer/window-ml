@@ -133,6 +133,24 @@ prefers `last_name`, then its own per-backend record. Capture:
 `tests/fixtures/hw/gpu-description-one-card-faulted-2026-09-12.json` (the fault predates the build, so `last_name`
 is absent there).
 
+**What a request is FOR (`hint`, `ollama-slop:hints2`, live 2026-09-12).** Every generation request may carry
+a top-level `hint`: `use` (who waits for the output: `interactive`, `agent`, `utility`, `batch`), `session`
+(shared by one conversation or run), `after` (`human` or `tool`, what the session waited on since its previous
+request), `synthetic` (generated traffic, kept out of learned usage) and `request` (echoed on that request's
+`gen.end`). The server only RECORDS it today, beside the request's timings on `gen.end`; placement (splitting a
+model across cards for agent loops) and keep-alive (learned from a session's gaps) are what it will be learned
+into. Open WebUI's `/api/chat/completions` passes it through (fork overlay, `payload.py`) and fills in
+`use: utility` and an `owui-` session for its own task calls when a request carries none. What we send
+(`wireHint`, contract.ts): agent steps are `agent` in `wml-<run hash>`, with `after` from the loop (a person at an
+approval gate, or a follow-up turn, is `human`; otherwise a tool that ran); a tool's own model calls — the
+vision reader, grounding, OCR, a fetch's reader — are `agent` in the parent run's session, bound while the tool
+runs (`currentRunSession`); the sidebar's summaries, notes and titles are `utility` in the session they are about;
+`createChat` turns carry the chat's session and `use` only when the caller gave one; a one-shot `ml.chat` carries
+no session; the observe and bench harnesses set `ml_synthetic_traffic` so their requests say `synthetic: true`.
+A STRICT OpenAI-compatible backend may 400 on the unknown field: the request is retried once without it, and the
+refusal is remembered for that URL only if the retry succeeds. The agreement and the reasoning behind each value
+are in the two mlbox reports `handover-request-hints.md` and `handover-request-hints-answer.md`.
+
 **Reachability, and a correction.** The extension finds Ollama through the same base discovery it uses for
 `/api/ps`: `<origin>/ollama` first (OpenWebUI's passthrough), then `<origin>`. This file used to say
 OpenWebUI proxies `/ollama/*` generically. **It does not** — it proxies NAMED ollama routes, so each new

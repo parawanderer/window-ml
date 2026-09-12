@@ -39,6 +39,20 @@ let activeDeref: ((ref: string, pipe?: string | string[]) => Promise<DerefRead>)
 /** The pointer resolver for the tool currently running, or null (→ `ml.dereference` throws outside a run). */
 export function currentDeref(): ((ref: string, pipe?: string | string[]) => Promise<DerefRead>) | null { return activeDeref; }
 
+// And the same for the RUN'S SESSION, so a model call a tool makes (a vision read, grounding, an OCR pass, a
+// reader distilling a fetch) is labelled as part of the run that caused it: `use: "agent"`, the run's session (see
+// RequestHint). The loop waits on those answers, so they are agent traffic, not side tasks.
+let activeSession: string | null = null;
+/** The hint session of the run whose tool is executing, or null outside any run. Read by `ml.chat`/`ml.step`. */
+export function currentRunSession(): string | null { return activeSession; }
+/** Run `fn` with the run's session bound — for a path that makes model calls without going through
+ *  `executeTool` (a post-navigation verify). Save/restore, like the other bindings. */
+export async function withRunSession<T>(session: string | null | undefined, fn: () => Promise<T>): Promise<T> {
+    const prev = activeSession;
+    activeSession = session ?? prev;
+    try { return await fn(); } finally { activeSession = prev; }
+}
+
 // And the same for `ml.dynamicTools`, which is where the whitelist LIVES rather than being checked.
 //
 // There is no caller identity to test: an approved `exec` runs in the page's main world, the same realm as
@@ -113,9 +127,10 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
     const note = issues.length ? `\n\n⚠ Argument schema issue(s): ${issues.join("; ")}` : "";
     // Bind `window.ml.answer` to THIS run's set for the duration of the tool call (an approved exec that calls
     // ml.answer resolves it; outside a run it throws). Save/restore for nested runs.
-    const prevAnswer = activeAnswer, prevDeref = activeDeref, prevAllow = activeServerAllow;
+    const prevAnswer = activeAnswer, prevDeref = activeDeref, prevAllow = activeServerAllow, prevSession = activeSession;
     if (ctx?.answer) activeAnswer = ctx.answer;
     if (ctx?.deref) activeDeref = ctx.deref;
+    if (ctx?.session) activeSession = ctx.session;
     // Set even when ABSENT, unlike the two above: a run that exposed no server tools must narrow the
     // namespace to nothing, and leaving the previous value would hand it whatever the last run allowed.
     activeServerAllow = ctx?.serverAllow ?? [];   // absent → nothing, see the note on the binding
@@ -139,5 +154,5 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         }
         return { result: String(raw) + note };
     } catch (e) { return { result: `Error: ${errText(e)}` + note }; }
-    finally { activeAnswer = prevAnswer; activeDeref = prevDeref; activeServerAllow = prevAllow; }
+    finally { activeAnswer = prevAnswer; activeDeref = prevDeref; activeServerAllow = prevAllow; activeSession = prevSession; }
 }

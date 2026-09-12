@@ -3843,3 +3843,48 @@ test("server tools: a curated-out function is never built, while its siblings st
     // error, and a run should degrade rather than fail before it starts.
     assert.deepEqual(buildServerTools({}, [bundle], ["srv1"], ["srv1__search_web", "srv1__send_email"]), []);
 });
+
+// ---- Request hints (RequestHint): what each page-side model call tells a patched ollama it is for ----
+test("request hints: a run's steps are agent requests in its session, and a tool's own model call joins it", async () => {
+    const hints = [];
+    let step = 0;
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
+            hints.push({ raw: !!m.payload?.raw, hint: m.payload?.hint });
+            if (!m.payload?.raw) return { data: "a red umbrella" };   // the tool's sub-call (ml.chat)
+            return { data: step++ === 0 ? toolCall("describe") : reply("done") };
+        },
+    });
+    // A tool that asks a model something itself — the vision reader / grounding / OCR shape.
+    const describe = world.ml.defineTool({ name: "describe", run: async () => String(await world.ml.chat("what is on screen?")) });
+    const res = await world.ml.agent("t", { tools: [describe] });
+    const session = `wml-${res.hash}`;
+    assert.deepEqual(hints.map((h) => h.hint), [
+        { use: "agent", session },
+        { use: "agent", session },                  // the tool's sub-call: the loop is waiting on it
+        { use: "agent", session, after: "tool" },  // the next step followed that tool
+    ]);
+    assert.deepEqual(hints.map((h) => h.raw), [true, false, true], "…in that order: step, sub-call, step");
+});
+
+test("request hints: a one-shot ml.chat says nothing it cannot know; a conversation has a session; ml.step is an agent step", async () => {
+    const hints = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
+            hints.push(m.payload?.hint);
+            return { data: m.payload?.raw ? reply("ok") : "ok" };
+        },
+    });
+    await world.ml.chat("hi");
+    assert.deepEqual(hints[0], {}, "no use (a person and a script look alike) and no session (one call is not a conversation)");
+    await world.ml.chat("hi", { use: "interactive" });
+    assert.deepEqual(hints[1], { use: "interactive" }, "the caller's own word is passed on");
+    const convo = world.ml.createChat();
+    await convo.chat("one");
+    await convo.chat("two");
+    assert.deepEqual(hints.slice(2, 4), [{ session: `wml-${convo.hash}` }, { session: `wml-${convo.hash}` }], "every turn of a conversation shares its session");
+    await world.ml.step([{ role: "user", content: "x" }]);
+    assert.deepEqual(hints[4], { use: "agent" }, "ml.step is the tool-loop primitive: a program acts on the reply");
+});

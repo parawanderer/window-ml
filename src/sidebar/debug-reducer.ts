@@ -6,7 +6,7 @@
 import { sessionMap, rev, config, sidebarOpen, backendError, unreachableIfNothingSaysOtherwise } from "./store";
 import type { Session, Status, Turn, AgentStep } from "./store";
 import type { MlDebugEvent } from "../contract";
-import { isBackendUnreachable } from "../contract";
+import { isBackendUnreachable, hintSession } from "../contract";
 import { truncate, lastUser, rollupStatus } from "./format";
 
 // The highest (cumulative) step number seen so far — the position a say()/answer arriving NOW belongs at,
@@ -272,7 +272,7 @@ export function genTitle(hash: string, prompt: string): void {
         { role: "user", content: `Summarise this request as a short title:\n\n${truncate(prompt, 500)}` },
     ];
     chrome.runtime.sendMessage(
-        { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 32, think: false } },
+        { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 32, think: false, hint: { session: hintSession(hash) } } },   // a side task about this session (RequestHint)
         (resp: any) => {
             const s = sessionMap.get(hash);
             if (!s || chrome.runtime.lastError || !resp || resp.error) return;   // leave unset → retried next open
@@ -301,7 +301,7 @@ export function ensureBlockSummary(hash: string, i: number, prompt: string, resu
         { role: "user", content: `Request:\n${truncate(prompt || "(none)", 400)}\n\nResult:\n${truncate(result || "(no result)", 400)}` },
     ];
     chrome.runtime.sendMessage(
-        { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 48, think: false } },
+        { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 48, think: false, hint: { session: hintSession(hash) } } },   // a side task about this session (RequestHint)
         (resp: { data?: unknown; error?: string } | undefined) => {
             if (chrome.runtime.lastError || !resp || resp.error) { blockSummaryTried.delete(key); return; }   // retry next open
             const line = String(resp.data || "").trim().split("\n").map(x => x.trim()).filter(Boolean)[0] || "";
