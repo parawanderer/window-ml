@@ -246,7 +246,9 @@ per device, in bytes.
   non-streamed call's `model` phase split `other | prefill | decode`; a split that does not FIT is not drawn.
   Unmatched spans are other clients' traffic and say so — WHOSE and what kind of work when the server echoed a
   hint (`serverGenNote`: Open WebUI's `owui-` task calls, a window.ml session this panel is not showing, or
-  another client, with `use` in words). A replay is deduped by the END and the figures, never
+  another client, with `use` in words). A hint whose session IS one of this panel's (`sessionMap`) is the panel's
+  own side task — a session title or a step summary, which are not lane events of their own — and says so; a
+  live run caught it being called "a session this panel isn't showing" about the run on screen. A replay is deduped by the END and the figures, never
   the start, which moves when a replay lost its `gen.start`.
 - **WHAT EACH CARD WAS DOING: the phase ribbon** (`ribbonSpans`, `PhaseRibbon`). A thin row per model along the
   top of a per-card track, drawing only TIMED phases — the engine's prefill/decode, our own streamed channels

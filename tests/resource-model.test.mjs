@@ -2817,3 +2817,12 @@ test("hintFrom / serverGenNote: whose a generation was, and what kind of work, i
     assert.equal(M.serverGenNote({ use: "interactive" }), "reported by the server: a person reading it");
     assert.equal(M.serverGenNote({ use: "speculative", session: "x", synthetic: true }), `reported by the server: another client, "speculative", synthetic traffic`, "an unknown use is quoted as sent");
 });
+
+test("serverGenNote: a side task in one of THIS panel's sessions is not 'a session this panel isn't showing'", () => {
+    // Caught live: the sidebar's own title/summary call for the run on screen came back labelled as another
+    // browser's. Those calls are not lane events of their own, so nothing matches them — but the session is here.
+    const shown = (s) => s === "wml-50becb2b";
+    assert.equal(M.serverGenNote({ use: "utility", session: "wml-50becb2b" }, shown), "a side task this panel ran for one of its sessions (its title or a summary)");
+    assert.match(M.serverGenNote({ use: "agent", session: "wml-50becb2b" }, shown), /one of this panel's sessions that matched none of its steps/);
+    assert.match(M.serverGenNote({ use: "utility", session: "wml-otherabc" }, shown), /window\.ml session this panel isn't showing/, "a session it does not have is still somebody else's");
+});
