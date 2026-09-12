@@ -698,6 +698,29 @@ export const normModel = (m: string): string => {
     return s.replace(/:latest$/, "");
 };
 
+/** The round intervals a time grid may use, in ms. */
+export const GRID_STEPS_MS = [1e3, 2e3, 5e3, 1e4, 15e3, 3e4, 6e4, 12e4, 3e5, 6e5, 9e5, 18e5, 36e5, 72e5, 216e5];
+
+/** A TIME GRID's spacing: the smallest round interval that keeps its lines at least `minPx` apart when `totalMs`
+ *  of runs is drawn across `widthPx` — the width a track is guaranteed (they tile at 300px), so a wider one only
+ *  spaces them further. The largest step past that. */
+export function gridStep(totalMs: number, widthPx = 300, minPx = 48): number {
+    const need = (totalMs / Math.max(1, widthPx)) * minPx;
+    return GRID_STEPS_MS.find((s) => s >= need) ?? GRID_STEPS_MS[GRID_STEPS_MS.length - 1];
+}
+
+/** Where a time grid's lines fall inside one run: every multiple of `step` on the LOCAL clock (a line lands on
+ *  the minute, the half-minute), between the run's first and last sample. A gap between runs has none — nothing
+ *  was measured there, and the run boundary is where the spacing visibly restarts. */
+export function gridTimes(run: { t: number }[], step: number): number[] {
+    if (run.length < 2 || step <= 0) return [];
+    const first = run[0].t, last = run[run.length - 1].t;
+    const off = -new Date(first).getTimezoneOffset() * 60_000;
+    const out: number[] = [];
+    for (let t = Math.ceil((first + off) / step) * step - off; t <= last && out.length < 500; t += step) out.push(t);
+    return out;
+}
+
 /**
  * A QUANTIZATION CODE IN WORDS — "Q4_K_M" is a code, "4-bit weights" is what it means.
  *

@@ -16,11 +16,11 @@ import {
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
 import { resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
-import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot, predictView } from "./store";
+import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot, predictView, timeGrid } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
@@ -768,6 +768,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 }}>
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${runWeight(run)} 1 0` }}>
+                        <TimeGrid runs={runs} run={run} />
                         <StackedArea frames={run.map(bandsOf)} times={run.map((sm) => sm.t)} ceiling={ceiling} hidden={hidden} scope={scope}
                             deep={deep} loads={deep ? events.filter((e) => e.kind === "load" && e.model === deep.model && e.until != null) : []}
                             snapIndex={snapUnder(runs)?.run === i ? snapUnder(runs)!.index : null} />
@@ -1488,6 +1489,7 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
                 <EventTip scope={scope} />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${runWeight(run)} 1 0` }}>
+                        <TimeGrid runs={runs} run={run} />
                         <InstantRules instants={instants} run={ri} scope={scope} />
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {axis.bands.map((b, bi) => {
@@ -1598,6 +1600,7 @@ function UtilView({ def, samples, latest, events = [], onHide }: { def: TrackDef
                 <EventTip scope={scope} />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${runWeight(run)} 1 0` }}>
+                        <TimeGrid runs={runs} run={run} />
                         <InstantRules instants={instants} run={ri} scope={scope} />
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {cards.flatMap((c, ci) => (["gpuPercent", "memoryPercent"] as const).flatMap((k) => {
@@ -1729,6 +1732,7 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
                 <EventTip scope="overlay" />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${runWeight(run)} 1 0` }}>
+                        <TimeGrid runs={runs} run={run} />
                         <InstantRules instants={instants} run={ri} scope="overlay" />
                         <HoverSpan run={ri} scope="lane" />
                         {/* ONE DOT PER LINE at the snapped sample — this view is literally lines, so it is the
@@ -2471,6 +2475,25 @@ function PredictLines({ run, loads, deviceId, ceiling }: { run: ResourceSample[]
             })}
         </>
     );
+}
+
+/**
+ * THE TIME GRID: faint vertical lines at round clock intervals through a plot, behind the gear's "time grid"
+ * (off by default). The axis is linear in time within a run, and even spacing is what makes that visible; at a
+ * gap the runs collapse and the spacing visibly restarts. Every plot draws the SAME step, derived from the same
+ * runs, so the lines of stacked tracks line up. Vertical only: memory gridlines would mean a different amount on
+ * every card, each having its own ceiling.
+ */
+function TimeGrid({ runs, run }: { runs: { t: number }[][]; run: { t: number }[] }) {
+    if (!timeGrid.value || run.length < 2) return null;
+    const step = gridStep(runs.reduce((n, r) => n + runWeight(r), 0));
+    // The spacing, said once per plot (in its last segment): a grid whose interval you have to work out by
+    // counting lines against the crosshair's clock is half a reading aid. A round interval, so round words.
+    const label = step < 60_000 ? `${step / 1000} s` : step < 3_600_000 ? `${step / 60_000} min` : `${step / 3_600_000} h`;
+    return <>
+        {gridTimes(run, step).map((t) => <i key={t} class="rc-grid" aria-hidden="true" style={{ left: `${runFrac(run, t) * 100}%` }} />)}
+        {run === runs[runs.length - 1] ? <span class="rc-grid-step">grid {label}</span> : null}
+    </>;
 }
 
 function SwapChips({ swap }: { swap: NonNullable<NonNullable<ResourceEvent["gen"]>["swap"]> }) {

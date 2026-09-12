@@ -2628,3 +2628,20 @@ test("loadTrace: with no runner to read, the cards' growth — peak above where 
     assert.equal(t2.basis, "device");
     assert.equal(t2.peak.bytes, 14 * GB);
 });
+
+test("gridStep: the smallest round interval that keeps the lines apart at a track's width", () => {
+    assert.equal(M.gridStep(30_000), 5_000, "30 s across 300 px: a line every 5 s is 50 px apart");
+    assert.equal(M.gridStep(300_000), 60_000, "five minutes: one a minute");
+    assert.equal(M.gridStep(300_000, 1200), 15_000, "a wider track affords a finer grid");
+    assert.equal(M.gridStep(1e12), M.GRID_STEPS_MS.at(-1), "past the last step, the last step");
+});
+
+test("gridTimes: on the LOCAL clock's round multiples, and only inside the run it is given", () => {
+    const start = new Date(2026, 8, 12, 10, 4, 7, 300).getTime();   // 10:04:07.300 local
+    const run = [{ t: start }, { t: start + 95_000 }];
+    const times = M.gridTimes(run, 30_000);
+    assert.deepEqual(times.map((t) => { const d = new Date(t); return `${d.getMinutes()}:${d.getSeconds()}.${d.getMilliseconds()}`; }),
+        ["4:30.0", "5:0.0", "5:30.0"], "on the half-minute, by the clock on the wall");
+    assert.ok(times.every((t) => t >= run[0].t && t <= run[1].t));
+    assert.deepEqual(M.gridTimes([{ t: start }], 30_000), [], "one sample is not a stretch of time");
+});

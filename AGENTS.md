@@ -1376,6 +1376,10 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   ruled over a band still resident). A gap still breaks the line and takes no width, because nothing was
   measured there. An event is placed inside the run that CONTAINS it, one in a gap is dropped, and the window
   admits a poll's grace past the last sample — without it the newest events were the only ones never shown.
+  **A TIME GRID shows it** (gear → Grid → "time grid", off by default, `timeGrid`): faint vertical lines at a
+  round LOCAL-clock interval (`gridStep` picks the smallest that keeps them 48 px apart at a track's 300 px
+  minimum; `gridTimes` places them inside each run), the same on every track, the interval captioned in each
+  plot's corner. Vertical only — memory gridlines would mean a different amount on every card.
 - **Instants rule through the plot** (dashed — a solid line reads as part of the chart), and one eviction is
   drawn in every track, so hovering it anywhere thickens it everywhere. **So do a load's two internal edges**
   (`loadEdges`): weights loaded, then KV cache and compute buffers allocated (ready to serve), each with the

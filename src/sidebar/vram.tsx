@@ -21,7 +21,7 @@ import { useTipPlacement } from "./use-tip";
 import { CodeEditor } from "./code-editor";
 import type { RemoteCompletion } from "./code-editor-api";
 import { hhmmss } from "./timestamps";
-import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, type BenchRun } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, type BenchRun } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
@@ -1491,6 +1491,18 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
                     snap to datapoint
                     <span class="tt-pop wrap" role="tooltip"><TipText
                         md="Snap the crosshair to the nearest **sample** and mark it with a dot. The tooltip already reads a real datapoint — a value between two polls was never measured — so this makes the line agree with the number beside it. Useful for reading one reading; noise while scanning the shape." /></span>
+                </label>
+            </div>
+            {/* A READING AID FOR THE TIME AXIS, off by default: faint lines at round clock intervals, so an axis
+                that is linear in time looks it, and a collapsed gap shows where the spacing restarts. */}
+            <div class="rc-erow rc-esections">
+                <span class="rc-esection-label">Grid</span>
+                <label class="tt rc-eopt">
+                    <input type="checkbox" checked={timeGrid.value}
+                        onChange={() => { timeGrid.value = !timeGrid.value; try { chrome.storage.local.set({ [TIMEGRID_KEY]: timeGrid.value }); } catch { /* opaque origin */ } }} />
+                    time grid
+                    <span class="tt-pop wrap" role="tooltip"><TipText
+                        md="Faint vertical lines at a round clock interval — 5 s, 30 s, 1 min… — chosen from how much time the chart spans, and named in each plot's corner. The axis is **linear in time** within a stretch of samples, so the lines are evenly spaced; where a gap was collapsed, the spacing restarts." /></span>
                 </label>
             </div>
             {/* FOR WHOEVER IS TUNING THE SERVER'S VRAM PREDICTOR, and off unless asked: a user loading a model has

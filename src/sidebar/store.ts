@@ -169,6 +169,10 @@ export { PREDICT_KEY } from "../load-records";   // storage.local: show the VRAM
  *  where it settled, weights and KV term by term — and a dashed line where it predicted the card would land.
  *  OFF by default: it is for tuning the predictor, and a user loading a model has no decision it informs. */
 export const predictView = signal(false);
+export const TIMEGRID_KEY = "ml_res_timegrid";   // storage.local: draw the time grid on the chart
+/** Faint vertical lines at round clock intervals through every plot — so the axis being LINEAR in time is
+ *  visible, and where a gap collapses, the spacing visibly restarts. Off by default: a reading aid. */
+export const timeGrid = signal(false);
 export const LANEH_KEY = "ml_res_laneh";   // storage.local: the event lane's own height, in px
 /** How tall the event LANE is, independent of the panel. Its default is a cap rather than "as tall as it
  *  needs to be", which is the whole point: the lane re-packs as the window moves — a step entering the view
