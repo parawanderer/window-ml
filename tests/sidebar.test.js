@@ -1567,6 +1567,27 @@ test("VRAM monitor lists loaded models with a total, and evicts one + all", asyn
     assert.deepEqual(w.unloadCalls.at(-1), {});
 });
 
+// WHICH BUILD a model is: the quantization is the one choice a user makes about a model that changes its size, speed
+// and answers at once, and the name rarely says which was pulled.
+test("VRAM monitor shows each model's quantization, with its size and family behind it", async () => {
+    const w = await loadSidebarWorld({ vram: [
+        { model: "gemma4:31b", vramGB: 21.4, vramBytes: 8 * 1024 ** 3, contextLength: 8192, expiresAt: null, quant: "Q4_K_M", paramSize: "31.3B", family: "gemma4" },
+        { model: "old-server", vramGB: 1.0, contextLength: null, expiresAt: null },   // a loading row or an unreported one
+    ] });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+    const rows = [...w.shadow.querySelectorAll(".vram-row")];
+    const badge = rows[0].querySelector(".vram-quant");
+    assert.ok(badge, "the quantization is on the row");
+    // In WORDS on the chip; the code, and what it means, behind it.
+    assert.equal(badge.firstChild.textContent.trim(), "4-bit weights");
+    assert.match(badge.querySelector(".tt-pop").textContent, /Q4_K_M: Weights stored as 4-bit integers/);
+    assert.match(badge.querySelector(".tt-pop").textContent, /31\.3B parameters, gemma4 family/);
+    assert.equal(rows[1].querySelector(".vram-quant"), null, "nothing reported, nothing drawn — never a guess");
+});
+
 test("VRAM monitor shows the context a model was LOADED with (Ollama preallocates the KV cache)", async () => {
     const w = await loadSidebarWorld({ vram: [
         { model: "gemma4:31b", vramGB: 21.4, vramBytes: 8 * 1024 ** 3, contextLength: 262144, expiresAt: null },

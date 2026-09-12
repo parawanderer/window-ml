@@ -2,6 +2,7 @@
 // extracts replies, and makes the privileged (host-permissioned) fetches. All
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
+import { LOAD_RECORDS_KEY } from "./load-records";
 import type { NeutralMessage, ToolCall, TokenUsage, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, InjectMessagePayload, ApprovalDecision } from "./contract";
 import { modelFilterAllows, bgRunResumable, pushReplay, UI_OUT_CAP } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
@@ -1725,6 +1726,17 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 info: await fetchOllamaInfo().catch(() => null),
             } });
         })();
+        return true;
+
+    } else if (message.type === "DUMP_LOADS") {
+        // `ml.__loads()` — the per-load records kept for tuning the VRAM predictor (see load-records.ts). Machine
+        // facts only, like DUMP_EVENTS: no URL, no key. Clearing them is harmless to anything but the collection,
+        // so a page may ask; they are only ever gathered while the user has the toggle on.
+        (async () => {
+            const got = await chrome.storage.local.get({ [LOAD_RECORDS_KEY]: [] });
+            if ((message.payload as { clear?: boolean } | undefined)?.clear) await chrome.storage.local.set({ [LOAD_RECORDS_KEY]: [] });
+            sendResponse({ data: got[LOAD_RECORDS_KEY] });
+        })().catch((e) => sendResponse({ error: String((e as Error)?.message || e) }));
         return true;
 
     } else if (message.type === "OLLAMA_PS") {

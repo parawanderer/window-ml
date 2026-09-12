@@ -21,13 +21,13 @@ import { useTipPlacement } from "./use-tip";
 import { CodeEditor } from "./code-editor";
 import type { RemoteCompletion } from "./code-editor-api";
 import { hhmmss } from "./timestamps";
-import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, type BenchRun } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, type BenchRun } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, dropInferredLoads, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, memorySplit, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, joinGens, rooflineFrom, kindRefusal } from "../resource-model";
+import { parseInfo, holdCapacity, memorySplit, estimateFrom, quantPlain, type LoadEstimate, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, joinGens, rooflineFrom, kindRefusal } from "../resource-model";
 import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay, LANE_KINDS, toggleLaneKind } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -363,6 +363,9 @@ const openGens = new Map<string, number[]>();
 /** When each model's most recent LOAD finished, so a generation that was waiting on it starts where the load
  *  ended rather than drawing the load's seconds a second time (see `genSpan`). */
 const loadEndedAt = new Map<string, number>();
+/** The predictor's last word on each model's pending load (an `estimate` frame), held until the load closes
+ *  and then carried on its span. A retried attempt sends a new estimate, which replaces the old one. */
+const pendingEstimate = new Map<string, LoadEstimate>();
 /** WHICH MODELS ARE LOADING RIGHT NOW — the open half of `openLoads`, as a signal so a reading can carry it.
  *
  *  This is the answer to a question `/api/ps` cannot be asked: for most of a load Ollama has no runner object
@@ -391,13 +394,18 @@ const pushMachine = (e: ResourceEvent): void => {
 /** One edge frame → what the lane draws. Returns nothing for the frames that are not events in their own
  *  right (`sample`, `heartbeat`, `hello`) and for a `load.complete` with no start to close, which is what a
  *  reconnect mid-load looks like — half a span is worse than none, since its left edge would be invented. */
-export function machineEventFrom(frame: { kind: string; model?: string; reason?: string; duration_ms?: number; weights_ms?: number; context_ms?: number; size_vram?: number; size_total?: number; timings?: unknown }, at: number): ResourceEvent | null {
+export function machineEventFrom(frame: { kind: string; model?: string; reason?: string; duration_ms?: number; weights_ms?: number; context_ms?: number; size_vram?: number; size_total?: number; timings?: unknown; estimate?: unknown; memory?: unknown }, at: number): ResourceEvent | null {
     // CANONICALISED ONCE, here at the boundary, so nothing downstream has to know that the same model has two
     // spellings on one server: the stream says `registry.ollama.ai/library/gemma4:31b`, `/api/ps` says
     // `gemma4:31b`. Matching them late — at the colour, at the legend, at the off-box check — means every new
     // comparison is a fresh chance to forget, and forgetting draws a second model that does not exist.
     const model = frame.model ? normModel(frame.model) : undefined;
     switch (frame.kind) {
+        case "estimate": {
+            const est = estimateFrom(frame.estimate);
+            if (model && est) pendingEstimate.set(model, est);
+            return null;                                    // carried on the load it predicted, when that closes
+        }
         case "load.start":
             if (model) { openLoads.set(model, { t: at }); noteLoading(); }
             return null;                                    // the SPAN is emitted when it closes
@@ -420,6 +428,9 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
             if (!model || !open) return null;
             openLoads.delete(model); noteLoading();
             loadEndedAt.set(model, at);
+            const estimate = pendingEstimate.get(model);
+            pendingEstimate.delete(model);
+            const measured = frame.size_vram != null ? memorySplit(frame.memory, frame.size_vram) : null;
             // The server reports the split DIRECTLY when it can (`weights_ms`/`context_ms` on the closing
             // edge), and that is the form to prefer: differencing two frames only works for a client that was
             // already connected when the load began, so a panel opened mid-load lost the divider entirely.
@@ -440,6 +451,9 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
                 // which succeeds and is merely slow, with no error anywhere. This difference is the only
                 // signal that happened.
                 ...(frame.size_total != null ? { totalBytes: frame.size_total } : {}),
+                // What the predictor expected, beside what the load held by kind — for tuning the predictor.
+                ...(estimate ? { estimate } : {}),
+                ...(measured ? { measured } : {}),
                 // "Resident at 4s, usable at 10s" — the two halves are weights and context, and the divider
                 // only exists when the server actually reported it.
                 ...(w && w > open.t && w < at
@@ -1074,6 +1088,18 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
                     {tips ? <span class="tt-pop left above" role="tooltip">A generating model — what <code>ml.chat</code> and <code>ml.agent</code> run on. Shown beside the embedding badge so a row you did not expect to be holding a card says which kind it is.</span> : null}
                 </span>
             ) : null}
+            {/* WHICH BUILD it is. The name rarely says which quantization was pulled, and it is the one choice
+                a user makes about a model that changes its size, its speed and its answers at once. */}
+            {m.quant ? (() => {
+                // IN WORDS on the chip — "4-bit weights", not "Q4_K_M" — with the code and what it means behind
+                // it. An unknown code is shown as itself rather than guessed at.
+                const plain = quantPlain(m.quant);
+                return (
+                    <span class={tips ? "tt vram-quant" : "vram-quant"} {...yieldTip}>{plain?.short ?? m.quant}
+                        {tips ? <span class="tt-pop left above" role="tooltip"><code>{m.quant}</code>: {plain?.detail ?? "the precision its weights are stored at."} A lower precision is smaller and faster and answers somewhat worse; the same model at another quantization is a different download.{m.paramSize ? <> {m.paramSize} parameters{m.family ? <>, {m.family} family</> : null}.</> : null}</span> : null}
+                    </span>
+                );
+            })() : null}
             {m.contextLength ? (
                 <span class={tips ? "tt vram-ctx" : "vram-ctx"} {...yieldTip}>{fmtCtx(m.contextLength)}
                     {/* The chip's figure LEADS, then the exact count. They are the same number — 262,144 tokens
@@ -1465,6 +1491,30 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
                     snap to datapoint
                     <span class="tt-pop wrap" role="tooltip"><TipText
                         md="Snap the crosshair to the nearest **sample** and mark it with a dot. The tooltip already reads a real datapoint — a value between two polls was never measured — so this makes the line agree with the number beside it. Useful for reading one reading; noise while scanning the shape." /></span>
+                </label>
+            </div>
+            {/* A READING AID FOR THE TIME AXIS, off by default: faint lines at round clock intervals, so an axis
+                that is linear in time looks it, and a collapsed gap shows where the spacing restarts. */}
+            <div class="rc-erow rc-esections">
+                <span class="rc-esection-label">Grid</span>
+                <label class="tt rc-eopt">
+                    <input type="checkbox" checked={timeGrid.value}
+                        onChange={() => { timeGrid.value = !timeGrid.value; try { chrome.storage.local.set({ [TIMEGRID_KEY]: timeGrid.value }); } catch { /* opaque origin */ } }} />
+                    time grid
+                    <span class="tt-pop wrap" role="tooltip"><TipText
+                        md="Faint vertical lines at a round clock interval — 5 s, 30 s, 1 min… — chosen from how much time the chart spans, and named in each plot's corner. The axis is **linear in time** within a stretch of samples, so the lines are evenly spaced; where a gap was collapsed, the spacing restarts." /></span>
+                </label>
+            </div>
+            {/* FOR WHOEVER IS TUNING THE SERVER'S VRAM PREDICTOR, and off unless asked: a user loading a model has
+                no decision these figures inform, while the person fitting the predictor needs every one of them. */}
+            <div class="rc-erow rc-esections">
+                <span class="rc-esection-label">Predictor</span>
+                <label class="tt rc-eopt">
+                    <input type="checkbox" checked={predictView.value}
+                        onChange={() => { predictView.value = !predictView.value; try { chrome.storage.local.set({ [PREDICT_KEY]: predictView.value }); } catch { /* opaque origin */ } }} />
+                    load predictions
+                    <span class="tt-pop wrap" role="tooltip"><TipText
+                        md="On each model load, what the server's **VRAM predictor** expected against what the load took: its peak, where it settled, and weights and KV cache term by term — plus a dashed line on the card where it predicted the load would land. For tuning the predictor; `ml.__loads()` returns the same records for collecting data." /></span>
                 </label>
             </div>
             {/* WHAT THE CHART DRAWS AND IN WHAT COLOURS, beside the tracks it draws them on. Both lived in

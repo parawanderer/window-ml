@@ -164,6 +164,15 @@ export const SNAPDOT_KEY = "ml_res_snapdot";   // storage.local: snap the crossh
  *  float wherever the pointer is. Off by default: it is a precision affordance for reading one datapoint,
  *  and a dot that follows every movement is noise when you are scanning the shape of the trace instead. */
 export const snapDot = signal(false);
+export { PREDICT_KEY } from "../load-records";   // storage.local: show the VRAM predictor's figures on loads
+/** Show, on each model load, what the server's VRAM PREDICTOR expected against what the load took — its peak,
+ *  where it settled, weights and KV term by term — and a dashed line where it predicted the card would land.
+ *  OFF by default: it is for tuning the predictor, and a user loading a model has no decision it informs. */
+export const predictView = signal(false);
+export const TIMEGRID_KEY = "ml_res_timegrid";   // storage.local: draw the time grid on the chart
+/** Faint vertical lines at round clock intervals through every plot — so the axis being LINEAR in time is
+ *  visible, and where a gap collapses, the spacing visibly restarts. Off by default: a reading aid. */
+export const timeGrid = signal(false);
 export const LANEH_KEY = "ml_res_laneh";   // storage.local: the event lane's own height, in px
 /** How tall the event LANE is, independent of the panel. Its default is a cap rather than "as tall as it
  *  needs to be", which is the whole point: the lane re-packs as the window moves — a step entering the view

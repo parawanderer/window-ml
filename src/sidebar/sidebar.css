@@ -657,8 +657,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    is the notable case and `chat` the ordinary one, which is a colour difference, not a shape one. Giving
    `chat` a capsule while `embed` and the context chip stayed rectangles made the odd one out the common
    case, and read as two unrelated kinds of thing on the same line. */
-.vram-embed, .vram-chat { padding: 0 4px; font-size: 0.72em; border: 1px solid var(--border); border-radius: 3px;
+.vram-embed, .vram-chat, .vram-quant { padding: 0 4px; font-size: 0.72em; border: 1px solid var(--border); border-radius: 3px;
     line-height: 1.6; }
+/* WHICH BUILD of the model — its quantization, in words ("4-bit weights"; the code is in its tooltip). A kind
+   badge like the two above, since it says what the model IS rather than what it is doing. */
+.vram-quant { color: var(--fg-dim); }
 .vram-embed { color: var(--fg-dim); }
 .vram-chat { color: var(--fg-faint); }
 /* Live keep-alive countdown — same chip shape as the context badge, sat beside it. */
@@ -2955,6 +2958,19 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
    exists to attribute it (`pendingAllocation`). Faint, with a dashed top in the model's colour — the model's
    load, but nothing the server has yet said the model holds. */
 .rc-part-pending { stroke: var(--model); stroke-width: 1; stroke-dasharray: 3 3; opacity: .55; }
+/* WHERE THE VRAM PREDICTOR SAID A LOAD WOULD LAND — the card's level before the load plus the placement figure,
+   dashed in the model's colour across the load. Only with the "load predictions" gear toggle on. */
+.rc-predict { position: absolute; height: 0; border-top: 1.5px dashed var(--model, var(--accent)); opacity: 0.85;
+  pointer-events: none; z-index: 3; }
+/* THE TIME GRID — faint vertical lines at round clock intervals, off by default (gear → "time grid"). Drawn
+   under everything else in the segment, and thin enough to read as paper rather than as data. */
+.rc-grid { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px solid color-mix(in srgb, var(--fg-faint) 35%, transparent);
+  pointer-events: none; z-index: 0; }
+/* The grid's spacing, once per plot in its bottom-right corner — on a backing of the panel's own colour, since
+   that corner is often inside a filled band, where bare faint text cannot be read. */
+.rc-grid-step { position: absolute; right: 3px; bottom: 2px; font-size: 0.72em; color: var(--fg-faint); line-height: 1.3;
+  background: color-mix(in srgb, var(--bg) 80%, transparent); border-radius: 2px; padding: 0 3px;
+  pointer-events: none; z-index: 4; font-variant-numeric: tabular-nums; }
 /* WHAT ONE GENERATION LEFT IN THE KV CACHE (`KvFill`), over the drilled-in cache part while its lane span is
    hovered. The layers are told apart by TEXTURE and weight of the model's own colour, the same weights its lane
    phases use: the reused prefix DOTTED (it cost no prefill), the prompt computed this turn DENSE, the decode

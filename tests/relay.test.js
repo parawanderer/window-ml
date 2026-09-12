@@ -835,6 +835,17 @@ test("ml.info(): the capacity round-trip, and null when the route isn't served",
     assert.equal(await none.ml.info(), null);
 });
 
+// ml.__loads() across the real page relay, and `clear` reaching the background — the store is emptied THERE,
+// so a clear that stopped at the page would read as having worked and leave every record behind.
+test("ml.__loads(): the per-load records round-trip, and clear is asked of the background", async () => {
+    const REC = { model: "gemma4:31b", start: 1, end: 2, estimate: { predicted: 1 }, complete: {}, failedAttempts: 0, trace: null };
+    const seen = [];
+    const world = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "DUMP_LOADS" ? (seen.push(m.payload), { data: [REC] }) : undefined) });
+    assert.deepEqual(await world.ml.__loads(), [REC]);
+    await world.ml.__loads({ clear: true });
+    assert.deepEqual(seen, [{ clear: false }, { clear: true }]);
+});
+
 // An advisory (a label resolved by similarity) must survive the background relay ALONGSIDE the value, so the
 // page-side ml.dereference can console.warn it without touching the data the script is about to parse.
 test("ml.dereference (background-hosted): a soft-match advisory crosses the relay beside the value", async () => {

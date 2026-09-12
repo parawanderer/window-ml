@@ -142,6 +142,11 @@ export function loadedFrom(rows: unknown[]): LoadedModel[] {
             ...(m.activity ? { activity: m.activity } : {}),
             // The decode ceiling for THIS placement, raw like `activity`, parsed once by `rooflineFrom`.
             ...(m.roofline ? { roofline: m.roofline } : {}),
+            // Which build: a `loading` row sends every one of these as "", which is "not reported" rather
+            // than a model with no quantization, so empty stays absent.
+            ...(m.details?.quantization_level ? { quant: String(m.details.quantization_level) } : {}),
+            ...(m.details?.parameter_size ? { paramSize: String(m.details.parameter_size) } : {}),
+            ...(m.details?.family ? { family: String(m.details.family) } : {}),
         };
     });
 }

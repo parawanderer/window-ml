@@ -43,6 +43,8 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     PS_REQUEST: { type: "OLLAMA_PS", responseType: "PS_RESPONSE" },
     // ml.__events() — the debug dump (see the background's DUMP_EVENTS).
     DUMP_EVENTS_REQUEST: { type: "DUMP_EVENTS", responseType: "DUMP_EVENTS_RESPONSE" },
+    // ml.__loads() — the per-load records kept for tuning the VRAM predictor (see the background's DUMP_LOADS).
+    DUMP_LOADS_REQUEST: { type: "DUMP_LOADS", responseType: "DUMP_LOADS_RESPONSE" },
     UNLOAD_REQUEST: { type: "OLLAMA_UNLOAD", responseType: "UNLOAD_RESPONSE" },
     CAPTURE_TAB_REQUEST: { type: "CAPTURE_TAB", responseType: "CAPTURE_TAB_RESPONSE" },
     SAVE_SESSION_REQUEST: { type: "SAVE_SESSION", responseType: "SAVE_SESSION_RESPONSE" },

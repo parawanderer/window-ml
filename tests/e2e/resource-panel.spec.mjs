@@ -2722,6 +2722,46 @@ test("resource panel: Esc with no tip up still leaves the zoom", async () => {
     } finally { await ext.close(); await fake.stop(); }
 });
 
+// THE TIME GRID: off by default; from the gear, faint lines at a round interval through every plot, evenly spaced
+// (the axis is linear in time within a run) and at the SAME places on every track, with the spacing named.
+test("resource panel: the time grid is off by default, and on it rules every plot at the same round times", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await seedStacked(ext);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 25000 }).toBe(3);
+        await sleep(12000);   // enough samples that the window holds more than one grid interval
+
+        expect(await frame.locator(".rc-grid").count(), "off by default").toBe(0);
+        await frame.locator(".vram-head").first().hover();
+        await frame.locator('[aria-label="Edit tracks"]').click();
+        await frame.locator(".rc-editor .rc-eopt", { hasText: /time grid/ }).locator("input").check();
+        await frame.locator('[aria-label="Edit tracks"]').click();
+
+        await expect.poll(() => frame.locator(".rc-grid").count(), { timeout: 5000 }).toBeGreaterThan(0);
+        // ONE synchronous read, so a sample landing between two measurements cannot move one track's lines.
+        const read = () => frame.evaluate(() => [...document.querySelectorAll(".rc-track")].map((tr) => {
+            const plot = tr.querySelector(".rc-plot").getBoundingClientRect();
+            return { xs: [...tr.querySelectorAll(".rc-grid")].map((g) => Math.round(g.getBoundingClientRect().left - plot.left)),
+                     step: tr.querySelector(".rc-grid-step")?.textContent };
+        }));
+        const tracks = await read();
+        expect(new Set(tracks.map((t) => JSON.stringify(t.xs))).size, `every track rules the same times: ${JSON.stringify(tracks)}`).toBe(1);
+        expect(tracks[0].step).toMatch(/^grid \d+ (s|min)$/);
+        const xs = tracks[0].xs;
+        expect(xs.length, "more than one line, so the spacing can be seen").toBeGreaterThan(1);
+        const gaps = xs.slice(1).map((x, i) => x - xs[i]);
+        expect(Math.max(...gaps) - Math.min(...gaps), `evenly spaced — the axis is linear in time: ${gaps}`).toBeLessThanOrEqual(2);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
 // THE RESIDUAL, NAMED BY PROCESS (`processes` + `processes_scope` on a patched /api/info). The arithmetic is
 // pinned against real captures in resource-model.test.mjs; what only the drawn panel shows is that every new
 // band is IN THE STACK — `bandOrder` has to name each key or a band silently drops out of the drawing — with a

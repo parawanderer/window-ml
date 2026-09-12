@@ -16,11 +16,11 @@ import {
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
-import { capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
-import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot } from "./store";
+import { resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
+import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot, predictView, timeGrid } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
@@ -768,12 +768,15 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 }}>
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${runWeight(run)} 1 0` }}>
+                        <TimeGrid runs={runs} run={run} />
                         <StackedArea frames={run.map(bandsOf)} times={run.map((sm) => sm.t)} ceiling={ceiling} hidden={hidden} scope={scope}
                             deep={deep} loads={deep ? events.filter((e) => e.kind === "load" && e.model === deep.model && e.until != null) : []}
                             snapIndex={snapUnder(runs)?.run === i ? snapUnder(runs)!.index : null} />
                         {deep && laneGen && laneGen.model === deep.model
                             ? <KvFill run={run} bandsOf={bandsOf} deep={deep} ev={laneGen} /> : null}
                         <InstantRules instants={instants} run={i} scope={scope} />
+                        {predictView.value && !deep && device
+                            ? <PredictLines run={run} loads={events} deviceId={device.id} ceiling={ceiling} /> : null}
                         <HoverSpan run={i} scope="lane" />
                     </div>
                 ))}
@@ -1486,6 +1489,7 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
                 <EventTip scope={scope} />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${runWeight(run)} 1 0` }}>
+                        <TimeGrid runs={runs} run={run} />
                         <InstantRules instants={instants} run={ri} scope={scope} />
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {axis.bands.map((b, bi) => {
@@ -1596,6 +1600,7 @@ function UtilView({ def, samples, latest, events = [], onHide }: { def: TrackDef
                 <EventTip scope={scope} />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${runWeight(run)} 1 0` }}>
+                        <TimeGrid runs={runs} run={run} />
                         <InstantRules instants={instants} run={ri} scope={scope} />
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {cards.flatMap((c, ci) => (["gpuPercent", "memoryPercent"] as const).flatMap((k) => {
@@ -1727,6 +1732,7 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
                 <EventTip scope="overlay" />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${runWeight(run)} 1 0` }}>
+                        <TimeGrid runs={runs} run={run} />
                         <InstantRules instants={instants} run={ri} scope="overlay" />
                         <HoverSpan run={ri} scope="lane" />
                         {/* ONE DOT PER LINE at the snapped sample — this view is literally lines, so it is the
@@ -2401,6 +2407,95 @@ function KvBar({ gen, ctx, model }: { gen: NonNullable<ResourceEvent["gen"]>; ct
  *  pays a full prefill next time, and when two conversations take turns on one model under a limit too small for
  *  both, every turn evicts the one about to be needed — the thrash, which shows up as exactly this chip on turn
  *  after turn. */
+/**
+ * WHAT THE PREDICTOR EXPECTED, AGAINST WHAT THE LOAD TOOK — a load tooltip's section for whoever is tuning the
+ * predictor, shown only with `predictView` on (the chart's gear).
+ *
+ * Every difference is taken against `forLoad`, the figure placement fits against; the bare `predicted` is
+ * shown beside it but measuring the load against it makes the predictor look ~15% low for a reason that is not
+ * an error. The PEAK is the row that decides whether a fit was safe — VRAM overshoots where it settles during a
+ * load — so it leads. A load that took MORE than predicted is the dangerous direction and is flagged; less is
+ * merely wasteful. Weights and KV are compared term by term and never summed: the prediction's split is the
+ * metadata model's and covers only those two.
+ */
+function PredictionRows({ e }: { e: ResourceEvent }) {
+    const est = e.estimate;
+    if (!est) return <div class="rc-tip-line sep"><span class="rc-tip-name">no prediction received for this load</span></div>;
+    const target = est.forLoad ?? est.predicted;
+    const trace = loadTrace(resourceHistory.value, e);
+    const diff = (bytes: number, against: number) => {
+        const d = bytes - against, pct = against > 0 ? Math.round((d / against) * 100) : null;
+        return <span class={`rc-chip ${d > 0 ? "rc-chip-warn" : "rc-chip-dim"}`}>
+            {d >= 0 ? "+" : "−"}{formatBytes(Math.abs(d))}{pct != null ? ` (${d >= 0 ? "+" : ""}${pct}%)` : ""}</span>;
+    };
+    const basis = trace?.basis === "runner" ? "the runner's own memory" : "the cards' growth over their level before the load";
+    return (
+        <>
+            <div class="rc-tip-line sep">
+                <span class="rc-tip-name">predicted, for placement</span>
+                <span class="rc-tip-size">{formatBytes(target)}</span>
+            </div>
+            <div class="rc-tip-chips">
+                {est.source ? <span class="rc-chip">{est.source}</span> : null}
+                {est.forLoad != null && est.forLoad !== est.predicted ? <span class="rc-chip rc-chip-dim">{formatBytes(est.predicted)} before the batch surcharge</span> : null}
+                {est.numCtx != null ? <span class="rc-chip rc-chip-dim">num_ctx {est.numCtx.toLocaleString()}</span> : null}
+                {est.numBatch != null ? <span class="rc-chip rc-chip-dim">num_batch {est.numBatch.toLocaleString()}</span> : null}
+                {est.metadataComplete === false ? <span class="rc-chip rc-chip-dim">metadata incomplete</span> : null}
+            </div>
+            {trace?.peak ? <div class="rc-tip-line"><span class="rc-tip-name">peak during the load</span>{diff(trace.peak.bytes, target)}<span class="rc-tip-size">{formatBytes(trace.peak.bytes)}</span></div> : null}
+            {trace?.final ? <div class="rc-tip-line"><span class="rc-tip-name">settled at</span>{diff(trace.final.bytes, target)}<span class="rc-tip-size">{formatBytes(trace.final.bytes)}</span></div> : null}
+            {e.loadBytes != null ? <div class="rc-tip-line"><span class="rc-tip-name">resident, as the server counts it</span>{diff(e.loadBytes, target)}<span class="rc-tip-size">{formatBytes(e.loadBytes)}</span></div> : null}
+            {est.weights != null && e.measured ? <div class="rc-tip-line"><span class="rc-tip-name">weights: {formatBytes(est.weights)} predicted</span>{diff(e.measured.weights, est.weights)}<span class="rc-tip-size">{formatBytes(e.measured.weights)}</span></div> : null}
+            {est.kvCache != null && e.measured ? <div class="rc-tip-line"><span class="rc-tip-name">KV cache: {formatBytes(est.kvCache)} predicted</span>{diff(e.measured.kvCache, est.kvCache)}<span class="rc-tip-size">{formatBytes(e.measured.kvCache)}</span></div> : null}
+            {trace ? <div class="rc-tip-note">peak and settled are {basis}{trace.basis === "device" ? " — an eviction making room at the same time reads as negative growth" : ""}. The weights/KV split is the metadata model's, whatever the source.</div> : null}
+        </>
+    );
+}
+
+/**
+ * WHERE THE PREDICTOR SAID A LOAD WOULD LAND, on the card it landed on: a dashed line at the card's used memory
+ * before the load plus the placement figure, across the load. The gap between the line and where the band
+ * settles IS the prediction's error, read without a tooltip — and the overshoot above it during the load is the
+ * part a fit has to budget for. Drawn only for a load on exactly ONE card: the prediction is a whole-model
+ * figure, and dividing it between cards would be pro-rating, which this panel never does.
+ */
+function PredictLines({ run, loads, deviceId, ceiling }: { run: ResourceSample[]; loads: ResourceEvent[]; deviceId: string; ceiling: number }) {
+    if (run.length < 2 || ceiling <= 0) return null;
+    const first = run[0].t, last = run[run.length - 1].t;
+    return (
+        <>
+            {loads.filter((e) => e.kind === "load" && e.estimate && e.t < last && (e.until ?? last) > first).map((e) => {
+                const trace = loadTrace(resourceHistory.value, e);
+                if (!trace || trace.cards.length !== 1 || trace.cards[0] !== deviceId) return null;
+                const level = (trace.baseline[deviceId] ?? 0) + (e.estimate!.forLoad ?? e.estimate!.predicted);
+                const from = runFrac(run, Math.max(first, e.t)), to = runFrac(run, Math.min(last, (e.until ?? last) + 5000));
+                return <i key={`p:${e.model}:${e.t}`} class="rc-predict" aria-hidden="true"
+                    style={{ left: `${from * 100}%`, width: `${Math.max(0.5, (to - from) * 100)}%`,
+                             bottom: `${Math.min(100, (level / ceiling) * 100)}%`, "--model": e.model ? colorFor(e.model) : undefined }} />;
+            })}
+        </>
+    );
+}
+
+/**
+ * THE TIME GRID: faint vertical lines at round clock intervals through a plot, behind the gear's "time grid"
+ * (off by default). The axis is linear in time within a run, and even spacing is what makes that visible; at a
+ * gap the runs collapse and the spacing visibly restarts. Every plot draws the SAME step, derived from the same
+ * runs, so the lines of stacked tracks line up. Vertical only: memory gridlines would mean a different amount on
+ * every card, each having its own ceiling.
+ */
+function TimeGrid({ runs, run }: { runs: { t: number }[][]; run: { t: number }[] }) {
+    if (!timeGrid.value || run.length < 2) return null;
+    const step = gridStep(runs.reduce((n, r) => n + runWeight(r), 0));
+    // The spacing, said once per plot (in its last segment): a grid whose interval you have to work out by
+    // counting lines against the crosshair's clock is half a reading aid. A round interval, so round words.
+    const label = step < 60_000 ? `${step / 1000} s` : step < 3_600_000 ? `${step / 60_000} min` : `${step / 3_600_000} h`;
+    return <>
+        {gridTimes(run, step).map((t) => <i key={t} class="rc-grid" aria-hidden="true" style={{ left: `${runFrac(run, t) * 100}%` }} />)}
+        {run === runs[runs.length - 1] ? <span class="rc-grid-step">grid {label}</span> : null}
+    </>;
+}
+
 function SwapChips({ swap }: { swap: NonNullable<NonNullable<ResourceEvent["gen"]>["swap"]> }) {
     return (
         <>
@@ -2640,6 +2735,7 @@ function EventTip({ scope }: { scope: string }) {
                 ? <div class="rc-tip-note warn">{formatBytes(spilled)} of this model did not fit — it is
                     running on the CPU, which is why it will be slow. No error is raised for this.</div>
                 : null}
+            {predictView.value && e.kind === "load" ? <PredictionRows e={e} /> : null}
             {/* ONE rule opens the footer, and the PROSE comes first inside it. The notes explain the block —
                 "the model wasn't resident", "continues past what was measured" — and they were sitting under
                 the timestamp, which read as a caption on the clock rather than on the thing. The timestamp is

@@ -612,6 +612,7 @@ the wrong one costs a whole read-through, so:
 | DIFF two runs | **`run.json`** | A markdown diff is mostly layout. Strip `VOLATILE_FIELDS` and run `canonicalizeText()` first, or every pointer id and timestamp shows as a change. |
 | Parse a run from Python/Go, or build a tool on it | **`run.json`** + `docs/spec/export.schema.json` | The schema is normative and checked in; generate models from it. Fields tagged `@unstable` will grow. |
 | Hand a run to a person who is not you | **the PDF** | Self-contained, light-themed, images inlined, prints with sane page breaks. Nothing to unzip and no sidecars to lose. |
+| Collect data for tuning the server's VRAM predictor | **`ml.__loads()`** | One record per load: the prediction, the load's own figures and the measured trace (peak, settled, every sample). Collected only with the panel's "load predictions" toggle on. |
 | Debug the resource panel / the event lane | **`ml.__events()`** | Not an export at all: the raw INPUTS the timeline is derived from (the debug stream, the server's frames, ps/info). Use it when the drawn events look wrong, because the drawing is what is in question. |
 
 The one that surprises people: **`run.json` carries `session.events`**, the whole timeline the resource panel
@@ -869,7 +870,27 @@ display rather than an obvious bug:
   before trusting an empty list**: under `"pid_namespace"` (any container) another container's process is
   not listed at all while its memory is still out of `free`, so the unlisted remainder is "outside ollama's
   view" and never "overhead". Every residual key must be in `bandOrder`, or its band silently drops out of
-  the stack.
+  the stack. **Only a list WITH a scope is trusted**: an earlier server build listed bare `{pid, used_memory}`
+  entries with neither the scope nor the runner marks (the recorded `events-load-lifecycle.json` is one), and
+  read as authoritative that list named ollama's own 88 GiB runner as a stranger's process.
+- **A model row says which BUILD it is** (`quant`/`paramSize`/`family` from `details` on `/api/ps`, which stock
+  Ollama sends too), IN WORDS: `quantPlain` turns `Q4_K_M` into "4-bit weights" and keeps the code and what it
+  means for the tooltip. Integer and float formats are kept apart — `Q4_*` is a 4-bit integer with a scale per
+  block, `MXFP4` a real 4-bit float — and an unknown code is shown as itself rather than guessed at.
+- **THE VRAM PREDICTOR'S FIGURES, off by default** (gear → Predictor → "load predictions", `predictView`,
+  `ml_res_predict`). For tuning the server's predictor, not for a user: an `estimate` frame (`estimateFrom`) is
+  carried on the load it predicted, beside `load.complete`'s measured `memory`, and the load's tooltip sets them
+  against each other (`PredictionRows`). Every difference is taken against `predicted_for_load`, the figure
+  placement fits against; weights and KV are compared term by term and never summed. **VRAM is not monotonic
+  through a load** (a fit probe and discovery come and go, the context allocates, it settles below its peak), so
+  `loadTrace` reports the PEAK beside where it SETTLED: the runner's own process memory when the driver lists it
+  (`runner` basis), else the cards' growth over their pre-load level (`device` basis, skewed by an eviction at the
+  same time). A dashed line on the card (`PredictLines`) marks where the prediction said it would land — only on
+  a one-card load, since dividing a whole-model figure between cards would be pro-rating. **`ml.__loads()`** hands
+  the same comparison back as DATA: `LoadRecorder` (load-records.ts) builds one record per load in the service
+  worker once its settling reading arrives, keeps it in storage.local while the toggle is on (deduped against a
+  reconnect's replay, capped), with the server's `estimate` and `load.complete` fields verbatim and the trace as
+  `[ms since start, bytes]`. `{ clear: true }` empties it. The panel must be open while loads happen.
 - **Unified memory (Metal) is one pool**: `runner` is the discriminator, occupancy comes from the HOST (a
   Mac's device reported itself 11.84/11.84 GiB free while the system was 12.6 GiB deep in the same silicon),
   and a GPU-resident model is attributed in FULL there (`size == size_vram`, so attributing only the spill
@@ -1355,6 +1376,10 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   ruled over a band still resident). A gap still breaks the line and takes no width, because nothing was
   measured there. An event is placed inside the run that CONTAINS it, one in a gap is dropped, and the window
   admits a poll's grace past the last sample — without it the newest events were the only ones never shown.
+  **A TIME GRID shows it** (gear → Grid → "time grid", off by default, `timeGrid`): faint vertical lines at a
+  round LOCAL-clock interval (`gridStep` picks the smallest that keeps them 48 px apart at a track's 300 px
+  minimum; `gridTimes` places them inside each run), the same on every track, the interval captioned in each
+  plot's corner. Vertical only — memory gridlines would mean a different amount on every card.
 - **Instants rule through the plot** (dashed — a solid line reads as part of the chart), and one eviction is
   drawn in every track, so hovering it anywhere thickens it everywhere. **So do a load's two internal edges**
   (`loadEdges`): weights loaded, then KV cache and compute buffers allocated (ready to serve), each with the
