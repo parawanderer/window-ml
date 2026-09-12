@@ -149,6 +149,17 @@ per device, in bytes.
   root. The keys answer only while the pointer is on the chart (`crosshair` is set), and `preventDefault` is
   called only when one was used, so the panel never eats scrolling it had no use for. **Esc unwinds one rung
   at a time** — tip, then keyboard focus, then zoom.
+- **THE KEYS WORK FROM A HOVER, with no click** (`chartKey`, `chartKeysWanted`, the shell's `relayChartKey`).
+  Hovering does not move focus and the browser delivers keys only to the focused document, so with the page
+  focused the hint offered `↑↓` and the keys went to the page until you clicked into the panel. While the
+  pointer is over a plot (`pointerOnChart`, which unlike `crosshair` does not outlive the pointer), the app posts
+  `__mlSidebarApp: "chartKeys"` naming exactly the keys `chartKey` would use; the overlay's shell takes those from
+  the page (capture phase, `preventDefault` + `stopImmediatePropagation`) and posts them in as
+  `__mlSidebarChartKey`. It never takes focus: focus on hover would blur the page's focused element, closing its
+  menus and pulling the caret out of a field because the mouse crossed the panel. A key typed into an editable
+  field is never taken. The DevTools panel cannot relay (keys typed in another DevTools pane never reach an
+  extension panel), so there the hints say "click, then ↑↓" (`ClickFirst`, from `keysReach`) instead of
+  promising keys that go elsewhere.
 - **THE SAME KEY STEPS THROUGH WHAT THE VIEW DRAWS.** Overview draws pool LINES, the stacked view draws model
   bands, so `↑↓` cycles pools there (`kbPool`/`stepPool`, its own signal — the two views focus genuinely
   different kinds of thing, and unifying them would be a wrapper over two two-element enums). Leaving the keys

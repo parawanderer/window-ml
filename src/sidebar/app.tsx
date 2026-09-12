@@ -21,7 +21,7 @@ import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge, EmbedRunView } from "./reply";
 import { AgentRunView } from "./agent-detail";
 import { Composer } from "./composer";
-import { fetchModels, pollPs, connectResourceStream, pollBackendHealth, VramPanel, PythonBench, BenchDrawer, BenchVer, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
+import { chartKey, keyRelay, fetchModels, pollPs, connectResourceStream, pollBackendHealth, VramPanel, PythonBench, BenchDrawer, BenchVer, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
 import { CardApp, endActiveCardDrag } from "./hud-card";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
@@ -430,6 +430,10 @@ function onMessage(e: MessageEvent): void {
     if (d.__mlDebug) onDebug(d.__mlDebug as MlDebugEvent);
     else if (typeof d.__mlHighlightPos === "string") highlightPos.value = d.__mlHighlightPos;   // where the approval target sits on the page
     else if (d.__mlDebugReset) resetSessions();
+    // The chart's keys, RELAYED from the page by the overlay's shell while the pointer is on a plot (see `chartKey`):
+    // hovering does not move focus, so the page's document is the one receiving them.
+    else if (typeof d.__mlSidebarChartKey === "string") chartKey(d.__mlSidebarChartKey);
+    else if (d.__mlSidebarKeyRelay === true) keyRelay.value = true;
     else if (typeof d.__mlSidebarSurface === "string") {
         // The shell tells us which surface we are. The off-mode card renders a transparent, curated
         // view — flag <html> so the CSS drops the opaque canvas and the acrylic shows through.

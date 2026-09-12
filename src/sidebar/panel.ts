@@ -93,6 +93,11 @@ connect();
 window.addEventListener("message", (e: MessageEvent) => {
     const d: any = e.data;
     if (!d || e.source !== frame.contentWindow) return;
+    // The chart's key set, which the overlay's shell uses to relay the PAGE's keys in. Nothing to relay here: the
+    // iframe fills this panel, so this document almost never has focus of its own, and keys typed while another
+    // DevTools pane has focus never reach an extension panel at all. Deliberately not announcing a relay, so the
+    // chart's hints say "click the chart" in DevTools rather than promising keys that go elsewhere.
+    if (d.__mlSidebarApp === "chartKeys") return;
     if (d.__mlSidebarApp === "ready") {
         ready = true;
         frame.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");   // the panel is always "open"

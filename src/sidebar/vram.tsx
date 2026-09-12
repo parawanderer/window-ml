@@ -4,7 +4,7 @@
 import { useState, useEffect, useRef, useMemo } from "preact/hooks";
 import type { RenderDescriptor } from "../contract";
 import { fmtCtx, isBackendUnreachable } from "../contract";
-import { signal } from "@preact/signals";
+import { signal, effect } from "@preact/signals";
 import type { ComponentChildren } from "preact";
 import {
     config, models, ollamaIds, modelKinds, loadedModels, psError, vramOpen, backendError, rev, sessionMap,
@@ -1423,6 +1423,75 @@ export function stepDepth(dir: number): boolean {
     return true;
 }
 
+/**
+ * ONE KEY, READ BY THE CHART — whether it arrived at this frame's own document or was relayed in from the page.
+ * Returns whether the key was used, so the caller calls `preventDefault` only then: the panel must not eat
+ * scrolling it had no use for.
+ *
+ * Esc unwinds ONE RUNG AT A TIME, most transient first: the tooltip, then a keyboard focus, then the zoom. They
+ * are different kinds of thing — the tip is in the way right now, the focus is a reading you are taking, the zoom
+ * is state you chose — and dismissing a popup should never be what throws away a selection two rungs below it.
+ *
+ * The arrows only answer while the pointer is ON the chart (`crosshair` is set by the plot's own pointermove and
+ * cleared when it leaves), because the whole point is reading the instant you are already pointing at without
+ * moving off it. Elsewhere they stay the page's arrows.
+ */
+export function chartKey(key: string): boolean {
+    if (key === "Escape") {
+        if (muteTip()) return true;
+        if (kbFocus.value) { kbFocus.value = null; hoverModel.value = null; return true; }
+        if (zoomRange.value) { zoomRange.value = null; return true; }
+        return false;
+    }
+    if (!crosshair.value) return false;                       // the pointer is not on the chart
+    if (key === "ArrowDown" || key === "ArrowUp") {
+        // THE SAME KEY, THE THING THIS VIEW DRAWS. Overview draws pool LINES and the stacked view draws model
+        // bands, so the noun differs while the question the key answers does not. Leaving it working in one view
+        // and dead in the other was the worse option: the same key would mean "change what I am reading" or
+        // "scroll the page" depending on where the pointer happened to be.
+        if (readingIsOverlay()) stepPool(key === "ArrowDown" ? 1 : -1);
+        else stepFocus(key === "ArrowDown" ? 1 : -1);
+        return true;
+    }
+    if (key === "ArrowRight" || key === "ArrowLeft") {
+        // NO DEPTH IN THE OVERLAID VIEW — a pool has no breakdown of its own, the decomposition is per model — so
+        // these are left to the page there rather than swallowed doing nothing.
+        return !readingIsOverlay() && stepDepth(key === "ArrowRight" ? 1 : -1);
+    }
+    return false;
+}
+
+/** The pointer is over a PLOT right now — not merely that a reading is anchored (`crosshair` outlives the
+ *  pointer while the keyboard holds a focus). What gates relaying the page's keys: once the mouse is on the
+ *  page, the page's arrows are the page's again. */
+export const pointerOnChart = signal(false);
+let lastKeysSent = "";
+/** Whether this frame's own document has focus, so keys typed now reach `chartKey` without any relay. */
+export const frameFocused = signal(typeof document !== "undefined" && document.hasFocus());
+if (typeof window !== "undefined") {
+    window.addEventListener("focus", () => { frameFocused.value = true; });
+    window.addEventListener("blur", () => { frameFocused.value = false; });
+}
+/** The parent relays the page's keys while the pointer is on the chart (the overlay's shell says so on ready).
+ *  The DevTools panel cannot: keys typed while another DevTools pane has focus never reach it. */
+export const keyRelay = signal(false);
+/** Will ↑↓ reach the chart from where the keyboard is now? What the key hints read, so they never offer keys
+ *  that go somewhere else until you click. */
+export const keysReach = (): boolean => keyRelay.value || frameFocused.value;
+
+/** The keys the chart would use RIGHT NOW, for a parent that relays them: what `chartKey` would answer, known in
+ *  advance, because the relay has to decide whether to take a key from the page before it can ask. ←/→ only
+ *  where there is depth to move through, so a page's own arrows are not taken for nothing. */
+export function chartKeysWanted(): string[] {
+    if (!pointerOnChart.value || !crosshair.value) return [];
+    const keys = ["ArrowUp", "ArrowDown", "Escape"];
+    if (!readingIsOverlay()) {
+        keys.push("ArrowRight");
+        if ((kbFocus.value?.depth ?? 0) > 0) keys.push("ArrowLeft");
+    }
+    return keys;
+}
+
 // The chosen VIEW. A preset is a named starting point for a layout, and editing one is the same operation on
 // the same state (`TrackDef[]`) — so there is no "am I in preset mode or edit mode" to get wrong. `layout`
 // null means "use the default preset for this box", which is also the fallback when a saved layout doesn't
@@ -1796,31 +1865,35 @@ export function VramPanel() {
     // called ONLY when a key was actually used — the panel must not eat scrolling it had no use for.
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === "Escape") {
-                if (muteTip()) return;
-                if (kbFocus.value) { kbFocus.value = null; hoverModel.value = null; return; }
-                if (zoomRange.value) zoomRange.value = null;
-                return;
-            }
-            if (e.altKey || e.ctrlKey || e.metaKey) return;
-            if (!crosshair.value) return;                       // the pointer is not on the chart
-            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                // THE SAME KEY, THE THING THIS VIEW DRAWS. Overview draws pool LINES and the stacked view
-                // draws model bands, so the noun differs while the question the key answers does not. Leaving
-                // it working in one view and dead in the other was the worse option: the same key would mean
-                // "change what I am reading" or "scroll the page" depending on where the pointer happened to
-                // be.
-                if (readingIsOverlay()) stepPool(e.key === "ArrowDown" ? 1 : -1);
-                else stepFocus(e.key === "ArrowDown" ? 1 : -1);
-                e.preventDefault();
-            } else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-                // NO DEPTH IN THE OVERLAID VIEW — a pool has no breakdown of its own, the decomposition is
-                // per model — so these are left to the page there rather than swallowed doing nothing.
-                if (!readingIsOverlay() && stepDepth(e.key === "ArrowRight" ? 1 : -1)) e.preventDefault();
-            }
+            if (e.key !== "Escape" && (e.altKey || e.ctrlKey || e.metaKey)) return;
+            if (chartKey(e.key)) e.preventDefault();
         };
         document.addEventListener("keydown", onKey);
-        return () => document.removeEventListener("keydown", onKey);
+        // WHILE THE POINTER IS OVER A PLOT, tell the parent which keys the chart would use, so a shell that can
+        // see the PAGE's keys relays them in (see `chartKey`). Hovering does not move focus, and the browser
+        // delivers keys only to the focused document, so without this the hint offered keys that went to the
+        // page until you clicked. `pointerover` rather than the plots' own handlers so every view is covered
+        // by one listener; leaving the frame entirely clears it.
+        const onOver = (e: PointerEvent) => { pointerOnChart.value = !!(e.target as Element | null)?.closest?.(".rc-plot"); };
+        const onOut = (e: PointerEvent) => { if (!e.relatedTarget) pointerOnChart.value = false; };
+        document.addEventListener("pointerover", onOver);
+        document.addEventListener("pointerout", onOut);
+        const stop = effect(() => {
+            const keys = chartKeysWanted();
+            const sig = keys.join(",");
+            if (sig === lastKeysSent) return;
+            lastKeysSent = sig;
+            try { window.parent.postMessage({ __mlSidebarApp: "chartKeys", keys }, "*"); } catch { /* no parent */ }
+        });
+        return () => {
+            document.removeEventListener("keydown", onKey);
+            document.removeEventListener("pointerover", onOver);
+            document.removeEventListener("pointerout", onOut);
+            stop();
+            pointerOnChart.value = false;
+            lastKeysSent = "";
+            try { window.parent.postMessage({ __mlSidebarApp: "chartKeys", keys: [] }, "*"); } catch { /* no parent */ }
+        };
     }, []);
     // The panel already ticks once a second (the TTL countdowns); that is also what notices a drag whose
     // release never arrived, so a missed pointerup self-heals within a second instead of wedging the panel.

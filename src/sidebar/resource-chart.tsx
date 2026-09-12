@@ -20,7 +20,7 @@ import {
     presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, stepBands, bandEdge, runGap, type RunGap,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
-import { resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
+import { keysReach, resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
 import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot, predictView, timeGrid } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
@@ -1147,7 +1147,7 @@ function BandTip({ bands, frame, history, samples, ceiling, scope, label, hidden
                 through the OVERVIEW, and a reader told half of what a key does stops pressing before finding
                 the rest. */}
             <div class="rc-tip-line rc-tip-keys">
-                <span><kbd>↑↓</kbd> models &amp; overview</span>
+                <span><ClickFirst /><kbd>↑↓</kbd> models &amp; overview</span>
                 <span>{deep ? <><kbd>←</kbd> back</> : <><kbd>→</kbd> details</>}</span>
             </div>
         </div>
@@ -1201,7 +1201,7 @@ function PlotTip({ at, bands, ceiling, label, hidden, scope }: { at: ResourceSam
                     <span class="rc-tip-consumer" key={b.key}>
                         <i class="rc-tip-dot" style={{ background: bandFill(b.key, undefined, b.of) }} />{b.label} {formatBytes(b.bytes)}</span>))}</div>
                 : null}
-            {models.length ? <div class="rc-tip-line rc-tip-keys"><span><kbd>↑↓</kbd> pick a model</span></div> : null}
+            {models.length ? <div class="rc-tip-line rc-tip-keys"><span><ClickFirst /><kbd>↑↓</kbd> pick a model</span></div> : null}
         </div>
     );
 }
@@ -1322,7 +1322,7 @@ function PoolsTip({ pools, latest, at: hoverSample, fracOf, usedOf, surface = "o
                 thing to find. ONLY ↑↓: there is no depth here to descend into, since a pool has no memory
                 breakdown of its own (the decomposition is per MODEL), and naming a key that silently does
                 nothing is worse than naming none. */}
-            {rows.length > 1 ? <div class="rc-tip-row rc-tip-keys"><span><kbd>↑↓</kbd> pick a {bandOf ? "pool" : "line"}</span></div> : null}
+            {rows.length > 1 ? <div class="rc-tip-row rc-tip-keys"><span><ClickFirst /><kbd>↑↓</kbd> pick a {bandOf ? "pool" : "line"}</span></div> : null}
         </div>
     );
 }
@@ -2055,6 +2055,14 @@ function GapMark({ prev, next, samples, scope }: { prev: ResourceSample[]; next:
     return <div class={`rc-gap${gap.reported ? " reported" : ""}${hot ? " hot" : ""}`}
         onPointerEnter={(e: PointerEvent) => { gapHover.value = { gap, scope }; trackCursor(scope)(e); }}
         onPointerLeave={() => { gapHover.value = null; }} />;
+}
+
+/** "click, then" in front of a key hint whenever the keys cannot reach the chart from where the keyboard is — the
+ *  DevTools panel with focus in another pane, which nothing can relay from. A hint must never offer keys that go
+ *  somewhere else; in the overlay the shell relays them, so this says nothing there. */
+function ClickFirst() {
+    const reach = keysReach();   // read unconditionally, so the component subscribes (the minify gotcha)
+    return reach ? null : <span class="rc-tip-click">click, then </span>;
 }
 
 /** The plot's segments with a {@link GapMark} between each pair — the one loop every view draws its runs in. */
