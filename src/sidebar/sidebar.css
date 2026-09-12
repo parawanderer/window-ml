@@ -980,9 +980,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .bench-tab:hover { color: var(--fg-dim); }
 /* The bench output's timestamps toggle: pushed to the far end of the tab row and set in the tabs' own type, so
    it reads as a property of the pane rather than a fourth tab. An eye before the label, crossed out when off.
-   Centred on the tabs' TEXT line rather than the strip's (the 2px margin cancels the tabs' underline, which the
-   strip's midpoint includes), and inset from the edge by the tabs' own 9px padding. */
-.bench-times { margin: 0 9px 2px auto; align-self: center; flex: 0 0 auto; cursor: pointer;
+   Centred in the STRIP, equal space above and below. Not on the tabs' text line: that sits high, because the
+   tabs' underline takes the bottom 2px, and a bordered pill centred on it hugged the top edge (1.5px above,
+   4.5px below). A pill is read against the edges around it, not against the text beside it. Inset from the
+   edge by the tabs' own 9px padding. */
+.bench-times { margin: 0 9px 0 auto; align-self: center; flex: 0 0 auto; cursor: pointer;
     display: inline-flex; align-items: center; gap: 4px;
     font: inherit; font-size: 0.74em; line-height: 1.4; color: var(--fg-dim); background: transparent;
     border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px 1px 6px; }
