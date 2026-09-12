@@ -2784,9 +2784,17 @@ export interface ServerHint {
  *  started from this browser; with a hint it can say whose it was — Open WebUI's own calls are `owui-`, another
  *  window.ml session is `wml-` (a tab or browser this panel is not showing, since ours would have matched) — and
  *  what kind of work (`use`, in words). An unknown `use` is quoted as sent rather than translated. */
-export function serverGenNote(h?: ServerHint | null): string {
+export function serverGenNote(h?: ServerHint | null, isShown?: (session: string) => boolean): string {
     const base = "reported by the server — not started from this browser";
     if (!h) return base;
+    // ONE OF THE SESSIONS THIS PANEL SHOWS. The panel's own side tasks about a session — its title, a step summary —
+    // are not drawn as lane events of their own, so nothing matches them; calling them "a session this panel isn't
+    // showing" was wrong about a session sitting right there (caught live).
+    if (h.session && isShown?.(h.session)) {
+        return h.use === "utility"
+            ? "a side task this panel ran for one of its sessions (its title or a summary)"
+            : "a request in one of this panel's sessions that matched none of its steps";
+    }
     const who = !h.session ? null
         : h.session.startsWith("owui-") ? "Open WebUI"
         : h.session.startsWith("wml-") ? "a window.ml session this panel isn't showing (another tab or browser)"

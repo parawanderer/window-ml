@@ -21,7 +21,7 @@ import {
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
 import { keysReach, resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
-import { models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot, predictView, timeGrid } from "./store";
+import { sessionMap, models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot, predictView, timeGrid } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
@@ -2917,7 +2917,7 @@ function EventTip({ scope }: { scope: string }) {
                     // A generation the SERVER reported and no session of ours matched: another client's traffic.
                     // Said, because a bar nobody here caused otherwise reads as something this browser did.
                     // With a hint the server echoed, it also says WHOSE and what kind of work (`serverGenNote`).
-                    e.kind === "gen" && e.via === "server" ? serverGenNote(e.hint) : null,
+                    e.kind === "gen" && e.via === "server" ? serverGenNote(e.hint, (sess) => sessionMap.has(sess.replace(/^wml-/, ""))) : null,
                     h.p.clipped ? "continues past what was measured" : null,
                     e.ref ? `click to open this ${e.ref.seq != null ? "step" : "run"}` : null,
                 ].filter(Boolean) as string[];
