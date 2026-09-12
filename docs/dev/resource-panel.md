@@ -27,6 +27,11 @@ display rather than an obvious bug:
 - **A device decomposes into three bands, never two**: attributed per model, the residual, then free. The
   residual is named by MAGNITUDE — under ~1 GiB it is ollama's own driver context (an idle card holds ~0.55
   GiB), above it something genuinely else is there. Calling it "other processes" invents a process.
+  **The residual is explained in ITS backend's terms** (`residualNotes(runner)`, `HOST_RAM_NOTE`,
+  `UNIFIED_NOTE`): a CUDA context on NVIDIA, a HIP (ROCm) context on AMD, generic wording on other backends, the
+  operating system and other programs for host RAM, and the one shared pool on a Mac. The 0.7–1.8 GiB range was
+  measured on CUDA only, so only CUDA quotes it. It used to be one CUDA sentence under every pool, System RAM
+  included. Every band carries its own note; the legend's fallback is backend-neutral.
 - **Once the driver NAMES the processes, the residual is split by them instead** (`processes` +
   `processes_scope` on `/api/info`, `processBands`): each runner's overhead (its process minus its model's
   share of the card, 444 vs 633 MiB on one box, so never a constant) stacked directly on its model in a wash
@@ -151,6 +156,10 @@ per device, in bytes.
   reading" or "scroll the page" depending on where the pointer happened to be. **Nothing else is copied
   over** — a pool has no memory breakdown of its own, so `←→` do nothing there and the hint on that tip offers
   only the pair it can honour.
+  **Pool lists are published PER SURFACE** (`notePools(surface, …)`): the overlaid view and a whole-box track both
+  draw pools, and the keys step the list of the surface being read. One shared list meant whichever rendered last
+  owned the keys, and the whole-box view published none — so ↑↓ there fell through to stepping MODELS (nothing, on
+  an idle box) under a tip promising "↑↓ pick a line". The tip says "pick a pool" there.
 - **A KEYBOARD FOCUS HOLDS UNTIL THE POINTER MOVES** (`releaseFocus`, called from the plot's `pointermove`
   and nothing else). A band sliding under a parked cursor as samples arrive raises `pointerenter` with nobody
   having touched anything, so honouring that would let an arriving poll overwrite a selection the keys just
@@ -322,6 +331,13 @@ per device, in bytes.
   on top of the stepped model it sloped from the last sample to the next — a `\` wedge beside the model's `|` at
   every eviction, which snapped square only when a hover subdivided the band. A LOADING runner stays a line: its
   memory really does climb as the weights land.
+  **Two rules keep a mixed stack from drawing wedges** (`stepBands`, `bandEdge`). Steps run only in an UNBROKEN
+  run from the bottom of the stack: tops are cumulative, so a stepped band stacked on a line (a loading runner,
+  climbing) held its top while its floor rose, and the inverted polygon filled as a wedge. And a line band above
+  the steps turns THEIR corners and interpolates only its own thickness — interpolating the cumulative top made it
+  climb before a model arrived (a pale wedge ahead of each step) and fall under its floor at an eviction. That was
+  always the stated rule ("its base jumps, its thickness varies smoothly"); the edge did not implement it until
+  `bandEdge`. So a device band turns a corner exactly where the model beneath it steps, and nowhere of its own.
 - **THE SNAP MARK CARRIES THE MODEL'S COLOUR.** A model's colour is its identity across the whole panel, and
   a mark sitting ON that band was drawn in the panel's accent — saying "a reading" where every other surface
   says "this model", with nothing to tell several marks apart. It reads from `identity`, the same source
