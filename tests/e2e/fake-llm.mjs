@@ -84,11 +84,11 @@ function usageFor(body, step) {
  * - url:       the chatUrl to configure the extension with (…/api/chat/completions)
  * - setScript: (steps: Array<StepOrFn>) => void   — the ordered turns for the NEXT run
  * - calls:     () => object[]                      — every chat request body received (for assertions)
- * @param {{ port?: number, model?: string }} [opts]
+ * @param {{ port?: number, model?: string, streamDelayMs?: number, continuousUsage?: boolean }} [opts]
  */
 /** @param {number} ms */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0 } = {}) {
+export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0, continuousUsage = true } = {}) {
     // A scriptable fake BOX as well as a fake model: /api/ps (what is resident) and /api/info (what capacity
     // exists) are what the resource panel polls, and both are settable mid-run so a test or demo can make
     // models load and evict on a timeline. `info: null` reproduces a stock Ollama, which doesn't serve the
@@ -126,8 +126,24 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
     /** @param {Res} res @param {FakeStep} step @param {any} body */
     const streamStep = async (res, step, body) => {
         res.writeHead(200, { "content-type": "text/event-stream", "access-control-allow-origin": "*", "cache-control": "no-store" });
+        // THE ENGINE'S RUNNING COUNT on every chunk, when the request asks (`stream_options.continuous_usage_stats`,
+        // as the patched server honours it) — a running TOTAL, counting a tool call's argument fragments too, which
+        // is exactly the stretch a count estimated from text used to freeze on. `continuousUsage: false` is a stock
+        // server that ignores the ask, so the client falls back to its estimate.
+        const liveUsage = continuousUsage && !!body?.stream_options?.continuous_usage_stats;
+        const promptTokens = usageFor(body, step).prompt_tokens;
+        let running = 0;
+        /** @param {any} d */
+        const tokensIn = (d) => {
+            const text = String(d.content || "") + String(d.reasoning_content || "") + (d.tool_calls || []).map((/** @type {any} */ t) => String(t.function?.arguments || "") + String(t.function?.name || "")).join("");
+            return text ? Math.max(1, Math.ceil(text.length / 4)) : 0;
+        };
         /** @param {Record<string, unknown>} delta @param {Record<string, unknown>} [extra] */
-        const send = (delta, extra = {}) => res.write(`data: ${JSON.stringify({ id: `chatcmpl-${callSeq}`, object: "chat.completion.chunk", model, choices: [{ index: 0, delta, ...extra }] })}\n\n`);
+        const send = (delta, extra = {}) => {
+            if (liveUsage) running += tokensIn(delta);
+            res.write(`data: ${JSON.stringify({ id: `chatcmpl-${callSeq}`, object: "chat.completion.chunk", model, choices: [{ index: 0, delta, ...extra }],
+                ...(liveUsage ? { usage: { prompt_tokens: promptTokens, completion_tokens: running, total_tokens: promptTokens + running } } : {}) })}\n\n`);
+        };
         const choice = toChoice(step);
         const calls = choice.message.tool_calls;
         if (step.emit) {
@@ -164,7 +180,10 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
         // Token counts ride the final chunk, as OpenWebUI's do. Not decoration: everything the CLIENT measures
         // about a call (its wall clock, and the generation phases) is stamped onto that usage object, so a
         // stream that reports no counts drops our own measurements with them.
-        res.write(`data: ${JSON.stringify({ id: `chatcmpl-${callSeq}`, object: "chat.completion.chunk", model, choices: [], usage: usageFor(body, step) })}\n\n`);
+        // With a running count, the final one is the count plus the end-of-sequence token, which produces no text
+        // — so the final total can exceed what the stream showed, as the real engine's does.
+        const final = liveUsage ? { prompt_tokens: promptTokens, completion_tokens: running + 1, total_tokens: promptTokens + running + 1 } : usageFor(body, step);
+        res.write(`data: ${JSON.stringify({ id: `chatcmpl-${callSeq}`, object: "chat.completion.chunk", model, choices: [], usage: final })}\n\n`);
         res.write("data: [DONE]\n\n");
         res.end();
     };

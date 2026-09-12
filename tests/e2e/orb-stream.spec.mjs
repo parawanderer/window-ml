@@ -9,7 +9,8 @@ import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
 test("HUD orb (streaming): a live token count ticks in the corner-card orb during the reasoning phase", async () => {
-    const fake = await startFakeLlm({ model: "fake-model", streamDelayMs: 90 });   // pace the SSE so reasoning lasts ~5s
+    // A STOCK server — one that ignores the ask for a running count — so the orb falls back to its estimate.
+    const fake = await startFakeLlm({ model: "fake-model", streamDelayMs: 90, continuousUsage: false });   // pace the SSE so reasoning lasts ~5s
     const site = await startPageServer({});
     const ext = await launchExtension();
     try {
@@ -55,6 +56,58 @@ test("HUD orb (streaming): a live token count ticks in the corner-card orb durin
         // It must not shrink: whatever the label does, the readout is the part still telling you something.
         expect(await live.evaluate((el) => getComputedStyle(el).flexShrink)).toBe("0");
         expect(await cardFrame.locator(".card-orb-label").first().textContent()).not.toMatch(/tok/);
+    } finally {
+        await ext.close();
+        fake.stop?.();
+        site.stop?.();
+    }
+});
+
+// THE FROZEN COUNTER. The estimate is built from the streamed reasoning and reply text, and a tool call's argument
+// fragments are neither — so while a model wrote a call the count stood still. The engine's own running count
+// (asked for with stream_options.continuous_usage_stats) keeps climbing through the call, and is shown exact.
+test("HUD orb (streaming): the engine's own count is shown exact, and keeps climbing while a tool call is written", async () => {
+    const fake = await startFakeLlm({ model: "fake-model", streamDelayMs: 120 });   // the patched server: counts every chunk
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off",
+        });
+        // A short think, then a LONG tool call streamed as forty argument fragments — no text at all for ~5s.
+        const args = { text: "x".repeat(800) };
+        fake.setScript([
+            { tool: "findByText", args, emit: [{ kind: "think", text: "Let me look." }, ...Array.from({ length: 40 }, () => ({ kind: "call" }))] },
+            { content: "done" },
+        ]);
+        const page = await ext.context.newPage();
+        await page.goto(site.url + "/");
+        await waitForMl(page);
+        await page.evaluate(() => { window.__run = window.ml.agent("find it", { stream: true }); });
+        await page.waitForFunction(() => !!document.getElementById("ml-sb-card")?.shadowRoot, null, { timeout: 20000 });
+        const cardFrame = await (async () => {
+            for (let i = 0; i < 100; i++) {
+                const f = page.frames().find((fr) => /sidebar\.html/.test(fr.url()));
+                if (f) return f;
+                await new Promise((r) => setTimeout(r, 100));
+            }
+            throw new Error("the corner-card iframe never appeared");
+        })();
+        // Read the live count while the CALL streams: every reading after the think has landed moved no text.
+        const counts = [];
+        for (let i = 0; i < 80 && counts.length < 6; i++) {
+            const txt = await cardFrame.locator(".card-orb-live").first().textContent().catch(() => null);
+            const m = txt && /(\d[\d.,]*k?) tok/.exec(txt);
+            if (m) {
+                expect(txt, "an exact count carries no ~").not.toMatch(/~/);
+                const n = Number(m[1].replace(/,/g, ""));
+                if (!counts.length || n !== counts.at(-1)) counts.push(n);
+            }
+            await new Promise((r) => setTimeout(r, 150));
+        }
+        expect(counts.length, `the count kept moving during the tool call: ${counts}`).toBeGreaterThanOrEqual(4);
+        expect(counts.every((n, i) => !i || n > counts[i - 1]), `a running total only climbs: ${counts}`).toBe(true);
+        await page.evaluate(() => window.__run);
     } finally {
         await ext.close();
         fake.stop?.();
