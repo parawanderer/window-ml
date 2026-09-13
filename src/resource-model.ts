@@ -727,9 +727,11 @@ export function expectedPhrase(ed: ExpectedDecode): { text: string; quiet: boole
     if (ed.basis === "profile_corrected") {
         const f = ed.correctionFactor;
         const off = f ? ` it runs ${Math.abs(Math.round((f - 1) * 100))}% ${f >= 1 ? "slower" : "faster"} than the box profile alone predicts${ed.profileTokensPerSec ? ` (${n(ed.profileTokensPerSec)} tok/s)` : ""}.` : "";
-        const runs = ed.correctionSamples ? `learned from ${ed.correctionSamples} run${ed.correctionSamples === 1 ? "" : "s"}` : "learned from its runs";
+        // "The last N": the correction is a window of the model's last 20 clean runs, and since 2026-09-13 it is
+        // shared by identical cards, so it is not "on this placement" but on this KIND of card.
+        const runs = ed.correctionSamples ? `learned from the last ${ed.correctionSamples} run${ed.correctionSamples === 1 ? "" : "s"}` : "learned from its runs";
         return { text: `~${n(ed.tokensPerSec)} tok/s expected`, quiet: false,
-            tip: `The decode speed to expect here with an empty cache, ${runs} on this placement:${off}${moe}` };
+            tip: `The decode speed to expect here with an empty cache, ${runs} on this kind of card:${off}${moe}` };
     }
     return { text: `~${n(ed.tokensPerSec)} tok/s estimate`, quiet: true,
         tip: `An estimate from this box's measured profile, for a plain llama on this card; this model has not run enough clean generations here to correct it, and a small or unusual model can be far off.${moe}` };
@@ -2797,6 +2799,66 @@ export interface GenTimings {
      *  Present only on a request that switched conversations, and only on a one-slot model (with more slots
      *  the log cannot say whose swap is whose, so none is reported). */
     swap?: { ms: number; restored: boolean; savedTokens?: number; savedBytes?: number; evicted?: number; evictedBytes?: number; tooLarge?: boolean };
+    /** The server's own prediction for THIS generation (`gen.end.predicted_decode`, `ollama-slop:genpredict`), made
+     *  from the state BEFORE it ran — see {@link PredictedDecode}. Rides with the figures, so a generation joined to
+     *  our own call keeps it. */
+    predicted?: PredictedDecode;
+}
+
+/**
+ * WHAT THE SERVER PREDICTED THIS GENERATION WOULD DECODE AT, made before it ran (`gen.end.predicted_decode`). Made
+ * from the same state the server stores beside the measurement, so it is never partly fitted to the generation it
+ * predicts — which a `/api/ps` row read at or after `gen.end` would be, since that generation has already taught the
+ * correction. Compare `msPerToken` with `evalMs / decoded`. Absent in the same cases as `expected_decode.unavailable`.
+ */
+export interface PredictedDecode {
+    /** Predicted milliseconds per decoded token, at `occupancyTokens` of context. */
+    msPerToken: number;
+    /** `prompt_tokens + decoded / 2`: the mean context over the decode. */
+    occupancyTokens?: number;
+    basis: string;
+    /** Only when corrected: the profile's figure, the factor, and how many EARLIER generations it rests on (at most
+     *  the last 20 clean ones, on any card of the same kind). */
+    profileMsPerToken?: number; correctionFactor?: number; correctionSamples?: number;
+    /** A sliding-window model: reading the KV cache is not in the prediction, so it is a lower bound on the TIME. */
+    excludesCacheRead?: boolean;
+}
+
+/** Parse `gen.end.predicted_decode`. Null when absent or unshaped. */
+export function predictedDecodeFrom(raw: unknown): PredictedDecode | null {
+    if (!raw || typeof raw !== "object") return null;
+    const o = raw as Record<string, unknown>;
+    const pos = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
+    const ms = pos(o.ms_per_token);
+    if (!ms) return null;
+    return { msPerToken: ms, basis: typeof o.basis === "string" ? o.basis : "",
+        ...(pos(o.occupancy_tokens) ? { occupancyTokens: pos(o.occupancy_tokens) } : {}),
+        ...(pos(o.profile_ms_per_token) ? { profileMsPerToken: pos(o.profile_ms_per_token) } : {}),
+        ...(pos(o.correction_factor) ? { correctionFactor: pos(o.correction_factor) } : {}),
+        ...(pos(o.correction_samples) ? { correctionSamples: pos(o.correction_samples) } : {}),
+        ...(o.excludes_cache_read === true ? { excludesCacheRead: true } : {}) };
+}
+
+/**
+ * A generation's measured decode against the server's prediction for it, in words: what share of the predicted
+ * speed it reached, and what the prediction rests on. A corrected prediction is learned from the last N runs; a
+ * plain `profile` one is an estimate for a plain llama on this card. For a sliding-window model the prediction
+ * leaves out reading the cache, so its speed is an UPPER bound and a figure under 100% is expected, and said so.
+ */
+export function predictionLine(g: GenTimings): string | null {
+    const p = g.predicted;
+    if (!p || !g.decoded || !(g.evalMs > 0)) return null;
+    const measuredMs = g.evalMs / g.decoded;
+    const tps = 1000 / p.msPerToken;
+    const fmt = tps >= 100 ? Math.round(tps).toString() : tps.toFixed(1);
+    const pct = Math.round((p.msPerToken / measuredMs) * 100);
+    const n = p.correctionSamples;
+    const src = p.basis === "profile_corrected"
+        ? `learned from the last ${n ?? "few"} run${n === 1 ? "" : "s"}`
+        : "a plain-llama estimate for this card";
+    return p.excludesCacheRead
+        ? `${pct}% of the predicted ${fmt} tok/s, which is an upper bound: it leaves out reading the cache (${src})`
+        : `${pct}% of the predicted ${fmt} tok/s at this context (${src})`;
 }
 
 /** Parse `gen.end.timings`. Null unless BOTH durations are present, since the split is built from the pair —

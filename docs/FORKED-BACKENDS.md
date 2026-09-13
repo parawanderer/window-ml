@@ -159,8 +159,10 @@ are in the two mlbox reports `handover-request-hints.md` and `handover-request-h
 bandwidth and per-token/per-layer costs, measured on the box once it is idle (`state` `pending` → `measuring` →
 `measured`, joined to `supported_gpus` by `pci_id`). `expected_decode` on each `/api/ps` row: the predicted empty-cache
 decode speed for that placement, `basis` `profile` or `profile_corrected` (by the model's own clean generations), or
-`unavailable` with a reason. The client shows both (see `docs/dev/resource-panel.md`); a per-generation predicted figure
-on `gen.end` has been requested so a generation can be compared with the prediction made before it.
+`unavailable` with a reason. `predicted_decode` on `gen.end` (`ollama-slop:genpredict`): the server's prediction for that
+generation, made before it ran (`ms_per_token` at `occupancy_tokens` = `prompt_tokens + decoded / 2`, its `basis`,
+`correction_samples` when corrected, `excludes_cache_read` for a sliding-window model). The client shows all three (see
+`docs/dev/resource-panel.md`).
 
 **Reachability, and a correction.** The extension finds Ollama through the same base discovery it uses for
 `/api/ps`: `<origin>/ollama` first (OpenWebUI's passthrough), then `<origin>`. This file used to say

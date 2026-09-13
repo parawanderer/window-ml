@@ -2881,7 +2881,7 @@ test("expected_decode: the three real shapes parse, and the wording follows the 
     const corrected = M.expectedPhrase(moe);
     assert.equal(corrected.text, "~210 tok/s expected");
     assert.equal(corrected.quiet, false, "learned from its own runs: a real expectation");
-    assert.match(corrected.tip, /learned from 5 runs/);
+    assert.match(corrected.tip, /learned from the last 5 runs on this kind of card/, "a window of recent runs, shared by identical cards");
     assert.match(corrected.tip, /16% slower than the box profile alone predicts \(244 tok\/s\)/);
     assert.match(corrected.tip, /7\.8% of its weights/);
 
@@ -2893,4 +2893,23 @@ test("expected_decode: the three real shapes parse, and the wording follows the 
     assert.deepEqual(M.expectedDecodeFrom({ unavailable: "partly_on_cpu" }), { unavailable: "partly_on_cpu" });
     assert.match(M.expectedPhrase({ unavailable: "profile_pending" }).text, /not measured yet/);
     assert.equal(M.expectedDecodeFrom({ basis: "profile" }), null, "no figure → nothing");
+});
+
+test("predicted_decode on gen.end: the real frames, and a generation read against its own prediction", () => {
+    const frames = readFileSync(new URL("./fixtures/hw/gen-end-predicted-decode-2026-09-13.ndjson", import.meta.url), "utf8")
+        .split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    const gen = (f) => ({ ...M.genTimingsFrom(f.timings), predicted: M.predictedDecodeFrom(f.predicted_decode) });
+    const [q1, , , q4, oss] = frames.map(gen);
+    assert.deepEqual(q1.predicted, { msPerToken: 14.032, occupancyTokens: 163, basis: "profile" });
+    assert.equal(q4.predicted.correctionSamples, 3, "the fourth frame is corrected, by the three before it");
+    assert.equal(oss.predicted.excludesCacheRead, true);
+
+    // The plain profile: an estimate, and this box ran at 98% of it.
+    assert.equal(M.predictionLine(q1), "98% of the predicted 71.3 tok/s at this context (a plain-llama estimate for this card)");
+    // Corrected: learned from the runs BEFORE it — measured 14.279 ms against 14.312 predicted.
+    assert.equal(M.predictionLine(q4), "100% of the predicted 69.9 tok/s at this context (learned from the last 3 runs)");
+    // A sliding-window model: the prediction leaves the cache read out, so it is an upper bound, and says so.
+    assert.equal(M.predictionLine(oss), "85% of the predicted 244 tok/s, which is an upper bound: it leaves out reading the cache (a plain-llama estimate for this card)");
+    // No prediction (an older build, or a machine not measured) → nothing drawn.
+    assert.equal(M.predictionLine(M.genTimingsFrom(frames[0].timings)), null);
 });

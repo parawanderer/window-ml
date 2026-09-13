@@ -453,10 +453,16 @@ per device, in bytes.
   row's chip is worded by `basis`: `profile_corrected` is an expectation ("~210 tok/s expected", learned from N runs),
   plain `profile` an ESTIMATE drawn quieter (a plain llama on this card; the capture's qwen3.5 predicted 854 and
   measured 521). An `unavailable` reason draws no chip. The correction is keyed per card index, so a model that moves
-  cards drops back to `profile`. **Not yet drawn: a generation against its prediction.** The row read at or after
-  `gen.end` already includes that generation's own correction, so the comparison waits for the server's own
-  per-generation figure on `gen.end` (asked for) rather than guessing which sample preceded `gen.start`. Real
-  captures: `tests/fixtures/hw/info-box-profile-2026-09-13.json`, `expected-decode-*-2026-09-13.json`.
+  cards of a different KIND drops back to `profile` (identical cards share it since 2026-09-13), and it is a window
+  of the last 20 clean runs, hence "learned from the last N runs". **A generation against its OWN prediction**
+  (`predictedDecodeFrom`, `predictionLine`, `PredictionChip`; `ollama-slop:genpredict`): `gen.end.predicted_decode`
+  is the server's prediction for that generation, made from the state BEFORE it ran — never the `/api/ps` row read
+  at or after `gen.end`, which already includes that generation's correction and so is partly fitted to what it
+  predicts. It rides on the generation's `GenTimings`, so a generation joined to our own call keeps it, and the
+  decode row of the lane tooltip says what share of the predicted speed it reached, beside the ceiling. A
+  sliding-window model's prediction leaves the cache read out (`excludes_cache_read`), so there it is an upper
+  bound and says so. Real captures: `tests/fixtures/hw/info-box-profile-2026-09-13.json`,
+  `expected-decode-*-2026-09-13.json`, `gen-end-predicted-decode-2026-09-13.ndjson`.
 - **A LATE `/api/info` REPLY IS DROPPED ONLY ONCE THE STREAM HAS CARRIED `info`** (`streamInfoSeen`). The reply to
   the mount-time request can land after the stream went live and must not overwrite its newer reading — but `info`
   rides a sample frame only when it changes and `hello` carries none, so on a quiet box that reply can be the only

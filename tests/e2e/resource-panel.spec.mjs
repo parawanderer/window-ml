@@ -4728,7 +4728,7 @@ test("resource panel: a card's facts say what decode achieves; a model's row say
         await expect(chip).toBeVisible({ timeout: 15000 });
         expect(await chip.evaluate((el) => el.firstChild.textContent)).toBe("~210 tok/s expected");
         expect(await chip.getAttribute("class")).not.toContain("quiet");
-        await expect(chip.locator(".tt-pop")).toContainText("learned from 5 runs");
+        await expect(chip.locator(".tt-pop")).toContainText("learned from the last 5 runs");
 
         // The small hybrid model on a card where it has no correction: an ESTIMATE, drawn quieter.
         fake.setResident([hw("expected-decode-qwen3.5-0.8b-2026-09-13.json").ps_row_before_generation]);
