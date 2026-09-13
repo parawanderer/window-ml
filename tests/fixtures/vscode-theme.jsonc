@@ -1,0 +1,32 @@
+// A small VS Code colour theme for tests and demos, written in the JSONC VS Code itself emits
+// ("Developer: Generate Color Theme From Current Settings" produces comments like these).
+{
+    "name": "Fixture Sunset",
+    "type": "dark",
+    "colors": {
+        "editor.background": "#1b1426",
+        "editor.foreground": "#f2e9ff",
+        "editor.selectionBackground": "#6b4f9a55",
+        "editor.lineHighlightBackground": "#241b33",
+        "editorCursor.foreground": "#ffcc00",
+        // the workbench, for "colour the whole panel":
+        "sideBar.background": "#160f20",
+        "editorWidget.background": "#160f20",   // same as the sidebar — must be derived, or cards vanish
+        "foreground": "#e8dcff",
+        "textLink.foreground": "#ff7ab6",
+        "panel.border": "#3a2d52",
+        "errorForeground": "#ff5566",
+        // "editor.inactiveSelectionBackground": "#33264a",
+    },
+    "tokenColors": [
+        { "scope": "comment", "settings": { "foreground": "#8a7aa8", "fontStyle": "italic" } },
+        { "scope": ["keyword", "storage.type"], "settings": { "foreground": "#ff7ab6" } },
+        { "scope": "keyword.control", "settings": { "foreground": "#ff4f9a", "fontStyle": "bold" } },
+        { "scope": "string", "settings": { "foreground": "#ffd166" } },
+        { "scope": "constant.numeric", "settings": { "foreground": "#7ee8fa" } },
+        { "scope": "entity.name.function", "settings": { "foreground": "#9bff8a" } },
+        { "scope": "support.function", "settings": { "foreground": "#ffb070" } },
+        // context-dependent, so the converter skips it:
+        { "scope": "meta.function-call entity.name.function", "settings": { "foreground": "#ff0000" } },
+    ],
+}

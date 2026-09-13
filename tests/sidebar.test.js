@@ -2903,6 +2903,32 @@ test("exec code is beautified for display when the descriptor sets format", asyn
     assert.ok(code.split("\n").length >= 3, "reflowed onto multiple lines (source was one line)");
 });
 
+test("code colour theme: a stored preset or VS Code theme is applied when the panel loads", async () => {
+    // The default draws on the panel's own colours, so it sets no surface override.
+    const def = await loadSidebarWorld();
+    assert.equal(def.window.document.documentElement.style.getPropertyValue("--code-bg"), "");
+    // A stored preset: its stylesheet goes in, and its surface colours ride the root.
+    const nord = await loadSidebarWorld({ local: { ml_code_theme: "nord" } });
+    assert.equal(nord.window.document.documentElement.style.getPropertyValue("--code-bg").trim(), "#2E3440");
+    assert.ok([...nord.window.document.querySelectorAll("style")].some((s) => /#81A1C1/i.test(s.textContent)), "Nord's stylesheet is live");
+    // A stored VS Code theme is converted from its source text on load.
+    const text = require("node:fs").readFileSync(require("node:path").join(__dirname, "fixtures/vscode-theme.jsonc"), "utf8");
+    const vs = await loadSidebarWorld({ local: { ml_code_theme: "vscode", ml_code_theme_vscode: { name: "Fixture Sunset", text } } });
+    assert.equal(vs.window.document.documentElement.style.getPropertyValue("--code-bg").trim(), "#1b1426");
+    assert.ok([...vs.window.document.querySelectorAll("style")].some((s) => s.textContent.includes(".hljs-keyword{color:#ff4f9a")));
+    // …and, by default, the whole PANEL too: its colours and its light/dark, over a panel set to light.
+    const html = vs.window.document.documentElement;
+    assert.equal(html.style.getPropertyValue("--bg").trim(), "#160f20");
+    assert.equal(html.style.getPropertyValue("--code-sel").trim(), "#6b4f9a55", "the theme's own selection tint");
+    assert.equal(html.getAttribute("data-theme"), "dark", "a dark theme makes the panel dark");
+    // With the panel toggle OFF, the code keeps the theme and the panel keeps its own palette.
+    const codeOnly = await loadSidebarWorld({ sync: { theme: "light" }, local: { ml_code_theme: "vscode", ml_code_theme_vscode: { name: "Fixture Sunset", text }, ml_code_theme_ui: false } });
+    const h2 = codeOnly.window.document.documentElement;
+    assert.equal(h2.style.getPropertyValue("--bg"), "", "no panel token set");
+    assert.equal(h2.style.getPropertyValue("--code-bg").trim(), "#1b1426");
+    assert.equal(h2.getAttribute("data-theme"), "light");
+});
+
 test("code line-number gutter: off by default, toggled on via settings, applied from storage", async () => {
     // Applied from storage on mount.
     const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
