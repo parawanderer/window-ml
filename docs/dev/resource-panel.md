@@ -131,9 +131,9 @@ per device, in bytes.
 - **`placement` — AVAILABLE, UNBUILT.** `/api/ps` and `load.complete` can carry which layers went where
   (`{num_layers, devices:[{device, first_layer, last_layer, layers}], swa_layers}`), behind
   `OLLAMA_LAYER_PLACEMENT=1` and absent by default, so treat it as optional exactly like `gpus[].memory`.
-  It wants its OWN visual rather than folding into the memory hover, and four things decide how: `device` is
-  the ENGINE's name (`"CUDA0"`), not the ollama `gpu_id`, and a mismatch is unknown rather than a guessed
-  mapping; `devices` is a list of RUNS, so `len(devices)` is not the number of cards; **layers are not a
+  It wants its OWN visual rather than folding into the memory hover, and four things decide how: which card a
+  run is on is its `gpu_id` (since 2026-09-13; see the next paragraph), never its position, and a mismatch is
+  unknown rather than a guessed mapping; `devices` is a list of RUNS, so `len(devices)` is not the number of cards; **layers are not a
   proxy for memory and must not share a scale** — on an even split one card held MORE layers and LESS weight,
   because the output layer is large and carries no KV; and `swa_layers` is a list rather than a count because
   the pattern is irregular (`gemma2` alternates 1:1, `gemma4:31b` is 50 of 61).
@@ -199,10 +199,13 @@ per device, in bytes.
   `placementFrom` parses it; the drilled-in tip draws it as its OWN section with its OWN units, never a bar
   beside the memory ones — layers are not a proxy for memory (on an even split one card held MORE layers and
   LESS weight, because the output layer is large and carries no KV), so drawn on a shared scale the two would
-  disagree, correctly, and read as a bug. Matched on the ENGINE's device name (`"CUDA0"`, not the ollama
-  `gpu_id`); a card whose name is not in the list shows nothing rather than being handed the entry at its
-  ordinal. `devices` is a list of RUNS, so entries are summed by name and `devices.length` is never a card
-  count. `swa_layers` is counted for THIS card, since the pattern is irregular.
+  disagree, correctly, and read as a bug. **Matched by `gpu_id`** (`layersOnCard`): since the server's
+  placement naming fix (2026-09-13) each run carries the ollama `gpu_id` that `gpus[]` uses. Before it, `device`
+  was the RUNNER's own enumeration, so with GPU0 leased away a model on GPU1 said `CUDA0` and the panel, matching
+  by name, drew its layers on the wrong track with nothing to show it. An entry without a `gpu_id` (an older
+  build) still matches by name, which is right only while the runner sees every card; a card with no entry shows
+  nothing rather than being handed one by position. Real capture: `tests/fixtures/hw/ps-placement-gpu-id-2026-09-13.json`.
+  `devices` is a list of RUNS, so entries are summed per card and `devices.length` is never a card count. `swa_layers` is counted for THIS card, since the pattern is irregular.
 - **WHAT THE RUNNER IS DOING, AND HOW FULL ITS CACHE IS (`activity` on `/api/ps`).** Read out of
   `llama-server`'s `/slots`, which ollama did not consult until the `activity3` build. `activityFrom` parses
   it, `kvOccupancy` divides it. Two DIFFERENT KINDS of fact live in one object and reading them alike is the
