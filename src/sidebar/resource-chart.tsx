@@ -639,6 +639,21 @@ function DeviceFacts({ device, label }: { device: DeviceCapacity; label: string 
                         is bound by; the host link rules ITSELF out (it sets load time, and almost nothing about
                         inference), and the width is the narrower of card and slot. */}
                     {device.memoryBandwidth ? row("bandwidth", `${(device.memoryBandwidth / 1e12).toFixed(2)} TB/s`, "the ceiling decode is bound by") : null}
+                    {/* WHAT DECODE ACTUALLY GETS, measured on this box (`compute.profile`): the rated figure above is a
+                        ceiling, this is the gap between the roofline and what any model reaches — 90% of rated on the
+                        box it was built against. The per-layer cost is why a deep, narrow model falls furthest below
+                        its roofline. Said plainly while it has not been measured, and with the engine's words when it
+                        could not be. */}
+                    {(() => {
+                        const dp = device.decodeProfile, prof = capacity.value?.profile;
+                        const failed = prof?.failures.find((f) => device.pciId && f.pciIds.includes(device.pciId));
+                        if (dp) return row("at decode", `${(dp.bandwidth / 1e12).toFixed(2)} TB/s${device.memoryBandwidth ? ` · ${Math.round((dp.bandwidth / device.memoryBandwidth) * 100)}% of rated` : ""}`,
+                            `measured on this box${dp.tokenOverheadMs != null ? `; +${dp.tokenOverheadMs} ms every token` : ""}${dp.layerOverheadUs != null ? `, +${dp.layerOverheadUs.toFixed(1)} µs every layer` : ""}`);
+                        if (failed) return row("at decode", "could not be measured", failed.error);
+                        if (prof?.state === "pending") return row("at decode", "not measured yet", "measured once, the first time the box is idle for a minute with nothing loaded");
+                        if (prof?.state === "measuring") return row("at decode", "being measured now", "a short run on an empty model; a request arriving interrupts it");
+                        return null;
+                    })()}
                     {device.pcieMaxGeneration || device.pcieMaxWidth
                         ? row("host link", `PCIe${device.pcieMaxGeneration ? ` Gen ${device.pcieMaxGeneration}` : ""}${device.pcieMaxWidth ? ` x${device.pcieMaxWidth}` : ""}`, "at most — sets how fast a model loads, not how fast it runs")
                         : null}

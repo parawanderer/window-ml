@@ -1,0 +1,188 @@
+{
+  "model": "gpt-oss:120b",
+  "captured_at": "2026-09-13T09:34:55Z",
+  "ps_row_before_generation": {
+    "name": "gpt-oss:120b",
+    "model": "gpt-oss:120b",
+    "size": 64748288737,
+    "digest": "a951a23b46a1f6093dafee2ea481d634b4e31ac720a8a16f3f91e04f5a40ecd9",
+    "details": {
+      "parent_model": "",
+      "format": "gguf",
+      "family": "gptoss",
+      "families": [
+        "gptoss"
+      ],
+      "parameter_size": "116.8B",
+      "quantization_level": "MXFP4"
+    },
+    "expires_at": "2026-09-13T09:39:53.882215553Z",
+    "size_vram": 64748288737,
+    "roofline": {
+      "unavailable": "mixture_of_experts"
+    },
+    "expected_decode": {
+      "tokens_per_sec": 210.422,
+      "basis": "profile_corrected",
+      "profile_tokens_per_sec": 244.252,
+      "correction_factor": 1.161,
+      "correction_samples": 5,
+      "active_weights_fraction": 0.078
+    },
+    "context_length": 8192,
+    "memory": {
+      "weights": 64197744394,
+      "kv_cache": 349175808,
+      "compute": 201368535
+    },
+    "weights_on_disk": 65369799840,
+    "placement": {
+      "num_layers": 37,
+      "devices": [
+        {
+          "device": "CUDA0",
+          "gpu_id": "0",
+          "first_layer": 0,
+          "last_layer": 36,
+          "layers": 37
+        }
+      ],
+      "swa_layers": [
+        0,
+        2,
+        4,
+        6,
+        8,
+        10,
+        12,
+        14,
+        16,
+        18,
+        20,
+        22,
+        24,
+        26,
+        28,
+        30,
+        32,
+        34
+      ]
+    },
+    "activity": {
+      "phase": "idle",
+      "slots": 1,
+      "slots_busy": 0
+    },
+    "gpus": [
+      {
+        "gpu_id": "0",
+        "runner": "CUDA",
+        "size_vram": 64748288737,
+        "memory": {
+          "weights": 64197744394,
+          "kv_cache": 349175808,
+          "compute": 201368535
+        }
+      }
+    ]
+  },
+  "generation": {
+    "prompt_eval_count": 101,
+    "prompt_eval_duration": 135260000,
+    "eval_count": 256,
+    "eval_duration": 1224085000,
+    "load_duration": 1982390
+  },
+  "ps_row_after_generation": {
+    "name": "gpt-oss:120b",
+    "model": "gpt-oss:120b",
+    "size": 64748288737,
+    "digest": "a951a23b46a1f6093dafee2ea481d634b4e31ac720a8a16f3f91e04f5a40ecd9",
+    "details": {
+      "parent_model": "",
+      "format": "gguf",
+      "family": "gptoss",
+      "families": [
+        "gptoss"
+      ],
+      "parameter_size": "116.8B",
+      "quantization_level": "MXFP4"
+    },
+    "expires_at": "2026-09-13T09:39:55.253949524Z",
+    "size_vram": 64748288737,
+    "roofline": {
+      "unavailable": "mixture_of_experts"
+    },
+    "expected_decode": {
+      "tokens_per_sec": 209.853,
+      "basis": "profile_corrected",
+      "profile_tokens_per_sec": 244.252,
+      "correction_factor": 1.164,
+      "correction_samples": 6,
+      "active_weights_fraction": 0.078
+    },
+    "context_length": 8192,
+    "memory": {
+      "weights": 64197744394,
+      "kv_cache": 349175808,
+      "compute": 201368535
+    },
+    "weights_on_disk": 65369799840,
+    "placement": {
+      "num_layers": 37,
+      "devices": [
+        {
+          "device": "CUDA0",
+          "gpu_id": "0",
+          "first_layer": 0,
+          "last_layer": 36,
+          "layers": 37
+        }
+      ],
+      "swa_layers": [
+        0,
+        2,
+        4,
+        6,
+        8,
+        10,
+        12,
+        14,
+        16,
+        18,
+        20,
+        22,
+        24,
+        26,
+        28,
+        30,
+        32,
+        34
+      ]
+    },
+    "activity": {
+      "phase": "idle",
+      "slots": 1,
+      "slots_busy": 0,
+      "prompt_tokens": 356,
+      "prompt_cache": {
+        "entries": 0,
+        "tokens": 0,
+        "bytes": 0,
+        "limit_bytes": 8589934592
+      }
+    },
+    "gpus": [
+      {
+        "gpu_id": "0",
+        "runner": "CUDA",
+        "size_vram": 64748288737,
+        "memory": {
+          "weights": 64197744394,
+          "kv_cache": 349175808,
+          "compute": 201368535
+        }
+      }
+    ]
+  }
+}

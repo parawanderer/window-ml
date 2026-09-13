@@ -1,0 +1,174 @@
+{
+  "model": "qwen3.5:0.8b",
+  "captured_at": "2026-09-13T09:35:00Z",
+  "ps_row_before_generation": {
+    "name": "qwen3.5:0.8b",
+    "model": "qwen3.5:0.8b",
+    "size": 1621559867,
+    "digest": "f3817196d142eaf72ce79dfebe53dcb20bd21da87ce13e138a8f8e10a866b3a4",
+    "details": {
+      "parent_model": "",
+      "format": "gguf",
+      "family": "qwen35",
+      "families": [
+        "qwen35"
+      ],
+      "parameter_size": "873.44M",
+      "quantization_level": "Q8_0"
+    },
+    "expires_at": "2026-09-13T09:40:00.519817618Z",
+    "size_vram": 1621559867,
+    "roofline": {
+      "basis": "dense_weights",
+      "bytes_per_token": 821087436,
+      "ceiling_tokens_per_sec": 2182.6274784211896,
+      "kv_bytes_per_context_token": 12288,
+      "devices": [
+        {
+          "gpu_id": "0",
+          "pci_id": "0000:01:00.0",
+          "bytes_per_token": 821087436,
+          "kv_bytes_per_context_token": 12288,
+          "memory_bandwidth_bytes_per_sec": 1792128000000
+        }
+      ]
+    },
+    "expected_decode": {
+      "tokens_per_sec": 853.975,
+      "basis": "profile",
+      "ms_per_token_per_1k_context": 0.008
+    },
+    "context_length": 8192,
+    "memory": {
+      "weights": 800881377,
+      "kv_cache": 100663296,
+      "recurrent_state": 20206059,
+      "compute": 269987347,
+      "projector": 429821788
+    },
+    "weights_on_disk": 1036034688,
+    "placement": {
+      "num_layers": 26,
+      "devices": [
+        {
+          "device": "CUDA0",
+          "gpu_id": "0",
+          "first_layer": 0,
+          "last_layer": 25,
+          "layers": 26
+        }
+      ]
+    },
+    "activity": {
+      "phase": "idle",
+      "slots": 1,
+      "slots_busy": 0
+    },
+    "gpus": [
+      {
+        "gpu_id": "0",
+        "runner": "CUDA",
+        "size_vram": 1621559867,
+        "memory": {
+          "weights": 800881377,
+          "kv_cache": 100663296,
+          "recurrent_state": 20206059,
+          "compute": 269987347,
+          "projector": 429821788
+        }
+      }
+    ]
+  },
+  "generation": {
+    "prompt_eval_count": 59,
+    "prompt_eval_duration": 15312000,
+    "eval_count": 110,
+    "eval_duration": 211200000,
+    "load_duration": 1865508
+  },
+  "ps_row_after_generation": {
+    "name": "qwen3.5:0.8b",
+    "model": "qwen3.5:0.8b",
+    "size": 1621559867,
+    "digest": "f3817196d142eaf72ce79dfebe53dcb20bd21da87ce13e138a8f8e10a866b3a4",
+    "details": {
+      "parent_model": "",
+      "format": "gguf",
+      "family": "qwen35",
+      "families": [
+        "qwen35"
+      ],
+      "parameter_size": "873.44M",
+      "quantization_level": "Q8_0"
+    },
+    "expires_at": "2026-09-13T09:40:00.751691216Z",
+    "size_vram": 1621559867,
+    "roofline": {
+      "basis": "dense_weights",
+      "bytes_per_token": 821087436,
+      "ceiling_tokens_per_sec": 2182.6274784211896,
+      "kv_bytes_per_context_token": 12288,
+      "devices": [
+        {
+          "gpu_id": "0",
+          "pci_id": "0000:01:00.0",
+          "bytes_per_token": 821087436,
+          "kv_bytes_per_context_token": 12288,
+          "memory_bandwidth_bytes_per_sec": 1792128000000
+        }
+      ]
+    },
+    "expected_decode": {
+      "tokens_per_sec": 853.975,
+      "basis": "profile",
+      "ms_per_token_per_1k_context": 0.008
+    },
+    "context_length": 8192,
+    "memory": {
+      "weights": 800881377,
+      "kv_cache": 100663296,
+      "recurrent_state": 20206059,
+      "compute": 269987347,
+      "projector": 429821788
+    },
+    "weights_on_disk": 1036034688,
+    "placement": {
+      "num_layers": 26,
+      "devices": [
+        {
+          "device": "CUDA0",
+          "gpu_id": "0",
+          "first_layer": 0,
+          "last_layer": 25,
+          "layers": 26
+        }
+      ]
+    },
+    "activity": {
+      "phase": "idle",
+      "slots": 1,
+      "slots_busy": 0,
+      "prompt_tokens": 168,
+      "prompt_cache": {
+        "entries": 0,
+        "tokens": 0,
+        "bytes": 0,
+        "limit_bytes": 8589934592
+      }
+    },
+    "gpus": [
+      {
+        "gpu_id": "0",
+        "runner": "CUDA",
+        "size_vram": 1621559867,
+        "memory": {
+          "weights": 800881377,
+          "kv_cache": 100663296,
+          "recurrent_state": 20206059,
+          "compute": 269987347,
+          "projector": 429821788
+        }
+      }
+    ]
+  }
+}

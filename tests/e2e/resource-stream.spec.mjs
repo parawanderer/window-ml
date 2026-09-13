@@ -1302,3 +1302,29 @@ test("a break in the plot says how long it was and why, and the strip shows the 
         await expect(tip).toContainText("fell behind its event stream");
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+// A STREAM THAT HAS NOT CARRIED `info` MUST NOT COST THE PANEL ITS CAPACITY. `info` rides a sample frame when it
+// changes and `hello` carries none, so on a quiet box the mount-time /api/info reply can be the only reading. The
+// guard against a stale reply (it lands after the stream went live) now waits for the stream to have carried one.
+test("an /api/info reply after the stream went live is kept when the stream carried no info", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        const TOTAL = 101972967424;
+        fake.setCapacity({ version: "0.0.0", models: { running: 0, vram_used: 0 }, compute: {
+            system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 100 * 1024 ** 3 },
+            supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", compute: "12.0", driver: "13.2",
+                total_memory: TOTAL, physical_memory: 102641958912, free_memory: TOTAL - 1024 ** 3 }] } });
+        fake.setInfoDelay(2500);   // answered after the stream is live
+        // Samples WITHOUT info: the quiet box.
+        fake.setEvents([{ v: 1, kind: "hello", t: 0, box: "test", retainedMs: 60000 },
+            { v: 1, kind: "sample", t: -2000, ps: { models: [] } }]);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-name").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        expect((await frame.locator(".rc-name").allTextContents()).join(" "), "a card's track, from the /api/info reading").toContain("CUDA0");
+    } finally { await ext.context.close(); await fake.stop(); }
+});

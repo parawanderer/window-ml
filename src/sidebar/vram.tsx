@@ -27,7 +27,7 @@ import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KE
 export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, dropInferredLoads, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, memorySplit, estimateFrom, quantPlain, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, joinGens, rooflineFrom, kindRefusal } from "../resource-model";
+import { parseInfo, holdCapacity, memorySplit, estimateFrom, quantPlain, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, joinGens, rooflineFrom, expectedDecodeFrom, expectedPhrase, kindRefusal } from "../resource-model";
 import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay, LANE_KINDS, toggleLaneKind } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -66,6 +66,7 @@ export function residencyOf(m: LoadedModel): ModelResidency {
         ...((() => { const pl = placementFrom(m.placement); return pl ? { placement: pl } : {}; })()),
         ...((() => { const ac = activityFrom(m.activity); return ac ? { activity: ac } : {}; })()),
         ...((() => { const rf = rooflineFrom(m.roofline); return rf ? { roofline: rf } : {}; })()),
+        ...((() => { const ed = expectedDecodeFrom(m.expectedDecode); return ed ? { expectedDecode: ed } : {}; })()),
     };
 }
 import { RenderPanel, PyBenchOut, BENCH_JUMP_EVENT, type BenchJumpDetail } from "./render-panel";
@@ -325,7 +326,9 @@ export function fetchCapacity(): void {
         if (chrome.runtime.lastError || !resp || resp.error) return;   // leave capacity unknown
         // Asked before the stream went live and answered after: the stream's frames are newer, and a full
         // body is authoritative — its absent `unavailable_gpus` would clear a fault the hello just reported.
-        if (streamLive.value) return;
+        // Only once the stream has actually CARRIED `info`, though: it rides a sample frame when it changes,
+        // and `hello` carries none, so on a quiet box this reply may be the only reading there is.
+        if (streamLive.value && streamInfoSeen) return;
         applyInfo(resp.data);
     });
 }
@@ -567,6 +570,9 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
 }
 
 let streamPort: chrome.runtime.Port | null = null;
+/** Whether the stream has delivered `info` on this connection. A late `/api/info` reply is dropped only then —
+ *  before it, that reply may be the only capacity reading there is (see `fetchCapacity`). */
+let streamInfoSeen = false;
 /** Subscribe to the server's event stream through the worker, which owns the host permission and the key, and
  *  holds ONE connection however many panels are open. Falls back to polling — never to an empty chart — when
  *  the route is not served, which is every stock Ollama. */
@@ -586,6 +592,7 @@ export function connectResourceStream(): () => void {
     try { port = chrome.runtime.connect({ name: "ml-resource" }); }
     catch { streamHolders--; return () => { /* no extension context (a test harness) */ }; }
     streamPort = port;
+    streamInfoSeen = false;
     port.onMessage.addListener((msg: any) => {
         if (msg?.unsupported) { streamLive.value = false; streamNote.value = null; return; }   // stock server: just poll
         if (msg?.interrupted) { streamLive.value = false; streamNote.value = String(msg.interrupted); return; }
@@ -601,7 +608,7 @@ export function connectResourceStream(): () => void {
         // A `sample` frame IS a poll's two answers, embedded verbatim by the server precisely so one parser
         // serves both transports. Capacity first: a reading must be recorded against the ceiling in force.
         if (msg.frame.kind === "sample") {
-            if (msg.info) applyInfo(msg.info);
+            if (msg.info) { streamInfoSeen = true; applyInfo(msg.info); }
             if (msg.loaded) applyLoaded(msg.loaded, msg.at);
             return;
         }
@@ -1173,6 +1180,21 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
                     {tips ? <span class="tt-pop left above" role="tooltip">The KV cache is holding {past.toLocaleString()} of {(m.contextLength ?? 0).toLocaleString()} tokens. The BYTES do not move with it — Ollama reserves the cache for the whole window when the model loads and it does not grow — so this is how much of what was reserved is being used{kv < 0.25 ? ", and at this level a smaller num_ctx would reclaim most of it" : ""}. It survives the request that filled it, so an idle model still says what its last task left behind.</span> : null}
                 </span>
             ) : null}
+            {/* WHAT IT SHOULD DECODE AT, where it is placed now (`expected_decode`): a PREDICTION from the box's measured
+                profile, corrected by this model's own runs once it has enough — so it covers a mixture of experts,
+                where the roofline is withheld. Worded by its basis (`expectedPhrase`), and drawn only when there IS a
+                figure: an unavailable reason on every row would be noise, since a spilled model is ordinary. The
+                measured rate sits on the cost line below, so the two can be read against each other. */}
+            {(() => {
+                const ed = expectedDecodeFrom(m.expectedDecode);
+                if (!ed || "unavailable" in ed) return null;
+                const ph = expectedPhrase(ed);
+                return (
+                    <span class={`${tips ? "tt " : ""}vram-expect${ph.quiet ? " quiet" : ""}`} {...yieldTip}>{ph.text}
+                        {tips ? <span class="tt-pop left above" role="tooltip">{ph.tip}</span> : null}
+                    </span>
+                );
+            })()}
             {/* THE HOST-RAM PROMPT CACHE: conversations parked in system RAM while another has the model's one
                 slot. It is where a second conversation on the same model lives between turns, and filling it is
                 the precondition for the thrash — two conversations that do not fit, each evicting the one about
