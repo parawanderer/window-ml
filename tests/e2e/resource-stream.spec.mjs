@@ -233,7 +233,10 @@ test("hovering a generation drills its model in and fills its KV cache part with
         // A turn that reused 3,000 tokens of its prompt, computed 1,000 and decoded 500, in an 8,192 context.
         fake.pushFrame({ v: 1, kind: "gen.start", t: t + 20, model: `registry.ollama.ai/library/${MODEL}` });
         fake.pushFrame({ v: 1, kind: "gen.end", t: t + 300, model: `registry.ollama.ai/library/${MODEL}`,
-            timings: { prompt_tokens: 4000, prompt_tokens_cached: 3000, prompt_ms: 40, eval_ms: 6400, decoded: 500 } });
+            timings: { prompt_tokens: 4000, prompt_tokens_cached: 3000, prompt_ms: 40, eval_ms: 6400, decoded: 500 },
+            // The server's own prediction for this generation, made before it ran (ollama-slop:genpredict).
+            predicted_decode: { ms_per_token: 10.24, occupancy_tokens: 4250, basis: "profile_corrected",
+                profile_ms_per_token: 10, correction_factor: 1.024, correction_samples: 4 } });
         for (let i = 0; i < 4; i++) await sample();
 
         const span = frame.locator(".rc-ev-gen").first();
@@ -256,6 +259,10 @@ test("hovering a generation drills its model in and fills its KV cache part with
         // Against the EMPTY-context ceiling it would read as 75%, and that figure is never shown.
         expect((await frame.locator(".rc-tip-event").textContent()).replace(/\s+/g, " "))
             .toMatch(/80% of the memory-bandwidth ceiling at this context \(98\.0 tok\/s\)/);
+        // …AND AGAINST WHAT THE SERVER PREDICTED for it: 12.8 ms measured against 10.24 predicted is 80% of 97.7 tok/s.
+        // The ceiling says what bandwidth allows; this says what the box expected of this model, from runs before it.
+        expect((await frame.locator(".rc-tip-event").textContent()).replace(/\s+/g, " "))
+            .toMatch(/80% of the predicted 97\.7 tok\/s at this context \(learned from the last 4 runs\)/);
         // The card's own ceilings, on its name: bandwidth, and the host link ruling itself out.
         const facts = (await frame.locator(".rc-devfacts .tt-pop").first().textContent()).replace(/\s+/g, " ");
         expect(facts).toMatch(/bandwidth 1\.79 TB\/s the ceiling decode is bound by/);

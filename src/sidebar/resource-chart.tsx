@@ -17,7 +17,7 @@ import {
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, stepBands, bandEdge, runGap, type RunGap, serverGenNote, layersOnCard,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, stepBands, bandEdge, runGap, type RunGap, serverGenNote, layersOnCard, predictionLine,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
 import { keysReach, resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
@@ -2717,6 +2717,14 @@ function CeilingChip({ e }: { e: ResourceEvent }) {
     );
 }
 
+/** A generation's measured decode against the SERVER'S PREDICTION for it (`gen.end.predicted_decode`), beside the
+ *  ceiling: the roofline says what memory bandwidth allows, this says what the box expected of this model at this
+ *  context — made before the generation ran, so it is not fitted to the thing it is compared with. */
+function PredictionChip({ e }: { e: ResourceEvent }) {
+    const line = e.gen ? predictionLine(e.gen) : null;
+    return line ? <span class="rc-chip rc-chip-dim">{line}</span> : null;
+}
+
 function EventTip({ scope }: { scope: string }) {
     const h = eventHover.value, at = cursorAt(scope);
     if (!h || !at || h.scope !== scope) return null;
@@ -2895,7 +2903,7 @@ function EventTip({ scope }: { scope: string }) {
                             {e.gen.promptTokensCached != null ? (e.gen.promptTokensCached > 0 ? ` · ${e.gen.promptTokensCached.toLocaleString()} from cache` : " · cold, none cached") : ""}</span> : null}
                         {ph.kind === "decode" && e.gen?.decoded != null ? <span class="rc-chip rc-chip-dim">{e.gen.decoded.toLocaleString()} tokens
                             {e.gen.evalMs > 0 ? ` · ${(e.gen.decoded / (e.gen.evalMs / 1000)).toFixed(1)} tok/s` : ""}</span> : null}
-                        {ph.kind === "decode" ? <CeilingChip e={e} /> : null}
+                        {ph.kind === "decode" ? <><CeilingChip e={e} /><PredictionChip e={e} /></> : null}
                         {ph.kind === "swap" && e.gen?.swap ? <SwapChips swap={e.gen.swap} /> : null}
                         <span class="rc-tip-size">{ms(ph.until - ph.from)}</span></div>
                 </>

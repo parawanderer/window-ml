@@ -8038,6 +8038,16 @@ test("scrub strip: is there from the first samples, and narrows as the session o
         // A 2-second window, so a few polls of history is already more session than it draws.
         local: { ml_res_window: 2 },
     });
+    // Every width the window box takes, from its FIRST render. Read once after a wait instead, this raced the
+    // clock: with a 2-second window, a slow runner (Node 22 on CI) had more than two seconds of session before the
+    // first look, and the box had already narrowed. The claim is about the first render, so that is what is read.
+    const widths = [];
+    const seen = new w.window.MutationObserver(() => {
+        const st = w.shadow.querySelector(".rc-scrub-win")?.getAttribute("style");
+        const wd = st && Number(/width:\s*([\d.]+)%/.exec(st)?.[1]);
+        if (wd && wd !== widths.at(-1)) widths.push(wd);
+    });
+    seen.observe(w.shadow, { subtree: true, childList: true, attributes: true, attributeFilter: ["style"] });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
@@ -8046,8 +8056,7 @@ test("scrub strip: is there from the first samples, and narrows as the session o
     }
     let strip = w.shadow.querySelector(".rc-scrub");
     assert.ok(strip, "the strip is drawn as soon as there is a session to draw");
-    assert.ok(Number(/width:\s*([\d.]+)%/.exec(strip.querySelector(".rc-scrub-win").getAttribute("style"))[1]) > 90,
-        "…full width to begin with, because the window is wider than the session so far");
+    assert.ok(widths[0] > 90, `…full width to begin with, because the window is wider than the session so far (first widths: ${widths.slice(0, 4).join(", ")})`);
     assert.ok(strip.querySelectorAll(".rc-scrub-run").length >= 1, "the session's runs are drawn as blocks");
     // Wait until the box is a genuine BOX and not the whole strip. The strip appears the instant history
     // exceeds the window, at which point the window still covers ~100% of it — and a grab at x=0 then lands
@@ -8063,6 +8072,7 @@ test("scrub strip: is there from the first samples, and narrows as the session o
     assert.match(boxBefore, /left:\s*[\d.]+%/, "the window is a box on the strip");
     assert.ok(Number(/width:\s*([\d.]+)%/.exec(boxBefore)[1]) < 50, "…a box, with strip either side of it to pan into");
     assert.ok(strip.querySelector(".rc-scrub-live").classList.contains("on"), "it starts pinned to live");
+    seen.disconnect();
 
     // Dragging the box moves the window through the session — it scrolls, it does not zoom.
     const track = strip.querySelector(".rc-scrub-track");
