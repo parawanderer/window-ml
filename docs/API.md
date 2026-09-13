@@ -1,0 +1,471 @@
+# The `window.ml` API
+
+The page-facing API. Setup is in [SETUP.md](SETUP.md); what needs a patched server is in [FORKED-BACKENDS.md](FORKED-BACKENDS.md).
+
+## Backends and API formats
+
+| URL | API format | Notes |
+| --- | --- | --- |
+| `<host>/api/chat/completions` | OpenAI | OpenWebUI's external API. Broken on OpenWebUI 0.9.5 ([#24550](https://github.com/open-webui/open-webui/issues/24550)), fixed by 0.10.x. |
+| `<host>/ollama/api/chat` | Ollama native | OpenWebUI's raw Ollama passthrough (same bearer key). Bypasses OpenWebUI middleware; needs raw Ollama model names. |
+| `http://ollama-host:11434/api/chat` | Ollama native | Direct Ollama, no OpenWebUI. |
+
+There is **no** root-level `/v1/chat/completions` on OpenWebUI (tested 0.9.5
+and 0.10.2) — unknown routes return the frontend HTML page.
+
+### Two features want a patched backend
+
+Everything on this page runs against a **stock** Ollama behind a **stock** OpenWebUI. The resource panel's
+capacity, placement and event stream (and `ml.info()`) need a patched Ollama,
+[`parawanderer/ollama`](https://github.com/parawanderer/ollama) branch `slop`; OpenWebUI's tool execute route needs
+[`parawanderer/open-webui`](https://github.com/parawanderer/open-webui) branch `ml/tool-execute-api`. Without them
+those features say "not reported" rather than break. What each field feeds: [FORKED-BACKENDS.md](FORKED-BACKENDS.md).
+
+### Feature support by API format
+
+The **API format** is one global switch, and two capability sets live on
+different endpoints — so no single format does everything:
+
+| Feature | OpenWebUI (`openai`) | Ollama-native (`ollama`) |
+| --- | :---: | :---: |
+| Chat · streaming (`onToken`) · structured output (`schema`) | ✅ | ✅ |
+| `think` · `maxTokens` · vision/OCR (`ml.read`) · client-side tools (`ml.step`/`ml.agent`) | ✅ | ✅ |
+| Server-side tools (`toolIds`) · RAG · web search · `sources` provenance | ✅ | ❌ |
+| `numCtx` (context window) · `numGpu:0` (Force-CPU, incl. `extend:"utility"`) | ✅² | ✅ |
+| VRAM readout / evict (`ml.ps` / `ml.unload`) | ✅¹ | ✅¹ |
+
+<sup>¹ requires a reachable Ollama backend (OpenWebUI proxies `/ollama/api/ps`).</sup>
+<sup>² Placement differs and the extension sends each correctly: the Ollama
+native route reads an `options` object; OpenWebUI's OpenAI route reads a
+request-body **`params`** object (which it maps into Ollama's options — the same
+channel `function_calling` uses; a direct `options` object there is *overwritten*
+and top-level fields dropped — confirmed in OpenWebUI's source and verified
+against **v0.10.2**). Applies to Ollama-backed models; `num_gpu` takes effect at
+model **load** (evict first).</sup>
+
+The real split is **server-side tools / RAG / web search** — those are
+OpenWebUI's OpenAI endpoint only. The Ollama runtime knobs (`numCtx` / `numGpu` /
+Force-CPU) reach Ollama on either format (see footnote ²), so pick the format by
+which feature set you need.
+
+**Cloud/commercial models** (Claude, GPT, OpenRouter) work with no extension
+changes — add them as a Connection in OpenWebUI and they appear in the model
+list. See [CLOUD-MODELS.md](CLOUD-MODELS.md).
+
+## `window.ml` API
+
+| Call | Purpose |
+| --- | --- |
+| `ml.chat(prompt, options?)` | One-shot chat. Returns the reply text. A **raw model call**: it sees only the prompt you pass (plus `images`), never the page — to ask about the page, pass the text in yourself or use `ml.agent`. |
+| `ml.chatShort(prompt, options?)` | Same, with a brevity suffix. |
+| `ml.createChat(options?)` | Multi-turn history object (below). |
+| `ml.models()` | Available model ids on the server. |
+| `ml.getModel()` / `ml.setModel(id)` | Read / persistently switch the default model. `setModel` validates against the server list and syncs the popup. |
+| `ml.config()` | Read the non-secret config the page may see: `model`, `ocrModel`, `apiFormat`, and the utility-model fields (`utilityModel`, `utilityNumCtx`, `utilityForceCpu`). Never the URL or key. |
+| `ml.ps()` | Models loaded in VRAM: `[{ model, vramGB, expiresAt }]`. |
+| `ml.unload(model?)` | Evict a model from VRAM (`keep_alive: 0`); no argument = evict all. |
+| `ml.read(image, { model?, prompt? })` | OCR — transcribe baked-in text from an `<img>` or URL to a plain string, using the configured OCR (vision) model. See [OCR](#ocr). |
+| `ml.step(messages, { tools?, model?, think? })` | One model turn with client-side tools; returns the raw assistant message and hands the loop to you. See [Tools](#tools-agents). |
+| `ml.agent(task, options?)` | Plain-English page agent: runs the whole loop over built-in DOM recon tools (and auto-wired vision) until it acts or answers. Returns `{ summary, steps, transcript, elements, hash }`. See [Agent](#tools-agents). |
+| `ml.createAgent(options?)` | A stateful agent handle — `run`/`say`/`cancel`/`fork` + `hash`/`messages`/`maxSteps` (live). The agent analogue of `createChat`. See [Agent](#tools-agents). |
+| `ml.chat(prompt, { toolIds })` | Server-side tools: OpenWebUI runs the tools and returns the finished answer. See [Tools](#tools-agents). |
+| `ml.serverTools()` | List the server-side tools your key may use — the valid `toolIds`, each with its function specs. `[]` on a non-OpenWebUI endpoint. |
+| `ml.logChat` / `ml.logChatShort` | `console.log` variants. |
+
+Options (all optional, both for `chat` and `createChat`):
+
+- `system` — system prompt.
+- `model` — model override; doesn't touch the saved default.
+- `think` — `true`/`false` maps to Ollama's native thinking toggle; `null`
+  omits it (server default). Models that support thinking are asked not to
+  by default. Sending images to a model without vision capability fails fast
+  with a clear error (checked via `/api/show`).
+- `images` — (per-call) list of `<img>` elements and/or URL strings.
+- `maxTokens` — hard cap on generated tokens (OpenAI `max_tokens` / Ollama
+  `num_predict`); `null` omits it. Bounds a runaway generation so it can't peg
+  the model. `ml.agent`'s auto-wired vision tool caps itself this way by default.
+- `extend` — config profile this call inherits: `"default"` (the saved default
+  model — same as omitting it) or `"utility"` (the small **utility model** plus
+  its saved context/Force-CPU). Works as `{ ...profile, ...explicit }`: an
+  explicit `model`/`numCtx`/… still wins, and `"utility"` falls back to the
+  default model when none is configured. Throws on any other value.
+- `numCtx` — Ollama context window (`num_ctx`); `null` omits it (Ollama's
+  default). Placed where each backend reads it — an `options` object on the
+  Ollama route, a `params` object on OpenWebUI's OpenAI route (see the support
+  table footnote).
+- `numGpu` — Ollama `num_gpu` (model layers on the GPU); `0` forces CPU. Same
+  placement as `numCtx`. `extend:"utility"` sets it to `0` when Force-CPU is on.
+  `num_gpu` applies at model **load** — evict a GPU-resident model
+  (`ml.unload`) so it reloads on CPU.
+- `onToken` — `(delta, full) => {}`. Stream the reply token-by-token (for a live
+  "typing" effect) while the call still resolves to the full string and history
+  updates as usual. Text-only, so it's ignored when `schema` is set. Works with
+  `toolIds` too (a server-side tool runs first, then its answer streams).
+
+  ```js
+  const out = document.querySelector("#out");
+  await ml.chat("Explain the Jevons paradox", {
+    onToken: (tok) => { out.textContent += tok; }   // paints as it generates
+  });
+  ```
+- `use` — who waits for the reply: `"interactive"` (a person reading it), `"agent"` (a program that acts on it),
+  `"utility"` (a side task), `"batch"` (nobody waiting). Sent as a request hint that a patched Ollama records to
+  learn how its models are used; it never changes the answer, and a stock server ignores it. Omit it when you
+  can't tell — nothing is guessed — except that `extend: "utility"` implies `"utility"`. A `createChat`
+  conversation also tells the server which requests belong together; a one-shot `ml.chat` does not.
+- `signal` — an `AbortSignal`. `controller.abort()` cancels the request and
+  **kills the in-flight fetch** (streaming disconnects its port; both stop a slow
+  generation), rejecting the call with an `AbortError`.
+- `schema` — a JSON Schema object. Constrains the reply to matching JSON and
+  returns it **parsed** (an object), not a string. Turns `window.ml` into a
+  classifier/extractor — the primitive for DOM-scripting against a policy:
+
+  ```js
+  const verdict = await ml.chat(videoTitle, {
+    system: "You enforce this feed policy: no rage-bait, no crypto shilling.",
+    schema: {
+      type: "object",
+      properties: {
+        hide: { type: "boolean" },
+        rewritten_title: { type: "string" }
+      },
+      required: ["hide", "rewritten_title"]
+    }
+  });
+  if (verdict.hide) tile.style.display = "none";
+  ```
+
+  Wire mapping: OpenAI format → `response_format` json_schema; Ollama native →
+  `format`. Support depends on the backend — most reliable against Ollama
+  (directly or via OpenWebUI). In history objects the raw JSON text is stored
+  as context so turns still chain.
+
+### History objects
+
+```js
+const h = ml.createChat({ system, model, think });
+await h.chat("prompt", { images, model, think });  // per-turn overrides
+
+h.messages          // plain [{ role, content, images? }] array — edit freely:
+h.messages.at(-1)   //   last message
+h.messages.pop()    //   drop a turn to retry
+h.fork()            // independent deep copy of the conversation
+h.hash              // stable session id (shown/copyable in the debug sidebar)
+```
+
+**Resume by hash.** `ml.resumeChat(hash)` returns a history you can keep
+`.chat()`-ing on. Same-tab sessions resume from memory; to survive a reload or
+resume in another tab, create the chat with `{ save: true }` (persisted to the
+extension's local storage — no credentials are stored, only the messages +
+options):
+
+```js
+const h = ml.createChat({ save: true });
+await h.chat("...");            // h.hash — copy it from the sidebar
+// …later, after a reload or in another tab:
+const h2 = await ml.resumeChat("<hash>");
+await h2.chat("carry on");
+```
+
+Design invariant: a failed request leaves `messages` untouched. (Reasoning
+models return their thinking in a separate field, so it never enters the
+stored `content` — no stripping needed.)
+
+**Sources.** When a server-side tool or RAG runs (e.g. `toolIds`), OpenWebUI
+attaches provenance, and `window.ml` surfaces it on the stored assistant message
+as `.sources` — the raw OpenWebUI array (`[{ source, metadata, document }]`), so
+you can render citations. Read it off the turn: `h.messages.at(-1).sources`.
+Absent on plain chats and the Ollama-native format.
+
+### OCR
+
+`ml.read()` transcribes text that's baked into image pixels — the case where a
+site renders content as an image so it can't be selected or scraped. It returns
+a **plain string**, so it composes with `chat`:
+
+```js
+await ml.chat("Summarize this: " + await ml.read(document.images[0]));
+const imgs = [...document.querySelectorAll(".listing img")];         // bulk
+const texts = await Promise.all(imgs.map(img => ml.read(img)));
+```
+
+**Setup:** OCR needs a vision model. Pull one and set it as the *OCR model* in
+the popup (kept separate from your chat model, so a text-only reasoning model
+stays the default and never sees image tokens):
+
+```sh
+ollama pull qwen2.5vl        # or: docker exec ollama ollama pull qwen2.5vl
+```
+
+Typical bulk flow, using the VRAM controls to avoid holding both models at once:
+
+```js
+const texts = await Promise.all(imgs.map(img => ml.read(img)));  // vision model stays warm
+await ml.unload();                    // purge it
+await ml.setModel("qwen3:235b");      // load the reasoning model
+await ml.chat("Analyze:\n" + texts.join("\n---\n"));
+```
+
+There's no separate OCR server — OCR is just a vision-model call through the
+same OpenWebUI pipe. For specialized accuracy, point the OCR model at any
+vision/OCR model you've added to OpenWebUI (a GOT-OCR2 or TrOCR GGUF, etc.).
+
+### Tools & agents
+
+Two primitives, for the two places tools can run. Both need a model that
+supports function calling (e.g. qwen3); a model that doesn't just replies with
+text and no tool calls.
+
+#### Server-Side tools & agents
+
+OpenWebUI runs its own registered tools (web search,
+MCP servers, community/Python tools) and returns the finished answer. One call,
+no loop on your side. **OpenWebUI only** (the Ollama-native format errors):
+
+```js
+await ml.chat("What's the weather in Amsterdam right now?", { toolIds: ["web_search"] });
+```
+
+
+#### Client-Side tools & agents
+
+##### Option 1: Build your own agent
+
+`ml.step()` is one model turn that hands the loop back
+to *you*: it returns the raw assistant message, you execute any tool calls
+(in the page), append the results, and call it again.
+
+```js
+const tools = [{ type: "function", function: {
+  name: "readDom",
+  description: "Visible text of elements matching a CSS selector.",
+  parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] }
+}}];
+
+const runners = {
+  readDom: ({ selector }) => [...document.querySelectorAll(selector)].map(e => e.innerText).join("\n")
+};
+
+let messages = [{ role: "user", content: "Find the menu link text on this page." }];
+for (let i = 0; i < 8; i++) {                      // your loop, your step limit
+  const msg = await ml.step(messages, { tools });
+  if (!msg.tool_calls?.length) { console.log(msg.content); break; }
+  messages.push({ role: "assistant", content: msg.content, tool_calls: msg.tool_calls });
+  for (const call of msg.tool_calls) {
+    if (!(call.name in runners)) continue;         // your whitelist
+    const result = await runners[call.name](call.arguments);
+    messages.push({ role: "tool", tool_call_id: call.id, content: String(result) });
+  }
+}
+```
+
+`ml.step` works on both OpenWebUI and plain Ollama — the wire differences
+(where `tool_calls` live, string vs object arguments, tool-result shape) are
+normalized so `{ id, name, arguments }` is the same either way.
+
+##### Option 2: Ready-made extensible agent loop
+
+![An example showing the example.com website running an agent to change the HTML of the web page](./agent-example-2026-07-11_16-10.png)
+
+**An agent, with nothing to configure** — `ml.agent(task)` is the loop above,
+already assembled. You give it plain English; it discovers the DOM with built-in
+recon tools, writes **one** rule to act on every match at once, and — when your
+model can see — screenshots the page to check its own work. No tool definitions,
+no loop, no step cap to wire up:
+
+```js
+// Edit the page: the model finds the repeating container itself and hides them.
+await ml.agent("Hide every sponsored result on this page.");
+
+// Or get a live DOM node back — hover it in devtools:
+const { elements } = await ml.agent("Find the top banner ad element.");
+elements[0];        // a real <div>, not a selector string
+```
+
+That's the whole setup: point the popup at your server, pick a big tool-capable
+model, and call `ml.agent`. What's built in:
+
+- **DOM recon tools** — `findByText`, `describeElement`, `ancestors`,
+  `countMatches`, `sampleText`, plus an `exec` escape hatch. Small, structured
+  output (never raw HTML), so context stays cheap.
+- **Eyes, auto-wired — natively when possible.** If your model reports vision
+  capability (or your configured [OCR](#ocr) model does), a `look` tool is added
+  automatically so the agent can orient and *visually verify* its work. **When the
+  agent's own model is vision-capable (e.g. `qwen3.5:122b`), `look` feeds the
+  screenshot straight into that model's own conversation** — it reasons over the
+  real pixels, not a second model's text summary. That's a big reliability jump:
+  the delegated path squashes the page to a paragraph and plans over the paragraph,
+  blind to whatever the summary dropped; native vision removes that lossy step. If
+  only your OCR model can see, it falls back to that delegated `look`. Text-only
+  model? It runs without eyes and says so if a task truly needs them. Turn it off
+  with `vision: false`, or force a model with `vision: "qwen2.5vl"`.
+- **A safety gate** — `exec` (arbitrary page JS) is approval-gated; the default
+  is a blocking `confirm()`. Pass your own `approve({ tool, arguments })`.
+- **A step cap** (`maxSteps`, default 10) and a full `transcript`.
+- **Cancellable** — pass an `AbortSignal` as `signal`; `controller.abort()` stops
+  the loop and **kills the in-flight model request** (no waiting on a slow local
+  generation), then **resolves** `{ cancelled: true }` with the partial transcript
+  (it doesn't throw). Compose it with a timeout, a UI "stop" button, etc.
+
+Returns `{ summary, steps, transcript, elements, hash }` (`elements` holds any DOM
+nodes the agent designated as its answer; `hash` identifies the session for
+`{ resume }`; a `hitCap`/`cancelled` flag marks a run that stopped early). Nudge it without rewriting the prompt via `systemAppend`, cancel it
+with `signal`, and watch every thought and tool call in the console with
+`logDebug` (or pass your own `onStep`):
+
+```js
+const res = await ml.agent("Hide items that can't be delivered today.", {
+  systemAppend: "On amazon.nl the delivery line reads 'Wordt vandaag bezorgd'.",
+  logDebug: true          // one console line per step — thoughts, tool calls, live nodes
+  maxSteps: 45
+});
+console.log(res.summary);
+```
+
+Cancel it from a "stop" button, or give it a hard deadline:
+
+```js
+const ctl = new AbortController();
+stopButton.onclick = () => ctl.abort();
+const res = await ml.agent("Reconcile the two tables.", { signal: ctl.signal });
+// …or a timeout: ml.agent(task, { signal: AbortSignal.timeout(30_000) })
+if (res.cancelled) console.log(`stopped early after ${res.steps} steps`);
+```
+
+**Keep asking — a stateful session.** Every run carries a session hash
+(`res.hash`, shown in the debug sidebar). `ml.createAgent(options)` returns a
+handle — the agent analogue of `ml.createChat` — with two primitives: **`say`**
+writes a user message into the session, **`run`** executes the loop until the
+agent's turn is complete. Everything shares one hash = one conversation.
+
+```js
+const a = ml.createAgent({ maxSteps: 20 });
+const done = a.run("Reorganise these tabs by topic.");   // a full turn
+a.say("actually, keep the pinned ones where they are");  // steer MID-run (injected at the next step)
+await done;
+await a.run("Now close the empty groups.");              // another turn, same session
+
+a.messages;    // the raw, mutable history (like MlHistory.messages)
+a.maxSteps = 40;   // live — raise the cap mid-run and the loop keeps going
+a.cancel();    // abort the in-flight turn → resolves { cancelled: true }
+const b = a.fork();   // branch a COPY of the history into a fresh session
+```
+
+`say()` steers a running loop (queued, injected at the next step boundary) or,
+when idle, appends to history for the next `run()`. `run(task?)` starts a turn
+(no task → runs over whatever `say()` queued); calling it again continues the
+same session. `res.transcript` accumulates the whole conversation's actions and
+replies.
+
+**Resume by hash.** When you only have the hash — copied from the debug sidebar,
+or `res.hash`/`a.hash` from an earlier call — **`ml.resumeAgent(hash)`** hands you
+the live handle back (the agent analogue of `ml.resumeChat`), so you can read its
+history or keep going without the original reference:
+
+```js
+const { hash } = await ml.agent("Audit this page's headings.");   // note the hash
+// …later, without the original handle:
+const a = ml.resumeAgent(hash);
+a.messages;                              // read (or mutate) the conversation
+await a.run("Now fix the ones you flagged.");   // continue the SAME session
+```
+
+`ml.resumeAgent` covers same-tab `createAgent` / HUD-started runs (a one-shot
+`ml.agent(task)` has no handle). The low-level `ml.agent(task, { resume: hash })`
+also continues a run by hash (it runs a turn rather than returning the handle).
+Background/off-mode runs live in the service worker and aren't handle-resumable
+this way yet. The hash is also how the in-page HUD and the sidebar/DevTools composer
+drive a session — typing into "Send a message to continue this session…" routes
+`say()`/`run()` to the handle behind that hash.
+
+**Scripting modes.** Two per-run switches for headless/automation use:
+
+- **`silent: true`** — keeps the run out of the in-page HUD (no working orb, no
+  answer card), for a scripting utility that shouldn't flash UI. Approvals still
+  surface (privileged consent can't be silenced), and the debug sidebar/panel is
+  unaffected.
+- **`unattended: true`** — no human is present to approve, so any approval-gated
+  call is **refused** (never prompts) with a steer back to read-only. `exec` and
+  `python_exec` are wired only when their read-only auto-approve is enabled
+  (`autoApproveReadonly` / `autoApprovePython` in Settings) — a read-only survey
+  / hardened-sandbox run then works with no prompt, while a mutating/full call is
+  refused; otherwise those tools are dropped entirely. Read-only DOM recon still
+  works throughout.
+
+```js
+// A fully headless, read-only run (e.g. from a cron userscript):
+const res = await ml.agent("Summarise the unread notifications.",
+                           { silent: true, unattended: true });
+```
+
+`ml.agent` is a *composition* of `ml.step`, not a black box — the loop, tool
+whitelist, step cap and approval gate are all plain code on top of the same
+primitive. Drop to `ml.step` when you want to own the loop yourself.
+
+### Using from a userscript
+
+`window.ml` lives on the page's **main-world** `window`, so a userscript that
+runs in page context (Tampermonkey, *User JavaScript and CSS*, …) can call it
+directly — no messaging. Since your script and the extension race to load, wait
+for the readiness signal rather than assuming `window.ml` exists yet:
+
+```js
+const ml = await (window.ml?.ready
+    ?? new Promise(r => addEventListener("ml:ready", () => r(window.ml), { once: true })));
+
+// e.g. flag a lunch menu you'd hate, then nudge the tab title:
+const menu = await ml.read(document.querySelector(".menu img"));
+const v = await ml.chat("I hate sandwiches. Warn me if lunch here is sandwich-only.\n\n" + menu,
+    { schema: { type: "object", properties: { warn: { type: "boolean" }, why: { type: "string" } }, required: ["warn", "why"] } });
+if (v.warn) document.title = "🥪 " + v.why;
+```
+
+`window.ml.ready` is a promise resolving to `ml`; the `ml:ready` event fires once
+on injection. (A sandboxed/isolated-world userscript won't see `window.ml` —
+bridge via `window.postMessage` instead.)
+
+> **Worked example:** [`examples/youtube-summarizer.user.js`](../examples/youtube-summarizer.user.js)
+> is a full userscript that injects an in-page **AI Summary** panel into the
+> YouTube watch page — it summarizes the video via an OpenWebUI server-side
+> transcript tool and takes follow-up questions, with a model picker and
+> capability-warning badge. See [`examples/README.md`](../examples/README.md) for
+> setup and a troubleshooting table.
+
+## Architecture
+
+| File | Role |
+| --- | --- |
+| `injected.js` | Runs in the page's main world; defines `window.ml`. Serializes `<img>`/blob/http images to data URLs. |
+| `content.js` | Dumb relay: `window.postMessage` ⇄ `chrome.runtime.sendMessage`. |
+| `background.js` | Service worker. Owns config, builds per-format request bodies, extracts replies, talks to OpenWebUI/Ollama (CORS-free). |
+| `popup.html/js` | Settings UI (`chrome.storage.sync`), model picker, Save & Test, VRAM usage readout, Free VRAM. |
+
+### Security & trust model
+
+The **hard security perimeter is the background worker**, and it holds no matter
+what page you're on:
+
+- Your **API URL and key are never exposed to the page** — `ml.config()` returns
+  only a non-secret subset. Config overrides (URL/key) are accepted **only from the
+  popup**; a message relayed from a web page (`sender.tab` set) can't repoint the
+  saved key at another host. Pages can only change the **model** (validated against
+  the server list, and filtered by `modelFilter`).
+- Credentialed cross-origin fetches are **host-locked** (the Google Sheets loader
+  only fetches `docs.google.com` exports), and an inline-approval decision is
+  accepted only from an **extension-origin** sender.
+
+But **`window.ml` lives in the page's *main world*** (that's the point — you call it
+from the console/userscripts). So **any page the extension is active on can call it,
+and a *hostile* page can manipulate it**: it can override `window.confirm` to defeat
+the approval prompt, forge the extension's internal page-side messages, or feed
+**prompt-injection** into an `ml.agent` run's context to steer the model. The
+approval gates and `window.ml`'s page-side behavior are human-in-the-loop consent
+against the *model's* proposals — they are **not** a defense against a malicious page,
+because the page owns that world.
+
+**Practical guidance:** keep **Site access** on **"On click"** or a whitelist of
+**pages you trust** ([SETUP.md](SETUP.md), step 1), so `window.ml` only exists where you deliberately
+invoke it. Don't run `ml.agent` on a page you don't trust — a malicious page can
+prompt-inject the model or subvert the approval flow. The extension can't protect the
+main world from the page it's injected into; it can only protect your credentials and
+the privileged (background) operations, which it does.

@@ -57,5 +57,5 @@ Both degrade gracefully, but knowing them saves a confusing minute:
 
 `schema` works against cloud models too — commercial APIs generally have
 robust JSON-schema support, so the `schema` option (see the
-[README](../README.md#windowml-api)) is often *more* reliable there than
+[API reference](API.md)) is often *more* reliable there than
 against a small local model.

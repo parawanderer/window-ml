@@ -192,7 +192,7 @@ await ml.read(document.images[0]);                 // OCR an image on the page
   [examples/README.md](../examples/README.md) — install its transcript tool, then
   load the userscript.
 - **Feed curation, agents, structured extraction:** see the
-  [README API](../README.md#windowml-api) (the `schema`, `ml.step`, and `toolIds`
+  [API reference](API.md) (the `schema`, `ml.step`, and `toolIds`
   sections).
 
 ## Troubleshooting

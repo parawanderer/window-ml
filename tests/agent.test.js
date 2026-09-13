@@ -1694,7 +1694,7 @@ test("the default approval gate fails safe to deny without a confirm()", async (
 // They are the executable spec for the "background-hosted agent loop" (design A) migration: once the
 // loop + gate move to the background, a page-set confirm / page-supplied approve must NOT be able to
 // approve a requiresApproval tool — at that point these get INVERTED to assert `ran === false` and
-// that a live sidebar decision was required. See README "Security & trust model".
+// that a live sidebar decision was required. See docs/API.md "Security & trust model".
 
 // design A (SHIPPED): on a NON-whitelisted origin (pageApprovalAllowed: false) a privileged run routes
 // to the unforgeable BACKGROUND gate — the page's own confirm/approve is bypassed, so the gated tool

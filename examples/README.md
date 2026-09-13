@@ -80,7 +80,7 @@ second model's text summary. That's a real reliability jump over the delegated
 ![A screenshot showing youtube with the youtube-summarizer.user.js user script enabled](../docs/youtube-summarizer-2026-07-06_21-26.png)
 
 A page-context userscript that injects an **AI Summary** card into the YouTube
-watch page. It uses [`window.ml`](../README.md) to call an OpenWebUI **server-side
+watch page. It uses [`window.ml`](../docs/API.md) to call an OpenWebUI **server-side
 transcript tool**, summarizes the video, and lets you ask follow-up questions —
 all inside the page, grounded in the actual transcript.
 

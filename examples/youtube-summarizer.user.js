@@ -11,7 +11,7 @@
 
 // This is a *page-context* userscript (Tampermonkey / "User JavaScript and CSS"
 // with @grant none). It runs in the page's main world, so it can call window.ml
-// directly — see the "Using from a userscript" section of the README.
+// directly — see the "Using from a userscript" section of docs/API.md.
 //
 // It relies on:
 //   1. the window.ml extension being active on this page (Site access), and
