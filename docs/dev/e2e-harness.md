@@ -188,6 +188,12 @@ as in AGENTS.md — they are all under `src/`.
   Screenshots land in `tests/e2e/artifacts/stream-demo/`; `HOLD=0` exits instead of holding the browser
   open. Deterministic (fake-LLM, approvals resolved via the SW `__mlApprovals` channel). The automated
   assertions are `python-stream.spec.mjs` (the reverse channel) and `output-scroll.spec.mjs` (tail-follow).
+- **`code-theme-demo.mjs`** — a **narrated demo, not a test** of Settings → Code blocks → Colour theme:
+  `npm run build && node --import tsx tests/e2e/code-theme-demo.mjs`. An agent step's JavaScript and a bench script
+  side by side, walked through the default, GitHub (a pair, in a light panel), Nord (dark-only, keeping its own
+  background in a light panel), the panel switched to dark, and a VS Code theme uploaded through Settings. `THEME=`
+  points it at your own theme file (the repo's fixture otherwise); `LINGER`, `HOLD=0`, `HEADLESS=1`; screenshots in
+  `tests/e2e/artifacts/code-theme-demo/`. The assertions are `code-theme.spec.mjs` and `tests/code-themes.test.mjs`.
 - **`bench-traceback-demo.mjs`** — a **narrated demo, not a test** of a bench traceback pointing into the
   editor: `npm run build && node --import tsx tests/e2e/bench-traceback-demo.mjs`. Real Pyodide, no model.
   It opens with the log's renderers in the bench (a sympy integral typeset, a numpy Mandelbrot returned as a PIL
