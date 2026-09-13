@@ -98,6 +98,8 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
     // How long /api/ps takes to answer. A slow reply is how a poll sent BEFORE the event stream went live
     // lands AFTER it, which is the race the panel must not lose.
     let psDelayMs = 0;
+    // The same for /api/info: a capacity reading asked for before the stream went live and answered after it.
+    let infoDelayMs = 0;
     /** @type {any} */
     let boxInfo = null;
     // The event stream (a PATCHED ollama only — docs/FORKED-BACKENDS.md). `frames` is what a new subscriber
@@ -206,6 +208,7 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
             // A server without the patch answers this route with the SPA's HTML, not a 404 — reproduce THAT,
             // since "unknown capacity" arriving as unparseable HTML is the case worth exercising.
             if (!boxInfo) { res.writeHead(200, { "content-type": "text/html" }); return res.end("<!doctype html><html><body>app</body></html>"); }
+            if (infoDelayMs) { const body = boxInfo; setTimeout(() => json(res, 200, body), infoDelayMs); return; }
             return json(res, 200, boxInfo);
         }
         if (req.method === "GET" && (path === "/api/events" || path === "/ollama/api/events")) {
@@ -340,6 +343,8 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
                 setResident: (/** @type {any[]} */ models) => { resident = models; },
                 /** Delay every /api/ps reply by `ms` (0 = immediate). */
                 setPsDelay: (/** @type {number} */ ms) => { psDelayMs = ms; },
+                /** Delay every /api/info reply by `ms` (0 = immediate). */
+                setInfoDelay: (/** @type {number} */ ms) => { infoDelayMs = ms; },
                 /** What /api/info reports as capacity; null = a server that doesn't serve the route at all. */
                 setCapacity: (/** @type {any} */ info) => { boxInfo = info; },
                 /**

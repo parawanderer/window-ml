@@ -100,6 +100,10 @@ export interface DeviceCapacity {
      *  holds memory that `free` counts and nothing names. Any other value is treated as the second. */
     processesScope?: string;
     memoryBandwidth?: number;
+    /** What this card ACHIEVES at decode, measured on this box (`compute.profile.devices[]`, joined by `pci_id`) —
+     *  the rated `memoryBandwidth` is a ceiling, this is what a model actually gets. Absent until the box has been
+     *  measured, and on every build before `ollama-slop:correction`. */
+    decodeProfile?: DecodeProfile;
     memoryBusWidthBits?: number;
     memoryClockMaxMhz?: number;
     pcieMaxGeneration?: number;
@@ -228,6 +232,8 @@ export interface Capacity {
     /** How the GPUs are connected to EACH OTHER — a property of each PAIR, never of a card. Null when the
      *  server does not report it, which must read as "not measured" and never as "no NVLink". */
     topology?: Topology | null;
+    /** The box's measured decode profile's state (`compute.profile`); the per-card figures are on each device. */
+    profile?: BoxProfile;
 }
 
 /** One PAIR of GPUs and what connects them, keyed on bus addresses (`a` < `b` after parsing). `type` is the
@@ -478,6 +484,51 @@ function processesOf(g: Record<string, unknown>): Partial<DeviceCapacity> {
     return { processes, ...(scope ? { processesScope: scope } : {}) };
 }
 
+/** One card's measured decode behaviour (see {@link DeviceCapacity.decodeProfile}). */
+export interface DecodeProfile {
+    /** The bandwidth decode actually achieves, bytes/s. */
+    bandwidth: number;
+    /** The fixed cost of every token, whatever the model. */
+    tokenOverheadMs?: number;
+    /** What each layer costs beyond reading its weights — 25 µs is 1.6 ms of a 64-layer model's 14 ms token. */
+    layerOverheadUs?: number;
+    /** The worst disagreement between the fit and the timings it came from: a check on the fit, not a confidence. */
+    fitErrorPct?: number;
+}
+
+/** The box profile's own state (`compute.profile`): whether it has been measured, and what could not be. It runs
+ *  once per combination of GPUs, driver and engine, the first time the box is idle, so `pending` is ordinary. */
+export interface BoxProfile {
+    state: string;
+    measuredAt?: number;
+    /** A measurement that could not be made, with the engine's words — a result, not retried until something changes. */
+    failures: { what: string; pciIds: string[]; error: string }[];
+}
+
+/** Read `compute.profile`: the per-card figures keyed by `pci_id` (to be joined onto the cards) and the state. */
+function profileFrom(raw: unknown): { byPci: Map<string, DecodeProfile>; profile: BoxProfile } | null {
+    if (!raw || typeof raw !== "object") return null;
+    const o = raw as Record<string, unknown>;
+    const pos = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
+    const nn = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+    const byPci = new Map<string, DecodeProfile>();
+    for (const x of Array.isArray(o.devices) ? o.devices : []) {
+        const d = x as Record<string, unknown>;
+        const bw = pos(d.bandwidth_bytes_per_sec);
+        if (typeof d.pci_id !== "string" || !bw) continue;
+        byPci.set(d.pci_id, { bandwidth: bw,
+            ...(nn(d.token_overhead_ms) != null ? { tokenOverheadMs: nn(d.token_overhead_ms) } : {}),
+            ...(nn(d.layer_overhead_us) != null ? { layerOverheadUs: nn(d.layer_overhead_us) } : {}),
+            ...(nn(d.fit_error_pct) != null ? { fitErrorPct: nn(d.fit_error_pct) } : {}) });
+    }
+    const at = typeof o.measured_at === "string" ? Date.parse(o.measured_at) : NaN;
+    const failures = (Array.isArray(o.failures) ? o.failures : []).map((x) => {
+        const f = x as Record<string, unknown>;
+        return { what: String(f.what ?? ""), pciIds: Array.isArray(f.pci_ids) ? f.pci_ids.map(String) : [], error: String(f.error ?? "") };
+    });
+    return { byPci, profile: { state: typeof o.state === "string" ? o.state : "", ...(Number.isFinite(at) ? { measuredAt: at } : {}), failures } };
+}
+
 /** A card's fixed ceilings and its utilization reading, each kept only when it is a real number — absent is
  *  "could not read", and `0` survives as a reading (idle), never collapsed into absent or vice versa. */
 function ceilingsOf(g: Record<string, unknown>): Partial<DeviceCapacity> {
@@ -502,8 +553,10 @@ export function parseInfo(raw: unknown): Capacity | null {
     if (!c || typeof c !== "object") return null;
     const sys = c.system_compute;
     if (!sys || typeof sys.total_memory !== "number") return null;
+    const prof = profileFrom((c as { profile?: unknown }).profile);
     const devices: DeviceCapacity[] = (Array.isArray(c.supported_gpus) ? c.supported_gpus : []).flatMap((g) => {
         const total = Number(g.total_memory), free = Number(g.free_memory);
+        const measured = typeof g.pci_id === "string" ? prof?.byPci.get(g.pci_id.trim()) : undefined;
         if (!Number.isFinite(total) || total <= 0) return [];
         const runner = String(g.runner ?? "");
         return [{
@@ -519,6 +572,7 @@ export function parseInfo(raw: unknown): Capacity | null {
             ...(typeof g.pci_id === "string" && g.pci_id.trim() ? { pciId: g.pci_id.trim() } : {}),
             ...(typeof g.description === "string" && g.description.trim() ? { description: g.description.trim() } : {}),
             ...ceilingsOf(g),
+            ...(measured ? { decodeProfile: measured } : {}),
             ...processesOf(g),
         }];
     });
@@ -540,6 +594,7 @@ export function parseInfo(raw: unknown): Capacity | null {
         // response (tests/fixtures/hw/info-ceilings-and-topology-2026-09-11.json). A top-level `topology` is
         // still accepted, since nothing is lost by it.
         topology: topologyFrom((c as { topology?: unknown }).topology ?? (raw as { topology?: unknown })?.topology),
+        ...(prof ? { profile: prof.profile } : {}),
     };
 }
 
@@ -613,6 +668,71 @@ export interface ModelResidency {
     activity?: RunnerActivity;
     /** The server's decode ceiling for this placement, or its reason for not having one — see `Roofline`. */
     roofline?: Roofline;
+    /** The decode speed PREDICTED for this model where it is placed now — see {@link ExpectedDecode}. */
+    expectedDecode?: ExpectedDecode;
+}
+
+/**
+ * WHAT THIS MODEL SHOULD DECODE AT, where it is placed now (`expected_decode` on `/api/ps`, `ollama-slop:correction`).
+ * Not a ceiling: the roofline is what memory bandwidth allows, this is a prediction from the box's measured profile
+ * and, once a model has run enough clean generations, corrected by what it actually measured — so it also covers a
+ * mixture of experts, where no roofline is given. `tokensPerSec` is with an EMPTY cache. The correction is keyed per
+ * card index, so a model that moves to the other, identical card starts again from the plain profile.
+ */
+export type ExpectedDecode =
+    | { tokensPerSec: number; basis: string;
+        /** The profile's prediction before the correction; present only when corrected. */
+        profileTokensPerSec?: number;
+        /** Median measured ÷ predicted TIME over this model's recent clean generations: 1.16 is 16% slower. */
+        correctionFactor?: number; correctionSamples?: number;
+        /** Extra ms per token per 1,000 tokens in the cache. Absent for a sliding-window model. */
+        msPerTokenPer1k?: number;
+        /** The share of the weights one token reads — a mixture of experts only. */
+        activeWeightsFraction?: number }
+    | { unavailable: string };
+
+/** Parse `/api/ps` `expected_decode`. Null when absent or unshaped. */
+export function expectedDecodeFrom(raw: unknown): ExpectedDecode | null {
+    if (!raw || typeof raw !== "object") return null;
+    const o = raw as Record<string, unknown>;
+    if (typeof o.unavailable === "string" && o.unavailable) return { unavailable: o.unavailable };
+    const pos = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
+    const tps = pos(o.tokens_per_sec);
+    if (!tps) return null;
+    return { tokensPerSec: tps, basis: typeof o.basis === "string" ? o.basis : "",
+        ...(pos(o.profile_tokens_per_sec) ? { profileTokensPerSec: pos(o.profile_tokens_per_sec) } : {}),
+        ...(pos(o.correction_factor) ? { correctionFactor: pos(o.correction_factor) } : {}),
+        ...(pos(o.correction_samples) ? { correctionSamples: pos(o.correction_samples) } : {}),
+        ...(pos(o.ms_per_token_per_1k_context) ? { msPerTokenPer1k: pos(o.ms_per_token_per_1k_context) } : {}),
+        ...(pos(o.active_weights_fraction) ? { activeWeightsFraction: pos(o.active_weights_fraction) } : {}) };
+}
+
+/**
+ * How a model's expected decode speed is SAID, from its `basis`. A corrected figure is an expectation, learned from
+ * this model's own runs; a plain `profile` figure is an estimate for a plain llama on this card, and for a small or
+ * unusual model it can be far off (854 predicted, 521 measured, in the capture) — so it is worded as an estimate and
+ * drawn quieter until a correction exists. Unavailable reasons are said in words.
+ */
+export function expectedPhrase(ed: ExpectedDecode): { text: string; quiet: boolean; tip: string } {
+    if ("unavailable" in ed) {
+        const why: Record<string, string> = {
+            profile_pending: "not measured yet: the box profile runs once, the first time the box is idle",
+            partly_on_cpu: "no expected speed: part of this model runs from system RAM, which nothing measures",
+            memory_unknown: "no expected speed: the runner reported no weights on its cards",
+        };
+        return { text: why[ed.unavailable] ?? `no expected speed: ${ed.unavailable}`, quiet: true, tip: "" };
+    }
+    const n = (v: number) => (v >= 100 ? Math.round(v).toString() : v.toFixed(1));
+    const moe = ed.activeWeightsFraction ? ` A mixture of experts: each token reads ${(ed.activeWeightsFraction * 100).toFixed(1)}% of its weights.` : "";
+    if (ed.basis === "profile_corrected") {
+        const f = ed.correctionFactor;
+        const off = f ? ` it runs ${Math.abs(Math.round((f - 1) * 100))}% ${f >= 1 ? "slower" : "faster"} than the box profile alone predicts${ed.profileTokensPerSec ? ` (${n(ed.profileTokensPerSec)} tok/s)` : ""}.` : "";
+        const runs = ed.correctionSamples ? `learned from ${ed.correctionSamples} run${ed.correctionSamples === 1 ? "" : "s"}` : "learned from its runs";
+        return { text: `~${n(ed.tokensPerSec)} tok/s expected`, quiet: false,
+            tip: `The decode speed to expect here with an empty cache, ${runs} on this placement:${off}${moe}` };
+    }
+    return { text: `~${n(ed.tokensPerSec)} tok/s estimate`, quiet: true,
+        tip: `An estimate from this box's measured profile, for a plain llama on this card; this model has not run enough clean generations here to correct it, and a small or unusual model can be far off.${moe}` };
 }
 
 /** What the engine is doing with a model right now, from `llama-server`'s `/slots`.

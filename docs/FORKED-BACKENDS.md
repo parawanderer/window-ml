@@ -155,6 +155,13 @@ unknown field: the request is retried once without it, and the refusal is rememb
 retry succeeds. The agreement and the reasoning behind each value
 are in the two mlbox reports `handover-request-hints.md` and `handover-request-hints-answer.md`.
 
+**Measured decode speed (`ollama-slop:correction`, 2026-09-13).** `compute.profile` on `/api/info`: each card's decode
+bandwidth and per-token/per-layer costs, measured on the box once it is idle (`state` `pending` → `measuring` →
+`measured`, joined to `supported_gpus` by `pci_id`). `expected_decode` on each `/api/ps` row: the predicted empty-cache
+decode speed for that placement, `basis` `profile` or `profile_corrected` (by the model's own clean generations), or
+`unavailable` with a reason. The client shows both (see `docs/dev/resource-panel.md`); a per-generation predicted figure
+on `gen.end` has been requested so a generation can be compared with the prediction made before it.
+
 **Reachability, and a correction.** The extension finds Ollama through the same base discovery it uses for
 `/api/ps`: `<origin>/ollama` first (OpenWebUI's passthrough), then `<origin>`. This file used to say
 OpenWebUI proxies `/ollama/*` generically. **It does not** — it proxies NAMED ollama routes, so each new

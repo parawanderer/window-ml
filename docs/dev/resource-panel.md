@@ -441,6 +441,26 @@ per device, in bytes.
   sliding-window cache) yields NO figure rather than the weights-only overstatement. It reproduces the
   server's own `ceiling_at_occupancy` to 1e-9 off the real capture (`tests/fixtures/hw/`). Over 100% on a dense
   model is said, not clamped.
+- **WHAT DECODE ACTUALLY GETS, AND WHAT A MODEL SHOULD RUN AT** (`profileFrom`, `DecodeProfile`,
+  `expectedDecodeFrom`, `expectedPhrase`; `ollama-slop:correction`). The roofline is a CEILING; these are
+  measurements and a prediction. `compute.profile` on `/api/info` is each card's decode behaviour measured on the
+  box (a zero-weight llama timed at four shapes, once per GPU/driver/engine combination, when the box is idle), joined
+  to the card by `pci_id` into `DeviceCapacity.decodeProfile` and shown in the card's facts as an "at decode" row:
+  achieved bandwidth against rated (90% on the box it was built against) plus the per-token and per-layer costs; it
+  says so while `pending`/`measuring`, and shows the engine's words for a `failures[]` entry. `expected_decode` on
+  each `/api/ps` row is the predicted empty-cache decode speed where the model is placed, corrected by the model's
+  own clean generations once it has three — so it covers a mixture of experts, where the roofline is withheld. The
+  row's chip is worded by `basis`: `profile_corrected` is an expectation ("~210 tok/s expected", learned from N runs),
+  plain `profile` an ESTIMATE drawn quieter (a plain llama on this card; the capture's qwen3.5 predicted 854 and
+  measured 521). An `unavailable` reason draws no chip. The correction is keyed per card index, so a model that moves
+  cards drops back to `profile`. **Not yet drawn: a generation against its prediction.** The row read at or after
+  `gen.end` already includes that generation's own correction, so the comparison waits for the server's own
+  per-generation figure on `gen.end` (asked for) rather than guessing which sample preceded `gen.start`. Real
+  captures: `tests/fixtures/hw/info-box-profile-2026-09-13.json`, `expected-decode-*-2026-09-13.json`.
+- **A LATE `/api/info` REPLY IS DROPPED ONLY ONCE THE STREAM HAS CARRIED `info`** (`streamInfoSeen`). The reply to
+  the mount-time request can land after the stream went live and must not overwrite its newer reading — but `info`
+  rides a sample frame only when it changes and `hello` carries none, so on a quiet box that reply can be the only
+  capacity reading there is.
 - **HOW BUSY, NOT HOW FULL: THE ACTIVITY PRESET** (`util.<id>` series, `UtilView`, `kindRefusal`;
   `ollama-slop:util`). `supported_gpus[].utilization` is NVML's `gpu_percent` and `memory_percent` (AMD:
   `gpu_busy_percent` / `mem_busy_percent`), drawn per card in its colour — SOLID GPU, DASHED memory controller,

@@ -1,0 +1,123 @@
+{
+  "version": "0.0.0",
+  "models": {
+    "store": "/root/.ollama/models",
+    "count": 70,
+    "filesystem_used": 1359174418249,
+    "running": 0,
+    "vram_used": 0
+  },
+  "compute": {
+    "system_compute": {
+      "cpu_cores": 32,
+      "total_memory": 130143776768,
+      "free_memory": 121281888256,
+      "free_swap": 6897786880
+    },
+    "supported_gpus": [
+      {
+        "gpu_id": "0",
+        "pci_id": "0000:01:00.0",
+        "name": "CUDA0",
+        "description": "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+        "total_memory": 101972967424,
+        "processes_scope": "pid_namespace",
+        "physical_memory": 102641958912,
+        "memory_bandwidth_bytes_per_sec": 1792128000000,
+        "memory_bus_width_bits": 512,
+        "memory_clock_max_mhz": 14001,
+        "pcie_max_generation": 5,
+        "pcie_max_width": 8,
+        "utilization": {
+          "gpu_percent": 0,
+          "memory_percent": 0
+        },
+        "free_memory": 101972377600,
+        "compute": "12.0",
+        "driver": "13.2",
+        "runner": "CUDA"
+      },
+      {
+        "gpu_id": "1",
+        "pci_id": "0000:03:00.0",
+        "name": "CUDA1",
+        "description": "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+        "total_memory": 101972967424,
+        "processes_scope": "pid_namespace",
+        "physical_memory": 102641958912,
+        "memory_bandwidth_bytes_per_sec": 1792128000000,
+        "memory_bus_width_bits": 512,
+        "memory_clock_max_mhz": 14001,
+        "pcie_max_generation": 5,
+        "pcie_max_width": 8,
+        "utilization": {
+          "gpu_percent": 0,
+          "memory_percent": 0
+        },
+        "free_memory": 101972377600,
+        "compute": "12.0",
+        "driver": "13.2",
+        "runner": "CUDA"
+      }
+    ],
+    "topology": {
+      "status": "measured",
+      "gpus": [
+        "0000:01:00.0",
+        "0000:03:00.0"
+      ],
+      "links": [
+        {
+          "a": "0000:01:00.0",
+          "b": "0000:03:00.0",
+          "type": "pcie",
+          "path": "PHB",
+          "pcie_path": "PHB",
+          "bandwidth_bytes_per_sec": 31507692307,
+          "bandwidth_source": "derived_from_pcie_link"
+        }
+      ]
+    },
+    "profile": {
+      "state": "measured",
+      "measured_at": "2026-09-13T06:51:30.269Z",
+      "devices": [
+        {
+          "gpu_id": "0",
+          "pci_id": "0000:01:00.0",
+          "bandwidth_bytes_per_sec": 1606542317748,
+          "token_overhead_ms": 0.057,
+          "layer_overhead_us": 25.121,
+          "fit_error_pct": 0.082
+        },
+        {
+          "gpu_id": "1",
+          "pci_id": "0000:03:00.0",
+          "bandwidth_bytes_per_sec": 1607856341423,
+          "token_overhead_ms": 0.061,
+          "layer_overhead_us": 24.943,
+          "fit_error_pct": 0.048
+        }
+      ],
+      "links": [
+        {
+          "pci_ids": [
+            "0000:01:00.0",
+            "0000:03:00.0"
+          ],
+          "reductions": [
+            {
+              "width": 4096,
+              "us": 11.661
+            },
+            {
+              "width": 8192,
+              "us": 16.117
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "load_stall_timeout_ms": 300000
+}

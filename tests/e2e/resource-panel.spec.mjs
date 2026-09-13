@@ -4699,3 +4699,40 @@ test("resource panel: a model's breakdown steps with its band, not across it", a
         }
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+// WHAT DECODE ACTUALLY GETS, AND WHAT A MODEL SHOULD RUN AT (ollama-slop:correction). The box is the REAL
+// /api/info capture with its measured profile; the models are the real /api/ps rows from before a generation.
+test("resource panel: a card's facts say what decode achieves; a model's row says what it should decode at", async () => {
+    const { readFileSync } = await import("node:fs");
+    const hw = (f) => JSON.parse(readFileSync(new URL(`../fixtures/hw/${f}`, import.meta.url), "utf8"));
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(hw("info-box-profile-2026-09-13.json"));
+        fake.setResident([hw("expected-decode-gpt-oss-120b-2026-09-13.json").ps_row_before_generation]);
+        await seedStacked(ext);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-devfacts").count(), { timeout: 25000 }).toBeGreaterThan(0);
+
+        // The card: measured against rated, in its own row beside the rated figure.
+        const facts = (await frame.locator(".rc-devfacts").first().locator(".tt-pop").textContent()).replace(/\s+/g, " ");
+        expect(facts).toMatch(/at decode\s*1\.61 TB\/s · 90% of rated/);
+        expect(facts).toMatch(/\+25\.1 µs every layer/);
+
+        // The model, corrected by its own runs: a real expectation, at full strength.
+        const chip = frame.locator(".vram-row .vram-expect").first();
+        await expect(chip).toBeVisible({ timeout: 15000 });
+        expect(await chip.evaluate((el) => el.firstChild.textContent)).toBe("~210 tok/s expected");
+        expect(await chip.getAttribute("class")).not.toContain("quiet");
+        await expect(chip.locator(".tt-pop")).toContainText("learned from 5 runs");
+
+        // The small hybrid model on a card where it has no correction: an ESTIMATE, drawn quieter.
+        fake.setResident([hw("expected-decode-qwen3.5-0.8b-2026-09-13.json").ps_row_before_generation]);
+        await expect.poll(async () => frame.locator(".vram-row .vram-expect").first().evaluate((el) => el.firstChild.textContent).catch(() => ""), { timeout: 15000 }).toBe("~854 tok/s estimate");
+        expect(await frame.locator(".vram-row .vram-expect").first().getAttribute("class")).toContain("quiet");
+    } finally { await ext.close(); await fake.stop(); }
+});

@@ -2852,3 +2852,45 @@ test("placement: the id decides, not the name — an old build's runner-relative
     const old = M.placementFrom({ ...base, devices: [{ device: "CUDA0", first_layer: 0, last_layer: 35, layers: 36 }] });
     assert.equal(M.layersOnCard(old, { id: "0", name: "CUDA0" }).length, 1, "no id: matched by name, as before");
 });
+
+// ---- Measured decode speed (ollama-slop:correction, real captures 2026-09-13) ----
+
+test("box profile: each card's measured decode bandwidth is joined to it by pci_id, beside the rated one", () => {
+    const cap = M.parseInfo(hwJson("info-box-profile-2026-09-13.json"));
+    assert.equal(cap.profile.state, "measured");
+    assert.equal(cap.profile.measuredAt, Date.parse("2026-09-13T06:51:30.269Z"));
+    const [a, b] = cap.devices;
+    assert.equal(a.pciId, "0000:01:00.0");
+    assert.equal(a.decodeProfile.bandwidth, 1606542317748);
+    assert.equal(a.decodeProfile.layerOverheadUs, 25.121);
+    assert.equal(b.decodeProfile.bandwidth, 1607856341423, "the other card gets ITS figure, not the first card's");
+    assert.equal(Math.round((a.decodeProfile.bandwidth / a.memoryBandwidth) * 100), 90, "90% of rated, as the server says");
+    assert.equal(M.parseInfo({ compute: { system_compute: { total_memory: 1 }, supported_gpus: [] } }).profile, undefined, "absent → absent");
+});
+
+test("expected_decode: the three real shapes parse, and the wording follows the basis", () => {
+    const row = (f) => M.expectedDecodeFrom(hwJson(f).ps_row_before_generation.expected_decode);
+    const dense = row("expected-decode-qwen3-32b-2026-09-13.json");
+    assert.deepEqual(dense, { tokensPerSec: 71.618, basis: "profile", msPerTokenPer1k: 0.163 });
+    const moe = row("expected-decode-gpt-oss-120b-2026-09-13.json");
+    assert.equal(moe.basis, "profile_corrected");
+    assert.equal(moe.correctionSamples, 5);
+    assert.equal(moe.activeWeightsFraction, 0.078);
+    assert.equal(moe.msPerTokenPer1k, undefined, "a sliding-window model has no single per-token cache rate");
+
+    const corrected = M.expectedPhrase(moe);
+    assert.equal(corrected.text, "~210 tok/s expected");
+    assert.equal(corrected.quiet, false, "learned from its own runs: a real expectation");
+    assert.match(corrected.tip, /learned from 5 runs/);
+    assert.match(corrected.tip, /16% slower than the box profile alone predicts \(244 tok\/s\)/);
+    assert.match(corrected.tip, /7\.8% of its weights/);
+
+    const est = M.expectedPhrase(row("expected-decode-qwen3.5-0.8b-2026-09-13.json"));
+    assert.equal(est.text, "~854 tok/s estimate", "plain profile: an ESTIMATE (it measured 521 in the capture)");
+    assert.equal(est.quiet, true);
+    assert.equal(M.expectedPhrase(dense).text, "~71.6 tok/s estimate");
+
+    assert.deepEqual(M.expectedDecodeFrom({ unavailable: "partly_on_cpu" }), { unavailable: "partly_on_cpu" });
+    assert.match(M.expectedPhrase({ unavailable: "profile_pending" }).text, /not measured yet/);
+    assert.equal(M.expectedDecodeFrom({ basis: "profile" }), null, "no figure → nothing");
+});

@@ -693,6 +693,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-kv { flex: 0 0 auto; color: var(--fg-faint); font-size: 0.9em; font-variant-numeric: tabular-nums;
   border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; line-height: 1.35; cursor: help; }
 .vram-kv::before { content: "▤"; opacity: 0.7; margin-right: 3px; }
+/* WHAT THE MODEL SHOULD DECODE AT where it is placed now (`expected_decode`, see `expectedPhrase`): a prediction,
+   not the roofline's ceiling. Full strength once corrected by the model's own runs; `.quiet` for the plain-profile
+   estimate, which can be far off for a small or unusual model until a correction exists. */
+.vram-expect { flex: 0 0 auto; color: var(--fg-dim); font-size: 0.9em; font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; line-height: 1.35; cursor: help; }
+.vram-expect::before { content: "⏵"; opacity: 0.7; margin-right: 3px; }
+.vram-expect.quiet { color: var(--fg-faint); }
 /* THE HOST-RAM PROMPT CACHE, beside the KV occupancy it backs up: conversations parked in system RAM while another
    holds the model's one slot. The same outlined chip shape (a standing fact about the model), turning to the
    warn colour near its limit, where two conversations taking turns start evicting each other. */
