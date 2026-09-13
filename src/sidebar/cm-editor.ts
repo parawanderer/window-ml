@@ -36,15 +36,16 @@ const HLJS_STYLE = HighlightStyle.define([
 ]);
 
 // Structure only. Everything with a colour reads a sidebar CSS variable, so the editor re-themes with
-// the rest of the panel rather than holding a copy of the palette.
+// the rest of the panel rather than holding a copy of the palette. The code SURFACE reads the code theme's own
+// `--code-bg`/`--code-fg` first (unset for the default theme, which keeps the panel's colours).
 const THEME = EditorView.theme({
-    "&": { color: "var(--fg)", backgroundColor: "var(--panel)", fontSize: "0.88em" },
+    "&": { color: "var(--code-fg, var(--fg))", backgroundColor: "var(--code-bg, var(--panel))", fontSize: "0.88em" },
     "&.cm-focused": { outline: "none" },
     ".cm-scroller": { fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", lineHeight: "1.5" },
-    ".cm-content": { padding: "8px 0", caretColor: "var(--fg)" },
+    ".cm-content": { padding: "8px 0", caretColor: "var(--code-fg, var(--fg))" },
     ".cm-line": { padding: "0 9px" },
-    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--fg)" },
-    ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--fg) 5%, transparent)" },
+    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--code-fg, var(--fg))" },
+    ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--code-fg, var(--fg)) 5%, transparent)" },
     // Selection is drawn by drawSelection (below) rather than natively, so it needs colouring here.
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
         { backgroundColor: "color-mix(in srgb, var(--accent) 32%, transparent)" },
@@ -60,7 +61,7 @@ const THEME = EditorView.theme({
     ".cm-completionIcon": { opacity: 0.55, paddingRight: "0.6em" },
     // The gutter drawn the way the log's code blocks draw theirs (`.cline .lno`), so a line number reads the
     // same in the editor as in the step the script came from.
-    ".cm-gutters": { backgroundColor: "var(--panel)", color: "var(--fg-faint)", borderRight: "1px solid var(--border)" },
+    ".cm-gutters": { backgroundColor: "var(--code-bg, var(--panel))", color: "color-mix(in srgb, var(--code-fg, var(--fg)) 45%, transparent)", borderRight: "1px solid var(--border)" },
     ".cm-lineNumbers .cm-gutterElement": { minWidth: "2.2em", padding: "0 8px 0 4px", opacity: 0.75 },
     // WHERE IT BROKE — the log's `.cline-fail`, on the editor's line and its number.
     ".cm-ml-fail": { backgroundColor: "color-mix(in srgb, var(--err) 13%, transparent)" },

@@ -278,6 +278,25 @@ reopens spans that straddle a newline — matching `<` first, so a text run like
 ` searchResults` isn't misread as a `<span>`), and numbers stay aligned even when
 a line wraps because each source line is its own flex row.
 
+**The code COLOUR THEME** (Settings → Code blocks → Colour theme; `ml_code_theme`, and the uploaded file in
+`ml_code_theme_vscode` as `{name, text}`). ONE stylesheet colours every code block AND the bench editor, because
+CodeMirror's tags are mapped onto highlight.js's `hljs-*` classes (`HLJS_STYLE` in cm-editor.ts) rather than given
+a palette of their own. Presets are highlight.js's own stylesheets, bundled as text (`src/sidebar/code-theme-css.ts`);
+the list, the VS Code converter and the `.hljs` colour reader are pure in `src/code-themes.ts`. Four things matter:
+- **Surface colours.** Any theme but the default sets `--code-bg`/`--code-fg` on the root (`applyCodeTheme`, prefs.ts),
+  read by `.code` blocks and the editor. Without them a dark theme in a light panel drew light tokens on white. The
+  default (Atom One) sets neither and keeps the panel's own colours, so it looks exactly as it did.
+- **A pair follows the panel**, a single-variant theme (Nord, Monokai, Xcode…) is used as it is either way.
+- **The VS Code conversion is approximate, and Settings says so.** A theme colours TextMate SCOPES; each `hljs-*`
+  class takes the colour of the scope that best stands for it (`SCOPE_MAP`, TextMate's own precedence: the longest
+  matching selector, later on a tie). Parent-scope selectors are skipped rather than applied everywhere, and a theme
+  that `include`s another cannot be read on its own. It is stored as SOURCE TEXT and converted on load, so an improved
+  converter re-reads old uploads.
+- **Nothing from the file reaches CSS verbatim**: hex colours and four font-style words only (tested with injection
+  payloads). The file is JSONC — VS Code's "Generate Color Theme From Current Settings" writes comments.
+`tests/code-themes.test.mjs` checks EVERY preset's stylesheet for a background and a text colour; that found two
+parsing gaps a sample missed (comments inside a rule, `.hljs` in a selector list).
+
 
 **A claim of unreachability needs the ABSENCE of evidence, not the presence of a failure**
 (`backendStateFrom`, contract.ts). During a 64-second load of a 142 GB model, `/api/ps` answered every poll in

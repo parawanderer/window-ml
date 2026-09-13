@@ -11,10 +11,12 @@ import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundin
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, modelKinds, embedDims, view } from "./store";
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, codeTheme, codeThemeCustom, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, modelKinds, embedDims, view } from "./store";
 import { truncate } from "./format";
 import { ToolDefsView } from "./agent-detail";   // the SAME viewer an agent run uses for its local toolset
-import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
+import { applyTheme, applyFont, applyCodePrefs, applyCodeTheme } from "./prefs";
+import { CODE_THEME_PRESETS, DEFAULT_CODE_THEME, VSCODE_THEME_ID, convertVscodeTheme, parseJsonc, type CodeThemePreset, type ConvertedTheme } from "../code-themes";
+import { convertStored } from "./code-theme-css";
 import { IconCheck } from "./icons";
 import { Disclosure } from "./ui-kit";
 
@@ -509,6 +511,83 @@ const SETTINGS_TABS = [
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number]["id"];
 const settingsTab = signal<SettingsTab>("connection");
+/** Settings → Code blocks → Colour theme: a highlight.js preset, or a VS Code theme the user uploads (converted,
+ *  approximately, by code-themes.ts). One stylesheet colours every code block AND the bench editor, so the choice
+ *  applies to both at once. */
+function CodeThemeSetting() {
+    const [err, setErr] = useState("");
+    const fileRef = useRef<HTMLInputElement>(null);
+    const id = codeTheme.value, custom = codeThemeCustom.value;
+    let info: ConvertedTheme | null = null;
+    try { info = custom ? convertStored(custom) : null; } catch { info = null; }
+    const choose = (v: string) => {
+        codeTheme.value = v;
+        chrome.storage.local.set({ [CODE_THEME_KEY]: v });
+        applyCodeTheme();
+        setErr("");
+    };
+    const onFile = async (e: Event) => {
+        const input = e.target as HTMLInputElement;
+        const f = input.files?.[0];
+        input.value = "";   // so choosing the same file again (after editing it) reloads it
+        if (!f) return;
+        // A colour theme is a few KB; anything this big is not one, and it would be stored as-is.
+        if (f.size > 2_000_000) { setErr(`${f.name} is ${(f.size / 1e6).toFixed(1)} MB — a colour theme is a few KB.`); return; }
+        try {
+            const text = await f.text();
+            const t = convertVscodeTheme(parseJsonc(text), f.name.replace(/\.jsonc?$/i, ""));
+            const next = { name: t.name, text };
+            codeThemeCustom.value = next;
+            codeTheme.value = VSCODE_THEME_ID;
+            chrome.storage.local.set({ [CODE_THEME_VSCODE_KEY]: next, [CODE_THEME_KEY]: VSCODE_THEME_ID });
+            applyCodeTheme();
+            setErr("");
+        } catch (x) {
+            setErr(x instanceof SyntaxError ? `${f.name} is not valid JSON (${x.message}).` : String((x as Error)?.message || x));
+        }
+    };
+    const both = CODE_THEME_PRESETS.filter((p) => p.dark && p.light);
+    const darkOnly = CODE_THEME_PRESETS.filter((p) => p.dark && !p.light);
+    const lightOnly = CODE_THEME_PRESETS.filter((p) => p.light && !p.dark);
+    const opt = (p: CodeThemePreset) => <option key={p.id} value={p.id}>{p.label}{p.id === DEFAULT_CODE_THEME ? " (default)" : ""}</option>;
+    return (
+        <>
+            <label class="set-field"><span>Colour theme</span>
+                <select class="set-codetheme" value={id} onChange={(e: any) => choose(e.target.value)}>
+                    <optgroup label="Light and dark — follows the panel">{both.map(opt)}</optgroup>
+                    <optgroup label="Dark">{darkOnly.map(opt)}</optgroup>
+                    <optgroup label="Light">{lightOnly.map(opt)}</optgroup>
+                    <optgroup label="Your own">
+                        <option value={VSCODE_THEME_ID}>{custom ? `VS Code: ${custom.name}` : "VS Code theme (upload a file)…"}</option>
+                    </optgroup>
+                </select></label>
+            {id === VSCODE_THEME_ID ? (
+                <div class="set-codetheme-vscode">
+                    <div class="free-row">
+                        <input ref={fileRef} type="file" accept=".json,.jsonc,application/json" style="display:none" onChange={onFile} />
+                        <button class="test-btn" onClick={() => fileRef.current?.click()}>{custom ? "Replace the theme file…" : "Choose a theme file…"}</button>
+                        {info ? <span class="dim">{info.name} · {info.type} · colours {info.matched.length} of {info.matched.length + info.missing.length} kinds of token</span> : null}
+                    </div>
+                    {err ? <div class="set-warn" role="alert">{err}</div> : null}
+                    <div class="set-note">
+                        A VS Code theme is <b>converted</b>, so it may not look exactly as it does in VS Code. VS Code colours
+                        far finer kinds of token than this panel can tell apart, so each kind here takes the closest colour
+                        the theme defines; rules that only apply in a particular context are skipped; and a theme that
+                        <code>include</code>s another file needs that file merged in first. To get your current theme as one
+                        file: in VS Code, run <b>Developer: Generate Color Theme From Current Settings</b> and save the result.
+                        Or take the <code>.json</code> from a theme extension's <code>themes/</code> folder.
+                    </div>
+                </div>
+            ) : (
+                <div class="set-note">
+                    Colours every code block and the Python bench's editor. A theme with light and dark versions follows the
+                    panel's theme; a dark-only or light-only one keeps its own background either way.
+                </div>
+            )}
+        </>
+    );
+}
+
 /**
  * Open Settings at a particular section, for a shortcut elsewhere in the UI.
  *
@@ -1070,6 +1149,7 @@ export function Settings() {
                 </Section>
 
                 <Section id="codeblocks" title="Code blocks">
+                <CodeThemeSetting />
                 <label class="set-field"><span>Long lines</span>
                     <select value={codeWrap.value ? "wrap" : "scroll"}
                         onChange={(e: any) => { codeWrap.value = e.target.value === "wrap"; applyCodePrefs(); chrome.storage.local.set({ [WRAP_KEY]: codeWrap.value }); }}>

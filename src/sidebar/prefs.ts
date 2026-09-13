@@ -1,14 +1,13 @@
 // Applies stored prefs to the DOM root for the debug sidebar: theme (data-theme +
-// the active Atom One highlight CSS), font scale (--fs), and code-block display
+// the active code theme's highlight CSS), font scale (--fs), and code-block display
 // (data-codewrap / data-codelines). Extracted so both the Settings UI and the app
-// bootstrap can drive them without a cycle. The Atom One themes live here since
-// applyTheme is their only consumer.
-import atomOneDark from "highlight.js/styles/atom-one-dark.css";
-import atomOneLight from "highlight.js/styles/atom-one-light.css";
+// bootstrap can drive them without a cycle. The code themes themselves live in
+// code-theme-css.ts (the stylesheets) and code-themes.ts (presets + the VS Code converter).
 import katexCss from "katex/dist/katex.min.css";
-import { config, fontScale, codeWrap, codeLineNumbers, focusMode, BASE_FS } from "./store";
+import { config, fontScale, codeWrap, codeLineNumbers, focusMode, BASE_FS, codeTheme, codeThemeCustom } from "./store";
+import { activeCodeTheme } from "./code-theme-css";
 
-let hljsStyleEl: HTMLStyleElement | null = null;   // holds the active Atom One theme
+let hljsStyleEl: HTMLStyleElement | null = null;   // holds the active code theme's stylesheet
 const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
 
 /** The theme to draw in — the explicit choice, else the OS preference. */
@@ -20,7 +19,7 @@ export const resolveTheme = (): "dark" | "light" => {
 export const applyTheme = (): void => {
     const t = resolveTheme();
     document.documentElement.setAttribute("data-theme", t);
-    if (hljsStyleEl) hljsStyleEl.textContent = t === "dark" ? atomOneDark : atomOneLight;
+    applyCodeTheme(t);
     // Tell the shell our AUTHORITATIVE resolved theme so the off-mode card's acrylic
     // (drawn page-side, in the shell's shadow root) matches. The shell resolves theme
     // from the CONTENT-SCRIPT window's matchMedia, which is unreliable on some hosts
@@ -30,6 +29,18 @@ export const applyTheme = (): void => {
     try { window.parent?.postMessage({ __mlSidebarCardTheme: t }, "*"); } catch { /* not framed */ }
 };
 themeMedia.addEventListener("change", applyTheme);
+
+/** The code colour theme (Settings → Code blocks): its stylesheet, plus the surface colours code blocks and the
+ *  bench editor paint with. Those two ride `--code-bg`/`--code-fg` on the root, and are REMOVED for the default,
+ *  which draws on the panel's own colours — so a theme whose light/dark differs from the panel's (a dark theme
+ *  in a light panel) still puts its light tokens on its own dark background, not on the panel's white. */
+export const applyCodeTheme = (panel: "dark" | "light" = resolveTheme()): void => {
+    const active = activeCodeTheme(codeTheme.value, codeThemeCustom.value, panel);
+    if (hljsStyleEl) hljsStyleEl.textContent = active.css;
+    const root = document.documentElement.style;
+    if (active.bg) root.setProperty("--code-bg", active.bg); else root.removeProperty("--code-bg");
+    if (active.fg) root.setProperty("--code-fg", active.fg); else root.removeProperty("--code-fg");
+};
 
 // Create the <style> element that holds the active highlight theme + apply once.
 // Called from mount() (needs document.head to exist).
