@@ -807,6 +807,8 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .set-test { display: flex; flex-direction: column; gap: 8px; margin-top: 10px;
     border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; background: var(--panel); }
 .set-test-title { color: var(--fg-dim); font-size: 0.82em; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+/* Settings → Code blocks → a VS Code theme: the file button and what was loaded, on one line with room between. */
+.set-codetheme-vscode .free-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .test-btn { align-self: flex-end; background: var(--panel-2); color: var(--fg); border: none; border-radius: 5px; padding: 4px 12px; font-size: 0.92em; cursor: pointer; }
 .test-btn:hover { background: var(--panel-2-hover); }
 .test-btn:disabled { opacity: .6; cursor: default; }
@@ -1819,10 +1821,13 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 .md a { color: var(--accent); }
 .md code { background: var(--panel-2); border-radius: 3px; padding: 0 3px; font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; }
 
+/* `--code-bg`/`--code-fg` are the CODE THEME's surface colours (prefs.ts applyCodeTheme), set for any theme but
+   the default. A dark theme in a light panel then puts its light tokens on its own dark background rather than on
+   the panel's; with the default they are unset and a block draws on the panel's colours as it always has. */
 .code, .md pre.code {
     margin: 0; white-space: pre-wrap; word-break: break-word;
-    background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
-    color: var(--fg); font: 0.92em/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--code-bg, var(--bg)); border: 1px solid var(--border); border-radius: 5px;
+    color: var(--code-fg, var(--fg)); font: 0.92em/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
     /* A wide line (e.g. a giant one-line selector in scroll mode) scrolls inside
        its own box — never widening the panel. */
     max-width: 100%; overflow-x: auto;

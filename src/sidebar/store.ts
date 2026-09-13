@@ -12,6 +12,8 @@ export const BASE_FS = 12, MIN_FS = 0.8, MAX_FS = 1.6;   // font-scale bounds (�
 // of the ml config the popup/background share).
 export const WRAP_KEY = "ml_debug_codewrap";     // true = break-line (default); false = horizontal scroll
 export const LINES_KEY = "ml_debug_codelines";   // line-number gutter on code blocks
+export const CODE_THEME_KEY = "ml_code_theme";   // storage.local: the code colour theme (a preset id, or "vscode")
+export const CODE_THEME_VSCODE_KEY = "ml_code_theme_vscode";   // storage.local: the uploaded VS Code theme, {name, text}
 // FOCUS MODE: read the transcript as a conversation. It hides the machinery a debugger wants and a reader
 // does not — step counters, approval badges, the "you" label, the model pill, the copy/raw controls, the
 // collapsed tool row's output preview. It is a DISPLAY pref, not a filter: nothing is dropped from the
@@ -115,6 +117,12 @@ export const view = signal<{ name: "list" } | { name: "detail"; hash: string } |
 export const fontScale = signal(1);   // × BASE_FS px — the panel's text size (Settings → Appearance)
 export const codeWrap = signal(true);          // wrap long code lines vs. horizontal scroll
 export const codeLineNumbers = signal(false);  // show a line-number gutter on code blocks
+/** The code colour theme: a preset id from code-themes.ts, or "vscode" for the uploaded one. A display pref like the
+ *  font scale (storage.local), not an MlConfig flag. */
+export const codeTheme = signal<string>("atom-one");
+/** The uploaded VS Code theme, kept as its source text so a better converter re-reads it rather than serving an
+ *  old conversion. Null until one is uploaded. */
+export const codeThemeCustom = signal<{ name: string; text: string } | null>(null);
 // FOCUS MODE: read the run as a conversation. A DISPLAY pref, not a filter — it quiets chrome (counters,
 // badges, provenance) via CSS on a root attribute, so nothing is dropped and turning it off restores it.
 export const focusMode = signal(false);

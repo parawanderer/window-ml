@@ -1,0 +1,22 @@
+// A small VS Code colour theme for tests and demos, written in the JSONC VS Code itself emits
+// ("Developer: Generate Color Theme From Current Settings" produces comments like these).
+{
+    "name": "Fixture Sunset",
+    "type": "dark",
+    "colors": {
+        "editor.background": "#1b1426",
+        "editor.foreground": "#f2e9ff",
+        // "editor.selectionBackground": "#44335c",
+    },
+    "tokenColors": [
+        { "scope": "comment", "settings": { "foreground": "#8a7aa8", "fontStyle": "italic" } },
+        { "scope": ["keyword", "storage.type"], "settings": { "foreground": "#ff7ab6" } },
+        { "scope": "keyword.control", "settings": { "foreground": "#ff4f9a", "fontStyle": "bold" } },
+        { "scope": "string", "settings": { "foreground": "#ffd166" } },
+        { "scope": "constant.numeric", "settings": { "foreground": "#7ee8fa" } },
+        { "scope": "entity.name.function", "settings": { "foreground": "#9bff8a" } },
+        { "scope": "support.function", "settings": { "foreground": "#ffb070" } },
+        // context-dependent, so the converter skips it:
+        { "scope": "meta.function-call entity.name.function", "settings": { "foreground": "#ff0000" } },
+    ],
+}
