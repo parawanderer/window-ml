@@ -17,7 +17,7 @@ import {
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, stepBands, bandEdge, runGap, type RunGap, serverGenNote,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, stepBands, bandEdge, runGap, type RunGap, serverGenNote, layersOnCard,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
 import { keysReach, resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
@@ -833,7 +833,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                     title={soft.label} /> : null}
                 <BandTip bands={bands} frame={hoverSample ? bandsOf(hoverSample) : null}
                     history={samples.map(bandsOf)} samples={samples} ceiling={ceiling} scope={scope} label={label}
-                    hidden={hidden} at={hoverSample} />
+                    cardId={device?.id} hidden={hidden} at={hoverSample} />
                 {/* Hovering the plot ANYWHERE, not just a model's band, answers the question this track's
                     header answers for the present: how full was this pool, then. Without it the free area
                     and the space above the stack were the only parts of the chart that said nothing. */}
@@ -999,8 +999,8 @@ function tileKbTips(root: Document | null): void {
  * is not in the list simply shows nothing rather than being handed the entry that happens to sit at its
  * ordinal. `devices` is a list of RUNS rather than one entry per card, so they are summed.
  */
-function LayerRows({ placement, device }: { placement: LayerPlacement; device: string }) {
-    const mine = placement.devices.filter((d) => d.device === device);
+function LayerRows({ placement, device, cardId }: { placement: LayerPlacement; device: string; cardId?: string }) {
+    const mine = layersOnCard(placement, { id: cardId, name: device });
     if (!mine.length) return null;
     const held = mine.reduce((n, d) => n + d.layers, 0);
     const span = mine.map((d) => `#${d.firstLayer}\u2013${d.lastLayer}`).join(", ");
@@ -1024,7 +1024,7 @@ function LayerRows({ placement, device }: { placement: LayerPlacement; device: s
 /** What the hovered band is, shown over the plot. Deliberately the SAME facts as the legend row (ModelFacts),
  *  because a band and its row describe one model — an SVG <title> could carry none of it: no colour, no live
  *  TTL, no badge, and a half-second delay before it appears. */
-function BandTip({ bands, frame, history, samples, ceiling, scope, label, hidden, at: hoverSample }: { bands: Band[]; frame: Band[] | null; history: Band[][]; samples: ResourceSample[]; ceiling: number; scope: string; label?: string; hidden: Set<string>; at: ResourceSample | null }) {
+function BandTip({ bands, frame, history, samples, ceiling, scope, label, cardId, hidden, at: hoverSample }: { bands: Band[]; frame: Band[] | null; history: Band[][]; samples: ResourceSample[]; ceiling: number; scope: string; label?: string; cardId?: string; hidden: Set<string>; at: ResourceSample | null }) {
     const name = hoverModel.value;
     // ANCHORED TO THE TRACK, not to the cursor, whenever the keyboard owns the focus. Two reasons, and the
     // second is the one that forces it: a reader who is not moving the mouse does not want an answer that
@@ -1117,7 +1117,7 @@ function BandTip({ bands, frame, history, samples, ceiling, scope, label, hidden
                     <span class="rc-tip-here">{percentOf(band.bytes, across.bytes)} here</span></div>
                 : null}
             {deep && band.parts ? <HoldingRows model={name} parts={band.parts} /> : null}
-            {deep && res?.placement && label ? <LayerRows placement={res.placement} device={label} /> : null}
+            {deep && res?.placement && label ? <LayerRows placement={res.placement} device={label} cardId={cardId} /> : null}
             {deep && !band.parts
                 // ABSENT IS NOT ZERO. A loading row, an MLX runner, or a build predating the field reports no
                 // split at all — and an empty decomposition would read as "it is holding nothing".

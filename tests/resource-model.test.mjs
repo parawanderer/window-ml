@@ -2826,3 +2826,29 @@ test("serverGenNote: a side task in one of THIS panel's sessions is not 'a sessi
     assert.match(M.serverGenNote({ use: "agent", session: "wml-50becb2b" }, shown), /one of this panel's sessions that matched none of its steps/);
     assert.match(M.serverGenNote({ use: "utility", session: "wml-otherabc" }, shown), /window\.ml session this panel isn't showing/, "a session it does not have is still somebody else's");
 });
+
+// ---- Layer placement names its card by gpu_id (ollama-slop placement naming fix, 2026-09-13) ----
+const PS_PLACEMENT = JSON.parse(readFileSync(new URL("./fixtures/hw/ps-placement-gpu-id-2026-09-13.json", import.meta.url), "utf8"));
+
+test("placement: the real capture carries each run's gpu_id, and it lands on the card with that id", () => {
+    const pl = M.placementFrom(PS_PLACEMENT.models[0].placement);
+    assert.equal(pl.devices[0].gpuId, "0", "gpu_id parsed");
+    assert.equal(PS_PLACEMENT.models[0].gpus[0].gpu_id, pl.devices[0].gpuId, "…and it is the id gpus[] uses for the same card");
+    assert.equal(M.layersOnCard(pl, { id: "0", name: "CUDA0" }).length, 1);
+    assert.equal(M.layersOnCard(pl, { id: "1", name: "CUDA1" }).length, 0);
+});
+
+test("placement: the id decides, not the name — an old build's runner-relative name cannot land on the wrong card", () => {
+    // DERIVED from the capture: the case the server fix describes, a model on GPU1 while GPU0 is leased away.
+    const base = PS_PLACEMENT.models[0].placement;
+    const onGpu1 = M.placementFrom({ ...base, devices: [{ ...base.devices[0], device: "CUDA1", gpu_id: "1" }] });
+    assert.equal(M.layersOnCard(onGpu1, { id: "1", name: "CUDA1" }).length, 1, "fixed build: right card");
+    // The OLD bug: the runner saw one card and called it CUDA0 while it was GPU1. With the id sent, the name is
+    // not what decides, so it still lands on GPU1's track and not GPU0's.
+    const misnamed = M.placementFrom({ ...base, devices: [{ ...base.devices[0], device: "CUDA0", gpu_id: "1" }] });
+    assert.equal(M.layersOnCard(misnamed, { id: "0", name: "CUDA0" }).length, 0, "not drawn on GPU0 because of a name");
+    assert.equal(M.layersOnCard(misnamed, { id: "1", name: "CUDA1" }).length, 1);
+    // An older build sends no gpu_id at all: the name is all there is, and it is used.
+    const old = M.placementFrom({ ...base, devices: [{ device: "CUDA0", first_layer: 0, last_layer: 35, layers: 36 }] });
+    assert.equal(M.layersOnCard(old, { id: "0", name: "CUDA0" }).length, 1, "no id: matched by name, as before");
+});

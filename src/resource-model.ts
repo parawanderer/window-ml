@@ -961,7 +961,11 @@ export interface LayerPlacement {
     /** One entry per contiguous RUN of layers — usually one per card, but built by scanning consecutive
      *  layers, so a non-contiguous assignment appears as several entries rather than as a span that never
      *  existed. `devices.length` is therefore NOT the number of cards. */
-    devices: { device: string; firstLayer: number; lastLayer: number; layers: number }[];
+    devices: { device: string; firstLayer: number; lastLayer: number; layers: number;
+        /** The ollama `gpu_id` of the card this run is on — the same id `gpus[]` and `supported_gpus` use. Sent
+         *  since the placement naming fix (2026-09-13); absent on older builds, which named the card by the
+         *  RUNNER's own enumeration, so with a card leased away a model on GPU1 reported `CUDA0`. */
+        gpuId?: string }[];
     /** WHICH layers use sliding-window attention, from the engine's own `hparams.is_swa`. A list rather than
      *  a count because the pattern is irregular — gemma2 alternates 1:1, gemma4:31b is 50 of 61. Empty for
      *  architectures with none. */
@@ -983,10 +987,19 @@ export function placementFrom(raw: unknown): LayerPlacement | null {
         firstLayer: Number(d.first_layer) || 0,
         lastLayer: Number(d.last_layer) || 0,
         layers: Number(d.layers) || 0,
+        ...(typeof d.gpu_id === "string" && d.gpu_id ? { gpuId: d.gpu_id } : {}),
     })).filter((d) => d.device && d.layers > 0);
     if (!num || !devices.length) return null;
     const swa = Array.isArray(p.swa_layers) ? (p.swa_layers as unknown[]).map(Number).filter((n) => Number.isFinite(n)) : [];
     return { numLayers: num, devices, swaLayers: swa };
+}
+
+/** The placement runs on ONE card. By `gpu_id` when the entry carries one and the card's id is known — the id both
+ *  lists share, so it cannot land on the wrong card. By NAME otherwise (an older build), which is right only while
+ *  the runner sees every card: an old build named cards by its own enumeration, so with GPU0 leased away a model
+ *  on GPU1 said `CUDA0` and its layers were drawn on the wrong track. Nothing is ever matched by position. */
+export function layersOnCard(placement: LayerPlacement, card: { id?: string | null; name: string }): LayerPlacement["devices"] {
+    return placement.devices.filter((d) => (d.gpuId != null && card.id != null ? d.gpuId === card.id : d.device === card.name));
 }
 
 /** Parse a server `memory` object, or null when it cannot be trusted as a split.
