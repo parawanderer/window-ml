@@ -5,7 +5,7 @@ web pages and bridges it to local LLMs via OpenWebUI / Ollama. It's a
 **console-first primitive**, not a chat app: the deliverable is a `window.ml`
 object you call from any page's devtools console or from userscripts.
 
-See `README.md` for the user-facing API and `docs/` for setup, cloud models,
+See `docs/API.md` for the user-facing API and `docs/` for setup, cloud models,
 and OCR. This file is the map for *extending* the code.
 
 ## Layout

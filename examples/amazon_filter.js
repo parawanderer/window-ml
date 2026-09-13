@@ -19,7 +19,7 @@
 
 (async () => {
     // window.ml is synchronous once injected; this is the canonical ready-wait
-    // in case the script somehow runs first (see the README).
+    // in case the script somehow runs first (see docs/API.md, "Using from a userscript").
     const ml = await (window.ml?.ready
         ?? new Promise(r => addEventListener("ml:ready", () => r(window.ml), { once: true })));
 

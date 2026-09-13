@@ -87,9 +87,9 @@ ollama pull qwen2.5vl        # or: docker exec ollama ollama pull qwen2.5vl
 ```
 
 Details and the bulk-processing pattern are in the
-[README](../README.md#ocr).
+[API reference](API.md#ocr).
 
-The full API is documented in the [README](../README.md#windowml-api). To route
+The full API is documented in the [API reference](API.md). To route
 to commercial models (Claude, GPT, OpenRouter) through the same setup, see
 [CLOUD-MODELS.md](CLOUD-MODELS.md).
 
