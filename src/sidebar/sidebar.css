@@ -1833,6 +1833,8 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
     max-width: 100%; overflow-x: auto;
 }
 .md pre.code code { background: none; padding: 0; }
+/* A themed code block's text selection is the theme's (`--code-sel`), as it is in the editor; unthemed, the browser's. */
+:root[data-code-themed] .code ::selection { background-color: var(--code-sel); }
 
 /* GFM tables. Wrapper scrolls a wide table instead of widening the panel. */
 .md-table-wrap { overflow-x: auto; margin: 4px 0; }

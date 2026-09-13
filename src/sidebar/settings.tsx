@@ -11,10 +11,10 @@ import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundin
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, codeTheme, codeThemeCustom, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, modelKinds, embedDims, view } from "./store";
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, modelKinds, embedDims, view } from "./store";
 import { truncate } from "./format";
 import { ToolDefsView } from "./agent-detail";   // the SAME viewer an agent run uses for its local toolset
-import { applyTheme, applyFont, applyCodePrefs, applyCodeTheme } from "./prefs";
+import { applyTheme, applyFont, applyCodePrefs, panelThemeActive } from "./prefs";
 import { CODE_THEME_PRESETS, DEFAULT_CODE_THEME, VSCODE_THEME_ID, convertVscodeTheme, parseJsonc, type CodeThemePreset, type ConvertedTheme } from "../code-themes";
 import { convertStored } from "./code-theme-css";
 import { IconCheck } from "./icons";
@@ -523,7 +523,7 @@ function CodeThemeSetting() {
     const choose = (v: string) => {
         codeTheme.value = v;
         chrome.storage.local.set({ [CODE_THEME_KEY]: v });
-        applyCodeTheme();
+        applyTheme();
         setErr("");
     };
     const onFile = async (e: Event) => {
@@ -540,7 +540,7 @@ function CodeThemeSetting() {
             codeThemeCustom.value = next;
             codeTheme.value = VSCODE_THEME_ID;
             chrome.storage.local.set({ [CODE_THEME_VSCODE_KEY]: next, [CODE_THEME_KEY]: VSCODE_THEME_ID });
-            applyCodeTheme();
+            applyTheme();
             setErr("");
         } catch (x) {
             setErr(x instanceof SyntaxError ? `${f.name} is not valid JSON (${x.message}).` : String((x as Error)?.message || x));
@@ -569,13 +569,20 @@ function CodeThemeSetting() {
                         {info ? <span class="dim">{info.name} · {info.type} · colours {info.matched.length} of {info.matched.length + info.missing.length} kinds of token</span> : null}
                     </div>
                     {err ? <div class="set-warn" role="alert">{err}</div> : null}
+                    <label class="set-check">
+                        <input type="checkbox" checked={codeThemeUi.value}
+                            onChange={(e: any) => { codeThemeUi.value = e.target.checked; chrome.storage.local.set({ [CODE_THEME_UI_KEY]: codeThemeUi.value }); applyTheme(); }} />
+                        <span>Colour the whole panel with this theme, not only the code</span>
+                    </label>
                     <div class="set-note">
                         A VS Code theme is <b>converted</b>, so it may not look exactly as it does in VS Code. VS Code colours
                         far finer kinds of token than this panel can tell apart, so each kind here takes the closest colour
                         the theme defines; rules that only apply in a particular context are skipped; and a theme that
                         <code>include</code>s another file needs that file merged in first. To get your current theme as one
                         file: in VS Code, run <b>Developer: Generate Color Theme From Current Settings</b> and save the result.
-                        Or take the <code>.json</code> from a theme extension's <code>themes/</code> folder.
+                        Or take the <code>.json</code> from a theme extension's <code>themes/</code> folder. Colouring the panel
+                        maps the theme's workbench colours onto this panel's own, which are laid out differently from VS
+                        Code's, so it is an impression of the theme rather than a copy.
                     </div>
                 </div>
             ) : (
@@ -1109,7 +1116,9 @@ export function Settings() {
                         <option value="auto">Auto (system)</option>
                         <option value="dark">Dark</option>
                         <option value="light">Light</option>
-                    </select></label>
+                    </select>
+                    {panelThemeActive() ? <div class="set-moot">Your VS Code theme ({panelThemeActive()!.name}, {panelThemeActive()!.type}) is colouring the panel, so this does not apply while it is on — see Code blocks → Colour theme.</div> : null}
+                </label>
                 </Section>
 
                 <Section id="devtools" title="DevTools">

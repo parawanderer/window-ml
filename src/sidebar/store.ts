@@ -14,6 +14,7 @@ export const WRAP_KEY = "ml_debug_codewrap";     // true = break-line (default);
 export const LINES_KEY = "ml_debug_codelines";   // line-number gutter on code blocks
 export const CODE_THEME_KEY = "ml_code_theme";   // storage.local: the code colour theme (a preset id, or "vscode")
 export const CODE_THEME_VSCODE_KEY = "ml_code_theme_vscode";   // storage.local: the uploaded VS Code theme, {name, text}
+export const CODE_THEME_UI_KEY = "ml_code_theme_ui";   // storage.local: whether an uploaded VS Code theme colours the whole panel
 // FOCUS MODE: read the transcript as a conversation. It hides the machinery a debugger wants and a reader
 // does not — step counters, approval badges, the "you" label, the model pill, the copy/raw controls, the
 // collapsed tool row's output preview. It is a DISPLAY pref, not a filter: nothing is dropped from the
@@ -123,6 +124,9 @@ export const codeTheme = signal<string>("atom-one");
 /** The uploaded VS Code theme, kept as its source text so a better converter re-reads it rather than serving an
  *  old conversion. Null until one is uploaded. */
 export const codeThemeCustom = signal<{ name: string; text: string } | null>(null);
+/** Whether an uploaded VS Code theme colours the whole PANEL too (its workbench colours), not only the code. On by
+ *  default: that is what a VS Code theme is. Presets never do — they carry no UI colours, and keep the default UI. */
+export const codeThemeUi = signal<boolean>(true);
 // FOCUS MODE: read the run as a conversation. A DISPLAY pref, not a filter — it quiets chrome (counters,
 // badges, provenance) via CSS on a root attribute, so nothing is dropped and turning it off restores it.
 export const focusMode = signal(false);

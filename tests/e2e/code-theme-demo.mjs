@@ -7,7 +7,8 @@
  * it, so every theme is seen on both surfaces at once (they share one stylesheet). It walks: the default (Atom One)
  * in a light panel; GitHub, a pair that follows the panel; Nord, dark-only, keeping its own background inside the
  * light panel; the panel switched to dark, and GitHub following it; then a VS Code theme uploaded through
- * Settings and converted — your own, if `THEME=` points at one, else the repo's fixture.
+ * Settings and converted — your own, if `THEME=` points at one, else the repo's fixture — colouring the whole panel,
+ * and then only the code.
  *
  * Knobs: THEME (path to a VS Code theme .json), LINGER (ms each beat holds, default 3000), HOLD=0 to exit instead
  * of holding the window open, HEADLESS=1 for screenshots only (tests/e2e/artifacts/code-theme-demo/).
@@ -147,9 +148,24 @@ try {
     await sleep(LINGER);
     await shot(page, "5-uploaded");
     await back();
-    await beat(page, "The transcript's code and the bench editor, in your theme");
+    await beat(page, "Your theme colours the whole panel, not only the code", "Its workbench colours, mapped onto this panel's own — and its selection tint, as in VS Code.");
+    await frame.locator(".bench-code .cm-content").click();
+    await frame.locator(".bench-code .cm-content").press(process.platform === "darwin" ? "Meta+a" : "Control+a");
     await sleep(LINGER);
     await shot(page, "6-vscode");
+
+    await beat(page, "Or only the code: Settings → \"Colour the whole panel with this theme\" off");
+    await settings();
+    await frame.locator(".set-codetheme-vscode input[type=checkbox]").scrollIntoViewIfNeeded();
+    await sleep(LINGER / 3);
+    await frame.locator(".set-codetheme-vscode input[type=checkbox]").uncheck();
+    await sleep(LINGER / 2);
+    await back();
+    await sleep(LINGER);
+    await shot(page, "7-code-only");
+    await settings();
+    await frame.locator(".set-codetheme-vscode input[type=checkbox]").check();
+    await back();
 
     await narrateDone(page, "Demo finished — Settings → Code blocks → Colour theme is yours to try");
     if (HOLD) {

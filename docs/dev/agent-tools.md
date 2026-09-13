@@ -294,6 +294,18 @@ the list, the VS Code converter and the `.hljs` colour reader are pure in `src/c
   converter re-reads old uploads.
 - **Nothing from the file reaches CSS verbatim**: hex colours and four font-style words only (tested with injection
   payloads). The file is JSONC — VS Code's "Generate Color Theme From Current Settings" writes comments.
+- **A VS Code theme can colour the whole PANEL** (`ml_code_theme_ui`, on by default; presets never do — they carry no
+  UI colours, so they keep the default UI). `panelPalette` maps its workbench colours onto the panel's tokens
+  (`PANEL_TOKENS`: `--bg`, `--panel`, `--fg`, `--accent`, `--ok`/`--err`/`--warn`, the JSON-tree colours), set inline on
+  the root so they beat the light/dark palettes, and all removed when it is off. A token the theme does not define is
+  DERIVED from its bg/fg (`color-mix`), never left at our grey; a layer given the same colour as the one under it (One
+  Dark Pro's widgets match its sidebar) is derived too, or cards vanish; the accent prefers the link colour over a
+  muted `focusBorder`; text on the accent is whichever of black/white contrasts more. While it is on the panel's
+  light/dark is the theme's `type`, and Settings → Theme says it does not apply.
+- **The editor's selection, current line, cursor and line numbers** come from the theme (`--code-sel`, `--code-line`,
+  `--code-cursor`, `--code-lno`); a preset's selection is a faint tint of its own text colour. CodeMirror's base theme
+  styles the FOCUSED selection with a longer selector (a fixed `#d7d4f0`), which had out-specified the editor's own
+  rule in every theme — the editor's selection selector now matches it.
 `tests/code-themes.test.mjs` checks EVERY preset's stylesheet for a background and a text colour; that found two
 parsing gaps a sample missed (comments inside a rule, `.hljs` in a selector list).
 

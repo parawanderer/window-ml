@@ -114,7 +114,23 @@ test("a VS Code theme file is uploaded, converted, and applied — and a bad fil
         const sunset = await benchColours(frame);
         expect(sunset.bg).toBe("rgb(27, 20, 38)");
         expect(sunset.keyword, "keyword.control's colour, the more specific rule").toBe("rgb(255, 79, 154)");
+        // The PANEL takes the theme too (the toggle is on by default), and goes dark with it in a light-set panel.
+        expect(await frame.evaluate(() => document.documentElement.getAttribute("data-theme"))).toBe("dark");
+        expect(await frame.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe("rgb(22, 15, 32)");
+        // A selection is the theme's own translucent tint, not the panel's accent.
+        await frame.locator(".bench-code .cm-content").press(process.platform === "darwin" ? "Meta+a" : "Control+a");
+        await expect.poll(() => frame.evaluate(() => {
+            const sel = document.querySelector(".bench-code .cm-selectionBackground");
+            return sel ? getComputedStyle(sel).backgroundColor : null;
+        })).toBe("rgba(107, 79, 154, 0.333)");
         if (SHOTS) await page.screenshot({ path: `${SHOTS}/bench-vscode.png` });
+
+        // Colour only the code: the panel returns to its own light palette, the code keeps the theme.
+        await openCodeSettings(frame);
+        await frame.locator(".set-codetheme-vscode input[type=checkbox]").uncheck();
+        expect(await frame.evaluate(() => document.documentElement.getAttribute("data-theme"))).toBe("light");
+        expect(await rootVar(frame, "--bg")).toBe("");
+        expect(await rootVar(frame, "--code-bg")).toBe("#1b1426");
     } finally {
         await ext.context.close();
         await fake.stop();

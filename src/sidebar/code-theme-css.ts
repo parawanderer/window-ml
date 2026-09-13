@@ -66,7 +66,7 @@ const CSS: Record<string, string> = {
 
 /** The live code theme: its stylesheet, and the colours to paint code SURFACES with (`--code-bg`/`--code-fg`).
  *  No colours for the default, which draws on the panel's own surface colours exactly as it always has. */
-export interface ActiveCodeTheme { css: string; bg?: string; fg?: string }
+export interface ActiveCodeTheme { css: string; bg?: string; fg?: string; ui?: ConvertedTheme["ui"] }
 
 let converted: { text: string; theme: ConvertedTheme } | null = null;
 /** A stored VS Code theme, converted once per distinct file rather than on every theme switch. */
@@ -84,7 +84,7 @@ export function convertStored(custom: { name: string; text: string }): Converted
  */
 export function activeCodeTheme(id: string, custom: { name: string; text: string } | null, panel: "dark" | "light"): ActiveCodeTheme {
     if (id === VSCODE_THEME_ID && custom) {
-        try { const t = convertStored(custom); return { css: t.css, bg: t.bg, fg: t.fg }; } catch { /* fall through to the default */ }
+        try { const t = convertStored(custom); return { css: t.css, bg: t.bg, fg: t.fg, ui: t.ui }; } catch { /* fall through to the default */ }
     }
     const { preset, file } = presetFile(id === VSCODE_THEME_ID ? DEFAULT_CODE_THEME : id, panel);
     const css = CSS[file] ?? "";

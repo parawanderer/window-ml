@@ -71,6 +71,13 @@ export interface ConvertedTheme {
     fg: string;
     /** A stylesheet of `.hljs` and `.hljs-*` rules, the same shape as a highlight.js theme. */
     css: string;
+    /** The editor's own chrome, where the theme defines it: VS Code paints a selection in `editor.selectionBackground`
+     *  (usually a translucent tint), not in any accent colour of ours, and a bright one washes the tokens out. */
+    ui: { selection?: string; lineHighlight?: string; cursor?: string; lineNumber?: string };
+    /** The PANEL's colour tokens (`--bg`, `--panel`, `--fg`, `--accent`…) from the theme's workbench colours — a
+     *  VS Code theme colours the whole workbench, not only the editor. Every token is set: taken from the theme
+     *  where it defines one, derived from its background and text colour where it does not. */
+    panel: Record<string, string>;
     /** Which highlight.js classes the theme coloured, and which fell back to its plain text colour. */
     matched: string[];
     missing: string[];
@@ -189,7 +196,83 @@ export function convertVscodeTheme(theme: unknown, fallbackName = "Custom theme"
     // highlight.js's own emphasis/strong classes mean italic/bold whatever colour the theme gave them.
     lines.push(".hljs-emphasis{font-style:italic}", ".hljs-strong{font-weight:bold}");
     const name = typeof t.name === "string" && t.name.trim() ? t.name.trim().slice(0, 80) : fallbackName;
-    return { name, type, bg, fg, css: lines.join("\n"), matched, missing };
+    const ui: ConvertedTheme["ui"] = {};
+    for (const [key, field] of [["editor.selectionBackground", "selection"], ["editor.lineHighlightBackground", "lineHighlight"],
+        ["editorCursor.foreground", "cursor"], ["editorLineNumber.foreground", "lineNumber"]] as const) {
+        const c = safeColor(colors[key]);
+        if (c) ui[field] = c;
+    }
+    const tokenColor = (cls: string) => new RegExp(`\\.${cls.replace(".", "\\.")}\\{color:(#[0-9a-f]+)`).exec(lines.join("\n"))?.[1];
+    const panel = panelPalette(colors, { type, bg, fg }, {
+        key: tokenColor("hljs-attr") ?? tokenColor("hljs-property"), str: tokenColor("hljs-string"),
+        lit: tokenColor("hljs-literal") ?? tokenColor("hljs-number"),
+    });
+    return { name, type, bg, fg, css: lines.join("\n"), ui, panel, matched, missing };
+}
+
+/** Every panel token a VS Code theme can set — so turning it off removes exactly what turning it on added. */
+export const PANEL_TOKENS = ["--bg", "--panel", "--panel-2", "--panel-2-hover", "--border", "--fg", "--fg-dim", "--fg-faint",
+    "--accent", "--accent-strong", "--accent-fg", "--ok", "--err", "--warn", "--user-bg", "--j-key", "--j-str", "--j-lit", "--j-base"];
+
+/** The panel's tokens, and the VS Code workbench colours that stand for each, best first. */
+const PANEL_MAP: [token: string, keys: string[]][] = [
+    ["--bg", ["sideBar.background", "editor.background"]],
+    ["--panel", ["editorWidget.background", "sideBarSectionHeader.background", "editorGroupHeader.tabsBackground"]],
+    ["--panel-2", ["input.background", "dropdown.background", "button.secondaryBackground"]],
+    ["--panel-2-hover", ["list.hoverBackground", "toolbar.hoverBackground"]],
+    ["--border", ["panel.border", "sideBar.border", "editorGroup.border", "widget.border", "contrastBorder"]],
+    ["--fg", ["foreground", "sideBar.foreground", "editor.foreground"]],
+    ["--fg-dim", ["descriptionForeground"]],
+    ["--fg-faint", ["disabledForeground", "editorLineNumber.foreground"]],
+    // The accent is a FILL (a selected tab, a primary button) and a LINK colour at once, so it wants a vivid one:
+    // `focusBorder` is often a muted grey (One Dark Pro's is), so it comes last.
+    ["--accent", ["textLink.foreground", "activityBarBadge.background", "button.background", "focusBorder"]],
+    ["--ok", ["gitDecoration.addedResourceForeground", "terminal.ansiGreen"]],
+    ["--err", ["errorForeground", "editorError.foreground", "terminal.ansiRed"]],
+    ["--warn", ["editorWarning.foreground", "terminal.ansiYellow"]],
+];
+
+/**
+ * The panel's colour tokens for a VS Code theme. Taken from the theme's own workbench colours where it defines
+ * them, and DERIVED from its background and text colour where it does not — so a theme that only sets editor
+ * colours still gives a coherent panel, rather than a theme background under our default greys. Only validated
+ * hex values and `color-mix()`es of them are produced, so nothing from the file reaches CSS verbatim.
+ */
+export function panelPalette(colors: Record<string, unknown>, base: { type: "dark" | "light"; bg: string; fg: string },
+    syntax: { key?: string; str?: string; lit?: string } = {}): Record<string, string> {
+    const pick = (keys: string[]) => { for (const k of keys) { const c = safeColor(colors[k]); if (c) return c; } return undefined; };
+    const mix = (a: string, b: string, pct: number) => `color-mix(in srgb, ${a} ${pct}%, ${b})`;
+    const out: Record<string, string> = {};
+    for (const [token, keys] of PANEL_MAP) { const c = pick(keys); if (c) out[token] = c; }
+    const bg = out["--bg"] ?? base.bg, fg = out["--fg"] ?? base.fg;
+    out["--bg"] = bg; out["--fg"] = fg;
+    // A layer the theme gives the SAME colour as the one under it would vanish into it — a card on a canvas of its
+    // own colour, dim text that is not dim — so it is derived instead of copied.
+    for (const [token, under] of [["--panel", "--bg"], ["--panel-2", "--panel"], ["--fg-dim", "--fg"]] as const) {
+        if (out[token] && out[token] === out[under]) delete out[token];
+    }
+    out["--panel"] ??= mix(fg, bg, 6);
+    out["--panel-2"] ??= mix(fg, bg, 14);
+    out["--panel-2-hover"] ??= mix(fg, bg, 22);
+    out["--border"] ??= mix(fg, bg, 18);
+    out["--fg-dim"] ??= mix(fg, bg, 72);
+    out["--fg-faint"] ??= mix(fg, bg, 48);
+    // Your own messages sit a shade apart from the canvas: sunken on a dark theme, a touch darker on a light one.
+    out["--user-bg"] = base.type === "dark" ? mix("#000000", bg, 22) : mix(fg, bg, 5);
+    if (out["--accent"]) {
+        out["--accent-strong"] = mix("#000000", out["--accent"], 15);
+        // Text ON the accent is chosen for contrast with it, not taken from the theme: the theme's button text is
+        // paired with its button colour, which is not necessarily the colour chosen as the accent here.
+        // Whichever of the two has the higher WCAG contrast ratio with it (they cross at a luminance of ~0.18).
+        const L = luminance(out["--accent"].slice(0, 7));
+        out["--accent-fg"] = (L + 0.05) / 0.05 > 1.05 / (L + 0.05) ? "#111111" : "#ffffff";
+    }
+    // The JSON tree's colours match the code theme, as they match Atom One by default.
+    if (syntax.key) out["--j-key"] = syntax.key;
+    if (syntax.str) out["--j-str"] = syntax.str;
+    if (syntax.lit) out["--j-lit"] = syntax.lit;
+    out["--j-base"] = fg;
+    return out;
 }
 
 /**

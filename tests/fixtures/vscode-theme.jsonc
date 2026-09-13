@@ -6,7 +6,17 @@
     "colors": {
         "editor.background": "#1b1426",
         "editor.foreground": "#f2e9ff",
-        // "editor.selectionBackground": "#44335c",
+        "editor.selectionBackground": "#6b4f9a55",
+        "editor.lineHighlightBackground": "#241b33",
+        "editorCursor.foreground": "#ffcc00",
+        // the workbench, for "colour the whole panel":
+        "sideBar.background": "#160f20",
+        "editorWidget.background": "#160f20",   // same as the sidebar — must be derived, or cards vanish
+        "foreground": "#e8dcff",
+        "textLink.foreground": "#ff7ab6",
+        "panel.border": "#3a2d52",
+        "errorForeground": "#ff5566",
+        // "editor.inactiveSelectionBackground": "#33264a",
     },
     "tokenColors": [
         { "scope": "comment", "settings": { "foreground": "#8a7aa8", "fontStyle": "italic" } },

@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { parseJsonc, convertVscodeTheme, hljsBaseColors, CODE_THEME_PRESETS, presetFile, DEFAULT_CODE_THEME, SCOPE_MAP } from "../src/code-themes.ts";
+import { parseJsonc, convertVscodeTheme, hljsBaseColors, CODE_THEME_PRESETS, presetFile, DEFAULT_CODE_THEME, SCOPE_MAP, PANEL_TOKENS } from "../src/code-themes.ts";
 
 const rule = (scope, foreground, fontStyle) => ({ scope, settings: { foreground, ...(fontStyle != null ? { fontStyle } : {}) } });
 const colorOf = (css, cls) => new RegExp(`\\.${cls.replace(".", "\\.")}\\{color:(#[0-9a-f]+)`).exec(css)?.[1];
@@ -118,4 +118,41 @@ test("a preset follows the panel where it can, and an unknown id is the default"
     assert.equal(presetFile("nord", "light").file, "nord", "a dark-only theme is used as it is in a light panel");
     assert.equal(presetFile("xcode", "dark").file, "xcode");
     assert.equal(presetFile("gone-in-a-later-version", "dark").preset.id, DEFAULT_CODE_THEME);
+});
+
+// THE EDITOR'S CHROME and THE PANEL. A VS Code theme colours the whole workbench; the selection in particular is
+// the theme's own translucent tint — painting it in our accent was a bright wash over the tokens.
+test("a theme's selection, current line, cursor and line numbers are carried over, hex only", () => {
+    const c = convertVscodeTheme({ colors: { "editor.selectionBackground": "#67769660", "editor.lineHighlightBackground": "#2c313c",
+        "editorCursor.foreground": "#528bff", "editorLineNumber.foreground": "red; } body{display:none" } });
+    assert.deepEqual(c.ui, { selection: "#67769660", lineHighlight: "#2c313c", cursor: "#528bff" });
+});
+
+test("the panel: workbench colours where the theme has them, derived from its bg/fg where it does not", async () => {
+    const t = convertVscodeTheme(parseJsonc(fs.readFileSync(path.resolve(import.meta.dirname, "fixtures/vscode-theme.jsonc"), "utf8")));
+    assert.equal(t.panel["--bg"], "#160f20", "the sidebar's background is the panel's");
+    assert.equal(t.panel["--fg"], "#e8dcff");
+    assert.equal(t.panel["--accent"], "#ff7ab6", "the link colour, not a muted focus border");
+    assert.equal(t.panel["--border"], "#3a2d52");
+    assert.equal(t.panel["--err"], "#ff5566");
+    // editorWidget.background equals the sidebar's, so a card would vanish into the canvas: derived instead.
+    assert.match(t.panel["--panel"], /^color-mix\(in srgb, #e8dcff 6%, #160f20\)$/);
+    assert.match(t.panel["--fg-faint"], /^color-mix/, "undefined tokens are derived, never left at our default grey");
+    assert.equal(t.panel["--j-str"], "#ffd166", "the JSON tree follows the code theme's string colour");
+});
+
+test("text on the accent is whichever of black and white contrasts better with it", () => {
+    const light = convertVscodeTheme({ colors: { "editor.background": "#101010", "textLink.foreground": "#61afef" } });
+    assert.equal(light.panel["--accent-fg"], "#111111", "a light blue takes dark text");
+    const dark = convertVscodeTheme({ colors: { "editor.background": "#101010", "textLink.foreground": "#1a3d8f" } });
+    assert.equal(dark.panel["--accent-fg"], "#ffffff");
+});
+
+test("every panel value is a hex colour or a color-mix of them, and every key is a known token", () => {
+    const t = convertVscodeTheme({ colors: { "sideBar.background": "#fff;} *{display:none", "foreground": "#123456",
+        "textLink.foreground": "url(//evil)", "panel.border": "#abcdef" } });
+    for (const [k, v] of Object.entries(t.panel)) {
+        assert.ok(PANEL_TOKENS.includes(k), `${k} is a token turning the theme off will remove`);
+        assert.match(v, /^(#[0-9a-f]{3,8}|color-mix\(in srgb, #[0-9a-f]{3,8} \d+%, #[0-9a-f]{3,8}\))$/, `${k}: ${v}`);
+    }
 });
