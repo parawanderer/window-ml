@@ -2200,6 +2200,30 @@ test("autoApproveReadonly: the agent reads its OWN setup (ml.config) with NO app
     assert.equal(step.approval, "readonly", "step tagged as auto-approved");
 });
 
+test("autoApproveReadonly: a survey that reads an earlier output by POINTER runs with NO approval prompt", async () => {
+    // `dereference` is in the dialect's read-only ml, and the pointer macro runs first so `@tool:wants` IS that
+    // call — so this is the free read the docs promise. It used to throw instead: ml.dereference resolves only while
+    // a tool call is executing, the read-only attempt runs BEFORE any tool call, and the throw sent every pointer
+    // read to the approval gate. The dialect's own tests never saw it, because they stub `ml`.
+    const world = loadPageWorld({
+        config: { model: "m", ocrModel: "", autoApproveReadonly: true },
+        onRuntimeMessage: scriptedModel([toolCall("wants", { token: true }, "c1"), toolCall("exec", { js: "@tool:wants.length" }, "c2"), reply("done")]),
+    });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    const exec = world.ml.domTools.find(t => t.name === "exec");
+    const wants = world.ml.defineTool({ name: "wants", run: () => "a computed result" });
+    let approvals = 0;
+    await world.ml.agent("x", { tools: [wants, exec], vision: false, toolTokens: true, approve: () => { approvals++; return true; } });
+    const step = events.find(e => e.kind === "agent-step" && e.tool === "exec" && !e.pending);
+    assert.equal(approvals, 0, `the pointer read was auto-approved (gate never called); the step said: ${step?.result}`);
+    assert.match(step.result, /\b17\b/, "and it read the real output: 'a computed result'.length");
+    assert.equal(step.approval, "readonly", "step tagged as auto-approved");
+});
+
 test("cached ml.fetch: fetch_url prompts + caches once, then a readonly exec re-reading it AUTO-APPROVES", async () => {
     // The whole loop through the REAL code: turn 1 fetches via the `fetch_url` tool (approval → the result is
     // CACHED); turn 2's `ml.fetch(url)…` in `exec` re-reads that cached result, which the read-only dialect

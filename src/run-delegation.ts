@@ -12,7 +12,8 @@
 // is `runAgentLoop` (agent-loop.ts), assembled background-side in a later slice.
 import type { MlTool, PageToolEnvelope, SubcallUsage, AnswerMedia } from "./contract";
 import { outputCapEscalated, hintSession } from "./contract";
-import { executeTool, toolContext, answerSetFor, withRunSession } from "./tool-exec";
+import { executeTool, toolContext, answerSetFor, withRunSession, withRunDeref } from "./tool-exec";
+import { expandPointers } from "./pointer-macro";
 import { derefViaBackground } from "./ml-agent";
 import { captureVerify, captureVerifyElement } from "./builtin-tools";
 import { htmlToMarkdown } from "./html-to-md";
@@ -189,7 +190,12 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
         if (outputCapEscalated("exec", args)) return { result: "", readonly: false };   // a raised output cap must hit the human gate
         try {
             const set = answerSetFor(run.byName);
-            const ro = await evalReadonly((args as { js: string }).js, document, typeof window !== "undefined" ? window.ml : null, makeAnswerFacade(set, elLine), { checkpoint: () => set.checkpoint() });
+            // The same two steps as the page path: expand `@tool:` first (it is not JavaScript, so the tokenizer
+            // would refuse it), and bind this run's resolver, which rings the service worker where the pointer
+            // store lives. Without either, every pointer read in a survey went to the approval gate.
+            const { code } = expandPointers((args as { js: string }).js);
+            const ro = await withRunDeref((ref, pipe) => derefViaBackground(runId, ref, pipe), () => evalReadonly(code, document,
+                typeof window !== "undefined" ? window.ml : null, makeAnswerFacade(set, elLine), { checkpoint: () => set.checkpoint() }));
             const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
             const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements }, args);
             const urls = [...new Set(ro.reused)];   // cached ml.fetch URLs this survey reused → the "reused a grant" note

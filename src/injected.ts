@@ -62,7 +62,7 @@ import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyE
 import { buildServerTools, buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
-import { executeTool, toolContext, currentAnswer, currentDeref, currentServerAllow, currentRunSession } from "./tool-exec";
+import { executeTool, toolContext, currentAnswer, currentDeref, currentServerAllow, currentRunSession, withRunDeref } from "./tool-exec";
 import { runAgentLoop, shotTurnMessage, CITABLE_TOOLS } from "./agent-loop";
 import type { AgentLoopDeps } from "./agent-loop";
 import { installToolDelegation, registerRun, endRun, runAnswer } from "./run-delegation";
@@ -1149,7 +1149,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         // Nothing is pre-hydrated here: the dialect auto-awaits a facade call, so a pointer
                         // is a value on this path too — the same semantics, arrived at differently.
                         const { code: roSrc } = expandPointers((args as { js: string }).js);
-                        const ro = await evalReadonly(roSrc, document, this, makeAnswerFacade(answerSet, elLine), { checkpoint: () => answerSet.checkpoint() });
+                        // The run's resolver is bound for the attempt: it runs before any tool call, outside
+                        // executeTool's binding, and `ml.dereference` reads whatever is bound.
+                        const ro = await withRunDeref(toolCtx.deref, () => evalReadonly(roSrc, document, this,
+                            makeAnswerFacade(answerSet, elLine), { checkpoint: () => answerSet.checkpoint() }));
                         const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
                         const { in: renderIn, out: renderOut } = descriptorFor(byName[name], { result, elements }, args);
                         // Cached ml.fetch URLs this survey re-read → a "reused a grant you approved" note (transparency).
