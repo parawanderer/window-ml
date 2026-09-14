@@ -38,6 +38,7 @@ So far this is mostly glue. Few of the ideas have actually been tested; the midd
 | The client tells the server who is waiting on each request and which requests belong together | sent and recorded, as data for the placement and keep-alive predictor | the server |
 | The server predicts each generation's decode speed and corrects itself from what it measures | the Ollama fork | the server |
 | Read-only work runs without asking me; everything else asks. The permission is whether the script is written in a small JavaScript dialect that can only read, always halts, and leaves nothing behind when it refuses | [the dialect](docs/dev/readonly-exec.md), still growing | the agent |
+| An agent uses my credentials without ever being able to read them: it holds a handle, and the secret stays in the service worker | not started ([notes](docs/spec/SECRET_HANDLES.md)) | the extension's background worker |
 
 **Right now.** Finishing the first row, because the rest depends on it: the benchmark tooling reads that data and
 the pointer A/B needs the benchmark, so both are paused until it is done. On the server side I am working on
