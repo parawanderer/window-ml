@@ -70,6 +70,12 @@ In the dialect a pointer read is a value, because facade calls are awaited for y
 `eval`), `tools.ts` resolves every pointer the script mentions before it runs, so there too `@tool:abc.length` is a
 number and not `undefined` read off a promise.
 
+`ml.dereference` reads whichever run's resolver is BOUND (`currentDeref` in `tool-exec.ts`), which is what stops a
+page's own console from reading a run's outputs. `executeTool` binds it during a tool call, but the read-only attempt
+runs before any tool call, so both call sites bind it themselves with `withRunDeref`. Until they did, every pointer
+read in a survey threw and went to the approval gate, on both paths, while the dialect's own tests (which stub `ml`)
+passed.
+
 ### 2. Tokenizer and parser
 
 `tokenize` and the `Parser` class in `readonly-exec.ts`. The grammar is the first whitelist: a shape the parser does
@@ -174,11 +180,11 @@ All four are fixed, and each has tests that fail on the old code.
 
 ## Where it is called
 
-- **Page-hosted runs**: `tryReadonly` in `injected.ts` expands pointers, calls `evalReadonly`, and returns the
-  result as the tool's; on any throw it returns null and the loop goes to the approval gate.
+- **Page-hosted runs**: `tryReadonly` in `injected.ts` expands pointers, binds the run's resolver, calls
+  `evalReadonly`, and returns the result as the tool's; on any throw it returns null and the loop goes to the
+  approval gate.
 - **Background-hosted runs**: `readonlyTry` in `run-delegation.ts` does the same inside the page for a loop that
-  lives in the service worker. It does not run the pointer macro yet, so a survey containing `@tool:` goes to
-  approval on this path.
+  lives in the service worker; its resolver rings the worker, where the pointer store lives.
 - **After approval**: the real `exec` tool (`tools.ts`) expands pointers, resolves them, and runs the code with
   `eval`, or through CDP on a page whose CSP forbids `eval`.
 
@@ -205,7 +211,6 @@ fails in seconds instead of hanging the runner.
 - The halting rules are conservative too: a callback that mutates the array its own `.map` is walking is refused,
   although array methods fix their length and would halt.
 - `join` on an array of very long strings can allocate up to V8's string limit before the result check refuses it.
-- The background path's missing pointer macro, above.
 - It is not a sandbox against a determined attacker crafting new reflection tricks; that is what SES (Hardened
   JavaScript) is for. It is an approval-fatigue reducer for an honest model that fails closed.
 

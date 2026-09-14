@@ -38,6 +38,14 @@ export function currentAnswer(): AnswerSet | null { return activeAnswer; }
 let activeDeref: ((ref: string, pipe?: string | string[]) => Promise<DerefRead>) | null = null;
 /** The pointer resolver for the tool currently running, or null (→ `ml.dereference` throws outside a run). */
 export function currentDeref(): ((ref: string, pipe?: string | string[]) => Promise<DerefRead>) | null { return activeDeref; }
+/** Run `fn` with the run's pointer resolver bound — for the read-only exec attempt, which runs BEFORE any tool call
+ *  and so outside `executeTool`'s binding. Without it every pointer read in an auto-approved survey threw and went
+ *  to the approval gate. Save/restore, like the other bindings. */
+export async function withRunDeref<T>(deref: ((ref: string, pipe?: string | string[]) => Promise<DerefRead>) | null | undefined, fn: () => Promise<T>): Promise<T> {
+    const prev = activeDeref;
+    activeDeref = deref ?? prev;
+    try { return await fn(); } finally { activeDeref = prev; }
+}
 
 // And the same for the RUN'S SESSION, so a model call a tool makes (a vision read, grounding, an OCR pass, a
 // reader distilling a fetch) is labelled as part of the run that caused it: `use: "agent"`, the run's session (see

@@ -200,6 +200,28 @@ test("readonlyTry: an in-dialect survey that RAISES maxChars must NOT auto-appro
     } finally { globalThis.document = prevDoc; globalThis.Element = prevEl; }
 });
 
+test("readonlyTry: a pointer read in a survey auto-approves — the macro runs and the run's resolver is bound", async () => {
+    // Two things were missing on this path, and either alone sent every pointer read to the approval gate:
+    // `@tool:` was never expanded (so the tokenizer refused it), and nothing bound the run's resolver (the attempt
+    // runs before any tool call, outside executeTool's binding, and `ml.dereference` reads whatever is bound).
+    const { currentDeref } = await import("../src/tool-exec.ts");
+    const dom = new JSDOM("<p>x</p>");
+    const prev = [globalThis.document, globalThis.Element, globalThis.window];
+    globalThis.document = dom.window.document; globalThis.Element = dom.window.Element;
+    let bound = null;
+    // Stands in for window.ml.dereference exactly where it matters: it can only answer through the bound resolver.
+    globalThis.window = { ml: { dereference: async (ref) => { bound = currentDeref(); if (!bound) throw new Error("not in a run"); return `VALUE(${ref})`; } } };
+    try {
+        registerRun("roPtr", [tool({ name: "exec", requiresApproval: true })]);
+        const env = await runDelegatedTool("roPtr", "exec", { js: "@tool:wants.length" }, { readonlyTry: true });
+        assert.ok(bound, "a resolver was bound while the survey ran");
+        assert.equal(env.readonly, true, `auto-approvable; got ${JSON.stringify(env)}`);
+        assert.match(env.result, /\b18\b/, "'VALUE(@tool:wants)'.length");
+        assert.equal(currentDeref(), null, "and unbound again afterwards");
+        endRun("roPtr");
+    } finally { [globalThis.document, globalThis.Element, globalThis.window] = prev; }
+});
+
 test("an unknown tool name → a clean error envelope (never a throw)", async () => {
     registerRun("r5", [tool()]);
     const env = await runDelegatedTool("r5", "nope", {});
