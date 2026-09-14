@@ -1149,7 +1149,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         // Nothing is pre-hydrated here: the dialect auto-awaits a facade call, so a pointer
                         // is a value on this path too — the same semantics, arrived at differently.
                         const { code: roSrc } = expandPointers((args as { js: string }).js);
-                        const ro = await evalReadonly(roSrc, document, this, makeAnswerFacade(answerSet, elLine));
+                        const ro = await evalReadonly(roSrc, document, this, makeAnswerFacade(answerSet, elLine), { checkpoint: () => answerSet.checkpoint() });
                         const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
                         const { in: renderIn, out: renderOut } = descriptorFor(byName[name], { result, elements }, args);
                         // Cached ml.fetch URLs this survey re-read → a "reused a grant you approved" note (transparency).

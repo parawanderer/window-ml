@@ -1,5 +1,9 @@
 # Spec: auto-approve read-only `exec` via a mediated mini-interpreter
 
+> The original v1 design, kept for its reasoning. The dialect has grown well past it (loops, `try`, `new`, regex,
+> destructuring, owned mutation, halting rules), so for what the code does now read
+> [`docs/dev/readonly-exec.md`](../dev/readonly-exec.md).
+
 Status: experimental / incremental. It's fine if it's incomplete — anything the
 interpreter doesn't understand **falls back to the existing approval + `eval`
 path**, so gaps degrade to "asks the human," never to "runs unsafely."

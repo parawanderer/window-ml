@@ -173,7 +173,7 @@ cancel — no waiting on a slow local generation.
 **Read-only `exec` auto-approve.** `autoApproveReadonly` (on by default) runs a read-only DOM survey with no
 prompt, through a mediated mini-interpreter (`readonly-exec.ts`) that is itself the whitelist and never compiles a
 string. Anything outside its dialect falls through to the normal approval: gaps degrade to "asks the human", never
-to "runs unsafely". How it works: `docs/dev/agent-tools.md`; spec `docs/spec/READONLY_EXEC_SPEC.md`.
+to "runs unsafely". How it works, what it promises and what it is for: `docs/dev/readonly-exec.md` (keep it current).
 
 **RULE — extending the dialect requires adversarial tests.** Any time you add a construct to the
 read-only dialect (a new statement/operator/pattern, a new allowed method, a new facade member),
@@ -185,6 +185,16 @@ for whether it can bind a live method or reach a denied prop; a new allowed meth
 return leaks the realm. The invariant is unchanged: gaps degrade to "asks the human," never to "runs
 unsafely" — new tests prove the new surface keeps that.
 
+  **The escape tests are not enough on their own: re-check the whole CONTRACT, not just the new surface.** An
+  extension can break an argument made for an EARLIER one, and nothing notices: `for…of` was argued terminating
+  because nothing could grow an iterable, and the next day's owned `Set`/`Map` mutators made
+  `for (const x of a) a.push(x)` run forever. So every extension also gets, in the same change: HALTING tests (can it
+  loop without a trip count fixed at the start, change a collection something is iterating, recurse by a route
+  `MAX_CALL_DEPTH` does not see, or do work proportional to an argument inside one host call with no budget or size
+  check in front of it?), FAILURE tests (a script that uses it and then falls out of dialect leaves nothing behind),
+  and an update to `docs/dev/readonly-exec.md`. Anything that could loop is tested in a worker with a timeout, so a
+  regression fails instead of hanging the runner.
+
 ## Where the implementation notes live — read the one you are about to change
 
 This file holds the rules for working in the repo and the traps. How each subsystem works, and why it is built
@@ -193,7 +203,8 @@ learned by shipping the wrong version first.
 
 | Changing… | Read first |
 | --- | --- |
-| agent tools, the read-only dialect, locate/vision, `verify`, cross-page runs, approvals over IPC, how a run renders in the sidebar | `docs/dev/agent-tools.md` (+ `docs/LOCATE-VISION.md` for locate, `docs/spec/READONLY_EXEC_SPEC.md`) |
+| agent tools, locate/vision, `verify`, cross-page runs, approvals over IPC, how a run renders in the sidebar | `docs/dev/agent-tools.md` (+ `docs/LOCATE-VISION.md` for locate) |
+| the read-only `exec` dialect: the pointer macro, the parser, the mediated evaluator, halting | `docs/dev/readonly-exec.md` |
 | `python_exec`, the sandbox modes, the Python bench and its editor | `docs/dev/python-sandbox.md` |
 | streamed tool output, the output cell, line maps, tracebacks, code-block buttons, retry diffs | `docs/dev/output-and-code.md` |
 | `@tool:` pointers, `dereference`, the pipe dialect, the pointer macro | `docs/dev/pointers.md` (+ `docs/POINTER-IDENTIFIERS.md`) |
