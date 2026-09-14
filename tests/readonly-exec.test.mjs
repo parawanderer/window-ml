@@ -1168,3 +1168,201 @@ test("the macro cannot smuggle a non-readonly method past the dialect", async ()
     assert.ok(value === "refused" || String(value).startsWith("VALUE("), `unexpected: ${value}`);
     assert.ok(!ML_CALLS.some(([m]) => m === "pythonExec"), "pythonExec was never reached");
 });
+
+// ---- EVERY SURVEY HALTS -----------------------------------------------------------------------------------------
+//
+// Two different properties, kept apart on purpose:
+//
+//   A. HALTING BY CONSTRUCTION — a property of the LANGUAGE. No script in the dialect can express an infinite
+//      loop: a loop's trip count is fixed when it starts (a collection cannot change while it is being iterated),
+//      and no function can be entered while it is already running (call depth is bounded by the source).
+//   B. BOUNDED COST — a resource POLICY. A script that halts can still take a very long time (loops nested over
+//      large collections, doubling an array forty times). A deterministic step budget and size caps send those to
+//      the human gate instead of freezing the page's main thread.
+//
+// Each case runs in a WORKER with a timeout: the interpreter is synchronous between awaits, so a regression here
+// is an infinite loop, and on the main thread it would hang the whole runner instead of failing one test.
+import { Worker } from "node:worker_threads";
+import { after } from "node:test";
+import { STEP_BUDGET } from "../src/readonly-exec.ts";
+const RO_URL = new URL("../src/readonly-exec.ts", import.meta.url).href;
+// A worker does not inherit the runner's tsx hooks (Node's own type stripping takes the import instead, and it
+// rejects the interpreter's parameter properties), so the worker registers tsx itself before importing.
+const TSX_API = import.meta.resolve("tsx/esm/api");
+// The cost tests run at a SMALL budget: the mechanism is identical at any size, and at the real one every
+// over-budget case spends a second proving it. One test below keeps the real budget.
+const TEST_BUDGET = 200_000;
+// ONE worker, reused: starting one costs ~150 ms, and there are dozens of cases. Only a case that HANGS costs a
+// fresh one, because the only way to stop a synchronous loop is to terminate the thread running it.
+let worker = null, nextId = 0;
+const pending = new Map();
+function ensureWorker() {
+    if (worker) return worker;
+    worker = new Worker(`
+        const { parentPort, workerData } = require("node:worker_threads");
+        const ready = import(workerData.tsx).then((tsx) => { tsx.register(); return import(workerData.url); });
+        parentPort.on("message", ({ id, src, stepBudget }) => ready
+            .then(({ evalReadonly }) => evalReadonly(src, { defaultView: null }, undefined, undefined, { stepBudget: stepBudget ?? undefined }))
+            .then((r) => parentPort.postMessage({ id, value: r.value }),
+                  (e) => parentPort.postMessage({ id, threw: e.constructor.name, message: e.message })));`,
+        { eval: true, workerData: { url: RO_URL, tsx: TSX_API } });
+    worker.on("message", ({ id, ...r }) => { pending.get(id)?.(r); pending.delete(id); });
+    worker.on("error", (e) => { for (const done of pending.values()) done({ threw: "WorkerError", message: String(e) }); pending.clear(); worker = null; });
+    return worker;
+}
+// Terminated explicitly: its message listener keeps the port referenced, so an unref'd worker still holds the
+// file's process open after the last test.
+after(() => worker?.terminate());
+function inWorker(src, ms = 5000, stepBudget = TEST_BUDGET) {
+    return new Promise((resolve) => {
+        const id = nextId++, w = ensureWorker();
+        const timer = setTimeout(() => { pending.delete(id); w.terminate(); if (worker === w) worker = null; resolve({ hung: true }); }, ms);
+        pending.set(id, (r) => { clearTimeout(timer); resolve(r); });
+        w.postMessage({ id, src, stepBudget });
+    });
+}
+/** The survey must END, and end OUT of dialect (→ the human gate), not with a value and not with a runtime error. */
+async function fallsBack(src, why, stepBudget) {
+    const r = await inWorker(src, 5000, stepBudget);
+    assert.ok(!r.hung, `${why}: still running after 5 s`);
+    assert.ok(r.threw === "NotInDialect" || r.threw === "Denied", `${why}: expected a fall-back to approval, got ${JSON.stringify(r)}`);
+    return r;
+}
+
+test("ADVERSARIAL (halting): a loop cannot grow the collection it is iterating", async () => {
+    // Every one of these ran forever before: the iteration re-reads the collection each step and the body keeps
+    // adding to it. Possible since script-created containers became mutable (push/add/set on your own array).
+    for (const [src, why] of [
+        ["const a = [1]; for (const x of a) a.push(x); 0", "for…of over an array the body pushes to"],
+        ["const a = [1]; for (const x of a) a[a.length] = x; 0", "for…of over an array the body assigns past the end of"],
+        ["const s = new Set([0]); for (const x of s) s.add(x + 1); 0", "for…of over a Set the body adds to"],
+        ["const m = new Map([[0, 0]]); for (const e of m) m.set(e[0] + 1, 0); 0", "for…of over a Map the body sets"],
+        ["const s = new Set([0]); s.forEach(x => s.add(x + 1)); 0", "Set.forEach whose callback adds"],
+        ["const m = new Map([[0, 0]]); m.forEach((v, k) => m.set(k + 1, 0)); 0", "Map.forEach whose callback sets"],
+        ["const a = [1]; Array.from(a, x => a.push(x)); 0", "Array.from over an array its mapper pushes to"],
+        ["const s = new Set([0]); Array.from(s, x => s.add(x + 1)); 0", "Array.from over a Set its mapper adds to"],
+    ]) {
+        const r = await fallsBack(src, why);
+        assert.match(r.message, /while it is being iterated/, `${why}: says why`);
+    }
+});
+
+test("ADVERSARIAL (halting): recursion is bounded, however a function reaches itself", async () => {
+    // Recursion is allowed the way `ml.range` allows a loop: bounded. Depth is capped (MAX_CALL_DEPTH), so a call
+    // tree is finite; the step budget bounds how BIG that finite tree may get. Every one of these ran forever, or
+    // stopped only when the JS stack overflowed — a RangeError a dialect `try` could have caught and retried.
+    for (const [src, why, reason] of [
+        ["const f = n => f(n + 1); f(0)", "unbounded linear recursion", /nested more than 256 deep/],
+        ["const f = n => n > 0 ? f(n - 1) + f(n - 1) : 1; f(60)", "branching recursion through its own name", /over \d+ steps/],
+        ["const r = h => n => n > 0 ? h(h)(n - 1) + h(h)(n - 1) : 1; r(r)(60)", "fresh closures of one arrow (the Y-combinator shape)", /over \d+ steps/],
+        ["const f = n => n > 0 ? [n - 1, n - 1].map(f).length : 1; f(60)", "branching recursion through a host callback", /over \d+ steps/],
+        // Not even reachable: calling a function stored on an object is outside the dialect altogether.
+        ["const o = {}; o.f = n => o.f(n + 1); o.f(0)", "recursion through an object property", /method 'f' not allowed/],
+        ["try { const f = n => f(n + 1); f(0) } catch { } 0", "a runaway recursion inside try/catch", /nested more than 256 deep/],
+    ]) {
+        const r = await fallsBack(src, why);
+        assert.match(r.message, reason, `${why}: says why`);
+    }
+});
+
+test("recursion inside the bounds works: a tree walk and a deep chain", async () => {
+    // Walking a nested structure is what recursion is FOR in a read-only survey.
+    const ok = async (src, want) => { const r = await inWorker(src); assert.deepEqual(r, { value: want }, src); };
+    await ok("const tree = { v: 1, kids: [{ v: 2, kids: [] }, { v: 3, kids: [{ v: 4, kids: [] }] }] };"
+        + " const sum = t => t.v + t.kids.map(sum).reduce((a, b) => a + b, 0); sum(tree)", 10);
+    await ok("const fact = n => n < 2 ? 1 : n * fact(n - 1); fact(10)", 3628800);
+    // Just under the cap, by both routes, must not trip the JS stack first.
+    await ok("const f = n => n > 0 ? f(n - 1) : 'bottom'; f(250)", "bottom");
+    await ok("const f = n => n > 0 ? [n - 1].map(f)[0] : 'bottom'; f(120)", "bottom");
+});
+
+test("halting rules leave the ordinary shapes alone", async () => {
+    const ok = async (src, want) => { const r = await inWorker(src); assert.deepEqual(r, { value: want }, src); };
+    // Filling a DIFFERENT container while iterating is the accumulator idiom and must keep working.
+    await ok("const src = [1, 2, 3]; const out = []; for (const x of src) out.push(x * 2); out", [2, 4, 6]);
+    await ok("const s = new Set([1, 2]); const seen = new Set(); s.forEach(x => seen.add(x * 10)); [...seen]", [10, 20]);
+    // Once the loop is over — however it ended — the collection is writable again.
+    await ok("const a = [1, 2]; for (const x of a) { } a.push(3); a.length", 3);
+    await ok("const a = [1, 2]; const f = () => { for (const x of a) return x; }; f(); a.push(3); a.length", 3);
+    await ok("const a = [1, 2]; try { for (const x of a) JSON.parse('{'); } catch { } a.push(3); a.length", 3);
+    // Reading the collection being iterated is fine; so is nesting two loops over it.
+    await ok("const a = [1, 2]; const out = []; for (const x of a) for (const y of a) out.push(x * y); out", [1, 2, 2, 4]);
+    // The same function called again once it has RETURNED is not recursion.
+    await ok("const f = x => x * 2; f(f(3))", 12);
+    await ok("const f = x => x + 1; [1, 2, 3].map(f)", [2, 3, 4]);
+    await ok("const twice = g => x => g(g(x)); twice(y => y + 1)(0)", 2);
+    // Array methods fix their length when they start, so a callback that pushes to its own array still halts —
+    // but it is changing the collection being iterated, which the rule refuses rather than special-cases.
+    const r = await inWorker("const a = [1, 2]; a.map(x => a.push(x)); a.length");
+    assert.ok(r.threw === "Denied", `a callback mutating its own array falls back: ${JSON.stringify(r)}`);
+});
+
+test("ADVERSARIAL (cost): a survey that halts but would take too long goes to the human", async () => {
+    for (const [src, why] of [
+        ["const o = { n: 0 }; for (const i of Array(1000000).keys()) for (const j of Array(1000000).keys()) o.n = o.n + 1; o.n", "10¹² iterations of a nested loop"],
+        ["Array.from({ length: 1000000000 }, (_, i) => i).length", "a billion-element Array.from"],
+        ["Array(1000000000).join(',').length", "a billion-hole array, joined"],
+        ["new Array(1000000000).length", "new Array of a billion"],
+        ["'x'.repeat(1000000000).length", "a gigabyte repeat"],
+        ["''.padStart(1000000000).length", "a gigabyte padStart"],
+        ["const o = { a: [1] }; for (const i of Array(40).keys()) o.a = o.a.concat(o.a); o.a.length", "an array doubled forty times"],
+        ["const o = { s: 'xx' }; for (const i of Array(40).keys()) o.s = o.s + o.s; o.s.length", "a string doubled forty times"],
+    ]) await fallsBack(src, why);
+});
+
+test("ADVERSARIAL (cost): a try/catch cannot swallow the budget, at the REAL budget", async () => {
+    // The real STEP_BUDGET, once: proves the shipped number stops a runaway in bounded time, not just a test-sized one.
+    const r = await fallsBack("try { for (const i of Array(1000000).keys()) for (const j of Array(1000000).keys()) { } } catch { } 0",
+        "an over-budget loop inside try/catch", null);   // null = the shipped STEP_BUDGET
+    assert.match(r.message, new RegExp(`over ${STEP_BUDGET} steps`));
+});
+
+test("the budget leaves room for a realistic survey of a large page", async () => {
+    const rows = Array.from({ length: 20000 }, (_, i) => `<tr class="${i % 3 ? "a" : "b"}"><td>${i}</td><td>name ${i}</td></tr>`).join("");
+    const doc = new JSDOM(`<table>${rows}</table>`).window.document;
+    const r = await evalReadonly("Array.from(document.querySelectorAll('tr')).filter(r => r.className === 'a')"
+        + ".map(r => ({ id: r.cells[0].textContent, name: r.cells[1].textContent.trim().toUpperCase() })).length", doc);
+    assert.equal(r.value, 13333);
+});
+
+test("a survey that falls out of dialect leaves the answer set as it found it", async () => {
+    // The interpreter's contract is that a failed attempt does nothing observable, which is what makes TRYING it
+    // safe. `ml.answer` is the one mutating facade, so an add before the fall-back would outlive it: the human is
+    // then asked to approve a script whose earlier half has already changed the run's answer.
+    const set = new AnswerSet();
+    set.add({ kind: "text", text: "kept" });
+    await assert.rejects(
+        evalReadonly("ml.answer.add('leaked'); ml.answer.remove(0); document.body.click()", world(), ML,
+            makeAnswerFacade(set), { checkpoint: () => set.checkpoint() }),
+        outOfDialect);
+    assert.deepEqual(set.dump().map((d) => d.preview), ["kept"]);
+    // And a survey that SUCCEEDS keeps its changes.
+    await evalReadonly("ml.answer.add('added')", world(), ML, makeAnswerFacade(set), { checkpoint: () => set.checkpoint() });
+    assert.deepEqual(set.dump().map((d) => d.preview), ["kept", "added"]);
+});
+
+test("ADVERSARIAL (cost): a regex that could backtrack without end is refused before it runs", async () => {
+    // One host call, no match timeout in V8, and exponential in the input: `/^(a+)+$/` on forty a's and a `!`
+    // ran for hours. Checked on the pattern, so it never starts.
+    const s = "'" + "a".repeat(38) + "!'";
+    for (const [src, why] of [
+        [`/^(a+)+$/.test(${s})`, "a nested quantifier"],
+        [`/^(a|a)+$/.test(${s})`, "an alternation under a quantifier"],
+        [`/^(\\w+\\s?)*$/.test(${s})`, "the classic word-and-space shape"],
+        [`${s}.match('^(a+)+$')`, "a string pattern, which match() turns into a regex"],
+        [`new RegExp('^(a+)+$').test(${s})`, "a pattern built with new RegExp"],
+        [`/^(?:a+){2,}$/.test(${s})`, "a non-capturing group under a counted repeat"],
+    ]) {
+        const r = await fallsBack(src, why);
+        assert.match(r.message, /backtrack/, `${why}: says why`);
+    }
+});
+
+test("ordinary regexes still run", async () => {
+    const ok = async (src, want) => { const r = await inWorker(src); assert.deepEqual(r, { value: want }, src); };
+    await ok("'a1b22c333'.match(/\\d+/g)", ["1", "22", "333"]);
+    await ok("/^(?:https?):\\/\\/([^/]+)/.exec('https://example.com/x')[1]", "example.com");
+    await ok("'2026-09-14'.replace(/(\\d+)-(\\d+)-(\\d+)/, '$3/$2/$1')", "14/09/2026");
+    await ok("/(?<year>\\d{4})/.exec('in 2026').groups.year", "2026");
+    await ok("/(ab)?c/.test('abc')", true);
+});

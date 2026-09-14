@@ -25,6 +25,78 @@
 export class NotInDialect extends Error {}
 export class Denied extends Error {}
 
+// ------------------------------------------------------------------ halting ---
+// Two properties, deliberately kept apart (docs/dev/readonly-exec.md, "Halting"):
+//
+//   A. HALTING BY CONSTRUCTION, a property of the language. No script can express an infinite loop: there is no
+//      `while`/`for(;;)`/generator/custom iterator, a collection cannot change while it is being iterated (so a
+//      loop's trip count is fixed when it starts), and calls nest at most MAX_CALL_DEPTH deep (so recursion is a
+//      tree of bounded depth whose every node does finitely much, which is finite). The collection rule went
+//      missing when script-created containers became mutable, and `for (const x of a) a.push(x)` ran forever.
+//   B. BOUNDED COST, a resource policy. A script that halts can still take very long. The step budget and the size
+//      caps below send it to the human gate instead of freezing the page's main thread, and a regex that could
+//      backtrack catastrophically (one host call, unbounded) is refused before it runs.
+
+/** Evaluation steps one survey may take: every AST node evaluated and every element iterated costs one. Measured at
+ *  about 3.2 million steps a second (M-series laptop), so a runaway holds the page's main thread for under a second,
+ *  while a filter-and-map survey over 20,000 table rows uses 207k steps, 7% of it. Deterministic: the same script on
+ *  the same page always gets the same answer. */
+export const STEP_BUDGET = 3_000_000;
+/** The largest array, Set or Map one step may produce. A single host call (`Array(n).join()`, `concat`, `Array.from
+ *  ({ length })`) does O(n) work without the budget seeing it, so its size is what bounds its cost. */
+export const MAX_COLLECTION = 1_000_000;
+/** The longest string one step may produce, for the same reason (`repeat`, `padStart`, doubling by `+`). */
+export const MAX_STRING = 10_000_000;
+/** How deep calls may nest. Recursion is allowed, the way `ml.range` allows a loop: bounded. Deep enough to walk
+ *  any real DOM or JSON tree, and far below where the JS stack itself would overflow, so the cap is what stops a
+ *  runaway rather than a RangeError a dialect `try` could catch. */
+export const MAX_CALL_DEPTH = 256;
+
+/** A regex that can backtrack exponentially: a REPEATED group that itself contains a quantifier or an alternation
+ *  (`(a+)+`, `(\w+\s?)*`, `(a|a)+`). V8 has no match timeout, so one `.test()` of such a pattern on a 40-character
+ *  string runs for hours in a single host call, where no budget can reach it. Conservative by design: a refused
+ *  pattern goes to the human, and `(?:x|y)+` is refused along with the dangerous ones. Returns why, or null. */
+export function riskyRegex(source: string): string | null {
+    // One frame per open group: whether a quantifier or `|` appears anywhere inside it.
+    const stack: { quant: boolean; alt: boolean }[] = [];
+    const isRepeat = (s: string, i: number): boolean => {
+        const c = s[i];
+        if (c === "*" || c === "+") return true;
+        if (c !== "{") return false;
+        const m = /^\{(\d+)(,(\d*))?\}/.exec(s.slice(i));
+        return !!m && (m[2] !== undefined ? (m[3] === "" || Number(m[3]) > 1) : Number(m[1]) > 1);
+    };
+    const mark = (k: "quant" | "alt") => { for (const f of stack) f[k] = true; };
+    for (let i = 0; i < source.length; i++) {
+        const c = source[i];
+        if (c === "\\") { i++; continue; }
+        if (c === "[") {   // a class is one atom: skip to its close
+            for (i++; i < source.length && source[i] !== "]"; i++) if (source[i] === "\\") i++;
+            continue;
+        }
+        if (c === "(") {
+            stack.push({ quant: false, alt: false });
+            // A group's own prefix (`?:`, `?=`, `?!`, `?<=`, `?<!`, `?<name>`) is syntax, not a quantifier.
+            if (source[i + 1] === "?") {
+                if (source[i + 2] === "<" && source[i + 3] !== "=" && source[i + 3] !== "!") i = source.indexOf(">", i);
+                else i += source[i + 2] === "<" ? 3 : 2;
+                if (i < 0) return null;
+            }
+            continue;
+        }
+        if (c === "|") { mark("alt"); continue; }
+        if (c === ")") {
+            const g = stack.pop();
+            if (g && isRepeat(source, i + 1) && (g.quant || g.alt))
+                return g.quant ? "a repeated group that contains a quantifier" : "a repeated group that contains an alternation";
+            if (g && isRepeat(source, i + 1)) mark("quant");
+            continue;
+        }
+        if (isRepeat(source, i) || c === "?") mark("quant");
+    }
+    return null;
+}
+
 // ---------------------------------------------------------------- tokenizer ---
 
 interface Tok { t: "num" | "str" | "name" | "punct" | "eof" | "template" | "regex"; v: string; quasis?: string[]; exprs?: string[]; flags?: string; }
@@ -708,6 +780,58 @@ class Evaluator {
     // while the bare wrapper a host method receives stays synchronous.
     private ourFns = new WeakMap<Function, { node: Node; scope: any }>();
     private depth = 0;
+    // What is left of the step budget. Spent by every node evaluated and every element iterated.
+    private fuel: number;
+    // Collections being iterated right now (a count, since loops over one collection can nest). A mutator or a
+    // property write on one of these is refused: that is what keeps every loop's trip count fixed at its start.
+    private iterating = new Map<object, number>();
+
+    private tick(n = 1): void {
+        if ((this.fuel -= n) < 0) throw new NotInDialect(`too much work to run without asking: over ${this.budget} steps`);
+    }
+    /** Refuse a value one step made too big to have been cheap (see MAX_COLLECTION / MAX_STRING). */
+    private sized<T>(v: T): T {
+        if (typeof v === "string" ? v.length > MAX_STRING
+            : Array.isArray(v) ? v.length > MAX_COLLECTION
+                : (v instanceof Set || v instanceof Map) && v.size > MAX_COLLECTION)
+            throw new NotInDialect("a value too large to build without asking");
+        return v;
+    }
+    private hold(o: unknown): void { if (o !== null && typeof o === "object") this.iterating.set(o, (this.iterating.get(o) ?? 0) + 1); }
+    private release(o: unknown): void {
+        if (o === null || typeof o !== "object") return;
+        const n = (this.iterating.get(o) ?? 1) - 1;
+        if (n > 0) this.iterating.set(o, n); else this.iterating.delete(o);
+    }
+    private notIterating(o: unknown, what: string): void {
+        if (o !== null && typeof o === "object" && this.iterating.has(o))
+            throw new Denied(`can't ${what} a collection while it is being iterated — build a new one instead`);
+    }
+    /** `Array(n)` / `new Array(n)` allocate n in one step, which the budget never sees. */
+    private allocation(name: string, args: unknown[]): void {
+        if (name === "Array" && args.length === 1 && typeof args[0] === "number" && args[0] > MAX_COLLECTION)
+            throw new NotInDialect("an array too large to build without asking");
+    }
+    /** A pattern given as a STRING becomes a regex inside the host call (`match`, `matchAll`, `search`, `new RegExp`),
+     *  so it gets the same check a regex literal does. */
+    private patternArg(p: unknown): void {
+        const risk = typeof p === "string" ? riskyRegex(p) : null;
+        if (risk) throw new NotInDialect(`a regex that could backtrack without end (${risk})`);
+    }
+    /** The host calls that do work proportional to an ARGUMENT, checked before they run: afterwards is too late. */
+    private preflight(obj: unknown, key: string, args: unknown[]): void {
+        const big = () => { throw new NotInDialect("a value too large to build without asking"); };
+        if (typeof obj === "string") {
+            if (key === "repeat" && obj.length * Math.max(0, Number(args[0]) || 0) > MAX_STRING) big();
+            if ((key === "padStart" || key === "padEnd") && Number(args[0]) > MAX_STRING) big();
+            if (key === "match" || key === "matchAll" || key === "search") this.patternArg(args[0]);
+        }
+        if (Array.isArray(obj) && key === "join" && obj.length * String(args[0] ?? ",").length > MAX_STRING) big();
+        // `Array.from({ length: n })` walks n indices inside the host, with or without a mapper.
+        const src = args[0] as { length?: unknown } | null;
+        if (key === "from" && src !== null && typeof src === "object" && !Array.isArray(src)
+            && typeof src.length === "number" && src.length > MAX_COLLECTION) big();
+    }
     // Containers the SCRIPT created (plain object/array literals, `new`, and the fresh arrays/objects our
     // allowlisted methods return — .map/.filter/.slice/Object.entries/JSON.parse/spread/…). ONLY these may be
     // mutated (assignment + push/sort/…). An array/object reached by READING a property off a page value is
@@ -715,7 +839,7 @@ class Evaluator {
     // all build new ones), so marking method results owned can't launder a live page container.
     private owned = new WeakSet<object>();
     private own<T>(v: T): T { if (v !== null && typeof v === "object" && isWritableTarget(v)) this.owned.add(v as object); return v; }
-    constructor(private ml: Record<string, unknown> | null) {}
+    constructor(private ml: Record<string, unknown> | null, private budget: number = STEP_BUDGET) { this.fuel = budget; }
 
     private guardKey(key: unknown): string {
         const k = String(key);
@@ -767,7 +891,7 @@ class Evaluator {
     private bindPattern(scope: any, pattern: Node, val: unknown): void {
         if (pattern.type === "ArrayPattern") {
             const arr = Array.isArray(val) ? val
-                : (val != null && typeof (val as any)[Symbol.iterator] === "function") ? Array.from(val as Iterable<unknown>)
+                : (val != null && typeof (val as any)[Symbol.iterator] === "function") ? this.sized(Array.from(val as Iterable<unknown>))
                     : (() => { throw new TypeError("cannot destructure a non-iterable value"); })();
             (pattern.elems as (string | null)[]).forEach((name, i) => { if (name) scope[name] = this.prop(arr, String(i)); });
             if (pattern.rest) scope[pattern.rest] = this.own(arr.slice((pattern.elems as unknown[]).length));
@@ -777,6 +901,7 @@ class Evaluator {
     }
 
     *eval(node: Node, scope: any): Ev {
+        this.tick();
         switch (node.type) {
             case "Program": {
                 let last: unknown;
@@ -817,12 +942,18 @@ class Evaluator {
                 // same termination property spread already relies on. The body is mediated like any code.
                 if (iterable == null || typeof (iterable as { [Symbol.iterator]?: unknown })[Symbol.iterator] !== "function")
                     throw new TypeError("for…of over a non-iterable value");
-                for (const item of iterable as Iterable<unknown>) {
-                    const child = Object.create(scope);   // fresh per-iteration binding (const semantics)
-                    child[node.name] = item;
-                    const v = yield* this.eval(node.body, child);
-                    if (v && typeof v === "object" && RETURN in (v as object)) return v;   // a `return` breaks out + propagates
-                }
+                // HELD for the loop's whole life, released however it ends (return, throw, a closed generator):
+                // the body may read the collection but not change it, so the iteration cannot outrun itself.
+                this.hold(iterable);
+                try {
+                    for (const item of iterable as Iterable<unknown>) {
+                        this.tick();
+                        const child = Object.create(scope);   // fresh per-iteration binding (const semantics)
+                        child[node.name] = item;
+                        const v = yield* this.eval(node.body, child);
+                        if (v && typeof v === "object" && RETURN in (v as object)) return v;   // a `return` breaks out + propagates
+                    }
+                } finally { this.release(iterable); }
                 return undefined;
             }
             case "Return": return { [RETURN]: yield* this.eval(node.arg, scope) };
@@ -833,7 +964,11 @@ class Evaluator {
             // A regex literal → a real RegExp. Pure value: no realm walk-back (its props are source/flags/
             // lastIndex — none in DENIED_PROPS is needed), and it can only be USED via allowlisted methods
             // (String.match/replace/split or RegExp.test/exec). An invalid pattern throws → falls back to approval.
-            case "Regex": try { return new RegExp(node.pattern, node.flags); } catch { throw new NotInDialect("invalid regex"); }
+            case "Regex": {
+                const risk = riskyRegex(node.pattern);
+                if (risk) throw new NotInDialect(`a regex that could backtrack without end (${risk})`);
+                try { return new RegExp(node.pattern, node.flags); } catch { throw new NotInDialect("invalid regex"); }
+            }
             case "Ident": {
                 if (node.name in scope) return scope[node.name];
                 throw new Denied(`'${node.name}' is not available`);
@@ -841,10 +976,10 @@ class Evaluator {
             case "Array": {
                 const arr: unknown[] = [];
                 for (const e of node.elements) {
-                    if (e.type === "Spread") { for (const v of (yield* this.eval(e.arg, scope)) as Iterable<unknown>) arr.push(v); }
+                    if (e.type === "Spread") { for (const v of (yield* this.eval(e.arg, scope)) as Iterable<unknown>) { this.tick(); arr.push(v); } }
                     else arr.push(yield* this.eval(e, scope));
                 }
-                return this.own(arr);
+                return this.own(this.sized(arr));
             }
             case "Object": {
                 const o: Record<string, unknown> = {};
@@ -854,7 +989,7 @@ class Evaluator {
                         // guard (denied props throw; a function value → the inert sentinel — so a spread can't
                         // launder a live method into a plain object). null/undefined/primitives spread nothing.
                         const src = yield* this.eval(p.spread, scope);
-                        if (src != null) for (const k of Object.keys(Object(src))) o[k] = this.prop(src, k);
+                        if (src != null) for (const k of Object.keys(Object(src))) { this.tick(); o[k] = this.prop(src, k); }
                     } else {
                         o[p.key] = yield* this.eval(p.value, scope);
                     }
@@ -877,9 +1012,12 @@ class Evaluator {
                 // MUTATING_METHODS gate. Mark it directly, not via own(): a Set/Map's prototype isn't
                 // Object.prototype, so own()'s isWritableTarget check would skip it. (Assignment `o[k]=v`
                 // stays restricted to plain objects/arrays — the Assign case re-checks isWritableTarget.)
-                const inst = new ctor(...(yield* this.evalArgs(node.args, scope)));
+                const args = yield* this.evalArgs(node.args, scope);
+                this.allocation(node.ctor, args);
+                if (node.ctor === "RegExp") this.patternArg(args[0]);
+                const inst = new ctor(...args);
                 if (inst !== null && typeof inst === "object") this.owned.add(inst as object);
-                return inst;
+                return this.sized(inst);
             }
             case "Assign": {
                 // MEMBER-only, and the target must be a container the SCRIPT CREATED (`owned`) with a non-denied
@@ -894,6 +1032,7 @@ class Evaluator {
                 // work) but is NOT a valid `o[k]=v` target — mutate it through .add/.set, not property writes.
                 if (!this.owned.has(obj) || !isWritableTarget(obj))
                     throw new Denied("can only assign to an object or array you built — never a DOM node, a page object, or the environment");
+                this.notIterating(obj, "assign into");
                 const val = yield* this.eval(node.value, scope);
                 obj[key] = val;
                 return val;
@@ -917,7 +1056,7 @@ class Evaluator {
                     case "==": return l == r; case "!=": return l != r;
                     case "<": return l < r; case ">": return l > r;
                     case "<=": return l <= r; case ">=": return l >= r;
-                    case "+": return l + r; case "-": return l - r;
+                    case "+": return this.sized(l + r); case "-": return l - r;
                     case "*": return l * r; case "/": return l / r; case "%": return l % r;
                 }
                 throw new NotInDialect(`operator ${node.op}`);
@@ -929,7 +1068,7 @@ class Evaluator {
             case "Template": {
                 // Concatenate quasi[0] expr[0] quasi[1] … — String() coercion, exactly like JS.
                 let out = node.quasis[0];
-                for (let k = 0; k < node.exprs.length; k++) out += String(yield* this.eval(node.exprs[k], scope)) + node.quasis[k + 1];
+                for (let k = 0; k < node.exprs.length; k++) out = this.sized(out + String(yield* this.eval(node.exprs[k], scope)) + node.quasis[k + 1]);
                 return out;
             }
             case "Try": {
@@ -965,7 +1104,7 @@ class Evaluator {
     private *evalArgs(args: Node[], scope: any): Ev<unknown[]> {
         const out: unknown[] = [];
         for (const a of args) {
-            if (a.type === "Spread") { for (const v of (yield* this.eval(a.arg, scope)) as Iterable<unknown>) out.push(v); }
+            if (a.type === "Spread") { for (const v of (yield* this.eval(a.arg, scope)) as Iterable<unknown>) { this.tick(); out.push(v); } }
             else out.push(yield* this.eval(a, scope));
         }
         return out;
@@ -974,7 +1113,7 @@ class Evaluator {
     // Invoke one of OUR arrows: bind the params in a child scope and evaluate its body. The depth
     // guard unwinds in `finally`, which runs even when the sync driver closes the generator early.
     private *callArrow(node: Node, scope: any, args: unknown[]): Ev {
-        if (++this.depth > 5000) { this.depth--; throw new NotInDialect("recursion limit"); }
+        if (++this.depth > MAX_CALL_DEPTH) { this.depth--; throw new NotInDialect(`calls nested more than ${MAX_CALL_DEPTH} deep`); }
         try {
             const child = Object.create(scope);
             (node.params as (string | Node)[]).forEach((p, idx) => {
@@ -1013,6 +1152,7 @@ class Evaluator {
             // run's answer set (no nodes/media/realm reachable through them).
             if (MUTATING_METHODS.has(key) && !this.owned.has(obj) && !onAnswer)
                 throw new Denied(`'${key}' can only mutate an array you created, not one reached from the page`);
+            if (MUTATING_METHODS.has(key) && !onAnswer) this.notIterating(obj, "change");
             // `x.then(cb)` where x is NOT a thenable — the shape models write over the ml reads
             // (`ml.getModel().then(m => …)`), which auto-await left a plain value. Apply the callback
             // to it: Promise.resolve(x).then(cb) semantics, without minting a promise. Driven by OUR
@@ -1030,7 +1170,17 @@ class Evaluator {
             // dialect try/catch (so a survey can handle a missing element in-dialect, no escalation),
             // while genuine denials (Denied / method-not-allowed NotInDialect) still bypass catch.
             if (typeof fn !== "function") throw new TypeError(`${obj == null ? String(obj) : "value"} has no callable '${key}'`);
-            const out = fn.apply(obj, yield* this.evalArgs(node.args, scope));
+            const args = yield* this.evalArgs(node.args, scope);
+            this.preflight(obj, key, args);
+            // A callback handed to a host method may run WHILE that method walks its receiver (`set.forEach`,
+            // `arr.sort`) or its source (`Array.from(src, fn)`), so both are held for the call: the callback can read
+            // them and cannot grow them. (Array methods fix their length when they start and would halt anyway; the
+            // rule is simpler kept uniform than special-cased per method.)
+            const held = args.some((a) => typeof a === "function" && this.ourFns.has(a as Function))
+                ? [obj, key === "from" ? args[0] : undefined] : [];
+            for (const h of held) this.hold(h);
+            let out: unknown;
+            try { out = fn.apply(obj, args); } finally { for (const h of held) this.release(h); }
             // Auto-await an ml call ONLY when it actually returns a promise (getModel/config/… round-trip),
             // so a forgotten `await` still reads the value. The SYNC ml reads (queryAll, range) return a plain
             // value — pass it straight through WITHOUT yielding, so they work inside a `.map`/`.filter` callback
@@ -1040,17 +1190,19 @@ class Evaluator {
             // Object.entries/JSON.parse/…) becomes mutable, so `arr.filter(…).push(x)` and the accumulator
             // idioms work. Page arrays are never RETURNED by an allowlisted method (they all build new ones),
             // so this can't launder a live page container — the mutator gate above still refuses page arrays.
-            if (onMl) return this.own((out != null && typeof (out as { then?: unknown }).then === "function") ? yield out : out);
+            if (onMl) return this.own(this.sized((out != null && typeof (out as { then?: unknown }).then === "function") ? yield out : out));
             // Accommodate a common model mistake: querySelectorAll / getElementsBy* return a NodeList /
             // HTMLCollection, which have no .map/.filter, so `querySelectorAll('x').map(…)` throws (the
             // model forgets to spread). In this read-only dialect it's safe to just hand back a real
             // Array, so the survey runs instead of falling through to the manual gate.
-            return this.own(isDomCollection(out) ? Array.from(out as ArrayLike<unknown>) : out);
+            return this.own(this.sized(isDomCollection(out) ? Array.from(out as ArrayLike<unknown>) : out));
         }
         // Ident(args) — only whitelisted coercion/parse builtins.
         if (callee.type === "Ident" && CALLABLE_ROOTS.has(callee.name) && callee.name in scope) {
             const fn = scope[callee.name] as Function;
-            return fn(...(yield* this.evalArgs(node.args, scope)));
+            const args = yield* this.evalArgs(node.args, scope);
+            this.allocation(callee.name, args);
+            return this.sized(fn(...args));
         }
         // (arrow)(args) / immediately-invoked arrow (or function expression). Driven by OUR driver
         // rather than through the sync wrapper, so an `await` inside an IIFE is honoured.
@@ -1094,8 +1246,14 @@ function runSync(gen: Ev): unknown {
  * injected; all other globals are this module's own (safe) intrinsics. Returns the
  * program value plus any captured console output. Rejects with NotInDialect / Denied on
  * anything outside the dialect or blocked — callers fall back to approval+eval.
+ *
+ * @param opts.checkpoint Called before the survey runs; returns a function that undoes whatever the survey changed
+ *   through `answerFacade`. Called when the survey fails, so a fall-back to approval starts from where it began.
+ * @param opts.stepBudget Overrides {@link STEP_BUDGET} — for tests, which exercise the same mechanism at a size that
+ *   does not cost seconds per case.
  */
-export async function evalReadonly(code: string, doc: Document, ml?: unknown, answerFacade?: unknown): Promise<{ value: unknown; logs: string[]; reused: string[] }> {
+export async function evalReadonly(code: string, doc: Document, ml?: unknown, answerFacade?: unknown,
+    opts: { checkpoint?: () => () => void; stepBudget?: number } = {}): Promise<{ value: unknown; logs: string[]; reused: string[] }> {
     const logs: string[] = [];
     const rec = (...a: unknown[]) => logs.push(a.map(x => typeof x === "string" ? x : safeStr(x)).join(" "));
     const reused: string[] = [];   // ml.fetch cache hits — URLs this survey re-read from a prior approval
@@ -1112,8 +1270,14 @@ export async function evalReadonly(code: string, doc: Document, ml?: unknown, an
     const view = doc.defaultView;
     if (view && typeof view.getComputedStyle === "function") root.getComputedStyle = view.getComputedStyle.bind(view);
     const ast = new Parser(tokenize(code)).parseProgram();
-    const value = await runAsync(new Evaluator(facade).eval(ast, root));
-    return { value, logs, reused };
+    // A FAILED ATTEMPT LEAVES NOTHING BEHIND. That is what makes trying the interpreter first safe, and `ml.answer`
+    // is the one thing a survey can change: an add before a fall-back would outlive it, and the human would then be
+    // asked to approve a script whose first half had already run. The caller's checkpoint restores it.
+    const restore = opts.checkpoint?.();
+    try {
+        const value = await runAsync(new Evaluator(facade, opts.stepBudget).eval(ast, root));
+        return { value, logs, reused };
+    } catch (e) { restore?.(); throw e; }
 }
 
 function safeStr(x: unknown): string { try { return JSON.stringify(x); } catch { return String(x); } }

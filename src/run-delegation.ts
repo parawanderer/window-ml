@@ -188,7 +188,8 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
         if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return { result: "", readonly: false };
         if (outputCapEscalated("exec", args)) return { result: "", readonly: false };   // a raised output cap must hit the human gate
         try {
-            const ro = await evalReadonly((args as { js: string }).js, document, typeof window !== "undefined" ? window.ml : null, makeAnswerFacade(answerSetFor(run.byName), elLine));
+            const set = answerSetFor(run.byName);
+            const ro = await evalReadonly((args as { js: string }).js, document, typeof window !== "undefined" ? window.ml : null, makeAnswerFacade(set, elLine), { checkpoint: () => set.checkpoint() });
             const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
             const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements }, args);
             const urls = [...new Set(ro.reused)];   // cached ml.fetch URLs this survey reused → the "reused a grant" note

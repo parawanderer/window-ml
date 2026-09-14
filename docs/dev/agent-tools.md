@@ -5,6 +5,9 @@ changed rather than loaded into every session. AGENTS.md keeps the repository's 
 bite; this file keeps how the subsystem works and why it is built that way. Paths name files by their bare name,
 as in AGENTS.md — they are all under `src/`.
 
+**The read-only dialect now has its own file, [`readonly-exec.md`](readonly-exec.md)**: the three stages, the
+contract, halting, and how to extend it. The paragraphs below are the older summary.
+
 **Read-only `exec` auto-approve (experimental).** `exec` is `requiresApproval`,
 but the config flag `autoApproveReadonly` (ON by default) lets a **read-only DOM
 survey** (`querySelectorAll → filter → map`, no mutation) run with **no prompt**

@@ -162,6 +162,13 @@ export class AnswerSet {
     /** Drop everything. */
     clear(): void { this.items.length = 0; }
 
+    /** Remember the set as it is now; the returned function puts it back. For an attempt that must leave nothing
+     *  behind when it fails (a read-only survey that falls back to approval). */
+    checkpoint(): () => void {
+        const saved = this.items.slice();
+        return () => { this.items.length = 0; this.items.push(...saved); };
+    }
+
     get length(): number { return this.items.length; }
 
     /** The indexed, serializable view the model inspects (`ml.answer` dump / the tool's echo). */
