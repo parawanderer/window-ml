@@ -92,7 +92,7 @@ export function fetchLineNotes(key: string, lang: string, src: string, output?: 
             // never went out.
             if (notes.length) codeNotes.set(key, notes); else notesState.set(key, "error");
             noteAside(hash, { t: started, ms: Date.now() - started, label: "annotating the code",
-                              model: config.value.utilityModel || undefined, seq: Number(seqStr) });
+                              model: config.value.utilityModel || undefined, seq: Number(seqStr), requestId: resp?.usage?.requestId });
             rev.value++;
         },
     );
@@ -129,7 +129,7 @@ export function fetchUtilityLine(messages: { role: string; content: string }[], 
             const s = truncate(line.replace(/^["'`*]+|["'`*]+$/g, "").trim(), 160);
             const [h, sq] = key.split(":");
             if (h) noteAside(h, { t: started, ms: Date.now() - started, label: "summarising",
-                                  model: config.value.utilityModel || undefined, seq: Number(sq) });
+                                  model: config.value.utilityModel || undefined, seq: Number(sq), requestId: resp?.usage?.requestId });
             if (s) { codeSummaries.set(key, s); rev.value++; }
         },
     );

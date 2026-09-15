@@ -8,7 +8,7 @@
 // Pure, and deliberately over a MINIMAL shape rather than the sidebar's Session type: the aggregation is the
 // part worth testing, and it should not need a whole debug-event fixture to exercise.
 import { runStats, type RunStats, type TokenUsage, type GenPhase } from "../contract";
-import type { ResourceEvent } from "../resource-model";
+import { joinGens, type ResourceEvent } from "../resource-model";
 
 /** The little a session must expose for these to work. */
 export interface UsageSource {
@@ -37,7 +37,7 @@ export interface UsageSource {
      *  run's cost because they are not the run's work: charging them would make two runs incomparable on
      *  the strength of how much someone poked at one. Carrying no `usage` is how that is enforced rather
      *  than remembered. */
-    asides?: { t: number; ms: number; label: string; model?: string; seq?: number }[];
+    asides?: { t: number; ms: number; label: string; model?: string; seq?: number; requestId?: string }[];
     steps?: {
         seq?: number; step?: number; ts?: number;
         tool?: string;
@@ -133,6 +133,14 @@ export function genPhases(from: number, genMs: number, marks?: GenPhase[]): NonN
     return out.length ? out : whole;
 }
 
+/** A call's stretch with its LOAD named: the first `loadMs` of it, which the wall clock contains, becomes a `load`
+ *  phase and whatever the model did after keeps its own phases. Only for a stretch measured by the wall clock
+ *  (`genMs`): `evalMs` excludes the load, so there the load is not inside the stretch at all. */
+export function loadFirst(phases: NonNullable<ResourceEvent["phases"]>, from: number, loadMs: number): NonNullable<ResourceEvent["phases"]> {
+    const end = from + loadMs;
+    return [{ kind: "load", until: end }, ...phases.filter((p) => p.until > end)];
+}
+
 /**
  * The machine's timeline, from what the sessions already recorded. Nothing new is collected:
  *  - a GENERATION span per model call that reported timing — hover it for what it cost;
@@ -196,6 +204,8 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
             if (!a.t || !(a.ms > 0)) continue;
             out.push({ t: a.t, until: a.t + a.ms, kind: "aside", label: a.label,
                        ...(a.model ? { model: a.model } : {}),
+                       // Our own id for the call, so the server's record of it joins this bar (see joinGens).
+                       ...(a.requestId ? { requestId: a.requestId } : {}),
                        ref: { hash: s.hash, ...(a.seq != null ? { seq: a.seq } : {}) } });
         }
     };
@@ -223,10 +233,13 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
         // runs backwards from it: that is where the time actually went.
         const genMs = u.genMs ?? u.evalMs ?? 0;
         const loadMs = u.loadMs ?? 0;
+        // The wall clock CONTAINS a load; `evalMs` does not (see loadFirst).
+        const inside = u.genMs != null && loadMs >= LOAD_EVENT_MIN_MS && loadMs <= genMs;
         if (genMs > 0) {
+            const phases = genPhases(ts - genMs, genMs, u.genPhases);
             out.push({ t: ts - genMs, until: ts, kind: "gen", label: model || "generation",
                        model: model || undefined, ...(id ? { id } : {}), ...(parent ? { parent } : {}), ref,
-                       phases: genPhases(ts - genMs, genMs, u.genPhases), cost: costOf(u),
+                       phases: inside ? loadFirst(phases, ts - genMs, loadMs) : phases, cost: costOf(u),
                        ...(u.requestId ? { requestId: u.requestId } : {}) });
         }
         // The load happened at the START of the call, before a token was generated — drawn as its own span so
@@ -288,7 +301,14 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
                 const phases: NonNullable<ResourceEvent["phases"]> = [];
                 // The model's own stretch subdivides further on a streamed call — thinking, then the tool-call
                 // fragments, and back again if it interleaved.
-                if (genMs > 0) phases.push(...genPhases(from, genMs, turnU?.genPhases));
+                // A load the wall clock contains is the FIRST stretch of the block: named as what it was, rather than
+                // left inside the model's time for the tooltip to call "scheduling and setup".
+                const loadMs = turnU?.loadMs ?? 0;
+                const loadInside = turnU?.genMs != null && loadMs >= LOAD_EVENT_MIN_MS && loadMs <= genMs;
+                if (genMs > 0) {
+                    const gp = genPhases(from, genMs, turnU?.genPhases);
+                    phases.push(...(loadInside ? loadFirst(gp, from, loadMs) : gp));
+                }
                 if (dispatchMs > 0) phases.push({ kind: "dispatch", until: from + genMs + dispatchMs });
                 if (waitMs > 0) phases.push({ kind: "wait", until: from + genMs + dispatchMs + waitMs });
                 // A REMOTE tool splits further, and only because it reported its own numbers: what it spent
@@ -338,10 +358,14 @@ export function eventsFrom(sessions: readonly UsageSource[], now?: number): Reso
                 // Its own load, if this call had to wait for the model to arrive, stays a separate span: it
                 // happened before a token was generated, and burying it inside the block would hide the one
                 // thing that explains a slow turn.
-                if ((turnU?.loadMs ?? 0) >= LOAD_EVENT_MIN_MS) {
-                    const lFrom = from - (turnU!.loadMs as number);
-                    out.push({ t: lFrom, until: from, kind: "load", label: `loading ${s.model || "model"}`,
-                               model: s.model || undefined, ref: { hash: s.hash, seq: st.seq } });
+                // WHERE it sits depends on what the block's model time measured. The wall clock (`genMs`) contains
+                // the load, so it is the block's first stretch; drawn in front instead, it landed before the run had
+                // started and never overlapped the server's record of the same load, so both were drawn. `evalMs`
+                // alone excludes it, so on those older records the load really does come before the block.
+                if (loadMs >= LOAD_EVENT_MIN_MS) {
+                    const lFrom = loadInside ? from : from - loadMs;
+                    out.push({ t: lFrom, until: lFrom + loadMs, kind: "load", label: `loading ${s.model || "model"}`,
+                               model: s.model || undefined, parent: stepId, ref: { hash: s.hash, seq: st.seq } });
                 }
                 continue;
             }
@@ -446,4 +470,52 @@ export function dropInferredLoads(inferred: ResourceEvent[], reported: ResourceE
     const overlaps = (a: ResourceEvent, b: ResourceEvent) =>
         a.t < (b.until ?? b.t) && (a.until ?? a.t) > b.t;
     return inferred.filter((e) => !(e.kind === "load" && loads.some((r) => r.model === e.model && overlaps(e, r))));
+}
+
+/** Two spans share time. A span with no end yet reaches the far future. */
+const sharesTime = (a: ResourceEvent, b: ResourceEvent): boolean =>
+    a.t < (b.until ?? Infinity) && (a.until ?? Infinity) > b.t;
+/** How late after a load ends the work it was for may start and still be its reason. Tight on purpose: the request
+ *  that waited on a load CONTAINS it (our wall clock covers the wait), and the server starts serving it the moment
+ *  the load completes (`busy.start` coincides with `load.complete`). This is scheduling slack, nothing more; work
+ *  that begins a second later was not what the load was for. */
+const LOAD_CLAIM_MS = 250;
+
+/**
+ * THE LANE'S EVENTS, from what the sessions recorded and what the server reported. Each generation, load and
+ * serving period is drawn once, and inside the run it belongs to whenever something says which run that is.
+ *
+ * - Our loads inferred from `load_duration` give way to the server's (`dropInferredLoads`), and the server's
+ *   generations join our steps and asides by request id (`joinGens`).
+ * - A server generation whose hint names a session this panel shows belongs to that session: a utility one is a
+ *   side task of it (an `aside`), anything else a call of the run's. Otherwise it would be drawn as anonymous
+ *   traffic, beside the run that caused it.
+ * - A server load with no owner takes the work it was for: the earliest call of the same model that it overlaps or
+ *   that starts within LOAD_CLAIM_MS of its end. It then sits in that run's band, under that step.
+ * - A serving period that a drawn generation of its model covers says nothing the generation does not, so it is
+ *   left out. One with no generation inside it (an older server, another client) stays.
+ */
+export function laneEvents(fromSessions: ResourceEvent[], machine: ResourceEvent[], isShown: (hash: string) => boolean): ResourceEvent[] {
+    const joined = joinGens(dropInferredLoads(fromSessions, machine), machine);
+    const server = joined.server.map((e): ResourceEvent => {
+        const sess = e.kind === "gen" && e.via === "server" ? e.hint?.session : undefined;
+        const hash = sess?.startsWith("wml-") ? sess.slice(4) : null;
+        if (!hash || !isShown(hash)) return e;
+        return e.hint?.use === "utility"
+            ? { ...e, kind: "aside", label: "a side task for this session", ref: { hash } }
+            : { ...e, ref: { hash } };
+    });
+    const all = [...joined.session, ...server];
+    const work = all.filter((e) => e.ref && (e.kind === "gen" || e.kind === "tool" || e.kind === "aside"));
+    return all.flatMap((e): ResourceEvent[] => {
+        if (e.kind === "serve")
+            return work.some((w) => w.model === e.model && sharesTime(w, e)) || all.some((g) => g !== e && g.kind === "gen" && g.model === e.model && sharesTime(g, e)) ? [] : [e];
+        if (e.kind === "load" && !e.ref) {
+            const owner = work
+                .filter((w) => w.model === e.model && w.t <= (e.until ?? e.t) + LOAD_CLAIM_MS && (w.until ?? Infinity) >= e.t)
+                .sort((a, b) => a.t - b.t)[0];
+            if (owner) return [{ ...e, ref: owner.ref, ...(owner.id ? { parent: owner.id } : {}) }];
+        }
+        return [e];
+    });
 }

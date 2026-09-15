@@ -500,11 +500,13 @@ export interface ExportEvent {
  * at its end; `other` is what lies between the request taking the runner and the prefill — neither phase, and
  * named as neither rather than folded into one. `swap` is a host-RAM prompt-cache swap the engine timed before
  * the prefill — a conversation's KV cache moved out of the slot and, if it was there, this one's moved back.
+ * `load` is the first stretch of a call whose wall clock contained a model load: the wait for the model to
+ * arrive, before it read a token. The load's own span (kind `load`) sits beneath it.
  *
  * Switch on the kinds you know and fall through on the rest.
  */
 export type ExportPhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "boot" | "dispatch" | "weights" | "context"
-    | "prefill" | "decode" | "other" | "swap";
+    | "prefill" | "decode" | "other" | "swap" | "load";
 
 export interface ExportEventPhase {
     kind: ExportPhaseKind;

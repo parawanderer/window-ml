@@ -3,7 +3,7 @@
 // (sessionMap + the rev signal): agent runs, chat turns, cross-page replay ordering (the orphan
 // queue), mid-run steers, live streaming. It also owns the lazy utility-model TITLE + per-task BLOCK
 // summaries and the run-block segmentation (buildRunBlocks). Pure logic, no JSX — extracted from app.tsx.
-import { sessionMap, rev, config, sidebarOpen, backendError, unreachableIfNothingSaysOtherwise } from "./store";
+import { sessionMap, rev, config, sidebarOpen, backendError, unreachableIfNothingSaysOtherwise, noteAside } from "./store";
 import type { Session, Status, Turn, AgentStep } from "./store";
 import type { MlDebugEvent } from "../contract";
 import { isBackendUnreachable, hintSession } from "../contract";
@@ -267,6 +267,7 @@ function cleanTitle(raw: string): string {
 
 /** Ask the utility model for a short session title, once per session, best-effort. */
 export function genTitle(hash: string, prompt: string): void {
+    const started = Date.now();
     const messages = [
         { role: "system", content: "You write terse 3-6 word titles for a request. Reply with ONLY the title — no quotes, no trailing punctuation, no preamble." },
         { role: "user", content: `Summarise this request as a short title:\n\n${truncate(prompt, 500)}` },
@@ -276,6 +277,10 @@ export function genTitle(hash: string, prompt: string): void {
         (resp: any) => {
             const s = sessionMap.get(hash);
             if (!s || chrome.runtime.lastError || !resp || resp.error) return;   // leave unset → retried next open
+            // Drawn on the lane as this session's side task, joined to the server's record of it by request id.
+            // Unrecorded, it was the one bar in the run nothing claimed: the utility model woken mid-run by nobody.
+            noteAside(hash, { t: started, ms: Date.now() - started, label: "titling the session",
+                              model: config.value.utilityModel || undefined, requestId: resp.usage?.requestId });
             const title = cleanTitle(String(resp.data || ""));
             if (title) { s.title = title; rev.value++; }
         },
@@ -296,6 +301,7 @@ export function ensureBlockSummary(hash: string, i: number, prompt: string, resu
     const key = blockKey(hash, i);
     if (blockSummaries.has(key) || blockSummaryTried.has(key)) return;
     blockSummaryTried.add(key);
+    const started = Date.now();
     const messages = [
         { role: "system", content: "You write a terse one-line summary (≤ 16 words) of one task within an agent session — what the user asked and what the agent did/produced. Reply with ONLY the summary: no quotes, no preamble." },
         { role: "user", content: `Request:\n${truncate(prompt || "(none)", 400)}\n\nResult:\n${truncate(result || "(no result)", 400)}` },
@@ -304,6 +310,8 @@ export function ensureBlockSummary(hash: string, i: number, prompt: string, resu
         { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 48, think: false, hint: { session: hintSession(hash) } } },   // a side task about this session (RequestHint)
         (resp: { data?: unknown; error?: string } | undefined) => {
             if (chrome.runtime.lastError || !resp || resp.error) { blockSummaryTried.delete(key); return; }   // retry next open
+            noteAside(hash, { t: started, ms: Date.now() - started, label: "summarising a task",
+                              model: config.value.utilityModel || undefined, requestId: (resp as { usage?: { requestId?: string } }).usage?.requestId });
             const line = String(resp.data || "").trim().split("\n").map(x => x.trim()).filter(Boolean)[0] || "";
             // Strip surrounding quotes/marks AND a leading "Summary:"/"Task -" label the model adds despite
             // the "no preamble" instruction (it was showing literally as "Summary: …" in the block header).

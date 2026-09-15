@@ -1991,6 +1991,8 @@ const phaseFill = (kind: string, model?: string): string => {
         // load, so it is striped the way a load is, in a lighter weight of the model's colour.
         : kind === "swap" ? halfStripes(`color-mix(in srgb, ${base} 45%, transparent)`, 45)
         : kind === "weights" ? halfStripes(base, 45)
+        // A load inside a step: the same wait the load's own span below it shows, striped the same way.
+        : kind === "load" ? halfStripes(`color-mix(in srgb, ${base} 70%, transparent)`, 45)
         : kind === "context" ? halfStripes(`color-mix(in srgb, ${base} 55%, transparent)`, -45)
         : `color-mix(in srgb, ${base} 38%, transparent)`;
 };
@@ -2790,6 +2792,9 @@ function EventTip({ scope }: { scope: string }) {
         // Moving conversations' KV caches between the slot and host RAM before the prefill — the engine's own
         // measure, and in no other timing.
         swap: "swapping conversations through the RAM cache",
+        // The first stretch of a call whose wall clock contained a load: the model arriving. Named, because left
+        // inside the model's time it was the tooltip's "scheduling and setup", seconds of it, pointing nowhere.
+        load: () => `waiting for ${e.model || "the model"} to load`,
     };
     const nameFor = (kind: string) => {
         const n = PHASE_NAMES[kind as PhaseKind];

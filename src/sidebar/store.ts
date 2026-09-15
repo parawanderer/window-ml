@@ -281,7 +281,9 @@ export const BENCH_CODE_KEY = "ml_bench_code";
  *  spent tokens on this box (so hiding it would be dishonest) but it is not the agent's work (so charging
  *  it to the run would make two runs incomparable on the strength of how much someone poked at one).
  *  Session-scoped and in memory only: it describes this reading session, not the run's record. */
-export interface Aside { t: number; ms: number; label: string; model?: string; seq?: number; }
+export interface Aside { t: number; ms: number; label: string; model?: string; seq?: number;
+    /** Our id for the call (its `usage.requestId`), so the server's record of it joins this aside. */
+    requestId?: string; }
 export const asides = new Map<string, Aside[]>();   // per session hash — see Aside above
 /** Record one, and bump `rev` so the panel picks it up. Bounded per session — a long debugging session
  *  should not grow a list nobody reads. */

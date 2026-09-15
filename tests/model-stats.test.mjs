@@ -119,19 +119,39 @@ test("eventsFrom: a tool step is ONE block, phased by who was working", () => {
     assert.equal(evs.filter((e) => e.kind === "gen").length, 0);
 });
 
-test("eventsFrom: a load before a tool call stays its OWN span", () => {
+test("eventsFrom: a load INSIDE a call sits at the step's start, not before the step", () => {
+    // The real shape, from a live run on the box (2026-09-14): the first step's model call took 15,207 ms of wall
+    // time, and that wall time CONTAINS the 9,658 ms load, then 2,846 ms of prefill and 2,586 ms of decode. The load
+    // used to be drawn in front of the block, which put it before the run had even started and kept it from ever
+    // overlapping the server's own record of the same load, so both were drawn.
     const evs = M.eventsFrom([{
         kind: "agent", hash: "r", model: "gemma4:31b",
-        steps: [{ seq: 1, ts: 100_000, tool: "exec", toolMs: 1000, usage: usage(10, 10, { genMs: 2000, loadMs: 20_000 }) }],
+        steps: [{ seq: 1, ts: 100_000, tool: "findByText", toolMs: 7,
+                  usage: usage(9972, 157, { genMs: 15_207, loadMs: 9658, promptEvalMs: 2846, evalMs: 2586 }) }],
+    }]);
+    const tool = evs.find((e) => e.kind === "tool");
+    const load = evs.find((e) => e.kind === "load");
+    assert.equal(tool.t, 100_000 - 7 - 15_207);
+    assert.equal(load.t, tool.t, "the load starts where the step does");
+    assert.equal(load.until, tool.t + 9658);
+    assert.deepEqual(load.ref, { hash: "r", seq: 1 });
+    // …and the step says so itself: its first stretch is the load, not "scheduling and setup".
+    assert.deepEqual(tool.phases.slice(0, 2), [{ kind: "load", until: tool.t + 9658 }, { kind: "model", until: tool.t + 15_207 }]);
+});
+
+test("eventsFrom: without a wall-clock time, a load still precedes the call", () => {
+    // An older record carries only `evalMs`, which does NOT contain the load, so the load happened before the
+    // stretch the block draws.
+    const evs = M.eventsFrom([{
+        kind: "agent", hash: "r", model: "gemma4:31b",
+        steps: [{ seq: 1, ts: 100_000, tool: "exec", toolMs: 1000, usage: usage(10, 10, { evalMs: 2000, loadMs: 20_000 }) }],
     }]);
     const tool = evs.find((e) => e.kind === "tool");
     const load = evs.find((e) => e.kind === "load");
     assert.equal(tool.t, 97_000);
-    // The load happened BEFORE a token was generated. Burying it inside the block would hide the one thing
-    // that explains the slow turn.
-    assert.equal(load.until, tool.t, "it ends exactly where the generation begins");
+    assert.equal(load.until, tool.t);
     assert.equal(load.t, 77_000);
-    assert.deepEqual(load.ref, { hash: "r", seq: 1 });
+    assert.equal(tool.phases[0].kind, "model", "no load phase inside a block that does not contain the load");
 });
 
 test("eventsFrom: a step with no tool execution is not a composite", () => {
@@ -669,4 +689,87 @@ test("eventsFrom: a model call carries its request id, the one the server echoes
     assert.equal(evs.find((e) => e.kind === "tool").requestId, "wml-r-step", "the model half of a tool step, which is what joinGens matches");
     const bare = M.eventsFrom([{ kind: "agent", hash: "x", model: "m", turns: [{ ts: 1, usage: usage(1, 1, { genMs: 5 }) }] }]);
     assert.equal(bare[0].requestId, undefined, "no id recorded, none invented");
+});
+
+// ---- the lane's composition, on a real run's timeline ----------------------------------------------------------
+//
+// One agent run against the box, 2026-09-14 (times in ms from the run's start, rounded): step 1 waited for a cold
+// load of gemma4:31b, the panel's auto-title woke gemma4:e2b in the middle of it all, and every generation was
+// reported by the server as well as by us.
+const REAL = (() => {
+    const step = (seq, ts, toolMs, u, requestId) => ({ seq, step: seq, ts, tool: "t" + seq, toolMs, usage: { ...u, requestId } });
+    const session = {
+        kind: "agent", hash: "2672bea1", model: "gemma4:31b",
+        steps: [
+            step(1, 15_220, 7, usage(9972, 157, { genMs: 15_207, loadMs: 9658, promptEvalMs: 2846, evalMs: 2586 }), "wml-r-1"),
+            step(2, 17_140, 20, usage(10143, 83, { genMs: 1906, loadMs: 3, promptEvalMs: 475, evalMs: 1348 }), "wml-r-2"),
+        ],
+        // The panel times its own call by the wall clock, so the aside covers the load it waited for as well.
+        asides: [{ t: 14_040, ms: 1_580, label: "titling the session", model: "gemma4:e2b", requestId: "wml-r-title" }],
+    };
+    const gen = (model, t, until, request, use = "agent") => ({ t, until, kind: "gen", label: `${model} generating`, model, via: "server",
+        gen: { promptMs: 100, evalMs: 100 }, hint: { use, session: "wml-2672bea1", request } });
+    const machine = [
+        // The server's own record of the cold load: 8.09 s, inside step 1.
+        { t: 1_650, until: 9_740, kind: "load", label: "loading gemma4:31b", model: "gemma4:31b", via: "server" },
+        { t: 9_740, until: 15_220, kind: "serve", label: "gemma4:31b serving", model: "gemma4:31b" },
+        gen("gemma4:31b", 9_740, 15_215, "wml-r-1"),
+        { t: 14_050, until: 15_560, kind: "load", label: "loading gemma4:e2b", model: "gemma4:e2b", via: "server" },
+        { t: 15_555, until: 15_615, kind: "serve", label: "gemma4:e2b serving", model: "gemma4:e2b" },
+        gen("gemma4:e2b", 15_555, 15_613, "wml-r-title", "utility"),
+        { t: 15_270, until: 17_140, kind: "serve", label: "gemma4:31b serving", model: "gemma4:31b" },
+        gen("gemma4:31b", 15_270, 17_138, "wml-r-2"),
+        // Somebody else's traffic, on a model this run never touched: stays exactly as the server reported it.
+        { t: 16_000, until: 16_500, kind: "serve", label: "qwen3:32b serving", model: "qwen3:32b" },
+    ];
+    return { sessions: [session], machine };
+})();
+const laneOf = () => M.laneEvents(M.eventsFrom(REAL.sessions), REAL.machine, (h) => h === "2672bea1");
+
+test("laneEvents: one cold load is drawn ONCE, under the step that waited for it", () => {
+    const loads = laneOf().filter((e) => e.kind === "load" && e.model === "gemma4:31b");
+    assert.equal(loads.length, 1, `one load, not ours and the server's: ${JSON.stringify(loads)}`);
+    assert.equal(loads[0].via, "server", "the server's record wins: it is measured at both edges");
+    assert.equal(loads[0].ref?.hash, "2672bea1", "and it belongs to the run, so it sits in the run's band");
+    assert.equal(loads[0].parent, "step:2672bea1:1", "under the step it served (hover lights them together)");
+});
+
+test("laneEvents: a load claims only the work that waited on it", () => {
+    // Finished a second before the step began: something else loaded the model (a preload, another client), and the
+    // step merely found it resident. It stays the machine's, in the machine's band.
+    const sessions = [{ kind: "agent", hash: "s", model: "m",
+        steps: [{ seq: 1, step: 1, ts: 20_000, tool: "exec", toolMs: 100, usage: usage(5, 5, { genMs: 3000 }) }] }];
+    const machine = [{ t: 10_000, until: 15_900, kind: "load", label: "loading m", model: "m", via: "server" }];
+    const [load] = M.laneEvents(M.eventsFrom(sessions), machine, () => true).filter((e) => e.kind === "load");
+    assert.equal(load.ref, undefined, "not the step's: it began 1 s after the load ended");
+});
+
+test("laneEvents: a serving span that a drawn generation already covers is not drawn again", () => {
+    const serves = laneOf().filter((e) => e.kind === "serve");
+    assert.deepEqual(serves.map((e) => e.model), ["qwen3:32b"], "only the one nothing else accounts for");
+});
+
+test("laneEvents: the panel's own side task is an aside of its session, joined to the server's record", () => {
+    const lane = laneOf();
+    const e2b = lane.filter((e) => e.model === "gemma4:e2b" && e.kind !== "load");
+    assert.equal(e2b.length, 1, `one bar for the title call, not the aside and the server's gen: ${JSON.stringify(e2b)}`);
+    assert.equal(e2b[0].kind, "aside");
+    assert.equal(e2b[0].ref?.hash, "2672bea1");
+    assert.ok(e2b[0].gen, "carrying the engine's figures from the server's record");
+    const load = lane.find((e) => e.kind === "load" && e.model === "gemma4:e2b");
+    assert.equal(load.ref?.hash, "2672bea1", "the load that side task caused belongs to the session too");
+});
+
+test("laneEvents: a generation tagged with a shown session lands in its band even with nothing to join", () => {
+    // A side task whose aside the panel never recorded (the panel reloaded, an older build) still says which
+    // session it was for, so it is drawn there rather than as a stranger's traffic.
+    const machine = [{ t: 100, until: 200, kind: "gen", label: "x", model: "gemma4:e2b", via: "server",
+                       gen: { promptMs: 10, evalMs: 10 }, hint: { use: "utility", session: "wml-2672bea1", request: "wml-r-lost" } }];
+    const [e] = M.laneEvents([], machine, (h) => h === "2672bea1");
+    assert.equal(e.kind, "aside");
+    assert.equal(e.ref?.hash, "2672bea1");
+    // …but only for a session this panel shows. Another tab's session stays the server's generation.
+    const [other] = M.laneEvents([], machine, () => false);
+    assert.equal(other.kind, "gen");
+    assert.equal(other.ref, undefined);
 });

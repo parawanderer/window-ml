@@ -2278,7 +2278,8 @@
                 "prefill",
                 "decode",
                 "other",
-                "swap"
+                "swap",
+                "load"
               ]
             },
             {
