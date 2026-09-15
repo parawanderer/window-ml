@@ -23,6 +23,7 @@ import { AgentRunView } from "./agent-detail";
 import { Composer } from "./composer";
 import { chartKey, keyRelay, fetchModels, pollPs, connectResourceStream, pollBackendHealth, VramPanel, PythonBench, BenchDrawer, BenchVer, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
 import { CardApp, endActiveCardDrag } from "./hud-card";
+import { releaseAxisHold } from "./resource-chart";
 import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
 } from "./card-state";
@@ -435,6 +436,7 @@ function onMessage(e: MessageEvent): void {
     // hovering does not move focus, so the page's document is the one receiving them.
     else if (typeof d.__mlSidebarChartKey === "string") chartKey(d.__mlSidebarChartKey);
     else if (d.__mlSidebarKeyRelay === true) keyRelay.value = true;
+    else if (d.__mlSidebarPointerOut === true) releaseAxisHold();   // the pointer is on the page (shell.ts relayPointerOut)
     else if (typeof d.__mlSidebarSurface === "string") {
         // The shell tells us which surface we are. The off-mode card renders a transparent, curated
         // view — flag <html> so the CSS drops the opaque canvas and the acrylic shows through.

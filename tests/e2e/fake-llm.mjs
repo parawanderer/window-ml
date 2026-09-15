@@ -98,6 +98,7 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
     // How long /api/ps takes to answer. A slow reply is how a poll sent BEFORE the event stream went live
     // lands AFTER it, which is the race the panel must not lose.
     let psDelayMs = 0;
+    let psPolls = 0;   // answered /api/ps polls, see `psPolls()`
     // The same for /api/info: a capacity reading asked for before the stream went live and answered after it.
     let infoDelayMs = 0;
     /** @type {any} */
@@ -200,6 +201,7 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
         }
         // Both bases findOllamaBase tries: `${origin}/ollama` first, then the origin itself.
         if (req.method === "GET" && (path === "/api/ps" || path === "/ollama/api/ps")) {
+            psPolls++;
             const body = { models: resident };
             if (psDelayMs) { setTimeout(() => json(res, 200, body), psDelayMs); return; }
             return json(res, 200, body);
@@ -343,6 +345,8 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
                 setResident: (/** @type {any[]} */ models) => { resident = models; },
                 /** Delay every /api/ps reply by `ms` (0 = immediate). */
                 setPsDelay: (/** @type {number} */ ms) => { psDelayMs = ms; },
+                /** How many /api/ps polls have been answered: a test waits on polls LANDING rather than on a timer. */
+                psPolls: () => psPolls,
                 /** Delay every /api/info reply by `ms` (0 = immediate). */
                 setInfoDelay: (/** @type {number} */ ms) => { infoDelayMs = ms; },
                 /** What /api/info reports as capacity; null = a server that doesn't serve the route at all. */

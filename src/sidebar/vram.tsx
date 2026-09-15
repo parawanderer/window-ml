@@ -2021,8 +2021,8 @@ export function VramPanel() {
      * inside a row describing two minutes ago, acts on a different world than the one it is sitting in.
      */
     const drawnEdge = (() => {
-        const scoped = laneScoped.value ? sessionWindow(timeline(), scopedHash(), Date.now()) : null;
-        const inWin = windowSamples(resourceHistory.value, chartWindow(zoomRange.value, scoped, resWindowS.value, Date.now()));
+        const scoped = laneScoped.value ? sessionWindow(timeline(), scopedHash(), Date.now(), { followMs: resWindowS.value * 1000 }) : null;
+        const inWin = windowSamples(resourceHistory.value, chartWindow(zoomRange.value, scoped, resWindowS.value, Date.now(), resourceHistory.value[0]?.t));
         const last = inWin.at(-1) ?? null;
         return last && last !== resourceHistory.value.at(-1) ? last : null;
     })();

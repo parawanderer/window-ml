@@ -1050,6 +1050,19 @@ function relayChartKey(e: KeyboardEvent): void {
     frame.contentWindow?.postMessage({ __mlSidebarChartKey: e.key }, "*");
 }
 
+/** The pointer is on the PAGE, so it is not on the panel: events over the panel's iframe go to the iframe. Relayed so a
+ *  chart holding its axis still under the pointer lets go (`chartHeld`, resource-chart.tsx): the iframe itself is told
+ *  nothing when the pointer leaves it, not a `pointerleave` and not even a change of `:hover` (measured). Throttled:
+ *  one message a half second is plenty to release a hold, and a page's mouse traffic is not the panel's business. */
+let lastPointerRelay = 0;
+function relayPointerOut(): void {
+    if (!frame) return;
+    const now = Date.now();
+    if (now - lastPointerRelay < 500) return;
+    lastPointerRelay = now;
+    frame.contentWindow?.postMessage({ __mlSidebarPointerOut: true }, "*");
+}
+
 // Start listening on the page window. `handshakeInjected` is true for the overlay/devtools surfaces
 // (bring injected.js live + clear the stale DevTools-panel buffer); false for OFF mode, whose card is
 // fed by the background stream, not injected's bus — so injected stays dormant and off keeps its
@@ -1057,6 +1070,7 @@ function relayChartKey(e: KeyboardEvent): void {
 function attach(handshakeInjected: boolean): void {
     window.addEventListener("message", onWindowMessage);
     window.addEventListener("keydown", relayChartKey, true);
+    window.addEventListener("pointermove", relayPointerOut, { capture: true, passive: true });
     if (handshakeInjected) {
         try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_RESET" }).catch(() => {}); } catch { /* context gone */ }
         handshake();
@@ -1198,6 +1212,7 @@ function teardown(): void {
     unmountCard();
     window.removeEventListener("message", onWindowMessage);
     window.removeEventListener("keydown", relayChartKey, true);
+    window.removeEventListener("pointermove", relayPointerOut, true);
     chartKeys = [];
     // Only overlay/devtools handshook injected; off left its bus dormant, so there's nothing to switch
     // off. `mode` is still the OLD surface here (applyMode tears down before advancing).

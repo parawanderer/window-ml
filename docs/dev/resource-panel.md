@@ -572,7 +572,7 @@ per device, in bytes.
   nobody measured. Parts are told apart by WEIGHT of the model's own colour, not by hue: four hues inside one
   band would lose the identity the band exists to carry.
 
-**The event lane (§4.5 of the spec).** Under the tracks, on the SAME segmented axis: what happened, against
+**The event lane (§4.5 of the spec).** Under the tracks, on the SAME axis: what happened, against
 what memory was doing while it did. Nothing new is collected — `src/sidebar/model-stats.ts` derives it from what
 sessions already record. `usageByModel` is the per-model ledger (attributed to the model that RAN, with
 delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
@@ -620,30 +620,45 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   totals), and events carry a lineage (`id`/`parent`); hovering one lights its chain and dims the rest.
   Ancestors go all the way up; descendants come only from the hovered event, or one sub-call lights every
   sibling step.
-- **The axis is LINEAR IN TIME within each run of samples; only GAPS collapse** (`runWeight`, `runFrac`). A
-  run is as wide as it is long and a time sits linearly across it, and EVERY mapping between the screen and
-  time goes through those two — the bands, the lines, the cache fill, event placement, the crosshair, the snap
-  and the selection — so none can disagree. It used to space samples EVENLY (sample i at i/(n-1), runs
-  weighted by sample count). Harmless under a fixed 2 s poll; under the stream's adaptive cadence (250 ms
-  during a load, 1 s working, 15 s idle) busy stretches stretched and idle ones shrank, scrolling changed the
-  mix of samples in view and so the warp — the chart "compressing at random" — and events, which `placeEvents`
-  placed linearly while the bands were drawn by index, landed at the right TIME and the wrong PLACE (an unload
-  ruled over a band still resident). A gap still breaks the line and takes no width, because nothing was
-  measured there. An event is placed inside the run that CONTAINS it, one in a gap is dropped, and the window
-  admits a poll's grace past the last sample — without it the newest events were the only ones never shown.
-  **A TIME GRID shows it** (gear → Grid → "time grid", off by default, `timeGrid`): faint vertical lines at a
-  round LOCAL-clock interval (`gridStep` picks the smallest that keeps them 48 px apart at a track's 300 px
-  minimum; `gridTimes` places them inside each run), the same on every track, the interval captioned in each
-  plot's corner. Vertical only — memory gridlines would mean a different amount on every card.
-  **A BREAK SAYS WHAT IT CUT OUT** (`runGap`, `GapMark`, `GapTip`). Collapsed to 3px, a missing minute and a
-  missing ten hours looked the same. Each break is a 3px flex item where the plot's `gap: 3px` used to be (so
-  nothing moved, and the lane's own 3px gap still lines up), with a wider hit area like a ruled instant's.
-  Hovering it says how long, from when to when, and why: nothing sampled (the panel was closed, or the box did
-  not answer) or frames the server reported dropping (`gapBefore`, drawn dashed in the warning colour). A lone
-  reading inside the stretch, too few to draw, is counted rather than the stretch called empty. While a break is
-  hovered the plot's reading, crosshair and snap mark stand down (`gapHover`, the same owner rule as
-  `eventHover`), and the same break lights in every track. The scrub strip, linear in clock time, hatches the
-  hole at its true width (`.rc-scrub-gap`) and lets a drag pass straight through it.
+- **The axis is LINEAR IN CLOCK TIME across the whole window, gaps included** (`Axis`, `axisFrac`, `axisTime` in
+  resource-model.ts). Every mapping between the screen and time goes through those: the runs' boxes, the lines, the
+  cache fill, event placement, the crosshair, the snap and the selection, so none can disagree. Within a run, time is
+  the same line restricted to it (`runFrac`), so a run's drawing is unchanged: its box (`onAxis`) is simply placed on
+  the axis. The history of this: samples were once spaced EVENLY, which warped badly under the stream's adaptive
+  cadence (250 ms during a load, 1 s working, 15 s idle) and ruled an unload over a band still resident; then runs
+  were linear but every GAP collapsed to 3px, which lost events (one inside a gap had nowhere to be drawn and was
+  dropped), could not scroll (the right edge was the LAST SAMPLE, so the chart stepped every second and froze idle),
+  and drew a minute and ten hours alike. Now an event is placed by its time alone and never dropped
+  (`placeEvents` returns UNCLAMPED fractions; the lane packs rows over a window's width off the left edge too, so a
+  bar keeps its row as it scrolls in, and clips to the plot).
+  **THE WINDOW FILLS, THEN SCROLLS, AND NEVER RESCALES** (`chartWindow`, `sessionWindow`). With less history than
+  the window holds, it starts at the first reading and the data grows rightward; once longer, it follows the clock
+  at the same width. Growing the window to fit instead is a continuous zoom (every bar moves and narrows each
+  sample) and snapped to a new window when a run ended. A finished session fits itself. A window that follows the
+  clock is marked `live`, and the chart slides it to now on a 250 ms tick (`AXIS_TICK_MS`) so it scrolls rather
+  than stepping; the window itself (what is sampled, what the scrub strip reasons about) keeps its sample cadence,
+  because a right edge moving at another cadence breaks the scrub gestures. While the window is still filling, the
+  scrub strip is given it clipped to the last reading, so a left-edge drag means "fewer seconds than the history".
+  **THE AXIS HOLDS UNDER THE POINTER** (`chartHeld`). A chart scrolling under a still cursor moves the sample being
+  read; so while the pointer is on the plots or the lane, the axis (and the samples) it entered on are held, and it
+  catches up when the pointer leaves. Letting go is the hard half: leaving the panel's IFRAME for the page tells the
+  iframe nothing (no `pointerleave`, no change of `:hover`; measured). So a hold ends three ways: moving off the chart
+  within the panel, the overlay shell relaying that the pointer is on the page (`relayPointerOut` in shell.ts →
+  `__mlSidebarPointerOut` → `releaseAxisHold`), and an 8 s lapse without pointer activity (the backstop for the
+  DevTools panel). A hold also stops applying when the VIEW changes (a zoom, a scrub, a new width, a scope change:
+  `holdKey`), since holding is for passive reading and navigating must move the chart.
+  **A TIME GRID shows it** (gear → Grid → "time grid", off by default, `timeGrid`): faint vertical lines at a round
+  LOCAL-clock interval across the whole axis (`gridStep` keeps them 48 px apart at a track's 300 px minimum), the
+  same on every track, the interval captioned in the plot's corner. Vertical only: memory gridlines would mean a
+  different amount on every card.
+  **A BREAK IS DRAWN AT ITS TRUE WIDTH, HATCHED** (`axisGaps`, `GapMark`, `GapTip`). Hovering it says how long, from
+  when to when, and why: nothing sampled (the panel was closed, or the box did not answer) or frames the server
+  reported dropping (`gapBefore`, hatched in the warning colour). A lone reading inside the stretch, too few to draw,
+  is counted rather than the stretch called empty. While a break is hovered the plot's reading, crosshair and snap
+  mark stand down (`gapHover`, the same owner rule as `eventHover`), and the same break lights in every track. The
+  scrub strip hatches the same hole at the same true width (`.rc-scrub-gap`).
+  **A lane bar is packed at the width it is DRAWN** (`MIN_BAR_PX` from the lane's measured width, and a pixel between
+  bars): reserving only `MIN_EV_SPAN` of a narrow lane let two bars at CSS `min-width` overlap.
 - **Instants rule through the plot** (dashed — a solid line reads as part of the chart), and one eviction is
   drawn in every track, so hovering it anywhere thickens it everywhere. **So do a load's two internal edges**
   (`loadEdges`): weights loaded, then KV cache and compute buffers allocated (ready to serve), each with the

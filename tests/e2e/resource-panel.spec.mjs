@@ -1064,7 +1064,9 @@ test("resource panel: no two lane bars overlap on the same row", async () => {
         // The lane is SCOPED to the open session by default, and this test posts events without opening
         // one, so it asks for the all-sessions view the toggle offers. Tests that read the default are
         // the scoping ones below.
-        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+        // …and a window about as long as the events it seeds, so sub-second calls are wide enough to pack: at five
+        // minutes they are fractions of a pixel, and the packer crowds them into a band's last row by design.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false, ml_res_window: 8 }));
         fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
         const { page, frame } = await openPanel(fake, ext);
@@ -1244,7 +1246,9 @@ test("resource panel: wheel scrolls through, double-click scopes, and the sectio
 
         // ---- double-click scopes the window to that block ----
         expect(await frame.locator(".vram-zoom.pinned").count(), "nothing scoped yet").toBe(0);
-        await frame.locator(".rc-ev-tool").first().dblclick();
+        // The LATEST step: on a scrolling axis the earliest bars run off the lane's left edge, clipped but still laid
+        // out there, and a click at the centre of one lands outside the panel. The newest is always wholly on screen.
+        await frame.locator(".rc-ev-tool").last().dblclick();
         await expect(frame.locator(".vram-zoom.pinned")).toBeVisible();
         // The window is necessarily WIDER than a short block (it needs samples in it to draw at all), so the
         // block says which one you landed on rather than leaving the answer as "somewhere in here".
@@ -2303,6 +2307,9 @@ test("resource panel: the crosshair snaps to a datapoint, and only when asked", 
         });
         fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        // A window SHORTER than the history this test waits for: the axis is linear in time, so a longer window would
+        // leave the stretch it hovers empty (the history fills from the left). See `chartWindow`.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 8 }));
         const { page, frame } = await openPanel(fake, ext);
         await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
         await sleep(9000);   // several samples, or "the nearest one" has nothing to choose between
@@ -2435,14 +2442,14 @@ test("resource panel: the crosshair snaps to a datapoint, and only when asked", 
         // the count is what the spacing IS and probing costs two more hovers that would themselves race polls.
         const gap = 1 / Math.max(1, before - 1);
         const parkedX = await dotX();
-        // SEVERAL polls, not one. Re-snapping legitimately moves the mark by up to half a sample gap as the
-        // nearest sample changes under a stationary pointer — so after ONE poll the right behaviour and the
-        // wrong one are barely a gap apart. Pinned to a sample, the mark walks a further gap with EVERY poll
-        // and never comes back; re-derived, it stays put however many land.
-        await expect.poll(countSamples, { timeout: 20000 }).toBeGreaterThan(before + 2);
+        // SEVERAL polls land while the pointer is parked. The axis HOLDS under the pointer (see `chartHeld`): samples
+        // that arrive wait past the right edge until it leaves, so what you are reading does not move under you.
+        // So the mark stays exactly where it was, however many polls land.
+        const polls = fake.psPolls();
+        await expect.poll(() => fake.psPolls(), { timeout: 20000 }).toBeGreaterThan(polls + 2);
         const afterX = await dotX();
         expect(Math.abs(afterX - parkedX), `the mark slid from ${parkedX.toFixed(3)} to ${afterX.toFixed(3)}`)
-            .toBeLessThan(gap * 0.75);
+            .toBeLessThan(gap * 0.1);
 
         const align = await frame.evaluate(() => {
             const plotEl = document.querySelector(".rc-plot");
@@ -2471,6 +2478,43 @@ test("resource panel: the crosshair snaps to a datapoint, and only when asked", 
 // THREE THINGS THE MARK MUST NOT DO, all reported from watching it rather than caught by a test — which is
 // what they have in common: each is about what the chart says when two marks are on screen at once, and no
 // assertion about a single one of them could have found any of them.
+// THE AXIS HOLDS STILL UNDER THE POINTER, and lets go when the pointer leaves. A chart that scrolls while you read it
+// moves the sample under the cursor; so while the pointer is on the chart the axis it entered on is held. The hard
+// half is the letting go: when the pointer leaves the panel's iframe for the page, the iframe is told NOTHING (no
+// pointerleave, no change of :hover; measured), so a hold released only by leave events never released at all. The
+// shell relays the pointer being on the page instead. Within three seconds, well under the eight-second lapse, so
+// this fails if only the lapse is left.
+test("resource panel: the axis holds under the pointer, and lets go when it leaves for the page", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        // A window shorter than the history waited for, so the run fills the plot and scrolls (see `chartWindow`).
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 5 }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-seg").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(7000);
+        const seg = () => frame.locator(".rc-seg").first().getAttribute("style");
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+
+        await page.mouse.move(plot.x + plot.width * 0.5, plot.y + plot.height * 0.5);
+        await sleep(300);
+        const held = await seg();
+        const polls = fake.psPolls();
+        await expect.poll(() => fake.psPolls(), { timeout: 10000 }).toBeGreaterThan(polls);
+        await sleep(600);
+        expect(await seg(), "held: readings arrived, and the chart did not move under the pointer").toBe(held);
+
+        await page.mouse.move(2, 2);   // onto the page, outside the panel
+        await expect.poll(seg, { timeout: 3000, message: "released and caught up once the pointer was on the page" }).not.toBe(held);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
 test("resource panel: the snap mark yields, focuses, and says what it is out of", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();
@@ -2483,6 +2527,9 @@ test("resource panel: the snap mark yields, focuses, and says what it is out of"
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
         await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_snapdot: true }));
         await seedStacked(ext);
+        // A window SHORTER than the history this test waits for: the axis is linear in time, so a longer window would
+        // leave the stretch it hovers empty (the history fills from the left). See `chartWindow`.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 5 }));
         const { page, frame } = await openPanel(fake, ext);
         await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
         await sleep(6000);
@@ -2504,6 +2551,9 @@ test("resource panel: the snap mark yields, focuses, and says what it is out of"
         // AN EVENT RULE OWNS THE POINTER. A dashed instant is its own vertical mark, naming an INSTANT where
         // the crosshair names the nearest SAMPLE — never the same x — so together they read as one thing that
         // cannot decide where it is.
+        // The pointer LEAVES first: the axis holds while it is on the chart (see `chartHeld`), so an eviction that
+        // happens meanwhile is past the held right edge and appears once the pointer is off.
+        await page.mouse.move(2, 2);
         fake.setResident([]);   // an eviction rules through the plot
         await expect.poll(() => frame.locator(".rc-rule").count(), { timeout: 30000 }).toBeGreaterThan(0);
         const rule = await frame.locator(".rc-rule").first().boundingBox();
@@ -2535,6 +2585,9 @@ test("resource panel: the pool tooltip puts the ceiling on its own dimmer line",
         fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
         await seedStacked(ext);
+        // A window SHORTER than the history this test waits for: the axis is linear in time, so a longer window would
+        // leave the stretch it hovers empty (the history fills from the left). See `chartWindow`.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 3 }));
         const { page, frame } = await openPanel(fake, ext);
         await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 25000 }).toBeGreaterThan(0);
         await sleep(4000);
@@ -2585,7 +2638,8 @@ test("resource panel: in snap mode the selection box lands on datapoints, not be
         });
         fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
-        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_snapdot: true, ml_res_window: 300 }));
+        // A window shorter than the nine seconds waited below, so the history covers the whole plot (see `chartWindow`).
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_snapdot: true, ml_res_window: 8 }));
         const { page, frame } = await openPanel(fake, ext);
         await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
         await sleep(9000);   // several samples, so a drag spans more than one
@@ -2671,6 +2725,9 @@ test("resource panel: Esc hides the cursor tip, and moving brings it back", asyn
         fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
         await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_snapdot: true }));
+        // A window SHORTER than the history this test waits for: the axis is linear in time, so a longer window would
+        // leave the stretch it hovers empty (the history fills from the left). See `chartWindow`.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 4 }));
         const { page, frame } = await openPanel(fake, ext);
         await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
         await sleep(5000);
@@ -2787,6 +2844,9 @@ test("resource panel: the residual is named process by process when the driver l
         fake.setCapacity(info);
         fake.setResident([resident("gemma4:31b", MODEL, 0)]);
         await seedStacked(ext);
+        // A window SHORTER than the history this test waits for: the axis is linear in time, so a longer window would
+        // leave the stretch it hovers empty (the history fills from the left). See `chartWindow`.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 2 }));
         const { page, frame } = await openPanel(fake, ext);
 
         const track = frame.locator(".rc-track").first();
@@ -3037,6 +3097,9 @@ test("resource panel: drilling into a split model answers on both cards, per car
             },
         }]);
         await seedStacked(ext);
+        // A window SHORTER than the history this test waits for: the axis is linear in time, so a longer window would
+        // leave the stretch it hovers empty (the history fills from the left). See `chartWindow`.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 3 }));
         const { page, frame } = await openPanel(fake, ext);
         await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
         await sleep(4000);
@@ -3209,6 +3272,9 @@ test("resource panel: the keys are advertised on a hover, and work from one", as
             memory: MEM, gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: V, memory: MEM }],
         }]);
         await seedStacked(ext);
+        // A window SHORTER than the history this test waits for: the axis is linear in time, so a longer window would
+        // leave the stretch it hovers empty (the history fills from the left). See `chartWindow`.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 3 }));
         const { page, frame } = await openPanel(fake, ext);
         await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
         await sleep(4000);
@@ -4668,6 +4734,10 @@ test("resource panel: a model's breakdown steps with its band, not across it", a
         };
         fake.setResident([model]);
         await seedStacked(ext);
+        // A window that covers the model resident AND its eviction four and a half seconds later, and is still shorter
+        // than the history: the axis is linear in time, so the default five minutes would draw the whole thing in a
+        // sliver at the left (the history fills from there, see `chartWindow`).
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 8 }));
         const { frame } = await openPanel(fake, ext);
         await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 25000 }).toBeGreaterThan(0);
         await sleep(4000);

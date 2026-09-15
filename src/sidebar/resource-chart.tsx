@@ -13,7 +13,7 @@ import { Fragment } from "preact";
 import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    boxAxis, chartWindow, placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
+    boxAxis, chartWindow, placeEvents, axisFrac, axisGaps, axisOf, type Axis, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
@@ -60,7 +60,7 @@ const snapUnder = (runs: ResourceSample[][]) => {
     // nearest SAMPLE — so drawn together they read as one thing that cannot decide where it is. The same rule
     // the reading tooltips already follow (`cursorOn`), applied to the mark.
     if (eventHover.value || gapHover.value) return null;   // …and so does a gap: there is no sample in one
-    return snapFraction(runs, c.frac);
+    return snapFraction(runs, c.frac, liveAxis, sampleGraceMs());
 };
 /**
  * IS THE TOOLTIP MUTED? Esc hides it so you can LOOK at the chart, and the next pointer movement brings it
@@ -735,7 +735,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     // data. Undrawable runs are skipped; nothing is lost, because a lone point conveys no trend either.
     const runs = noteRuns(useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]));
     // Only the instants: a span is a duration and belongs in the lane, where its length can be read.
-    const instants = useInstants(runs, events);
+    const instants = useInstants(events);
     // WHAT THIS CARD WAS DOING — its phase ribbon, from the same (kind-filtered) events the rules come from.
     // Keyed on the COUNTS, never the arrays: `timeline()` rebuilds `events` every render (see AGENTS.md).
     const deviceCount = capacity.value?.devices.length ?? 1;
@@ -827,21 +827,19 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                     if (kbFocus.value) return;
                     hoverModel.value = null; eventHover.value = null; crosshair.value = null;
                 }}>
-                {withGaps(runs, samples, scope, (run, i) => (
-                    <div class="rc-seg" style={{ flex: `${runWeight(run)} 1 0` }}>
-                        <TimeGrid runs={runs} run={run} />
+                <TimeGrid />
+                {onAxis(runs, samples, scope, (run, i) => (<>
                         {!deep && ribbon.length ? <PhaseRibbon run={run} spans={ribbon} /> : null}
                         <StackedArea frames={run.map(bandsOf)} times={run.map((sm) => sm.t)} ceiling={ceiling} hidden={hidden} scope={scope}
                             deep={deep} loads={deep ? events.filter((e) => e.kind === "load" && e.model === deep.model && e.until != null) : []}
                             snapIndex={snapUnder(runs)?.run === i ? snapUnder(runs)!.index : null} />
                         {deep && laneGen && laneGen.model === deep.model
                             ? <KvFill run={run} bandsOf={bandsOf} deep={deep} ev={laneGen} /> : null}
-                        <InstantRules instants={instants} run={i} scope={scope} />
                         {predictView.value && !deep && device
                             ? <PredictLines run={run} loads={events} deviceId={device.id} ceiling={ceiling} /> : null}
-                        <HoverSpan run={i} scope="lane" />
-                    </div>
-                ))}
+                    </>))}
+                <InstantRules instants={instants} scope={scope} />
+                <HoverSpan scope="lane" />
                 <BrushOverlay runs={runs} />
                 <Crosshair runs={runs} />
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
@@ -890,7 +888,7 @@ function hoveredSample(runs: ResourceSample[][], scope: string): ResourceSample 
     // breakdown genuinely does not describe the other). Reading only the pointed-at track would show one
     // half of a split and silently omit the rest.
     if (!kbFocus.value?.model && !cursorOn(scope)) return null;
-    return sampleAtFraction(runs, c.frac);
+    return sampleAtFraction(runs, c.frac, liveAxis, sampleGraceMs());
 }
 
 /** WHEN the figures above were measured. A tooltip that reads a historical datapoint has to say which one,
@@ -1531,7 +1529,7 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
     const usedOf = (sm: ResourceSample, p: typeof pools[number]) =>
         p.bandsOf(sm).filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
     const runs = noteRuns(segments(samples, sampleGapMs()).filter((r) => r.length > 1));
-    const instants = useInstants(runs, events);
+    const instants = useInstants(events);
     const held = pools.reduce((n, p) => n + usedOf(latest, p), 0);
     // THE SAME READING THE OVERLAID VIEW GIVES, because it is the same question asked of the same pools — this
     // view had none, so pointing at it (or at a key) answered nothing. Colours are the ones the bands are drawn
@@ -1575,10 +1573,8 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
                     fracOf={(sm, p) => (p.ceiling > 0 ? Math.min(1, usedOf(sm, p) / p.ceiling) : 0)} usedOf={usedOf} links={links} />
                 <EventTip scope={scope} />
                 <GapTip scope={scope} />
-                {withGaps(runs, samples, scope, (run, ri) => (
-                    <div class="rc-seg" style={{ flex: `${runWeight(run)} 1 0` }}>
-                        <TimeGrid runs={runs} run={run} />
-                        <InstantRules instants={instants} run={ri} scope={scope} />
+                <TimeGrid />
+                {onAxis(runs, samples, scope, (run) => (<>
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {axis.bands.map((b, bi) => {
                                 const p = pools.find((x) => x.id === b.id)!;
@@ -1606,8 +1602,8 @@ function BoxView({ def, samples, latest, hidden, events = [], onHide }: { def: T
                             <i key={`w:${b.id}`} class={`rc-boxwall${walls[wi]?.bridge ? ` bridge${walls[wi].mesh === "partial" ? " partial" : ""}` : ""}`} aria-hidden="true"
                                 style={{ bottom: `${(b.base / axis.total) * 100}%` }} />
                         ))}
-                    </div>
-                ))}
+                    </>))}
+                <InstantRules instants={instants} scope={scope} />
             </div>
             {/* One key per pool, carrying what it holds OF ITS OWN capacity — the per-pool reading the axis
                 deliberately refuses to compute for you. Clicking one takes it off the axis.
@@ -1663,7 +1659,7 @@ function UtilView({ def, samples, latest, events = [], onHide }: { def: TrackDef
     const scope = `util:${def.id}`;
     const cards = def.series.map((id) => cap.devices.find((d) => d.id === id.slice("util.".length))).filter(Boolean) as DeviceCapacity[];
     const runs = noteRuns(segments(samples, sampleGapMs()).filter((r) => r.length > 1));
-    const instants = useInstants(runs, events);
+    const instants = useInstants(events);
     if (!cards.length) return null;
     const color = (i: number) => poolColor(i, cards.length);
     const names = cards.map((c) => c.name).join(" · ");
@@ -1687,10 +1683,8 @@ function UtilView({ def, samples, latest, events = [], onHide }: { def: TrackDef
                 <UtilTip cards={cards} color={color} at={hoveredSample(runs, scope)} latest={latest} scope={scope} />
                 <EventTip scope={scope} />
                 <GapTip scope={scope} />
-                {withGaps(runs, samples, scope, (run, ri) => (
-                    <div class="rc-seg" style={{ flex: `${runWeight(run)} 1 0` }}>
-                        <TimeGrid runs={runs} run={run} />
-                        <InstantRules instants={instants} run={ri} scope={scope} />
+                <TimeGrid />
+                {onAxis(runs, samples, scope, (run) => (<>
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {cards.flatMap((c, ci) => (["gpuPercent", "memoryPercent"] as const).flatMap((k) => {
                                 // Split wherever the reading is ABSENT, so a gap in the counter is a gap in the
@@ -1709,8 +1703,8 @@ function UtilView({ def, samples, latest, events = [], onHide }: { def: TrackDef
                                 ));
                             }))}
                         </svg>
-                    </div>
-                ))}
+                    </>))}
+                <InstantRules instants={instants} scope={scope} />
             </div>
             <div class="rc-legend">
                 {cards.map((c, ci) => {
@@ -1793,7 +1787,7 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
         return mine.length > 0 && mine.every((b) => hidden.has(b.model!));
     };
     const pct = (v: number) => `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}%`;
-    const instants = useInstants(runs, events);
+    const instants = useInstants(events);
     return (
         <div class="rc-track">
             <div class="rc-head">
@@ -1820,11 +1814,8 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
                 {/* This view has rules of its own now, so it needs the tip that explains them. */}
                 <EventTip scope="overlay" />
                 <GapTip scope="overlay" />
-                {withGaps(runs, samples, "overlay", (run, ri) => (
-                    <div class="rc-seg" style={{ flex: `${runWeight(run)} 1 0` }}>
-                        <TimeGrid runs={runs} run={run} />
-                        <InstantRules instants={instants} run={ri} scope="overlay" />
-                        <HoverSpan run={ri} scope="lane" />
+                <TimeGrid />
+                {onAxis(runs, samples, "overlay", (run, ri) => (<>
                         {/* ONE DOT PER LINE at the snapped sample — this view is literally lines, so it is the
                             view where "snap to the line" means the most. Positioned HTML rather than an SVG
                             circle for the same reason as the stacked one: the viewBox is stretched, so a
@@ -1881,8 +1872,9 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
                                 );
                             })}
                         </svg>
-                    </div>
-                ))}
+                    </>))}
+                <InstantRules instants={instants} scope="overlay" />
+                <HoverSpan scope="lane" />
             </div>
             <div class="rc-legend">
                 {pools.map((p, pi) => (
@@ -2036,20 +2028,21 @@ function phaseGradient(phases: { kind: string; until: number }[], from: number, 
 /** The instants to rule through a plot, placed against its own segments. Shared, because writing them inline
  *  in one view is exactly how the Overview preset ended up with no rules at all while the per-pool tracks had
  *  them: the same events, drawn in one place and not the other. */
-function useInstants(runs: ResourceSample[][], events: ResourceEvent[]): EventPlacement[] {
-    return useMemo(() => {
-        const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
-        // The moments themselves, plus a server-split load's two internal edges (`loadEdges`) — the steps in the
-        // memory trace a load draws, which otherwise had nothing on the plot saying what they were.
-        const moments = [...events.filter((e) => e.until == null), ...events.flatMap(loadEdges)];
-        return placeEvents(runs, eventsIn(moments, from, to + sampleGraceMs()), sampleGraceMs());
-    }, [runs, events]);
+function useInstants(events: ResourceEvent[]): EventPlacement[] {
+    // Not memoised: the axis moves on every tick of a live chart, and the instants in a window are few.
+    const axis = liveAxis;
+    if (!axis) return [];
+    // The moments themselves, plus a server-split load's two internal edges (`loadEdges`) — the steps in the
+    // memory trace a load draws, which otherwise had nothing on the plot saying what they were. Placed on the axis
+    // by time alone: an eviction that happened in a gap is drawn in the gap, where it happened.
+    const moments = [...events.filter((e) => e.until == null), ...events.flatMap(loadEdges)];
+    return placeEvents(axis, eventsIn(moments, axis.from, axis.to));
 }
 
 /** The dashed rules themselves — an eviction is a moment in the memory trace, and its meaning is WHERE the
  *  curve steps, so it belongs on the plot rather than in the lane below. */
-function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; run: number; scope: string }) {
-    return <>{instants.filter((p) => p.run === run).map((p) => (
+function InstantRules({ instants, scope }: { instants: EventPlacement[]; scope: string }) {
+    return <>{instants.map((p) => (
         // Keyed by the EVENT, not the element: the same eviction is drawn in every track, so hovering it in
         // one plot thickens it in all of them — one thing that happened, not three.
         <div class={`rc-rule rc-rule-${p.event.kind}${eventKey(p.event) === hotEvent.value ? " hot" : ""}`}
@@ -2066,15 +2059,17 @@ function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; ru
 }
 
 /**
- * A BREAK in the plot, and what it cut out. The axis collapses a gap to these few pixels whatever its length, so a
- * minute and ten hours look the same; pointing at one says which it was and why the chart knows. A flex item in
- * place of the plot's old 3px `gap`, so the geometry — and the lane's, which mirrors it — did not move. Keyed by
- * its start, so the same break lights in every track, the way a ruled instant does.
+ * A BREAK in the plot, and what it cut out: drawn at its TRUE width, hatched, because the axis is linear in time and
+ * the hole is part of the history. (It used to be a 3px marker whatever its length, so a minute and ten hours looked
+ * the same.) Pointing at one says how long it was and why the chart knows. Keyed by its start, so the same break
+ * lights in every track, the way a ruled instant does.
  */
-function GapMark({ prev, next, samples, scope }: { prev: ResourceSample[]; next: ResourceSample[]; samples: ResourceSample[]; scope: string }) {
-    const gap = runGap(prev, next, samples);
+function GapMark({ gap, from, to, scope }: { gap: RunGap; from: number; to: number; scope: string }) {
     const hot = gapHover.value?.gap.from === gap.from;
+    const left = Math.max(0, from), right = Math.min(1, to);
+    if (!(right > left)) return null;
     return <div class={`rc-gap${gap.reported ? " reported" : ""}${hot ? " hot" : ""}`}
+        style={{ left: `${left * 100}%`, width: `${(right - left) * 100}%` }}
         onPointerEnter={(e: PointerEvent) => { gapHover.value = { gap, scope }; trackCursor(scope)(e); }}
         onPointerLeave={() => { gapHover.value = null; }} />;
 }
@@ -2087,14 +2082,19 @@ function ClickFirst() {
     return reach ? null : <span class="rc-tip-click">click, then </span>;
 }
 
-/** The plot's segments with a {@link GapMark} between each pair — the one loop every view draws its runs in. */
-function withGaps(runs: ResourceSample[][], samples: ResourceSample[], scope: string, seg: (run: ResourceSample[], i: number) => preact.JSX.Element) {
-    return runs.map((run, i) => (
-        <Fragment key={i}>
-            {i > 0 ? <GapMark prev={runs[i - 1]} next={run} samples={samples} scope={scope} /> : null}
-            {seg(run, i)}
-        </Fragment>
-    ));
+/** The plot's runs, each in a box PLACED ON THE AXIS, with the breaks between them drawn at their true width — the one
+ *  loop every view draws its runs in. A run's own drawing works in run-local fractions (`runFrac`), which is the
+ *  axis restricted to that run, so the box is all the placement it needs. */
+function onAxis(runs: ResourceSample[][], samples: ResourceSample[], scope: string, seg: (run: ResourceSample[], i: number) => preact.JSX.Element) {
+    const axis = liveAxis;
+    if (!axis) return null;
+    return <>
+        {axisGaps(runs, samples, axis).map((g) => <GapMark key={`g${g.gap.from}`} gap={g.gap} from={g.from} to={g.to} scope={scope} />)}
+        {runs.map((run, i) => {
+            const a = axisFrac(axis, run[0].t), b = axisFrac(axis, run[run.length - 1].t);
+            return <div class="rc-seg" key={i} style={{ left: `${a * 100}%`, width: `${Math.max(0, b - a) * 100}%` }}>{seg(run, i)}</div>;
+        })}
+    </>;
 }
 
 /** What a hovered break stands for: how long nothing was drawn, from when to when, and why. */
@@ -2377,10 +2377,9 @@ function Crosshair({ runs }: { runs?: ResourceSample[][] } = {}) {
     );
 }
 
-/** Track the pointer along the time axis. The fraction positions the line; the TIME comes from the same
- *  segmented mapping the brush uses, because the axis is not linear and a label read off the pixels would
- *  name the wrong instant. */
-const trackCrosshair = (runs: ResourceSample[][]) => (e: PointerEvent) => {
+/** Track the pointer along the time axis. The fraction positions the line; the TIME comes from the axis, the same
+ *  mapping the brush and every drawing use, so the label names the instant under the line. */
+const trackCrosshair = (_runs?: ResourceSample[][]) => (e: PointerEvent) => {
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const raw = Math.min(1, Math.max(0, (e.clientX - box.left) / Math.max(1, box.width)));
     // SNAPPED, when asked: the tooltip already reads a real SAMPLE rather than interpolating between two, so
@@ -2393,11 +2392,11 @@ const trackCrosshair = (runs: ResourceSample[][]) => (e: PointerEvent) => {
     const frac = raw;
     // How much time ONE PIXEL is worth here, which is what decides whether milliseconds mean anything in the
     // label: zoomed into ten seconds they do, over five minutes of history they are noise.
-    const first = runs[0]?.[0]?.t, last = runs.at(-1)?.at(-1)?.t;
-    const msPerPx = first != null && last != null && box.width > 0 ? (last - first) / box.width : Infinity;
+    const axis = liveAxis;
+    const msPerPx = axis && box.width > 0 ? (axis.to - axis.from) / box.width : Infinity;
     // The TIME comes from the unsnapped position when floating and from the snapped one when not, so the
     // label always names the instant the line is actually drawn at.
-    crosshair.value = { frac, t: timeAtFraction(runs, frac), msPerPx };
+    crosshair.value = { frac, t: timeAtFraction(axis, frac), msPerPx };
 };
 
 /** The hovered EVENT's stretch, shaded on the plot above it. The lane and the chart share an axis and that
@@ -2408,10 +2407,10 @@ const trackCrosshair = (runs: ResourceSample[][]) => (e: PointerEvent) => {
  *  Drawn inside its own SEGMENT, exactly like the block is, because the axis is segmented by gaps and is not
  *  linear in time — a fraction of the whole plot would land somewhere else entirely. Carries the model's
  *  colour so the shade and the block are visibly the same thing, and disappears with the hover. */
-function HoverSpan({ run, scope }: { run: number; scope: string }) {
+function HoverSpan({ scope }: { scope: string }) {
     const h = eventHover.value;
-    if (!h || h.scope !== scope || h.p.run !== run) return null;
-    const { from, to } = h.p;
+    if (!h || h.scope !== scope) return null;
+    const from = Math.max(0, h.p.from), to = Math.min(1, h.p.to);
     // An INSTANT has no width; the dashed rule already marks it, and a zero-width shade would be a hairline
     // competing with it.
     if (!(to > from)) return null;
@@ -2430,7 +2429,7 @@ function BrushOverlay({ runs }: { runs?: ResourceSample[][] } = {}) {
     // edge resolved once drifts off the dot it was dragged against the moment a poll lands: measured a whole
     // sample apart (a box edge at 0.600 beside a mark at 0.500). Both now answer "which sample is under this
     // screen position" from the same data at the same instant, which is the only way they cannot disagree.
-    const at = (f: number) => (snapDot.value && runs ? snapFraction(runs, f)?.frac ?? f : f);
+    const at = (f: number) => (snapDot.value && runs ? snapFraction(runs, f, liveAxis, sampleGraceMs())?.frac ?? f : f);
     const from = Math.min(at(b.from), at(b.to)), to = Math.max(at(b.from), at(b.to));
     return <div class="rc-brush" style={{ left: `${from * 100}%`, width: `${Math.max(0, to - from) * 100}%` }} />;
 }
@@ -2447,6 +2446,61 @@ function BrushOverlay({ runs }: { runs?: ResourceSample[][] } = {}) {
  * handlers, which run outside render and want the newest data there is.
  */
 let liveRuns: ResourceSample[][] | null = null;
+/**
+ * THE AXIS THE PLOTS ARE DRAWN ON ({@link Axis}): the chart's window, linear in clock time. Published by the chart as
+ * it renders and read by every plot, overlay and pointer handler, so they all place a time at the same x. A plain
+ * ref rather than a signal for the same reason as `liveRuns`: it is written during render.
+ */
+let liveAxis: Axis | null = null;
+/** How often a chart that follows the clock redraws its axis. Fast enough to read as scrolling, slow enough that a
+ *  re-render of every track is not the panel's main cost. */
+const AXIS_TICK_MS = 250;
+/** The narrowest a lane bar is DRAWN, in pixels (`.rc-ev` has the same `min-width`). The packer reserves at least this
+ *  much: reserving only `MIN_EV_SPAN` of the lane, which is under 3px on a narrow one, let two bars packed edge to
+ *  edge be drawn overlapping. */
+const MIN_BAR_PX = 3;
+/** The lane's measured width, for turning MIN_BAR_PX into a fraction of it. Written from a callback ref, since the
+ *  rows are drawn below the lane's early return where a hook cannot reach. */
+const laneWidthPx = signal(0);
+/**
+ * THE AXIS HOLDS STILL UNDER THE POINTER. A chart that scrolls while you read it moves the thing you are pointing at:
+ * the crosshair's sample walks away, a tooltip changes under a still cursor, a drag's anchored edge slides. So while
+ * the pointer is over the plots or the lane, the axis it entered on is held, and the chart catches up to now when
+ * the pointer leaves. Samples keep arriving meanwhile; they are drawn past the right edge until then.
+ */
+const chartHeld = signal<{ axis: Axis; key: string } | null>(null);
+/** WHAT the held axis was a view OF. Holding is for passive reading only: a zoom, a scrub, a new width or a change of
+ *  scope is you navigating, and a hold taken before it would pin the chart to the stretch you just asked to leave. */
+const holdKey = (): string =>
+    `${zoomRange.value?.from ?? ""}:${zoomRange.value?.to ?? ""}:${resWindowS.value}:${laneScoped.value}`
+    // The open session changes the window only when the chart is SCOPED to it. Keying it in regardless released the hold
+    // on the first click of a double-click (a click opens the step), so the chart jumped between the two clicks and the
+    // second one missed the bar it was meant for.
+    + (laneScoped.value ? `:${scopedHash() ?? ""}` : "");
+/** When the pointer last did anything over a chart surface. */
+let lastPointerAt = 0;
+/** A hold with no pointer activity over the chart for this long lets go. The backstop for where nothing can say the
+ *  pointer has left: the DevTools panel, and any exit the browser does not report into the iframe. */
+const HOLD_LAPSE_MS = 8000;
+/** Hold the axis as the pointer comes onto (or moves over) a chart surface. */
+const holdAxis = () => {
+    lastPointerAt = Date.now();
+    if (!chartHeld.value && liveAxis) chartHeld.value = { axis: liveAxis, key: holdKey() };
+};
+/** Let it go when the pointer leaves for somewhere that is not another chart surface (plots → lane keeps it held). */
+const releaseAxis = (e: PointerEvent) => {
+    const to = e.relatedTarget as Element | null;
+    if (!to?.closest?.(".rc, .rc-lane")) chartHeld.value = null;
+};
+/** Let go outright: the pointer is somewhere else entirely. Called when the overlay's shell reports the pointer on the
+ *  PAGE, which the iframe is otherwise never told (see `relayPointerOut` in shell.ts). */
+export function releaseAxisHold(): void { if (chartHeld.value) chartHeld.value = null; }
+// THREE WAYS A HOLD ENDS, because the one that should suffice (`pointerleave`) is not delivered when the pointer leaves
+// the panel's iframe for the page: moving anywhere in the panel off the chart; the shell saying the pointer is on the
+// page; and the lapse, in the chart's tick.
+if (typeof document !== "undefined") document.addEventListener("pointermove", (e) => {
+    if (chartHeld.value && !(e.target as Element | null)?.closest?.(".rc, .rc-lane")) chartHeld.value = null;
+}, { passive: true });
 /** Publish the runs a plot is about to draw, for the pointer handlers. Call it from a render, not an effect:
  *  a drag begun in the same frame must not consult the previous one's data. */
 const noteRuns = (runs: ResourceSample[][]): ResourceSample[][] => (liveRuns = runs);
@@ -2478,11 +2532,11 @@ const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
     const timeAt = (x: number) => {
         const rs = liveRuns ?? runs;
         if (snapDot.value) {
-            const s = snapFraction(rs, raw(x));
+            const s = snapFraction(rs, raw(x), liveAxis, sampleGraceMs());
             const t = s ? rs[s.run]?.[s.index]?.t : null;
             if (t != null) return t;
         }
-        return timeAtFraction(rs, raw(x));
+        return timeAtFraction(liveAxis, raw(x));
     };
     const startX = e.clientX;
     // RAW screen fractions, snapped where they are DRAWN (BrushOverlay) — see there. Storing the snapped
@@ -2673,15 +2727,17 @@ function PhaseRibbon({ run, spans }: { run: { t: number }[]; spans: { t: number;
  * runs, so the lines of stacked tracks line up. Vertical only: memory gridlines would mean a different amount on
  * every card, each having its own ceiling.
  */
-function TimeGrid({ runs, run }: { runs: { t: number }[][]; run: { t: number }[] }) {
-    if (!timeGrid.value || run.length < 2) return null;
-    const step = gridStep(runs.reduce((n, r) => n + runWeight(r), 0));
-    // The spacing, said once per plot (in its last segment): a grid whose interval you have to work out by
-    // counting lines against the crosshair's clock is half a reading aid. A round interval, so round words.
+function TimeGrid() {
+    const axis = liveAxis;
+    if (!timeGrid.value || !axis) return null;
+    const step = gridStep(axis.to - axis.from);
+    // The spacing, said once per plot: a grid whose interval you have to work out by counting lines against the
+    // crosshair's clock is half a reading aid. A round interval, so round words. Across the WHOLE axis, gaps
+    // included: the clock did not stop while nothing was measured.
     const label = step < 60_000 ? `${step / 1000} s` : step < 3_600_000 ? `${step / 60_000} min` : `${step / 3_600_000} h`;
     return <>
-        {gridTimes(run, step).map((t) => <i key={t} class="rc-grid" aria-hidden="true" style={{ left: `${runFrac(run, t) * 100}%` }} />)}
-        {run === runs[runs.length - 1] ? <span class="rc-grid-step">grid {label}</span> : null}
+        {gridTimes([{ t: axis.from }, { t: axis.to }], step).map((t) => <i key={t} class="rc-grid" aria-hidden="true" style={{ left: `${axisFrac(axis, t) * 100}%` }} />)}
+        <span class="rc-grid-step">grid {label}</span>
     </>;
 }
 
@@ -2983,15 +3039,23 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
     const events = useMemo(() => filterEvents(all, filter), [all, filter.hash, filter.scope, filter.hidden, evKey]);
     const counts = useMemo(() => countByKind(all), [all]);
     const runs = noteRuns(useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]));
-    const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
-    // The window admits a poll's worth past the last sample, for the same reason placeEvents does.
-    const placed = useMemo(() => placeEvents(runs, eventsIn(events, from, to + sampleGraceMs()), sampleGraceMs()),
-        [runs, events, from, to]);
+    const axis = liveAxis;
+    // On the chart's axis, by time alone: nothing is dropped for falling between samples. PACKED over a window's
+    // width to the LEFT of the screen as well as what is on it, so a bar keeps its row while the chart scrolls,
+    // instead of the rows re-packing under it on every tick as bars leave. The minimum drawn width is a fraction of
+    // the axis, which does not change while it scrolls at one width.
+    const lastT = samples.at(-1)?.t;
+    const placed = axis
+        ? placeEvents(axis, eventsIn(events, axis.from - (axis.to - axis.from), axis.to), lastT != null ? lastT + sampleGraceMs() : undefined)
+        : [];
     // The CONTROL still shows when everything is filtered out — otherwise hiding the last kind hides the way
     // to bring it back.
-    if (!runs.length || (!placed.length && !all.length)) return null;
+    if (!axis || !runs.length || (!placed.length && !all.length)) return null;
     const spans = placed.filter((p) => p.event.until != null);
-    const rows = laneRows(spans);
+    // Packed at the width a bar is DRAWN at, never less (see MIN_BAR_PX).
+    const minSpan = Math.max(MIN_EV_SPAN, laneWidthPx.value > 0 ? MIN_BAR_PX / laneWidthPx.value : 0);
+    // …and a bar never packed flush against another: a pixel between them, or two read as one longer bar.
+    const rows = laneRows(spans, 4, minSpan, undefined, laneWidthPx.value > 0 ? 1 / laneWidthPx.value : 0);
     const [pulsed, setPulsed] = useState<string | null>(null);
     const lit = lineageOf(events, eventHover.value?.p.event.id);
     // The same focus, carried into the transcript: the log dims every step outside the hovered lineage, so a
@@ -3075,7 +3139,8 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
         try { chrome.storage.local.set({ [LANEH_KEY]: LANE_H_DEFAULT }); } catch { /* opaque origin */ }
     };
     return (
-        <div class="rc-lane" onPointerLeave={() => { eventHover.value = null; hoverAt.value = null; hoverModel.value = null; }}>
+        <div class="rc-lane" onPointerEnter={holdAxis} onPointerMove={holdAxis}
+            onPointerLeave={(e: PointerEvent) => { eventHover.value = null; hoverAt.value = null; hoverModel.value = null; releaseAxis(e); }}>
             {/* Rows carry the SAME drag-select the plot has. The lane shares the plot's axis, so a range
                 picked out here means exactly what one picked out above does — and having to go up to the
                 chart to select the stretch you are looking at down here reads as the lane being a picture
@@ -3095,7 +3160,8 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                 A FIXED height, not a max: a cap still lets the box grow and shrink with its content, which is
                 the jumping, just with a ceiling on it. Fixed, the lane occupies exactly what it was given
                 whatever happens inside it, and everything above it is nailed down. */}
-            {showLane.value ? <div class="rc-lane-rows" style={{ height: `${laneH.value}px` }}>{rows.map((row, ri) => (
+            {showLane.value ? <div class="rc-lane-rows" style={{ height: `${laneH.value}px` }}
+                ref={(el) => { const w = el?.clientWidth ?? 0; if (w > 0 && w !== laneWidthPx.value) laneWidthPx.value = w; }}>{rows.map((row, ri) => (
                 <div class="rc-lane-row" key={ri}
                     onPointerDown={startBrush(runs)}
                     onPointerMove={trackCursor("lane")}>
@@ -3105,11 +3171,10 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                         chosen. Every surface on this axis draws the same fractions, which is the point of
                         the axis being shared. */}
                     <BrushOverlay runs={runs} />
-                    {runs.map((run, i) => (
-                        <div class="rc-lane-seg" key={i} style={{ flex: `${runWeight(run)} 1 0` }}>
-                            {row.filter((p) => p.run === i).map((p) => {
+                    {/* Only what reaches the screen is drawn; the rest was packed so its row is ready. */}
+                    {row.filter((p) => Math.max(p.to, p.from + minSpan) >= 0 && p.from <= 1).map((p) => {
                                 const e = p.event;
-                                const w = Math.max(MIN_EV_SPAN * 100, (p.to - p.from) * 100);   // packed at this width too
+                                const w = Math.max(minSpan * 100, (p.to - p.from) * 100);   // packed at this width too
                                 // A composite span is ONE block whose parts are different KINDS of time: the
                                 // model, the human deciding, the tool. Drawn as gradient stops rather than
                                 // separate elements, so it still hovers and clicks as the single step it is.
@@ -3147,6 +3212,9 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                                         // property, so "is the lane drawing one model or two" — the question
                                         // behind the two-spellings bug — could only be answered by eye.
                                         data-model={e.model ?? undefined}
+                                        // …and WHAT it is, for the same reason: two asides of one model (a session's
+                                        // title and a code annotation) are otherwise told apart only by hovering.
+                                        data-label={e.label}
                                         onPointerEnter={(ev: PointerEvent) => { eventHover.value = { p, scope: "lane" }; hoverModel.value = e.model ?? null; trackCursor("lane")(ev); }}
                                         onClick={() => open(e)}
                                         onDblClick={() => scope(e)}>
@@ -3183,8 +3251,6 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                                     </button>
                                 );
                             })}
-                        </div>
-                    ))}
                 </div>
             ))}</div> : null}
             {/* Its own grip, under the rows and above the header — a lane too short to show what happened is
@@ -3316,16 +3382,44 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     // right handle snap back to live instead of resizing, and emptied the strip outright in another test.
     // Here the value is a stable `null` whenever nothing is scoped, so it cannot disturb the memo below.
     // (`events.length`, never `events`: `timeline()` rebuilds that array every render.)
+    // A live session FILLS its window and then scrolls at the width on screen, rather than growing to fit (which is a
+    // continuous zoom, and snapped to a new window when the run ended): see `sessionWindow`.
     const scopedWindow = useMemo(
-        () => (laneScoped.value ? sessionWindow(events, scopedHash(), Date.now()) : null),
-        [laneScoped.value, scopedHash(), events.length, samples.length]);
+        () => (laneScoped.value ? sessionWindow(events, scopedHash(), Date.now(), { followMs: resWindowS.value * 1000 }) : null),
+        [laneScoped.value, scopedHash(), events.length, samples.length, resWindowS.value]);
     const window_ = useMemo(
-        () => chartWindow(zoomRange.value, scopedWindow, resWindowS.value, Date.now()),
+        () => chartWindow(zoomRange.value, scopedWindow, resWindowS.value, Date.now(), samples[0]?.t),
         [resWindowS.value, zoomRange.value, samples.length, scopedWindow]);
     // The samples in the window, plus the nearest either side when the window is too narrow to draw itself —
     // see `windowSamples`. Zooming inside one long event used to leave fewer than two samples and an empty
     // chart, which reads as the panel having broken rather than as a window between two polls.
-    const windowed = useMemo(() => windowSamples(samples, window_), [samples, window_]);
+    // While the pointer holds the axis still (see chartHeld), the SAMPLES hold too: the window keeps moving as readings
+    // arrive, and drawing the moved window's samples on the held axis left its left part empty under the pointer.
+    // Read unconditionally, so the chart subscribes to it (the minify gotcha). A hold taken under a different view (a zoom
+    // or scrub since) no longer applies: see holdKey.
+    const heldNow = chartHeld.value;
+    const held = heldNow && heldNow.key === holdKey() ? heldNow.axis : null;
+    const windowed = useMemo(() => windowSamples(samples, held ?? window_), [samples, window_, held]);
+    // THE AXIS FOLLOWS THE CLOCK, not the last sample. The window above is recomputed when samples arrive (every
+    // second while the box works, every 15 s idle), and a chart whose right edge is the last sample steps and freezes
+    // at that cadence. So the DRAWN axis slides the window along to now on a short tick, while the window itself —
+    // what is sampled, what the scrub strip reasons about — keeps its sample cadence (see the note on its memo: a
+    // right edge moving at another cadence breaks the scrub gestures). Only a window that follows the clock slides:
+    // a zoom stays where you put it, and so does a finished session.
+    const following = window_ ? !!window_.live : true;
+    const [tickNow, setTickNow] = useState(() => Date.now());
+    useEffect(() => {
+        if (!following) return;
+        const id = setInterval(() => {
+            const now = Date.now();
+            if (chartHeld.value && now - lastPointerAt > HOLD_LAPSE_MS) chartHeld.value = null;
+            setTickNow(now);
+        }, AXIS_TICK_MS);
+        return () => clearInterval(id);
+    }, [following]);
+    liveAxis = held ?? (!window_ ? axisOf(null, [windowed], tickNow)
+        : window_.live && tickNow > window_.to ? { from: window_.from + (tickNow - window_.to), to: tickNow }
+        : window_);
     // KNOWN BUG, diagnosed and deliberately still here: this backfills the CURRENT capacity into a sample
     // that has none, and a capacity carries FREE BYTES — which is what usage is computed from. So a sample
     // taken before `/api/info` first answered is drawn with TODAY's usage and MOVES as the present moves: the
@@ -3398,7 +3492,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     };
     return (
         <>
-            <div class="rc" onWheel={wheelScrub}>
+            <div class="rc" onWheel={wheelScrub} onPointerEnter={holdAxis} onPointerMove={holdAxis} onPointerLeave={releaseAxis}>
                 {/* The plots' RULES obey the same kind filter as the lane and the strip: hiding "loads" takes the
                     load steps off the chart too, rather than leaving them ruled through a trace whose lane bars
                     are gone. */}
@@ -3408,7 +3502,11 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
                 rather than below it because the lane RE-PACKS as the window moves — a step entering the view
                 can add a row — and anything below a control whose height changes shifts out from under the
                 pointer mid-drag. The strip is the thing being dragged, so it goes where nothing moves it. */}
-            <ScrubStrip samples={samples} window={window_} events={stripEvents} />
+            {/* The strip is about the stretch that HAS data, so while the window is still filling (its right edge
+                ahead of the last reading, see `chartWindow`) it is given the window clipped to that reading: a drag
+                on its left edge then means "fewer seconds than the history", which is what narrowing is. */}
+            <ScrubStrip samples={samples} window={window_ && samples.length && window_.to > samples[samples.length - 1].t
+                ? { from: window_.from, to: samples[samples.length - 1].t } : window_} events={stripEvents} />
             {/* And below that, sharing the tracks' x-axis: what happened, against what memory was doing. The
                 connector says the second is the first opened out — see ZoomLink. */}
             {/* Drawn unless the track editor's "event lane" is off — `laneEnabled` is that switch and takes
