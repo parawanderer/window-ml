@@ -2049,11 +2049,11 @@ function useInstants(runs: ResourceSample[][], events: ResourceEvent[]): EventPl
 /** The dashed rules themselves — an eviction is a moment in the memory trace, and its meaning is WHERE the
  *  curve steps, so it belongs on the plot rather than in the lane below. */
 function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; run: number; scope: string }) {
-    return <>{instants.filter((p) => p.run === run).map((p, k) => (
+    return <>{instants.filter((p) => p.run === run).map((p) => (
         // Keyed by the EVENT, not the element: the same eviction is drawn in every track, so hovering it in
         // one plot thickens it in all of them — one thing that happened, not three.
         <div class={`rc-rule rc-rule-${p.event.kind}${eventKey(p.event) === hotEvent.value ? " hot" : ""}`}
-            key={k}
+            key={barKey(p.event)}
             // A rule about a MODEL carries that model's colour, the same one its row, its band and its lane
             // blocks already use — so "gemma was evicted here" is legible from the line without reading the
             // tooltip. Generic red said only "something bad", which on a box running four models is the one
@@ -2520,6 +2520,10 @@ const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
 /** One event's identity across surfaces: the same eviction is drawn in every track, so hovering it anywhere
  *  must highlight it everywhere. Its time and what it was are enough to identify it. */
 const eventKey = (e: ResourceEvent): string => `${e.kind}:${e.t}:${e.model ?? ""}`;
+/** A lane bar's DOM identity: the event it draws, never its index in a row. Keyed by index, a row that re-packed as a
+ *  live run grew handed the same button to a different event under a still pointer; no `pointerenter` fired, so the
+ *  hover went on naming the event that button used to be (a hovered aside showed the run's tooltip). */
+const barKey = (e: ResourceEvent): string => e.id ?? `${eventKey(e)}:${e.ref?.hash ?? ""}:${e.ref?.seq ?? ""}:${e.label}`;
 const hotEvent = signal<string | null>(null);
 
 /** The hovered event, and WHICH surface owns it. Every track's plot renders a tip (a ruled instant is hovered
@@ -3103,7 +3107,7 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                     <BrushOverlay runs={runs} />
                     {runs.map((run, i) => (
                         <div class="rc-lane-seg" key={i} style={{ flex: `${runWeight(run)} 1 0` }}>
-                            {row.filter((p) => p.run === i).map((p, k) => {
+                            {row.filter((p) => p.run === i).map((p) => {
                                 const e = p.event;
                                 const w = Math.max(MIN_EV_SPAN * 100, (p.to - p.from) * 100);   // packed at this width too
                                 // A composite span is ONE block whose parts are different KINDS of time: the
@@ -3123,7 +3127,7 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                                 // something next to the step that spawned it and the run that contains it.
                                 const away = lit.size > 0 && !(e.id && lit.has(e.id));
                                 return (
-                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}${e.open ? " open" : ""}${e.id && e.id === pulsed ? " pulse" : ""}`} key={k}
+                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}${e.open ? " open" : ""}${e.id && e.id === pulsed ? " pulse" : ""}`} key={barKey(e)}
                                         style={{ left: `${p.from * 100}%`, width: `${w}%`,
                                                  // A `run` is the CONTAINER every other block sits inside, so it is
                                                  // drawn as a pattern rather than a solid fill (see .rc-ev-run) —
