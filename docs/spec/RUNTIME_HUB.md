@@ -67,6 +67,37 @@ why approving is its own scope.
   size-capped.
 - **Transport**: websockets. The hub is small and stateless apart from the rings; any low-overhead language will do.
 
+## Orchestration: agents that drive other agents
+
+The longer-term case: a root agent on a page that is a canvas over a desktop, issuing commands to the computer (such
+as starting browsers) and driving subagents in those browsers. The hub carries it with three additions, and a
+stricter security rule, because an orchestrator is exactly what a prompt injection would want to take over.
+
+- **An agent can be a client.** The orchestrator holds a paired key the way a phone does, watches subagent sessions
+  through the same event stream, and sends them the same signed commands. The protocol does not distinguish a
+  person from an agent.
+- **A desktop runtime.** Commands to the computer come from a small daemon on it that registers as a runtime, with
+  capabilities such as shell, processes, desktop screenshots and input. Clicking a remote-desktop canvas also works
+  (the extension already sends trusted input into a canvas through CDP), but real input and process commands are
+  more reliable than pixels, so the canvas is better as the person's view than as the agent's control path.
+- **Lineage across runtimes.** A subagent's session records its parent: the root session, possibly on another
+  runtime. The client can then draw the tree, and the request hints tell the GPU box it is one tree of work. The
+  lane already nests by `parent` within one runtime; this extends it across runtimes.
+
+**Authority flows down by capability, and approvals stay with people.**
+
+- Starting a runtime returns a capability for THAT runtime only. The orchestrator can drive what it started and
+  nothing else, the same object-capability stance as [`SECRET_HANDLES.md`](SECRET_HANDLES.md).
+- The orchestrator gets the drive scope, not the approve scope. A subagent's approval still goes to a person's
+  paired device or the sidebar. Letting an agent approve would be an explicit, scoped decision made by a person,
+  never a default.
+- The desktop runtime's shell is the most dangerous capability in the whole system, and its commands are
+  approval-gated the way `exec` is.
+
+This is the goal approvals over IPC were built toward (`docs/dev/agent-tools.md` names it: one wrapper driving a
+desktop with delegated subagents), and it overlaps [`HEADLESS_AGENTS.md`](HEADLESS_AGENTS.md), where subagents and
+headless runtimes are still open.
+
 ## Open
 
 - **MV3 lifetime.** The extension's service worker is evicted when idle. A websocket with regular traffic is
