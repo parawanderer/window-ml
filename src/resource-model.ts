@@ -1943,25 +1943,18 @@ export function runGap(prev: readonly { t: number }[], next: readonly { t: numbe
     return { from, to, reported: !!next[0].gapBefore || inside.some((s) => s.gapBefore), isolated: inside.length };
 }
 
-/** Where an event sits on the chart's x-axis — which SEGMENT, and how far across it.
- *
- *  The plot is split into contiguous runs of samples (a gap is drawn as a gap, never interpolated across),
- *  and each run is linear in time and weighted by its duration (`runWeight`/`runFrac`) — but the GAPS
- *  collapse, so a pixel is not a fixed duration across the whole axis. An event therefore has to be placed
- *  INSIDE the run that contains it, by time, and an event that falls in a gap has no x at all: nothing was
- *  measured then, and putting it at the edge would claim it happened at a moment the chart can't speak for.
- *
- *  Spans are clipped to the run they start in. A span crossing a gap is a real thing (a load that ran while
- *  the panel was closed), and the honest drawing of it ends where the measurements do. */
+/** Where an event sits on the chart's x-axis, as fractions of the whole axis ({@link placeEvents}, {@link Axis}).
+ *  The axis is linear in clock time, gaps included, so an event is placed by its time alone: one that happened in a
+ *  gap is drawn in the gap, which is where it happened. */
 export interface EventPlacement {
     event: ResourceEvent;
-    /** Index into the runs array — which segment it is drawn in. */
+    /** Always 0 on the linear axis; kept so a row can still be grouped by it. */
     run: number;
-    /** 0..1 across that run's own width. */
+    /** Across the whole axis, UNCLAMPED: off the left edge is below 0, off the right above 1. */
     from: number;
-    /** 0..1; equals `from` for an instant. */
+    /** Likewise; equals `from` for an instant. */
     to: number;
-    /** The span continues past the end of this run (into a gap, or past the window). */
+    /** The span continues past the last measurement. */
     clipped: boolean;
 }
 
@@ -2133,12 +2126,19 @@ export function clampWindow(win: { from: number; to: number }, minMs = MIN_SCOPE
  * as arithmetic going wrong rather than as two clocks. Deriving the window twice would have been the same bug
  * waiting to come back.
  */
-export function chartWindow(zoom: { from: number; to: number } | null, scoped: { from: number; to: number } | null,
-    secs: number, now: number): { from: number; to: number } | null {
+export function chartWindow(zoom: { from: number; to: number } | null, scoped: { from: number; to: number; live?: true } | null,
+    secs: number, now: number, firstT?: number): { from: number; to: number; live?: true } | null {
     if (zoom) return zoom;
     if (scoped) return scoped;
     if (!secs) return null;                        // "everything" — no window to draw
-    return { from: now - secs * 1000, to: now };
+    const width = secs * 1000;
+    // FILL, THEN SCROLL, the same rule a live session follows (`sessionWindow`). With less history than the window
+    // holds, the window starts at the first reading and the data grows rightward into it; once the history is longer,
+    // it follows the clock at the same width. It never rescales. (Strictly `now - width` would leave a fresh panel
+    // blank on the left; stretching the history to fit is a continuous zoom until the window fills.)
+    // `live`: this window FOLLOWS THE CLOCK, so the chart may slide it along between samples (see ResourceTracks).
+    if (firstT != null && now - firstT < width) return { from: firstT, to: firstT + width, live: true };
+    return { from: now - width, to: now, live: true };
 }
 
 /** THE SAMPLES A WINDOW SHOULD DRAW — the ones inside it, PLUS the nearest on each side.
@@ -2282,38 +2282,13 @@ export function wheelScrubFraction(deltaX: number, deltaY: number, deltaMode: nu
     return d / plotPx;
 }
 
-/** The TIME at a fraction across the whole plot — the inverse of `placeEvents`, for turning a drag into a
- *  time range. The plot is segments laid out with flex weights proportional to their sample counts, so the
- *  fraction is spent across the segments in those proportions and then interpolated INSIDE the one it lands
- *  in. A fraction landing in a gap between segments resolves to that gap's near edge: nothing was measured
- *  there, so the honest answer is the last moment that was. */
-export function locateFraction<T extends { t: number }>(runs: T[][], frac: number): { run: T[]; within: number } | null {
-    const live = runs.filter((r) => r.length > 0);
-    if (!live.length) return null;
-    const weights = live.map(runWeight);
-    const total = weights.reduce((a, b) => a + b, 0);
-    let acc = 0;
-    const f = Math.min(1, Math.max(0, frac));
-    for (let i = 0; i < live.length; i++) {
-        const share = weights[i] / total;
-        if (f <= acc + share || i === live.length - 1)
-            return { run: live[i], within: share > 0 ? Math.min(1, Math.max(0, (f - acc) / share)) : 0 };
-        acc += share;
-    }
-    return { run: live.at(-1)!, within: 1 };
-}
-
 /**
- * THE CHART'S TIME AXIS IS LINEAR IN TIME, within each run of samples. One second is the same width wherever it
- * falls; only a GAP (no samples at all) is collapsed, since there is nothing measured to draw there.
+ * A RUN'S OWN SPAN OF THE AXIS. Within a run of samples, time is linear, and a run is drawn in a box placed on the
+ * chart's axis ({@link Axis}) — so its drawing works in run-local fractions (`runFrac`) and the box does the rest.
  *
- * It used to space samples EVENLY — sample i at i/(n-1) of its run, runs weighted by sample COUNT. That was
- * harmless while the panel polled every 2 s, and it warped badly once the event stream sampled adaptively (250 ms
- * during a load, 1 s while working, 15 s idle): busy stretches stretched, idle ones shrank, and scrolling changed
- * the mix of samples in view and so the warp — which read as the chart compressing at random, and put an unload
- * rule over a band that was still resident. So: a run's WIDTH is its duration (`runWeight`), and a time's
- * position is linear across it (`runFrac`). Every mapping between the screen and time — drawing, events, the
- * crosshair, the snap, the selection — goes through these two, so none of them can disagree.
+ * Samples used to be spaced EVENLY (sample i at i/(n-1) of its run), which warped badly once the event stream
+ * sampled adaptively (250 ms during a load, 1 s while working, 15 s idle): busy stretches stretched, idle ones
+ * shrank, and an unload rule landed over a band that was still resident. Hence linear in time, everywhere.
  */
 export const runWeight = (run: readonly { t: number }[]): number =>
     run.length > 1 ? Math.max(1, run[run.length - 1].t - run[0].t) : 1;
@@ -2336,64 +2311,79 @@ const nearestIndex = (run: readonly { t: number }[], t: number): number => {
     return t - run[lo].t <= run[hi].t - t ? lo : hi;
 };
 
-export function timeAtFraction(runs: { t: number }[][], frac: number): number | null {
-    const at = locateFraction(runs, frac);
-    if (!at) return null;
-    // Linear across the run, the inverse of `runFrac` — the same mapping the bands are drawn with.
-    const { run, within } = at;
-    if (run.length === 1) return run[0].t;
-    return run[0].t + (run[run.length - 1].t - run[0].t) * within;
+/**
+ * THE CHART'S TIME AXIS: LINEAR IN CLOCK TIME across the whole window, gaps included.
+ *
+ * It used to be segmented: each run of samples as wide as it lasted, and every gap between two runs collapsed to a
+ * 3px marker. That lost events (one inside a gap had nowhere to be drawn and was dropped), could not scroll (the
+ * right edge was the LAST SAMPLE, which arrives every second while busy and every 15 s idle, so the whole chart
+ * stepped and froze), and drew a minute and ten hours alike. A monitoring view draws a continuous time axis with a
+ * hole left at its true width, and so does this one: a gap is drawn, hatched, as wide as it was.
+ *
+ * Every mapping between the screen and time — drawing, events, the crosshair, the snap, the selection — goes through
+ * `axisFrac` and `axisTime`, so none of them can disagree. Within a run, `runFrac` is the same line restricted to
+ * that run, which is why a run's own drawing needs no change: its box is simply placed on the axis.
+ */
+export interface Axis { from: number; to: number }
+/** Where time `t` sits across the axis. UNCLAMPED: off the left edge is below 0, off the right above 1. */
+export const axisFrac = (a: Axis, t: number): number => (t - a.from) / Math.max(1, a.to - a.from);
+/** The time at a fraction across the axis, clamped to it: a drag off the plot means its edge, not time off screen. */
+export const axisTime = (a: Axis, frac: number): number => a.from + Math.min(1, Math.max(0, frac)) * (a.to - a.from);
+
+/** The axis to draw: the chosen window, or with none ("everything") the first sample to `now`. Null when there is
+ *  nothing to draw. */
+export function axisOf(window: Axis | null, runs: readonly (readonly { t: number }[])[], now: number): Axis | null {
+    if (window) return window;
+    const first = runs.find((r) => r.length)?.[0]?.t;
+    return first == null ? null : { from: first, to: Math.max(now, first + 1) };
 }
 
-/** The DATAPOINT under a fraction of the plot's width — what a Grafana-style hover reads, as opposed to the
- *  interpolated instant the crosshair labels. It snaps to a real sample rather than interpolating between
- *  two, because the values in the tooltip are measurements: a figure halfway between two polls was never
- *  observed, and presenting one as though it had been is the whole failure mode a memory panel must not have.
- *  Nearest in TIME, since that is what the axis is. */
-export function sampleAtFraction<T extends { t: number }>(runs: T[][], frac: number): T | null {
-    const at = locateFraction(runs, frac);
-    if (!at) return null;
-    const { run, within } = at;
-    if (run.length === 1) return run[0];
-    return run[nearestIndex(run, run[0].t + (run[run.length - 1].t - run[0].t) * within)] ?? null;
+/** The time at a fraction of the plot's width — the inverse of `placeEvents`, for turning a drag into a range. */
+export function timeAtFraction(axis: Axis | null, frac: number): number | null {
+    return axis ? axisTime(axis, frac) : null;
 }
 
 /**
- * WHERE THE NEAREST DATAPOINT SITS — the inverse of {@link sampleAtFraction}, so the crosshair can SNAP to
- * the sample it is already reading instead of floating between two.
+ * WHERE THE NEAREST DATAPOINT SITS, so the crosshair can SNAP to the sample it is reading instead of floating
+ * between two. A fraction inside a run reads that run's nearest sample. Just past a run's last sample it still
+ * reads that sample, for up to `reachMs`: the next reading has not arrived, and the latest still describes the box
+ * — which is the right edge of a live chart, where the pointer spends most of its time. Anywhere else is a gap,
+ * where nothing was measured, and reads NOTHING rather than the nearest measurement minutes away.
  *
- * The tooltip has always named a real measurement (a figure halfway between two polls was never observed),
- * but the line was drawn wherever the pointer happened to be, so the number and the mark disagreed by up to
- * half a sample gap. At a 15s idle cadence that is seven seconds of daylight between "here" and "the reading
- * you are being shown".
- *
- * Returns null when there is nothing to snap to. Inverts exactly the axis's own mapping (`runWeight`,
- * `runFrac`), so the snapped fraction is where that sample is DRAWN.
+ * `run` is the index into `runs` as given, so a caller mapping over `runs` can ask "is it in THIS one?".
  */
-export function snapFraction<T extends { t: number }>(runs: T[][], frac: number): { frac: number; index: number; run: number } | null {
-    // The ORIGINAL indices, so a caller mapping over `runs` can ask "is the snapped sample in THIS segment?".
-    // Filtering first and returning a position in the filtered list would silently name the wrong segment on
-    // any window that contains an empty one.
-    const liveAt = runs.map((r, i) => [r, i] as const).filter(([r]) => r.length > 0);
-    const live = liveAt.map(([r]) => r);
-    if (!live.length) return null;
-    const weights = live.map(runWeight);
-    const total = weights.reduce((a, b) => a + b, 0);
-    const f = Math.min(1, Math.max(0, frac));
-    let acc = 0;
-    for (let i = 0; i < live.length; i++) {
-        const share = weights[i] / total;
-        if (f <= acc + share || i === live.length - 1) {
-            const run = live[i];
-            const within = share > 0 ? Math.min(1, Math.max(0, (f - acc) / share)) : 0;
-            const index = run.length === 1 ? 0 : nearestIndex(run, run[0].t + (run[run.length - 1].t - run[0].t) * within);
-            return { frac: acc + runFrac(run, run[index].t) * share, index, run: liveAt[i][1] };
-        }
-        acc += share;
+export function snapFraction<T extends { t: number }>(runs: T[][], frac: number, axis: Axis | null, reachMs = 0): { frac: number; index: number; run: number } | null {
+    if (!axis) return null;
+    const t = axisTime(axis, frac);
+    for (let i = 0; i < runs.length; i++) {
+        const run = runs[i];
+        if (!run.length) continue;
+        const first = run[0].t, last = run[run.length - 1].t;
+        if (t < first || t > last + reachMs) continue;
+        const index = nearestIndex(run, t);
+        return { frac: axisFrac(axis, run[index].t), index, run: i };
     }
     return null;
 }
 
+/** The DATAPOINT under a fraction of the plot — what a Grafana-style hover reads, as opposed to the instant the
+ *  crosshair labels. A real sample, never one interpolated between two polls: the values in the tooltip are
+ *  measurements, and a figure halfway between two readings was never observed. See {@link snapFraction}. */
+export function sampleAtFraction<T extends { t: number }>(runs: T[][], frac: number, axis: Axis | null, reachMs = 0): T | null {
+    const s = snapFraction(runs, frac, axis, reachMs);
+    return s ? runs[s.run][s.index] : null;
+}
+
+/** The breaks between runs, as fractions of the axis, each with what it stands for ({@link runGap}). Drawn at their
+ *  true width, hatched: the hole is part of the history, and how long it was is part of what it says. */
+export function axisGaps(runs: ResourceSample[][], samples: ResourceSample[], axis: Axis): { from: number; to: number; gap: RunGap }[] {
+    const out: { from: number; to: number; gap: RunGap }[] = [];
+    for (let i = 1; i < runs.length; i++) {
+        const gap = runGap(runs[i - 1], runs[i], samples);
+        out.push({ from: axisFrac(axis, gap.from), to: axisFrac(axis, gap.to), gap });
+    }
+    return out;
+}
 
 /** What the lane draws. Everything is shown by default; this is how a busy session is narrowed.
  *
@@ -2458,8 +2448,8 @@ export function filterEvents(events: readonly ResourceEvent[], filter: LaneFilte
  *  a window would be a claim about when it happened. */
 export function sessionWindow(
     events: readonly ResourceEvent[], hash: string | null, now: number,
-    { minMs = 30_000, padFrac = 0.04 }: { minMs?: number; padFrac?: number } = {},
-): { from: number; to: number } | null {
+    { minMs = 30_000, padFrac = 0.04, followMs = 0 }: { minMs?: number; padFrac?: number; followMs?: number } = {},
+): { from: number; to: number; live?: true } | null {
     if (!hash) return null;
     let from = Infinity, to = -Infinity;
     for (const e of events) {
@@ -2469,6 +2459,16 @@ export function sessionWindow(
         to = Math.max(to, e.until ?? e.t);
     }
     if (!Number.isFinite(from)) return null;
+    // A LIVE session with a width to follow at FILLS, then SCROLLS, and never rescales. The window is `followMs` wide
+    // from the start, anchored at the session's beginning, so the run fills it from the left; once the session is
+    // longer than that, it follows the clock at the same width. Growing the window to fit instead — pinning the left
+    // edge and stretching the right — is a continuous zoom: every bar moves and narrows on every sample, and the
+    // moment the run ended the window jumped to a different one. A FINISHED session still fits itself, below.
+    if (followMs > 0 && now - to < minMs) {
+        const start = from - Math.max(1000, followMs * padFrac);
+        // `live` either way: the fill has a fixed right edge until the clock reaches it, and then it scrolls.
+        return now - start <= followMs ? { from: start, to: start + followMs, live: true } : { from: now - followMs, to: now, live: true };
+    }
     // Still going, or only just finished: follow the clock rather than stopping short of it.
     if (now - to < minMs) to = now;
     const pad = Math.max((to - from) * padFrac, 1000);
@@ -2640,7 +2640,7 @@ export const EV_ROW_GAP = 0.004;
  *  cap insufficient, because the number of bands is the number of concurrent runs. */
 export const MAX_LANE_ROWS = 10;
 
-export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN, maxTotal = MAX_LANE_ROWS): EventPlacement[][] {
+export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN, maxTotal = MAX_LANE_ROWS, minGap = 0): EventPlacement[][] {
     const groups = new Map<string, EventPlacement[]>();
     for (const p of placed) {
         const key = p.event.ref?.hash ?? "";
@@ -2659,7 +2659,7 @@ export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV
     const startOf = (p: EventPlacement) => p.run + p.from;
 
     for (const [, band] of order) {
-        const rows = packBand(band, maxRows, minSpan);
+        const rows = packBand(band, maxRows, minSpan, minGap);
         // REUSE rows where the band cannot collide. Banding exists so a tree is never interleaved with
         // another — but two runs that never overlap in TIME cannot interleave, so stacking them costs rows
         // for nothing, and most runs are sequential rather than concurrent. The band is placed as a WHOLE at
@@ -2704,12 +2704,14 @@ export function laneTier(kind: string): number {
     return 2;                                               // the machine: loads, serving, evictions
 }
 
-function packBand(placed: EventPlacement[], maxRows: number, minSpan: number): EventPlacement[][] {
+function packBand(placed: EventPlacement[], maxRows: number, minSpan: number, minGap = 0): EventPlacement[][] {
     const rows: EventPlacement[][] = [];
-    // The END is the DRAWN end, not the true one: see MIN_EV_SPAN.
+    // The END is the DRAWN end, not the true one: see MIN_EV_SPAN. The fallback pass without the row gap still keeps
+    // `minGap` (a pixel, from the caller that knows the lane's width): bars at their minimum width packed flush read as
+    // one longer bar.
     const start = (p: EventPlacement) => p.run + p.from;
     const end = (p: EventPlacement, pad: boolean) =>
-        p.run + Math.max(p.to, p.from + minSpan) + (pad ? EV_ROW_GAP : 0);
+        p.run + Math.max(p.to, p.from + minSpan) + (pad ? EV_ROW_GAP : minGap);
     // A true INTERVAL test against the row's members, not a running end. The running end assumed events
     // arrived in increasing start order, which stopped being true the moment they were sorted by tier — a
     // load that abuts a step it precedes was then refused the row it belongs on, because a later-starting
@@ -2740,29 +2742,20 @@ function packBand(placed: EventPlacement[], maxRows: number, minSpan: number): E
     return rows;
 }
 
-/** Place events onto segmented runs. `runs` is what the chart draws: one array of samples per contiguous run,
- *  in order. Events that fall entirely in a gap are DROPPED — see above. */
-export function placeEvents(runs: { t: number }[][], events: ResourceEvent[], graceMs = 0): EventPlacement[] {
-    // The last sample is up to one poll OLD, but the chart's right edge means "now" — so an event from the
-    // last couple of seconds belongs to the final run rather than to nowhere. Without this grace the newest
-    // events, which are the ones you are watching for, are the only ones that never appear.
-    const spans = runs.map((r, i) => ({ from: r[0]?.t ?? 0, to: (r.at(-1)?.t ?? 0) + (i === runs.length - 1 ? graceMs : 0) }));
-    const out: EventPlacement[] = [];
-    for (const e of events) {
+/**
+ * Place events on the axis. NOTHING IS DROPPED for falling between samples: an event is a fact about when something
+ * happened, and a gap in the MEASUREMENTS says nothing about whether it did. (Dropping them is how a whole load
+ * vanished from the lane when it happened while the panel was closed.)
+ *
+ * `from`/`to` are UNCLAMPED fractions, so an event off either edge has one below 0 or above 1. That is deliberate:
+ * the lane packs rows over events the window does not show yet, so a bar keeps its row as it scrolls into view,
+ * and the renderer clips to the plot. `clipped` says a span runs past `measuredTo`, the last measurement.
+ */
+export function placeEvents(axis: Axis, events: ResourceEvent[], measuredTo?: number): EventPlacement[] {
+    return events.map((e) => {
         const end = e.until ?? e.t;
-        // The run that CONTAINS the start, else the first run the event overlaps at all — a span that began
-        // during a gap still belongs to the segment it reaches.
-        let idx = spans.findIndex((r) => e.t >= r.from && e.t <= r.to);
-        if (idx < 0) idx = spans.findIndex((r) => end >= r.from && e.t <= r.to);
-        if (idx < 0) continue;   // entirely inside a gap (or outside every run): nothing measured, nothing drawn
-        // On the SAME axis the bands are drawn on: linear in time across the run (`runFrac`). The run's own last
-        // sample bounds it — the grace decides membership, and a time past the last sample sits at the right
-        // edge rather than squashing every bar left by however long the poll happens to be.
-        const r = spans[idx], run = runs[idx];
-        const at = (t: number): number => (run.length < 2 ? 0 : runFrac(run, t));
-        out.push({ event: e, run: idx, from: at(e.t), to: at(Math.min(end, r.to)), clipped: end > r.to });
-    }
-    return out;
+        return { event: e, run: 0, from: axisFrac(axis, e.t), to: axisFrac(axis, end), clipped: measuredTo != null && e.until != null && end > measuredTo };
+    });
 }
 
 /** An annotation on the time axis — a run starting, a model loading or being evicted, a context reload.

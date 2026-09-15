@@ -635,50 +635,35 @@ test("eventsIn: a span counts when it OVERLAPS the window, an instant when it is
 // The chart's x-axis is NOT linear in time: it is split into contiguous runs (a gap is a gap), each weighted
 // by its sample count. So an event is placed inside the run that contains it, and one that falls in a gap has
 // no x at all — putting it at the edge would claim it happened at a moment nothing was measured.
-test("placeEvents: inside the run that holds it, dropped when it falls in a gap", () => {
-    const runs = [
-        [{ t: 1000 }, { t: 2000 }, { t: 3000 }],     // 1s..3s
-        [{ t: 9000 }, { t: 10_000 }],                // 9s..10s, after a six-second gap
-    ];
+test("placeEvents: by time alone on a linear axis — nothing is dropped for falling in a gap", () => {
+    // The chart's axis is the window, linear in clock time, gaps included (see Axis).
+    const axis = { from: 0, to: 10_000 };
     const at = (label, t, until) => ({ t, until, kind: "note", label });
-    const got = M.placeEvents(runs, [
-        at("start of run 0", 1000),
-        at("middle of run 0", 2000),
-        at("in the gap", 5000),
-        at("in run 1", 9500),
-        at("span inside run 0", 1500, 2500),
-        at("span crossing the gap", 2000, 9500),
-        at("span over before any sample", 100, 900),
-        at("span ending inside run 0", 200, 1500),
-    ]);
+    const got = M.placeEvents(axis, [
+        at("start", 0),
+        at("in what used to be a collapsed gap", 5000),
+        at("span", 2500, 7500),
+        at("off the left edge", -3000, -1000),
+        at("past the last measurement", 8000, 9500),
+    ], 9000);
     const by = Object.fromEntries(got.map((p) => [p.event.label, p]));
-    assert.equal(by["in the gap"], undefined, "nothing was measured then, so there is nowhere honest to draw it");
-    assert.equal(by["start of run 0"].run, 0);
-    assert.equal(by["start of run 0"].from, 0);
-    assert.equal(by["middle of run 0"].from, 0.5, "placed by TIME within its own run, not by sample index");
-    assert.equal(by["in run 1"].run, 1);
-    assert.equal(by["in run 1"].from, 0.5);
-    // An instant has zero width.
-    assert.equal(by["middle of run 0"].to, by["middle of run 0"].from);
-    // A span inside one run keeps both ends.
-    assert.deepEqual([by["span inside run 0"].from, by["span inside run 0"].to], [0.25, 0.75]);
-    assert.equal(by["span inside run 0"].clipped, false);
-    // One that runs past the end of its segment is clipped there and SAYS so — a load that ran while the panel
-    // was closed is real, and the honest drawing of it stops where the measurements stop.
-    assert.equal(by["span crossing the gap"].to, 1);
-    assert.equal(by["span crossing the gap"].clipped, true);
-    // A span that was OVER before anything was measured has nowhere honest to go; one that began before the
-    // first sample and ended inside the run is drawn from the run's left edge — the load that started before
-    // you looked. (This used to be asserted in a jsdom test against the wall clock, where which of the two
-    // cases it was depended on how fast the machine ran the setup.)
-    assert.equal(by["span over before any sample"], undefined);
-    assert.equal(by["span ending inside run 0"].from, 0);
-    assert.equal(by["span ending inside run 0"].to, 0.25);
+    // An event is a fact about WHEN something happened; a gap in the measurements says nothing about whether it did.
+    // Dropping these is how a whole load vanished from the lane when it ran while the panel was closed.
+    assert.equal(by["in what used to be a collapsed gap"].from, 0.5);
+    assert.equal(by["start"].from, 0);
+    assert.deepEqual([by["span"].from, by["span"].to], [0.25, 0.75]);
+    assert.equal(by["start"].to, by["start"].from, "an instant has zero width");
+    // UNCLAMPED, so the lane can pack a bar's row before it scrolls on screen; the renderer clips.
+    assert.deepEqual([by["off the left edge"].from, by["off the left edge"].to], [-0.3, -0.1]);
+    assert.equal(by["past the last measurement"].clipped, true, "…and a span running past the last reading says so");
+    assert.equal(by["span"].clipped, false);
 });
 
-test("placeEvents: a run of one sample has no width to place within", () => {
-    const got = M.placeEvents([[{ t: 500 }]], [{ t: 500, kind: "note", label: "only" }]);
-    assert.equal(got[0].from, 0, "no division by zero, and no fabricated position");
+test("axisGaps: a break between runs is drawn at its TRUE width", () => {
+    const runs = [[{ t: 1000 }, { t: 2000 }], [{ t: 8000 }, { t: 9000 }]];
+    const [g] = M.axisGaps(runs, [...runs[0], ...runs[1]], { from: 0, to: 10_000 });
+    assert.deepEqual([g.from, g.to], [0.2, 0.8], "six seconds of a ten-second axis is sixty percent of it, not 3 px");
+    assert.deepEqual([g.gap.from, g.gap.to], [2000, 8000]);
 });
 
 test("residencyEvents: an eviction is a diff; a load already told as a span isn't repeated", () => {
@@ -759,31 +744,17 @@ test("lineageOf: an event, what spawned it, and what it spawned", () => {
 // Turning a drag into a time range is the INVERSE of placing an event: the plot is segments weighted by
 // sample count, so a fraction is spent across them in those proportions and interpolated inside the one it
 // lands in. Getting this wrong makes a zoom select a different stretch than the one you dragged over.
-test("timeAtFraction: the inverse of placeEvents, across weighted segments", () => {
-    // Two runs: 3 s of samples, then 1 s after a gap. The axis is LINEAR IN TIME within a run and each run is as
-    // wide as it is LONG (the gap collapses), so the weights are 3 and 1 → three quarters and one quarter.
-    const runs = [
-        [{ t: 1000 }, { t: 2000 }, { t: 3000 }, { t: 4000 }],
-        [{ t: 10_000 }, { t: 11_000 }],
-    ];
-    assert.equal(M.timeAtFraction(runs, 0), 1000, "the left edge is the first sample");
-    assert.equal(M.timeAtFraction(runs, 1), 11_000, "the right edge is the last");
-    // Three eighths of the way is halfway through the FIRST run (which owns three quarters of the width).
-    assert.equal(M.timeAtFraction(runs, 3 / 8), 2500);
-    // AT the boundary between runs the answer is the last measured moment before the gap, never a time
-    // interpolated across it — nothing was measured there, so there is no honest value inside it.
-    assert.equal(M.timeAtFraction(runs, 3 / 4), 4000);
-    assert.equal(M.timeAtFraction(runs, 0.8), 10_200, "past it, inside the second run");
-    assert.equal(M.timeAtFraction(runs, 7 / 8), 10_500);
-    // It round-trips with placeEvents: an event placed at a fraction reads back as its own time.
-    const ev = { t: 2500, kind: "note", label: "x" };
-    const [p] = M.placeEvents(runs, [ev]);
-    const overall = (p.run === 0 ? 0 : 3 / 4) + p.from * (p.run === 0 ? 3 / 4 : 1 / 4);
-    assert.ok(Math.abs(M.timeAtFraction(runs, overall) - 2500) < 1);
+test("timeAtFraction: the inverse of placeEvents on the linear axis", () => {
+    const axis = { from: 1000, to: 11_000 };
+    assert.equal(M.timeAtFraction(axis, 0), 1000);
+    assert.equal(M.timeAtFraction(axis, 1), 11_000);
+    assert.equal(M.timeAtFraction(axis, 0.35), 4500, "linear in time: no weighting by what was sampled where");
+    const [p] = M.placeEvents(axis, [{ t: 2500, kind: "note", label: "x" }]);
+    assert.equal(M.timeAtFraction(axis, p.from), 2500, "round-trips with placeEvents");
     // Out of range clamps rather than extrapolating into time that was never on screen.
-    assert.equal(M.timeAtFraction(runs, -3), 1000);
-    assert.equal(M.timeAtFraction(runs, 9), 11_000);
-    assert.equal(M.timeAtFraction([], 0.5), null, "no samples → no answer, not a guess");
+    assert.equal(M.timeAtFraction(axis, -3), 1000);
+    assert.equal(M.timeAtFraction(axis, 9), 11_000);
+    assert.equal(M.timeAtFraction(null, 0.5), null, "no axis → no answer, not a guess");
 });
 
 // A very short event is WIDENED so it stays visible, so packing has to reserve the same width — otherwise
@@ -1081,6 +1052,40 @@ test("filterEvents: scope answers whose, kinds answer which — and machine even
 
 // Scoping the lane and the model list but not the AXIS left the two disagreeing about what "this session"
 // means: the list said one model while the chart still drew ten minutes of a shared box either side of it.
+test("chartWindow: the rolling window fills from the first reading, then scrolls, and never rescales", () => {
+    const W = 300;   // seconds, the default
+    // Thirty seconds of history in a five-minute window: it starts at the first reading and the data fills rightward.
+    const fresh = M.chartWindow(null, null, W, 1_030_000, 1_000_000);
+    assert.deepEqual([fresh.from, fresh.to], [1_000_000, 1_300_000]);
+    assert.equal(fresh.live, true);
+    // A minute later: the SAME window. Nothing rescaled.
+    assert.deepEqual(M.chartWindow(null, null, W, 1_090_000, 1_000_000), fresh);
+    // Past the width: it follows the clock at that width.
+    const later = M.chartWindow(null, null, W, 1_500_000, 1_000_000);
+    assert.deepEqual([later.from, later.to], [1_200_000, 1_500_000]);
+    // A zoom and a scoped window are taken as given.
+    assert.deepEqual(M.chartWindow({ from: 1, to: 2 }, null, W, 1_500_000, 1_000_000), { from: 1, to: 2 });
+});
+
+test("sessionWindow: a live session FILLS its window and then SCROLLS, and never rescales", () => {
+    const T = 1_700_000_000_000;
+    const run = (until) => [{ t: T, until, kind: "run", label: "r", ref: { hash: "a" } }];
+    const W = 120_000;
+    // Twenty seconds in: the window is W wide, anchored just before the start; the run fills it from the left.
+    const early = M.sessionWindow(run(T + 20_000), "a", T + 20_000, { followMs: W });
+    assert.equal(early.to - early.from, W, "the width on screen, from the first sample on");
+    assert.ok(early.from < T && T - early.from < 10_000, "the session starts at the left edge");
+    // Forty seconds in: the SAME window. Nothing moved, nothing narrowed — the run just reached further right.
+    assert.deepEqual(M.sessionWindow(run(T + 40_000), "a", T + 40_000, { followMs: W }), early);
+    // Past the width: it follows the clock at that width.
+    const later = M.sessionWindow(run(T + 300_000), "a", T + 300_000, { followMs: W });
+    assert.deepEqual([later.from, later.to], [T + 300_000 - W, T + 300_000]);
+    assert.equal(later.live, true, "a window the chart may slide along between samples");
+    // A finished session fits itself, and is not live: it does not slide.
+    const done = M.sessionWindow(run(T + 20_000), "a", T + 900_000, { followMs: W });
+    assert.ok(done.to < T + 100_000 && !done.live);
+});
+
 test("sessionWindow: frames the session, follows a live one, and floors a short one", () => {
     const T = 1_700_000_000_000;
     const evs = [
@@ -1484,13 +1489,12 @@ describe("windowSamples", () => {
 // …and the event that window sits inside must still be DRAWN, cropped to what is on screen.
 describe("placeEvents: an event wider than the window", () => {
     const { placeEvents } = M;
-    test("an event spanning the whole run is placed across it, not dropped", () => {
-        const run = [{ t: 1000 }, { t: 2000 }, { t: 3000 }];
-        const [p] = placeEvents([run], [{ kind: "run", t: 0, until: 9000, model: "m" }]);
-        assert.ok(p, "the event is placed even though it starts before and ends after the samples");
-        assert.equal(p.from, 0, "cropped to the left edge");
-        assert.equal(p.to, 1, "…and the right");
-        assert.equal(p.clipped, true, "and it SAYS it continues past what is drawn");
+    test("an event spanning the whole window is placed across it, not dropped", () => {
+        const [p] = placeEvents({ from: 1000, to: 3000 }, [{ kind: "run", t: 0, until: 9000, model: "m" }], 3000);
+        assert.ok(p, "the event is placed even though it starts before and ends after the window");
+        // Unclamped, reaching past both edges: the lane clips it to the plot.
+        assert.ok(p.from < 0 && p.to > 1, `from ${p.from}, to ${p.to}`);
+        assert.equal(p.clipped, true, "and it SAYS it continues past what was measured");
     });
 });
 
@@ -1730,44 +1734,24 @@ test("memoryParts / contextBytes: what a user can act on", () => {
 // SNAPPING THE CROSSHAIR to the datapoint it is already reading. The tooltip has always named a real
 // measurement — a figure halfway between two polls was never observed — but the line was drawn wherever the
 // pointer was, so the number and the mark disagreed by up to half a sample gap.
-test("snapFraction: lands exactly where sampleAtFraction reads, and inverts the segmented axis", () => {
+test("snapFraction: lands where sampleAtFraction reads, on the linear axis, and reads nothing in a gap", () => {
     const run = (n, t0) => Array.from({ length: n }, (_, i) => ({ t: t0 + i * 1000 }));
-
-    // ONE segment: sample i sits at i/(n-1) of the width, which is where a polyline puts it.
-    const one = [run(5, 0)];
-    for (const f of [0, 0.12, 0.26, 0.5, 0.74, 0.99, 1]) {
-        const snap = M.snapFraction(one, f);
-        assert.equal(one[0][snap.index], M.sampleAtFraction(one, f),
-            `f=${f}: the snap and the reading must be the SAME sample, or the mark contradicts the number`);
-        assert.ok(Math.abs(snap.frac - snap.index / 4) < 1e-9, `f=${f}: it sits where the polyline drew it`);
+    const axis = { from: 0, to: 20_000 };
+    const runs = [run(5, 0), run(3, 12_000)];   // 0–4 s, then a gap, then 12–14 s
+    for (const f of [0, 0.06, 0.1, 0.19, 0.6, 0.65, 0.7]) {
+        const snap = M.snapFraction(runs, f, axis);
+        assert.ok(snap, `f=${f} is inside a run`);
+        assert.equal(runs[snap.run][snap.index], M.sampleAtFraction(runs, f, axis), `f=${f}: the mark and the reading are one sample`);
+        assert.equal(snap.frac, runs[snap.run][snap.index].t / 20_000, `f=${f}: it sits where that sample is drawn`);
     }
-
-    // TWO segments, flex-weighted by sample COUNT rather than by elapsed time — a gap is a gap, and the axis
-    // is not linear across it. The 8-sample run owns 8/10 of the width, the 2-sample run the rest.
-    const two = [run(8, 0), run(2, 600000)];
-    const inSecond = M.snapFraction(two, 0.95);
-    assert.equal(two[1][inSecond.index], M.sampleAtFraction(two, 0.95), "the second segment reads its own sample");
-    assert.ok(inSecond.frac > 0.8, "…and snaps inside that segment, not back across the gap");
-    const lastOfFirst = M.snapFraction(two, 0.79);
-    assert.equal(two[0][lastOfFirst.index], M.sampleAtFraction(two, 0.79));
-
-    // A ONE-SAMPLE segment has no interior, so it sits in the middle of the share it owns rather than at an
-    // edge it does not — an edge would put the dot on the boundary with the neighbouring run.
-    const lone = [run(1, 0), run(3, 60000)];
-    const only = M.snapFraction(lone, 0.05);
-    assert.equal(only.index, 0);
-    assert.ok(only.frac > 0 && only.frac < 0.25, `a lone sample sits inside its own share (${only.frac})`);
-
-    // It names the ORIGINAL segment, so a caller mapping over `runs` can ask "is it in THIS one?". Filtering
-    // first and returning a position in the filtered list names the wrong segment on any window holding an
-    // empty one — and an empty run is ordinary, since a gap is a gap.
-    const withHole = [[], run(4, 0), [], run(3, 90000)];
-    assert.equal(M.snapFraction(withHole, 0.1).run, 1, "the first NON-EMPTY run is index 1, not 0");
-    assert.equal(M.snapFraction(withHole, 0.95).run, 3);
-
-    // Nothing to snap to is null, never 0 — 0 is a real position and would park the dot at the left edge.
-    assert.equal(M.snapFraction([], 0.5), null);
-    assert.equal(M.snapFraction([[]], 0.5), null);
+    assert.equal(M.snapFraction(runs, 0.4, axis), null, "in the gap: nothing was measured, so nothing is read");
+    // Just past a run's last sample — the right edge of a live chart — it still reads that sample, within reach.
+    assert.equal(M.snapFraction(runs, 0.73, axis, 1000)?.index, 2, "14.6 s, past the last sample, still reads it (14 s)");
+    assert.equal(M.snapFraction(runs, 0.8, axis, 1000), null, "…but not a reading two seconds stale");
+    // It names the ORIGINAL run, so a caller mapping over `runs` can ask "is it in THIS one?".
+    assert.equal(M.snapFraction([[], ...runs], 0.62, axis).run, 2);
+    assert.equal(M.snapFraction([], 0.5, axis), null);
+    assert.equal(M.snapFraction(runs, 0.5, null), null);
 });
 
 // A GENUINELY SPLIT MODEL, captured from the box rather than constructed here: `qwen3:235b` (142 GB) across
@@ -2458,16 +2442,17 @@ test("the axis is LINEAR IN TIME on an adaptive cadence: an event, a sample and 
     // compressed at random as the mix of samples in view changed, and an unload was ruled over a band that was
     // still resident. Linear in time, 8 s into a 15.75 s run is 8/15.75 of the way, wherever the samples fall.
     const run = [{ t: 0 }, { t: 250 }, { t: 500 }, { t: 750 }, { t: 15_750 }];
-    const [p] = M.placeEvents([run], [{ t: 8000, kind: "evict", label: "unloaded" }]);
+    const axis = { from: 0, to: 15_750 };
+    const [p] = M.placeEvents(axis, [{ t: 8000, kind: "evict", label: "unloaded" }]);
     assert.ok(Math.abs(p.from - 8000 / 15_750) < 1e-12, `placed at ${p.from}`);
     // A sample's position is its time's position — the same mapping the bands are drawn with (`runFrac`).
     assert.equal(M.runFrac(run, 750), 750 / 15_750);
     // The crosshair's time and the placement round-trip exactly.
-    assert.ok(Math.abs(M.timeAtFraction([run], p.from) - 8000) < 1e-9);
+    assert.ok(Math.abs(M.timeAtFraction(axis, p.from) - 8000) < 1e-9);
     // The DATAPOINT under a position is the one nearest in TIME — at 8 s, sample 750 (7.25 s away) rather than
     // 15 750 (7.75 s away) — and snapping lands exactly on where that sample is drawn.
-    assert.equal(M.sampleAtFraction([run], p.from).t, 750);
-    const snap = M.snapFraction([run], p.from);
+    assert.equal(M.sampleAtFraction([run], p.from, axis).t, 750);
+    const snap = M.snapFraction([run], p.from, axis);
     assert.deepEqual([snap.index, snap.frac], [3, 750 / 15_750]);
     // A run is as wide as it is LONG: a 1 s run beside a 3 s one takes a quarter of the width.
     assert.deepEqual([M.runWeight([{ t: 0 }, { t: 1000 }]), M.runWeight([{ t: 0 }, { t: 3000 }]), M.runWeight([{ t: 5 }])], [1000, 3000, 1]);

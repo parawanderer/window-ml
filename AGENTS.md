@@ -220,7 +220,8 @@ learned by shipping the wrong version first.
 - **Resource panel.** Memory is raw BYTES and BINARY: convert once, through `formatBytes`. Absent is not zero and
   not idle (`memory`, `activity`, `processes`, `gpus` all mean "not reported" when missing). Never pro-rate a split
   model across cards. The event stream names models fully-qualified and `/api/ps` short: `normModel` at the
-  boundary. Screen↔time goes only through `runWeight`/`runFrac` (the axis is linear in time). A memo over the
+  boundary. Screen↔time goes only through `axisFrac`/`axisTime` (the axis is linear in clock time, gaps included; an
+  event is never dropped for falling between samples). A memo over the
   lane's events keys on `events.length`, never `events`. Every residual band key must be in `bandOrder`, and a band
   that belongs to a model steps with it — but steps run only from the bottom of the stack (`stepBands`), and a
   line band rides the steps' corners (`bandEdge`), or the stack draws wedges. A residual's note names its OWN

@@ -74,8 +74,10 @@ test("annotating a step draws an ASIDE on the lane, and does not touch the run's
         // below would mean nothing without this.
         await expect(frame.locator(".rc-lane")).toBeVisible({ timeout: 20000 });
         await expect(frame.locator(".rc-ev").first()).toBeVisible({ timeout: 20000 });
-        // Nothing you triggered yet, so nothing of yours on the lane.
-        await expect(frame.locator(".rc-ev-aside")).toHaveCount(0);
+        // No annotation yet. (The session's auto-TITLE is an aside too, and may already be there: it is the panel's own
+        // side task for this session, so the lane draws it in the run's band. This test is about the annotation.)
+        const annotation = frame.locator('.rc-ev-aside[data-label="annotating the code"]');
+        await expect(annotation).toHaveCount(0);
         const barsBefore = await frame.locator(".rc-ev").count();
 
         const step = frame.locator(".astep").first();
@@ -84,7 +86,7 @@ test("annotating a step draws an ASIDE on the lane, and does not touch the run's
         await expect(step.locator(".lnote")).toHaveCount(1, { timeout: 15000 });
 
         // It appears, as its own kind — the lane polls, so this needs a beat rather than a click.
-        await expect(frame.locator(".rc-ev-aside")).toHaveCount(1, { timeout: 15000 });
+        await expect(annotation).toHaveCount(1, { timeout: 15000 });
         // Exactly ONE, and only from the click: the button asks once. Deliberately NOT a count of every bar
         // on the lane — it is live, and the box keeps emitting while the test runs, so a total would be an
         // assertion about the fake backend rather than about the aside.
@@ -92,7 +94,7 @@ test("annotating a step draws an ASIDE on the lane, and does not touch the run's
 
         // It says outright that it is not part of the run — a bar in a run's lane that is not the run's work
         // is exactly what a reader would otherwise spend a minute misattributing.
-        await frame.locator(".rc-ev-aside").hover();
+        await annotation.hover();
         const tip = frame.locator(".rc-tip-event");
         await expect(tip).toBeVisible();
         await expect(tip).toContainText("NOT part of the run");

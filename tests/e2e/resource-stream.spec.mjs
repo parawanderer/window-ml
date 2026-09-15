@@ -89,6 +89,9 @@ test("a load span is drawn with its two halves, and named as them", async () => 
         });
         await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
         fake.setEvents(FRAMES);
+        // A window shorter than the ~113 s of backfill but still holding the load (62 s back), so its two edges, 1.5 s
+        // apart, are drawn ~7px apart: at five minutes they sit 3px from each other, inside each other's 9px hit area.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 90 }));
         const { frame } = await openPanel(fake, ext);
 
         // The load span, with the weights/context divider the server reported.

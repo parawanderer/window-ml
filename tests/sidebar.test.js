@@ -7139,7 +7139,10 @@ test("diff gutter: a row carries only the side it exists on, and the new side ma
 });
 
 test("tooltips: a chart tip reads the DATAPOINT under the cursor; the row tip reads the present", async () => {
-    const w = await loadSidebarWorld({ vram: growModel(19), info: INFO_2CARD, ...STACKED_LAYOUT });
+    // A one-second window: jsdom has no layout, so the pointer below reads as the plot's RIGHT EDGE, and while a window
+    // is still filling (see `chartWindow`) that edge is the future. At one second it is within a poll of the newest
+    // reading, which is what "the pointer is over the newest datapoint" means here.
+    const w = await loadSidebarWorld({ vram: growModel(19), info: INFO_2CARD, local: { ...STACKED_LAYOUT.local, ml_res_window: 1 } });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
@@ -7684,9 +7687,10 @@ test("event lane: an eviction rules through the plot and names itself", async ()
     }
     const rule = w.shadow.querySelector(".rc-rule-evict");
     assert.ok(rule, "the eviction is ruled through the plot");
-    // It sits inside a segment, positioned by time — not pinned to an edge.
+    // Positioned by time on the plot's own axis — not pinned to an edge, and not inside a run's box: the axis is
+    // linear in clock time, so an eviction that happened in a gap between runs is drawn in the gap, where it happened.
     assert.match(rule.getAttribute("style") || "", /left:/);
-    assert.ok(rule.closest(".rc-seg"), "…inside the run that contains it");
+    assert.ok(rule.closest(".rc-plot") && !rule.closest(".rc-seg"), "…on the plot's axis");
 
     // The SAME eviction is drawn in every track (it happened to the machine, not to one card), so hovering it
     // in one plot must thicken it in all of them — otherwise three copies of one moment read as three moments.
@@ -7875,7 +7879,7 @@ test("event lane: evictions rule through the Overview track too, not just the pe
     }
     const rule = w.shadow.querySelector(".rc-rule-evict");
     assert.ok(rule, "the eviction is ruled through the overlay plot");
-    assert.ok(rule.closest(".rc-seg"), "…inside the run that contains it");
+    assert.ok(rule.closest(".rc-plot") && !rule.closest(".rc-seg"), "…on the plot's axis, by time");
     rule.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
     await w.flush();
     assert.match(w.shadow.querySelector(".rc-tip-event").textContent, /doomed:12b/, "and it says what happened");

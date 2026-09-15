@@ -507,7 +507,16 @@ test("tooltips: dividers separate sections, names stay whole, and nothing is cli
                             evalMs: 1588, promptEvalMs: 6103, model: "qwen3.8-flash-next:vision" } });
         });
         await expect.poll(() => frame.locator(".rc-ev-tool").count(), { timeout: 15000 }).toBeGreaterThan(0);
-        await frame.locator(".rc-ev-tool").first().hover();
+        // Hover the part of the bar that is ON SCREEN. This step began before the panel's first reading, and the axis
+        // starts there (see `chartWindow`), so most of the bar lies off the lane's left edge: clipped, but laid out, and
+        // a hover at its centre lands outside what is visible.
+        {
+            const bar = await frame.locator(".rc-ev-tool").last().boundingBox();
+            const row = await frame.locator(".rc-ev-tool").last().locator("xpath=..").boundingBox();
+            const left = Math.max(bar.x, row.x), right = Math.min(bar.x + bar.width, row.x + row.width);
+            await page.mouse.move((left + right) / 2, bar.y + bar.height / 2 + 12);
+            await page.mouse.move((left + right) / 2, bar.y + bar.height / 2, { steps: 3 });
+        }
         await sleep(400);
         const tip = frame.locator(".rc-tip-event");
         await expect(tip).toBeVisible();
