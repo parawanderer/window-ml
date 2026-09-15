@@ -2011,8 +2011,13 @@ function phaseSpans(phases: { kind: string; until: number }[], from: number, tot
     });
 }
 
+/** Whether a phase's fill is a PATTERN (stripes) rather than a colour. A pattern cannot be a gradient stop: one in
+ *  the list makes the whole `background` invalid, the declaration is dropped, and the block draws as nothing. So
+ *  a patterned phase gets a flat stop here and its stripes as an overlay (see `rc-ev-pattern`). */
+const isPattern = (fill: string): boolean => fill.startsWith("repeating-");
+
 function phaseGradient(phases: { kind: string; until: number }[], from: number, total: number, model?: string): string {
-    const fill = (kind: string) => phaseFill(kind, model);
+    const fill = (kind: string) => { const f = phaseFill(kind, model); return isPattern(f) ? "var(--panel)" : f; };
     const stops: string[] = [];
     // A HAIRLINE between phases, in the panel's own colour so it reads as a cut rather than a fourth colour.
     // Fills alone don't do it: think and call are the same hue at different weights, and two adjacent weights
@@ -3157,6 +3162,18 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                                                     // change of texture rather than needing a drawn line.
                                                     <i class={ph.kind === "context" ? "rc-ev-ctxphase" : "rc-ev-wait"} key={wi}
                                                         style={{ left: `${ph.start * 100}%`, width: `${(ph.end - ph.start) * 100}%` }} />
+                                                ))
+                                            : null}
+                                        {/* Every other STRIPED phase (a load inside a step, a cache swap, a cold
+                                            start): the gradient carries a flat stop for it, and its stripes are
+                                            drawn here. In the gradient they made the whole background invalid,
+                                            and the block vanished. A load's own bar has its stripes already. */}
+                                        {e.phases && total > 0 && e.kind !== "load"
+                                            ? phaseSpans(e.phases, e.t, total)
+                                                .filter((ph) => ph.kind !== "wait" && ph.kind !== "context" && ph.end > ph.start && isPattern(phaseFill(ph.kind, e.model)))
+                                                .map((ph, pi) => (
+                                                    <i class="rc-ev-pattern" key={`p${pi}`}
+                                                        style={{ left: `${ph.start * 100}%`, width: `${(ph.end - ph.start) * 100}%`, background: phaseFill(ph.kind, e.model) }} />
                                                 ))
                                             : null}
                                     </button>

@@ -671,6 +671,43 @@ test("the lane draws a run above its steps, and the machine below both", async (
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
+// A STRIPED PHASE MUST NOT ERASE ITS BLOCK. A phase fill that is a pattern (a load inside a step, a cache swap, a
+// cold start) was written into the block's gradient as a stop; a pattern is not a colour, so the whole `background`
+// was invalid and dropped, and on a real run the first step of every cold start drew as an empty gap.
+test("a step whose call waited for a load is drawn, with the wait striped over it", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_lane_scope: false }));
+        const info = FRAMES.find((f) => f.kind === "sample")?.info;
+        const row = { model: "qwen3.5:35b", name: "qwen3.5:35b", size: 20e9, size_vram: 20e9, context_length: 262144, expires_at: null, gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: 20e9 }] };
+        fake.setResident([row]);
+        fake.setEvents([-60000, -40000, -20000, -5000].map((t) => ({ v: 1, kind: "sample", t, ps: { models: [row] }, info })));
+        const { page, frame } = await openPanel(fake, ext);
+        // The lane draws nothing until there is an event, so the run goes in first.
+        await page.evaluate(() => {
+            const now = Date.now();
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            post({ kind: "agent", id: "cold", ts: now - 50000, save: false, session: { hash: "cold", turn: 0 },
+                   task: "cold start", model: "qwen3.5:35b", maxSteps: 4, config: null });
+            // The shape a real cold call has: the wall clock (genMs) CONTAINS the load.
+            post({ kind: "agent-step", id: "cold", ts: now - 30000, save: false, session: { hash: "cold", turn: 1 },
+                   step: 1, seq: 1, tool: "exec", toolMs: 2000, approveMs: 0, dispatchMs: 10,
+                   arguments: { js: "1" }, result: "ok",
+                   usage: { promptTokens: 90, completionTokens: 10, totalTokens: 100, genMs: 12000, loadMs: 8000, model: "qwen3.5:35b" } });
+        });
+        const block = frame.locator(".rc-ev-tool").first();
+        await expect(block).toBeVisible({ timeout: 15000 });
+        const bg = await block.evaluate((el) => getComputedStyle(el).backgroundImage);
+        expect(bg, "the block has a background at all").toContain("linear-gradient");
+        await expect(block.locator(".rc-ev-pattern"), "and its load stretch is striped over it").toHaveCount(1);
+    } finally { await ext.context.close(); await fake.stop(); }
+});
+
 test("the track editor's checkbox takes the whole event section, header and all", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
     const ext = await launchExtension();
