@@ -284,6 +284,48 @@ value (see `docs/FORKED-BACKENDS.md`, where every field of the patched Ollama is
 - **A source's clock is corrected, not trusted**: offsets are estimated per source, and a source whose clock jumps is
   flagged rather than redrawn.
 
+## Distributed and multi-tenant servers: a worked example
+
+What a compatible server built for many users would do: one deployment serving one model (or a few) across many GPUs
+and nodes, with continuous batching, a paged KV cache and prefix caching, possibly with prefill and decode on
+separate nodes (vLLM with tensor or pipeline parallelism, and clusters built on it). It is the kind of box the tenancy
+rule leaves room for: the five concerns there are ones it can meet, because it authenticates every request and so
+knows whose it is.
+
+**What it emits** (the `BoxFrame` contract, with a few optional kinds):
+
+- **`hello`**: its box id and clock, and its topology as capacity: nodes, GPUs, and the parallel layout.
+- **`gen.start` / `gen.end` per request**, with the echoed hint and timings: queue time, prefill, decode, cached-prefix
+  tokens. With prefill and decode on different nodes, each phase names where it ran, which the panel's per-card phase
+  ribbon already draws.
+- **Samples** whose moving parts differ from a workstation's: memory is flat (the weights never move), so it reports
+  KV-block usage, batch size, queue depth and preemptions. These are optional kinds; absent means not reported.
+- **Loads and evictions** rarely or never: placement is static.
+
+**How it meets the five concerns** (see Tenancy):
+
+1. **Telemetry.** It knows each request's account from its own authentication, never from the hint, and emits one
+   stream per account: that account's generations in full, and coarse box-wide aggregates (utilisation, queue depth)
+   with nobody else's hints.
+2. **Control actions.** It offers tenants none: no unload, no placement; the operator owns those. It declares no
+   control capabilities, and the client renders by capability, so the controls a workstation box has are not shown.
+3. **Hints.** It schedules on authenticated identity and per-account quotas. A hint such as `use: interactive` can
+   reorder a tenant's own requests within its own share, never another tenant's.
+4. **The prompt cache.** Prefix-cache entries are scoped per account, so a cache hit can only come from the account's
+   own earlier requests. (vLLM is believed to offer a per-request cache salt for this; to be confirmed.)
+5. **Learned corrections** are mostly moot: decode speed is a property of the deployment, and nothing is kept alive or
+   evicted. Anything learned per tenant stays per tenant.
+
+**How the hub handles it.** It is the one principal that serves several accounts. Each tenant pairs it into their
+own account (the tenant's credential for the server, and the server's key), and the server publishes each account's
+filtered stream encrypted to that account's key. The hub routes per account as it does everything, and isolation still
+holds twice: the hub reads only ciphertext, and a tenant holds only its own account's key. The server is trusted to
+filter correctly, which is inherent in serving everyone: it already holds every request.
+
+**What changes in the client**: box capabilities (`multi_tenant`, `placement: static`, which controls exist) so the
+panel shows only what applies; an aggregate view for boxes with more devices than the chart's box shapes cover (they
+reach about nine pools); and the client never sends an account in a hint, since the server derives it.
+
 ## Building the relay (a proposal)
 
 Small, stateless where it can be, and scaled by account. Not a stream of JSON text.
