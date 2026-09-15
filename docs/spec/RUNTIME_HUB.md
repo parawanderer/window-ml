@@ -100,11 +100,36 @@ table above assumes a single owner.
 - **The hub protects itself.** Registering needs an account credential for the hub (separate from the end-to-end
   keys, which the hub never sees), so a stranger cannot fill it with registrations; connections, ring sizes and
   message rates are limited per account, so one account cannot starve another.
-- **A box shared between users is the hard case.** A box's telemetry is box-wide: its `gen.end` frames carry every
-  requester's hints. On a box shared across accounts, relaying its raw feed to one user would show them the other's
-  sessions and timings. So a cross-account box needs its stream filtered PER ACCOUNT at the box (hints would carry the
-  account, and the patched Ollama would serve each subscriber only its own generations plus the box's aggregate
-  memory), rather than a connector relaying everything. Until that exists, a box is shared only within one account.
+- **A box belongs to exactly one account, and its feed never crosses accounts.** An account is a trust domain, not
+  a person: a lab sharing one workstation is one account with several people's devices, and they see each other's
+  model loads and token counts the way colleagues sharing a machine do. Whose model stays loaded is then a question
+  of fairness among them (a `use: interactive` hint is a fairness signal, and gaming it is a social problem), not of
+  security.
+
+**Why a box is not shared across accounts.** The box this project targets is a patched Ollama, and Ollama is
+designed for a single owner: one scheduler, one cache and one trust level for every client. The placement and
+keep-alive work here is about exactly that setting (how to spend VRAM on a personal or lab workstation), not
+large-scale serving. Serving strangers from one box would need five things it does not have, and building them would
+fight its design:
+
+1. **Its telemetry is everyone's metadata.** The event stream carries every generation's hint: other users' session
+   and request ids, prompt and output token counts, timings, the models they load, whether a request was
+   interactive. Not content, but usage patterns, prompt lengths and private model names.
+2. **Control actions act on the shared box.** Freeing VRAM or unloading a model evicts someone else's mid-
+   conversation; placement and keep-alive trade one user's latency for another's. The box trusts every client
+   equally.
+3. **Hints are self-reported.** A client could claim `interactive` to win if the scheduler ever prioritised it, or
+   tag its requests with someone else's session. The lane only trusts exact request-id joins across runtimes; a
+   scheduler has no such check.
+4. **The prompt cache is a side channel.** The patched box keeps conversations' KV caches, including in host RAM. A
+   prefix cache that can hit across users reveals, by a fast response, that someone else sent the same prefix: a
+   known cross-tenant leak in shared LLM serving. Isolation would need cache entries scoped per account.
+5. **Learned corrections mix users.** The decode-speed correction and a learned keep-alive would train on everyone's
+   traffic, so one user's habits would shape another's latency.
+
+A server built for many tenants (vLLM and its kind are built for high-throughput serving of many users) could provide
+all five. The hub does not implement that; it publishes the contract such a server would emit (see The contract)
+and treats any server that emits it as untrusted input.
 
 ## Who subscribes to whom
 
@@ -221,6 +246,118 @@ they are drawn as the box's traffic with the claimed runtime and session named, 
 the subagent as a single span (its own step) rather than a subtree. Seeing the subtree requires `view` on the child,
 which the spawn grant gives the orchestrator and inheritance gives the person's devices.
 
+## The contract: making another server compatible
+
+Anything that emits the contract can be a source: another box (a patched vLLM, a different local server), or a
+runtime that is not this extension. Building those is out of scope for this project; making it possible and safe is
+not. As the hub is implemented, this section becomes the published specification, with the schemas and test vectors
+beside it, so a compatible server can be written from it alone.
+
+**What is published** (as `docs/spec/hub/*.proto` plus a prose reference, versioned):
+
+- **`Envelope`**: the only part the hub reads. Version, account, sender, recipient or stream, sequence number, flags,
+  and the encrypted payload.
+- **`SessionEvent`**: the session debug stream (agent start with lineage, steps with usage and phases, turns, asides,
+  approvals), the objects `eventsFrom` derives the lane from.
+- **`BoxFrame`**: a box's telemetry, the shape the patched Ollama's `/api/events` already emits (`hello` with the box
+  id and server time, `sample` with `ps` and changed `info`, `load.*`, `busy.*`, `gen.start`/`gen.end` with timings,
+  the echoed hint and the predicted decode, `evict`, `expires`), each with `v`.
+- **`Hint`**: what a requester attaches to a model request and a compatible box echoes on `gen.end`: `use`, `session`,
+  `request`, `runtime`, `root`, `after`, `synthetic`.
+- **`Command`** and **`Capability`**: the signed commands and scope grants in Security and Principals and scopes.
+- **Conformance vectors**: recorded streams (real captures, as `tests/fixtures/hw/` holds for the box today) and the
+  lane and chart each should produce, so an implementer can check they are drawn correctly.
+
+**What a compatible box must do**: emit `BoxFrame`s over its stream with its own box id and clock in `hello`; echo the
+request's hint on `gen.end`; report timings in the units named; send `info` when it changes. **What it may omit**:
+anything optional in the schema. Absent means not reported, which the panel already says rather than inventing a
+value (see `docs/FORKED-BACKENDS.md`, where every field of the patched Ollama is already optional).
+
+**How the client handles a third-party source, securely:**
+
+- **Every source is untrusted input.** Sizes, rates and field lengths are capped per source; an unknown kind or
+  version is skipped, never guessed at; malformed frames are dropped and counted.
+- **Nothing a source sends is markup.** Strings are rendered as escaped text (the rule the panel's tooltips already
+  follow for content from outside), and no source can supply a link, a script or an image.
+- **Attribution needs evidence.** A generation lands in a session's band only by an exact request-id join with that
+  session's own records (see Rendering a subagent); a hint alone is a claim, labelled as one.
+- **A source's clock is corrected, not trusted**: offsets are estimated per source, and a source whose clock jumps is
+  flagged rather than redrawn.
+
+## Distributed and multi-tenant servers: a worked example
+
+What a compatible server built for many users would do: one deployment serving one model (or a few) across many GPUs
+and nodes, with continuous batching, a paged KV cache and prefix caching, possibly with prefill and decode on
+separate nodes (vLLM with tensor or pipeline parallelism, and clusters built on it). It is the kind of box the tenancy
+rule leaves room for: the five concerns there are ones it can meet, because it authenticates every request and so
+knows whose it is.
+
+**What it emits** (the `BoxFrame` contract, with a few optional kinds):
+
+- **`hello`**: its box id and clock, and its topology as capacity: nodes, GPUs, and the parallel layout.
+- **`gen.start` / `gen.end` per request**, with the echoed hint and timings: queue time, prefill, decode, cached-prefix
+  tokens. With prefill and decode on different nodes, each phase names where it ran, which the panel's per-card phase
+  ribbon already draws.
+- **Samples** whose moving parts differ from a workstation's: memory is flat (the weights never move), so it reports
+  KV-block usage, batch size, queue depth and preemptions. These are optional kinds; absent means not reported.
+- **Loads and evictions** rarely or never: placement is static.
+
+**How it meets the five concerns** (see Tenancy):
+
+1. **Telemetry.** It knows each request's account from its own authentication, never from the hint, and emits one
+   stream per account: that account's generations in full, and coarse box-wide aggregates (utilisation, queue depth)
+   with nobody else's hints.
+2. **Control actions.** It offers tenants none: no unload, no placement; the operator owns those. It declares no
+   control capabilities, and the client renders by capability, so the controls a workstation box has are not shown.
+3. **Hints.** It schedules on authenticated identity and per-account quotas. A hint such as `use: interactive` can
+   reorder a tenant's own requests within its own share, never another tenant's.
+4. **The prompt cache.** Prefix-cache entries are scoped per account, so a cache hit can only come from the account's
+   own earlier requests. (vLLM is believed to offer a per-request cache salt for this; to be confirmed.)
+5. **Learned corrections** are mostly moot: decode speed is a property of the deployment, and nothing is kept alive or
+   evicted. Anything learned per tenant stays per tenant.
+
+**How the hub handles it.** It is the one principal that serves several accounts. Each tenant pairs it into their
+own account (the tenant's credential for the server, and the server's key), and the server publishes each account's
+filtered stream encrypted to that account's key. The hub routes per account as it does everything, and isolation still
+holds twice: the hub reads only ciphertext, and a tenant holds only its own account's key. The server is trusted to
+filter correctly, which is inherent in serving everyone: it already holds every request.
+
+**What changes in the client**: box capabilities (`multi_tenant`, `placement: static`, which controls exist) so the
+panel shows only what applies; an aggregate view for boxes with more devices than the chart's box shapes cover (they
+reach about nine pools); and the client never sends an account in a hint, since the server derives it.
+
+## Building the relay (a proposal)
+
+Small, stateless where it can be, and scaled by account. Not a stream of JSON text.
+
+- **Binary, schema'd framing.** Varint-length-delimited protobuf, the framing the extension already uses for the
+  patched Ollama's chat stream (`protostream.ts`). One schema, generated code for every language an implementer might
+  use, and protobuf's evolution rules match "switch on the kinds you know". Carried as WebSocket binary messages now
+  (they work from a phone and through proxies), WebTransport later if head-of-line blocking matters.
+- **The hub parses only the envelope.** A few fixed fields in front of an AEAD ciphertext. It never decodes a payload,
+  so its cost per message is a header read and a queue push.
+- **Batched and coalesced.** A source batches events into one frame per ~100 ms while busy. Box samples carry only
+  what changed (the box already sends `info` only on change, and memory figures move rarely). Telemetry that is
+  superseded before it is sent is replaced, not queued.
+- **Compression, carefully.** Telemetry (numbers) compresses freely. Session events mix page content an attacker can
+  influence (a hostile page's text reaches tool results) with things that must stay secret, and compressing those
+  before encryption lets whoever sees ciphertext sizes (the hub) learn from them, the CRIME and BREACH class of
+  attack. So session events are not compressed, or are padded to size buckets.
+- **Backpressure by kind.** Each subscriber has a bounded queue. Telemetry for a slow subscriber (a phone on a poor
+  connection) is coalesced and, past a limit, dropped with a marker; the panel already draws a reported drop as a
+  hatched gap (`gapBefore`). Session events are state and are never dropped: a subscriber that falls behind on them
+  is disconnected and resyncs from the ring.
+- **Scaled by account, sharing nothing between accounts.** Connections are routed to a hub node by account (a hash of
+  the account id at the load balancer), so an account's principals meet on one node and nodes share nothing. Each
+  node keeps the bounded rings for its accounts in memory. The rings are a CACHE: the authoritative history is on the
+  runtimes (saved sessions) and the boxes (their own rings), so a node lost is a reconnect and a backfill, not data
+  lost. No database.
+- **Large objects on their own channel.** Screenshots are requested, sent in chunks outside the rings, and never
+  retained.
+- **Approvals reach a sleeping phone by push**, carrying nothing but "an approval is waiting": the decision itself is
+  made in the app, signed, over the relay.
+- **Language**: Go or Rust. Either keeps per-connection memory small; Go is the simpler to write, Rust the tighter.
+
 ## Runtimes
 
 - A runtime registers under its public key and a name, with **capabilities**: whether it has tabs, can take
@@ -274,8 +411,8 @@ headless runtimes are still open.
 - Group keys for box telemetry: rotation when a device is unpaired.
 - Whether the local chat page also connects to the hub to show other runtimes, or stays local-only.
 - How much history a client can pull (the rings are bounded; saved sessions live on the runtime).
-- The hint fields (`runtime`, `root`, and `account` for shared boxes) need the patched Ollama's agreement before use.
-- Per-account filtering of a shared box's stream, at the box.
+- The hint fields (`runtime`, `root`) need the patched Ollama's agreement before use.
+- The schemas and conformance vectors (see The contract) are written as the hub is implemented, not before.
 
 ## Related
 
