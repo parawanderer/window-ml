@@ -25,9 +25,9 @@ import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KE
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
-import { usageByModel, eventsFrom, dropInferredLoads, type UsageSource } from "./model-stats";
+import { usageByModel, eventsFrom, laneEvents, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, memorySplit, estimateFrom, quantPlain, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, joinGens, rooflineFrom, expectedDecodeFrom, expectedPhrase, predictedDecodeFrom, kindRefusal } from "../resource-model";
+import { parseInfo, holdCapacity, memorySplit, estimateFrom, quantPlain, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, rooflineFrom, expectedDecodeFrom, expectedPhrase, predictedDecodeFrom, kindRefusal } from "../resource-model";
 import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay, LANE_KINDS, toggleLaneKind } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -960,17 +960,16 @@ export function timeline(): ResourceEvent[] {
             { t, until: Date.now(), open: true, kind: "serve", label: `${model} serving`, model }))]
         : residencyEvents(resourceHistory.value, fromSessions);
     // Both sources describe a LOAD, and with the stream carrying they describe the SAME loads — so the one we
-    // inferred from `load_duration` is dropped where the server reported it (see dropInferredLoads).
+    // inferred from `load_duration` is dropped where the server reported it (see laneEvents).
     // A MODEL SWITCHED OFF IS SWITCHED OFF EVERYWHERE THE PANEL DRAWS IT. The dot took it out of the stack
     // and the totals and left its lane blocks standing — which is most visible on an off-box model, whose
     // only presence IS the lane: its row offered a control that could not remove the one thing it drew. The
     // row itself stays, because the row is what you turn it back on with.
     const off = hiddenModels.value;
-    // OUR OWN GENERATIONS ARRIVE TWICE with the stream carrying — as the step the session drew and as the
-    // server's `gen` span — so the server's is joined onto ours (its prefill/decode figures travel with it) and
-    // only the generations that match nothing, other clients' traffic, are drawn as spans of their own.
-    const joined = joinGens(dropInferredLoads(fromSessions, machine), machine);
-    const all = [...joined.session, ...joined.server].map(withGenCtx).sort((a, b) => a.t - b.t);
+    // OUR OWN WORK ARRIVES TWICE with the stream carrying — as what the session drew and as the server's record
+    // of it — so each load, generation and serving period is drawn once, inside the run it belongs to (see
+    // laneEvents). Only traffic nothing here accounts for is drawn as the server's own.
+    const all = laneEvents(fromSessions, machine, (hash) => sessionMap.has(hash)).map(withGenCtx).sort((a, b) => a.t - b.t);
     return off.size ? all.filter((e) => !e.model || !off.has(e.model)) : all;
 }
 

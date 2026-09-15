@@ -2774,7 +2774,7 @@ export function placeEvents(runs: { t: number }[][], events: ResourceEvent[], gr
 // `boot` is an executor's COLD START — a sandbox fetching its runtime before the code runs. Like a model
 // load it is the step's wall time and none of the work you asked for, so it is drawn apart from `tool`.
 export type PhaseKind = "model" | "wait" | "tool" | "think" | "answer" | "call" | "queue" | "net" | "boot" | "dispatch" | "weights" | "context"
-    | "prefill" | "decode" | "other" | "swap";
+    | "prefill" | "decode" | "other" | "swap" | "load";
 
 /** What the ENGINE measured for one generation (`gen.end.timings`, patched Ollama). Every figure is the
  *  executor's own, which is what makes a prefill/decode boundary drawable at all: the event stream carries no
@@ -3109,7 +3109,9 @@ export function joinGens(sessionEvents: ResourceEvent[], serverEvents: ResourceE
     for (const { si, g } of pairs) {
         if (usedS.has(si) || usedG.has(g)) continue;
         usedS.add(si); usedG.add(g);
-        session[si] = withGen(session[si], g.gen!);
+        // An ASIDE takes the figures but keeps its outline: it is drawn unfilled because it is not the run's work,
+        // and phases would fill it. It only ever joins by request id (it has no model stretch to time against).
+        session[si] = session[si].kind === "aside" ? { ...session[si], gen: g.gen! } : withGen(session[si], g.gen!);
     }
     return { session, server: serverEvents.filter((e) => !usedG.has(e)) };
 }

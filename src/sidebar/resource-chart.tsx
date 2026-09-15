@@ -1991,6 +1991,8 @@ const phaseFill = (kind: string, model?: string): string => {
         // load, so it is striped the way a load is, in a lighter weight of the model's colour.
         : kind === "swap" ? halfStripes(`color-mix(in srgb, ${base} 45%, transparent)`, 45)
         : kind === "weights" ? halfStripes(base, 45)
+        // A load inside a step: the same wait the load's own span below it shows, striped the same way.
+        : kind === "load" ? halfStripes(`color-mix(in srgb, ${base} 70%, transparent)`, 45)
         : kind === "context" ? halfStripes(`color-mix(in srgb, ${base} 55%, transparent)`, -45)
         : `color-mix(in srgb, ${base} 38%, transparent)`;
 };
@@ -2009,8 +2011,13 @@ function phaseSpans(phases: { kind: string; until: number }[], from: number, tot
     });
 }
 
+/** Whether a phase's fill is a PATTERN (stripes) rather than a colour. A pattern cannot be a gradient stop: one in
+ *  the list makes the whole `background` invalid, the declaration is dropped, and the block draws as nothing. So
+ *  a patterned phase gets a flat stop here and its stripes as an overlay (see `rc-ev-pattern`). */
+const isPattern = (fill: string): boolean => fill.startsWith("repeating-");
+
 function phaseGradient(phases: { kind: string; until: number }[], from: number, total: number, model?: string): string {
-    const fill = (kind: string) => phaseFill(kind, model);
+    const fill = (kind: string) => { const f = phaseFill(kind, model); return isPattern(f) ? "var(--panel)" : f; };
     const stops: string[] = [];
     // A HAIRLINE between phases, in the panel's own colour so it reads as a cut rather than a fourth colour.
     // Fills alone don't do it: think and call are the same hue at different weights, and two adjacent weights
@@ -2042,11 +2049,11 @@ function useInstants(runs: ResourceSample[][], events: ResourceEvent[]): EventPl
 /** The dashed rules themselves — an eviction is a moment in the memory trace, and its meaning is WHERE the
  *  curve steps, so it belongs on the plot rather than in the lane below. */
 function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; run: number; scope: string }) {
-    return <>{instants.filter((p) => p.run === run).map((p, k) => (
+    return <>{instants.filter((p) => p.run === run).map((p) => (
         // Keyed by the EVENT, not the element: the same eviction is drawn in every track, so hovering it in
         // one plot thickens it in all of them — one thing that happened, not three.
         <div class={`rc-rule rc-rule-${p.event.kind}${eventKey(p.event) === hotEvent.value ? " hot" : ""}`}
-            key={k}
+            key={barKey(p.event)}
             // A rule about a MODEL carries that model's colour, the same one its row, its band and its lane
             // blocks already use — so "gemma was evicted here" is legible from the line without reading the
             // tooltip. Generic red said only "something bad", which on a box running four models is the one
@@ -2513,6 +2520,10 @@ const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
 /** One event's identity across surfaces: the same eviction is drawn in every track, so hovering it anywhere
  *  must highlight it everywhere. Its time and what it was are enough to identify it. */
 const eventKey = (e: ResourceEvent): string => `${e.kind}:${e.t}:${e.model ?? ""}`;
+/** A lane bar's DOM identity: the event it draws, never its index in a row. Keyed by index, a row that re-packed as a
+ *  live run grew handed the same button to a different event under a still pointer; no `pointerenter` fired, so the
+ *  hover went on naming the event that button used to be (a hovered aside showed the run's tooltip). */
+const barKey = (e: ResourceEvent): string => e.id ?? `${eventKey(e)}:${e.ref?.hash ?? ""}:${e.ref?.seq ?? ""}:${e.label}`;
 const hotEvent = signal<string | null>(null);
 
 /** The hovered event, and WHICH surface owns it. Every track's plot renders a tip (a ruled instant is hovered
@@ -2790,6 +2801,9 @@ function EventTip({ scope }: { scope: string }) {
         // Moving conversations' KV caches between the slot and host RAM before the prefill — the engine's own
         // measure, and in no other timing.
         swap: "swapping conversations through the RAM cache",
+        // The first stretch of a call whose wall clock contained a load: the model arriving. Named, because left
+        // inside the model's time it was the tooltip's "scheduling and setup", seconds of it, pointing nowhere.
+        load: () => `waiting for ${e.model || "the model"} to load`,
     };
     const nameFor = (kind: string) => {
         const n = PHASE_NAMES[kind as PhaseKind];
@@ -3093,7 +3107,7 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                     <BrushOverlay runs={runs} />
                     {runs.map((run, i) => (
                         <div class="rc-lane-seg" key={i} style={{ flex: `${runWeight(run)} 1 0` }}>
-                            {row.filter((p) => p.run === i).map((p, k) => {
+                            {row.filter((p) => p.run === i).map((p) => {
                                 const e = p.event;
                                 const w = Math.max(MIN_EV_SPAN * 100, (p.to - p.from) * 100);   // packed at this width too
                                 // A composite span is ONE block whose parts are different KINDS of time: the
@@ -3113,7 +3127,7 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                                 // something next to the step that spawned it and the run that contains it.
                                 const away = lit.size > 0 && !(e.id && lit.has(e.id));
                                 return (
-                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}${e.open ? " open" : ""}${e.id && e.id === pulsed ? " pulse" : ""}`} key={k}
+                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}${e.open ? " open" : ""}${e.id && e.id === pulsed ? " pulse" : ""}`} key={barKey(e)}
                                         style={{ left: `${p.from * 100}%`, width: `${w}%`,
                                                  // A `run` is the CONTAINER every other block sits inside, so it is
                                                  // drawn as a pattern rather than a solid fill (see .rc-ev-run) —
@@ -3152,6 +3166,18 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                                                     // change of texture rather than needing a drawn line.
                                                     <i class={ph.kind === "context" ? "rc-ev-ctxphase" : "rc-ev-wait"} key={wi}
                                                         style={{ left: `${ph.start * 100}%`, width: `${(ph.end - ph.start) * 100}%` }} />
+                                                ))
+                                            : null}
+                                        {/* Every other STRIPED phase (a load inside a step, a cache swap, a cold
+                                            start): the gradient carries a flat stop for it, and its stripes are
+                                            drawn here. In the gradient they made the whole background invalid,
+                                            and the block vanished. A load's own bar has its stripes already. */}
+                                        {e.phases && total > 0 && e.kind !== "load"
+                                            ? phaseSpans(e.phases, e.t, total)
+                                                .filter((ph) => ph.kind !== "wait" && ph.kind !== "context" && ph.end > ph.start && isPattern(phaseFill(ph.kind, e.model)))
+                                                .map((ph, pi) => (
+                                                    <i class="rc-ev-pattern" key={`p${pi}`}
+                                                        style={{ left: `${ph.start * 100}%`, width: `${(ph.end - ph.start) * 100}%`, background: phaseFill(ph.kind, e.model) }} />
                                                 ))
                                             : null}
                                     </button>

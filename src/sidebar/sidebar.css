@@ -2581,6 +2581,10 @@ code .expanded:hover { background: color-mix(in srgb, var(--ok, #22c55e) 12%, tr
 /* Time spent WAITING at the approval gate — the step's wall clock, none of the machine's work. Striped for
    exactly the reason a model load is: flat, a wide block reads as a lot of work having happened. The gaps
    are transparent so the neutral fill beneath still shows through. */
+/* A striped phase inside a lane block (a load inside a step, a cache swap, a cold start), drawn over the block's
+   flat stop because a pattern cannot be a gradient stop. The stripes come inline from phaseFill. */
+.rc-ev-pattern { position: absolute; top: 0; bottom: 0; pointer-events: none; border-radius: inherit; }
+
 .rc-ev-wait {
     position: absolute; top: 0; bottom: 0; pointer-events: none; border-radius: inherit;
     background: repeating-linear-gradient(45deg,
