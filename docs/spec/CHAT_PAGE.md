@@ -12,6 +12,18 @@ way of working: long-form discussion and brainstorming rather than a drawer besi
 Everything the app already has comes with it unchanged: themes and colours, the Python bench, the resource panel and
 event lane, exports, approvals.
 
+## Sources
+
+The page consumes session events from two kinds of source and renders them the same way:
+
+- **Local**: this extension's own sessions, over its own messaging.
+- **Remote**: agent runtimes registered with the runtime hub ([`RUNTIME_HUB.md`](RUNTIME_HUB.md)): another
+  browser, a phone-driven setup, later a headless runtime.
+
+So the page is written against one store interface from the start: subscribe to a source's events, send it commands.
+Local is the first implementation; the hub transport is a second, not a rewrite. Sessions are keyed by source (a
+runtime) and hash, and what the page offers for a session follows what its runtime can do.
+
 ## Decisions
 
 - **Where a chat's agent runs.** An extension page is not a web page, so an agent chat needs a primary page. When
