@@ -162,6 +162,15 @@ jobs:
           base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")
           if [ -z "$base" ]; then echo "no merge base — skipping the CSS ratchet"; exit 0; fi
           node scripts/components.mjs --new-css "$base"
+      # A REMINDER, never a gate — it exits 0 whatever it finds, and lands as ::warning annotations on the
+      # diff rather than as a line in a log. Ratcheted for the same reason as the CSS check above: fifteen
+      # files are already over the limit, so listing them every run would train people to ignore it. It
+      # speaks only when a change makes an oversized file bigger.
+      - name: Oversized source files (reminder only)
+        run: |
+          base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")
+          if [ -z "$base" ]; then echo "no merge base — skipping the file-size reminder"; exit 0; fi
+          node scripts/check-file-size.mjs "$base"
 
   build:
     runs-on: ubuntu-latest

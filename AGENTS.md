@@ -366,6 +366,13 @@ A TRAILING `//` counts as the docstring for a one-line export, which is the hous
 scanner to read those fixed thirty of them with no churn, rather than having me move thirty comments above
 their declarations to satisfy an indexer. Playbook: `.claude/skills/components/SKILL.md`.
 
+**A file that has grown past ~800 lines gets a REMINDER** (`node scripts/check-file-size.mjs`) — in the
+pre-commit hook and in CI's `tools` job suggesting it be split into logical modules, with per-module tests where that follows. It never
+fails a build — size is a judgement, and `contract.ts` is long because it is one contract. It is RATCHETED:
+fifteen files are already over the line, so it speaks only when a change makes an oversized file bigger,
+which is the moment the advice is actionable. `--all` lists every one of them when you do want the survey.
+Tests are exempt: a long test file is a long LIST, which is not the same failure as a long module.
+
 **RULE — AGENTS.md holds working rules and traps; implementation notes go to `docs/dev/`.** Everything here is
 loaded into every session, so it is for what you must know to work in the repo at all: the rules, the map, the
 invariants, and one-line traps that break things silently. How a subsystem works and why it is built that way —
