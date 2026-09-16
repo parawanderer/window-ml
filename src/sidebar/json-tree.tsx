@@ -3,11 +3,16 @@
 // re-exports it.
 import { useState } from "preact/hooks";
 import { IconChevron } from "./icons";
-import { TipText } from "./ui-kit";
+import { TipText, cursorTipOn } from "./ui-kit";
 
 /** Marks where a CUT-OFF value ended: a JSON value whose text was clipped is drawn as the part that arrived, and this
  *  sentinel, placed as the last member of the innermost container open at the cut, draws a "truncated" row there. */
 export const JT_CUT: object = Object.freeze({});
+
+/** Marks where the MODEL's copy of a value ended: the panel keeps more of a value than the model received, and this
+ *  sentinel, placed in the container open at that point, draws a "not sent to the model" row there. Members after it
+ *  (at every depth up to the root) are drawn dimmed, through the `unsent` map passed to the tree. */
+export const JT_SEEN: object = Object.freeze({});
 
 /** How many members an open container draws before a "show more" row, so a returned array of 50,000 rows does not
  *  mount 50,000 rows the moment you expand it. */
@@ -27,15 +32,15 @@ function holdsCut(v: unknown): boolean {
 
 // A zero-dep collapsible JSON tree (DevTools-console style): objects/arrays fold with a one-line
 // preview, primitives render inline + typed. Used to inspect the agent's full tool definitions.
-export function jtPreview(v: object): string {
-    const cut = holdsCut(v) ? ", cut" : "";
+export function jtPreview(v: object, unsent = false): string {
+    const cut = (holdsCut(v) ? ", cut" : "") + (unsent ? ", partly not sent" : "");
     if (Array.isArray(v)) {
-        const n = v.length - (v[v.length - 1] === JT_CUT ? 1 : 0);
+        const n = v.filter(x => x !== JT_CUT && x !== JT_SEEN).length;
         return v.length ? `[ ${n} item${n === 1 ? "" : "s"}${cut} ]` : "[ ]";
     }
-    const all = Object.keys(v), keys = all.filter(k => (v as Record<string, unknown>)[k] !== JT_CUT);
+    const all = Object.keys(v), keys = all.filter(k => (v as Record<string, unknown>)[k] !== JT_CUT && (v as Record<string, unknown>)[k] !== JT_SEEN);
     if (!all.length) return "{ }";
-    const names = [...keys.slice(0, 4), ...(keys.length > 4 ? ["…"] : []), ...(cut ? ["cut"] : [])];
+    const names = [...keys.slice(0, 4), ...(keys.length > 4 ? ["…"] : []), ...(cut ? [cut.slice(2)] : [])];
     return `{ ${names.join(", ")} }`;
 }
 // A JSON-schema node (as much as we read of it): its own `description`, and children by `properties`
@@ -55,17 +60,24 @@ export function JtKey({ name, desc, unknown }: { name: string; desc?: string; un
  *  non-collapsible at EVERY depth, which is what the raw In view passes so nothing can be folded away
  *  from a Ctrl+F. Keys carry their schema `description` as a tooltip, and one not in the schema is
  *  flagged as a likely hallucinated argument. */
-export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen, cut }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean; cut?: string }) {
+export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen, cut, unsent, dim }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean; cut?: string;
+    /** Container → index of its first member the model was NOT sent (see JT_SEEN). */ unsent?: WeakMap<object, number>;
+    /** This member was not sent to the model: drawn dimmed. */ dim?: boolean }) {
     const branch = !!v && typeof v === "object";
     const [open, setOpen] = useState(allOpen || (defaultOpen ?? depth < 1));   // allOpen → expanded at EVERY depth (the raw In view)
     const [shown, setShown] = useState(JT_PAGE);
     const pad = { paddingLeft: `${depth * 13}px` };
     // Where the text was cut. Its own row, in the container that was still open, so the reader sees exactly
     // which member is the last one that arrived. `cut` is the sentence; the tree's caller writes it.
-    if (v === JT_CUT) return <div class="jt-row jt-cut" style={pad}>{cut ?? "… truncated here"}</div>;
+    const dimCls = dim ? " jt-unsent" : "";
+    if (v === JT_CUT) return <div class={`jt-row jt-cut${dimCls}`} style={pad}>{cut ?? "… truncated here"}</div>;
+    // Where the MODEL's copy ended. Everything after this row, here and in every enclosing container, it never read.
+    if (v === JT_SEEN) return <div class="jt-row jt-seen-end" style={pad}
+        {...cursorTipOn("The panel kept more of this value than the tool's output cap let through. The model read up to here, and none of what follows.")}>
+        ↓ not sent to the model</div>;
     if (!branch) {
         const t = v === null ? "null" : typeof v;
-        return <div class="jt-row" style={pad}>
+        return <div class={`jt-row${dimCls}`} style={pad}>
             {k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null}
             <span class={`jt-val jt-${t}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}</span>
         </div>;
@@ -82,15 +94,21 @@ export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, 
     // allOpen (the raw In view) is non-collapsible → drop the chevron, so the opening brace isn't pushed
     // right of the closing one and keys indent cleanly under it.
     const collapsible = !allOpen;
-    return <div class="jt-node">
+    const from = unsent?.get(v as object);
+    return <div class={`jt-node${dimCls}`}>
         <div class={`jt-row jt-branch${collapsible ? " jt-clickable" : ""}`} style={pad} role={collapsible ? "button" : undefined} onClick={collapsible ? () => setOpen(o => !o) : undefined}>
             {collapsible ? <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span> : null}
             {k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null}
-            {open ? <span class="jt-brace">{arr ? "[" : "{"}</span> : <span class="jt-preview">{jtPreview(v as object)}</span>}
+            {open ? <span class="jt-brace">{arr ? "[" : "{"}</span> : <span class="jt-preview">{jtPreview(v as object, from != null)}</span>}
         </div>
         {open ? <>
             {/* allOpen (the raw In view) draws every member: it exists so Ctrl+F can reach all of them. */}
-            {(allOpen ? entries : entries.slice(0, shown)).map(([ek, ev]) => <JsonNode key={ek} k={arr || ev === JT_CUT ? undefined : ek} v={ev} depth={depth + 1} schema={childOf(ek)} desc={arr ? undefined : childOf(ek)?.description} unknown={!!props && ev !== JT_CUT && !(ek in props)} allOpen={allOpen} cut={cut} />)}
+            {(allOpen ? entries : entries.slice(0, shown)).map(([ek, ev], i) => {
+                const mark = ev === JT_CUT || ev === JT_SEEN;
+                return <JsonNode key={ek} k={arr || mark ? undefined : ek} v={ev} depth={depth + 1} schema={childOf(ek)} desc={arr ? undefined : childOf(ek)?.description} unknown={!!props && !mark && !(ek in props)} allOpen={allOpen} cut={cut}
+                    // Only at the boundary: opacity compounds, so a dimmed container's own members are not dimmed again.
+                    unsent={unsent} dim={from != null && i >= from} />;
+            })}
             {!allOpen && entries.length > shown
                 ? <div class="jt-row" style={{ paddingLeft: `${(depth + 1) * 13}px` }}><button class="jt-more" onClick={() => setShown(n => n + JT_PAGE)}>show {Math.min(JT_PAGE, entries.length - shown)} more of {entries.length - shown}</button></div>
                 : null}

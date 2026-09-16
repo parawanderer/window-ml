@@ -19,7 +19,7 @@ import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmt
 import { markdown, truncate, pretty, highlight } from "./format";
 import { codeNotes, notesState, notesHidden, fetchLineNotes, toggleLineNotes } from "./summaries";
 import { Prose } from "./prose";
-import { JsonNode, JT_CUT } from "./json-tree";
+import { JsonNode, JT_CUT, JT_SEEN } from "./json-tree";
 import { parseLooseJson } from "../json-repair";
 import { notesByLine } from "./annotate";
 import {
@@ -631,11 +631,13 @@ export function TimedOutput({ text, marks }: { text: string; marks?: [number, nu
 /** Captured output with the tail the MODEL NEVER RECEIVED marked. A tool clips its model-facing result
  *  to a context budget while the UI keeps far more, so without this you would read the surplus as "what
  *  the model saw". Everything past `seen` renders dimmed under an explicit label. */
-export function SeenSplit({ text, seen, live, marks }: { text: string; seen?: number; live?: boolean; marks?: [number, number][] }) {
-    if (seen == null || seen >= text.length) return <TimedOutput text={text} marks={marks} />;
+export function SeenSplit({ text, seen, live, marks, lang }: { text: string; seen?: number; live?: boolean; marks?: [number, number][];
+    /** Highlight both halves as this language instead of as timestamped output (a returned JSON value). */ lang?: string }) {
+    const part = (t: string, m?: [number, number][]) => lang ? <Code text={t} lang={lang} /> : <TimedOutput text={t} marks={m} />;
+    if (seen == null || seen >= text.length) return part(text, marks);
     return (
         <>
-            <TimedOutput text={text.slice(0, seen)} marks={marks} />
+            {part(text.slice(0, seen), marks)}
             {/* While the tool is still RUNNING we already know where the model's cut will fall, so mark it as it
                 streams rather than springing it on you at the end — greyed, with a "?" that explains why. */}
             <div class={`r-unseen-lbl${live ? " live" : ""}`}
@@ -644,7 +646,7 @@ export function SeenSplit({ text, seen, live, marks }: { text: string; seen?: nu
                     : "The tool captured this, but it was clipped out of the result sent to the model (its output cap). The model never read it.")}>
                 {live ? "beyond the model's cutoff " : "↓ captured, but NOT sent to the model"}{live ? <span class="r-unseen-q">?</span> : null}
             </div>
-            <div class="r-unseen"><TimedOutput text={text.slice(seen)} marks={marks?.map(([o, t]) => [o - seen, t] as [number, number])} /></div>
+            <div class="r-unseen">{part(text.slice(seen), marks?.map(([o, t]) => [o - seen, t] as [number, number]))}</div>
         </>
     );
 }
@@ -1184,7 +1186,7 @@ function PyOutBody({ id, d, marks, lineMap, fill }: { id: PyOutSectionId; d: Ext
         // In a cell like the output above it: a returned value can be as long as anything printed on the way
         // there, and it is the half you most often want to search — so it is capped, scrollable and
         // Ctrl+F-able by being wrapped, rather than by each section inventing its own.
-        case "value": return <ValueOut text={String(d.value)} fill={fill} />;
+        case "value": return <ValueOut text={String(d.value)} fill={fill} seen={d.valueSeen} />;
     }
 }
 
@@ -1401,20 +1403,63 @@ function markCut(value: object, path: (string | number)[]): object {
     return value;
 }
 
+/** Put the "not sent to the model" marker where the model's copy of a value ended, and record, for every container on
+ *  the way down, the first member the model never received. `prefix` is the model's copy parsed on its own: its innermost
+ *  open container holds exactly the members the model saw whole, so the marker goes at that count in the FULL tree. */
+function markSeen(value: object, seenText: string): WeakMap<object, number> | undefined {
+    const prefix = parseLooseJson(seenText);
+    if (!prefix?.cutPath) return undefined;
+    const unsent = new WeakMap<object, number>();
+    // A container the model got NONE of whole (its copy ended just inside it) is marked from its parent, before it:
+    // a marker as the first row of `{ … }` says less than one between the rows it received and the one it did not.
+    const path = [...prefix.cutPath];
+    const at = (root: any, keys: (string | number)[]) => keys.reduce((n, k) => n?.[k], root);
+    while (path.length) {
+        const inner = at(prefix.value, path);
+        if (inner && typeof inner === "object" && (Array.isArray(inner) ? inner.length : Object.keys(inner).length)) break;
+        path.pop();
+    }
+    let full: any = value, part: any = prefix.value;
+    for (const k of path) {
+        if (!full || typeof full !== "object" || !part || typeof part !== "object") return undefined;
+        const at = Array.isArray(full) ? Number(k) : Object.keys(full).indexOf(String(k));
+        unsent.set(full, at + 1);   // the member on the path was only partly sent; everything after it, not at all
+        full = full[k]; part = part[k];
+    }
+    if (!full || typeof full !== "object" || !part || typeof part !== "object") return undefined;
+    // Members received whole: all of `part`'s, except one that was trimmed back to here (the model got part of it).
+    const trimmed = path.length < prefix.cutPath.length;
+    const seenCount = (Array.isArray(part) ? part.length : Object.keys(part).length) - (trimmed ? 1 : 0);
+    if (Array.isArray(full)) full.splice(seenCount, 0, JT_SEEN);
+    else {
+        // Re-insert the keys around the marker, since an object's order is its insertion order.
+        const entries = Object.entries(full);
+        for (const [k] of entries) delete full[k];
+        entries.forEach(([k, x], i) => { if (i === seenCount) full["↓"] = JT_SEEN; full[k] = x; });
+        if (seenCount >= entries.length) full["↓"] = JT_SEEN;
+    }
+    unsent.set(full, seenCount + 1);
+    return unsent;
+}
+
 /** A tool's returned VALUE (exec, python_exec): the JSON text exactly as the model got it, plus a corner button that
  *  draws it as a collapsible JSON TREE whenever it is an object or array. A value clipped for the UI (the
  *  `… [+N chars truncated]` note) still gets its tree: the part that arrived whole, closed at the cut, with a row
  *  saying where the cut was. Text stays the default, since it is what the model read and what Ctrl+F searches. */
-export function ValueOut({ text, fill }: { text: string; fill?: boolean }) {
+export function ValueOut({ text, fill, seen }: { text: string; fill?: boolean; /** chars the model received; absent → all */ seen?: number }) {
+    const partial = seen != null && seen < text.length;
     const [asTree, setAsTree] = useState(false);
     const loose = useMemo(() => parseLooseJson(text), [text]);
     // Re-parsed rather than shared with `loose`, because marking the cut mutates the value.
     const tree = useMemo(() => {
         if (!asTree || !loose) return null;
         const fresh = parseLooseJson(text)!;
-        return fresh.cutPath ? markCut(fresh.value, fresh.cutPath) : fresh.value;
-    }, [asTree, text]);
-    if (!loose) return <OutputCell fill={fill}><Code text={text} lang="json" /></OutputCell>;
+        const value = fresh.cutPath ? markCut(fresh.value, fresh.cutPath) : fresh.value;
+        // The seen marker goes in AFTER the cut marker: both are placed by position, and the cut is always at the end.
+        return { value, unsent: partial ? markSeen(value, text.slice(0, seen)) : undefined };
+    }, [asTree, text, seen]);
+    const asText = <SeenSplit text={text} seen={partial ? seen : undefined} lang="json" />;
+    if (!loose) return <OutputCell fill={fill}>{asText}</OutputCell>;
     const dropped = loose.droppedChars;
     const cut = `… cut here${dropped != null ? `: ${dropped.toLocaleString("en-US")} more characters were not kept` : ""}`;
     const tip = asTree ? "Show the value as text"
@@ -1422,7 +1467,7 @@ export function ValueOut({ text, fill }: { text: string; fill?: boolean }) {
     const corner = <button class={`code-tool${asTree ? " on" : ""}`} aria-pressed={asTree} {...cursorTipOn(tip)} onClick={() => setAsTree(v => !v)}>{asTree ? "text" : "tree"}</button>;
     return (
         <OutputCell fill={fill} corner={corner}>
-            {tree ? <div class="jt-value"><JsonNode v={tree} defaultOpen cut={cut} /></div> : <Code text={text} lang="json" />}
+            {tree ? <div class="jt-value"><JsonNode v={tree.value} defaultOpen cut={cut} unsent={tree.unsent} /></div> : asText}
         </OutputCell>
     );
 }
@@ -1440,7 +1485,7 @@ function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: {
             </PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell text><ExecError text={d.error} line={d.errorLine} map={lineMap} /></OutputCell></PyOutSection> : null}
-            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><ValueOut text={d.value} /></PyOutSection> : null}
+            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><ValueOut text={d.value} seen={d.valueSeen} /></PyOutSection> : null}
             {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} /> : null}
         </div>
     );

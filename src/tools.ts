@@ -14,7 +14,7 @@ export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "h
 // the debugger is off / nothing resolved. ml-backed (round-trips to the background), injected so the pure
 // domTools stay ml-free. Used by describeElement to reveal content a page selector can't enter.
 export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
-import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom";
+import { truncate, clipOut, clipValue, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom";
 import { expandPointers } from "./pointer-macro";   // `@tool:` fantasy syntax → a real dereference call
 import { execErrorLine } from "./exec-trace";       // a stack frame → the model's own line number
 import { runPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
@@ -743,7 +743,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // The UI's RENDERED Out — parity with python_exec's cell (console / value / error sections +
                 // a rendered⇄raw toggle) instead of one raw blob. Carries exactly the same data the raw
                 // `content` string does, so the model-facing result is byte-identical (the raw-view rule).
-                const execRender = (value?: string, error?: string, errorLine?: number | null): import("./contract").RenderDescriptor => {
+                const execRender = (value?: string, error?: string, errorLine?: number | null, valueSeen?: number): import("./contract").RenderDescriptor => {
                     const joined = logs.join("\n");
                     return {
                         type: "exec-out",
@@ -753,6 +753,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         ...(error != null ? { error } : {}),
                         ...(errorLine != null ? { errorLine } : {}),
                         ...(value != null ? { value } : {}),
+                        ...(valueSeen != null ? { valueSeen } : {}),
                     };
                 };
 
@@ -799,13 +800,15 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     return { content: withLogs(`${(result as NodeListOf<Node>).length} element(s)`), elements: [...(result as NodeListOf<Node>)].slice(0, 50), render: execRender(`${(result as NodeListOf<Node>).length} element(s)`) };
                 }
 
-                let value: string;
-                if (result === undefined) value = "(undefined)";
+                let full: string;
+                if (result === undefined) full = "(undefined)";
                 else if (typeof result === "object") {
-                    try { value = clipOut(JSON.stringify(result), cap); }
-                    catch { value = clipOut(String(result), cap); }
-                } else value = clipOut(String(result), cap);
-                return timed({ content: withLogs(value), render: execRender(value) });
+                    try { full = JSON.stringify(result); }
+                    catch { full = String(result); }
+                } else full = String(result);
+                // The panel keeps up to UI_OUT_CAP and marks where the model's copy (`cap`) ended.
+                const v = clipValue(full, cap, UI_OUT_CAP);
+                return timed({ content: withLogs(v.model), render: execRender(v.ui, undefined, undefined, v.seen) });
             }
         }),
         T({

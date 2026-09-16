@@ -309,10 +309,10 @@ test("code block find: the block and an output cell share ONE owner", async () =
 
 /* ---------------- a returned VALUE as a JSON tree ---------------- */
 
-const mountValue = async (text) => {
+const mountValue = async (text, seen) => {
     const host = doc.getElementById("root");
     render(null, host);
-    render(h(ValueOut, { text }), host);
+    render(h(ValueOut, { text, seen }), host);
     await tick();
     return host.querySelector(".r-outcell");
 };
@@ -356,6 +356,42 @@ test("value tree: a CLIPPED value draws the part that arrived and says where it 
     assert.ok(cut, "a cut row inside the open row object");
     assert.equal(cut.textContent, `… cut here: ${(whole.length - 300).toLocaleString("en-US")} more characters were not kept`);
     assert.equal(kids.at(-1).contains(cut), true, "inside the last row, where the text ended");
+});
+
+// The panel keeps more of a value than the model's cap lets through; both views say where the model's copy ended.
+test("value seen: the text view marks what the model was never sent", async () => {
+    const text = JSON.stringify({ rows: Array.from({ length: 20 }, (_, i) => ({ id: i })) });
+    const seen = 60;
+    const cell = await mountValue(text, seen);
+    const lbl = cell.querySelector(".r-unseen-lbl");
+    assert.ok(lbl, "a label where the model's copy ended");
+    assert.match(lbl.textContent, /NOT sent to the model/);
+    assert.equal(cell.querySelector(".r-unseen").textContent, text.slice(seen), "everything after it, dimmed");
+    // Whole value, no seen boundary: no label.
+    const whole = await mountValue(text);
+    assert.equal(whole.querySelector(".r-unseen-lbl"), null);
+});
+
+test("value seen: the tree puts a marker between the last row the model got whole and the rest, and dims the rest", async () => {
+    const rows = Array.from({ length: 20 }, (_, i) => ({ id: i, name: `row${i}` }));
+    const text = JSON.stringify({ rows, total: 20 });
+    // Cut the model's copy partway through row 3: rows 0–2 arrived whole.
+    const seen = text.indexOf(`{"id":3`) + 5;
+    const cell = await mountValue(text, seen);
+    treeBtn(cell).click(); await tick();
+    const branch = (re) => [...cell.querySelectorAll(".jt-row.jt-branch")].find((r) => re.test(r.textContent));
+    const rowsRow = branch(/rows/);
+    assert.match(rowsRow.textContent, /partly not sent/, "the folded array says the model got only part of it");
+    rowsRow.click(); await tick();
+    const members = [...rowsRow.parentElement.children].filter((e) => e.classList.contains("jt-node") || e.classList.contains("jt-seen-end"));
+    const at = members.findIndex((e) => e.classList.contains("jt-seen-end"));
+    assert.equal(at, 3, "the marker sits after the three rows the model received whole");
+    assert.equal(members.slice(0, 3).some((e) => e.classList.contains("jt-unsent")), false, "rows it got are not dimmed");
+    assert.ok(members.slice(4).every((e) => e.classList.contains("jt-unsent")), "every row after the marker is dimmed");
+    assert.equal(cell.querySelectorAll(".jt-unsent .jt-unsent").length, 0, "dimmed once, not compounded");
+    // The enclosing object: `total` comes after `rows`, so the model never saw it either.
+    const total = [...cell.querySelectorAll(".jt-value > .jt-node > .jt-row")].find((r) => /total/.test(r.textContent));
+    assert.ok(total.classList.contains("jt-unsent"), "a later key of the enclosing object is dimmed too");
 });
 
 test("value tree: a long array draws a page of members, then 'show more'", async () => {

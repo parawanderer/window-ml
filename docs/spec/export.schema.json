@@ -1146,6 +1146,9 @@
                 "value": {
                   "type": "string"
                 },
+                "valueSeen": {
+                  "type": "number"
+                },
                 "error": {
                   "type": "string"
                 },
@@ -1209,6 +1212,9 @@
                 },
                 "value": {
                   "type": "string"
+                },
+                "valueSeen": {
+                  "type": "number"
                 },
                 "error": {
                   "type": "string"
@@ -1682,6 +1688,9 @@
                 "value": {
                   "type": "string"
                 },
+                "valueSeen": {
+                  "type": "number"
+                },
                 "error": {
                   "type": "string"
                 },
@@ -1745,6 +1754,9 @@
                 },
                 "value": {
                   "type": "string"
+                },
+                "valueSeen": {
+                  "type": "number"
                 },
                 "error": {
                   "type": "string"

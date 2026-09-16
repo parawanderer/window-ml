@@ -40,6 +40,16 @@ export const clipOut = (str: string, n: number): string => {
     return str.length > n ? `${str.slice(0, n)}… [+${str.length - n} chars truncated]` : str;
 };
 
+/** A tool's returned VALUE, clipped twice: to the MODEL's cap for the result it reads, and to the (larger) UI cap for
+ *  the panel. `seen` is where the model's copy ended inside `ui`, absent when the model received all of it; the
+ *  first `seen` characters of both are identical, which is what lets the panel mark the rest as never sent. */
+export const clipValue = (str: string, modelCap: number, uiCap: number): { model: string; ui: string; seen?: number } => {
+    str = String(str == null ? "" : str);
+    const model = clipOut(str, modelCap);
+    if (str.length <= modelCap) return { model, ui: model };
+    return { model, ui: clipOut(str, Math.max(uiCap, modelCap)), seen: modelCap };
+};
+
 /** Context window (num_ctx) for the fetch_url `ask` reader sub-call — a SUMMARISER over a possibly-large
  *  fetched page, so it needs a window sized to the CONTENT, not the tiny utility default (tuned for titles,
  *  e.g. 4096). Sized to the clipped body (~3 chars/token, JSON/code-safe) plus headroom for the prompt

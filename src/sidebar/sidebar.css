@@ -1741,6 +1741,11 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 .jt-value { padding: 2px 44px 2px 4px; }
 /* The row where a clipped value's text ended, in the container that was still open there. */
 .jt-cut { color: var(--fg-faint); font-style: italic; }
+/* A value tree's members the model was NOT sent (the panel keeps more than the tool's output cap): dimmed like
+   `.r-unseen`. */
+.jt-unsent { opacity: .55; }
+/* The row in a value tree where the MODEL's copy of the value ended ("not sent to the model"), set like `.r-unseen-lbl`. */
+.jt-seen-end { margin: 3px 0; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-faint); cursor: help; }
 /* "show N more": an open container draws its members a page at a time. */
 .jt-more { font: inherit; font-size: 0.95em; padding: 0 4px; color: var(--accent); background: none; border: none; cursor: pointer; }
 .jt-more:hover { text-decoration: underline; }

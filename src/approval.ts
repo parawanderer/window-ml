@@ -6,7 +6,7 @@
 import type { ApprovalRequest, ApprovalDecision, RenderDescriptor } from "./contract";
 import { UI_OUT_CAP } from "./contract";
 import { NotInDialect, Denied } from "./readonly-exec";
-import { clipOut, elPath } from "./dom";
+import { clipOut, clipValue, elPath } from "./dom";
 import { suspiciousArgsWarning } from "./security";
 
 // In an approval prompt the DATA SOURCE (which sheet/table/image/url this call touches) is what
@@ -112,10 +112,12 @@ export function formatReadonlyExec(result: unknown, logs: string[]): { result: s
     const joined = logs.join("\n");
     const logged = logs.length ? `console:\n${clipOut(joined, MODEL_CAP)}` : "";
     const withLogs = (value: string) => logged ? `${logged}\n\nvalue: ${value}` : value;
-    const render = (value: string): RenderDescriptor => ({
+    // The panel keeps more of the value than the model's 500 characters, and marks where the model's copy ended.
+    const render = (v: { ui: string; seen?: number }): RenderDescriptor => ({
         type: "exec-out",
         ...(logs.length ? { stdout: clipOut(joined, UI_OUT_CAP), seen: Math.min(joined.length, MODEL_CAP) } : {}),
-        value,
+        value: v.ui,
+        ...(v.seen != null ? { valueSeen: v.seen } : {}),
     });
     if (typeof Element !== "undefined" && result instanceof Element) {
         return { result: withLogs(elPath(result)), elements: [result] };
@@ -129,9 +131,10 @@ export function formatReadonlyExec(result: unknown, logs: string[]): { result: s
         const nodes = Array.from(result as ArrayLike<Node>);
         return { result: withLogs(`${nodes.length} element(s)`), elements: nodes.slice(0, 50) };
     }
-    let value: string;
-    if (result === undefined) value = "(undefined)";
-    else if (typeof result === "object") { try { value = clipOut(JSON.stringify(result), MODEL_CAP); } catch { value = clipOut(String(result), MODEL_CAP); } }
-    else value = clipOut(String(result), MODEL_CAP);
-    return { result: withLogs(value), render: render(value) };
+    let full: string;
+    if (result === undefined) full = "(undefined)";
+    else if (typeof result === "object") { try { full = JSON.stringify(result); } catch { full = String(result); } }
+    else full = String(result);
+    const v = clipValue(full, MODEL_CAP, UI_OUT_CAP);
+    return { result: withLogs(v.model), render: render(v) };
 }

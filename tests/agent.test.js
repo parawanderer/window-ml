@@ -2204,6 +2204,36 @@ test("autoApproveReadonly: a survey's Out renders as exec-out (console + value s
     assert.match(step.result, /\n\nvalue: \[2,4,6\]$/, "the model-facing string keeps its console/value shape");
 });
 
+// The VALUE, like the console: the panel keeps more of it than the model's cap, and says where the model's copy ended.
+// It used to be clipped to the model's cap before the panel saw it, so a 400-row result drew six rows.
+for (const [name, js, cfg] of [
+    ["an auto-approved survey (500-char cap)", "return Array.from({ length: 300 }, (_, i) => ({ i }))", { autoApproveReadonly: true }],
+    ["an approved exec (its own cap)", "window.__touched = 1; return Array.from({ length: 3000 }, (_, i) => ({ i }))", { autoApproveReadonly: false }],
+]) {
+    test(`exec value: ${name} renders more than the model got, and marks where its copy ended`, async () => {
+        const world = loadPageWorld({
+            config: { model: "", ocrModel: "", ...cfg },
+            onRuntimeMessage: scriptedModel([toolCall("exec", { js }, "c1"), reply("done")]),
+        });
+        const win = world.context.window;
+        const events = [];
+        win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+        win.postMessage({ __mlSidebar: "ready" });
+        await new Promise(r => setTimeout(r, 0));
+        const exec = world.ml.domTools.find(t => t.name === "exec");
+        await world.ml.agent("x", { tools: [exec], vision: false, approve: () => true });
+        const step = events.find(e => e.kind === "agent-step" && e.tool === "exec" && !e.pending);
+        const out = step.renderOut;
+        assert.equal(out.type, "exec-out");
+        const seen = out.valueSeen;
+        assert.ok(seen > 0, `the model's copy ended somewhere (valueSeen ${seen})`);
+        assert.ok(out.value.length > seen + 100, `the panel kept more than the model got (${out.value.length} vs ${seen})`);
+        // The model-facing string is exactly what it was: the first `seen` characters, then the clip note.
+        const modelValue = step.result.replace(/^[\s\S]*?(?=\[)/, "");
+        assert.ok(modelValue.startsWith(out.value.slice(0, seen) + "… [+"), "the model's copy is the panel's first `seen` characters, clipped");
+    });
+}
+
 test("autoApproveReadonly: the agent reads its OWN setup (ml.config) with NO approval prompt", async () => {
     // "Which model am I?" is a pure read — it shouldn't cost the user an approval. The interpreter
     // hands the dialect a facade of ML_READONLY_METHODS only (see readonly-exec.test.mjs for the gate).
