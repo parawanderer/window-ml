@@ -2839,6 +2839,25 @@ test("bandEdge: a line band on stepped ones turns their corners — a constant r
     assert.deepEqual(M.bandEdge([1, 2, 3], false, null), [[0, 1], [1, 2], [2, 3]]);
 });
 
+// Reported from a real load (ml.__events, 2026-09-16, gemma4:31b): the loading runner's memory (`load:`, a line) climbed
+// to 43.3 GiB, and at the sample where the server first reported the model it became the model's band (stepped). The
+// load's thickness was interpolated to zero across the interval while the model's step waited for the sample: a dip to
+// zero, then a spike to full, for memory that never left the card.
+test("bandEdge: a load handing its bytes to its model holds its thickness to the corner — no dip to zero", () => {
+    const G = 1024 ** 3;
+    // Cumulative tops: the model (stepped base) arrives at sample 2; the load on top of it held 43.3 until then.
+    const model = [0, 0, 43.3 * G, 43.3 * G];
+    const loadTop = [20 * G, 43.3 * G, 43.3 * G, 43.3 * G];
+    const top = M.bandEdge(loadTop, false, model);
+    assert.deepEqual(top, [[0, 20 * G], [1, 43.3 * G], [2, 43.3 * G], [2, 43.3 * G], [3, 43.3 * G]], "the stack's top stays flat through the hand-off");
+    assert.ok(top.every(([, v]) => v >= 43.3 * G || v === 20 * G), "never below what is on the card");
+    // The reverse hand-off (a model's figures dropping back to an unattributed runner) holds the same way.
+    const back = M.bandEdge([43.3 * G, 43.3 * G, 43.3 * G], false, [43.3 * G, 0, 0]);
+    assert.deepEqual(back, [[0, 43.3 * G], [1, 43.3 * G], [1, 43.3 * G], [2, 43.3 * G]]);
+    // Not a hand-off (both grow): the thickness still varies smoothly above the corner, as before.
+    assert.deepEqual(M.bandEdge([5, 12], false, [4, 10]), [[0, 5], [1, 6], [1, 12]]);
+});
+
 test("the REAL capture with one card faulted: the healthy card's product name, and a fault with no remembered label", () => {
     // `ollama-slop:devicenames`, off the box with GPU1 faulted. The fault predates the first build that remembers
     // names, so `last_name` is correctly ABSENT — the server never saw that address healthy, and never guesses.

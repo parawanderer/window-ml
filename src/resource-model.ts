@@ -1401,7 +1401,16 @@ export function bandEdge(series: number[], stepped: boolean, base: number[] | nu
     const out: [number, number][] = [];
     for (let i = 0; i < series.length; i++) {
         if (i > 0 && stepped) out.push([i, series[i - 1] ?? 0]);
-        else if (i > 0 && base && base[i - 1] !== base[i]) out.push([i, (base[i - 1] ?? 0) + (series[i] ?? 0) - (base[i] ?? 0)]);
+        else if (i > 0 && base && base[i - 1] !== base[i]) {
+            const b0 = base[i - 1] ?? 0, b1 = base[i] ?? 0;
+            const t0 = (series[i - 1] ?? 0) - b0, t1 = (series[i] ?? 0) - b1;
+            // A HAND-OFF: the base rises as this band's thickness falls, or the reverse. That is the same bytes changing
+            // owner at this sample (a load becoming the model it loaded), so the thickness is held up to the corner, as
+            // the step below it is. Interpolated, the load thinned to nothing across the interval while the model's step
+            // waited for the sample, and the stack drew a dip to zero followed by a spike to full.
+            const handOff = (b1 - b0) * (t1 - t0) < 0;
+            out.push([i, b0 + (handOff ? t0 : t1)]);
+        }
         out.push([i, series[i] ?? 0]);
     }
     return out;
