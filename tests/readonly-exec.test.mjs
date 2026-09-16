@@ -1216,6 +1216,9 @@ const RO_URL = new URL("../src/readonly-exec.ts", import.meta.url).href;
 // A worker does not inherit the runner's tsx hooks (Node's own type stripping takes the import instead, and it
 // rejects the interpreter's parameter properties), so the worker registers tsx itself before importing.
 const TSX_API = import.meta.resolve("tsx/esm/api");
+// And tsx's CommonJS hooks: on Node 22 the worker loads the interpreter as CommonJS, where its one import
+// (`./table-brand`, extensionless) resolves only through them — ESM hooks alone passed on 24+ and failed on 22.
+const TSX_CJS_API = import.meta.resolve("tsx/cjs/api");
 // The cost tests run at a SMALL budget: the mechanism is identical at any size, and at the real one every
 // over-budget case spends a second proving it. One test below keeps the real budget.
 const TEST_BUDGET = 200_000;
@@ -1227,12 +1230,13 @@ function ensureWorker() {
     if (worker) return worker;
     worker = new Worker(`
         const { parentPort, workerData } = require("node:worker_threads");
-        const ready = import(workerData.tsx).then((tsx) => { tsx.register(); return import(workerData.url); });
+        const ready = import(workerData.tsxCjs).then((cjs) => { cjs.register(); return import(workerData.tsx); })
+            .then((tsx) => { tsx.register(); return import(workerData.url); });
         parentPort.on("message", ({ id, src, stepBudget }) => ready
             .then(({ evalReadonly }) => evalReadonly(src, { defaultView: null }, undefined, undefined, { stepBudget: stepBudget ?? undefined }))
             .then((r) => parentPort.postMessage({ id, value: r.value }),
                   (e) => parentPort.postMessage({ id, threw: e.constructor.name, message: e.message })));`,
-        { eval: true, workerData: { url: RO_URL, tsx: TSX_API } });
+        { eval: true, workerData: { url: RO_URL, tsx: TSX_API, tsxCjs: TSX_CJS_API } });
     worker.on("message", ({ id, ...r }) => { pending.get(id)?.(r); pending.delete(id); });
     worker.on("error", (e) => { for (const done of pending.values()) done({ threw: "WorkerError", message: String(e) }); pending.clear(); worker = null; });
     return worker;
