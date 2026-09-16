@@ -14,6 +14,7 @@
 
 import { runPipe, splitStages } from "./text-pipe";
 import type { DerefRead, DerefMeta, TokenKind } from "./contract";
+import type { TableLike } from "./table-data";
 export type { DerefRead, DerefMeta };
 import { isTokenShape } from "./token-id";
 import { lexicalSimilarity, type LexicalMetric } from "./label-match";
@@ -42,7 +43,7 @@ export interface TokenValue {
     /** The call/arguments — what `@tool:<id>:in` reads. */
     in?: string;
     /** The structural value when there is one, so the pipe needn't reparse a rendered grid. */
-    table?: { columns: string[]; rows: unknown[][] };
+    table?: TableLike;
     /** A `data:image/…;base64,…` URL when the step produced an image. */
     image?: string;
     /** A LaTeX rendering when the step produced one (a sympy return sets it). */

@@ -50,7 +50,7 @@ interface Sink {
     inline(label: string, value: string, opts?: { code?: boolean; muted?: boolean }): void;
     image(src: string, base: string, alt: string): void;       // `base` names the sidecar
     details(summary: string, body: () => void): void;          // collapsed disclosure
-    table(columns: string[], rows: (string | number | null)[][]): void;   // a real data table (df preview)
+    table(columns: string[], rows: (string | number | boolean | null)[][]): void;   // a real data table (df preview)
     divider(text: string): void;                     // a labelled section break (a page-transition marker)
 }
 
@@ -235,7 +235,7 @@ function htmlSink() {
         table: (columns, rows) => {
             const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
             const th = `<tr><th class="idx"></th>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`;
-            const tds = (r: (string | number | null)[]) => cols.map((_, j) => { const c = r[j]; return `<td class="${typeof c === "number" ? "num" : (c == null ? "nan" : "")}">${c == null ? "NaN" : escapeHtml(String(c))}</td>`; }).join("");
+            const tds = (r: (string | number | boolean | null)[]) => cols.map((_, j) => { const c = r[j]; return `<td class="${typeof c === "number" ? "num" : (c == null ? "nan" : "")}">${c == null ? "NaN" : escapeHtml(String(c))}</td>`; }).join("");
             o.push(`<table class="dftable"><thead>${th}</thead><tbody>${rows.map((r, i) => `<tr><td class="idx">${i}</td>${tds(r)}</tr>`).join("")}</tbody></table>`);
         },
         divider: (t) => o.push(`<div class="nav-divider"><span>→ ${escapeHtml(t)}</span></div>`),
@@ -349,6 +349,7 @@ function writeAgent(s: Session, d: Sink): void {
                 const cols = t.columns?.length || t.rows?.[0]?.length || 0;
                 const srcLabel = t.source.kind === "sheet-external" ? `external Google Sheet (${t.source.label}), fetched with your approval`
                     : t.source.kind === "sheet-current" ? `current Google Sheet — ${t.source.label}`
+                    : t.source.kind === "fetch" ? `fetched URL — ${t.source.label}`
                     : `page table — ${t.source.label}`;
                 if (t.rows) {
                     // Collapse the (potentially huge) df into a disclosure so it doesn't flood the

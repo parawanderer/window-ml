@@ -3,6 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
+import { expandPointers } from "../src/pointer-macro.ts";
 
 function world() {
     const dom = new JSDOM(`<!doctype html><body>
@@ -1365,4 +1366,92 @@ test("ordinary regexes still run", async () => {
     await ok("'2026-09-14'.replace(/(\\d+)-(\\d+)-(\\d+)/, '$3/$2/$1')", "14/09/2026");
     await ok("/(?<year>\\d{4})/.exec('in 2026').groups.year", "2026");
     await ok("/(ab)?c/.test('abc')", true);
+});
+
+// --- Dereferenced TABLES ------------------------------------------------------------------------------------
+//
+// A pointer to a table resolves to a TableLike — plain arrays, strings and numbers — and the dialect can
+// already traverse those. So this adds NO construct and no allowed method; it is the CONTRACT re-check
+// AGENTS.md asks for when a new kind of value starts flowing through an existing surface. The questions are
+// the usual three: does the intended use work, can the new value reach anything it shouldn't, and can it be
+// used to run forever or to mutate something that is not the script's own.
+const TABLE = {
+    columns: ["id", "name", "qty"],
+    rows: [[1, "Ada", 3], [2, "Bob", 10], [3, "Cy", 7]],
+    shape: [3, 3],
+    dtypes: { id: "int64", name: "object", qty: "int64" },
+};
+// An ml whose dereference resolves to a TABLE pointer, as the real one does for a fetched CSV / a DataFrame.
+const tableMl = () => ({
+    ...ML,
+    dereference: async (ref) => ({ text: "id,name,qty\n1,Ada,3", type: "table", id: "a1b2c3d", tool: "fetch_url", step: 1, table: TABLE }),
+});
+const runTable = (js) => evalReadonly(expandPointers(js).code, world(), tableMl());
+
+test("a table pointer needs no `await` in the dialect — the evaluator awaits host reads itself", async () => {
+    // In an approved FULL exec (real JS) `ml.dereference` returns a promise and the model must await it. In
+    // THIS dialect the mediated evaluator awaits a host call's result before the value is ever used, so the
+    // bare form is the idiom. Both are pinned here because both are written, and neither may start failing.
+    assert.deepEqual((await runTable(`return @tool:a1b2c3d.table.shape`)).value, [3, 3]);
+    assert.deepEqual((await runTable(`return (await @tool:a1b2c3d).table.shape`)).value, [3, 3]);
+    assert.deepEqual((await runTable(`const t = @tool:a1b2c3d; return t.table.columns`)).value, ["id", "name", "qty"]);
+});
+
+test("a dereferenced table is READABLE as pandas: shape, columns, dtypes, rows", async () => {
+    assert.deepEqual((await runTable(`return @tool:a1b2c3d.table.shape`)).value, [3, 3]);
+    assert.deepEqual((await runTable(`return @tool:a1b2c3d.table.columns`)).value, ["id", "name", "qty"]);
+    assert.equal((await runTable(`return @tool:a1b2c3d.table.dtypes.qty`)).value, "int64");
+    assert.equal((await runTable(`return @tool:a1b2c3d.table.rows.length`)).value, 3);
+});
+
+test("a dereferenced table is COMPUTABLE — the survey a model actually writes over one", async () => {
+    // Pick a column by name, filter on it, project another. This is the whole point: the model reads its own
+    // earlier fetch as DATA instead of re-reading it as text.
+    const js = `const t = @tool:a1b2c3d.table;
+                const q = t.columns.indexOf("qty");
+                return t.rows.filter(r => r[q] > 5).map(r => r[t.columns.indexOf("name")]);`;
+    assert.deepEqual((await runTable(js)).value, ["Bob", "Cy"]);
+    // And the aggregate, which is what a "how many / total" question becomes.
+    assert.equal((await runTable(`const t = @tool:a1b2c3d.table; return t.rows.reduce((a, r) => a + r[2], 0)`)).value, 20);
+});
+
+test("ADVERSARIAL: a table is data — it is no route to the realm and no lever on the page", async () => {
+    // The standard walks, from the table and from the rows/cells inside it.
+    await assert.rejects(runTable(`return @tool:a1b2c3d.table.constructor`), outOfDialect);
+    await assert.rejects(runTable(`return @tool:a1b2c3d.table.rows.constructor("return globalThis")()`), outOfDialect);
+    await assert.rejects(runTable(`return @tool:a1b2c3d.table.__proto__`), outOfDialect);
+    await assert.rejects(runTable(`return @tool:a1b2c3d.table.rows[0].constructor.constructor("return 1")()`), outOfDialect);
+    await assert.rejects(runTable(`return @tool:a1b2c3d.table.dtypes.__proto__`), outOfDialect);
+});
+
+test("ADVERSARIAL: the run's OWN captured table can't be rewritten through the pointer", async () => {
+    // The table belongs to the pointer store, not to the script — so the in-place builders the dialect allows
+    // on script-local arrays must NOT apply to it. Otherwise a survey could quietly edit the evidence a later
+    // step (or the export) reads back.
+    for (const js of [
+        `@tool:a1b2c3d.table.rows.push([4, "Zed", 99])`,
+        `@tool:a1b2c3d.table.rows[0][1] = "EDITED"`,
+        `@tool:a1b2c3d.table.columns[0] = "EDITED"`,
+        `@tool:a1b2c3d.table.shape = [999, 999]`,
+        `delete @tool:a1b2c3d.table.dtypes.qty`,
+        `@tool:a1b2c3d.table.rows.sort()`,
+    ]) {
+        await assert.rejects(runTable(`return ${js}`), outOfDialect, js);
+    }
+    // The fixture is untouched by every one of those attempts.
+    assert.deepEqual(TABLE.rows, [[1, "Ada", 3], [2, "Bob", 10], [3, "Cy", 7]]);
+    assert.deepEqual(TABLE.shape, [3, 3]);
+});
+
+test("HALTING: work over a table is bounded by the table, and copies of it are script-local", async () => {
+    // Every traversal is over a FIXED number of rows fixed before the loop starts, and nothing the dialect
+    // offers can grow the pointer's array mid-iteration (the previous test proves it cannot be mutated at
+    // all). A copy the script makes is its own, and mutating THAT is fine — the ownership rule, unchanged.
+    const js = `const t = @tool:a1b2c3d.table;
+                const mine = t.rows.slice();
+                mine.push([4, "Zed", 1]);
+                const seen = [];
+                for (const r of t.rows) seen.push(r[0]);
+                return [mine.length, seen.length, t.rows.length];`;
+    assert.deepEqual((await runTable(js)).value, [4, 3, 3], "the copy grew; the pointer's table did not");
 });

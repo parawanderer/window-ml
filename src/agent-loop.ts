@@ -13,6 +13,7 @@
 // model / executor / gate in tests/agent-loop.test.js.
 
 import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor, ToolFeedback, SubcallUsage, TokenUsage, RunStats } from "./contract";
+import { tableOf } from "./table-data";
 import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
@@ -746,8 +747,11 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             if (tokenId && !mintedView) {
                 const r = tr?.renderOut;
                 const df = r?.type === "python-out" ? r.df : undefined;
-                const tbl = df ? { columns: df.columns, rows: df.rows as unknown[][] }
-                    : r?.type === "table" ? { columns: r.columns, rows: r.rows as unknown[][] } : undefined;
+                // Described through tableOf, so a POINTER to a table carries the same pandas surface a fetched
+                // one does (`shape`, `dtypes`) rather than a bare grid — `dereference` and `ml.fetch` then hand
+                // back the same kind of object, which is the whole point of there being one table type.
+                const tbl = df ? tableOf(df.columns, df.rows)
+                    : r?.type === "table" ? tableOf(r.columns, r.rows) : undefined;
                 const looksJson = /^\s*[[{]/.test(result);
                 const kind: TokenKind = tbl ? "table"
                     : (r?.type === "image" || r?.type === "look") ? "image"

@@ -57,9 +57,17 @@ function regexAllowed(src: string, i: number): boolean {
  *
  * The expansion is the BARE call, deliberately not `await`ed. Auto-awaiting would break the moment a model
  * writes one inside a non-async callback — `list.map(x => @tool:a)` would put `await` in a non-async arrow,
- * a SyntaxError — and it would hide that these are asynchronous, which the model needs to know in order to
- * write `await Promise.all([@tool:a, @tool:b])`. So: a pointer expression evaluates to a PROMISE, and the
- * model writes its own `await`.
+ * a SyntaxError. It does not need to: a pointer expression is NOT a promise at either call site.
+ *
+ * That is the whole payoff of the pass being lexical. Every handle a script mentions is known before a line
+ * of it runs, so both runners resolve them UP FRONT and `ml.dereference` is an ordinary synchronous read for
+ * the duration of the call — the `exec` tool awaits every handle in one `Promise.all` before evaluating
+ * (tools.ts), and the read-only dialect's evaluator awaits a host read before the value is used. A model that
+ * writes `@tool:abc.length` therefore gets a length, where against a promise it would get `undefined` and no
+ * error, which is exactly the plausible-wrong-answer shape this codebase keeps designing out. It also removes
+ * a line of prompt surface ("it is a promise") that models get wrong however often they are told.
+ *
+ * `await` in front of one still works, and models write it out of habit — it is just not needed.
  */
 export function expandPointers(src: string): ExpandResult {
     // Nothing to do is the overwhelmingly common case, and it must cost nothing and risk nothing: exec

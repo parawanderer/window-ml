@@ -11,48 +11,16 @@
 // What stays ours is the part that is about THIS project: which cells become numbers (below), and what a
 // model is shown of a table it did not fetch.
 import Papa from "papaparse";
+// The TABLE TYPES live in contract.ts, not here: they cross the message channel (a fetch result, a pointer
+// read, an agent output) and `agent_api_docs` is generated from that file, so a type defined here would be
+// invisible to the model that has to use it. This module owns the PARSERS; contract.ts owns the shape.
+import type { TableLike, TableCell, TableDtype } from "./contract";
+export type { TableLike, TableCell, TableDtype };
 
-/** A cell after casting: a number for a numeric column, null for a blank (pandas NaN), else the raw string. */
-export type TableCell = string | number | null;
-
-/** The pandas dtype a column will have once these rows reach a DataFrame. Deliberately pandas' OWN names
- *  rather than ours: the audience is a model that has read a great deal of pandas and none of this codebase,
- *  and `int64` needs no explanation where `"integer"` would invite the question of what we mean by it. */
-export type TableDtype = "int64" | "float64" | "object";
-
-/** A parsed table, however it was produced (CSV/TSV text, a DOM table, later Parquet). The shape
- *  `python_exec` loads as a DataFrame, and the shape the fetch preview renders — so a table crosses from
- *  a fetch to pandas without being re-serialized to text and re-parsed on the other side.
- *
- *  **It is deliberately a pandas DataFrame's surface**: `shape`, `columns` and `dtypes` mean exactly what
- *  they mean in pandas, down to `shape` being `[rows, columns]` and an all-integer column with one blank
- *  being `float64` (a NaN forces the float, as it does in `read_csv`). A model that has never seen this type
- *  can therefore guess it correctly instead of learning it, and the preview it is shown is pandas' own repr.
- *  The one difference is that `rows` is positional data rather than an index — there is no row index here. */
-export interface TableLike {
-    /** Header labels, de-duplicated the way pandas does it (`a`, `a.1`) and with blanks named `Unnamed: N`,
-     *  so every label is usable as a key. Empty (not absent) when the source had no header row. */
-    columns: string[];
-    /** `[rows, columns]`, as `df.shape`. The row count is the SOURCE's — larger than `rows.length` when
-     *  {@link truncated}, so a preview can say what it is a preview OF. A model told "10 of 48,231 rows"
-     *  reasons differently from one handed 10 rows and no count. */
-    shape: [number, number];
-    /** Column name → the dtype pandas will infer, as `df.dtypes`. Describes what a consumer WILL get from
-     *  these rows, not a guess about the file: the cast below is what makes it true. */
-    dtypes: Record<string, TableDtype>;
-    /** Data rows, header excluded. Ragged rows are padded to the header width so a consumer can index safely. */
-    rows: TableCell[][];
-    /** What the fields were separated by, for a delimited source ("," "\t" ";" "|"). Absent for a DOM table.
-     *  Worth surfacing: it is the discovered value, and a wrong guess is the failure a reader should be able
-     *  to see rather than infer from mangled columns. */
-    delimiter?: string;
-    /** `rows` was capped at {@link MAX_TABLE_ROWS} — the table is a prefix of the source, not the whole of it. */
-    truncated?: boolean;
-}
-
-/** The most rows a parsed table keeps. A bound on MEMORY, not on what a model sees (that is the preview's
- *  job, and much smaller): a fetched CSV is meant to be handed to `python_exec` whole, so this sits far
- *  above realistic files and exists only so a pathological body cannot exhaust the worker. */
+/** The most LINES a parse keeps, header included — so a table with a header carries one row fewer. A bound
+ *  on MEMORY, not on what a model sees (that is the preview's job, and much smaller): a fetched CSV is meant
+ *  to be handed to `python_exec` whole, so this sits far above realistic files and exists only so a
+ *  pathological body cannot exhaust the worker. Hitting it sets `truncated`, never silently drops. */
 export const MAX_TABLE_ROWS = 200_000;
 
 /** Delimiters worth guessing between, in preference order — Papa's default set minus its ASCII record/unit
@@ -194,7 +162,11 @@ export function parseNumericCell(v: string): number | null {
  *  NaN); otherwise leave it as strings (names, and IDs/ZIPs where a leading zero would drop —
  *  pass tableRaw to skip casting for those). Returns a NEW rows array. Pure. */
 export function castTableColumns(columns: string[], rows: string[][]): TableCell[][] {
-    const width = Math.max(columns.length, ...rows.map(r => r.length), 0);
+    // Counted, never spread: `Math.max(...rows.map(…))` passes one argument per row, which overflows the
+    // stack somewhere in the tens of thousands. This function used to be fed DOM tables, capped at 5,000
+    // rows; a fetched CSV has no such ceiling, and the row-cap test is what found it.
+    let width = columns.length;
+    for (const r of rows) if (r.length > width) width = r.length;
     const out: TableCell[][] = rows.map(r => r.slice());
     for (let c = 0; c < width; c++) {
         let nonEmpty = 0, numeric = 0;
@@ -217,6 +189,12 @@ export function castTableColumns(columns: string[], rows: string[][]): TableCell
  *  chose it: enough to see the shape of each column, few enough to cost nothing. */
 export const PREVIEW_ROWS = 5;
 
+/** How many rows of a table a RENDER descriptor carries — what the sidebar draws, the debug stream ships
+ *  and the JSON export embeds. Far above a preview (a reader scrolls; a model does not) and far below a
+ *  whole file, which belongs in neither an export nor a replay buffer. The full table stays in the fetch
+ *  cache, where `python_exec` reads it by URL. */
+export const RENDER_TABLE_ROWS = 200;
+
 /** What a MODEL is shown of a table it did not fetch: the header, the first rows, and the two facts a
  *  sample cannot carry — the real shape and the dtypes. Reads as a `df.head()` because everything it
  *  names is pandas' (`shape`, `dtypes`, `[N rows x M columns]`), so a model can act on it without
@@ -224,7 +202,7 @@ export const PREVIEW_ROWS = 5;
  *
  *  Deliberately NOT pandas' aligned repr: alignment is padding, and padding is pure context cost on a
  *  model-facing string (AGENTS.md). The rows are CSV-dense and quoted where a cell needs it. Pure. */
-export function tablePreview(t: TableLike, opts: { rows?: number; handle?: string } = {}): string {
+export function tablePreview(t: TableLike, opts: { rows?: number; source?: string } = {}): string {
     const n = Math.max(0, opts.rows ?? PREVIEW_ROWS);
     const shown = t.rows.slice(0, n);
     const [nrows, ncols] = t.shape;
@@ -240,35 +218,106 @@ export function tablePreview(t: TableLike, opts: { rows?: number; handle?: strin
         `[${nrows.toLocaleString("en-US")} rows x ${ncols} columns]${more}`,
         `dtypes: ${dtypes}`,
         ...(t.truncated ? [`NOTE: only the first ${MAX_TABLE_ROWS.toLocaleString("en-US")} rows were parsed; the source has more.`] : []),
-        ...(opts.handle ? [`The WHOLE table (not just these rows) is ${opts.handle} — pass it to python_exec as a table to get it as a pandas DataFrame.`] : []),
+        ...(opts.source ? [`Whole table cached: pass ${opts.source} to python_exec's \`tables\` for all ${nrows.toLocaleString("en-US")} rows as a DataFrame (no refetch, no read_csv).`] : []),
     ].join("\n");
 }
 
-// ---- BINARY table formats (Parquet, Arrow, …): the extension point, not yet built ----
+
+// ---- Parquet ----
 //
-// Everything above turns TEXT into a TableLike. A binary format needs one more function beside it —
-// `tableFromBytes(bytes: ArrayBuffer, kind): TableLike` — and then nothing else in the codebase changes:
-// the fetch result, the model-facing preview, the pointer store and the `python_exec` handoff all speak
-// TableLike already. What each format actually costs:
+// A binary table format needs a decoder; there is no parsing one by hand. `hyparquet` is MIT, pure JS, no
+// wasm and no `new Function`, so it clears MV3's CSP where `parquet-wasm` does not. Two things make it a
+// better fit here than the CSV path it joins: the footer carries the row count and the SCHEMA, so `shape`
+// and `dtypes` are read rather than inferred, and row groups are addressable, so a preview decodes the
+// first rows instead of the file.
+
+/** Parquet's magic, at BOTH ends of the file — `PAR1`. The footer copy is what makes it a reliable check
+ *  rather than a guess: a truncated or HTML-error-page body fails it. */
+const PARQUET_MAGIC = [0x50, 0x41, 0x52, 0x31];
+
+/** Does this look like a Parquet file? Checked on BYTES — a Parquet body read as text is already corrupt,
+ *  which is why this cannot live in `typeFromContent` beside the text sniffs. Pure. */
+export function looksParquet(bytes: ArrayBuffer): boolean {
+    const b = new Uint8Array(bytes);
+    if (b.length < 8) return false;
+    return PARQUET_MAGIC.every((c, i) => b[i] === c) && PARQUET_MAGIC.every((c, i) => b[b.length - 4 + i] === c);
+}
+
+/** Parquet bytes → a {@link TableLike}, with `shape` and `dtypes` taken from the file's own schema rather
+ *  than inferred from values — the one respect in which a binary format is strictly better than CSV here.
+ *  Only the first {@link MAX_TABLE_ROWS} rows are decoded; `shape` still reports the file's true row count,
+ *  so a preview of a 10-million-row file says so instead of describing what it managed to read. */
+export async function tableFromParquet(bytes: ArrayBuffer, opts: { maxRows?: number } = {}): Promise<TableLike> {
+    // DYNAMIC on purpose, and load-bearing rather than stylistic. This module is reachable from the PAGE
+    // bundle (dom.ts → classification → injected.ts), which never decodes Parquet; a static import would put
+    // the decoder in `injected.js` for every page the extension touches. Deferred, esbuild tree-shakes it out
+    // of any bundle whose entry does not call this, so it ships only in `background.js`, where it runs.
+    const { parquetMetadata, parquetSchema, parquetReadObjects } = await import("hyparquet");
+    const meta = parquetMetadata(bytes);
+    const total = Number(meta.num_rows);
+    // Top-level fields only. A nested/repeated group has no flat column to put in a DataFrame, and pandas
+    // would hold it as an object of dicts anyway — so it is named and its values pass through as-is.
+    const fields = parquetSchema(meta).children;
+    const columns = namedColumns(fields.map(f => f.element.name));
+    const keep = Math.min(total, opts.maxRows ?? MAX_TABLE_ROWS);
+    const objects = keep > 0 ? await parquetReadObjects({ file: bytes, rowStart: 0, rowEnd: keep }) : [];
+    const rows: TableCell[][] = objects.map(o => fields.map(f => cellOf((o as Record<string, unknown>)[f.element.name])));
+    return {
+        columns, rows, shape: [total, columns.length],
+        dtypes: parquetDtypes(columns, fields, rows),
+        ...(keep < total ? { truncated: true } : {}),
+    };
+}
+
+/** One decoded Parquet value → a cell. BigInt becomes a number because that is what survives the trip to
+ *  pandas and to JSON (an INT64 beyond 2^53 loses precision, which is worth it against a value that cannot
+ *  be serialized at all); bytes become text; anything structural is left to JSON. Pure. */
+function cellOf(v: unknown): TableCell {
+    if (v == null) return null;
+    if (typeof v === "bigint") return Number(v);
+    if (typeof v === "number" || typeof v === "boolean" || typeof v === "string") return v;
+    if (v instanceof Uint8Array) { try { return new TextDecoder().decode(v); } catch { return String(v); } }
+    if (v instanceof Date) return v.toISOString();
+    try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+/** Parquet's DECLARED types → pandas dtypes, with the same NaN rule as everywhere else: an integer column
+ *  holding a null is `float64`, because that is what it becomes in a DataFrame. Pure. */
+function parquetDtypes(columns: string[], fields: { element: { type?: string } }[], rows: TableCell[][]): Record<string, TableDtype> {
+    const out: Record<string, TableDtype> = {};
+    columns.forEach((name, c) => {
+        const t = String(fields[c]?.element?.type || "");
+        const hasNull = rows.some(r => r[c] == null);
+        out[name] = t === "BOOLEAN" ? "bool"
+            : /^(INT32|INT64|INT96)$/.test(t) ? (hasNull ? "float64" : "int64")
+            : /^(FLOAT|DOUBLE)$/.test(t) ? "float64"
+            : "object";
+    });
+    return out;
+}
+
+// ---- Other binary formats (Arrow IPC / Feather, and whatever comes next) ----
 //
-// **Parquet** — needs a decoder; there is no parsing it by hand. `hyparquet` (MIT, ~10 KB, pure JS, no wasm
-// and no `new Function`, so it clears MV3's CSP where `parquet-wasm` does not) reads the footer for the
-// schema and row count WITHOUT reading the row groups, which maps exactly onto what a preview wants: the
-// column names, types and `rowCount` come back exact rather than inferred, and only the first row group has
-// to be decoded to show a head. The body must reach it as BYTES — `ml.fetch` currently does `res.text()`
-// unconditionally, so this needs an arraybuffer path through `rawGet`/`buildResult` (see the "no TextDecoder
-// anywhere near binary" trap in AGENTS.md; a Parquet body run through `text()` is already corrupt by the
-// time it is classified, which is also why sniffing its magic bytes cannot be bolted onto `typeFromContent`).
-// Classification is otherwise easy and unusually reliable: `application/vnd.apache.parquet`, a `.parquet`
-// extension, or the `PAR1` magic at BOTH ends of the file.
+// Adding one means writing a single function beside `tableFromParquet` — `tableFromX(bytes): TableLike` —
+// and a classification cue. Nothing else in the codebase changes: the fetch result, the model-facing
+// preview, the pointer store, the sidebar render and the `python_exec` handoff all speak TableLike, and
+// none of them asks where a table came from.
 //
-// **Arrow IPC / Feather** — the same shape, with `apache-arrow` (the official JS implementation) instead.
-// It is a much larger dependency than hyparquet, so it is worth waiting for a real use case; the format's
-// value here would be zero-copy handoff to Pyodide, which is a different (and bigger) piece of work than
-// parsing — see the note on cross-runtime passing in `docs/dev/python-sandbox.md`.
+// The work each new format actually needs:
 //
-// **What a new format owes this module**: a `TableLike` with `columns`, `rows`, an exact `rowCount`, and
-// `truncated` set honestly when it only decoded a prefix. Column TYPES are the one place a binary format is
-// strictly better than CSV — they are declared, not guessed — so when `dtypes` lands on TableLike it should
-// be populated from the file's own schema rather than from `castTableColumns`, which exists precisely
-// because CSV has no types to read.
+// 1. **A decoder that clears MV3's CSP.** Pure JS, no wasm, no `new Function`. For Arrow IPC/Feather that is
+//    `apache-arrow` (the official JS implementation) — much larger than hyparquet, which is why it is worth
+//    waiting for a real use case rather than adding speculatively.
+// 2. **Classification, on bytes.** A `ContentKind`, a Content-Type and extension in dom.ts, and a magic-byte
+//    check like `looksParquet` (Arrow IPC files start `ARROW1`). The text sniffs in `typeFromContent` are no
+//    help: a binary body that reached them as a string is already corrupt (see the "no TextDecoder anywhere
+//    near binary" trap in AGENTS.md), which is why the binary branch happens in sw-fetch BEFORE classification.
+// 3. **Honest `shape` and `truncated`.** Report the file's real row count even when only a prefix was
+//    decoded, exactly as the Parquet path does — a preview that describes what it managed to read, rather
+//    than what is there, is how a model comes to answer a question about 10,000 rows of a 10,000,000-row file.
+// 4. **dtypes from the format's own schema**, never from `castTableColumns`. That function exists because CSV
+//    has no types to read; a format that declares them should be believed instead.
+//
+// The one thing NOT to reach for here is zero-copy handoff to Pyodide (Arrow's real attraction). That is a
+// different and much bigger piece of work than parsing — it belongs with the cross-runtime notes in
+// `docs/dev/python-sandbox.md`, not in a parser.

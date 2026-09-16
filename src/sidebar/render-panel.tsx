@@ -56,7 +56,7 @@ export function RenderElements({ items }: { items: { path: string; text?: string
 }
 /** A plain TABLE from a `table` render descriptor — the simple one. A DataFrame gets `PyDfTable`
  *  instead, which is the spreadsheet-shaped view with sorting, resizing and an index gutter. */
-export function RenderTable({ columns, rows }: { columns: string[]; rows: (string | number | null)[][] }) {
+export function RenderTable({ columns, rows }: { columns: string[]; rows: (string | number | boolean | null)[][] }) {
     return (
         <div class="r-table-wrap">
             <table class="r-table">
@@ -197,7 +197,7 @@ const csvField = (v: unknown): string => {
  *  `noCollapse` drops the hide/show control. Collapsing is for a LOG, where a wide table sits in a scrolling
  *  transcript you are reading past; in the bench the tab strip already decides what is on screen, so a
  *  second control for "don't show me this" is one that undoes the choice you just made with the first. */
-export function PyDfTable({ columns, rows, noCollapse }: { columns: string[]; rows: (string | number | null)[][]; noCollapse?: boolean }) {
+export function PyDfTable({ columns, rows, noCollapse }: { columns: string[]; rows: (string | number | boolean | null)[][]; noCollapse?: boolean }) {
     const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
     const [collapsed, setCollapsed] = useState(false);
     const [sort, setSort] = useState<{ c: number; dir: 1 | -1 } | null>(null);
@@ -295,6 +295,7 @@ function tableSourceDesc(s: TableSource): { short: string; tip: string } {
     switch (s.kind) {
         case "sheet-external": return { short: `sheet ${s.label}`, tip: "This data was fetched from an EXTERNAL Google Sheet with your approval." };
         case "sheet-current": return { short: s.label, tip: "This data was fetched from the Google Sheet you're currently on." };
+        case "fetch": return { short: s.label, tip: `This table was parsed from ${s.label}, which the agent had already fetched — it was read from the fetch cache, not requested again.` };
         default: return { short: s.label, tip: `This data was extracted from a table on the current page (${s.label}).` };
     }
 }
