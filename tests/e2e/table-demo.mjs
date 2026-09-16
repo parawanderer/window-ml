@@ -26,12 +26,24 @@
 //      real pandas DataFrame — no second request, and no `read_csv` in a sandbox that has no network. The
 //      shape and dtypes pandas reports are the ones the preview promised in beat 1.
 //
+// PART TWO, a second run: ONE TABLE ACROSS BOTH RUNTIMES, by pointer. Written BEFORE the slices of
+// docs/spec/POINTER_VALUES.md that make it work, as the target — so each beat's caption says what actually
+// happened ("✓" or "✗ not built yet: …"), and the demo reads true on the day it is run. The same behaviour is
+// asserted by tests/e2e/pointer-values.spec.mjs.
+//
+//   9.  AN ARROW FILE FETCHES AS A TABLE — dtypes read from its schema, like Parquet, with nothing to decode.
+//   10. PYTHON OPENS IT BY POINTER — `tables: { df: '@tool:"the stock table"' }` — and returns a DataFrame,
+//       which becomes a pointer of its own.
+//   11. JAVASCRIPT READS PYTHON'S TABLE IN FULL through that pointer — every row, not the 200-row preview.
+//   12. THE READ-ONLY DIALECT READS IT TOO, with no prompt.
+//
 // Screenshots land in tests/e2e/artifacts/table-demo/. Env: HOLD=0 to exit instead of waiting.
 import path from "node:path";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
 import { parquetWriteBuffer } from "hyparquet-writer";
+import { tableFromArrays, tableToIPC, vectorFromArray, Utf8, Bool, Float64, Int64 } from "apache-arrow";
 import { launchExtension, configureExtension, waitForMl, openRunInSidebar, narrate, narrateDone } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
@@ -57,7 +69,17 @@ async function startDataServer() {
             { name: "discontinued", data: [false, true, false, false] },
         ],
     }));
+    // Part two's table, as an Arrow IPC file: 1,000 SKUs, so a DataFrame derived from it is bigger than a
+    // preview and "read it in full" is a claim that can fail visibly.
+    const N = 1_000;
+    const arrow = Buffer.from(tableToIPC(tableFromArrays({
+        sku: vectorFromArray(Array.from({ length: N }, (_, i) => `SKU-${String(i).padStart(4, "0")}`), new Utf8()),
+        price: vectorFromArray(Array.from({ length: N }, (_, i) => 2.5 + (i % 40) * 1.25), new Float64()),
+        stock: vectorFromArray(Array.from({ length: N }, (_, i) => BigInt((i * 7) % 60)), new Int64()),
+        discontinued: vectorFromArray(Array.from({ length: N }, (_, i) => i % 17 === 0), new Bool()),
+    }), "file"));
     const routes = {
+        "/stock.arrow": [arrow, "application/vnd.apache.arrow.file"],
         "/sales.csv": [sales.join("\n"), "text/csv"],
         "/cities.csv": [cities, "text/plain; charset=utf-8"],   // semicolons, and a header that says nothing
         "/stock.parquet": [parquet, "application/octet-stream"],
@@ -232,6 +254,72 @@ const main = async () => {
         await answer.scrollIntoViewIfNeeded().catch(() => {});
         await sleep(600);
         await frame.page().screenshot({ path: path.join(ART, "7-answer-citations.png") });
+
+        // ---- PART TWO: one table, both runtimes, by pointer ------------------------------------------------
+        // The TARGET of docs/spec/POINTER_VALUES.md, run against whatever is built today. A demo does not
+        // assert; it says what happened. `outcome` turns a tool message into the caption's verdict.
+        const outcome = (text, ok) => ok.test(text) ? "✓ works" : `✗ not built yet — got: ${text.split("\n").find((l) => l.trim() && !/^(Fetched |\()/.test(l))?.slice(0, 90) ?? "(nothing)"}`;
+        const STOCK = `${data.url}/stock.arrow`;
+        const PY2 = [
+            "low = df[(df['stock'] < 10) & (~df['discontinued'])].copy()",
+            "low['reorder'] = 60 - low['stock']",
+            "print(df.dtypes.to_dict())",
+            "print(len(low), 'SKUs to reorder')",
+            "return low[['sku', 'price', 'stock', 'reorder']]",
+        ].join("\n");
+        const JS2 = [
+            `const t = @tool:"the restock plan".table;`,
+            `const reorder = await t.col("reorder");   // a stored table's columns are requests`,
+            `return { rows: t.shape[0], read: reorder.length, units: reorder.reduce((a, n) => a + n, 0) };`,
+        ].join("\n");
+        const RO2 = `const t = @tool:"the restock plan".table; return { rows: t.shape[0], first: t.head(3).records() };`;
+        fake.setScript([
+            { tool: "fetch_url", args: { url: STOCK, token: "the stock table" } },
+            { tool: "python_exec", args: { mode: "readonly", tables: { df: '@tool:"the stock table"' }, code: PY2, token: "the restock plan" } },
+            { tool: "exec", args: { js: JS2 } },
+            { tool: "exec", args: { js: RO2 } },
+            { content: "The restock plan, computed in Python and read back in JavaScript:\n\n![the restock plan](@tool:\"the restock plan\")" },
+        ]);
+        const callsBefore = fake.calls().length;
+        await narrate(page, "Part two — one table, both runtimes, by POINTER", { sub: "an Arrow file → pandas → JavaScript, never copied through a preview (the target of POINTER_VALUES)" });
+        await page.evaluate(() => {
+            window.ml.agent("plan the restock from the stock file", { approvalRouting: "both", extraTools: [window.ml.pythonTool()], toolTokens: true });
+        });
+        // The panel is still showing part one's run, so go back to the sessions list for the helper to open this one.
+        await frame.locator(".head .nav").click().catch(() => {});
+        const frame2 = await openRunInSidebar(page, { task: "plan the restock" });
+        for (let i = 0; i < 120 && fake.calls().length - callsBefore < 5; i++) {
+            const pending = await ext.sw.evaluate(() => (globalThis.__mlApprovals?.list?.() || []).map((d) => d.key));
+            for (const k of pending) await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), k);
+            await sleep(400);
+        }
+        await sleep(2000);
+        const steps2 = frame2.locator(".astep");
+        const out2 = async (n) => {
+            await steps2.nth(n).locator(".astep-head").click().catch(() => {});
+            await sleep(600);
+            return toolMsgs()[n] || "(no tool message)";
+        };
+
+        const s9 = await out2(0);
+        await narrate(page, "9 — an ARROW file fetches as a table", { sub: `dtypes read from its schema, nothing to decode · ${outcome(s9, /type: arrow/)}` });
+        log("\n--- 9. fetch_url on an Arrow IPC file ---\n" + s9.trim().slice(0, 600));
+        await frame2.page().screenshot({ path: path.join(ART, "9-arrow-fetch.png") });
+
+        const s10 = await out2(1);
+        await narrate(page, "10 — python_exec opens it BY POINTER", { sub: `tables: { df: '@tool:"the stock table"' } — and its DataFrame becomes a pointer · ${outcome(s10, /SKUs to reorder/)}` });
+        log("\n--- 10. python_exec over the pointer ---\n" + s10.trim().slice(0, 700));
+        await frame2.page().screenshot({ path: path.join(ART, "10-python-by-pointer.png") });
+
+        const s11 = await out2(2);
+        await narrate(page, "11 — JavaScript reads Python's table IN FULL", { sub: `every row through the pointer, not a 200-row preview · ${outcome(s11, /"rows":(\d+),"read":\1/)}` });
+        log("\n--- 11. exec reading python's pointer ---\n" + s11.trim().slice(0, 500));
+        await frame2.page().screenshot({ path: path.join(ART, "11-js-reads-python.png") });
+
+        const s12 = await out2(3);
+        await narrate(page, "12 — the read-only dialect reads it too, with NO prompt", { sub: `the same pointer, surveyed for free · ${outcome(s12, /"first":\[\{"sku"/)}` });
+        log("\n--- 12. read-only survey of python's pointer ---\n" + s12.trim().slice(0, 500));
+        await frame2.page().screenshot({ path: path.join(ART, "12-readonly-reads-python.png") });
 
         log(`\nScreenshots → ${ART}`);
         await narrateDone(page);
