@@ -206,9 +206,13 @@ test("a table cut at the row cap says so — a prefix must not read as the whole
     const body = ["n", ...Array.from({ length: MAX_TABLE_ROWS + 10 }, (_, i) => String(i))].join("\n");
     const t = tableFromDelimited(body);
     assert.equal(t.truncated, true);
-    // The cap counts parsed LINES, so a table with a header keeps one data row fewer — the contract is
-    // "never more than the cap, and never silently", not an exact count.
-    assert.ok(t.rows.length <= MAX_TABLE_ROWS && t.rows.length >= MAX_TABLE_ROWS - 1, `kept ${t.rows.length}`);
+    // Exactly the cap in DATA rows (the header is not one of them), and `shape` counts the whole file — it
+    // used to report the kept rows, one short of the cap, as the table's size.
+    assert.equal(t.rows.length, MAX_TABLE_ROWS);
+    assert.deepEqual(t.shape, [MAX_TABLE_ROWS + 10, 1]);
+    assert.match(tablePreview(t, { source: '"u"' }), /for the first 200,000 rows as a DataFrame \(a prefix of the 200,010;/, "python_exec gets the kept rows, and the hint says so");
+    assert.doesNotMatch(tablePreview(t, { source: '"u"' }), /for all/);
+    assert.match(tablePreview(t), new RegExp(`\\[${(MAX_TABLE_ROWS + 10).toLocaleString("en-US")} rows x 1 columns\\]`));
     assert.match(tablePreview(t), /only the first [\d,]+ rows were parsed/);
 });
 
@@ -327,4 +331,17 @@ test("a facade over a PREFIX keeps saying so — wrapping must not launder the s
     assert.deepEqual(t.shape, [50000, 1]);
     assert.equal(t.truncated, true);
     assert.equal(t.select(["a"]).truncated, true, "a column subset of a prefix is still a prefix");
+});
+
+test("a table at EXACTLY the cap is complete, with or without a header", () => {
+    const rows = Array.from({ length: MAX_TABLE_ROWS }, (_, i) => String(i));
+    const withHeader = tableFromDelimited(["n", ...rows].join("\n"));
+    assert.equal(withHeader.truncated, undefined, "the header line is not a data row, so nothing was dropped");
+    assert.deepEqual(withHeader.shape, [MAX_TABLE_ROWS, 1]);
+    const headerless = tableFromDelimited(rows.join("\n"), { header: false });
+    assert.equal(headerless.truncated, undefined);
+    assert.deepEqual(headerless.shape, [MAX_TABLE_ROWS, 1]);
+    const over = tableFromDelimited([...rows, "x"].join("\n"), { header: false });
+    assert.equal(over.truncated, true);
+    assert.deepEqual(over.shape, [MAX_TABLE_ROWS + 1, 1]);
 });

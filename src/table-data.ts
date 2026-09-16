@@ -37,7 +37,7 @@ const MD_RULE_ROW = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/;
 /** Lex delimited text into raw string rows, discovering the delimiter unless one is given. Thin over Papa:
  *  the only thing added is the row cap. Empty lines are dropped ("greedy" — including whitespace-only ones,
  *  which a trailing newline and a hand-edited file both produce). Pure. */
-export function parseDelimited(text: string, delimiter?: string): { rows: string[][]; delimiter: string; truncated: boolean } {
+export function parseDelimited(text: string, delimiter?: string): { rows: string[][]; delimiter: string; truncated: boolean; total: number } {
     const out = Papa.parse<string[]>(String(text ?? ""), {
         delimiter: delimiter ?? "",          // "" = discover it
         delimitersToGuess: DELIMITERS,
@@ -45,8 +45,11 @@ export function parseDelimited(text: string, delimiter?: string): { rows: string
         // Never dynamicTyping: it casts PER CELL, so one "N/A" in a numeric column yields a column of mixed
         // numbers and strings. castTableColumns decides per COLUMN, which is what pandas needs.
     });
-    const rows = out.data.slice(0, MAX_TABLE_ROWS);
-    return { rows, delimiter: out.meta.delimiter || ",", truncated: out.data.length > MAX_TABLE_ROWS };
+    // One line over the cap, so a header row does not cost a data row; tableFromDelimited caps the BODY. `total`
+    // is every line Papa read — the cap bounds what is kept, never what is counted, since the whole text was
+    // lexed either way and the count is what lets a prefix say what it is a prefix of.
+    const rows = out.data.slice(0, MAX_TABLE_ROWS + 1);
+    return { rows, delimiter: out.meta.delimiter || ",", truncated: out.data.length > MAX_TABLE_ROWS + 1, total: out.data.length };
 }
 
 /** Parse RFC-4180 CSV → an array of rows (each an array of string cells), header row included. Handles
@@ -60,20 +63,22 @@ export function parseCsv(text: string, delimiter = ","): string[][] {
  *  columns are cast for pandas unless `raw`. `delimiter` overrides discovery (a caller that KNOWS, like the
  *  Sheets export, should say so rather than let a comma-less first line be guessed at). Pure. */
 export function tableFromDelimited(text: string, opts: { delimiter?: string; raw?: boolean; header?: boolean | "auto" } = {}): TableLike {
-    const { rows: all, delimiter, truncated } = parseDelimited(text, opts.delimiter);
+    const { rows: all, delimiter, total } = parseDelimited(text, opts.delimiter);
     // Whether row 0 is a HEADER or the first record. Getting this wrong is not a cosmetic error: treating a
     // data row as a header eats a record AND names the columns after its values, and the table then renders
     // perfectly while being quietly short one row — wrong in the way that looks right.
     const header = opts.header === undefined || opts.header === "auto" ? hasHeaderRow(all) : opts.header;
     const columns = header ? namedColumns(all[0] || []) : positionalColumns(all[0]?.length || 0);
-    const body = header ? all.slice(1) : all;
+    const body = (header ? all.slice(1) : all).slice(0, MAX_TABLE_ROWS);
+    // The SOURCE's data rows, not the kept ones: past the cap, `shape` must still say how big the file is.
+    const rowCount = total - (header ? 1 : 0);
     // Pad ragged rows to the header width so every row can be indexed by column position. Papa reports
     // these as errors; we do not reject on them, because a single malformed line in a large export should
     // cost that line's tail, not the whole table.
     const width = columns.length;
     const padded = width ? body.map(r => r.length === width ? r : Array.from({ length: width }, (_, i) => r[i] ?? "")) : body;
     const rows = opts.raw ? padded : castTableColumns(columns, padded);
-    return { ...tableOf(columns, rows), delimiter, ...(header ? {} : { headerless: true }), ...(truncated ? { truncated: true } : {}) };
+    return { ...tableOf(columns, rows, Math.max(rowCount, rows.length)), delimiter, ...(header ? {} : { headerless: true }) };
 }
 
 /** Positional column names for a table with no header row — `0`, `1`, `2`, exactly what `read_csv(header=None)`
@@ -288,7 +293,11 @@ export function tablePreview(t: TableLike, opts: { rows?: number; source?: strin
         `dtypes: ${dtypes}`,
         ...(t.headerless ? ["NOTE: no header row was detected, so the columns are numbered by position (as read_csv(header=None)). Nothing was dropped. If the first row IS a header, re-fetch with \"header\": true."] : []),
         ...(t.truncated ? [`NOTE: only the first ${MAX_TABLE_ROWS.toLocaleString("en-US")} rows were parsed; the source has more.`] : []),
-        ...(opts.source ? [`Whole table cached: pass ${opts.source} to python_exec's \`tables\` for all ${nrows.toLocaleString("en-US")} rows as a DataFrame (no refetch, no read_csv).`] : []),
+        // What python_exec gets from the cache is what was KEPT. Past the cap that is a prefix, and the hint must say
+        // so rather than promise every row the shape counts.
+        ...(opts.source ? [t.truncated
+            ? `Cached: pass ${opts.source} to python_exec's \`tables\` for the first ${t.rows.length.toLocaleString("en-US")} rows as a DataFrame (a prefix of the ${nrows.toLocaleString("en-US")}; no refetch, no read_csv).`
+            : `Whole table cached: pass ${opts.source} to python_exec's \`tables\` for all ${nrows.toLocaleString("en-US")} rows as a DataFrame (no refetch, no read_csv).`] : []),
     ].join("\n");
 }
 
