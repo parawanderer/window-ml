@@ -59,7 +59,7 @@ import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStr
 import { validateArgs, validateExtend } from "./validate";
 import { makeDynamicTools } from "./dynamic-tools";
 import type { DynamicToolNamespace } from "./dynamic-tools";
-import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
+import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec, readonlyRefused } from "./approval";
 import { buildServerTools, buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
@@ -1173,7 +1173,18 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         const urls = [...new Set(ro.reused)];
                         const reused = urls.length ? urls.map(u => ({ kind: "fetch-url" as const, detail: u })) : undefined;
                         return { result, elements, renderIn, renderOut, reused };
-                    } catch { return null; }
+                    } catch (e) {
+                        // A REFUSAL falls through to the human gate; a script error is answered here. See
+                        // readonlyRefused — approving a typo cannot make it run, and the approved attempt
+                        // throws the same error a moment later having spent the interrupt.
+                        if (readonlyRefused(e)) return null;
+                        // The line the interpreter was on, when it knows it — the same fact the approved path
+                        // reports from a real stack, and the model is retrying this code either way.
+                        const at = (e as { mlLine?: number })?.mlLine ?? null;
+                        const msg = `Error: ${errText(e)}${at ? ` (line ${at})` : ""}`;
+                        const { in: renderIn } = descriptorFor(byName[name], { result: msg }, args);
+                        return { result: msg, renderIn, renderOut: { type: "exec-out" as const, error: `${errText(e)}${at ? ` (line ${at})` : ""}`, ...(at ? { errorLine: at } : {}) } };
+                    }
                 } : undefined,
                 precheck: async (name, args) => {
                     const tool = byName[name];

@@ -22,7 +22,7 @@ import { makeAnswerFacade, finalizeAnswer } from "./answer-set";
 import { runPipe, pipeHint } from "./text-pipe";
 import { descriptorFor } from "./render-descriptor";
 import { evalReadonly } from "./readonly-exec";
-import { formatReadonlyExec } from "./approval";
+import { formatReadonlyExec, readonlyRefused } from "./approval";
 import { subcallUsage } from "./bus";
 
 /** The delegated vision-sub-call tokens `fn` spent, as a DELTA around the page-side meter (bus.ts). The
@@ -200,7 +200,15 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
             const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements }, args);
             const urls = [...new Set(ro.reused)];   // cached ml.fetch URLs this survey reused → the "reused a grant" note
             return { result, elementCount: elements ? elements.length : undefined, renderIn, renderOut, readonly: true, reused: urls.length ? urls.map(u => ({ kind: "fetch-url" as const, detail: u })) : undefined };
-        } catch { return { result: "", readonly: false }; }
+        } catch (e) {
+            // Same split as the page path, through the same predicate: the dialect refusing escalates, the
+            // script throwing is reported. `readonly: true` is what says "this was answered without a gate".
+            if (readonlyRefused(e)) return { result: "", readonly: false };
+            const at = (e as { mlLine?: number })?.mlLine ?? null;
+            const msg = `Error: ${errText(e)}${at ? ` (line ${at})` : ""}`;
+            const { in: renderIn } = descriptorFor(tool, { result: msg }, args);
+            return { result: msg, renderIn, renderOut: { type: "exec-out" as const, error: `${errText(e)}${at ? ` (line ${at})` : ""}`, ...(at ? { errorLine: at } : {}) }, readonly: true };
+        }
     }
     // A tool (look/locate, or click/type/wait with verify) may make its own delegated vision sub-calls —
     // meter their spend as a delta so the background loop can tally it (the page meter it can't read).
