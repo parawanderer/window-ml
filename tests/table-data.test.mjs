@@ -106,6 +106,11 @@ test("source code is not a table, though every line ends in the same semicolon",
     // consistent semicolon-delimited fields whose second is always empty.
     assert.equal(sniffDelimiter("const x = 1;\nexport default x;"), null);
     assert.equal(sniffDelimiter("foo();\nbar();\nbaz();"), null);
+    // The one that got through the "empty in every row" rule and was caught by an e2e test: a trailing `}`
+    // means the last column is NOT empty everywhere, so the sniff still sees a table. Nothing about the BODY
+    // rules this out — which is why classifyContent gives a named code extension priority over a guessed
+    // delimiter (see dom.ts), and why this case is pinned there rather than only here.
+    assert.equal(sniffDelimiter("export const answer: number = 42;\nexport function id(x) { return x; }"), ";");
     // The rule that rejects them is "a column empty in EVERY row", so a real trailing empty column in an
     // otherwise populated table still parses.
     assert.equal(sniffDelimiter("a;b;c\n1;2;3\n4;5;6"), ";");

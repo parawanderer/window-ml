@@ -195,6 +195,13 @@ export const PREVIEW_ROWS = 5;
  *  cache, where `python_exec` reads it by URL. */
 export const RENDER_TABLE_ROWS = 200;
 
+/** A table's STRUCTURE without its rows — its shape and its pandas dtypes. The table answer to "what is the
+ *  schema of this", and the one string three callers were each building for themselves: `fetch_url`'s
+ *  `schema: true`, a pointer's `.schema()`, and `ml.schema`. Pure. */
+export function tableShape(t: TableLike): string {
+    return `table shape: (${t.shape[0]}, ${t.shape[1]})\ndtypes: ${t.columns.map(c => `${c} ${t.dtypes[c]}`).join(", ")}`;
+}
+
 /** What a MODEL is shown of a table it did not fetch: the header, the first rows, and the two facts a
  *  sample cannot carry — the real shape and the dtypes. Reads as a `df.head()` because everything it
  *  names is pandas' (`shape`, `dtypes`, `[N rows x M columns]`), so a model can act on it without

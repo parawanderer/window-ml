@@ -40,7 +40,7 @@ import { htmlToMarkdown } from "./html-to-md";
 import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
 import { citeParam } from "./tool-params";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, googleSheetCsvUrl, googleSheetId, externalSheetIds, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom";
-import { castTableColumns, tableFromDelimited, tablePreview, RENDER_TABLE_ROWS } from "./table-data";
+import { castTableColumns, tableFromDelimited, tablePreview, tableShape, RENDER_TABLE_ROWS } from "./table-data";
 import { makeAnswerFacade, finalizeAnswer, resolveOutputs } from "./answer-set";
 import { isSelfSourceUrl } from "./self-source";
 import { BUILD_INFO } from "./build-info.gen";
@@ -223,6 +223,19 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const vs = await Promise.all(values);
             if (!vs.length) throw new Error("ml.schema needs at least one value — pass a JSON value, a JSON string, a fetch result, or a pointer read.");
             const label = (i: number) => vs.length === 1 ? "the argument" : `argument ${i + 1}`;
+            // A TABLE has a structure, but not a JSON one: its rows are a matrix, so a JSON shape of them
+            // says `(string | number)[][]` — true, and useless. Describe it as a FRAME instead (the same
+            // answer `fetch_url`'s `schema: true` and a pointer's `.schema()` give), so asking a CSV for its
+            // schema returns its columns and dtypes rather than the type of its text.
+            const asTable = (v: unknown): import("./contract").TableLike | undefined =>
+                (v && typeof v === "object" ? (v as { table?: import("./contract").TableLike }).table : undefined);
+            if (vs.some(asTable)) {
+                return vs.map((v, i) => {
+                    const t = asTable(v);
+                    const prefix = vs.length === 1 ? "" : `${label(i)}: `;
+                    return prefix + (t ? tableShape(t) : jsonShape(jsonValue(v, label(i))));
+                }).join("\n\n");
+            }
             return joinShapes(vs.map((v, i) => jsonValue(v, label(i))));
         },
         /**
@@ -1919,7 +1932,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     // the structure IS the columns and their dtypes.
                     if (schema && r.table) {
                         const t = r.table;
-                        return { content: `${head}\n\nshape: (${t.shape[0]}, ${t.shape[1]})\ndtypes: ${t.columns.map(c => `${c} ${t.dtypes[c]}`).join(", ")}`, renderIn: inRender() };
+                        return { content: `${head}\n\n${tableShape(t)}`, renderIn: inRender() };
                     }
                     // `schema: true` — the caller wants the JSON's STRUCTURE, not the body.
                     if (schema) {

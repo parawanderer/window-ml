@@ -4,6 +4,7 @@
 // no `this` rewrite. injected.ts imports `AgentHandle` (used by createAgent/agent), the two same-origin
 // auto-approve predicates (used by the page loop), and the `AgentControl` type.
 import type { NeutralMessage, MlApi, AgentOptions, MlAgentHandle, AgentResult, AgentTranscriptEntry } from "./contract";
+import { tableShape } from "./table-data";
 import type { TableLike } from "./table-data";
 import type { DerefRead, DerefMeta, TokenKind } from "./token-pipe";
 import type { DerefValue } from "./contract";
@@ -195,8 +196,15 @@ export class DerefText extends String implements DerefValue {
     /** Reduce this value further through the text-pipe dialect. */
     pipe(stages: string | string[]): Promise<DerefValue> { return this.#repipe(stages); }
 
-    /** The TS-like shape of it. Throws the same actionable error as `ml.schema` on a non-JSON body. */
-    schema(): string { return jsonShape(jsonValue(this.text, `@tool:${this.id || "?"}`)); }
+    /** The TS-like shape of it. A TABLE describes itself as a frame — its shape and its pandas dtypes —
+     *  rather than as the type of its rendered text, which is the same answer `fetch_url`'s `schema: true`
+     *  gives for a CSV and the reason `schema` is worth calling on a pointer at all: the structure without
+     *  the payload. Otherwise the JSON shape, throwing `ml.schema`'s actionable error on a non-JSON body. */
+    schema(): string {
+        const t = this.table;
+        if (t) return tableShape(t);
+        return jsonShape(jsonValue(this.text, `@tool:${this.id || "?"}`));
+    }
 }
 
 export function derefViaBackground(runId: string, ref: string, pipe?: string | string[]): Promise<DerefRead> {

@@ -30,7 +30,7 @@ const LARGE_ROWS = 50_000;
 /** The files under test. A DIFFERENT ORIGIN from the page (a different port is a different origin), so every
  *  fetch opens the approval gate rather than being auto-approved as same-origin. */
 async function startDataServer() {
-    const small = ["id,name,price,qty", "1,Ada,12.50,3", "2,Bob,9.99,10", "3,Cy,4.00,7", "4,Dot,15.25,1", "5,Eve,0.99,42"].join("\n");
+    const small = ["id,name,price,qty", "1,Ada,12.50,3", "2,Bob,9.99,10", "3,Cy,4.00,7", "4,Dot,15.25,1", "5,Eve,0.99,42", "6,Fay,7.10,9"].join("\n");
     // Semicolons AND a generic content-type: the header cannot classify it, so the body's delimiter is the
     // only thing that can. European exports really are shaped like this.
     const euro = ["city;population;area", "Lyon;522969;47.87", "Porto;231962;41.42", "Ghent;263927;156.2"].join("\n");
@@ -87,10 +87,16 @@ test.afterAll(async () => {
     await data?.stop();
 });
 
-async function waitForGate(sw) {
-    await expect.poll(async () => (await sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 20000 }).toBe(1);
-    const [gate] = await sw.evaluate(() => globalThis.__mlApprovals.list());
-    return gate;
+/** Approve every gate that appears until the run has made `want` model calls. NOT "wait for exactly one
+ *  gate": `fetch_url` remembers an approved URL for the session, so the second test to fetch the same URL
+ *  opens no gate at all and a waiter would sit there until it timed out. */
+async function driveApprovals(want, before) {
+    const deadline = Date.now() + 40000;
+    while (Date.now() < deadline && fake.calls().length - before < want) {
+        const pending = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+        for (const g of pending) await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), g.key);
+        await new Promise((r) => setTimeout(r, 200));
+    }
 }
 
 /** Drive ONE fetch_url call through a real agent run, approve its gate, and return the transcript the model
@@ -102,11 +108,14 @@ async function fetchThroughAgent(url, args = {}) {
         (req) => ({ content: req.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n") }),
     ]);
     const runPromise = page.evaluate((u) => window.ml.agent(`Fetch ${u} and report it.`, { env: false, approvalRouting: "both" }), url);
-    const gate = await waitForGate(ext.sw);
-    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+    await driveApprovals(2, before);
     await runPromise.catch(() => {});
     await expect.poll(() => fake.calls().length - before, { timeout: 30000 }).toBeGreaterThanOrEqual(2);
-    return fake.calls().at(-1).messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
+    // The TOOL message specifically — what `fetch_url` put in front of the model. The whole transcript also
+    // carries the system prompt and the task, so measuring its SIZE would measure those instead.
+    const msgs = fake.calls().at(-1).messages;
+    const tool = msgs.filter((m) => m.role === "tool" && typeof m.content === "string").at(-1);
+    return tool ? tool.content : msgs.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
 }
 
 test("a small CSV comes back as a df.head(): rows, real shape, and inferred dtypes", async () => {
@@ -114,12 +123,12 @@ test("a small CSV comes back as a df.head(): rows, real shape, and inferred dtyp
     expect(seen).toMatch(/type: csv/);
     expect(seen).toContain("id,name,price,qty");          // the header
     expect(seen).toContain("1,Ada,12.5,3");               // a row, CAST — 12.50 is a float, printed as pandas would
-    expect(seen).toMatch(/\[5 rows x 4 columns\]/);       // the shape, in pandas' own words
+    expect(seen).toMatch(/\[6 rows x 4 columns\]/);       // the shape, in pandas' own words
     // The column types are the point of the exercise: whole numbers int64, a decimal column float64,
     // text object — the same answer read_csv would give.
     expect(seen).toMatch(/dtypes: id int64, name object, price float64, qty int64/);
-    // A head, not a dump: the 6th row is not there.
-    expect(seen).not.toContain("5,Eve");
+    // A head, not a dump: five rows are shown, so the sixth is not there.
+    expect(seen).not.toContain("6,Fay");
 });
 
 test("a semicolon-separated export mislabelled text/plain is still discovered and parsed", async () => {
@@ -141,8 +150,9 @@ test("a 50,000-row CSV reports its REAL size while showing five rows", async () 
     expect(seen).toMatch(/\[50,000 rows x 4 columns\]/);
     expect(seen).toContain("0,row-0,0.00,true".replace("0.00", "0"));   // cast: "0.00" → 0
     expect(seen).not.toContain("row-500");                              // nowhere near a dump
-    // And it stays small. A raw clip was 4,000 characters; this is a head plus two lines of description.
-    expect(seen.length).toBeLessThan(4000);
+    // And it stays small: the old behaviour clipped the body at 4,000 characters and still told the model
+    // nothing about the file's size. This says more, in a fraction of the tokens.
+    expect(seen.length).toBeLessThan(1000);
     // The model is told how to get the REST — by URL, from the cache, not by re-fetching or read_csv.
     expect(seen).toMatch(/pass "[^"]*\/large\.csv" to python_exec's `tables`/);
 });
@@ -168,7 +178,7 @@ test("`pipe` opts out of the preview — a model that wrote a scan gets the line
 
 test("`schema: true` on a CSV answers with the frame, not an 'isn't JSON' error", async () => {
     const seen = await fetchThroughAgent(data.url + "/small.csv", { schema: true });
-    expect(seen).toMatch(/shape: \(5, 4\)/);
+    expect(seen).toMatch(/shape: \(6, 4\)/);
     expect(seen).toMatch(/dtypes: id int64/);
     expect(seen).not.toMatch(/isn't JSON/);
     expect(seen).not.toContain("1,Ada");        // structure WITHOUT the payload, as for JSON
@@ -186,14 +196,13 @@ test("python_exec loads the fetched table from the cache — no refetch, no read
         (req) => ({ content: req.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n") }),
     ]);
     const runPromise = page.evaluate((u) => window.ml.agent(`Fetch ${u} then total its price column.`, { env: false, approvalRouting: "both", extraTools: [window.ml.pythonTool()] }), url);
-    const gate = await waitForGate(ext.sw);
-    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+    await driveApprovals(3, before);
     await runPromise.catch(() => {});
     await expect.poll(() => fake.calls().length - before, { timeout: 60000 }).toBeGreaterThanOrEqual(3);
     const seen = fake.calls().at(-1).messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
     // pandas agrees with the preview: same shape, same columns, and the dtype the preview PROMISED.
-    expect(seen).toContain("(5, 4)");
+    expect(seen).toContain("(6, 4)");
     expect(seen).toContain("['id', 'name', 'price', 'qty']");
     expect(seen).toContain("float64");
-    expect(seen).toContain("42.73");            // 12.50 + 9.99 + 4.00 + 15.25 + 0.99
+    expect(seen).toContain("49.83");            // 12.50 + 9.99 + 4.00 + 15.25 + 0.99 + 7.10
 });

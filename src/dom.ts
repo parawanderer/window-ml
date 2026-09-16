@@ -1579,7 +1579,13 @@ export function classifyContent(contentType: string, body: string, url = ""): {
     const byContent = typeFromContent(body);
     const byExtension = typeFromExtension(url);
     const structured = byContent === "json" || byContent === "html" || byContent === "xml" || byContent === "csv";
-    const type = byHeader ?? (structured ? byContent : (byExtension?.type ?? byContent));
+    // A named CODE extension beats a GUESSED delimiter. Source is full of semicolons, and a run of statements
+    // splits into consistent two-field rows — `export const answer: number = 42;` over
+    // `export function id<T>(x: T): T { return x; }` is, to a delimiter sniff, a clean table. The extension is
+    // an explicit claim about the file and the sniff is an inference from its punctuation, so the claim wins.
+    // Only against `csv`: json/html/xml identify themselves structurally and are not guesses in the same way.
+    const codeNotCsv = byContent === "csv" && byExtension?.type === "code";
+    const type = byHeader ?? (structured && !codeNotCsv ? byContent : (byExtension?.type ?? byContent));
     const language = type === "code" ? byExtension?.language : undefined;
     return { type, language, byHeader, byContent, byExtension };
 }

@@ -272,7 +272,8 @@ export interface DerefValue extends String {
     readonly latex?: string;
     /** Reduce it further through the text-pipe dialect, resolving to a new value. */
     pipe(stages: string | string[]): Promise<DerefValue>;
-    /** The TS-like shape of it, when it is JSON (see `ml.schema`). Throws on non-JSON. */
+    /** The TS-like shape of it: for a TABLE its `shape` + `dtypes` (the frame without the rows), else the
+     *  JSON shape (see `ml.schema`). Throws only on a body that is neither. */
     schema(): string;
 }
 
