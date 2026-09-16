@@ -910,12 +910,33 @@
                           "type": "number"
                         },
                         {
+                          "type": "boolean"
+                        },
+                        {
                           "type": "object",
                           "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
                         }
                       ]
                     }
                   }
+                },
+                "rowCount": {
+                  "type": "number"
+                },
+                "truncated": {
+                  "type": "boolean"
+                },
+                "dtypes": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "delimiter": {
+                  "type": "string"
+                },
+                "headerless": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -1425,12 +1446,33 @@
                           "type": "number"
                         },
                         {
+                          "type": "boolean"
+                        },
+                        {
                           "type": "object",
                           "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
                         }
                       ]
                     }
                   }
+                },
+                "rowCount": {
+                  "type": "number"
+                },
+                "truncated": {
+                  "type": "boolean"
+                },
+                "dtypes": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "delimiter": {
+                  "type": "string"
+                },
+                "headerless": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -2001,6 +2043,9 @@
                   "type": "number"
                 },
                 {
+                  "type": "boolean"
+                },
+                {
                   "type": "object",
                   "description": "This shape is UNSTABLE: it grows as the extension does and is NOT covered by the schema version. The members here are the ones known when this file was generated — read the ones you recognise and tolerate others."
                 }
@@ -2020,7 +2065,7 @@
     },
     "TableSource": {
       "type": "object",
-      "description": "Where a `python_exec` DataFrame came from — for the debug render's source label + tooltip. `dom` = a table on the current page (label = the selector); `sheet-current` = the Google Sheet you're on (label = its page title); `sheet-external` = a Google Sheet fetched by URL with the user's approval (label = its spreadsheet id).",
+      "description": "Where a `python_exec` DataFrame came from — for the debug render's source label + tooltip. `dom` = a table on the current page (label = the selector); `sheet-current` = the Google Sheet you're on (label = its page title); `sheet-external` = a Google Sheet fetched by URL with the user's approval (label = its spreadsheet id); `fetch` = a CSV/table already fetched by `fetch_url` and read back out of the fetch cache (label = its URL), so no second request was made.",
       "properties": {
         "kind": {
           "anyOf": [
@@ -2029,7 +2074,8 @@
               "enum": [
                 "dom",
                 "sheet-current",
-                "sheet-external"
+                "sheet-external",
+                "fetch"
               ]
             },
             {

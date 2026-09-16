@@ -2300,7 +2300,10 @@ test("agent tool steps render descriptors (image / elements / table)", async () 
     assert.equal(w.shadow.querySelectorAll(".r-el").length, 2, "elements list rendered");
     assert.match(w.shadow.querySelector(".r-el-text").textContent, /Black cat/);
     assert.equal(w.shadow.querySelectorAll(".r-el-idx").length, 2, "multiple elements → each shows its #N badge");
-    assert.equal(w.shadow.querySelector(".r-table td") ? w.shadow.querySelectorAll(".r-table td").length : 0, 4, "table cells rendered");
+    // A `table` descriptor draws the same grid a DataFrame does (scroll-capped, sticky header, copy-CSV) —
+    // there is one table renderer now, not two.
+    // `:not(.r-df-idx)` skips the index gutter this grid draws per row (the pandas index).
+    assert.equal(w.shadow.querySelectorAll(".r-df-table tbody td:not(.r-df-idx)").length, 4, "table cells rendered");
 });
 
 test("a SINGLE-element render hides the #0 badge (it's just the one element)", async () => {

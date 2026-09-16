@@ -582,6 +582,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             // skip the gate and steer the model to supply `maxCharsReason` (then the human sees it on the card).
             precheck: (args) => outputCapPrecheck("exec", args as Record<string, unknown>),
             run: async ({ js: source, maxChars, maxCharsReason }: { js: string; maxChars?: number; maxCharsReason?: string }, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
+                // Timed so the step can say where its time went. An exec call is not all "running the code":
+                // resolving the pointers it mentions happens first, and on a background-hosted run that is a
+                // message round trip PER HANDLE. Unmeasured, it was invisible — the event lane draws a phase
+                // only where something timed it, so this time sat inside the step's total, unattributed.
+                const t0 = Date.now();
+                let pointerMs = 0;
                 // Pointer MACRO: `@tool:abc1234` in code position becomes `ml.dereference("@tool:abc1234")`.
                 // A lexical pass, because that syntax does not parse and a parser cannot find what it rejects
                 // — and one that leaves strings and comments alone, exactly as a C macro does. What runs from
@@ -611,10 +617,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     // Concurrently, and a FAILED read is stored rather than thrown: a bad handle sitting in a
                     // branch the script never reaches must not turn a working program into a failing one.
                     // Eager fetch, lazy failure.
+                    const tPointers = Date.now();
                     await Promise.all([...handles, ...wantsList].map(async (ref) => {
                         try { pointers.set(ref, { read: await ctx.deref!(ref) }); }
                         catch (e) { pointers.set(ref, { error: errText(e) }); }
                     }));
+                    pointerMs = Date.now() - tPointers;
                 }
                 // Effective per-slot output cap. Default 500; a raise past it is only reachable AFTER the human
                 // gate (the readonly try refuses to auto-approve an escalated call), clamped to the ceiling.
@@ -727,6 +735,11 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 const logged = logs.length ? `console:\n${clipOut(logs.join("\n"), cap)}` : "";
                 const clampNote = clamped ? `\n\n(output limit clamped to ${cap} chars — the hard ceiling.)` : "";
                 const withLogs = (value: string) => (logged ? `${logged}\n\nvalue: ${value}` : value) + clampNote;
+                // `queuedMs` is the field's own meaning — "elapsed before evaluation began" — which is exactly
+                // what pointer resolution is here; python_exec reports its cold start the same way. Omitted
+                // when no pointer was resolved, so it never claims a phase that did not happen.
+                const timed = (r: ToolResult): ToolResult =>
+                    ({ ...r, remoteMs: { durationMs: Math.max(0, Date.now() - t0 - pointerMs), ...(pointerMs ? { queuedMs: pointerMs } : {}) } });
                 // The UI's RENDERED Out — parity with python_exec's cell (console / value / error sections +
                 // a rendered⇄raw toggle) instead of one raw blob. Carries exactly the same data the raw
                 // `content` string does, so the model-facing result is byte-identical (the raw-view rule).
@@ -760,7 +773,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     // CDP `Runtime.evaluate` (debugger, CSP-exempt). The background decides — run it (cdp on +
                     // granted), or return an actionable "enable / grant" note (off / missing). The `content` here
                     // is the base the background builds on when it CAN'T run CDP.
-                    if (isCspEvalBlocked(msg)) return { content: withLogs("This page blocks main-world eval (its CSP omits 'unsafe-eval', or it enforces Trusted Types), so the code couldn't run in the page context."), cdpExec: { source: js }, render: execRender(undefined, "This page blocks main-world eval (CSP / Trusted Types).") };
+                    if (isCspEvalBlocked(msg)) return timed({ content: withLogs("This page blocks main-world eval (its CSP omits 'unsafe-eval', or it enforces Trusted Types), so the code couldn't run in the page context."), cdpExec: { source: js }, render: execRender(undefined, "This page blocks main-world eval (CSP / Trusted Types).") });
                     // The #1 exec mistake: querySelectorAll / .children / getElementsBy* return a
                     // NodeList/HTMLCollection (array-LIKE, no .map/.filter). Steer the retry
                     // instead of leaving the model to flail on "map is not a function".
@@ -769,12 +782,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     const hint = arrayish
                         ? " — querySelectorAll / .children / getElementsBy* return a NodeList/HTMLCollection, not an Array. Wrap it first: [...document.querySelectorAll('…')].map(…) or Array.from(…)."
                         : "";
-                    return { content: withLogs(`Error: ${msg}${where}${hint}`), render: execRender(undefined, `${msg}${where}${hint}`, at) };
+                    return timed({ content: withLogs(`Error: ${msg}${where}${hint}`), render: execRender(undefined, `${msg}${where}${hint}`, at) });
                 }
 
                 // DOM node results come back hoverable (see the loop's envelope).
                 if (typeof Element !== "undefined" && result instanceof Element) {
-                    return { content: withLogs(elPath(result)), elements: [result], render: execRender(elPath(result)) };
+                    return timed({ content: withLogs(elPath(result)), elements: [result], render: execRender(elPath(result)) });
                 }
                 const isNodes = result && (
                     (typeof NodeList !== "undefined" && result instanceof NodeList) ||
@@ -792,7 +805,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     try { value = clipOut(JSON.stringify(result), cap); }
                     catch { value = clipOut(String(result), cap); }
                 } else value = clipOut(String(result), cap);
-                return { content: withLogs(value), render: execRender(value) };
+                return timed({ content: withLogs(value), render: execRender(value) });
             }
         }),
         T({

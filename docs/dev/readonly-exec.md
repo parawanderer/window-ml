@@ -178,6 +178,30 @@ invalidated an argument made for an earlier one, and nothing re-checked it. Rege
 catastrophic backtracking, and making `ml.answer` free (2026-09-01) broke "a failed attempt leaves nothing behind".
 All four are fixed, and each has tests that fail on the old code.
 
+## Working on fetched tables
+
+A survey can read a table the run already fetched, and this needed no extension to the dialect — which is the
+point worth recording. A `TableLike` (see `docs/dev/wire-and-fetch.md`) is plain arrays, strings and numbers,
+so the existing read mediation already traverses it:
+
+```js
+const t = ml.fetch("https://example.com/sales.csv").table;   // cache-only here: no egress, no prompt
+const r = t.columns.indexOf("region");
+return t.rows.filter(row => row[r] === "west").length;
+```
+
+`@tool:<id>.table` reads the same object out of a pointer. Neither needs `await`: the evaluator awaits a host
+read before the value is used, and in a full `exec` the pointers are pre-resolved before the script runs.
+
+Two properties are worth stating because they are what make it safe rather than merely convenient. **The table
+is not the script's**, so it is READ-ONLY under the ownership rule: `rows.push(...)`, `rows.sort()`, assigning
+into a cell and deleting a dtype are all refused, and a survey cannot edit the evidence a later step or the
+export reads back. Copy it (`rows.slice()`) to build on it. **The work is bounded by the table**: a traversal
+runs over a row count fixed before it starts, and since nothing can mutate the pointer's array there is no way
+to grow a collection while iterating it — the halting argument the collection types needed, inherited rather
+than re-made. Both have tests; a new kind of value flowing through an existing surface gets the contract
+re-checked even when no construct was added.
+
 ## Where it is called
 
 - **Page-hosted runs**: `tryReadonly` in `injected.ts` expands pointers, binds the run's resolver, calls

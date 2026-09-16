@@ -1342,10 +1342,6 @@ details.io[open] > summary .io-preview { display: none; }
 .r-el-idx { color: var(--fg-faint); font: 0.8em ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
 .r-el-text { color: var(--fg); }
 .r-el-path { color: var(--fg-dim); font: 0.82em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
-.r-table-wrap { overflow-x: auto; }
-.r-table { border-collapse: collapse; font-size: 0.9em; }
-.r-table th, .r-table td { border: 1px solid var(--border); padding: 2px 7px; text-align: left; white-space: nowrap; }
-.r-table th { color: var(--fg-dim); font-weight: 600; }
 .r-keyval { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; font-size: 0.92em; }
 .r-k { color: var(--fg-dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .r-v { color: var(--fg); word-break: break-word; }

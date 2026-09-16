@@ -2,6 +2,7 @@
 // jQuery-tolerant query engine, skeleton descriptions, text normalization. No
 // dependency on injected's closure state; only args + browser globals.
 import { roleOf, accessibleName } from "./a11y";   // for the `role=` / `label=` selector engines (a11y has no dom import → no cycle)
+import { looksCsv } from "./table-data";           // the delimiter sniff behind the "csv" classification (table-data has no dom import → no cycle)
 import type { ElementContext } from "./contract";
 
 /**
@@ -1124,45 +1125,6 @@ export function extractTable(el: Element): { columns: string[]; rows: string[][]
     return out;
 }
 
-/** Parse a table cell as a number, tolerating corporate formatting — thousands commas,
- *  currency ($€£¥), a trailing %, whitespace, and accounting parens ((150) → -150). Returns
- *  null when it isn't a clean int/decimal (names, alphanumeric IDs, blanks). Pure. */
-export function parseNumericCell(v: string): number | null {
-    let s = String(v == null ? "" : v).trim();
-    if (!s) return null;
-    const paren = /^\((.*)\)$/.exec(s);
-    if (paren) s = "-" + paren[1];
-    s = s.replace(/[,$€£¥%\s]/g, "");
-    if (!/^[-+]?(\d+\.?\d*|\.\d+)$/.test(s)) return null;   // int/decimal only — no "1e3"/"421A"/leading-word
-    const n = Number(s);
-    return Number.isFinite(n) ? n : null;
-}
-
-/** Auto-cast the NUMERIC columns of an extracted table so pandas infers int64/float64 (else
- *  every cell is a string and df.sum() string-CONCATENATES). Per column: if ≥90% of non-empty
- *  cells parse as numbers, coerce the whole column to number|null (blank/stray → null, pandas
- *  NaN); otherwise leave it as strings (names, and IDs/ZIPs where a leading zero would drop —
- *  pass tableRaw to skip casting for those). Returns a NEW rows array. Pure. */
-export function castTableColumns(columns: string[], rows: string[][]): (string | number | null)[][] {
-    const width = Math.max(columns.length, ...rows.map(r => r.length), 0);
-    const out: (string | number | null)[][] = rows.map(r => r.slice());
-    for (let c = 0; c < width; c++) {
-        let nonEmpty = 0, numeric = 0;
-        for (const r of rows) {
-            const s = r[c] == null ? "" : String(r[c]).trim();
-            if (!s) continue;
-            nonEmpty++;
-            if (parseNumericCell(s) != null) numeric++;
-        }
-        if (nonEmpty === 0 || numeric / nonEmpty < 0.9) continue;   // not a numeric column
-        for (const r of out) {
-            const s = r[c] == null ? "" : String(r[c]).trim();
-            r[c] = s ? parseNumericCell(s) : null;   // non-numeric outlier → null (pandas NaN)
-        }
-    }
-    return out;
-}
-
 /** A Google Sheets URL → its spreadsheet id (the stable `/d/<id>` key), or null if it isn't a
  *  Sheets URL. Used to cache a per-session access approval by the SPREADSHEET (its tabs share it). */
 export const googleSheetId = (url: string): string | null => {
@@ -1194,35 +1156,7 @@ export const googleSheetCsvUrl = (url: string): string | null => {
     return `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid ? gid[1] : "0"}`;
 };
 
-/** Parse RFC-4180 CSV → an array of rows (each an array of string cells). Handles quoted
- *  fields with embedded commas, newlines, and doubled "" quotes. Pure. */
-export function parseCsv(text: string): string[][] {
-    const s = String(text == null ? "" : text).replace(/\r\n?/g, "\n");
-    const rows: string[][] = []; let row: string[] = [], field = "", inQ = false;
-    for (let i = 0; i < s.length; i++) {
-        const c = s[i];
-        if (inQ) {
-            if (c === '"') { if (s[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
-            else field += c;
-        } else if (c === '"') inQ = true;
-        else if (c === ",") { row.push(field); field = ""; }
-        else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
-        else field += c;
-    }
-    if (field !== "" || row.length) { row.push(field); rows.push(row); }
-    return rows;
-}
-
-/** Does the head of a body look like CSV? ≥2 non-empty lines that each split on commas into the SAME
- *  number of columns (≥2). A light heuristic for when the Content-Type is generic (text/plain). */
-function looksCsv(head: string): boolean {
-    const lines = head.split(/\r?\n/).filter(l => l.trim()).slice(0, 6);
-    if (lines.length < 2) return false;
-    const cols = lines.map(l => l.split(",").length);
-    return cols[0] >= 2 && cols.every(c => c === cols[0]);
-}
-
-export type ContentKind = "json" | "csv" | "html" | "xml" | "markdown" | "code" | "text";
+export type ContentKind = "json" | "csv" | "parquet" | "html" | "xml" | "markdown" | "code" | "text";
 
 /** Classify by the Content-Type HEADER alone. Returns null for a GENERIC/absent header (text/plain,
  *  octet-stream, empty) — the signal to let the other cues decide (a server can mislabel: raw.github
@@ -1231,6 +1165,9 @@ export function typeFromHeader(contentType: string): ContentKind | null {
     const ct = String(contentType || "").split(";")[0].trim().toLowerCase();
     if (ct === "application/json" || ct.endsWith("+json")) return "json";
     if (ct === "text/csv" || ct === "application/csv") return "csv";
+    // Parquet has no agreed type; all three are in the wild. The BODY is what settles it (looksParquet, on
+    // bytes) — this only says which responses are worth reading as bytes in the first place.
+    if (ct === "application/vnd.apache.parquet" || ct === "application/x-parquet" || ct === "application/parquet") return "parquet";
     if (ct === "text/html" || ct === "application/xhtml+xml") return "html";
     if (ct === "text/xml" || ct === "application/xml" || ct.endsWith("+xml")) return "xml";
     if (ct === "text/markdown") return "markdown";
@@ -1263,6 +1200,7 @@ const EXT_LANG: Record<string, string> = {
 const EXT_KIND: Record<string, ContentKind> = {
     json: "json", jsonl: "json", ndjson: "json",
     csv: "csv", tsv: "csv",
+    parquet: "parquet", pq: "parquet",
     html: "html", htm: "html", xhtml: "html",
     xml: "xml", svg: "xml", rss: "xml", atom: "xml",
     md: "markdown", markdown: "markdown", mdx: "markdown",
@@ -1641,7 +1579,13 @@ export function classifyContent(contentType: string, body: string, url = ""): {
     const byContent = typeFromContent(body);
     const byExtension = typeFromExtension(url);
     const structured = byContent === "json" || byContent === "html" || byContent === "xml" || byContent === "csv";
-    const type = byHeader ?? (structured ? byContent : (byExtension?.type ?? byContent));
+    // A named CODE extension beats a GUESSED delimiter. Source is full of semicolons, and a run of statements
+    // splits into consistent two-field rows — `export const answer: number = 42;` over
+    // `export function id<T>(x: T): T { return x; }` is, to a delimiter sniff, a clean table. The extension is
+    // an explicit claim about the file and the sniff is an inference from its punctuation, so the claim wins.
+    // Only against `csv`: json/html/xml identify themselves structurally and are not guesses in the same way.
+    const codeNotCsv = byContent === "csv" && byExtension?.type === "code";
+    const type = byHeader ?? (structured && !codeNotCsv ? byContent : (byExtension?.type ?? byContent));
     const language = type === "code" ? byExtension?.language : undefined;
     return { type, language, byHeader, byContent, byExtension };
 }

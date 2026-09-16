@@ -294,6 +294,11 @@ function typeToSchema(type, ctx) {
         } finally { ctx.resolving.delete(t); ctx.unstableUnion = wasUnstable; }
     }
 
+    // `Record<string, X>` — an open map, which JSON Schema says with additionalProperties. The KEYS are data
+    // (a table's column names, say), so there is nothing to enumerate; only the value type is describable.
+    const rec = /^Record<\s*string\s*,\s*(.+)>$/.exec(t);
+    if (rec) return { type: "object", additionalProperties: typeToSchema(rec[1].trim(), ctx) };
+
     // An unrecognised named type would silently become "anything", which is how a generated schema stops
     // describing the thing it claims to. Refuse instead.
     throw new Error(`gen-export-schema: unhandled type \`${t}\` — teach typeToSchema() to map it, or simplify the declaration`);

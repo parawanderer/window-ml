@@ -166,7 +166,11 @@ test("fetch_url: reads + classifies raw JSON, CSV, and a mislabelled code file (
 
     const csvSeen = await fetchThroughAgent(data.url + "/data.csv");
     expect(csvSeen).toMatch(/type: csv/);
-    expect(csvSeen).toContain("apples,3,1.20");
+    // A CSV comes back PARSED now (a df.head(), not the raw body), so the price reads as the float it was
+    // cast to — "1.20" is 1.2, exactly as pandas would print it. The shape and dtypes ride along.
+    expect(csvSeen).toContain("apples,3,1.2");
+    expect(csvSeen).toMatch(/\[2 rows x 3 columns\]/);
+    expect(csvSeen).toMatch(/dtypes: name object, qty int64, price float64/);
 
     // A raw .ts served as text/plain — the header can't classify it, so the URL extension resolves it to code.
     const codeSeen = await fetchThroughAgent(data.url + "/code.ts");

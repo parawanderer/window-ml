@@ -233,6 +233,13 @@ learned by shipping the wrong version first.
   (`@tool:"label"`, 7-hex id, bare tool name) are told apart by SHAPE, never tried in order.
 - **Python.** Each call is stateless; `readonly` mode hardens the sandbox and may auto-approve, `full` always asks.
   The wheels (`pyodide-wheels/`) are gitignored and a missing set fails only at run time.
+- **Tables.** One representation (`TableLike`, contract.ts) and one set of parsers (`table-data.ts`) for every
+  producer — a fetched CSV/TSV/Parquet, a DOM table, the Sheets export, a pointer read. Never hand-split a
+  delimited body: the separator is DISCOVERED, and assuming a comma is the bug this replaced. `shape` is the
+  SOURCE's row count even when `rows` is a prefix, so pass `rowCount` to `tableOf` whenever you cap. Delimited
+  text parses page-side (the text already crossed the wire); Parquet parses in the worker and its decoder is
+  dynamically imported so it never reaches the page bundle. A code EXTENSION beats a guessed delimiter — source
+  full of semicolons parses as a clean two-column table otherwise.
 - **Wire formats.** The protobuf path is chosen from the RESPONSE's content type, never sniffed; no `TextDecoder`
   anywhere near binary; `toolIds` keeps SSE permanently. A strict backend refusing an optional request key is
   retried once without it — a wire nicety must never cost an answer.
@@ -531,7 +538,8 @@ thing. The parts:
   backends (never in CI): `server-tool-live.mjs`, `md-ladder-live.mjs`, `proto-stream-live.mjs`,
   `capture-frames.mjs` (records real event-stream fixtures). Narrated demos (watched, never asserting):
   `approval-demo`, `resource-demo` (`BOX=`), `line-map-demo`, `cursor-demo`, `panel-news-demo`, `whole-box-demo`,
-  `stream-demo`, `bench-editor-demo`, `bench-completion-demo`.
+  `stream-demo`, `bench-editor-demo`, `bench-completion-demo`, `table-demo` (fetching CSV/Parquet, then
+  scanning, surveying and analysing them through pipe / readonly exec / full exec / python_exec).
 - **RULE — a demo says what it is doing, on screen: `narrate(page, "…", { sub: "…" })`** (harness.mjs). A
   demo is WATCHED, and a watcher who cannot tell which beat is running infers it from what moved — which is
   exactly backwards when the point of a beat is that something did NOT move. It draws a banner in the PAGE

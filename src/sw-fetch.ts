@@ -7,7 +7,8 @@
 // functions assume the decision was already made.
 import type { FetchResult, FetchFormat, FetchAttempt } from "./contract";
 import { acceptLanguageFrom } from "./contract";
-import { classifyContent, jsonShape, markdownAlternateHref, resolveMarkdownAlternate, markdownSiblingUrl, isMarkdownResponse, typeFromExtension } from "./dom";
+import { classifyContent, jsonShape, markdownAlternateHref, resolveMarkdownAlternate, markdownSiblingUrl, isMarkdownResponse, typeFromExtension, typeFromHeader } from "./dom";
+import { looksParquet, tableFromParquet } from "./table-data";
 import { ensureDebuggerAttached, releaseDebugger } from "./sw-cdp";
 import { incognitoEnableSteps } from "./util";
 
@@ -96,10 +97,31 @@ const MD_ACCEPT = "text/markdown, text/x-markdown;q=0.9, text/html;q=0.8, applic
 // that adds Markdown support tomorrow should not be remembered as lacking it for days.
 const noSiblingOrigins = new Set<string>();
 
-/** One GET, returning the pieces every rung needs. Never throws for a non-2xx — only for a network failure. */
-async function rawGet(url: string, credentials: boolean, accept?: string): Promise<{ res: Response; text: string; truncated: boolean; ms: number }> {
+/** Might this response be a BINARY table (Parquet) rather than text? Cheap and deliberately loose — it only
+ *  decides whether to read the body as BYTES, and the magic-byte check on those bytes is what actually
+ *  decides. Generic `application/octet-stream` is included because that is how most static hosts serve a
+ *  `.parquet`, and a body that turns out not to be Parquet is decoded as text below with nothing lost. */
+function maybeBinaryTable(contentType: string, url: string): boolean {
+    const ct = contentType.split(";")[0].trim().toLowerCase();
+    return ct.includes("parquet") || ct === "application/octet-stream" || typeFromExtension(url)?.type === "parquet";
+}
+
+/** One GET, returning the pieces every rung needs. Never throws for a non-2xx — only for a network failure.
+ *
+ *  A response that might be a binary table is read as an ArrayBuffer and, if the magic says it is not one
+ *  after all, decoded to text here — so a mislabelled body costs a decode rather than being corrupted by
+ *  `res.text()` before anything can look at it. Nothing else runs a TextDecoder near these bytes. */
+async function rawGet(url: string, credentials: boolean, accept?: string): Promise<{ res: Response; text: string; bytes?: ArrayBuffer; truncated: boolean; ms: number }> {
     const t0 = Date.now();
     const res = await fetch(url, { method: "GET", credentials: credentials ? "include" : "omit", redirect: "follow", headers: browserFetchHeaders(accept) });
+    if (maybeBinaryTable(res.headers.get("content-type") || "", res.url || url)) {
+        const bytes = await res.arrayBuffer();
+        if (looksParquet(bytes)) return { res, text: "", bytes, truncated: false, ms: Date.now() - t0 };
+        let text = "";
+        try { text = new TextDecoder().decode(bytes); } catch { /* not decodable → an empty text body */ }
+        const truncated = text.length > FETCH_URL_MAX;
+        return { res, text: truncated ? text.slice(0, FETCH_URL_MAX) : text, truncated, ms: Date.now() - t0 };
+    }
     let text = await res.text();
     const truncated = text.length > FETCH_URL_MAX;
     if (truncated) text = text.slice(0, FETCH_URL_MAX);
@@ -125,6 +147,25 @@ function buildResult(requested: string, r: { res: Response; text: string; trunca
     return out;
 }
 
+/** A Parquet response → a FetchResult carrying the decoded table. `text` holds a one-line DESCRIPTION rather
+ *  than the bytes: every reader of `.text` expects something printable, and a caller that fell through to it
+ *  should be told what this is instead of being handed mojibake. A decode failure is reported the same way —
+ *  the fetch itself succeeded, so it is not an error, it is a body we could not read. */
+async function parquetResult(requested: string, r: { res: Response; bytes: ArrayBuffer }): Promise<FetchResult> {
+    const out: FetchResult = {
+        url: r.res.url || requested, status: r.res.status, ok: r.res.ok, type: "parquet",
+        typeByHeader: typeFromHeader(r.res.headers.get("content-type") || ""), typeByContent: "parquet",
+        typeByExtension: typeFromExtension(r.res.url || requested),
+        contentType: r.res.headers.get("content-type") || "",
+        text: `(a Parquet file, ${r.bytes.byteLength.toLocaleString("en-US")} bytes — binary, so there is no text body; read \`table\`)`,
+        redirected: r.res.redirected || undefined,
+        headers: safeResponseHeaders(r.res.headers),
+    };
+    try { out.table = await tableFromParquet(r.bytes); }
+    catch (e) { out.text = `(a Parquet file, ${r.bytes.byteLength.toLocaleString("en-US")} bytes, which could not be decoded: ${e instanceof Error ? e.message : String(e)})`; }
+    return out;
+}
+
 /** Perform the GET for ml.fetch (host permissions bypass CORS). Uncredentialed (no cookies) unless
  *  `credentials` is set — then it sends the user's cookies (the gated as-you path).
  *
@@ -146,9 +187,13 @@ function buildResult(requested: string, r: { res: Response; text: string; trunca
 export async function fetchUrlContent(url: string, credentials = false, format: FetchFormat = "markdown"): Promise<FetchResult> {
     // A URL whose extension already names a data/code file never negotiates: there is no prose twin, and
     // sending a Markdown-first Accept to an API that honours it could change what comes back.
-    const dataShape = ["json", "csv", "code"].includes(typeFromExtension(url)?.type || "");
+    const dataShape = ["json", "csv", "parquet", "code"].includes(typeFromExtension(url)?.type || "");
     const negotiating = format === "markdown" && !dataShape;
     const first = await rawGet(url, credentials, negotiating ? MD_ACCEPT : undefined);
+    // A BINARY table short-circuits everything: there is no Markdown twin of a Parquet file, and no text body
+    // to classify. It is decoded HERE, in the worker, rather than shipped to the page as bytes — the page
+    // wants the table, and a TableLike crosses the message channel far more cheaply than the file does.
+    if (first.bytes) return await parquetResult(url, first as { res: Response; bytes: ArrayBuffer });
     if (!negotiating) return buildResult(url, first);
 
     const attempts: FetchAttempt[] = [];

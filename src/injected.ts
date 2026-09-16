@@ -39,7 +39,8 @@ import { expandPointers } from "./pointer-macro";   // `@tool:` → a real deref
 import { htmlToMarkdown } from "./html-to-md";
 import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
 import { citeParam } from "./tool-params";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, googleSheetCsvUrl, googleSheetId, externalSheetIds, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom";
+import { castTableColumns, tableFromDelimited, tablePreview, tableShape, RENDER_TABLE_ROWS } from "./table-data";
 import { makeAnswerFacade, finalizeAnswer, resolveOutputs } from "./answer-set";
 import { isSelfSourceUrl } from "./self-source";
 import { BUILD_INFO } from "./build-info.gen";
@@ -84,7 +85,7 @@ let _embedTurn = 0;
 const embedSession = () => ({ hash: (_embedHash ||= `embed${Math.random().toString(16).slice(2, 8)}`), turn: _embedTurn });
 const embedTurn = () => ++_embedTurn;
 
-type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } };
+type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } };
 
 (function() {
 
@@ -222,6 +223,19 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const vs = await Promise.all(values);
             if (!vs.length) throw new Error("ml.schema needs at least one value — pass a JSON value, a JSON string, a fetch result, or a pointer read.");
             const label = (i: number) => vs.length === 1 ? "the argument" : `argument ${i + 1}`;
+            // A TABLE has a structure, but not a JSON one: its rows are a matrix, so a JSON shape of them
+            // says `(string | number)[][]` — true, and useless. Describe it as a FRAME instead (the same
+            // answer `fetch_url`'s `schema: true` and a pointer's `.schema()` give), so asking a CSV for its
+            // schema returns its columns and dtypes rather than the type of its text.
+            const asTable = (v: unknown): import("./contract").TableLike | undefined =>
+                (v && typeof v === "object" ? (v as { table?: import("./contract").TableLike }).table : undefined);
+            if (vs.some(asTable)) {
+                return vs.map((v, i) => {
+                    const t = asTable(v);
+                    const prefix = vs.length === 1 ? "" : `${label(i)}: `;
+                    return prefix + (t ? tableShape(t) : jsonShape(jsonValue(v, label(i))));
+                }).join("\n\n");
+            }
             return joinShapes(vs.map((v, i) => jsonValue(v, label(i))));
         },
         /**
@@ -1733,11 +1747,23 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 description: "GET a URL's content via the extension — bypasses CORS, and by default sends NO cookies. Use it to " +
                     "READ a raw file, a JSON API, or another site WITHOUT navigating there (also works on pages " +
                     "that block the extension, e.g. raw.githubusercontent.com). The result reports the body plus a " +
-                    "best-effort TYPE (json/csv/html/xml/markdown/code/text) so you can chain — JSON comes " +
-                    "pre-parsed, hand a CSV to python_exec, a code file names its language. The type is a HEURISTIC " +
+                    "best-effort TYPE (json/csv/parquet/html/xml/markdown/code/text) so you can chain — JSON comes " +
+                    "pre-parsed, a code file names its language. The type is a HEURISTIC " +
                     "(resolved from the Content-Type header, a content sniff, and the URL extension — a server can " +
                     "mislabel), not authoritative. GET only (no headers/body/auth). Each NEW url is approved once by " +
                     "the user, then remembered for the session. Prefer this over `navigate` when you only need to READ a URL. " +
+                    "**TABLES (csv/tsv/parquet) come back PARSED, as a pandas-shaped object** — you do not need to split " +
+                    "the text, and you must not guess the separator: it is discovered (`,` `\\t` `;` `|`), quoted fields and " +
+                    "embedded newlines are handled, and numeric columns are cast. You get a `df.head()`: the header, the " +
+                    "first 5 rows, then `[N rows x M columns]` and `dtypes: <col> <dtype>, …` — pandas' own names " +
+                    "(`int64`, `float64`, `bool`, `object`), with the same rules, so a whole-number column holding one " +
+                    "blank is `float64` (NaN forces the float) and a Parquet file's dtypes are READ from its schema " +
+                    "rather than inferred. The row count is the FILE\'s, not the preview\'s — 5 rows shown out of " +
+                    "`[50,000 rows x 4 columns]` means there are 50,000. To work on ALL of them, pass the SAME URL to " +
+                    "python_exec\'s `tables` (e.g. `tables: { df: \"<the url>\" }`): it loads the already-parsed table " +
+                    "from the cache as a real DataFrame — no second request, and never `read_csv` (the sandbox has no " +
+                    "network). `schema: true` on a table returns just its shape + dtypes. Set `pipe` instead if you want " +
+                    "to scan the RAW text yourself — that skips the parsed preview and gives you the lines your scan selected. " +
                     "Set `schema: true` when you KNOW it returns JSON and only need the STRUCTURE — you get a compact " +
                     "TS-like shape (`{ id: number, items: { name: string }[] }`) instead of the whole payload (and a " +
                     "clear error, saying what it actually was, if it isn't JSON). " +
@@ -1784,6 +1810,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. Renders in INCOGNITO (no session/cookies): same-origin is FREE, cross-origin asks once then remembered (needs 'Allow in Incognito'). Add credentials:true to render in the user's SESSION (a normal tab with cookies) — always re-asks. Slower/heavier; never cached." },
                         ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
                         format: { type: "string", enum: ["markdown", "html"], description: "What DOCUMENT to fetch. \"markdown\" (default) negotiates for the site's own Markdown version of the page and falls back to converting its HTML. \"html\" returns the ORIGINAL markup in one plain request, no negotiation — for when you need the markup itself (a selector, an attribute, an embedded script). Data bodies (JSON/CSV/code) are unaffected either way." },
+                        header: { type: "boolean", description: "For a CSV/TSV only. Whether the first row is a HEADER. Detected automatically (a row of text over columns of numbers is a header), so pass this only to CORRECT it: `false` when the file starts straight into data and the columns came back named after the first record, `true` when a real header was mistaken for data. With no header the columns are numbered by position, exactly as read_csv(header=None)." },
                         pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). " + PIPE_REF + " For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
                     },
                     required: ["url"],
@@ -1798,7 +1825,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     const pipe = (typeof a?.pipe === "string" && a.pipe.trim()) ? a.pipe.trim() : undefined;
                     return { type: "action", verb: "fetch", target: String(a?.url ?? ""), ...(note ? { note } : {}), ...(ask ? { ask } : {}), ...(pipe ? { pipe } : {}) };
                 },
-                run: async ({ url, schema = false, credentials = false, rendered = false, ask = null, format = "markdown", pipe = null }: { url?: unknown; schema?: boolean; credentials?: boolean; rendered?: boolean; ask?: unknown; format?: unknown; pipe?: unknown } = {}, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
+                run: async ({ url, schema = false, credentials = false, rendered = false, ask = null, format = "markdown", pipe = null, header = undefined }: { url?: unknown; schema?: boolean; credentials?: boolean; rendered?: boolean; ask?: unknown; format?: unknown; pipe?: unknown; header?: boolean } = {}, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
                     if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
                     let r: import("./contract").FetchResult;
                     const wantHtml = format === "html";
@@ -1901,6 +1928,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         });
                         return { content, renderIn };
                     }
+                    // `schema: true` on a TABLE means the same thing it means for JSON — the structure without
+                    // the payload — so it answers with the frame rather than erroring "isn't JSON". For a CSV
+                    // the structure IS the columns and their dtypes.
+                    if (schema && r.table) {
+                        const t = r.table;
+                        return { content: `${head}\n\n${tableShape(t)}`, renderIn: inRender() };
+                    }
                     // `schema: true` — the caller wants the JSON's STRUCTURE, not the body.
                     if (schema) {
                         if (r.json === undefined) {
@@ -1917,6 +1951,27 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     // model uses to filter a big doc to the relevant lines BEFORE the clip). For a LARGE json, prepend
                     // the shape so the structure survives the clip — but only when NOT piped (a piped body is already
                     // a filtered view) and the shape is actually SMALLER than the payload.
+                    // An explicit `header` re-parses the body for THIS call only. The cached result keeps the
+                    // auto-detected table: an override is one caller's correction, not a fact about the file,
+                    // and rewriting the cache would hand the next reader a table it never asked for.
+                    if (typeof header === "boolean" && r.table && r.type === "csv") {
+                        try { r = { ...r, table: tableFromDelimited(r.text, { header }) }; } catch { /* keep the detected one */ }
+                    }
+                    // A TABLE the parser understood, and the model did not ask for its own scan of the raw text:
+                    // show a `df.head()` rather than 4000 characters of rows. The clip is the reason — on a
+                    // 48,000-row CSV it leaves the first sixty rows and hides that there are 48,000, so the model
+                    // cannot tell whether an answer covers the file. A head plus `shape` plus `dtypes` is COMPLETE
+                    // information about the table, at a fraction of the tokens. `pipe` opts out, as asked: a model
+                    // that wrote a scan wants the lines its scan selected, not our summary of the whole.
+                    if (r.table && !pipeStr) {
+                        const t = r.table;
+                        const content = `${head}${mdNote}\n\n${tablePreview(t, { source: JSON.stringify(r.url) })}`;
+                        // The rendered Out is the table itself — which also mints a `table` POINTER (the loop reads
+                        // the descriptor's kind), so a later step can `dereference … | keys` for the columns. Capped:
+                        // this descriptor rides the debug stream and the JSON export, and a whole CSV does not belong
+                        // in either. python_exec gets the FULL table from the fetch cache, by URL.
+                        return { content, render: { type: "table", columns: t.columns, rows: t.rows.slice(0, RENDER_TABLE_ROWS), rowCount: t.shape[0], dtypes: t.dtypes, ...(t.delimiter ? { delimiter: t.delimiter } : {}), ...(t.headerless ? { headerless: true } : {}), ...(t.rows.length > RENDER_TABLE_ROWS ? { truncated: true } : {}) }, renderIn: inRender() };
+                    }
                     const pd = doPipe(bodyText());
                     if (pd.err) return pd.err;
                     const body = pd.text;
@@ -2060,8 +2115,8 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 { code, image: img, hardened: mode !== "full", stream: !!onStdout, tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: typeof specs[i].src === "string" ? specs[i].src as string : null })) },
                 undefined, null,
                 // LIVE stdout (opt-in): each PYTHON_STREAM chunk for this run → onStdout (the tool's ctx.stream).
-                onStdout ? { type: "PYTHON_STREAM", onProgress: (d) => onStdout(String((d as { chunk?: string }).chunk ?? ""), (d as { ts?: number }).ts) } : undefined) as { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
-            const extra: { inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } } = {};
+                onStdout ? { type: "PYTHON_STREAM", onProgress: (d) => onStdout(String((d as { chunk?: string }).chunk ?? ""), (d as { ts?: number }).ts) } : undefined) as { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | boolean | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
+            const extra: { inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | boolean | null)[][] } } = {};
             if (img) extra.inputImage = img;
             if (imageBox) extra.imageBox = imageBox;   // for cast:'pt'/'box' → project image px → viewport
             if (r.table) extra.resultTable = r.table;   // a returned DataFrame → the UI renders a real table
@@ -2079,6 +2134,21 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          */
         _loadTable: async function(name: string, src: string | Element, raw = false): Promise<LoadedTable> {
             const isCurrent = src === "current";
+            // A URL THE RUN ALREADY FETCHED. `fetch_url` parses a CSV into a TableLike and the fetch cache holds
+            // it, so naming that URL here loads the WHOLE table as a DataFrame with no second request, no
+            // re-parse, and no `read_csv` in the sandbox (which has no network anyway). The cache is the gate:
+            // a URL that was never fetched is refused rather than fetched, so this cannot become an egress that
+            // skips the approval `fetch_url` went through.
+            if (typeof src === "string" && /^https?:\/\//i.test(src) && !googleSheetCsvUrl(src)) {
+                const cached = mlFetchCache.get(src);
+                if (cached?.table) {
+                    const t = cached.table;
+                    return { name, source: { kind: "fetch", label: cached.url }, data: { kind: "rows", columns: t.columns, rows: t.rows } };
+                }
+                throw new Error(cached
+                    ? `pythonExec tables — "${src}" was fetched but isn't a table (type: ${cached.type}). Only a CSV/TSV parses into a DataFrame this way.`
+                    : `pythonExec tables — "${src}" hasn't been fetched in this run. Call fetch_url on it first; its parsed table is then loaded from the cache.`);
+            }
             if (isCurrent || (typeof src === "string" && googleSheetCsvUrl(src))) {
                 const target = isCurrent ? (typeof location !== "undefined" ? location.href : "") : String(src);
                 const csvUrl = googleSheetCsvUrl(target);
@@ -2098,11 +2168,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     throw new Error(`pythonExec — "${String(src)}" isn't a Google Sheets URL.`);
                 }
                 const { csv, name: sheetName } = await makeBackgroundTaskPromise<{ csv: string; name: string | null }>("FETCH_SHEET_REQUEST", "FETCH_SHEET_RESPONSE", { url: csvUrl });
-                const all = parseCsv(csv), columns = all[0] || [], dataRows = all.slice(1);
+                // The Sheets export is ALWAYS comma-separated, so it is named rather than discovered: a sheet
+                // whose first row holds no comma (one column, or a title cell) would otherwise be guessed at.
+                const sheet = tableFromDelimited(csv, { delimiter: ",", raw });
                 const source: TableSource = isCurrent
                     ? { kind: "sheet-current", label: (typeof document !== "undefined" && document.title) ? document.title : "current sheet" }
                     : { kind: "sheet-external", label: googleSheetId(String(src)) || String(src), name: sheetName };   // label = id (for the link), name = the real title (chip)
-                return { name, source, data: { kind: "rows", columns, rows: raw ? dataRows : castTableColumns(columns, dataRows) } };
+                return { name, source, data: { kind: "rows", columns: sheet.columns, rows: sheet.rows } };
             }
             const data = this._resolveTable(src, raw);
             return { name, source: { kind: "dom", label: typeof src === "string" ? src : elPath(src) }, data };
@@ -2113,7 +2185,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * columns cast page-side so pandas infers numbers, unless `raw`), else `{ kind:"html",
          * html }` (the element's outerHTML) for `pd.read_html`. Page-side.
          */
-        _resolveTable: function(target: string | Element, raw = false): { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } {
+        _resolveTable: function(target: string | Element, raw = false): { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } {
             let el: Element | undefined;
             if (typeof target === "string") {
                 try { el = queryAll(target)[0]; }
@@ -2680,6 +2752,23 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     // the cost is negligible and the cached copy carries it. `.text` still holds the raw HTML.
                     if (r && r.type === "html" && typeof r.text === "string" && r.markdown === undefined) {
                         try { r.markdown = htmlToMarkdown(r.text); } catch { /* leave undefined — callers fall back to .text */ }
+                    }
+                    // Same move for a CSV/TSV body: attach the PARSED table, with its separator discovered and
+                    // numeric columns cast, so no caller has to re-split the text (and get the separator wrong —
+                    // the reason this exists is that they did). Page-side for the same reason as `.markdown`: the
+                    // text has already crossed the message channel, so parsing here adds nothing to the wire.
+                    if (r && r.type === "csv" && typeof r.text === "string" && r.table === undefined) {
+                        try {
+                            r.table = tableFromDelimited(r.text);
+                            // A body clipped at the size cap ends mid-row, so that row is a fragment rather than
+                            // data. Drop it and say the table is a prefix — silently keeping it would put a
+                            // half-parsed record into a DataFrame.
+                            if (r.truncated && r.table.rows.length) {
+                                r.table.rows.pop();
+                                r.table.shape = [r.table.rows.length, r.table.columns.length];
+                                r.table.truncated = true;
+                            }
+                        } catch { /* leave undefined — callers fall back to .text */ }
                     }
                     // Cache ONLY a successful UNCREDENTIALED, non-rendered fetch (as-you bytes are authenticated —
                     // never cache). Keyed by url ALONE, so only the DEFAULT format is cached: `format:"html"`

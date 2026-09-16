@@ -8,6 +8,7 @@
 // Type-only (erased): the curated answer-set class, referenced by ToolContext.answer. answer-set.ts
 // imports AnswerMedia back from here — a type-only cycle, which is fine.
 import type { AnswerSet } from "./answer-set";
+
 // Type-only: the unit-vector wrapper `ml.embed` resolves to. embedding.ts imports nothing, so no cycle.
 import type { Embedding } from "./embedding";
 
@@ -233,8 +234,10 @@ export interface DerefMeta {
     step: number;
     /** The model's own short name for it, when it gave one. A claim, not a fact. */
     label?: string;
-    /** The structural value, when the step produced a grid — no need to reparse a rendered table. */
-    table?: { columns: string[]; rows: unknown[][] };
+    /** The structural value, when the step produced a grid — no need to reparse a rendered table. A full
+     *  {@link TableLike}, so a dereferenced table describes itself exactly as a fetched one does: `shape`,
+     *  `columns`, `dtypes`, `rows`. The read-only dialect can traverse it as plain data. */
+    table?: TableLike;
     /** A `data:image/…;base64,…` URL when the step produced an image. */
     image?: string;
     latex?: string;
@@ -264,12 +267,13 @@ export interface DerefValue extends String {
     readonly label?: string;
     /** The parsed body when the text is JSON, else undefined. Parsed once, lazily. */
     readonly json?: unknown;
-    readonly table?: { columns: string[]; rows: unknown[][] };
+    readonly table?: TableLike;
     readonly image?: string;
     readonly latex?: string;
     /** Reduce it further through the text-pipe dialect, resolving to a new value. */
     pipe(stages: string | string[]): Promise<DerefValue>;
-    /** The TS-like shape of it, when it is JSON (see `ml.schema`). Throws on non-JSON. */
+    /** The TS-like shape of it: for a TABLE its `shape` + `dtypes` (the frame without the rows), else the
+     *  JSON shape (see `ml.schema`). Throws only on a body that is neither. */
     schema(): string;
 }
 
@@ -490,7 +494,66 @@ export interface FetchNegotiation {
 /** The result of `ml.fetch(url)`. Content type is resolved BOTH ways so a mislabel is visible: `type` is the
  *  final pick (header when specific, else the content sniff), `typeByHeader`/`typeByContent` are the raw
  *  signals. `json` is pre-parsed when `type === "json"`. `text` is the raw body (size-capped → `truncated`). */
-export type ContentKind = "json" | "csv" | "html" | "xml" | "markdown" | "code" | "text";
+/** A cell after casting: a number for a numeric column, null for a blank (pandas NaN), a real boolean where
+ *  the SOURCE declared one (Parquet does; CSV has no types to declare), else the raw string. */
+export type TableCell = string | number | boolean | null;
+
+/** The pandas dtype a column will have once these rows reach a DataFrame. Deliberately pandas' OWN names
+ *  rather than ours: the audience is a model that has read a great deal of pandas and none of this codebase,
+ *  and `int64` needs no explanation where `"integer"` would invite the question of what we mean by it. */
+export type TableDtype = "int64" | "float64" | "bool" | "object";
+
+/** A parsed table, however it was produced (CSV/TSV text, a DOM table, later Parquet). The shape
+ *  `python_exec` loads as a DataFrame, and the shape the fetch preview renders — so a table crosses from
+ *  a fetch to pandas without being re-serialized to text and re-parsed on the other side.
+ *
+ *  **It is deliberately a pandas DataFrame's surface**: `shape`, `columns` and `dtypes` mean exactly what
+ *  they mean in pandas, down to `shape` being `[rows, columns]` and an all-integer column with one blank
+ *  being `float64` (a NaN forces the float, as it does in `read_csv`). A model that has never seen this type
+ *  can therefore guess it correctly instead of learning it, and the preview it is shown is pandas' own repr.
+ *  The one difference is that `rows` is positional data rather than an index — there is no row index here.
+ *
+ *  WHERE ONE COMES FROM, and what to do with it:
+ *
+ *      const r = await ml.fetch(url);          // a .csv/.tsv/.parquet URL
+ *      r.table.shape                           // [48231, 5] — the FILE's rows, not a preview's
+ *      r.table.dtypes.price                    // "float64"
+ *      const i = r.table.columns.indexOf("qty");
+ *      r.table.rows.filter(row => row[i] > 5)  // plain arrays: filter/map/reduce as usual
+ *
+ *  A pointer to a table resolves to the same object — `@tool:abc1234.table` inside `exec` (pre-resolved, so
+ *  no `await` is needed for a literal reference) — and both are readable from the read-only `exec` dialect,
+ *  which auto-approves. The table is READ-ONLY there: it belongs to the run's captured output, so mutating
+ *  it is refused; copy it (`rows.slice()`) if you need to build on it.
+ *
+ *  For real analysis, hand the URL to `python_exec`'s `tables` (`tables: { df: "<the url>" }`): the parsed
+ *  table loads from the fetch cache as an actual pandas DataFrame, with no second request and no `read_csv`. */
+export interface TableLike {
+    /** Header labels, de-duplicated the way pandas does it (`a`, `a.1`) and with blanks named `Unnamed: N`,
+     *  so every label is usable as a key. Empty (not absent) when the source had no header row. */
+    columns: string[];
+    /** `[rows, columns]`, as `df.shape`. The row count is the SOURCE's — larger than `rows.length` when
+     *  {@link truncated}, so a preview can say what it is a preview OF. A model told "10 of 48,231 rows"
+     *  reasons differently from one handed 10 rows and no count. */
+    shape: [number, number];
+    /** Column name → the dtype pandas will infer, as `df.dtypes`. Describes what a consumer WILL get from
+     *  these rows, not a guess about the file: the cast below is what makes it true. */
+    dtypes: Record<string, TableDtype>;
+    /** Data rows, header excluded. Ragged rows are padded to the header width so a consumer can index safely. */
+    rows: TableCell[][];
+    /** What the fields were separated by, for a delimited source ("," "\t" ";" "|"). Absent for a DOM table.
+     *  Worth surfacing: it is the discovered value, and a wrong guess is the failure a reader should be able
+     *  to see rather than infer from mangled columns. */
+    delimiter?: string;
+    /** `rows` was capped at {@link MAX_TABLE_ROWS} — the table is a prefix of the source, not the whole of it. */
+    truncated?: boolean;
+    /** The source had NO header row, so `columns` are positional (`0`, `1`, `2`) — `read_csv(header=None)`.
+     *  Recorded rather than left implicit: a reader who sees numeric column names should be able to tell that
+     *  it was DECIDED, not that the header was lost. */
+    headerless?: boolean;
+}
+
+export type ContentKind = "json" | "csv" | "parquet" | "html" | "xml" | "markdown" | "code" | "text";
 export interface FetchResult {
     url: string;              // the response URL (after any redirects)
     status: number;           // HTTP status code
@@ -507,6 +570,12 @@ export interface FetchResult {
     json?: unknown;           // parsed JSON when type === "json" and it parsed
     schema?: string;          // a compact TS-like SHAPE of `json` (see dom.ts jsonShape) — the structure to
                               // write code against without the whole payload; present iff `json` is set
+    /** For type === "csv": the body PARSED, with the delimiter discovered (`,` `\t` `;` `|`) and numeric
+     *  columns cast — a pandas-shaped {@link TableLike} (`shape`, `columns`, `dtypes`, `rows`). The CSV
+     *  counterpart of `json`/`schema`, and for the same reason: a caller that has to re-split the text is one
+     *  that will get the separator wrong. Attached page-side by `ml.fetch` (like `markdown`), so the rows
+     *  never cross the message channel — `.text` still holds the raw body. */
+    table?: TableLike;
     truncated?: boolean;      // the body was clipped to the size cap
     redirected?: boolean;     // the request followed ≥1 redirect (`url` above is the FINAL landing URL — the
                               // intermediate chain isn't visible to fetch; a redirect log needs chrome.webRequest)
@@ -970,11 +1039,12 @@ export interface LocateSubstep {
 /** Where a `python_exec` DataFrame came from — for the debug render's source label + tooltip.
  *  `dom` = a table on the current page (label = the selector); `sheet-current` = the Google Sheet
  *  you're on (label = its page title); `sheet-external` = a Google Sheet fetched by URL with the
- *  user's approval (label = its spreadsheet id). */
-export interface TableSource { kind: "dom" | "sheet-current" | "sheet-external"; label: string; name?: string | null; }
+ *  user's approval (label = its spreadsheet id); `fetch` = a CSV/table already fetched by `fetch_url`
+ *  and read back out of the fetch cache (label = its URL), so no second request was made. */
+export interface TableSource { kind: "dom" | "sheet-current" | "sheet-external" | "fetch"; label: string; name?: string | null; }
 /** One loaded DataFrame for the `python-in` render: its variable name, its source, and either a
  *  rows preview (`columns`+`rows`) or `html: true` (loaded via `pd.read_html`, no clean preview). */
-export interface TablePreview { name: string; source: TableSource; columns?: string[]; rows?: (string | number | null)[][]; html?: boolean; }
+export interface TablePreview { name: string; source: TableSource; columns?: string[]; rows?: (string | number | boolean | null)[][]; html?: boolean; }
 
 /** @unstable INTERNAL, and reachable from the published JSON export — a new variant/member may
  *  appear in any release, so the generated `docs/spec/export.schema.json` marks it open rather
@@ -986,7 +1056,15 @@ export type RenderDescriptor = (
     // not conclude the log is lying to them. `marks`: byte ranges in `text` a renderer may highlight, each
     // with the original it replaced (hover fodder).
     | { type: "code"; text: string; lang?: string; format?: boolean; note?: string; marks?: { start: number; end: number; from: string }[]; revision?: CodeRevision }
-    | { type: "table"; columns: string[]; rows: (string | number)[][] }
+    // `null` is a real cell: a numeric column's blanks become null (pandas NaN) when a table is cast, and
+    // RenderTable has always drawn them as empty — this type was simply narrower than both.
+    // `rowCount` is the SOURCE's row count when `rows` is only a PREFIX of it (a fetched CSV caps what it
+    // ships to the UI and the export). Without it a pointer to a 50,000-row table reports the 200 rows that
+    // happened to be drawn — a plausible wrong number, and the one a model would answer with.
+    // `dtypes`/`delimiter`/`headerless` let the VIEW say what the model is already told: what each column is,
+    // how the body was split (a guess, so a wrong one should be visible rather than inferred from mangled
+    // columns), and whether the column names were decided rather than read.
+    | { type: "table"; columns: string[]; rows: (string | number | boolean | null)[][]; rowCount?: number; truncated?: boolean; dtypes?: Record<string, string>; delimiter?: string; headerless?: boolean }
     | { type: "keyval"; pairs: [string, string][] }
     | { type: "elements"; items: { path: string; text?: string; index?: number }[] }
     // `locate`'s debug view as an ordered list of SUBSTEPS — each is one vision
@@ -1270,7 +1348,7 @@ export interface AgentResult {
 
 /** Structured data for one tool output surfaced in an agent's answer — the headless-scripting payload. */
 export type AgentOutput = { id: string; tool: string } & (
-    | { kind: "table"; columns: string[]; rows: (string | number | null)[][] }   // a DataFrame / DOM table → a 2D matrix + its header
+    | { kind: "table"; columns: string[]; rows: (string | number | boolean | null)[][] }   // a DataFrame / DOM table → a 2D matrix + its header
     | { kind: "value"; value: unknown }        // a scalar / a python dict-or-list (PARSED to the real JS object when it was JSON)
     | { kind: "image"; dataUrl: string }       // a screenshot / returned image, as a data: URL
     | { kind: "code"; text: string; lang?: string }             // the executed source (a `:in` citation)
@@ -2402,8 +2480,8 @@ export interface MlApi {
     _imageToDataUrl(image: string | HTMLImageElement): Promise<string>;
     _fetchImageBase64(url: string): Promise<string>;
     _stitchFullPage(capture: () => Promise<string>): Promise<string>;
-    _resolveTable(target: string | Element, raw?: boolean): { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string };
-    _loadTable(name: string, src: string | Element, raw?: boolean): Promise<{ name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } }>;
+    _resolveTable(target: string | Element, raw?: boolean): { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string };
+    _loadTable(name: string, src: string | Element, raw?: boolean): Promise<{ name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } }>;
     _resolveVisionModel(agentModel: string | null, vision: boolean | string | null): Promise<string | null>;
     _modelSees(model: string | null): Promise<boolean>;
     _nativeLookTool(memory?: VisionMemory): MlTool;
