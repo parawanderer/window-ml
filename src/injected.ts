@@ -1874,7 +1874,9 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     const by = r.negotiation?.resolvedBy;
                     const mdNote = converted
                         ? "\n\n(This page was HTML; the tool converted it to Markdown itself for readability — nav/header/footer stripped. Re-run with \"format\": \"html\" for the original markup.)"
-                        : (by === "accept" || by === "declared" || by === "sibling")
+                        // A rung that RESOLVED is not a rung that found Markdown: a non-HTML first response (a JSON
+                        // API, an unrecognised body) also stops the ladder as `accept`. Only a hit is the site's own.
+                        : (by === "declared" || by === "sibling" || (by === "accept" && r.negotiation?.attempts?.find((a) => a.strategy === "accept")?.outcome === "hit"))
                         ? `\n\n(This is the SITE'S OWN Markdown version of the page${by === "declared" ? ", the one it declares for agents" : by === "sibling" ? ", from its .md URL" : ", served by content negotiation"} — authored text, not our conversion of the HTML. Re-run with "format": "html" for the original markup.)`
                         : "";
                     // The body to read/return: converted Markdown for HTML (unless raw), else the JSON/raw text.

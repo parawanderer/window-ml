@@ -238,3 +238,29 @@ test("a twin served with NO content-type is judged by its content", async () => 
     const r2 = await fetchUrlContent("https://noct2.test/guide");
     assert.equal(by(r2), "convert", "a missing header is not a licence to accept tag soup");
 });
+
+// A BINARY body stops at the first rung and is DESCRIBED, never decoded: it used to reach the model as UTF-8 mojibake
+// under a note calling it "the site's own Markdown".
+const bin = (contentType, bytes) => (url) => ({
+    ok: true, status: 200, url, redirected: false, headers: new Headers({ "content-type": contentType }),
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+});
+test("a binary body is typed `binary`, named by its magic, and never negotiated or decoded", async () => {
+    const arrow = new Uint8Array([0x41, 0x52, 0x52, 0x4f, 0x57, 0x31, 0, 0, 0xff, 0xff, 0xff, 0xff, 0x28, 0, 0, 0]);
+    const calls = net({ "https://b1.test/stock.arrow": bin("application/vnd.apache.arrow.file", arrow) });
+    const r = await fetchUrlContent("https://b1.test/stock.arrow");
+    assert.equal(r.type, "binary");
+    assert.match(r.text, /^\(binary data, not text: an Arrow IPC file, served as application\/vnd\.apache\.arrow\.file, 16 bytes\. Not shown\./);
+    assert.doesNotMatch(r.text, /ARROW1/, "no bytes in the text");
+    assert.equal(r.negotiation, undefined, "no ladder, so no claim about whose Markdown this is");
+    assert.equal(calls.length, 1);
+    assert.doesNotMatch(r.text, /  /, "model-facing text carries no double spaces");
+});
+
+test("an unrecognised binary served as octet-stream is described too, not decoded after the Parquet check misses", async () => {
+    const blob = new Uint8Array([0x01, 0x02, 0, 0x03, 0x04, 0, 0, 0x05]);
+    net({ "https://b2.test/export.bin": bin("application/octet-stream", blob) });
+    const r = await fetchUrlContent("https://b2.test/export.bin");
+    assert.equal(r.type, "binary");
+    assert.match(r.text, /unrecognised binary data, served as application\/octet-stream, 8 bytes/);
+});

@@ -9,7 +9,7 @@ import type { FetchResult, FetchFormat, FetchAttempt } from "./contract";
 import { acceptLanguageFrom } from "./contract";
 import { classifyContent, jsonShape, markdownAlternateHref, resolveMarkdownAlternate, markdownSiblingUrl, isMarkdownResponse, typeFromExtension, typeFromHeader } from "./dom";
 import { looksParquet, tableFromParquet } from "./table-data";
-import { readCapped, decodeCapped } from "./body-read";
+import { readCapped, decodeCapped, binaryKind } from "./body-read";
 import { ensureDebuggerAttached, releaseDebugger } from "./sw-cdp";
 import { incognitoEnableSteps } from "./util";
 
@@ -123,7 +123,7 @@ const FETCH_BINARY_MAX = 64_000_000;
  *  A response that might be a binary table is read as bytes and, if the magic says it is not one after all,
  *  decoded to text here — so a mislabelled body costs a decode rather than being corrupted by a text read before
  *  anything can look at it. */
-async function rawGet(url: string, credentials: boolean, accept?: string): Promise<{ res: Response; text: string; bytes?: ArrayBuffer; truncated: boolean; parquetTooLarge?: number; ms: number }> {
+async function rawGet(url: string, credentials: boolean, accept?: string): Promise<{ res: Response; text: string; bytes?: ArrayBuffer; truncated: boolean; parquetTooLarge?: number; binary?: { kind: string; size: number }; ms: number }> {
     const t0 = Date.now();
     const res = await fetch(url, { method: "GET", credentials: credentials ? "include" : "omit", redirect: "follow", headers: browserFetchHeaders(accept) });
     if (maybeBinaryTable(res.headers?.get?.("content-type") || "", res.url || url)) {
@@ -138,9 +138,15 @@ async function rawGet(url: string, credentials: boolean, accept?: string): Promi
             if (looksParquet(buf)) return { res, text: "", bytes: buf, truncated: false, ms: Date.now() - t0 };
         }
         const cut = truncated || bytes.length > FETCH_URL_MAX;
+        const kind = binaryKind(bytes);
+        if (kind) return { res, text: "", truncated, binary: { kind, size: bytes.length }, ms: Date.now() - t0 };
         return { res, text: decodeCapped(bytes.length > FETCH_URL_MAX ? bytes.subarray(0, FETCH_URL_MAX) : bytes, cut), truncated: cut, ms: Date.now() - t0 };
     }
     const { bytes, truncated } = await readCapped(res, FETCH_URL_MAX);
+    // Checked on the BYTES, before any decode: a body nobody recognised was decoded as UTF-8 and reached the model
+    // as control characters and replacement glyphs, labelled as text.
+    const kind = binaryKind(bytes);
+    if (kind) return { res, text: "", truncated, binary: { kind, size: bytes.length }, ms: Date.now() - t0 };
     return { res, text: decodeCapped(bytes, truncated), truncated, ms: Date.now() - t0 };
 }
 
@@ -161,6 +167,22 @@ function buildResult(requested: string, r: { res: Response; text: string; trunca
         try { out.json = JSON.parse(r.text); out.schema = jsonShape(out.json); } catch { /* mislabelled → leave as text */ }
     }
     return out;
+}
+
+/** A BINARY body that is not a table we decode. Its `text` DESCRIBES it, as a Parquet result's does, because
+ *  every reader of `.text` expects something printable — and the answer to "what did this URL return" is the
+ *  format and size, not its bytes. No negotiation note, no preview: there is nothing to read. */
+function binaryResult(requested: string, r: { res: Response; truncated: boolean; binary: { kind: string; size: number } }): FetchResult {
+    const contentType = r.res.headers?.get?.("content-type") || "";
+    const size = `${r.binary.size.toLocaleString("en-US")}${r.truncated ? "+" : ""} bytes`;
+    return {
+        url: r.res.url || requested, status: r.res.status, ok: r.res.ok, type: "binary",
+        typeByHeader: typeFromHeader(contentType), typeByContent: "binary", typeByExtension: typeFromExtension(r.res.url || requested),
+        contentType,
+        text: `(binary data, not text: ${r.binary.kind}${contentType ? `, served as ${contentType.split(";")[0].trim()}` : ""}, ${size}. Not shown. fetch_url reads text, HTML, JSON, XML, CSV/TSV and Parquet.)`,
+        truncated: r.truncated || undefined, redirected: r.res.redirected || undefined,
+        headers: safeResponseHeaders(r.res.headers),
+    };
 }
 
 /** A Parquet body past the binary cap. Reported, not decoded: its footer is at the end, so the part that was
@@ -224,6 +246,7 @@ export async function fetchUrlContent(url: string, credentials = false, format: 
     // wants the table, and a TableLike crosses the message channel far more cheaply than the file does.
     if (first.bytes) return await parquetResult(url, first as { res: Response; bytes: ArrayBuffer });
     if (first.parquetTooLarge) return parquetTooLargeResult(url, first.res, first.parquetTooLarge);
+    if (first.binary) return binaryResult(url, first as typeof first & { binary: { kind: string; size: number } });
     if (!negotiating) return buildResult(url, first);
 
     const attempts: FetchAttempt[] = [];

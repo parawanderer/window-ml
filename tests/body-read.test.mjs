@@ -4,7 +4,7 @@
 // merely short would pass against the broken version too.
 import test from "node:test";
 import assert from "node:assert";
-import { readCapped, decodeCapped } from "../src/body-read.ts";
+import { readCapped, decodeCapped, binaryKind } from "../src/body-read.ts";
 
 /** A Response whose body is produced on demand, one chunk per pull, recording how many chunks were asked for. */
 function countingResponse(chunkBytes, totalChunks) {
@@ -65,4 +65,27 @@ test("a response with no stream falls back to what it does offer, capped afterwa
     const empty = await readCapped(new Response(null, { status: 204 }), 100);
     assert.equal(empty.bytes.length, 0);
     assert.equal(empty.truncated, false);
+});
+
+// A body nobody recognised used to be decoded as UTF-8 and handed to the model byte for byte.
+const bytesOf = (...parts) => new Uint8Array(parts.flatMap((p) => (typeof p === "string" ? [...new TextEncoder().encode(p)] : p)));
+
+test("binaryKind: a NUL in the head is binary, and a known format is NAMED", () => {
+    assert.equal(binaryKind(bytesOf("ARROW1", [0, 0, 0xff, 0xff])), "an Arrow IPC file");
+    assert.equal(binaryKind(bytesOf([0x50, 0x4b, 0x03, 0x04, 0x14, 0, 0])), "a ZIP archive (also .xlsx/.docx/.jar)");
+    assert.equal(binaryKind(bytesOf([0x89], "PNG\r\n", [0x1a, 0x0a, 0, 0, 0])), "a PNG image");
+    assert.equal(binaryKind(bytesOf("RIFF", [0x10, 0, 0, 0], "WEBPVP8 ")), "a WebP image");
+    assert.equal(binaryKind(bytesOf([0xff, 0xff, 0xff, 0xff, 0x50, 1, 0, 0])), "unrecognised binary data", "an Arrow STREAM has no magic");
+});
+
+test("binaryKind: text is null — including UTF-16 with its NULs, and a NUL too late to be the header's", () => {
+    assert.equal(binaryKind(bytesOf("id,name\n1,Ada\n")), null);
+    assert.equal(binaryKind(bytesOf("# Title\n\nprose, ünïcödé ✓")), null);
+    assert.equal(binaryKind(bytesOf([0xff, 0xfe], "h", [0], "i", [0])), null, "UTF-16 LE with a BOM is text");
+    assert.equal(binaryKind(bytesOf("x".repeat(9000), [0])), null, "only the first 8,000 bytes are sniffed");
+    assert.equal(binaryKind(new Uint8Array(0)), null);
+});
+
+test("binaryKind: a PDF is binary even though its header is ASCII", () => {
+    assert.equal(binaryKind(bytesOf("%PDF-1.7\n%\u00e2\u00e3\n1 0 obj")), "a PDF document");
 });

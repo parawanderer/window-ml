@@ -18,6 +18,17 @@ const jsonResult = (json, extra = {}) => ({
     contentType: "application/json", ...extra,
 });
 
+// The "site's own Markdown" note belongs to a Markdown HIT. A non-HTML first response — a JSON API — also stops
+// the ladder as `accept`, and was labelled as the site's authored Markdown.
+test("fetch_url tool: a JSON API that stopped the ladder is NOT called the site's own Markdown; a real hit is", async () => {
+    const attempts = (outcome) => [{ strategy: "accept", url: "https://x.test/api", outcome }];
+    const api = body(await fetchTool(jsonResult({ a: 1 }, { url: "https://x.test/api", negotiation: { wanted: "markdown", attempts: attempts("not-markdown"), resolvedBy: "accept" } })).run({ url: "https://x.test/api" }));
+    assert.doesNotMatch(api, /SITE'S OWN Markdown/);
+    const mdHit = { url: "https://x.test/guide", status: 200, ok: true, type: "markdown", text: "# Guide", typeByHeader: "markdown", typeByContent: "markdown", typeByExtension: null, contentType: "text/markdown",
+        negotiation: { wanted: "markdown", attempts: attempts("hit"), resolvedBy: "accept" } };
+    assert.match(body(await fetchTool(mdHit).run({ url: "https://x.test/guide" })), /SITE'S OWN Markdown version of the page, served by content negotiation/);
+});
+
 // fetch_url's returns are ToolResults wherever an In render rides along (the Markdown ladder's trace); this
 // reads the model-facing text out of either shape.
 const body = (out) => (typeof out === "string" ? out : out.content);
