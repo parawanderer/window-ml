@@ -112,15 +112,65 @@ becomes a real array.
 
 **Calls.** A call runs only if one of these holds:
 
-- `obj.method(…)` with `method` in `ALLOWED_METHODS`: DOM queries and attribute reads, array, string, regex,
-  `Set`/`Map`, `Object`/`JSON`/`Math` helpers, `Promise.all`, `console`. Keyed by name across every object, so
-  nothing effectful may ever join it.
+- `obj.method(…)` where the method is allowed FOR THAT KIND of receiver (`BY_KIND`): DOM queries on an
+  element, array methods on an array, string methods on a string, `Set`/`Map` operations on those,
+  `Object`/`JSON`/`Math` statics on those namespaces, `console` on the captured console. See
+  [Scoping](#the-method-gate-is-scoped-by-receiver) — this used to be one flat list of names and the flat
+  version was the bug;
 - a method of the `ml` facade or the `ml.answer` facade, checked by identity (`obj === this.ml`), so their names
   never become callable on anything else;
 - a name in `CALLABLE_ROOTS` (`String(x)`, `Number(x)`, `parseInt`, `Array(n)`, `getComputedStyle`, …);
 - `new` on a name in `SAFE_CONSTRUCTORS` (`Set`, `Map`, `Array`, `Date`, `RegExp`, …), resolved by name so it
   cannot be rebound;
 - one of the script's own arrows, called directly or handed to a host method as a callback.
+
+### The method gate is scoped by receiver
+
+The allowlist was one flat set of NAMES, allowed on every object the dialect could reach, and that was never
+what anyone meant: `querySelector` on a string and `map` on an element were already nonsense — they were
+simply nonsense that was permitted.
+
+The cost is not tidiness. **A name harmless on one kind can be effectful on another**, and a flat list cannot
+tell them apart. `select` is the case that forced the change: on a table facade it picks columns, on an
+`<input>` it changes the page's text selection. Adding it for the first would have handed every auto-approved
+survey the second.
+
+The codebase had already invented the fix twice, ad hoc — `ANSWER_METHODS` and `ML_READONLY_METHODS` sit
+outside the flat set precisely so `x.remove()` and `x.schema()` on a page object stay out of dialect. Scoping
+generalises that, and those two become ordinary entries.
+
+Three rules make it a mechanism rather than a lookup table:
+
+- **`kindOf` defaults to DENY.** An unrecognised receiver gets no methods at all and never falls back to `"*"`.
+- **`"*"` holds only what is harmless on EVERY receiver** — which is exactly the property that failed for
+  `select` — so it stays as close to empty as the language allows (`then`, because the dialect applies a
+  callback to a non-thenable; `toString`).
+- **Kinds are decided structurally**, never by `instanceof` or a constructor name. The dialect can hold a value
+  from an iframe's realm (`ml.queryAll` pierces them), and a page can name a class anything it likes. `Set` and
+  `Map` are identified by borrowing their prototype's own `size` getter, which throws on anything that is not
+  one — a brand no shape-copying can fake.
+
+Ownership stays a SEPARATE, orthogonal gate: the kind answers "is this name meaningful here", `owned` answers
+"may I mutate THIS object". A `Set` reached off a page object is still a `Set`, and must still not be mutable.
+
+### A missing method is not a refusal
+
+Two different "no"s share this gate, and confusing them costs a person's attention.
+
+A method the receiver HAS but the dialect withholds — `input.select()`, `el.click()` — is a real capability.
+Escalating is right: approving it is a decision someone can meaningfully make.
+
+A method that DOES NOT EXIST cannot be fixed by any approval. The approved run throws the same `TypeError` a
+moment later, having spent a human interrupt on a typo. So it fails immediately, as the runtime error it is,
+and is reported to the model — which reads it and corrects itself, with nobody interrupted.
+
+That distinction only works if the CALLER honours it too: `tryReadonly` used to catch every error and fall
+through to the gate, so the evaluator's precision was thrown away one level up. `readonlyRefused` (approval.ts)
+is the single predicate both loops ask, so the page path and the background path cannot drift on the question
+of who gets interrupted.
+
+The curated facades are exempt, and must be: on `ml`, a missing name is a deliberate withholding — the real
+`window.ml` has `setModel` and `chat` — so absence there escalates rather than being reported as a typo.
 
 **Ownership: what may be changed.** The `owned` set holds the containers the script created: literals, `new`
 instances, and the fresh arrays and objects allowlisted methods return (`.map`, `.filter`, `Object.entries`,

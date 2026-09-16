@@ -607,46 +607,148 @@ const DENIED_PROPS = new Set([
 const isDomCollection = (x: any): boolean =>
     x != null && typeof x === "object" && !Array.isArray(x) && typeof x.length === "number" && typeof x.item === "function";
 
-const ALLOWED_METHODS = new Set([
-    // DOM read / query
-    "querySelector", "querySelectorAll", "getElementById", "getElementsByClassName",
-    "getElementsByTagName", "getElementsByName", "closest", "matches", "getAttribute",
-    "getAttributeNames", "hasAttribute", "contains", "getBoundingClientRect", "getRootNode",
+// WHAT MAY BE CALLED, SCOPED TO WHAT IT IS CALLED ON.
+//
+// This was one flat set of NAMES, allowed on every receiver the dialect could reach — and the flat version
+// was never what anyone meant. `querySelector` on a string and `map` on an element are already nonsense; they
+// were simply nonsense that was permitted. The cost of that is not tidiness: a name harmless on one kind can
+// be EFFECTFUL on another, and the allowlist could not tell them apart. `select` is the case that forced this
+// — on a table it picks columns, on an `<input>` it changes the page's text selection.
+//
+// The codebase had already invented the fix twice, ad hoc: `ANSWER_METHODS` and `ML_READONLY_METHODS` sit
+// outside the flat set precisely so `x.remove()` and `x.schema()` on a page object stay out of dialect. This
+// generalises that, and those two become ordinary entries.
+//
+// Rules that make it a security mechanism rather than a lookup table:
+//   · `kindOf` DEFAULTS TO DENY. An unrecognised receiver gets no methods at all and never falls back to "*".
+//   · "*" is for names that must be harmless on EVERY receiver — which is exactly the property that failed
+//     for `select`, so it stays as close to empty as the language allows.
+//   · Kinds are decided STRUCTURALLY, not by `instanceof` or a constructor name: the dialect can reach an
+//     iframe's document (`queryAll` pierces them), so a cross-realm Array is still an Array, and a page could
+//     name a class anything it likes.
+//
+// Ownership stays a SEPARATE, orthogonal gate (MUTATING_METHODS + `owned`): the kind answers "is this name
+// meaningful here", ownership answers "may I mutate THIS object". A Set reached off a page object is still a
+// Set, and must not be mutable.
+type MethodKind =
+    | "array" | "string" | "number" | "date" | "regexp" | "set" | "map" | "promise"
+    | "element" | "document" | "collection" | "style" | "console"
+    | "Math" | "JSON" | "ObjectCtor" | "ArrayCtor" | "PromiseCtor";
+
+const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
+    // Harmless on anything. `then` is here because the dialect APPLIES a callback to a non-thenable (the shape
+    // models write over auto-awaited ml reads), so its receiver can be any value; `toString` reads nothing.
+    "*": ["then", "toString"],
     // Array — readers/pure PLUS the in-place builders (push/pop/…): array mutation is already tolerated
     // (sort/reverse/fill mutate in place), and these operate on a SCRIPT-LOCAL computation array (models write
     // `(o[k] = o[k] || []).push(x)` to build accumulators). Their returns are a length/element/removed-array —
-    // plain data, never the realm.
-    "from", "isArray", "of", "map", "filter", "forEach", "reduce", "reduceRight", "find", "findIndex", "findLast", "findLastIndex",
-    "some", "every", "includes", "indexOf", "lastIndexOf", "slice", "concat", "join",
-    "flat", "flatMap", "sort", "reverse", "at", "fill", "push", "pop", "shift", "unshift", "splice",
-    // String
-    "substring", "substr", "toLowerCase", "toUpperCase", "trim", "trimStart", "trimEnd",
-    "split", "startsWith", "endsWith", "replace", "replaceAll", "padStart", "padEnd",
-    "repeat", "charAt", "charCodeAt", "codePointAt", "normalize", "localeCompare",
-    // String↔RegExp (pure matching — a regex literal is now in-dialect): the string-side readers plus the
-    // RegExp-side `test`/`exec`. All side-effect-free; `exec`/matchAll return match arrays, not the realm.
-    "match", "matchAll", "search", "test", "exec",
-    // Set / Map — reads (has/get; size is a property, read via readMember) PLUS the mutators
-    // (add/set/delete/clear). Like the array in-place builders, the mutators only run on a container the
-    // SCRIPT created (MUTATING_METHODS + `owned`) — never a Set/Map/collection reached off a page object, so
-    // e.g. `document.body.classList.add('x')` stays Denied while `new Set()`/`new Map()` accumulators work.
-    "has", "get", "add", "set", "delete", "clear",
-    // Object / JSON / Math / Number
-    "keys", "values", "entries", "fromEntries", "stringify", "parse", "assign",
-    // Promise combinators + `then` — models batch and chain the async ml reads
-    // (`Promise.all([ml.models(), ml.getModel()])`, `ml.getModel().then(m => …)`). Only the
-    // combinators: `Promise` itself is never callable (not a CALLABLE_ROOT, and `new` isn't in the
-    // dialect), so this can't mint a promise around anything the gates didn't already allow.
-    "all", "allSettled", "then",
-    "max", "min", "floor", "ceil", "round", "abs", "pow", "sqrt", "sign", "trunc",
-    "toFixed", "toString",
-    // CSSStyleDeclaration (getComputedStyle) — pure readers. Named property reads (`.color`) go
-    // through readMember and aren't denied; these are the method form. No setProperty/removeProperty
-    // (mutation, and they throw on a computed style anyway) — absent, so uncallable.
-    "getPropertyValue", "getPropertyPriority", "item",
-    // console (captured)
-    "log", "info", "warn", "error", "debug",
-]);
+    // plain data, never the realm. The `owned` gate below is what keeps them off the page's arrays.
+    array: ["map", "filter", "forEach", "reduce", "reduceRight", "find", "findIndex", "findLast", "findLastIndex",
+        "some", "every", "includes", "indexOf", "lastIndexOf", "slice", "concat", "join",
+        "flat", "flatMap", "sort", "reverse", "at", "fill", "push", "pop", "shift", "unshift", "splice",
+        "keys", "values", "entries"],
+    // String, plus the string side of RegExp matching. All side-effect-free; `match`/`matchAll` return match
+    // arrays, not the realm.
+    string: ["substring", "substr", "toLowerCase", "toUpperCase", "trim", "trimStart", "trimEnd",
+        "split", "startsWith", "endsWith", "replace", "replaceAll", "padStart", "padEnd",
+        "repeat", "charAt", "charCodeAt", "codePointAt", "normalize", "localeCompare",
+        "match", "matchAll", "search", "includes", "indexOf", "lastIndexOf", "slice", "concat", "at"],
+    number: ["toFixed"],
+    date: [],                       // `new Date()` is the clock; reading it is a property/coercion, not a call
+    regexp: ["test", "exec"],
+    // Set / Map — reads (has/get; size is a property, read via readMember) PLUS the mutators, which the
+    // `owned` gate confines to containers the script created. Scoping them here is what stops the same names
+    // reaching a DOMTokenList or any other page object that happens to spell a method `add`.
+    set: ["has", "add", "delete", "clear", "forEach", "keys", "values", "entries"],
+    map: ["has", "get", "set", "delete", "clear", "forEach", "keys", "values", "entries"],
+    promise: [],                    // `then` is in "*"; `catch`/`finally` are not in the dialect
+    // DOM read / query. Nothing here mutates, and nothing returns the realm — the walk back to `window` is
+    // cut by DENIED_PROPS.
+    element: ["querySelector", "querySelectorAll", "getElementsByClassName", "getElementsByTagName",
+        "getElementsByName", "closest", "matches", "getAttribute", "getAttributeNames", "hasAttribute",
+        "contains", "getBoundingClientRect", "getRootNode"],
+    document: ["querySelector", "querySelectorAll", "getElementById", "getElementsByClassName",
+        "getElementsByTagName", "getElementsByName", "contains", "getRootNode"],
+    collection: ["item", "forEach", "keys", "values", "entries", "at"],
+    // CSSStyleDeclaration (getComputedStyle) — pure readers. Named property reads (`.color`) go through
+    // readMember. No setProperty/removeProperty: mutation, and they throw on a computed style anyway.
+    style: ["getPropertyValue", "getPropertyPriority", "item"],
+    console: ["log", "info", "warn", "error", "debug"],
+    Math: ["max", "min", "floor", "ceil", "round", "abs", "pow", "sqrt", "sign", "trunc"],
+    JSON: ["stringify", "parse"],
+    ObjectCtor: ["keys", "values", "entries", "fromEntries", "assign"],
+    ArrayCtor: ["from", "isArray", "of"],
+    // Promise combinators. `Promise` itself is never callable (not a CALLABLE_ROOT, and `new` isn't in the
+    // dialect), so this cannot mint a promise around anything the gates did not already allow.
+    PromiseCtor: ["all", "allSettled"],
+};
+
+const KIND_SETS = new Map<string, Set<string>>(Object.entries(BY_KIND).map(([k, v]) => [k, new Set(v)]));
+const ANY_KIND = KIND_SETS.get("*")!;
+
+/** What KIND of receiver is this, for the purpose of deciding which method names are callable on it?
+ *
+ *  Structural throughout, because `instanceof` is realm-bound and the dialect can hold a value from an
+ *  iframe's realm (`ml.queryAll` pierces them). Returns null for anything unrecognised — and null means NO
+ *  methods, never a fallback, so a receiver this does not understand cannot be called at all. */
+function kindOf(obj: unknown): MethodKind | null {
+    if (obj == null) return null;
+    if (typeof obj === "string") return "string";
+    if (typeof obj === "number") return "number";
+    if (Array.isArray(obj)) return "array";
+    if (typeof obj === "function") {
+        // The namespace/constructor objects whose STATICS the dialect allows. Compared by identity against
+        // this realm's builtins; a cross-realm `Array` is a different function object and simply is not one of
+        // these, which fails closed.
+        if (obj === Math as unknown) return "Math";
+        if (obj === (Object as unknown)) return "ObjectCtor";
+        if (obj === (Array as unknown)) return "ArrayCtor";
+        if (obj === (Promise as unknown)) return "PromiseCtor";
+        return null;
+    }
+    if (obj === (JSON as unknown)) return "JSON";
+    if (obj === (Math as unknown)) return "Math";
+    if (typeof obj !== "object") return null;
+    const o = obj as Record<string, unknown>;
+    // A String OBJECT, not a primitive: `ml.dereference` returns a String subclass (DerefText) so a pointer
+    // read is usable as the string it is. It must get the string methods, or the wrapper silently costs the
+    // caller `.split`/`.startsWith`.
+    if (Object.prototype.toString.call(o) === "[object String]") return "string";
+    // Set / Map, told apart by their own brand rather than by prototype identity: calling the getter on a
+    // foreign object throws, which is the check. (`size` is an accessor on Set.prototype/Map.prototype.)
+    if (isSet(o)) return "set";
+    if (isMap(o)) return "map";
+    if (typeof (o as { then?: unknown }).then === "function") return "promise";
+    if (o instanceof Date || Object.prototype.toString.call(o) === "[object Date]") return "date";
+    if (Object.prototype.toString.call(o) === "[object RegExp]") return "regexp";
+    // A DOCUMENT before an element: it answers `getElementById`, which an element does not.
+    if (typeof (o as { createElement?: unknown }).createElement === "function" && typeof (o as { getElementById?: unknown }).getElementById === "function") return "document";
+    if (typeof (o as { nodeType?: unknown }).nodeType === "number") return "element";
+    if (typeof (o as { getPropertyValue?: unknown }).getPropertyValue === "function") return "style";
+    if (isDomCollection(o)) return "collection";
+    // The CAPTURED console — the evaluator swaps in its own recorder, so this is matched by shape rather
+    // than by identity with the global (which the interpreter deliberately never holds).
+    if (typeof (o as { log?: unknown }).log === "function" && typeof (o as { warn?: unknown }).warn === "function") return "console";
+    return null;
+}
+
+/** Is this a real Set / Map? Asked by BORROWING the prototype's own accessor: it throws on anything that is
+ *  not one, which no amount of shape-copying by a page object can fake, and it works across realms where
+ *  `instanceof` does not. */
+const brandCheck = (proto: object, prop: string) => {
+    const get = Object.getOwnPropertyDescriptor(proto, prop)?.get;
+    return (o: unknown): boolean => { try { get?.call(o); return !!get; } catch { return false; } };
+};
+const isSet = brandCheck(Set.prototype, "size");
+const isMap = brandCheck(Map.prototype, "size");
+
+/** May `key` be CALLED on `obj`? The whole method gate, in one place: the receiver's kind decides, an
+ *  unrecognised receiver gets nothing, and "*" holds only what is harmless everywhere. */
+function methodAllowed(obj: unknown, key: string): boolean {
+    if (ANY_KIND.has(key)) return true;
+    const kind = kindOf(obj);
+    return kind !== null && (KIND_SETS.get(kind)?.has(key) ?? false);
+}
 
 // Free identifiers that may be CALLED directly: coercion/parse builtins + getComputedStyle (a pure,
 // same-origin read; bound to the view in evalReadonly so it never hands back `window`, and its result's
@@ -1141,10 +1243,32 @@ class Evaluator {
             // like `onMl` — so add/remove/clear/dump run on IT, and nothing else. Its methods deliberately never
             // join ALLOWED_METHODS (so `x.remove()`/`x.dump()` on a page object stay out of dialect).
             const onAnswer = this.ml !== null && obj != null && obj === (this.ml as Record<string, unknown>).answer;
-            if (onMl ? !Object.prototype.hasOwnProperty.call(this.ml, key)
-                : onAnswer ? !ANSWER_METHODS.has(key)
-                    : !ALLOWED_METHODS.has(key)) {
-                throw new NotInDialect(`method '${key}' not allowed`);
+            // THE CURATED FACADES FIRST, where absence is a REFUSAL rather than a typo. `ml` holds only the
+            // read-only API, and `ml.answer` only its four curate methods — the real `window.ml` has
+            // `setModel`/`chat`/`pythonExec`, so a missing name here means "the dialect withheld it", which
+            // is precisely the thing a human may want to approve. Escalate, never explain it away.
+            if (onMl) {
+                if (!Object.prototype.hasOwnProperty.call(this.ml, key)) throw new NotInDialect(`method '${key}' not allowed`);
+            } else if (onAnswer) {
+                if (!ANSWER_METHODS.has(key)) throw new NotInDialect(`method '${key}' not allowed`);
+            } else if (!methodAllowed(obj, key)) {
+                // WHICH KIND OF "no" IS THIS? The distinction decides whether a human gets interrupted.
+                //
+                // A method that EXISTS on the receiver but is not allowed here (`input.select()`,
+                // `el.click()`) is a real capability the dialect refuses — escalating is right, because
+                // approving it is a decision a person can meaningfully make.
+                //
+                // A method that DOES NOT EXIST cannot be fixed by any approval: the approved run throws the
+                // same TypeError a moment later, having spent a human interrupt on a typo. So it fails HERE,
+                // as the runtime error it is — catchable in-dialect, reported to the model, no prompt.
+                const missing = obj == null || typeof (obj as Record<string, unknown>)[key] !== "function";
+                if (missing) throw new TypeError(obj == null
+                    ? `Cannot read properties of ${String(obj)} (reading '${key}')`
+                    : `${key} is not a function on this ${kindOf(obj) ?? "value"}`);
+                // Say WHAT it was called on: with the gate scoped by receiver, "not allowed" without the kind
+                // sends the reader looking for a missing name when the real answer is that the name is fine
+                // and the receiver is wrong.
+                throw new NotInDialect(`method '${key}' not allowed on ${kindOf(obj) ?? "this value"}`);
             }
             // An in-place MUTATOR (push/sort/…) may run ONLY on a container the script itself created — never an
             // array reached off a page value. So `pageState.items.push(x)` / `.sort()` can't mutate page data.

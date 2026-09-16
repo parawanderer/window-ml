@@ -4,6 +4,7 @@
 // only imported dom/security helpers, no bus/ml state.
 
 import type { ApprovalRequest, ApprovalDecision } from "./contract";
+import { NotInDialect, Denied } from "./readonly-exec";
 import { clipOut, elPath } from "./dom";
 import { suspiciousArgsWarning } from "./security";
 
@@ -79,6 +80,24 @@ export const normalizeApproval = (result: ApprovalDecision, orig: Record<string,
  * (console-prefix + value / element-count envelope), for the auto-approve
  * fast-path in the agent loop.
  */
+/** Did the read-only attempt fail because the DIALECT refused, or because the SCRIPT was wrong?
+ *
+ *  The distinction decides whether a human is interrupted. A refusal (`NotInDialect` / `Denied`) means the
+ *  script asked for a real capability the dialect withholds — `input.select()`, a `while` loop, a token spend
+ *  — and approving it is a decision a person can meaningfully make, so the attempt falls through to the gate.
+ *
+ *  Anything else is the script throwing: a method that does not exist, a null receiver, a bad regex, a pandas
+ *  reach on a table facade. No approval can fix any of those — the approved run throws the same error a
+ *  moment later, having spent a human interrupt on a typo. Those are REPORTED to the model instead, which can
+ *  read the error and try again, and nothing unsafe has run either way: every effect is gated before it
+ *  happens, and `evalReadonly` restores the answer set when an attempt fails.
+ *
+ *  Kept here, beside the shared result formatter, because the page loop and the background loop both have to
+ *  answer it the same way — and it is exactly the sort of policy that rots when it lives in two catch blocks. */
+export function readonlyRefused(e: unknown): boolean {
+    return e instanceof NotInDialect || e instanceof Denied;
+}
+
 export function formatReadonlyExec(result: unknown, logs: string[]): { result: string; elements?: Node[] } {
     const logged = logs.length ? `console:\n${clipOut(logs.join("\n"), 500)}` : "";
     const withLogs = (value: string) => logged ? `${logged}\n\nvalue: ${value}` : value;

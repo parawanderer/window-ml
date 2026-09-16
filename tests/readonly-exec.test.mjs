@@ -51,6 +51,12 @@ const ML = {
 };
 const run = (js, doc = world(), ml = ML) => evalReadonly(js, doc, ml);
 const outOfDialect = e => e instanceof NotInDialect || e instanceof Denied;
+// REFUSED-OR-ABSENT. Since the method gate is scoped by receiver, a name can fail two ways: the dialect
+// withholds it (NotInDialect/Denied — escalates to a human), or the receiver simply has no such method
+// (TypeError — reported to the model, since no approval could make a typo run). Both mean IT DID NOT RUN,
+// which is the security claim; tests that only care about that use this, and the ones that care WHICH
+// keep asserting outOfDialect.
+const refused = e => outOfDialect(e) || e instanceof TypeError;
 
 test("canonical survey #1 (querySelectorAll → filter → map) returns the summary", async () => {
     const js = `Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"]'))
@@ -369,9 +375,11 @@ test("Set/Map: reads + mutators (has/get/add/set/delete/clear) work on a contain
 test("adversarial (Set/Map mutators): add/set/delete/clear only touch a container YOU built — never off the page", async () => {
     const doc = world();
     doc.body.className = "a b";
-    // classList is a live DOMTokenList reached off a page node → NOT owned → its mutators are refused.
-    await assert.rejects(run(`document.body.classList.add('evil'); 1`, doc), outOfDialect);
-    await assert.rejects(run(`document.body.classList.remove('a'); 1`, doc), outOfDialect);   // not even allowlisted
+    // classList reaches the script as an array of class names, so `add`/`remove` are not methods on what it
+    // is holding — they fail as missing rather than as refused. The CLAIM is the line below either way, and
+    // it is the one that matters: the page did not change.
+    await assert.rejects(run(`document.body.classList.add('evil'); 1`, doc), refused);
+    await assert.rejects(run(`document.body.classList.remove('a'); 1`, doc), refused);
     assert.equal(doc.body.className, "a b");   // untouched
     // A Set/Map hung on a page object is reached via a property read → NOT owned → mutators Denied.
     doc.appSet = new Set([1, 2]);
@@ -866,8 +874,11 @@ test("blessed primitive: ml.a11y ADVERSARIAL — object can't reach a realm, fac
     await assert.rejects(run(`ml.a11y(ml.queryAll("input")[0]).constructor`, doc, ml), outOfDialect);
     await assert.rejects(run(`ml.a11y(ml.queryAll("input")[0])["__proto__"]`, doc, ml), outOfDialect);
     // (2) the name lives ONLY on the ml facade — calling it on a page object is out-of-dialect (not a global method).
-    await assert.rejects(run(`document.body.a11y()`, doc, ml), outOfDialect);
-    await assert.rejects(run(`ml.queryAll("input")[0].a11y()`, doc, ml), outOfDialect);
+    // `a11y` is a FACADE-ONLY name: it is reached as `ml.a11y(el)`, never as a method of an element. On an
+    // element there is no such method to reach, so these fail as missing — the claim ("the name did not leak
+    // onto every object in scope") holds either way, and more plainly.
+    await assert.rejects(run(`document.body.a11y()`, doc, ml), refused);
+    await assert.rejects(run(`ml.queryAll("input")[0].a11y()`, doc, ml), refused);
     // (3) an odd/hostile ARG is harmless — a non-element still yields the string-valued object, no throw/leak.
     assert.equal(typeof (await run(`ml.a11y(document).name`, doc, ml)).value, "string");
     assert.equal((await run(`ml.a11y(null).selector`, doc, ml)).value, "");
@@ -934,14 +945,29 @@ test("ml.answer: constructor / __proto__ are denied (no prototype-walk off the f
 });
 
 test("the answer methods did NOT leak globally — remove()/dump() on any other object stay out of dialect", async () => {
-    await assert.rejects(runAns(`[1,2,3].remove(0)`), outOfDialect, "remove is not a global allowed method");
-    await assert.rejects(runAns(`[1,2,3].dump()`), outOfDialect, "dump is not a global allowed method");
+    // An array has no `remove`/`dump` at all, so these now fail as missing methods rather than as refusals —
+    // and that is the stronger outcome: the name never reached a gate, because there was nothing to reach.
+    // The claim is unchanged: the facade's methods are ITS methods and exist nowhere else.
+    await assert.rejects(runAns(`[1,2,3].remove(0)`), refused, "remove is not a method of an array");
+    await assert.rejects(runAns(`[1,2,3].dump()`), refused, "dump is not a method of an array");
+    // A receiver that HAS the name still escalates rather than being explained away — the two paths must not
+    // collapse into one. `sort` exists on an array and is refused on a page one by the ownership gate.
+    const doc = world(); doc.appList = [3, 1, 2];
+    await assert.rejects(run(`document.appList.sort(); 1`, doc), outOfDialect);
 });
 
 test("the owned-mutation guard is INTACT — add/clear on a page object stay Denied (only the answer facade is exempt)", async () => {
     // classList.add is reached off a page node, not the answer facade → still refused. Proves `!onAnswer` only
     // exempted the answer facade, not `add`/`clear` everywhere.
-    await assert.rejects(runAns(`document.body.classList.add("x")`), outOfDialect);
+    // `classList` materialises as an array of class names in the dialect, so `add` is not even a method on
+    // what the script is holding — it fails as a missing method rather than as a refusal. Either way the
+    // guard's claim is the same one, and it is asserted directly: the page did not change.
+    const doc = world();
+    await assert.rejects(runAns(`document.body.classList.add("x")`, new AnswerSet(), doc), refused);
+    assert.equal(doc.body.classList.contains("x"), false, "the page was not mutated — which is the claim");
+    // And a Set the SCRIPT built still takes the ownership route, so the gate that governs real mutation is
+    // untouched: allowed on your own container, and the name is meaningful there rather than missing.
+    assert.deepEqual((await runAns(`const s = new Set(); s.add("x"); return [...s]`)).value, ["x"]);
 });
 
 // --- ADVERSARIAL: ml.dereference as a dialect member -------------------------------------------------------
@@ -1454,4 +1480,74 @@ test("HALTING: work over a table is bounded by the table, and copies of it are s
                 for (const r of t.rows) seen.push(r[0]);
                 return [mine.length, seen.length, t.rows.length];`;
     assert.deepEqual((await runTable(js)).value, [4, 3, 3], "the copy grew; the pointer's table did not");
+});
+
+// --- The SCOPED method gate --------------------------------------------------------------------------------
+//
+// The allowlist used to be one flat set of NAMES, allowed on every receiver in scope. These are the cases that
+// makes wrong: a name that is harmless on one kind of object and EFFECTFUL on another. `select` is the one
+// that forced the change — on a table it picks columns, on an `<input>` it changes the page's selection — so
+// the gate now asks what the receiver IS before deciding.
+
+const kindWorld = () => {
+    const doc = world();
+    doc.body.innerHTML = `<input id="i" value="hello"><div id="d">text</div>`;
+    return doc;
+};
+
+test("a name is judged against its RECEIVER — `select` on an input is not `select` on a table", async () => {
+    const doc = kindWorld();
+    // The motivating case. `input.select()` mutates the page's text selection; it must never become callable
+    // because some other kind of object wants a method with that name.
+    await assert.rejects(run(`document.querySelector("#i").select()`, doc), refused);
+    // And the reverse leak: DOM query methods are not callable on values that merely happen to be in scope.
+    await assert.rejects(run(`"a string".querySelector("div")`, doc), refused);
+    await assert.rejects(run(`[1,2,3].getAttribute("id")`, doc), refused);
+    await assert.rejects(run(`({}).closest("div")`, doc), refused);
+});
+
+test("each kind keeps the methods that are actually ITS methods", async () => {
+    const doc = kindWorld();
+    assert.equal((await run(`return document.querySelector("#d").getAttribute("id")`, doc)).value, "d");
+    assert.deepEqual((await run(`return [3,1,2].slice().sort()`, doc)).value, [1, 2, 3]);
+    assert.equal((await run(`return "a,b".split(",")[1]`, doc)).value, "b");
+    assert.equal((await run(`return new Set([1,1,2]).has(2)`, doc)).value, true);
+    assert.equal((await run(`return new Map([["a",1]]).get("a")`, doc)).value, 1);
+    assert.equal((await run(`return Math.max(1,9,3)`, doc)).value, 9);
+    assert.equal((await run(`return JSON.parse('{"a":2}').a`, doc)).value, 2);
+    assert.equal((await run(`return Object.keys({a:1,b:2}).length`, doc)).value, 2);
+    assert.equal((await run(`return /(\\d+)/.exec("x42")[1]`, doc)).value, "42");
+});
+
+test("MISSING is not the same refusal as REFUSED — only one of them is worth a human's attention", async () => {
+    const doc = kindWorld();
+    // A method the receiver HAS but the dialect withholds is a real capability: a person can meaningfully
+    // approve it, so it escalates.
+    await assert.rejects(run(`document.querySelector("#i").select()`, doc), outOfDialect);
+    await assert.rejects(run(`document.querySelector("#d").click()`, doc), outOfDialect);
+    // A method that does not exist cannot be fixed by ANY approval — the approved run throws the same error a
+    // moment later, having spent the interrupt on a typo. It fails here instead, as the runtime error it is,
+    // which the model can read and correct on its own.
+    await assert.rejects(run(`[1,2,3].frobnicate()`, doc), (e) => e instanceof TypeError && !outOfDialect(e));
+    await assert.rejects(run(`"str".groupby()`, doc), (e) => e instanceof TypeError && !outOfDialect(e));
+    await assert.rejects(run(`document.querySelector("#nope").getAttribute("id")`, doc),
+        (e) => e instanceof TypeError && /null/.test(e.message));
+});
+
+test("an unrecognised receiver gets NOTHING — the default is deny, never a fallback", async () => {
+    const doc = kindWorld();
+    // A Date is in the dialect (the clock) but exposes no methods, so even a real one of its own is refused
+    // rather than falling through to some shared list.
+    await assert.rejects(run(`new Date().getFullYear()`, doc), refused);
+    // A plain object has no methods of its own at all.
+    await assert.rejects(run(`({a:1}).hasOwnProperty("a")`, doc), refused);
+});
+
+test("the ml and answer facades still answer by IDENTITY, and absence there still escalates", async () => {
+    // These are the two lists that were already scoped before this refactor. On a curated facade a MISSING
+    // name is a deliberate withholding — the real `window.ml` has `setModel` — so it must keep escalating
+    // rather than being reported as a typo.
+    await assert.rejects(run(`return ml.setModel("m")`), outOfDialect);
+    await assert.rejects(run(`return ml.chat("hi")`), outOfDialect);
+    await assert.rejects(runAns(`ml.answer.frobnicate()`), outOfDialect);
 });
