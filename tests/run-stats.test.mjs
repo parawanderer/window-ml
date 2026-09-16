@@ -59,6 +59,13 @@ test("fmtTokPerSec: rounds a fast rate to an integer, keeps one decimal when slo
     assert.equal(fmtTokPerSec(runStats([u(0, 6, { evalMs: 1000 })])), "6.0 tok/s");
 });
 
+test("normalizeUsage: a server's own reasoning_tokens is taken only when it is a real count", () => {
+    assert.equal(normalizeUsage({ prompt_tokens: 5, completion_tokens: 90, completion_tokens_details: { reasoning_tokens: 60 } }).reasoningTokens, 60);
+    // ollama and OpenWebUI report 0 for a model that thought for a page; that zero is not a measurement.
+    assert.equal(normalizeUsage({ prompt_tokens: 5, completion_tokens: 90, completion_tokens_details: { reasoning_tokens: 0 } }).reasoningTokens, undefined);
+    assert.equal(normalizeUsage({ prompt_tokens: 5, completion_tokens: 90 }).reasoningTokens, undefined);
+});
+
 test("normalizeUsage: reads Ollama eval_duration (ns) → evalMs (ms)", () => {
     const nu = normalizeUsage({ prompt_eval_count: 100, eval_count: 40, eval_duration: 2_000_000_000 });   // 2e9 ns = 2000ms
     assert.equal(nu.promptTokens, 100);

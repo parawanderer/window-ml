@@ -9036,3 +9036,30 @@ test("housekeeping log: ‹ returns to the view it replaced, and the header's pa
     assert.ok(w.shadow.querySelector('[aria-label="More panels"]'));
     assert.equal(w.shadow.querySelector(".hk-view"), null);
 });
+
+// THE THINKING COUNT: exact when the turn COUNTED it (the engine's running total while the call was thinking, or a
+// server's real reasoning_tokens), a `~` estimate from the text only when it did not.
+test("a thinking block shows the counted token figure without `~`, and the estimate with it", async () => {
+    const w = await loadSidebarWorld();
+    const start = (hash) => ({ kind: "agent", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, task: "t", config: { maxSteps: 5, system: "s", tools: [] } });
+    const thought = "x".repeat(1400);   // chars/4 → ~350
+    await w.dispatch(start("rt1"));
+    await w.dispatch({ kind: "agent-step", id: "rt1", ts: Date.now(), save: false, session: { hash: "rt1", turn: 1 }, step: 1, localStep: 1, reasoning: thought, usage: { promptTokens: 10, completionTokens: 400, totalTokens: 410, reasoningTokens: 337 } });
+    await w.dispatch({ kind: "agent-result", id: "rt1", ts: Date.now(), save: false, session: { hash: "rt1", turn: 1 }, summary: "done", steps: 1, hitCap: false });
+    w.raw({ __mlSidebarOpen: true });
+    await w.flush();
+    [...w.shadow.querySelectorAll(".row")].find((r) => /rt1|t/.test(r.textContent))?.click();
+    await w.flush();
+    const counted = w.shadow.querySelector(".athinking .astep-tokest")?.textContent;
+    assert.equal(counted, "337 tokens", "counted: no tilde, the engine's number");
+
+    const w2 = await loadSidebarWorld();
+    await w2.dispatch(start("rt2"));
+    await w2.dispatch({ kind: "agent-step", id: "rt2", ts: Date.now(), save: false, session: { hash: "rt2", turn: 1 }, step: 1, localStep: 1, reasoning: thought, usage: { promptTokens: 10, completionTokens: 400, totalTokens: 410 } });
+    await w2.dispatch({ kind: "agent-result", id: "rt2", ts: Date.now(), save: false, session: { hash: "rt2", turn: 1 }, summary: "done", steps: 1, hitCap: false });
+    w2.raw({ __mlSidebarOpen: true });
+    await w2.flush();
+    [...w2.shadow.querySelectorAll(".row")].find((r) => /rt2|t/.test(r.textContent))?.click();
+    await w2.flush();
+    assert.equal(w2.shadow.querySelector(".athinking .astep-tokest")?.textContent, "~350 tokens", "not counted: marked as the estimate it is");
+});

@@ -121,6 +121,9 @@ export const normalizeUsage = (u: any): TokenUsage | null => {
     // stays absent (not reported), which is why `n()` rather than `|| 0`.
     const cached = n(u.prompt_tokens_details?.cached_tokens) ?? n(u.prompt_eval_cached_count) ?? n(u.cached_tokens);
     if (cached != null && cached >= 0) out.cachedTokens = cached;
+    // Only a POSITIVE count: ollama and OpenWebUI report 0 reasoning tokens for a model that thought for a page.
+    const thought = n(u.completion_tokens_details?.reasoning_tokens) ?? n(u.reasoning_tokens);
+    if (thought != null && thought > 0) out.reasoningTokens = thought;
     return out;
 };
 
@@ -947,7 +950,7 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
  *  agent loop uses client-side `tools` (not `tool_ids`), so no SERVER_TOOL_MODES probe is needed here. */
 export async function streamAgentTurn(
     payload: FetchLlmPayload,
-    onDelta: (acc: { reasoning: string; content: string; phases: GenPhase[]; phaseChanged: boolean; tokens?: number }) => void,
+    onDelta: (acc: { reasoning: string; content: string; phases: GenPhase[]; phaseChanged: boolean; tokens?: number; reasoningTokens?: number }) => void,
     signal?: AbortSignal,
 ): Promise<{ content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null }> {
     const { config, format, body, send, protoAsked, requestId } = await prepareRequest(payload, signal);
@@ -986,6 +989,9 @@ export async function streamAgentTurn(
     let buffer = "";
     // The engine's running count, when it sends one. The latest value is the figure — never a sum.
     let tokens: number | undefined;
+    // That count as it stood while the call was still THINKING — nothing answered, no tool call begun — which is
+    // exactly the number of thinking tokens, since thinking comes first and the count is a running total.
+    let reasoningTokens: number | undefined;
     /** One parsed chunk, whatever carried it. SSE and protobuf differ only in how a chunk is RECOVERED from
      *  the wire; everything after — the phase marks, the fragment accumulation, the throttled fan — is the
      *  same work, and having it once is what stops the two formats drifting into different behaviour. */
@@ -1010,9 +1016,12 @@ export async function streamAgentTurn(
                 } else { ollamaCalls = chunk.toolCallDelta; }   // Ollama whole array
             }
         }
+        // AFTER this chunk's answer text and call fragments are in: a chunk that STARTS the answer or a tool call
+        // carries a count that already includes it, so it must not move the thinking figure.
+        if (chunk.tokens != null && reasoning && !content && byIndex.size === 0 && !ollamaCalls) reasoningTokens = chunk.tokens;
         // A phase change is reported even with no new TEXT: a turn that only calls a tool produces no content
         // or reasoning deltas at all, so a caller throttling on text alone would never hear that it started.
-        if (changed || phaseChanged) onDelta({ reasoning, content, phases, phaseChanged, ...(tokens != null ? { tokens } : {}) });
+        if (changed || phaseChanged) onDelta({ reasoning, content, phases, phaseChanged, ...(tokens != null ? { tokens } : {}), ...(reasoningTokens != null ? { reasoningTokens } : {}) });
     };
     const handleLine = (line: string) => handleChunk(format.streamChunk(line));
     // THE SAME NEGOTIATION the one-shot stream does: we asked for protobuf where it costs nothing to ask, and
@@ -1072,8 +1081,10 @@ export async function streamAgentTurn(
         tool_calls = format.extractToolCalls({ choices: [{ message: { tool_calls: arr } }] } as any);
     }
     const timed = withGenMs(usage, Date.now() - _t0, requestId);
+    // The counted thinking figure goes on the usage when the server did not report a real one itself.
+    const counted = timed && reasoningTokens != null && timed.reasoningTokens == null ? { ...timed, reasoningTokens } : timed;
     return { content: content || null, tool_calls, reasoning: reasoning || null,
-             usage: timed && phases.length ? { ...timed, genPhases: phases } : timed };
+             usage: counted && phases.length ? { ...counted, genPhases: phases } : counted };
 }
 
 export function authHeaders(config: MlConfig): Record<string, string> {

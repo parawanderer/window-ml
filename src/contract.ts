@@ -804,6 +804,12 @@ export interface TokenUsage {
      *  invisible in `promptTokens`, which is the same either way; this and the prefill's duration are the
      *  evidence. Cheap in TIME, never in tokens — do not fold it into a spend figure. */
     cachedTokens?: number;
+    /** How many of `completionTokens` were THINKING — COUNTED, not estimated from text. From the server's own
+     *  `completion_tokens_details.reasoning_tokens` when it reports a nonzero one (ollama and OpenWebUI send 0
+     *  whatever the model did, so a 0 there is not taken), else from a streamed turn: the engine's running count on
+     *  the last chunk while the call was still in its thinking phase. Absent on a call that neither reported nor
+     *  streamed a count — a surface then estimates, and says so. */
+    reasoningTokens?: number;
     /** Wall-clock ms of THIS model call, measured at the source (around the fetch). ALWAYS available; it
      *  includes the call's own network/queue latency (TTFT) — the honest "time spent waiting on the model". */
     genMs?: number;
@@ -2150,7 +2156,10 @@ export interface DebugAgentConfig {
 export interface DebugAgentStream extends DebugBase { kind: "agent-stream"; step: number; localStep?: number; reasoning?: string; content?: string;
     /** The ENGINE's running count of tokens generated so far this call — thinking, answer and a tool call's
      *  arguments alike. Absent when the server does not send one (then a surface estimates from the text). */
-    tokens?: number; }
+    tokens?: number;
+    /** The same running count, frozen when the call LEFT its thinking phase: how many tokens the thinking took.
+     *  Present once a count arrived during thinking; it stops moving when the answer or a tool call starts. */
+    reasoningTokens?: number; }
 /** A model call is UNDERWAY. Emitted the instant the turn's request goes out, and again whenever the
  *  generation changes phase, so a surface can draw the call while it is happening instead of back-dating a
  *  finished block over memory it already drew.

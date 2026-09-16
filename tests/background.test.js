@@ -3779,6 +3779,11 @@ test("START_RUN (stream:true) asks for the engine's running count and carries it
     // chunks moved no text at all.
     assert.equal(first.at(-1).tokens, 15, `live counts: ${first.map((e) => e.tokens)}`);
     assert.equal(first.at(-1).reasoning, "Let me look.", "the text stood still while the count climbed");
+    // THE THINKING COUNT is that running total frozen while the call was still thinking — 3 — not the 15 it
+    // reached once the tool call was written. It is counted, so the sidebar can drop the `~`.
+    assert.equal(first.at(-1).reasoningTokens, 3, `live thinking counts: ${first.map((e) => e.reasoningTokens)}`);
+    const settled = panel.messages.map((m) => m.__mlDebug).filter((e) => e?.kind === "agent-step" && e.usage?.reasoningTokens != null);
+    assert.equal(settled[0]?.usage.reasoningTokens, 3, "the turn's usage carries the counted thinking figure");
 });
 
 test("START_RUN (stream:true): a server that refuses the count is asked once more without it, and then never again", async () => {
