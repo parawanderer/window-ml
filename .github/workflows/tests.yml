@@ -201,10 +201,20 @@ jobs:
   # (background loop → tool delegation → page) against a scripted fake-LLM — deterministic, no Ollama.
   # Kept minimal on purpose (real browsers are slow); only behaviour that genuinely needs a browser
   # lives here (see CLAUDE.md "End-to-end tests"). Everything else is in the fast `test` job above.
-  e2e:
+  # SHARDED across three jobs, each with the config's three workers: the suite is ~30 minutes of test time, and
+  # one job took ~11 minutes of wall time on every PR. Playwright splits by TEST (fullyParallel), so the two
+  # heavy specs (resource-panel, bench-dock) spread across shards instead of pinning one; a spec pinned with
+  # `mode: "default"` stays whole on one shard. `fail-fast: false` so one red shard does not cancel the others'
+  # report — the failures you need to read may be in all three.
+  e2e-shard:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    name: e2e (${{ matrix.shard }}/3)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
@@ -230,7 +240,19 @@ jobs:
       # headless now (full Chromium in --headless=new); xvfb stays as a safety net for anything that asks
       # for a window (the narrated demos, E2E_HEADFUL=1) so such a run fails on its assertion, not on DISPLAY.
       - name: Run E2E
-        run: xvfb-run -a npm run test:e2e
+        run: xvfb-run -a npm run test:e2e -- --shard=${{ matrix.shard }}/3
+
+  # ONE `e2e` status for the three shards, so a PR still has a single e2e check to read (and to require, if the
+  # branch is ever protected). Skipped with the shards when no code changed; red if any shard was not green.
+  e2e:
+    needs: [changes, e2e-shard]
+    if: always() && needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: All shards passed
+        run: |
+          echo "shards: ${{ needs.e2e-shard.result }}"
+          test "${{ needs.e2e-shard.result }}" = "success"
 
   # The BENCH's own instrument check — separate from `test`/`e2e` so a failure names the right thing. A
   # broken measurement tool is not a broken extension, and reading "e2e failed" sends you to look at the
