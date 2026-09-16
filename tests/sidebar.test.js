@@ -7814,8 +7814,10 @@ test("event lane: the tooltip's model line carries the model's colour", async ()
     bar.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
     await w.flush();
     const tip = w.shadow.querySelector(".rc-tip-event");
+    // A phased block is several colours, so its header (the whole block) has no swatch; the phases carry them.
+    assert.equal(tip.querySelector(".rc-tip-line:first-child .rc-tip-dot"), null, "no swatch on the header of a phased block");
     const dot = tip.querySelector(".rc-tip-dot");
-    assert.ok(dot, "the model line has a dot");
+    assert.ok(dot, "the model phase has a dot");
     // The SAME colour the row below uses — a different one would be a second colour scheme for one model.
     const rowDot = w.shadow.querySelector(".vram-row .vram-dot");
     assert.equal(dot.getAttribute("style"), rowDot.getAttribute("style"));
@@ -7824,9 +7826,8 @@ test("event lane: the tooltip's model line carries the model's colour", async ()
     // The HEADER says what the block is, then one row per phase. The first phase used to take the header
     // line, which left a machine event with no phases showing nothing but a model name — a serving span and
     // a load looked identical and neither said which it was.
-    const dots = [...tip.querySelectorAll(".rc-tip-dot")];
-    assert.equal(dots.length, 3, "the block, then one per phase: the model, then the tool");
-    const phaseDots = dots.slice(1);
+    const phaseDots = [...tip.querySelectorAll(".rc-tip-dot")];
+    assert.equal(phaseDots.length, 2, "one per phase: the model, then the tool");
     assert.notEqual(phaseDots[0].getAttribute("style"), phaseDots[1].getAttribute("style"), "…and they differ, as the stripes do");
     // The tool phase says WHAT it is: a bare "exec" reads as a label of unknown kind.
     assert.match(tip.textContent, /tool call:/);

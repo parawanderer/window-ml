@@ -2681,7 +2681,7 @@ export const EV_ROW_GAP = 0.004;
  *  cap insufficient, because the number of bands is the number of concurrent runs. */
 export const MAX_LANE_ROWS = 10;
 
-export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN, maxTotal = MAX_LANE_ROWS, minGap = 0): EventPlacement[][] {
+export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN, maxTotal = MAX_LANE_ROWS): EventPlacement[][] {
     const groups = new Map<string, EventPlacement[]>();
     for (const p of placed) {
         const key = p.event.ref?.hash ?? "";
@@ -2700,7 +2700,7 @@ export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV
     const startOf = (p: EventPlacement) => p.run + p.from;
 
     for (const [, band] of order) {
-        const rows = packBand(band, maxRows, minSpan, minGap);
+        const rows = packBand(band, maxRows, minSpan);
         // REUSE rows where the band cannot collide. Banding exists so a tree is never interleaved with
         // another — but two runs that never overlap in TIME cannot interleave, so stacking them costs rows
         // for nothing, and most runs are sequential rather than concurrent. The band is placed as a WHOLE at
@@ -2745,14 +2745,16 @@ export function laneTier(kind: string): number {
     return 2;                                               // the machine: loads, serving, evictions
 }
 
-function packBand(placed: EventPlacement[], maxRows: number, minSpan: number, minGap = 0): EventPlacement[][] {
+function packBand(placed: EventPlacement[], maxRows: number, minSpan: number): EventPlacement[][] {
     const rows: EventPlacement[][] = [];
-    // The END is the DRAWN end, not the true one: see MIN_EV_SPAN. The fallback pass without the row gap still keeps
-    // `minGap` (a pixel, from the caller that knows the lane's width): bars at their minimum width packed flush read as
-    // one longer bar.
+    // The END is the DRAWN end, not the true one: see MIN_EV_SPAN. The fallback pass lets a bar start exactly where
+    // the previous one is drawn to end. It used to keep a pixel between them, and a run's steps follow each other
+    // within a few MILLISECONDS (a gen hands straight to its tool), far less than a pixel on any lane, so every
+    // other step was refused the row and the run's steps alternated between two rows as if they overlapped. Two
+    // flush bars still read as two: `.rc-ev` draws a hairline in the panel's colour around every bar.
     const start = (p: EventPlacement) => p.run + p.from;
     const end = (p: EventPlacement, pad: boolean) =>
-        p.run + Math.max(p.to, p.from + minSpan) + (pad ? EV_ROW_GAP : minGap);
+        p.run + Math.max(p.to, p.from + minSpan) + (pad ? EV_ROW_GAP : 0);
     // A true INTERVAL test against the row's members, not a running end. The running end assumed events
     // arrived in increasing start order, which stopped being true the moment they were sorted by tier — a
     // load that abuts a step it precedes was then refused the row it belongs on, because a later-starting

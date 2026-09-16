@@ -657,8 +657,12 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   is counted rather than the stretch called empty. While a break is hovered the plot's reading, crosshair and snap
   mark stand down (`gapHover`, the same owner rule as `eventHover`), and the same break lights in every track. The
   scrub strip hatches the same hole at the same true width (`.rc-scrub-gap`).
-  **A lane bar is packed at the width it is DRAWN** (`MIN_BAR_PX` from the lane's measured width, and a pixel between
-  bars): reserving only `MIN_EV_SPAN` of a narrow lane let two bars at CSS `min-width` overlap.
+  **A lane bar is packed at the width it is DRAWN** (`MIN_BAR_PX` from the lane's measured width): reserving only
+  `MIN_EV_SPAN` of a narrow lane let two bars at CSS `min-width` overlap. It may start FLUSH against the bar before it,
+  though. The packer used to keep a pixel between bars, and a run's steps follow each other within 2 to 40 ms (a gen
+  hands straight to its tool) while a pixel of a five-minute lane is ~170 ms, so every other step was refused the row
+  and a strictly sequential run drew its steps alternating between two rows, which claims they overlapped. `.rc-ev`'s
+  hairline in the panel colour is what keeps two touching bars reading as two.
 - **The chart draws with the samples EITHER SIDE of the window** (`windowSamples(…, { edges: true })`), always. Without
   them the stretch from the last reading before the left edge to the first one inside was not drawn, so scrolling
   back made each stretch pop in only when its first reading crossed the edge. The plot clips; a far neighbour is still
@@ -691,8 +695,8 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   drawn as a CHECKERBOARD rather than a solid fill (built from its own `--model`, so it keeps the identity
   the lane reads by) — solid, it read as the heaviest work in the lane rather than the thing holding it.
   **A child is never packed above its container** (`packBand` takes each event's row floor from its `parent`'s row).
-  Tiers alone did not guarantee it: two runs of one session that ABUT cannot share a row (the pixel between bars),
-  so the second run opened a row below and its steps, packed next, took the free row ABOVE their own container.
+  Tiers alone did not guarantee it: two runs of one session that ABUT could not share a row (the packer then kept a pixel
+  between bars), so the second run opened a row below and its steps, packed next, took the free row ABOVE their own container.
 - **Double-clicking any block scopes the panel to it** (`scopeToSpan`, pure/tested), widening a block too
   short to frame around its own centre — a 40ms window contains no samples and draws as an empty plot. An
   open block has no end, so `now` stands in. A single click still navigates to the step: framing the time
