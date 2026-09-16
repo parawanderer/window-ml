@@ -61,7 +61,13 @@ were open at that point. It never invents a value, and text that is not JSON (a 
 rather than a half-drawn tree. The tree marks the cut: a `JT_CUT` sentinel is appended to the innermost container
 still open, drawn as "… cut here: N more characters were not kept", and every folded ancestor's preview says
 "cut", so the reader can find it without expanding the whole value. Text stays the default: it is what the model
-read, and a folded tree hides members from Ctrl+F. The tree itself (`JsonNode`) lives in `json-tree.tsx` so the
+read, and a folded tree hides members from Ctrl+F. *The panel keeps MORE of a value than the model got* (`clipValue`, dom.ts). exec (approved and read-only) and
+python_exec used to clip the value to the model's cap before the panel saw it, so a read-only survey (500 characters)
+drew a 400-row result as six rows. Now the model's string is unchanged and the descriptor carries up to `UI_OUT_CAP`,
+with `valueSeen` saying where the model's copy ended. The text view splits there the way the console does
+(`SeenSplit`, now with a `lang`); the tree places a `JT_SEEN` row between the members the model received whole and the
+rest, dims everything after it at every depth up to the root, and says "partly not sent" in each folded container on
+the way. A container the model got none of whole is marked from its parent, before it. The tree itself (`JsonNode`) lives in `json-tree.tsx` so the
 renderers can use it without importing agent-detail.tsx, and an open container draws `JT_PAGE` members at a time
 (except the raw In view's `allOpen`, which must stay fully searchable).
 

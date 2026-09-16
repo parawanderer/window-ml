@@ -7,7 +7,7 @@
 import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext, ServerTool, JsonSchema } from "./contract";
 import { DEFAULT_GROUNDING_RANGE, resolveOutputCap, outputCapPrecheck, UI_OUT_CAP } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
-import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed, clickSelector } from "./dom";
+import { truncate, clipOut, clipValue, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed, clickSelector } from "./dom";
 import { accessibleName } from "./a11y";
 import { regionLegend, formatLegend, type Box as LegendBox } from "./legend";
 import { outputCapParams, retryParams, citeParam } from "./tool-params";
@@ -1497,6 +1497,11 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const capNote = capClamped ? `(output limit clamped to ${PY_OUT_MAX} chars — the hard ceiling.)\n\n` : "";
             const pre = capNote + tableNote + loadedNote + (stdoutClipped ? `stdout:\n${stdoutClipped}\n\n` : "");
             const stringify = (x: unknown) => clipOut(typeof x === "string" ? x : JSON.stringify(x), PY_OUT_MAX);
+            // The value for the PANEL: more of it than the model's cap, with where the model's copy ended.
+            const valueOut = (x: unknown): { value: string; valueSeen?: number } => {
+                const v = clipValue(typeof x === "string" ? x : JSON.stringify(x), PY_OUT_MAX, UI_OUT_CAP);
+                return { value: v.ui, ...(v.seen != null ? { valueSeen: v.seen } : {}) };
+            };
             // The In slot: a notebook-cell header (cell mode + input image/table + source). Shared
             // by every return path. The Out slot varies (stdout + one of image/token/value/error).
             const cellMode = cast === "pt" ? "pt" as const : cast === "box" ? "box" as const : "script" as const;
@@ -1546,7 +1551,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                     // A common miss: the script returned a LIST of candidate points — say so specifically.
                     const list = asPointList(v);
                     const why = list ? `it's a LIST of ${list.length} points — return the SINGLE best one as [x, y]` : `the return isn't a point ([x,y] or {x,y})`;
-                    return done(`${pre}cast:'pt' but ${why}: ${stringify(v)}`, { value: stringify(v) });
+                    return done(`${pre}cast:'pt' but ${why}: ${stringify(v)}`, valueOut(v));
                 }
                 // The script computed the point in the input IMAGE's pixels; project it back to viewport
                 // coords (crop offset + dpr) so the @pt clicks the right spot. No image → already viewport.
@@ -1562,7 +1567,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 if (!raw) {
                     const list = asBoxList(v);
                     const why = list ? `it's a LIST of ${list.length} boxes — return the SINGLE best one` : `the return isn't a box ([x1,y1,x2,y2] or {left,top,right,bottom})`;
-                    return done(`${pre}cast:'box' but ${why}: ${stringify(v)}`, { value: stringify(v) });
+                    return done(`${pre}cast:'box' but ${why}: ${stringify(v)}`, valueOut(v));
                 }
                 const bx = r.imageBox ? projectShotBox(raw, r.imageBox) : raw;   // image px → viewport
                 const t = mintBox(bx);
@@ -1599,7 +1604,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             // Auto-typeset a LaTeX return, no `| latex` cast needed (`| raw` overrides): a sympy TYPE, or a
             // string that is LaTeX itself (`LOOKS_LATEX`, for a model that returns `sympy.latex(expr)`).
             if (parts.latex) return done(`${pre}${text}`, parts);
-            return done(`${pre}${text}${castHint}${nullWarn}`, { value: text });
+            return done(`${pre}${text}${castHint}${nullWarn}`, valueOut(v));
         },
     });
 };
