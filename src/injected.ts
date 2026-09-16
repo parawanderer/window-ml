@@ -40,8 +40,9 @@ import { htmlToMarkdown } from "./html-to-md";
 import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
 import { citeParam } from "./tool-params";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, googleSheetCsvUrl, googleSheetId, externalSheetIds, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom";
-import { castTableColumns, tableFromDelimited, tablePreview, tableShape, RENDER_TABLE_ROWS } from "./table-data";
+import { castTableColumns, tableFromDelimited, tablePreview, tableShape, asTable, RENDER_TABLE_ROWS } from "./table-data";
 import { FetchCache, estimateFetchResultBytes } from "./fetch-cache";
+import { isTable } from "./table-brand";
 /** The page fetch cache's estimated memory budget. Enough for the table a step just fetched plus a few smaller
  *  bodies; far below what an unbounded session used to accumulate in the user's tab. */
 const FETCH_CACHE_BUDGET_BYTES = 64_000_000;
@@ -67,7 +68,7 @@ import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyE
 import { buildServerTools, buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
-import { executeTool, toolContext, currentAnswer, currentDeref, currentServerAllow, currentRunSession, withRunDeref } from "./tool-exec";
+import { executeTool, toolContext, currentAnswer, currentDeref, currentServerAllow, currentRunSession, currentHasTool, withRunDeref } from "./tool-exec";
 import { runAgentLoop, shotTurnMessage, CITABLE_TOOLS } from "./agent-loop";
 import type { AgentLoopDeps } from "./agent-loop";
 import { installToolDelegation, registerRun, endRun, runAnswer } from "./run-delegation";
@@ -1981,7 +1982,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     // auto-detected table: an override is one caller's correction, not a fact about the file,
                     // and rewriting the cache would hand the next reader a table it never asked for.
                     if (typeof header === "boolean" && r.table && r.type === "csv") {
-                        try { r = { ...r, table: tableFromDelimited(r.text, { header }) }; } catch { /* keep the detected one */ }
+                        try { r = { ...r, table: asTable(tableFromDelimited(r.text, { header }), { python: currentHasTool("python_exec") }) }; } catch { /* keep the detected one */ }
                     }
                     // A TABLE the parser understood, and the model did not ask for its own scan of the raw text:
                     // show a `df.head()` rather than 4000 characters of rows. The clip is the reason — on a
@@ -2789,17 +2790,24 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     // text has already crossed the message channel, so parsing here adds nothing to the wire.
                     if (r && r.type === "csv" && typeof r.text === "string" && r.table === undefined) {
                         try {
-                            r.table = tableFromDelimited(r.text);
+                            const parsed = tableFromDelimited(r.text);
                             // A body clipped at the size cap ends mid-row, so that row is a fragment rather than
                             // data. Drop it and say the table is a prefix — silently keeping it would put a
-                            // half-parsed record into a DataFrame.
-                            if (r.truncated && r.table.rows.length) {
-                                r.table.rows.pop();
-                                r.table.shape = [r.table.rows.length, r.table.columns.length];
-                                r.table.truncated = true;
+                            // half-parsed record into a DataFrame. BEFORE wrapping: the facade is read-only, and
+                            // trimming through it threw halfway, leaving the fragment dropped but the shape wrong.
+                            if (r.truncated && parsed.rows.length) {
+                                parsed.rows.pop();
+                                parsed.shape = [parsed.rows.length, parsed.columns.length];
+                                parsed.truncated = true;
                             }
+                            r.table = parsed;
                         } catch { /* leave undefined — callers fall back to .text */ }
                     }
+                    // Every table a caller receives is a FACADE, not the bare data — a Parquet one decoded in the
+                    // worker as much as a CSV parsed here: the description is pandas-shaped, so the object has to
+                    // answer a pandas reach with a message rather than `undefined`. Whether the message may point
+                    // at python_exec is read from the running run's toolset.
+                    if (r && r.table && !isTable(r.table)) r.table = asTable(r.table, { python: currentHasTool("python_exec") });
                     // Cache ONLY a successful UNCREDENTIALED, non-rendered fetch (as-you bytes are authenticated —
                     // never cache). Keyed by url ALONE, so only the DEFAULT format is cached: `format:"html"`
                     // returns different bytes for the same url, and letting it share the key would hand a later

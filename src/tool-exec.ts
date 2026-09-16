@@ -47,6 +47,15 @@ export async function withRunDeref<T>(deref: ((ref: string, pipe?: string | stri
     try { return await fn(); } finally { activeDeref = prev; }
 }
 
+// And the same for the run's TOOLSET, so advice can be conditional on what the run can actually do. The
+// table facade's error says "use python_exec for real pandas" — which is worse than silence when the run was
+// never given python_exec, so it asks here rather than being handed a flag at construction (the same table
+// can be reached from a run that has it and one that does not).
+let activeHasTool: ((name: string) => boolean) | null = null;
+/** Whether the RUNNING tool call's run has `name` in its toolset. False outside a run — where there is no
+ *  toolset, so no tool can be recommended. */
+export function currentHasTool(name: string): boolean { return activeHasTool ? activeHasTool(name) : false; }
+
 // And the same for the RUN'S SESSION, so a model call a tool makes (a vision read, grounding, an OCR pass, a
 // reader distilling a fetch) is labelled as part of the run that caused it: `use: "agent"`, the run's session (see
 // RequestHint). The loop waits on those answers, so they are agent traffic, not side tasks.
@@ -135,9 +144,10 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
     const note = issues.length ? `\n\n⚠ Argument schema issue(s): ${issues.join("; ")}` : "";
     // Bind `window.ml.answer` to THIS run's set for the duration of the tool call (an approved exec that calls
     // ml.answer resolves it; outside a run it throws). Save/restore for nested runs.
-    const prevAnswer = activeAnswer, prevDeref = activeDeref, prevAllow = activeServerAllow, prevSession = activeSession;
+    const prevAnswer = activeAnswer, prevDeref = activeDeref, prevAllow = activeServerAllow, prevSession = activeSession, prevHasTool = activeHasTool;
     if (ctx?.answer) activeAnswer = ctx.answer;
     if (ctx?.deref) activeDeref = ctx.deref;
+    if (ctx?.hasTool) activeHasTool = ctx.hasTool;
     if (ctx?.session) activeSession = ctx.session;
     // Set even when ABSENT, unlike the two above: a run that exposed no server tools must narrow the
     // namespace to nothing, and leaving the previous value would hand it whatever the last run allowed.
@@ -162,5 +172,5 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         }
         return { result: String(raw) + note };
     } catch (e) { return { result: `Error: ${errText(e)}` + note }; }
-    finally { activeAnswer = prevAnswer; activeDeref = prevDeref; activeServerAllow = prevAllow; activeSession = prevSession; }
+    finally { activeAnswer = prevAnswer; activeDeref = prevDeref; activeServerAllow = prevAllow; activeSession = prevSession; activeHasTool = prevHasTool; }
 }

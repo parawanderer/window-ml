@@ -267,7 +267,7 @@ export interface DerefValue extends String {
     readonly label?: string;
     /** The parsed body when the text is JSON, else undefined. Parsed once, lazily. */
     readonly json?: unknown;
-    readonly table?: TableLike;
+    readonly table?: Table;
     readonly image?: string;
     readonly latex?: string;
     /** Reduce it further through the text-pipe dialect, resolving to a new value. */
@@ -522,6 +522,7 @@ export type TableDtype = "int64" | "float64" | "bool" | "str" | "object";
  *      r.table.dtypes.price                    // "float64"
  *      const i = r.table.columns.indexOf("qty");
  *      r.table.rows.filter(row => row[i] > 5)  // plain arrays: filter/map/reduce as usual
+ *      r.table.col("qty")                      // or through the Table facade: col / select / records / head
  *
  *  A pointer to a table resolves to the same object — `@tool:abc1234.table` inside `exec` (pre-resolved, so
  *  no `await` is needed for a literal reference) — and both are readable from the read-only `exec` dialect,
@@ -555,6 +556,29 @@ export interface TableLike {
     headerless?: boolean;
 }
 
+/** A {@link TableLike} as a caller actually receives it — from `ml.fetch(url).table` or a pointer's `.table` —
+ *  with the four operations its pandas-shaped description suggests, and a LOUD failure on anything else:
+ *
+ *      t.col("price")               // one column's values → [9.99, 13.49, …]
+ *      t.select(["region", "qty"])  // a column subset as a new Table — the spelling of df[["region", "qty"]]
+ *      t.records()                  // rows as objects keyed by column → [{ region: "north", qty: 3 }, …]
+ *      t.head(10)                   // the first 10 rows as a new Table, like df.head(10)
+ *
+ *  It is NOT a DataFrame: `t.price`, `t[["a", "b"]]`, `t.groupby(…)` throw an error naming the nearest real
+ *  spelling rather than returning `undefined`. For grouping, joins and the rest of pandas, hand the source URL to
+ *  `python_exec`'s `tables`. Read-only: writing to it throws; copy what you need first. Available in the
+ *  read-only `exec` dialect, where a call that would build more than a million cells at once asks first. */
+export interface Table extends TableLike {
+    /** One column's values, by name. `t.col("revenue")` → `[9.99, 13.49, …]`. Throws on an unknown name. */
+    col(name: string): TableCell[];
+    /** A column SUBSET as a new table — `df[["a", "b"]]`. Keeps the source's row count and dtypes. */
+    select(names: string[]): Table;
+    /** Rows as objects keyed by column name — what most JavaScript actually wants. */
+    records(): Record<string, TableCell>[];
+    /** The first `n` rows as a new table (default 5), like `df.head()`: its `shape` counts only those rows. */
+    head(n?: number): Table;
+}
+
 export type ContentKind = "json" | "csv" | "parquet" | "html" | "xml" | "markdown" | "code" | "text";
 export interface FetchResult {
     url: string;              // the response URL (after any redirects)
@@ -576,8 +600,9 @@ export interface FetchResult {
      *  columns cast — a pandas-shaped {@link TableLike} (`shape`, `columns`, `dtypes`, `rows`). The CSV
      *  counterpart of `json`/`schema`, and for the same reason: a caller that has to re-split the text is one
      *  that will get the separator wrong. Attached page-side by `ml.fetch` (like `markdown`), so the rows
-     *  never cross the message channel — `.text` still holds the raw body. */
-    table?: TableLike;
+     *  never cross the message channel — `.text` still holds the raw body. Handed to the caller as a
+     *  {@link Table}: the data plus `col` / `select` / `records` / `head`. */
+    table?: Table | TableLike;
     truncated?: boolean;      // the body was clipped to the size cap
     redirected?: boolean;     // the request followed ≥1 redirect (`url` above is the FINAL landing URL — the
                               // intermediate chain isn't visible to fetch; a redirect log needs chrome.webRequest)

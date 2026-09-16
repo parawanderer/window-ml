@@ -169,6 +169,29 @@ test("ml.fetch: a FAILED (non-2xx) fetch is NOT cached — a retry re-fetches af
     assert.equal(world.ml._fetchCached("https://x.test/down"), undefined, "…but NOT cached (so a readonly re-read re-fetches, not serves the stale 503)");
 });
 
+// A CSV body clipped at the size cap ends mid-row. That fragment is dropped and the table says it is a prefix —
+// and the table the caller gets is the FACADE. The two used to fight: the trim wrote through the read-only facade,
+// threw halfway, and left the fragment dropped but `shape` still counting it and `truncated` unset.
+test("ml.fetch: a TRUNCATED CSV drops its partial last row, says it is a prefix, and comes back as the facade", async () => {
+    const result = { url: "https://x.test/a.csv", status: 200, ok: true, type: "csv", text: "id,qty\n1,3\n2,10\n3,7\n4,", truncated: true };
+    const world = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "FETCH_URL" ? { data: result } : undefined) });
+    const got = await world.ml.fetch("https://x.test/a.csv");
+    assert.deepEqual(got.table.shape, [3, 2], "the fragment `4,` is not counted");
+    assert.equal(got.table.truncated, true);
+    assert.deepEqual(got.table.col("qty"), [3, 10, 7], "a facade: it answers col()");
+    assert.throws(() => got.table.qty, /not a pandas DataFrame/);
+});
+
+// A Parquet table is decoded in the WORKER and arrives as plain data — it gets the same facade as a CSV parsed
+// page-side, or `t.revenue` on one would be `undefined` while the same reach on the other throws.
+test("ml.fetch: a table the worker decoded (Parquet) is wrapped as the facade too", async () => {
+    const table = { columns: ["a", "b"], rows: [[1, 2]], shape: [1, 2], dtypes: { a: "int64", b: "int64" } };
+    const world = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "FETCH_URL" ? { data: { url: "https://x.test/a.parquet", status: 200, ok: true, type: "parquet", text: "", table } } : undefined) });
+    const got = await world.ml.fetch("https://x.test/a.parquet");
+    assert.deepEqual(got.table.records(), [{ a: 1, b: 2 }]);
+    assert.throws(() => got.table.a, /t\.col\("a"\)/);
+});
+
 test("ml.chat travels the relay and returns the reply verbatim", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

@@ -11,11 +11,12 @@
 // What stays ours is the part that is about THIS project: which cells become numbers (below), and what a
 // model is shown of a table it did not fetch.
 import Papa from "papaparse";
+import { brandTable } from "./table-brand";
 // The TABLE TYPES live in contract.ts, not here: they cross the message channel (a fetch result, a pointer
 // read, an agent output) and `agent_api_docs` is generated from that file, so a type defined here would be
 // invisible to the model that has to use it. This module owns the PARSERS; contract.ts owns the shape.
-import type { TableLike, TableCell, TableDtype } from "./contract";
-export type { TableLike, TableCell, TableDtype };
+import type { TableLike, TableCell, TableDtype, Table } from "./contract";
+export type { TableLike, TableCell, TableDtype, Table };
 
 /** The most LINES a parse keeps, header included — so a table with a header carries one row fewer. A bound
  *  on MEMORY, not on what a model sees (that is the preview's job, and much smaller): a fetched CSV is meant
@@ -393,3 +394,130 @@ function parquetDtypes(columns: string[], fields: { element: { type?: string } }
 // The one thing NOT to reach for here is zero-copy handoff to Pyodide (Arrow's real attraction). That is a
 // different and much bigger piece of work than parsing — it belongs with the cross-runtime notes in
 // `docs/dev/python-sandbox.md`, not in a parser.
+
+// ---- The table FACADE ----
+//
+// `TableLike` is plain data, and describing it in pandas' vocabulary (`shape`, `dtypes`, `columns`) invites
+// pandas' SYNTAX, which it does not have. A model that reaches for `t[["a","b"]]` or `t.revenue` gets
+// `undefined` from plain JavaScript — and `undefined` flows onward silently into an answer, which is the
+// plausible-wrong-answer shape this codebase keeps designing out. The description created that expectation,
+// so the type owes an answer to it.
+//
+// Two halves, and the second is the load-bearing one:
+//
+//   1. A SMALL REAL SURFACE — the four operations worth having without a DataFrame: one column's values, a
+//      column subset, rows as objects, and a head. Everything here returns plain data or another TableLike.
+//   2. A THROW on anything else, instead of `undefined`. Property access cannot fail on its own in JS, so
+//      this needs a Proxy — which is the entire reason the facade is a wrapper rather than a few helpers.
+
+// `Table`, the facade's type, lives in contract.ts beside TableLike, for the same reason TableLike does: the
+// model reads its API docs from that file.
+
+/** Thrown when something asks a table facade for pandas. Carries the attempted key so the message can name
+ *  it, because "not a DataFrame" without "you wrote `t.revenue`" is a puzzle rather than an answer. */
+export class NotATable extends Error {
+    constructor(message: string, readonly key: string) { super(message); this.name = "NotATable"; }
+}
+
+// Everything the facade answers to. A key outside this set is a mistake worth reporting, not a miss.
+const TABLE_KEYS = new Set(["columns", "rows", "shape", "dtypes", "delimiter", "truncated", "headerless",
+    "col", "select", "records", "head"]);
+
+// INTEROP keys that must never throw, because the language and the platform read them speculatively on
+// objects they know nothing about: `then` decides whether `await` treats this as a thenable (throwing there
+// would break `await someTable`), `toJSON` is read by JSON.stringify, and the rest are printing/equality
+// plumbing. They answer `undefined`, which is what a plain object would have answered.
+const INTEROP_KEYS = new Set(["then", "toJSON", "constructor", "valueOf", "toString", "inspect",
+    "nodeType", "$$typeof", "_owner", "props"]);
+
+/** Wrap a {@link TableLike} so it has the four operations its pandas-shaped description implies — and so that
+ *  asking it for anything more says so instead of answering `undefined`.
+ *
+ *  `python` says whether `python_exec` is actually available to the caller, because the error's advice
+ *  ("use python_exec for real pandas") is worse than useless when the tool is not in the run's toolset —
+ *  the same gate `fetch_url`'s pipe error uses before pointing at `exec`.
+ *
+ *  The facade does NOT survive a structured clone (methods never do), so it is rebuilt at each boundary,
+ *  exactly as `DerefText` is. Pass the underlying `TableLike` across a boundary, wrap on arrival. */
+export function asTable(t: TableLike, opts: { python?: boolean } = {}): Table {
+    const target: Table = {
+        ...t,
+        col(name: string): TableCell[] {
+            const i = t.columns.indexOf(name);
+            if (i < 0) throw new NotATable(`No column "${name}". This table has: ${t.columns.join(", ")}.`, name);
+            return t.rows.map(r => r[i]);
+        },
+        select(names: string[]): Table {
+            if (!Array.isArray(names)) throw new NotATable(`select() takes a list of column names — \`t.select(["a", "b"])\`. For one column's values, \`t.col(${JSON.stringify(String(names))})\`.`, "select");
+            const idx = names.map(n => {
+                const i = t.columns.indexOf(n);
+                if (i < 0) throw new NotATable(`No column "${n}". This table has: ${t.columns.join(", ")}.`, n);
+                return i;
+            });
+            // Through tableOf, so the subset describes itself the way every other table does — and keeps the
+            // SOURCE's row count, since selecting columns does not change how many rows there are.
+            // The SOURCE's dtypes, not re-measured: a subset does not change what a column holds, and re-reading a
+            // prefix could disagree with the whole (a null past the prefix makes int64 float64).
+            return asTable({ ...derived([...names], t.rows.map(r => idx.map(i => r[i])), t.shape[0], names), ...(t.headerless ? { headerless: true } : {}) }, opts);
+        },
+        records(): Record<string, TableCell>[] {
+            return t.rows.map(r => Object.fromEntries(t.columns.map((c, i) => [c, r[i]])));
+        },
+        head(n = PREVIEW_ROWS): Table {
+            // `shape` is the HEAD's own, not the source's — `df.head(2).shape` is `(2, cols)` in pandas, and a
+            // head that claimed the whole table's row count would be the sample-as-the-whole bug again, this
+            // time introduced by the very method whose job is to take a sample. (`select` is the opposite
+            // case: choosing columns does not change how many rows there are, so it keeps the source count.)
+            // Except when the table is itself a PREFIX shorter than the head asked for: then the head is as
+            // long as the source says, and it is still missing rows, so it keeps saying so.
+            const want = Math.min(Math.max(0, Math.floor(Number(n)) || 0), t.shape[0]);
+            return asTable({ ...derived([...t.columns], t.rows.slice(0, want), want, t.columns), ...(t.delimiter ? { delimiter: t.delimiter } : {}) }, opts);
+        },
+    };
+    // A new table over a subset of this one's rows or columns. Always a COPY of the column list — the facade
+    // is read-only at its top level, but an array handed out would be the source's own, and an approved script
+    // pushing to it would rewrite the cached table under every later reader.
+    function derived(columns: string[], rows: TableCell[][], rowCount: number, from: string[]): TableLike {
+        const dtypes = Object.fromEntries(from.map((c, i) => [columns[i], t.dtypes?.[c] ?? "object"])) as Record<string, TableDtype>;
+        // Built directly rather than through tableOf, which would measure dtypes it is about to be told.
+        return { columns, rows, shape: [rowCount, columns.length], dtypes, ...(rowCount > rows.length ? { truncated: true } : {}) };
+    }
+    // BRANDED, so the read-only dialect can recognise it by identity rather than by shape — see
+    // table-brand.ts for why a property or a well-known symbol would be a hole rather than a check.
+    return brandTable(new Proxy(target, {
+        get(obj, key, recv) {
+            if (typeof key === "symbol" || TABLE_KEYS.has(key) || INTEROP_KEYS.has(key)) return Reflect.get(obj, key, recv);
+            throw new NotATable(pandasHint(String(key), t, !!opts.python), String(key));
+        },
+        // A miss must be loud on the way in too: `"revenue" in t` answering false is fine, but writing to a
+        // table that is not yours should not silently succeed.
+        set(_obj, key) {
+            throw new NotATable(`This table is read-only — it holds output a step already produced. Copy what you need (\`t.rows.slice()\`) and build on that.`, String(key));
+        },
+        // The other two ways to change an object's own keys, refused the same way: a `delete t.rows` that
+        // succeeded would leave a facade whose description no longer matches its data.
+        deleteProperty(_obj, key) {
+            throw new NotATable(`This table is read-only — \`delete\` cannot remove \`${String(key)}\` from it.`, String(key));
+        },
+        defineProperty(_obj, key) {
+            throw new NotATable(`This table is read-only — it holds output a step already produced.`, String(key));
+        },
+    }));
+}
+
+/** The message a pandas reach gets. Names what was written, says what this is, and points at the nearest
+ *  thing that exists — a bare "not supported" leaves the caller to guess which of five spellings is right. */
+function pandasHint(key: string, t: TableLike, python: boolean): string {
+    const known = t.columns.includes(key);
+    // `t[["a","b"]]` arrives here as the key "a,b" — an array stringifies on property access — so a comma is
+    // the tell for the exact pandas idiom this is most likely to be.
+    const looksSelect = key.includes(",") && key.split(",").every(k => t.columns.includes(k.trim()));
+    const nearest = looksSelect ? `t.select([${key.split(",").map(k => JSON.stringify(k.trim())).join(", ")}])`
+        : known ? `t.col(${JSON.stringify(key)})`
+        : null;
+    return [
+        `This is a lightweight table facade, not a pandas DataFrame — \`${looksSelect ? `t[[${key.split(",").map(k => JSON.stringify(k.trim())).join(", ")}]]` : `t.${key}`}\` is not something it answers to.`,
+        nearest ? `Use \`${nearest}\`.` : `It has: columns, rows, shape, dtypes, and col(name) / select(names) / records() / head(n).`,
+        python ? "For real pandas — grouping, joins, pivots, resampling — pass the table's source to python_exec's `tables` and work on the DataFrame there." : "",
+    ].filter(Boolean).join(" ");
+}

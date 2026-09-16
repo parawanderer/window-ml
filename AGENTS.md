@@ -240,7 +240,9 @@ learned by shipping the wrong version first.
   SOURCE's row count even when `rows` is a prefix, so pass `rowCount` to `tableOf` whenever you cap. Delimited
   text parses page-side (the text already crossed the wire); Parquet parses in the worker and its decoder is
   dynamically imported so it never reaches the page bundle. A code EXTENSION beats a guessed delimiter — source
-  full of semicolons parses as a clean two-column table otherwise.
+  full of semicolons parses as a clean two-column table otherwise. A caller gets the `Table` FACADE, which is
+  read-only and throws on unknown keys: finish editing the plain `TableLike` BEFORE `asTable`, and never probe
+  a value's shape in the dialect without checking `isTable` first.
 - **Wire formats.** The protobuf path is chosen from the RESPONSE's content type, never sniffed; no `TextDecoder`
   anywhere near binary; `toolIds` keeps SSE permanently. A strict backend refusing an optional request key is
   retried once without it — a wire nicety must never cost an answer.
