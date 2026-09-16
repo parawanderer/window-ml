@@ -216,7 +216,11 @@ export const EXEC_RANGE_CLAUSE =
     "fine too (read/inspect/`console.log` each item) — but it CANNOT accumulate (no `+=`, no `.push`), so " +
     "reach for `.map`/`.reduce` when you need to build a result. A C-style `for(;;)`, `for…in`, `while`, or " +
     "any reassignment/mutation is still ALLOWED but requires approval (it could mutate or act) — use those " +
-    "only when the task genuinely needs stateful iteration, not for a read-only read of the page.";
+    "only when the task genuinely needs stateful iteration, not for a read-only read of the page. " +
+    // A PRIMITIVE, said where the model is already deciding what to return: dumping a large object costs its whole
+    // size in context (and is clipped anyway), while its shape answers "what is in here" for a few lines.
+    "When a value is too large to return whole, return its SHAPE: `ml.schema(x)` gives the TS-like type of any " +
+    "JSON (an API response, `ml.info()`, a fetch result), then read only the fields you need.";
 export const PYTHON_CLAUSE =
     "\n\nYou have `python_exec` — a REAL sandboxed Python (its tool description lists the available " +
     "libraries). You are a language " +

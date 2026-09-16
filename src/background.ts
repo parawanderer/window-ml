@@ -3,6 +3,7 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import { LOAD_RECORDS_KEY } from "./load-records";
+import { parseInfo } from "./resource-model";   // chat_metadata: the machine's devices and memory
 import type { NeutralMessage, ToolCall, TokenUsage, RequestHint, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, InjectMessagePayload, ApprovalDecision } from "./contract";
 import { modelFilterAllows, bgRunResumable, pushReplay, UI_OUT_CAP, hintSession } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
@@ -1224,7 +1225,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     const contextWindow = lm && typeof lm.context_length === "number" ? lm.context_length : null;
                     const vramBytes = lm && lm.size_vram ? lm.size_vram : null;
                     const local = capabilities !== null;   // caps came back from Ollama /api/show → resident/local
-                    return { model, contextWindow, capabilities, vramBytes, local, ...overhead };
+                    // The machine (devices and memory, /api/info) — asked only for a LOCAL model; null where the route is missing.
+                    const capacity = local ? await fetchOllamaInfo().then((raw) => (raw ? parseInfo(raw) : null)).catch(() => null) : undefined;
+                    return { model, contextWindow, capabilities, vramBytes, local, capacity, ...overhead };
                 },
             },
         )
