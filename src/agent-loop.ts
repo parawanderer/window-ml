@@ -15,7 +15,7 @@
 import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor, ToolFeedback, SubcallUsage, TokenUsage, RunStats } from "./contract";
 import { tableOf } from "./table-data";
 import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract";
-import { formatBytes } from "./resource-model";
+import { formatBytes, type Capacity } from "./resource-model";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
@@ -97,6 +97,29 @@ export interface AgentLoopDeps {
     subcallTokens?(): SubcallUsage;
 }
 
+/** The machine's devices and memory for chat_metadata, in GiB like every other memory figure. One line per device
+ *  (so a split box reads card by card), then the VRAM total across devices and system RAM. A unified pool (Apple
+ *  silicon) shares memory with the system, so it is never summed with RAM. Absent capacity is said to be unknown,
+ *  never reported as zero; `undefined` (a world that did not look) prints nothing. */
+export function capacityLines(cap: Capacity | null | undefined): string[] {
+    if (cap === undefined) return [];
+    if (cap === null) return ["devices: not reported (the server has no /api/info — a stock Ollama or a cloud backend)"];
+    const L: string[] = [];
+    const used = (d: { totalBytes: number; freeBytes: number }) => Math.max(0, d.totalBytes - d.freeBytes);
+    for (const d of cap.devices) {
+        L.push(`device ${d.name}${d.description ? ` (${d.description})` : ""}${d.unified ? " [unified with system RAM]" : ""}: ${formatBytes(used(d))} in use of ${formatBytes(d.totalBytes)}, ${formatBytes(d.freeBytes)} free`);
+    }
+    if (!cap.devices.length) L.push("devices: none reported (CPU only)");
+    const gpus = cap.devices.filter((d) => !d.unified);
+    if (gpus.length > 1) {
+        const total = gpus.reduce((n, d) => n + d.totalBytes, 0), free = gpus.reduce((n, d) => n + d.freeBytes, 0);
+        L.push(`VRAM across ${gpus.length} devices: ${formatBytes(total - free)} in use of ${formatBytes(total)}, ${formatBytes(free)} free`);
+    }
+    if (cap.unavailable.length) L.push(`unavailable GPUs (seen, not usable): ${cap.unavailable.map((u) => u.name || u.pciId).join(", ")}`);
+    if (cap.host.totalBytes > 0) L.push(`system RAM: ${formatBytes(Math.max(0, cap.host.totalBytes - cap.host.freeBytes))} in use of ${formatBytes(cap.host.totalBytes)}, ${formatBytes(cap.host.freeBytes)} free`);
+    return L;
+}
+
 /** Model facts for chat_metadata, resolved per-world. `local`: true = Ollama-resident, false = cloud/remote,
  *  null = undeterminable. `contextWindow`/`vramBytes` are null when not resident or on a cloud model. */
 export interface ChatMeta {
@@ -106,6 +129,9 @@ export interface ChatMeta {
     /** EXACT bytes resident in VRAM, rendered binary (GiB) like every other memory figure. It was decimal GB off
      *  `size_vram / 1e9`, which reads ~7% larger than the panel's figure for the same model. */
     vramBytes?: number | null;
+    /** The MACHINE: every device with its total and free memory, and host RAM — parsed `/api/info`. `null` when the
+     *  server does not serve that route (a stock Ollama, a cloud backend): capacity UNKNOWN, never zero. */
+    capacity?: Capacity | null;
     local?: boolean | null;
     backend?: string | null;   // "OpenWebUI" / "Ollama" / "OpenAI-compatible" — how the call is routed
     // ESTIMATED fixed-overhead tokens (~chars/4, no real tokenizer): the system prompt and the tool-schema
@@ -166,6 +192,7 @@ function formatChatMeta(
     const tps = fmtTokPerSec(rs);
     if (tps) L.push(`generation rate: ${tps} — ${rs.genBasis === "eval" ? "Ollama generation time (excludes network)" : rs.genBasis === "wall" ? "wall-clock per call (includes network/queue)" : "mixed (Ollama timing where available, else wall-clock)"}`);
     if (cm?.vramBytes) L.push(`VRAM resident: ${formatBytes(cm.vramBytes)}`);
+    L.push(...capacityLines(cm?.capacity));
     // conversation SHAPE — "messages" was ambiguous; split turns / your messages / model replies
     L.push(`conversation so far: ${role("user")} of your messages · ${role("assistant")} model replies${imgs ? ` · ${imgs} carried images` : ""}`);
     // Delegated sub-call tokens: `locate` is ALWAYS a delegated vision sub-call; `look` is only a sub-call

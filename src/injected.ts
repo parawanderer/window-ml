@@ -43,6 +43,7 @@ import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, e
 import { castTableColumns, tableFromDelimited, tablePreview, tableShape, asTable, RENDER_TABLE_ROWS } from "./table-data";
 import { FetchCache, estimateFetchResultBytes } from "./fetch-cache";
 import { isTable } from "./table-brand";
+import { parseInfo } from "./resource-model";   // chat_metadata: the machine's devices and memory
 /** The page fetch cache's estimated memory budget. Enough for the table a step just fetched plus a few smaller
  *  bodies; far below what an unbounded session used to accumulate in the user's tab. */
 const FETCH_CACHE_BUDGET_BYTES = 64_000_000;
@@ -1257,7 +1258,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     const est = (s: string) => (s ? Math.round(s.length / 4) : 0);   // ~chars/4, no real tokenizer
                     let toolJson = "";
                     try { toolJson = JSON.stringify(toolset.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }))); } catch { /* skip */ }
-                    return { model: runModel, contextWindow, capabilities, vramBytes, local, backend, systemTokens: est(systemPrompt), toolTokens: est(toolJson) };
+                    // The machine: devices and memory, from /api/info (null on a server that does not serve it).
+                    let capacity: import("./resource-model").Capacity | null = null;
+                    try { const raw = await mlApi.info(); capacity = raw ? parseInfo(raw) : null; } catch { /* unknown */ }
+                    return { model: runModel, contextWindow, capabilities, vramBytes, local, backend, systemTokens: est(systemPrompt), toolTokens: est(toolJson), capacity };
                 },
             };
 

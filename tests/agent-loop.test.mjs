@@ -540,3 +540,27 @@ test("after: a gate an ORCHESTRATOR resolved (the external channel) is not a per
     await runAgentLoop("x", { tools: [danger] }, deps);
     assert.deepEqual(seen, [null, "tool"], "code decided in milliseconds; only the tool was waited on");
 });
+
+
+// THE MACHINE in chat_metadata: each device with its memory in GiB, the VRAM total, and system RAM — and "not reported"
+// on a server without /api/info, never zeros.
+test("chat_metadata: capacityLines lists each device, the VRAM total and system RAM in GiB; unknown is said", async () => {
+    const { capacityLines } = await import("../src/agent-loop.ts");
+    const { parseInfo } = await import("../src/resource-model.ts");
+    const GiB = 1024 ** 3;
+    const card = (id, total, free) => ({ gpu_id: String(id), name: `CUDA${id}`, description: "NVIDIA RTX PRO 6000", runner: "CUDA", total_memory: total, free_memory: free });
+    const cap = parseInfo({ compute: {
+        system_compute: { cpu_cores: 32, total_memory: 128 * GiB, free_memory: 12 * GiB },
+        supported_gpus: [card(0, 95 * GiB, 37.5 * GiB), card(1, 95 * GiB, 40 * GiB)],
+    } });
+    const lines = capacityLines(cap);
+    assert.deepEqual(lines, [
+        "device CUDA0 (NVIDIA RTX PRO 6000): 57.50 GiB in use of 95.00 GiB, 37.50 GiB free",
+        "device CUDA1 (NVIDIA RTX PRO 6000): 55.00 GiB in use of 95.00 GiB, 40.00 GiB free",
+        "VRAM across 2 devices: 112.5 GiB in use of 190.0 GiB, 77.50 GiB free",
+        "system RAM: 116.0 GiB in use of 128.0 GiB, 12.00 GiB free",
+    ]);
+    for (const l of lines) assert.doesNotMatch(l, /  /, "model-facing: no padding");
+    assert.deepEqual(capacityLines(null), ["devices: not reported (the server has no /api/info — a stock Ollama or a cloud backend)"]);
+    assert.deepEqual(capacityLines(undefined), [], "a world that did not look prints nothing");
+});

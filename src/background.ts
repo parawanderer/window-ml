@@ -3,6 +3,7 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import { LOAD_RECORDS_KEY } from "./load-records";
+import { parseInfo } from "./resource-model";   // chat_metadata: the machine's devices and memory
 import type { NeutralMessage, ToolCall, TokenUsage, RequestHint, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, InjectMessagePayload, ApprovalDecision } from "./contract";
 import { modelFilterAllows, bgRunResumable, pushReplay, UI_OUT_CAP, hintSession } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
@@ -1213,7 +1214,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     const backend = fmt === "ollama" ? "Ollama (native)"
                         : /open-?webui|\/api\/chat\/completions/i.test(url) ? "OpenWebUI (server-side tools available)"
                         : "OpenAI-compatible";
-                    const overhead = { systemTokens: est(p.systemPrompt), toolTokens: est(toolJson), backend };
+                    // The machine: devices and memory, from /api/info (null on a server that does not serve it).
+                    const capacity = await fetchOllamaInfo().then((raw) => (raw ? parseInfo(raw) : null)).catch(() => null);
+                    const overhead = { systemTokens: est(p.systemPrompt), toolTokens: est(toolJson), backend, capacity };
                     if (!model) return { model, contextWindow: null, capabilities: null, ...overhead };
                     const [capabilities, resident] = await Promise.all([
                         modelCapabilities(config, model).catch(() => null),
