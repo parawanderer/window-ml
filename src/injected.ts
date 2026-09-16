@@ -107,7 +107,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
     // BUDGETED (fetch-cache.ts): it was a bare Map that kept every fetched body — and every parsed CSV's rows —
     // in the user's tab for the life of the page. The most recent fetch is always kept, since the next step
     // reading it is the handoff this cache exists for; evicted URLs are remembered so a miss can say so.
-    const mlFetchCache = new FetchCache<import("./contract").FetchResult>(FETCH_CACHE_BUDGET_BYTES, estimateFetchResultBytes);
+    // Each budget eviction goes to the housekeeping log (docs/dev/housekeeping.md), reported from here because the
+    // cache lives in the page: the worker stamps it page-origin, and only this tab reads its key (the URL) back.
+    const mlFetchCache = new FetchCache<import("./contract").FetchResult>(FETCH_CACHE_BUDGET_BYTES, estimateFetchResultBytes, undefined, (key, bytes) => {
+        makeBackgroundTaskPromise("HOUSEKEEPING_REPORT_REQUEST", "HOUSEKEEPING_REPORT_RESPONSE", { subsystem: "fetch-cache", kind: "evict", reason: "budget", key, bytes, detail: { budgetBytes: FETCH_CACHE_BUDGET_BYTES } }).catch(() => { /* a log, never worth a failure */ });
+    });
 
     /** `ml.fetch(ownUrl, { rendered: true, credentials: true })` on a local page, answered from the live
      *  document (see `isCurrentPage`). `rendered` is set because that is what it is: a settled DOM, not a

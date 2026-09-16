@@ -1,7 +1,8 @@
 # The housekeeping log: what the system decided on its own
 
-**Status: in progress.** Written 2026-09-16. The log store, `ml.__housekeeping()` and service-worker start/eviction
-inference are built (`docs/dev/housekeeping.md`); the other emitters and the DevTools view are not. Build it before the value store
+**Status: in progress.** Written 2026-09-16. The log store, `ml.__housekeeping()`, service-worker start/eviction
+inference, Pyodide cold starts and kills, and fetch-cache evictions are built (`docs/dev/housekeeping.md`); the
+pre-warm, the value store and the DevTools view are not. Build it before the value store
 (`docs/spec/POINTER_VALUES.md`), with the Pyodide pre-warm as its first emitter.
 
 ## Why

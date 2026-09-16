@@ -31,20 +31,32 @@ const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnT
 
 /** Arm a kill for run `id`: when it fires, that run fails with `error` and the (still-busy) worker is terminated,
  *  failing anything queued behind it. */
-function killAfter(id: number, ms: number, error: string): ReturnType<typeof setTimeout> {
+function killAfter(id: number, ms: number, error: string, reason: "timeout" | "start-timeout"): ReturnType<typeof setTimeout> {
     return setTimeout(() => {
         const entry = pending.get(id);
         if (!entry) return;   // already resolved
         pending.delete(id);
         entry.resolve({ ok: false, stdout: "", error });
-        killWorker("timeout");   // nuke the (still-busy) instance + fail any others queued behind it
+        killWorker(reason);   // nuke the (still-busy) instance + fail any others queued behind it
     }, ms);
+}
+
+/** Tells the worker's housekeeping log what this document decided (docs/dev/housekeeping.md). The worker stamps
+ *  it `offscreen` from the sender. Fire-and-forget: a log is never worth failing a run over. */
+function reportHousekeeping(report: { subsystem: string; kind: string; reason?: string; ms?: number; detail?: Record<string, string | number | boolean> }): void {
+    try { chrome.runtime.sendMessage({ type: "HOUSEKEEPING_REPORT", payload: report }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
 }
 
 // Terminate the worker and fail every still-pending run with `reason`. Used on a worker crash and
 // on a timeout kill (after the timed-out run itself has been resolved + removed from `pending`).
 function killWorker(reason: string): void {
-    if (worker) { try { worker.terminate(); } catch { /* already gone */ } worker = null; }
+    if (worker) {
+        try { worker.terminate(); } catch { /* already gone */ }
+        worker = null;
+        // A timeout names itself; anything else is the worker's own error message, kept as detail under "crashed".
+        const named = reason === "timeout" || reason === "start-timeout";
+        reportHousekeeping({ subsystem: "pyodide", kind: "kill", reason: named ? reason : "crashed", detail: { queuedRuns: pending.size, ...(named ? {} : { message: reason }) } });
+    }
     for (const { resolve, timer } of pending.values()) { clearTimeout(timer); resolve({ ok: false, stdout: "", error: `Python worker stopped (${reason}).` }); }
     pending.clear();
 }
@@ -65,12 +77,14 @@ function ensureWorker(): Worker {
             const entry = pending.get(e.data.id);
             if (entry?.armOnStart) {
                 clearTimeout(entry.timer);
-                entry.timer = killAfter(e.data.id, PY_TIMEOUT_MS, `Python run exceeded ${PY_TIMEOUT_MS / 1000}s and was terminated — simplify the computation or reduce the input size.`);
+                entry.timer = killAfter(e.data.id, PY_TIMEOUT_MS, `Python run exceeded ${PY_TIMEOUT_MS / 1000}s and was terminated — simplify the computation or reduce the input size.`, "timeout");
             }
             return;
         }
         const { id, ...result } = e.data as { id: number } & PyResult;
         const entry = pending.get(id);
+        // `bootMs` is on exactly the run that paid for starting the runtime: the cold start, for the log.
+        if (typeof result.bootMs === "number") reportHousekeeping({ subsystem: "pyodide", kind: "cold-start", ms: result.bootMs });
         if (entry) { pending.delete(id); clearTimeout(entry.timer); entry.resolve(result); }
     };
     // A worker-level failure (load error, uncaught throw) would otherwise strand every pending run.
@@ -101,7 +115,7 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         // run queued behind a 10s one could expire 5s into its own work. So the post arms only the generous
         // START bound, and the worker's `started` (runtime up, script about to run) swaps in the script's cap.
         const timer = noTimeout || complete || bench?.reset ? (0 as unknown as ReturnType<typeof setTimeout>)
-            : killAfter(id, PY_START_TIMEOUT_MS, `The Python sandbox did not start within ${PY_START_TIMEOUT_MS / 1000}s and was terminated.`);
+            : killAfter(id, PY_START_TIMEOUT_MS, `The Python sandbox did not start within ${PY_START_TIMEOUT_MS / 1000}s and was terminated.`, "start-timeout");
         pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset) });   // streamId → the background can key live stdout chunks
         w.postMessage({ id, code, image, hardened, tables, stream, ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}) });
     });

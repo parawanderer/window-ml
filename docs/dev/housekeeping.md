@@ -13,6 +13,18 @@ you add an emitter.
 | `background.ts` | Routes `HOUSEKEEPING_REPORT` / `DUMP_HOUSEKEEPING`, calls `start()` at load and `beat()` on every message. |
 | `injected.ts` | `ml.__housekeeping({ download })`. |
 
+## What reports today
+
+| Event | From | Notes |
+| --- | --- | --- |
+| `sw/start`, `sw/evicted-inferred` | the worker (`HousekeepingLog.start`) | See "Inferred eviction" below. |
+| `pyodide/cold-start` (`ms`) | `offscreen.ts` | On the run whose result carries `bootMs`, the one that paid for starting the runtime. A warm run reports nothing. |
+| `pyodide/kill` (`reason: timeout / start-timeout / crashed`) | `offscreen.ts` `killWorker` | `detail.queuedRuns` is how many runs behind it failed with it; a crash keeps the worker's message in `detail.message`. |
+| `fetch-cache/evict` (`reason: budget`, `key`, `bytes`) | the page (`injected.ts`, `FetchCache`'s `onEvict`) | Page-origin, so only the tab that fetched the URL reads the key back. |
+
+`tests/e2e/housekeeping.spec.mjs` covers what only a real browser can: the log surviving a stopped worker (CDP
+`ServiceWorker.stopAllWorkers`), the next worker's inference, and the offscreen origin coming from the sender.
+
 ## Adding an emitter
 
 - **In the worker:** `recordHousekeeping({ subsystem, kind, reason?, key?, bytes?, ms?, detail? })` from
