@@ -114,7 +114,7 @@ export const sessionMap = new Map<string, Session>();
 export const rev = signal(0);
 // WHICH VIEW is on screen. `settings` and `bench` REPLACE the others, which is why leaving them needs
 // `viewReturn` — see it below.
-export const view = signal<{ name: "list" } | { name: "detail"; hash: string } | { name: "settings" } | { name: "bench" }>({ name: "list" });
+export const view = signal<{ name: "list" } | { name: "detail"; hash: string } | { name: "settings" } | { name: "bench" } | { name: "housekeeping" }>({ name: "list" });
 export const fontScale = signal(1);   // × BASE_FS px — the panel's text size (Settings → Appearance)
 export const codeWrap = signal(true);          // wrap long code lines vs. horizontal scroll
 export const codeLineNumbers = signal(false);  // show a line-number gutter on code blocks
