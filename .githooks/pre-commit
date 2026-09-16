@@ -111,3 +111,12 @@ if echo "$staged" | grep -q '^src/sidebar/sidebar\.css$'; then
         exit 1
     fi
 fi
+
+# A REMINDER about files that have outgrown one idea. Last, because it never blocks: it prints and returns 0
+# whatever it finds, so it cannot be the reason a commit fails. Ratcheted against the merge base and run on
+# the STAGED tree, so it speaks only when THIS commit makes an oversized file bigger — which is the moment
+# the advice can still be acted on cheaply, rather than in review.
+base=$(git merge-base HEAD origin/main 2>/dev/null || echo "")
+if [ -n "$base" ]; then
+    node scripts/check-file-size.mjs "$base" --staged || true
+fi

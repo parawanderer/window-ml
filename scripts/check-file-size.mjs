@@ -55,7 +55,12 @@ function grownFiles(base, staged) {
         // Absent in the base = a NEW file. It has no inherited size to be forgiven, so any oversized new file
         // is reported however it arrived.
         try { before = git(["show", `${base}:${p}`]).split("\n").length; } catch { before = 0; }
-        return { path: p, before, now: lines(p) };
+        // STAGED reads the INDEX, not the disk. A hook that measured the working tree would be answering
+        // about a state nobody is committing — the same distinction the CSS ratchet draws for its diff.
+        let now = 0;
+        if (staged) { try { now = git(["show", `:${p}`]).split("\n").length; } catch { now = 0; } }
+        else now = lines(p);
+        return { path: p, before, now };
     }).filter((f) => f.now > LIMIT && f.now > f.before);
 }
 

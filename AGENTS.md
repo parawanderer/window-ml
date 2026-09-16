@@ -359,8 +359,8 @@ A TRAILING `//` counts as the docstring for a one-line export, which is the hous
 scanner to read those fixed thirty of them with no churn, rather than having me move thirty comments above
 their declarations to satisfy an indexer. Playbook: `.claude/skills/components/SKILL.md`.
 
-**A file that has grown past ~800 lines gets a REMINDER in CI** (`node scripts/check-file-size.mjs`, the
-`tools` job) suggesting it be split into logical modules, with per-module tests where that follows. It never
+**A file that has grown past ~800 lines gets a REMINDER** (`node scripts/check-file-size.mjs`) — in the
+pre-commit hook and in CI's `tools` job suggesting it be split into logical modules, with per-module tests where that follows. It never
 fails a build — size is a judgement, and `contract.ts` is long because it is one contract. It is RATCHETED:
 fifteen files are already over the line, so it speaks only when a change makes an oversized file bigger,
 which is the moment the advice is actionable. `--all` lists every one of them when you do want the survey.
