@@ -27,7 +27,10 @@ before(async () => {
     py = await loadPyodide({ indexURL: PYODIDE_DIR });
     // The PRELUDE imports numpy/PIL/pandas; read_html needs bs4 + html5lib. (scipy is load-only in
     // the real sandbox and unused by the prelude, so it's skipped here.)
-    await py.loadPackage(["numpy", "pillow", "pandas", "beautifulsoup4", "html5lib", "sympy"]);
+    // pyarrow too, when its wheel was fetched, and PREPARED before any test runs pandas — the worker's own order.
+    const withArrow = fs.readdirSync(PYODIDE_DIR).some((f) => f.startsWith("pyarrow-"));
+    await py.loadPackage(["numpy", "pillow", "pandas", "beautifulsoup4", "html5lib", "sympy", ...(withArrow ? ["pyarrow"] : [])]);
+    if (withArrow) py.runPython((await import("../src/python-env.ts")).PY_STARTUP_PREPARE);
 }, { timeout: 180000 });
 
 // Mirror offscreen.run(): set the injected globals, (optionally harden), run the wrapped script,
@@ -637,4 +640,46 @@ test("bench: completion from a LIVE namespace types what static analysis cannot 
     const code = "grid.su";
     assert.deepEqual(completeIn(py, code, 1, code.length).map((c) => c.name), [], "without the namespace: nothing");
     assert.ok(completeIn(py, code, 1, code.length, ns).map((c) => c.name).includes("sum"), "with it: the live ndarray's methods");
+});
+
+// ── pyarrow ───────────────────────────────────────────────────────────────────────────────────────────────────
+// Loaded at start and prepared in `before`, as the worker does. Used from INSIDE the readonly sandbox — proving a
+// hardened script reads and writes Parquet and Arrow IPC with no JS bridge and no network, which pointer values need.
+const hasPyarrow = hasPyodide && fs.readdirSync(PYODIDE_DIR).some((f) => f.startsWith("pyarrow-"));
+const skipArrow = skip || (hasPyarrow ? false : "no pyarrow wheel in dist/pyodide — re-run `npm run fetch-pyodide`");
+
+test("pyarrow: a hardened script round-trips a DataFrame through Parquet and Arrow IPC, after pandas ran before it", { skip: skipArrow, timeout: 120000 }, async () => {
+    // pandas FIRST, as a sandbox that has already run something has.
+    assert.equal((await pyRun("return pd.__version__", { hardened: true })).ok, true);
+    const code = [
+        "import pyarrow as pa",
+        "buf = io.BytesIO()",
+        "src = pd.DataFrame({'a': [1, 2, 3], 'b': ['x', 'y', None], 'c': [True, False, True]})",
+        "src.to_parquet(buf)",
+        "buf.seek(0)",
+        "back = pd.read_parquet(buf)",
+        "sink = pa.BufferOutputStream()",
+        "table = pa.Table.from_pandas(src)",
+        "with pa.ipc.new_file(sink, table.schema) as w: w.write_table(table)",
+        "ipc = pa.ipc.open_file(sink.getvalue()).read_all().to_pandas()",
+        "return {'parquet': [len(back), str(back.dtypes['a']), str(back.dtypes['c'])], 'ipc_equal': bool(ipc.equals(src)), 'version': pa.__version__}",
+    ].join("\n");
+    const r = await pyRun(code, { hardened: true });
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(r.value.parquet, [3, "int64", "bool"]);
+    assert.equal(r.value.ipc_equal, true);
+    assert.match(r.value.version, /^22\./);
+});
+
+test("ADVERSARIAL pyarrow: its preparation leaves no route to `js` for a hardened script", { skip: skipArrow, timeout: 120000 }, async () => {
+    // The dependency that needed `js` kept it as a module attribute; that is the one to try first.
+    const r = await pyRun([
+        "import sys, unix_timezones, pyarrow",
+        "leaks = [name for name, mod in list(sys.modules.items()) if mod is not None and getattr(mod, 'js', None) is not None and name.split('.')[0] in ('pyarrow', 'unix_timezones', 'pandas')]",
+        "return {'attr': hasattr(unix_timezones, 'js'), 'cached': 'js' in sys.modules, 'leaks': leaks}",
+    ].join("\n"), { hardened: true });
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(r.value, { attr: false, cached: false, leaks: [] });
+    const imp = await pyRun("import js\nreturn 'reached'", { hardened: true });
+    assert.equal(imp.ok, false, "`import js` still fails in a hardened run with pyarrow loaded");
 });

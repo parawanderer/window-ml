@@ -253,7 +253,10 @@ Each slice ships and is useful without the next:
 
 1. **The two independent fixes** — the capped streaming read, and `mlFetchCache` eviction.
 2. **`TableLike.dtypes` says `str`**, matching pandas 3.
-3. **pyarrow in the bundle**, loaded on demand; `read_parquet` works in `python_exec`.
+3. **pyarrow in the bundle**; `read_parquet` works in `python_exec`. **Built — loaded at START, not on demand**:
+   pandas fixes its view of pyarrow when pandas is imported, so a late load left it half-switched. ~1.5 s of cold
+   start, mostly absorbed by the pre-warm. Why, and the `import js` its timezone dependency needed:
+   `docs/dev/python-sandbox.md`.
 4. **The value store**: IndexedDB blobs keyed by pointer id with a metadata row each, the layered eviction above
    (global budget on write, session release, idle sweep), and loud failure on a miss.
    Fetched tables store their bytes; nothing reads them yet except a new, explicit test path.
