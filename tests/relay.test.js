@@ -846,6 +846,13 @@ test("ml.__loads(): the per-load records round-trip, and clear is asked of the b
     assert.deepEqual(seen, [{ clear: false }, { clear: true }]);
 });
 
+// ml.__housekeeping() across the real page relay: the events come back as the background sent them.
+test("ml.__housekeeping(): the log round-trips through the relay", async () => {
+    const EV = { t: 1, subsystem: "sw", kind: "start", origin: "worker" };
+    const world = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "DUMP_HOUSEKEEPING" ? { data: [EV] } : undefined) });
+    assert.deepEqual(await world.ml.__housekeeping(), [EV]);
+});
+
 // An advisory (a label resolved by similarity) must survive the background relay ALONGSIDE the value, so the
 // page-side ml.dereference can console.warn it without touching the data the script is about to parse.
 test("ml.dereference (background-hosted): a soft-match advisory crosses the relay beside the value", async () => {

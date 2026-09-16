@@ -22,6 +22,7 @@ import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, she
 import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
+import { housekeeping, handleHousekeepingReport, handleHousekeepingDump } from "./sw-housekeeping";   // what the system decided on its own (docs/dev/housekeeping.md)
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -153,6 +154,8 @@ async function hydratePersistedRuns(): Promise<void> {
 }
 // Resolves once the startup rehydrate is done — CONTENT_READY awaits it so a page loading right after an SW
 // respawn doesn't miss the in-flight run (the respawn race).
+// Logs this worker's start, and infers the previous one's eviction from a heartbeat it left in storage.session.
+void housekeeping.start();
 const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && chrome.storage?.local) ? hydratePersistedRuns() : Promise.resolve();
 
 // TEST-ONLY (reachable only from the SW realm via serviceWorker.evaluate, like __mlApprovals — no page can
@@ -412,6 +415,7 @@ function dropPrintDoc(key: string): void {
 }
 
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
+    housekeeping.beat();   // a message is the worker being alive: the heartbeat an eviction is inferred from (throttled)
     // The content-script shell forwards each __mlDebug event here so a DevTools panel
     // (which can't see page window-messages) can mirror the overlay's stream. Fire-and-
     // forget — no response. RESET clears a tab's buffer on navigation (fresh page).
@@ -1740,6 +1744,17 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 info: await fetchOllamaInfo().catch(() => null),
             } });
         })();
+        return true;
+
+    } else if (message.type === "HOUSEKEEPING_REPORT") {
+        // Another context (the offscreen doc, a page's fetch cache) reporting what it decided. `origin` comes
+        // from `sender`, never the payload; nothing reads the log to decide anything, so a page may report.
+        sendResponse(handleHousekeepingReport(message.payload, sender));
+        return;
+
+    } else if (message.type === "DUMP_HOUSEKEEPING") {
+        // `ml.__housekeeping()` and the DevTools panel. A page sees another tab's events without their key/detail.
+        handleHousekeepingDump(message.payload, sender).then(sendResponse, (e) => sendResponse({ error: String((e as Error)?.message || e) }));
         return true;
 
     } else if (message.type === "DUMP_LOADS") {

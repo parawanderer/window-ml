@@ -1,6 +1,7 @@
 # The housekeeping log: what the system decided on its own
 
-**Status: agreed, not started.** Written 2026-09-16. Build it before the value store
+**Status: in progress.** Written 2026-09-16. The log store, `ml.__housekeeping()` and service-worker start/eviction
+inference are built (`docs/dev/housekeeping.md`); the other emitters and the DevTools view are not. Build it before the value store
 (`docs/spec/POINTER_VALUES.md`), with the Pyodide pre-warm as its first emitter.
 
 ## Why
@@ -42,7 +43,7 @@ interface HousekeepingEvent {
     key?: string;                    // what it acted on: a URL, a pointer id, a session hash
     bytes?: number;                  // what it freed or cost
     ms?: number;                     // how long it took (a cold start, a sweep)
-    origin: "worker" | "offscreen" | "page";   // WHO REPORTED IT — see Trust
+    origin: "worker" | "offscreen" | "extension" | "page";   // WHO REPORTED IT — see Trust
     detail?: Record<string, string | number | boolean>;   // anything else, small and JSON-safe
 }
 ```
@@ -80,6 +81,11 @@ the content-script relay, which a hostile page can call directly. So every event
 WORKER from the message's sender, never by the reporter. Page-reported events are shown, tagged as such, and
 never used to decide anything: nothing reads this log to make a security or eviction decision. It is a record,
 not an input.
+
+Three rules follow from a page being able to reach both messages. Page-reported events have their own cap inside the
+ring (200 of 1,000), so a page flooding reports cannot push the worker's events out. A page reading the log sees
+`key` and `detail` only on events its own tab reported, because a key can be another tab's URL or a resumable
+session hash. And a page cannot clear it.
 
 ## The two ways in
 

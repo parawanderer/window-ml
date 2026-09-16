@@ -210,6 +210,7 @@ learned by shipping the wrong version first.
 | `@tool:` pointers, `dereference`, the pipe dialect, the pointer macro | `docs/dev/pointers.md` (+ `docs/POINTER-IDENTIFIERS.md`) |
 | the Markdown/PDF export, the JSON export and its schema | `docs/dev/export.md` |
 | `ml.fetch` Markdown negotiation, protobuf streaming, the live token count, sources/reasoning plumbing | `docs/dev/wire-and-fetch.md` |
+| the housekeeping log (`ml.__housekeeping()`), or anything that evicts, sweeps or restarts on its own | `docs/dev/housekeeping.md` (+ `docs/spec/HOUSEKEEPING_LOG.md`) |
 | the resource panel (VRAM/RAM) and the event lane | `docs/dev/resource-panel.md` (+ `docs/spec/RESOURCE_PANEL.md`) |
 | the overlay vs DevTools surfaces, `debugMode`, shared UI components | `docs/dev/sidebar.md` |
 | the patched Ollama/OpenWebUI features and how the client reads them | `docs/FORKED-BACKENDS.md` |

@@ -3990,3 +3990,50 @@ test("FETCH_LLM: the request id sent as hint.request comes back on that call's u
     assert.ok(sent, "an id went out");
     assert.equal(res.data.usage.requestId, sent, "and the call's usage names it, so the panel can match the server's gen.end to it");
 });
+
+// ---- the housekeeping log (src/housekeeping.ts, src/sw-housekeeping.ts) ----
+
+const PAGE = (id, url = "https://site.example/") => ({ tab: { id, url }, url });
+const EXT = (p = "sidebar/devtools.html") => ({ url: `chrome-extension://test/${p}` });
+
+test("housekeeping: a worker start with a heartbeat left behind logs the earlier worker's eviction", async () => {
+    const bg = loadBackground({ onFetch: () => jsonResponse({}), session: { ml_hk_seen: Date.now() - 60_000 } });
+    const { data } = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: {} }, EXT());
+    const kinds = data.map((e) => `${e.subsystem}/${e.kind}`);
+    assert.deepEqual(kinds.slice(0, 2), ["sw/evicted-inferred", "sw/start"]);
+    assert.equal(data[0].reason, "idle");
+    assert.ok(Array.isArray(bg.sessionStore.ml_hk_log), "the log is in storage.session, where it outlives the worker");
+});
+
+test("housekeeping: origin and tab are stamped from the sender — a page cannot report as the worker", async () => {
+    const bg = loadBackground({ onFetch: () => jsonResponse({}) });
+    const r = await bg.send({ type: "HOUSEKEEPING_REPORT", payload: { subsystem: "sw", kind: "start", origin: "worker", tab: 1 } }, PAGE(7));
+    assert.equal(r.data, true);
+    await bg.send({ type: "HOUSEKEEPING_REPORT", payload: { subsystem: "pyodide", kind: "cold-start", ms: 3000 } }, EXT("offscreen.html"));
+    const { data } = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: {} }, EXT());
+    const fromPage = data.filter((e) => e.kind === "start" && e.origin !== "worker");
+    assert.equal(fromPage.length, 1);
+    assert.equal(fromPage[0].origin, "page");
+    assert.equal(fromPage[0].tab, 7);
+    assert.equal(data.find((e) => e.kind === "cold-start").origin, "offscreen");
+    assert.equal((await bg.send({ type: "HOUSEKEEPING_REPORT", payload: { subsystem: "BAD", kind: "x" } }, PAGE(7))).data, false);
+});
+
+test("housekeeping: a page reads another tab's events without their key or detail, and cannot clear the log", async () => {
+    const bg = loadBackground({ onFetch: () => jsonResponse({}) });
+    await bg.send({ type: "HOUSEKEEPING_REPORT", payload: { subsystem: "fetch-cache", kind: "evict", key: "https://mine/a.csv", bytes: 5 } }, PAGE(1));
+    await bg.send({ type: "HOUSEKEEPING_REPORT", payload: { subsystem: "fetch-cache", kind: "evict", key: "https://private/b.csv", bytes: 6, detail: { n: 1 } } }, PAGE(2));
+    const { data } = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: {} }, PAGE(1));
+    const evicts = data.filter((e) => e.kind === "evict");
+    assert.equal(evicts[0].key, "https://mine/a.csv");
+    assert.equal(evicts[1].key, undefined);
+    assert.equal(evicts[1].detail, undefined);
+    assert.equal(evicts[1].bytes, 6);
+    const refused = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: { clear: true } }, PAGE(1));
+    assert.match(refused.error, /cannot clear/);
+    const all = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: {} }, EXT());
+    assert.ok(all.data.some((e) => e.key === "https://private/b.csv"), "the refused clear left the log intact; a surface sees every key");
+    await bg.send({ type: "DUMP_HOUSEKEEPING", payload: { clear: true } }, EXT());
+    const after = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: {} }, EXT());
+    assert.deepEqual(after.data.map((e) => `${e.subsystem}/${e.kind}`), ["log/clear"]);
+});
