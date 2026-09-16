@@ -116,7 +116,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
-function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9" }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9" }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
@@ -130,6 +130,7 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
     const connectListeners = [];
     const stored = { ...config };
     const localStore = { ...local };   // seed chrome.storage.local (e.g. ml_bgrun_* snapshots for durable-resume tests)
+    const sessionStore = { ...session };   // seed chrome.storage.session (e.g. a housekeeping heartbeat left by an "earlier" worker)
     let offscreenDoc = false;
 
     const context = {
@@ -171,7 +172,11 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
                     },
                     set: async (obj) => { Object.assign(localStore, obj); },
                     remove: async (keys) => { for (const k of (Array.isArray(keys) ? keys : [keys])) delete localStore[k]; },
-                }
+                },
+                session: {
+                    get: async (keys) => Object.fromEntries((Array.isArray(keys) ? keys : [keys]).filter((k) => k in sessionStore).map((k) => [k, structuredClone(sessionStore[k])])),
+                    set: async (obj) => { Object.assign(sessionStore, structuredClone(obj)); },
+                },
             },
             // GET_INVOCATION reads the manifest's suggested key + the contextMenus permission.
             commands: commandShortcut === null ? undefined : {
@@ -258,6 +263,7 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
         emitDebuggerEvent: (target, method, params) => { [...debuggerEventListeners].forEach(fn => fn(target, method, params)); },
         stored,
         localStore,   // chrome.storage.local contents — tests assert a snapshot was kept/removed
+        sessionStore,   // chrome.storage.session contents — the housekeeping log lives here
         context,      // the vm sandbox — reach test-only globalThis hooks (e.g. __mlSeedBgRunForTest)
         // Simulates chrome.runtime.sendMessage hitting the listener.
         send: (message, sender = {}) =>

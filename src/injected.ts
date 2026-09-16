@@ -2888,6 +2888,28 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @param opts.clear Empty the store after reading it.
          * @returns {Promise<object[]>} The records, oldest first.
          */
+        /**
+         * The HOUSEKEEPING LOG: what the system decided on its own — cache evictions, sweeps, service-worker
+         * restarts (inferred from a heartbeat, since an evicted worker writes nothing on its way out), Python
+         * cold starts. One structured event each, oldest first, kept in `chrome.storage.session` so it outlives
+         * the worker and clears with the browser. `origin` is who reported it, stamped by the worker; this page
+         * sees `key` and `detail` only on events its own tab reported. Underscored: a debugging aid, not API.
+         * See docs/dev/housekeeping.md.
+         *
+         * @param opts.download Save it as `ml-housekeeping-<time>.json` instead of only returning it.
+         * @returns {Promise<object[]>} The events, oldest first.
+         */
+        __housekeeping: async function(opts?: { download?: boolean }): Promise<unknown[]> {
+            const events = await makeBackgroundTaskPromise("DUMP_HOUSEKEEPING_REQUEST", "DUMP_HOUSEKEEPING_RESPONSE", {}) as unknown[];
+            if (opts?.download) {
+                const url = URL.createObjectURL(new Blob([JSON.stringify(events, null, 1)], { type: "application/json" }));
+                const a = document.createElement("a");
+                a.href = url; a.download = `ml-housekeeping-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(url), 10_000);
+            }
+            return events;
+        },
         __loads: async function(opts?: { download?: boolean; clear?: boolean }): Promise<unknown[]> {
             const records = await makeBackgroundTaskPromise("DUMP_LOADS_REQUEST", "DUMP_LOADS_RESPONSE", { clear: !!opts?.clear }) as unknown[];
             if (opts?.download) {

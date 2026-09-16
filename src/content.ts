@@ -45,6 +45,9 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     DUMP_EVENTS_REQUEST: { type: "DUMP_EVENTS", responseType: "DUMP_EVENTS_RESPONSE" },
     // ml.__loads() — the per-load records kept for tuning the VRAM predictor (see the background's DUMP_LOADS).
     DUMP_LOADS_REQUEST: { type: "DUMP_LOADS", responseType: "DUMP_LOADS_RESPONSE" },
+    // ml.__housekeeping() and page-side reports into it (see the background's DUMP_HOUSEKEEPING/HOUSEKEEPING_REPORT).
+    DUMP_HOUSEKEEPING_REQUEST: { type: "DUMP_HOUSEKEEPING", responseType: "DUMP_HOUSEKEEPING_RESPONSE" },
+    HOUSEKEEPING_REPORT_REQUEST: { type: "HOUSEKEEPING_REPORT", responseType: "HOUSEKEEPING_REPORT_RESPONSE" },
     UNLOAD_REQUEST: { type: "OLLAMA_UNLOAD", responseType: "UNLOAD_RESPONSE" },
     CAPTURE_TAB_REQUEST: { type: "CAPTURE_TAB", responseType: "CAPTURE_TAB_RESPONSE" },
     SAVE_SESSION_REQUEST: { type: "SAVE_SESSION", responseType: "SAVE_SESSION_RESPONSE" },
