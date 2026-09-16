@@ -8,7 +8,7 @@
 import type { FetchResult, FetchFormat, FetchAttempt } from "./contract";
 import { acceptLanguageFrom } from "./contract";
 import { classifyContent, jsonShape, markdownAlternateHref, resolveMarkdownAlternate, markdownSiblingUrl, isMarkdownResponse, typeFromExtension, typeFromHeader } from "./dom";
-import { looksParquet, tableFromParquet } from "./table-data";
+import { looksParquet, tableFromParquet, looksArrowFile, tableFromArrow } from "./table-data";
 import { readCapped, decodeCapped, binaryKind } from "./body-read";
 import { ensureDebuggerAttached, releaseDebugger } from "./sw-cdp";
 import { incognitoEnableSteps } from "./util";
@@ -104,7 +104,8 @@ const noSiblingOrigins = new Set<string>();
  *  `.parquet`, and a body that turns out not to be Parquet is decoded as text below with nothing lost. */
 function maybeBinaryTable(contentType: string, url: string): boolean {
     const ct = contentType.split(";")[0].trim().toLowerCase();
-    return ct.includes("parquet") || ct === "application/octet-stream" || typeFromExtension(url)?.type === "parquet";
+    const ext = typeFromExtension(url)?.type;
+    return ct.includes("parquet") || typeFromHeader(ct) === "arrow" || ct === "application/octet-stream" || ext === "parquet" || ext === "arrow";
 }
 
 /** The most bytes a possibly-BINARY body may be read to. Larger than the text cap because a binary table is
@@ -123,7 +124,7 @@ const FETCH_BINARY_MAX = 64_000_000;
  *  A response that might be a binary table is read as bytes and, if the magic says it is not one after all,
  *  decoded to text here — so a mislabelled body costs a decode rather than being corrupted by a text read before
  *  anything can look at it. */
-async function rawGet(url: string, credentials: boolean, accept?: string): Promise<{ res: Response; text: string; bytes?: ArrayBuffer; truncated: boolean; parquetTooLarge?: number; binary?: { kind: string; size: number }; ms: number }> {
+async function rawGet(url: string, credentials: boolean, accept?: string): Promise<{ res: Response; text: string; bytes?: ArrayBuffer; arrow?: ArrayBuffer; truncated: boolean; parquetTooLarge?: number; arrowTooLarge?: number; binary?: { kind: string; size: number }; ms: number }> {
     const t0 = Date.now();
     const res = await fetch(url, { method: "GET", credentials: credentials ? "include" : "omit", redirect: "follow", headers: browserFetchHeaders(accept) });
     if (maybeBinaryTable(res.headers?.get?.("content-type") || "", res.url || url)) {
@@ -136,6 +137,16 @@ async function rawGet(url: string, credentials: boolean, accept?: string): Promi
             if (truncated) return { res, text: "", truncated: true, parquetTooLarge: FETCH_BINARY_MAX, ms: Date.now() - t0 };
             const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
             if (looksParquet(buf)) return { res, text: "", bytes: buf, truncated: false, ms: Date.now() - t0 };
+        }
+        // ARROW IPC: the File format by its `ARROW1` magic, whatever it was served as; the Stream format, which has
+        // no magic, only when its media type or extension says so — the decode is what then settles it.
+        const declaredArrow = typeFromHeader(res.headers?.get?.("content-type") || "") === "arrow" || typeFromExtension(res.url || url)?.type === "arrow";
+        const arrowStart = bytes.length >= 6 && bytes[0] === 0x41 && bytes[1] === 0x52 && bytes[2] === 0x52 && bytes[3] === 0x4f && bytes[4] === 0x57 && bytes[5] === 0x31;
+        if (arrowStart || declaredArrow) {
+            // A File's schema and record-batch index are in its FOOTER, so a prefix is unreadable, as with Parquet.
+            if (truncated) return { res, text: "", truncated: true, arrowTooLarge: FETCH_BINARY_MAX, ms: Date.now() - t0 };
+            const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+            if (arrowStart ? looksArrowFile(buf) : true) return { res, text: "", arrow: buf, truncated: false, ms: Date.now() - t0 };
         }
         const cut = truncated || bytes.length > FETCH_URL_MAX;
         const kind = binaryKind(bytes);
@@ -183,6 +194,41 @@ function binaryResult(requested: string, r: { res: Response; truncated: boolean;
         truncated: r.truncated || undefined, redirected: r.res.redirected || undefined,
         headers: safeResponseHeaders(r.res.headers),
     };
+}
+
+/** An Arrow IPC body past the binary cap: reported, not decoded, for Parquet's reason — a File's schema is at
+ *  the end. */
+function arrowTooLargeResult(requested: string, res: Response, cap: number): FetchResult {
+    return {
+        url: res.url || requested, status: res.status, ok: res.ok, type: "arrow",
+        typeByHeader: typeFromHeader(res.headers?.get?.("content-type") || ""), typeByContent: "arrow",
+        typeByExtension: typeFromExtension(res.url || requested),
+        contentType: res.headers?.get?.("content-type") || "",
+        text: `(an Arrow IPC file larger than ${Math.round(cap / 1e6)} MB — not read. Arrow keeps its schema and batch index at the END of the file, so a prefix cannot be decoded.)`,
+        truncated: true, redirected: res.redirected || undefined,
+    };
+}
+
+/** An Arrow IPC response → a FetchResult carrying the decoded table, exactly as `parquetResult` does it. A body
+ *  that CLAIMED to be Arrow (a stream's media type) but does not decode is described as binary instead: the
+ *  claim was the only evidence, and the bytes disagree. */
+async function arrowResult(requested: string, r: { res: Response; arrow: ArrayBuffer }): Promise<FetchResult> {
+    const contentType = r.res.headers.get("content-type") || "";
+    const out: FetchResult = {
+        url: r.res.url || requested, status: r.res.status, ok: r.res.ok, type: "arrow",
+        typeByHeader: typeFromHeader(contentType), typeByContent: "arrow",
+        typeByExtension: typeFromExtension(r.res.url || requested),
+        contentType,
+        text: `(an Arrow IPC table, ${r.arrow.byteLength.toLocaleString("en-US")} bytes — binary, so there is no text body; read \`table\`)`,
+        redirected: r.res.redirected || undefined,
+        headers: safeResponseHeaders(r.res.headers),
+    };
+    try { out.table = await tableFromArrow(r.arrow); }
+    catch (e) {
+        const kind = binaryKind(new Uint8Array(r.arrow)) ?? "data that did not decode as Arrow";
+        return binaryResult(requested, { res: r.res, truncated: false, binary: { kind, size: r.arrow.byteLength } });
+    }
+    return out;
 }
 
 /** A Parquet body past the binary cap. Reported, not decoded: its footer is at the end, so the part that was
@@ -238,7 +284,7 @@ async function parquetResult(requested: string, r: { res: Response; bytes: Array
 export async function fetchUrlContent(url: string, credentials = false, format: FetchFormat = "markdown"): Promise<FetchResult> {
     // A URL whose extension already names a data/code file never negotiates: there is no prose twin, and
     // sending a Markdown-first Accept to an API that honours it could change what comes back.
-    const dataShape = ["json", "csv", "parquet", "code"].includes(typeFromExtension(url)?.type || "");
+    const dataShape = ["json", "csv", "parquet", "arrow", "code"].includes(typeFromExtension(url)?.type || "");
     const negotiating = format === "markdown" && !dataShape;
     const first = await rawGet(url, credentials, negotiating ? MD_ACCEPT : undefined);
     // A BINARY table short-circuits everything: there is no Markdown twin of a Parquet file, and no text body
@@ -246,6 +292,8 @@ export async function fetchUrlContent(url: string, credentials = false, format: 
     // wants the table, and a TableLike crosses the message channel far more cheaply than the file does.
     if (first.bytes) return await parquetResult(url, first as { res: Response; bytes: ArrayBuffer });
     if (first.parquetTooLarge) return parquetTooLargeResult(url, first.res, first.parquetTooLarge);
+    if (first.arrow) return await arrowResult(url, first as typeof first & { arrow: ArrayBuffer });
+    if (first.arrowTooLarge) return arrowTooLargeResult(url, first.res, first.arrowTooLarge);
     if (first.binary) return binaryResult(url, first as typeof first & { binary: { kind: string; size: number } });
     if (!negotiating) return buildResult(url, first);
 

@@ -1774,12 +1774,12 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 description: "GET a URL's content via the extension — bypasses CORS, and by default sends NO cookies. Use it to " +
                     "READ a raw file, a JSON API, or another site WITHOUT navigating there (also works on pages " +
                     "that block the extension, e.g. raw.githubusercontent.com). The result reports the body plus a " +
-                    "best-effort TYPE (json/csv/parquet/html/xml/markdown/code/text) so you can chain — JSON comes " +
+                    "best-effort TYPE (json/csv/parquet/arrow/html/xml/markdown/code/text/binary) so you can chain — JSON comes " +
                     "pre-parsed, a code file names its language. The type is a HEURISTIC " +
                     "(resolved from the Content-Type header, a content sniff, and the URL extension — a server can " +
                     "mislabel), not authoritative. GET only (no headers/body/auth). Each NEW url is approved once by " +
                     "the user, then remembered for the session. Prefer this over `navigate` when you only need to READ a URL. " +
-                    "**TABLES (csv/tsv/parquet) come back PARSED, as a pandas-shaped object** — you do not need to split " +
+                    "**TABLES (csv/tsv/parquet/arrow) come back PARSED, as a pandas-shaped object** — you do not need to split " +
                     "the text, and you must not guess the separator: it is discovered (`,` `\\t` `;` `|`), quoted fields and " +
                     "embedded newlines are handled, and numeric columns are cast. You get a `df.head()`: the header, the " +
                     "first 5 rows, then `[N rows x M columns]` and `dtypes: <col> <dtype>, …` — pandas' own names " +

@@ -225,6 +225,9 @@ Two bugs in the table above are small and stand on their own:
 2. **Evict `mlFetchCache`.** A byte budget and least-recently-used eviction, so a long session does not keep
    every fetched body in the user's tab. (Once values move to the store, this cache holds previews only.)
 
+**Built:** Arrow IPC over `fetch_url`/`ml.fetch` (File by magic, Stream by media type or extension), decoded in
+the worker with `apache-arrow`; the four Arrow acceptance tests are unmarked.
+
 ## Bundling pyarrow
 
 pyarrow 22.0.0 is in this Pyodide release's lock file (`pyarrow-22.0.0-cp314-cp314-pyemscripten_2026_0_wasm32`,

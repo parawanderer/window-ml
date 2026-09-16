@@ -1156,7 +1156,7 @@ export const googleSheetCsvUrl = (url: string): string | null => {
     return `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid ? gid[1] : "0"}`;
 };
 
-export type ContentKind = "json" | "csv" | "parquet" | "html" | "xml" | "markdown" | "code" | "text" | "binary";
+export type ContentKind = "json" | "csv" | "parquet" | "arrow" | "html" | "xml" | "markdown" | "code" | "text" | "binary";
 
 /** Classify by the Content-Type HEADER alone. Returns null for a GENERIC/absent header (text/plain,
  *  octet-stream, empty) — the signal to let the other cues decide (a server can mislabel: raw.github
@@ -1168,6 +1168,8 @@ export function typeFromHeader(contentType: string): ContentKind | null {
     // Parquet has no agreed type; all three are in the wild. The BODY is what settles it (looksParquet, on
     // bytes) — this only says which responses are worth reading as bytes in the first place.
     if (ct === "application/vnd.apache.parquet" || ct === "application/x-parquet" || ct === "application/parquet") return "parquet";
+    // Arrow IPC: the registered types for the File and Stream formats, and the older x- names still served.
+    if (ct === "application/vnd.apache.arrow.file" || ct === "application/vnd.apache.arrow.stream" || ct === "application/x-apache-arrow-file" || ct === "application/x-apache-arrow-stream" || ct === "application/x-feather") return "arrow";
     if (ct === "text/html" || ct === "application/xhtml+xml") return "html";
     if (ct === "text/xml" || ct === "application/xml" || ct.endsWith("+xml")) return "xml";
     if (ct === "text/markdown") return "markdown";
@@ -1201,6 +1203,7 @@ const EXT_KIND: Record<string, ContentKind> = {
     json: "json", jsonl: "json", ndjson: "json",
     csv: "csv", tsv: "csv",
     parquet: "parquet", pq: "parquet",
+    arrow: "arrow", arrows: "arrow", feather: "arrow",
     html: "html", htm: "html", xhtml: "html",
     xml: "xml", svg: "xml", rss: "xml", atom: "xml",
     md: "markdown", markdown: "markdown", mdx: "markdown",
