@@ -79,7 +79,7 @@ test("a real streamed reply comes back as protobuf, and its tokens are intact", 
         const calls = (await wire(ext.sw)).filter((c) => /chat\/completions/.test(c.url));
         expect(calls.length, "the worker made the call").toBeGreaterThan(0);
         const last = calls.at(-1);
-        expect(last.accept, "we asked for it").toBe("application/protobuf");
+        expect(last.accept, "we asked for it").toMatch(/^application\/protobuf\b/);
         // THE ASSERTION THAT MATTERS. Asking proves nothing — the fallback is silent by design, so a run that
         // quietly got SSE would look identical from every other angle.
         expect(last.type, `the server answered ${last.type} on ${last.url}`).toContain("application/protobuf");
@@ -130,7 +130,7 @@ test("a real TOOL CALL survives the format — fragments reassembled off the wir
         // EVERY turn, not just the first: the turn that EMITS the tool call and the turn that answers after
         // its result take different paths through the accumulator.
         for (const c of calls) {
-            expect(c.accept, `asked on ${c.url}`).toBe("application/protobuf");
+            expect(c.accept, `asked on ${c.url}`).toMatch(/^application\/protobuf\b/);
             expect(c.type, `answered ${c.type}`).toContain("application/protobuf");
         }
     } finally { await ext.context.close(); }
@@ -192,7 +192,7 @@ test("a backend that will not serve it still works — we ask, get SSE, and pars
             return { text, chunks: seen.length };
         });
         const last = (await wire(ext.sw)).filter((c) => /chat\/completions/.test(c.url)).at(-1);
-        expect(last.accept, "we asked").toBe("application/protobuf");
+        expect(last.accept, "we asked").toMatch(/^application\/protobuf\b/);
         expect(last.type, "it declined").toContain("text/event-stream");
         // …and none of that reached the caller, which is the point of negotiating by the response.
         expect(out.text.toLowerCase(), "the answer is intact anyway").toContain("quick brown fox");

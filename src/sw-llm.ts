@@ -69,6 +69,11 @@ interface ApiFormatHandler {
 }
 
 const countOf = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+/** A RUNNING count, which is only a count when it is positive: every chunk that carries anything follows at least one
+ *  generated token, so a 0 there means the engine is not counting. Measured on a real box (2026-09-16): a runner that
+ *  does not count sends the usage object on every chunk with 0 in it until the last, and a 0 taken as the thinking
+ *  count labelled a page of thinking "0 tokens". The FINAL usage is read through `normalizeUsage`, not this. */
+const runningCountOf = (v: unknown): number | undefined => { const n = countOf(v); return n != null && n > 0 ? n : undefined; };
 
 /**
  * ASK THE ENGINE TO COUNT, on every streamed chunk, instead of estimating tokens from text (chars/4).
@@ -201,7 +206,8 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
         },
         extractContent: (data: any) => data.choices?.[0]?.message?.content,
         hasContainer: (data: any) => Array.isArray(data?.choices),
-        extractReasoning: (data: any) => data.choices?.[0]?.message?.reasoning_content,
+        // `reasoning_content` is OpenWebUI's (and OpenAI-compatible servers') name; ollama's own /v1 says `reasoning`.
+        extractReasoning: (data: any) => data.choices?.[0]?.message?.reasoning_content ?? data.choices?.[0]?.message?.reasoning,
         extractToolCalls: (data: any): ToolCall[] => (data.choices?.[0]?.message?.tool_calls || []).map((tc: any) => ({
             id: tc.id,
             name: tc.function?.name,
@@ -241,7 +247,9 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
             const choice = obj.choices?.[0] || {};
             return {
                 delta: choice.delta?.content || "",
-                reasoning: choice.delta?.reasoning_content || "",
+                // Both spellings: ollama's /v1 passthrough streams `reasoning`, and reading only `reasoning_content` dropped
+                // the whole thinking channel there.
+                reasoning: choice.delta?.reasoning_content || choice.delta?.reasoning || "",
                 toolCall: choice.finish_reason === "tool_calls" || !!choice.delta?.tool_calls,
                 // The raw tool_call FRAGMENTS (OpenAI streams them incrementally, keyed by `index`: id + name +
                 // arguments-string pieces across chunks). streamAgentTurn accumulates them by index.
@@ -252,7 +260,7 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
                 usage: normalizeUsage(obj.usage),
                 // …and EVERY chunk, as a running total, when the request asked for continuous stats. On ollama's
                 // /v1 the finish chunk carries none; the usage chunk after it has the final figure.
-                ...(countOf(obj.usage?.completion_tokens) != null ? { tokens: countOf(obj.usage.completion_tokens) } : {}),
+                ...(runningCountOf(obj.usage?.completion_tokens) != null ? { tokens: runningCountOf(obj.usage.completion_tokens) } : {}),
             };
         },
     },
@@ -307,7 +315,7 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
                 toolCallDelta: Array.isArray(obj.message?.tool_calls) ? obj.message.tool_calls : null,
                 usage: obj.done ? normalizeUsage(obj) : null,
                 // `stream_metrics: true` puts the running `eval_count` on every chunk, not just the last.
-                ...(countOf(obj.eval_count) != null ? { tokens: countOf(obj.eval_count) } : {}) };
+                ...(runningCountOf(obj.eval_count) != null ? { tokens: runningCountOf(obj.eval_count) } : {}) };
         },
     },
 };
@@ -689,7 +697,7 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
                     // ONE HEADER, and only where nothing can be lost by it — see `protoEligible`. A server
                     // that does not speak it answers with the SSE it always did, so this is safe to send
                     // hopefully rather than after sniffing a version.
-                    headers: stream && protoEligible ? { ...headers, Accept: "application/protobuf" } : headers,
+                    headers: stream && protoEligible ? { ...headers, Accept: PROTO_ACCEPT } : headers,
                     body: JSON.stringify({ ...requestBody, stream }),
                     signal,   // ABORT_TASK → this fetch rejects with an AbortError (kills a slow generation)
                 });
@@ -818,6 +826,10 @@ export async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): 
  * worker — the alternative is a line per streamed turn, which is how a warning stops being read.
  */
 const protoMissed = new Set<string>();
+/** What a streamed call asks for when protobuf is on. SSE is listed too, at a lower quality: a strict negotiator that
+ *  honours `Accept` and cannot produce protobuf would otherwise answer 406, and nothing retries that. The patched
+ *  server selects protobuf by the substring (`strings.Contains`), so the second type does not switch it off. */
+export const PROTO_ACCEPT = "application/protobuf, text/event-stream;q=0.9";
 function servedProto(res: Response, asked: ProtoMode | null, url: string): boolean {
     const ct = res.headers?.get?.("content-type") || "";
     if (ct.includes("application/protobuf")) return true;
@@ -1046,8 +1058,8 @@ export async function streamAgentTurn(
                                                               function: { name: t.function?.name || undefined, arguments: t.function?.arguments ?? "" } }))
                             : null,
                         sources: null, usage: null,
-                        // `optional` on the wire: absent means the request did not ask, and 0 is a real count.
-                        ...(f.delta.completionTokens !== undefined ? { tokens: f.delta.completionTokens } : {}),
+                        // `optional` on the wire: absent means the request did not ask. A 0 is not a running count (see runningCountOf).
+                        ...(runningCountOf(f.delta.completionTokens) != null ? { tokens: runningCountOf(f.delta.completionTokens) } : {}),
                     });
                 }
                 if (f.end) {
