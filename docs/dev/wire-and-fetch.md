@@ -152,7 +152,15 @@ includes thinking tokens and the end-of-sequence token that produces no text, so
 shows; and a new count is news on its own, so a chunk carrying only an argument fragment still fans a delta.
 **A strict backend may refuse the unfamiliar key** with a 400, so a refusal is retried once without it and
 the URL remembered for the worker's life (`refusesLiveCount`) — a wire nicety must never cost an answer. A
-stock server that ignores it simply sends no count, and the estimate stands in. `streamLLM` (`ml.chat`) does
+stock server that ignores it simply sends no count, and the estimate stands in.
+
+**The THINKING count is the same running total, frozen while the call is still thinking** (`reasoningTokens` on
+`agent-stream` and on the turn's `TokenUsage`). Thinking comes first and the count is cumulative, so its value on
+the last chunk before any answer text or tool-call fragment arrived IS the number of thinking tokens. The check
+runs after a chunk's fragments are recorded: the chunk that starts a tool call carries a count that already
+includes it. A server's own `completion_tokens_details.reasoning_tokens` wins when it is positive — ollama and
+OpenWebUI send 0 for a model that thought for pages, so a 0 is not taken. The sidebar's thinking block shows a
+counted figure plain and an estimate (chars/4) with `~`; a non-streamed turn has no count and stays an estimate. `streamLLM` (`ml.chat`) does
 not ask: nothing there reads a live count, and on SSE every chunk would carry the usage object for nothing.
 
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level

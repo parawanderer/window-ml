@@ -90,14 +90,16 @@ export const StepPill = ({ step, max }: { step: number; max?: number }) =>
     <span class="step-pill">step {step}{max ? `/${max}` : ""}</span>;
 
 // The turn's separate reasoning channel (reasoning_content) — how the model THINKS, distinct from
-// what it says (the prose). Dim, COLLAPSED by default (its text is mostly noise); the preview is just
-// a ~token estimate (the server reports reasoning_tokens:0). No status dot — it's not a step that fails.
-export function ThoughtBlock({ thought, live }: { thought: string; live?: boolean }) {
+// what it says (the prose). Dim, COLLAPSED by default (its text is mostly noise); the preview is its token count:
+// COUNTED when the turn has one (`tokens`, see TokenUsage.reasoningTokens), else a `~` estimate from the text.
+// No status dot — it's not a step that fails.
+export function ThoughtBlock({ thought, live, tokens }: { thought: string; live?: boolean; tokens?: number }) {
     const [open, setOpen] = useState(false);
     const bodyRef = useRef<HTMLDivElement>(null);
     // While LIVE (streaming), keep the expanded body scrolled to the newest text.
     useEffect(() => { if (live && open && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight; });
-    const tokEst = Math.max(1, Math.round(thought.length / 4));   // ~chars/4 (no real reasoning_tokens)
+    // The engine's count when there is one; chars/4 only when there is not, and then marked `~` as the guess it is.
+    const tokLabel = tokens != null ? `${tokens.toLocaleString("en-US")} tokens` : `~${Math.max(1, Math.round(thought.length / 4)).toLocaleString("en-US")} tokens`;
     return (
         <div class={`athought athinking${live ? " live" : ""}`}>
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
@@ -111,7 +113,7 @@ export function ThoughtBlock({ thought, live }: { thought: string; live?: boolea
                     preview, which focus mode hides as spam — and hiding this with it took away the only sign
                     that a long think is progressing rather than stuck, which is the opposite of what a reading
                     mode wants. Two classes rather than a new one: the styling is shared, the visibility is not. */}
-                {!open && (surface.value !== "card" || live) ? <span class="astep-preview astep-tokest">~{tokEst} tokens{live ? "…" : ""}</span> : null}
+                {!open && (surface.value !== "card" || live) ? <span class="astep-preview astep-tokest">{tokLabel}{live ? "…" : ""}</span> : null}
             </button>
             {/* Live: plain text (partial markdown mid-stream renders ugly); finished: markdown. */}
             {open
@@ -474,7 +476,7 @@ export function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: num
     return (
         <div class="aturn">
             <div class="aturn-head"><StepPill step={turn.localStep} max={max} /></div>
-            {turn.reasoning ? <ThoughtBlock thought={turn.reasoning} /> : null}
+            {turn.reasoning ? <ThoughtBlock thought={turn.reasoning} tokens={turn.reasoningTokens} /> : null}
             {turn.thought ? <TurnProse text={turn.thought} /> : null}
             {turn.tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} hash={hash} />)}
         </div>
@@ -802,7 +804,7 @@ export function LiveStream({ ls, s }: { ls: NonNullable<Session["liveStream"]>; 
             {ls.reasoning
                 ? <div class="aturn">
                     <div class="aturn-head"><StepPill step={ls.localStep ?? ls.step} max={s.maxSteps} /></div>
-                    <ThoughtBlock thought={ls.reasoning} live />
+                    <ThoughtBlock thought={ls.reasoning} tokens={ls.reasoningTokens} live />
                   </div>
                 : null}
             {ls.content ? <ReplyBubble content={ls.content} status="ok" model={s.model} profile={sessionProfile(s)} ts={ls.step /* unused while streaming */} streaming /> : null}
