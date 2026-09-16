@@ -2970,8 +2970,12 @@ function EventTip({ scope }: { scope: string }) {
                 was made structurally impossible. A border cannot exist without the content it belongs to. */}
             {phases.map((ph, i) => (
                 <>
-                    <div class="rc-tip-line sep" key={i}>
+                    {/* THREE COLUMNS: the swatch, a body that wraps (the name, then its chips), and the duration. As one
+                        wrapping flex row it inherited `space-between`, so a row whose chips did not fit spread its first
+                        line: the swatch at the left edge, the name pushed right or centred, the duration a line of its own. */}
+                    <div class="rc-tip-line sep rc-tip-phase" key={i}>
                         <i class="rc-tip-dot" style={phaseSwatch(ph.kind, e.model)} />
+                        <span class="rc-tip-phase-body">
                         {/* A bare "exec" reads as a label of unknown kind. Saying what it IS — a tool call,
                             with the name as code — is the difference between a word and an identifier. */}
                         <span class="rc-tip-name">{ph.kind === "tool"
@@ -2991,6 +2995,7 @@ function EventTip({ scope }: { scope: string }) {
                             {e.gen.evalMs > 0 ? ` · ${(e.gen.decoded / (e.gen.evalMs / 1000)).toFixed(1)} tok/s` : ""}</span> : null}
                         {ph.kind === "decode" ? <><CeilingChip e={e} /><PredictionChip e={e} /></> : null}
                         {ph.kind === "swap" && e.gen?.swap ? <SwapChips swap={e.gen.swap} /> : null}
+                        </span>
                         <span class="rc-tip-size">{ms(ph.until - ph.from)}</span></div>
                 </>
             ))}
