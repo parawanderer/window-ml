@@ -2681,7 +2681,7 @@ export const EV_ROW_GAP = 0.004;
  *  cap insufficient, because the number of bands is the number of concurrent runs. */
 export const MAX_LANE_ROWS = 10;
 
-export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN, maxTotal = MAX_LANE_ROWS, minGap = 0): EventPlacement[][] {
+export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN, maxTotal = MAX_LANE_ROWS): EventPlacement[][] {
     const groups = new Map<string, EventPlacement[]>();
     for (const p of placed) {
         const key = p.event.ref?.hash ?? "";
@@ -2700,7 +2700,7 @@ export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV
     const startOf = (p: EventPlacement) => p.run + p.from;
 
     for (const [, band] of order) {
-        const rows = packBand(band, maxRows, minSpan, minGap);
+        const rows = packBand(band, maxRows, minSpan);
         // REUSE rows where the band cannot collide. Banding exists so a tree is never interleaved with
         // another — but two runs that never overlap in TIME cannot interleave, so stacking them costs rows
         // for nothing, and most runs are sequential rather than concurrent. The band is placed as a WHOLE at
@@ -2745,14 +2745,50 @@ export function laneTier(kind: string): number {
     return 2;                                               // the machine: loads, serving, evictions
 }
 
-function packBand(placed: EventPlacement[], maxRows: number, minSpan: number, minGap = 0): EventPlacement[][] {
+/** The order a band's events are packed in: TIER, then — within the machine tier — what belongs to one of the run's
+ *  own steps before anything else, then time; and never a child before its parent. A load a step waited for used to be
+ *  packed after an aside that merely started earlier (same tier), so the aside took the row under the step and the load
+ *  landed two rows down, detached from the wait it explains. The parent rule is what the row floor needs: a child packed
+ *  before its parent has no floor to respect. */
+function packOrder(placed: EventPlacement[], start: (p: EventPlacement) => number): EventPlacement[] {
+    const idOf = (p: EventPlacement) => (p.event as { id?: string }).id;
+    const parentOf = (p: EventPlacement) => (p.event as { parent?: string }).parent;
+    const byId = new Map<string, EventPlacement>();
+    for (const p of placed) { const id = idOf(p); if (id != null) byId.set(id, p); }
+    // 0: owned by a run's own work (a step, a gen); 1: anything else in the tier (an aside, and what hangs off one).
+    const ownerRank = (p: EventPlacement) => {
+        const parent = parentOf(p) != null ? byId.get(parentOf(p)!) : undefined;
+        return parent && laneTier(parent.event.kind) < laneTier(p.event.kind) ? 0 : 1;
+    };
+    const sorted = [...placed].sort((a, b) =>
+        laneTier(a.event.kind) - laneTier(b.event.kind) || ownerRank(a) - ownerRank(b) || start(a) - start(b));
+    // Children held back until their parent is emitted, then emitted right after it.
+    const out: EventPlacement[] = [], emitted = new Set<EventPlacement>(), waiting = new Map<EventPlacement, EventPlacement[]>();
+    const emit = (p: EventPlacement): void => {
+        out.push(p); emitted.add(p);
+        for (const c of waiting.get(p) ?? []) emit(c);
+        waiting.delete(p);
+    };
+    for (const p of sorted) {
+        const parent = parentOf(p) != null ? byId.get(parentOf(p)!) : undefined;
+        if (parent && parent !== p && !emitted.has(parent)) (waiting.get(parent) ?? waiting.set(parent, []).get(parent)!).push(p);
+        else emit(p);
+    }
+    // A cycle, or a parent that never came: emit what is left rather than drop it.
+    for (const kids of waiting.values()) for (const c of kids) if (!emitted.has(c)) emit(c);
+    return out;
+}
+
+function packBand(placed: EventPlacement[], maxRows: number, minSpan: number): EventPlacement[][] {
     const rows: EventPlacement[][] = [];
-    // The END is the DRAWN end, not the true one: see MIN_EV_SPAN. The fallback pass without the row gap still keeps
-    // `minGap` (a pixel, from the caller that knows the lane's width): bars at their minimum width packed flush read as
-    // one longer bar.
+    // The END is the DRAWN end, not the true one: see MIN_EV_SPAN. The fallback pass lets a bar start exactly where
+    // the previous one is drawn to end. It used to keep a pixel between them, and a run's steps follow each other
+    // within a few MILLISECONDS (a gen hands straight to its tool), far less than a pixel on any lane, so every
+    // other step was refused the row and the run's steps alternated between two rows as if they overlapped. Two
+    // flush bars still read as two: `.rc-ev` draws a hairline in the panel's colour around every bar.
     const start = (p: EventPlacement) => p.run + p.from;
     const end = (p: EventPlacement, pad: boolean) =>
-        p.run + Math.max(p.to, p.from + minSpan) + (pad ? EV_ROW_GAP : minGap);
+        p.run + Math.max(p.to, p.from + minSpan) + (pad ? EV_ROW_GAP : 0);
     // A true INTERVAL test against the row's members, not a running end. The running end assumed events
     // arrived in increasing start order, which stopped being true the moment they were sorted by tier — a
     // load that abuts a step it precedes was then refused the row it belongs on, because a later-starting
@@ -2771,8 +2807,7 @@ function packBand(placed: EventPlacement[], maxRows: number, minSpan: number, mi
         const at = parent != null ? rowOf.get(parent) : undefined;
         return at == null ? 0 : at + 1;
     };
-    for (const p of [...placed].sort((a, b) =>
-        laneTier(a.event.kind) - laneTier(b.event.kind) || start(a) - start(b))) {
+    for (const p of packOrder(placed, start)) {
         const floor = below(p);
         const firstFit = (pad: boolean) => rows.findIndex((row, i) => i >= floor && fits(row, p, pad));
         let r = firstFit(true);

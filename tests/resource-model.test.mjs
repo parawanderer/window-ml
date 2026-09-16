@@ -816,7 +816,7 @@ test("laneRows: a child is never drawn above its own container, even when the co
         ev("run", 0.40, 1.00, "run:2"), ev("tool", 0.45, 0.60, "step:3", "run:2"), ev("tool", 0.62, 0.95, "step:4", "run:2"),
         ev("embed", 0.50, 0.55, "step:3:sub0", "step:3"),
     ];
-    const rows = M.laneRows(placed, 8, M.MIN_EV_SPAN, M.MAX_LANE_ROWS, 0.001);
+    const rows = M.laneRows(placed, 8, M.MIN_EV_SPAN, M.MAX_LANE_ROWS);
     const rowOf = new Map();
     rows.forEach((row, i) => row.forEach((p) => rowOf.set(p.event.id, i)));
     for (const p of placed) {
@@ -824,6 +824,31 @@ test("laneRows: a child is never drawn above its own container, even when the co
         assert.ok(rowOf.get(p.event.id) > rowOf.get(p.event.parent),
             `${p.event.id} (row ${rowOf.get(p.event.id)}) sits below ${p.event.parent} (row ${rowOf.get(p.event.parent)}): ${JSON.stringify(rows.map((r) => r.map((q) => q.event.id)))}`);
     }
+});
+
+// Reproduced from a real capture (ml.__events, 2026-09-16): a run whose gen hands to a tool, and tool to tool, 2–15 ms
+// apart. On a lane ~1800px wide showing five minutes a pixel is ~170 ms, and the packer kept a pixel between bars, so
+// every other step was refused the row and the steps alternated between two rows as if they overlapped.
+test("laneRows: a run's back-to-back steps share ONE row, milliseconds apart on a lane far wider than that", () => {
+    const axisMs = 300_000, px = 1 / 1800;
+    const ev = (kind, fromMs, toMs, id) => ({
+        event: { t: fromMs, until: toMs, kind, ref: { hash: "fa3503e7" }, id, parent: "run:fa3503e7:1" },
+        run: 0, from: fromMs / axisMs, to: toMs / axisMs, clipped: false,
+    });
+    // The capture's own timings (ms from the run's start) and gaps.
+    const steps = [
+        ev("gen", 60_770, 64_418, "gen:4"), ev("tool", 64_420, 68_290, "step:3"), ev("tool", 68_297, 72_650, "step:4"),
+        ev("gen", 72_662, 78_650, "gen:5"), ev("tool", 78_655, 81_910, "step:5"), ev("tool", 81_913, 84_230, "step:6"),
+        ev("gen", 84_239, 87_730, "gen:6"), ev("tool", 87_735, 97_070, "step:7"), ev("tool", 97_073, 101_050, "step:8"),
+    ];
+    const run = { event: { t: 20_210, until: 316_690, kind: "run", ref: { hash: "fa3503e7" }, id: "run:fa3503e7:1" }, run: 0, from: 20_210 / axisMs, to: 316_690 / axisMs, clipped: false };
+    // Packed the way the chart packs: the minimum drawn width is three pixels.
+    const rows = M.laneRows([run, ...steps], 4, Math.max(M.MIN_EV_SPAN, 3 * px));
+    assert.equal(rows.length, 2, `the container, then every step on one row: ${JSON.stringify(rows.map((r) => r.map((p) => p.event.id)))}`);
+    assert.deepEqual(rows[1].map((p) => p.event.id), steps.map((p) => p.event.id), "in the order they ran");
+    // Still refused when two steps really do overlap.
+    const overlap = M.laneRows([run, ev("gen", 60_000, 65_000, "a"), ev("tool", 64_000, 70_000, "b")], 4, 3 * px);
+    assert.equal(overlap.length, 3, "overlapping steps keep separate rows");
 });
 
 test("laneRows: the SAME model running twice at once is still two bands — grouping is by RUN", () => {
@@ -1173,6 +1198,38 @@ test("laneRows: the container is above its children, and the machine is below bo
     // The machine did not belong to the run and did not contain it: it is the ground underneath.
     assert.ok(rowOf("load") > rowOf("tool"), "a load sits below the run's own work, not above it");
     assert.ok(rowOf("serve") > rowOf("tool"), "and so does a serving span");
+});
+
+// Reported from a real run: a step waited 8 s for its model to load, and the LOAD bar sat two rows under it, because an
+// aside of the same run (a side task on another model, same tier) started earlier and took the row under the step.
+test("laneRows: a load sits directly under the step that waited for it, even when an aside started earlier", () => {
+    const ev = (kind, from, to, id, parent, model) => ({
+        event: { t: from, until: to, kind, ref: { hash: "s" }, id, ...(parent ? { parent } : {}), ...(model ? { model } : {}) },
+        run: 0, from, to, clipped: false,
+    });
+    const placed = [
+        ev("run", 0.10, 1.00, "run:0"),
+        ev("tool", 0.15, 0.60, "step:1", "run:0", "qwen"),
+        ev("aside", 0.15, 0.45, "aside:1", undefined, "gemma"),       // starts with the step, before the load
+        ev("load", 0.16, 0.25, "load:gemma", "aside:1", "gemma"),     // the aside's own load
+        ev("load", 0.25, 0.45, "load:qwen", "step:1", "qwen"),        // the load the step waited for
+    ];
+    const rows = M.laneRows(placed, 8);
+    const rowOf = (id) => rows.findIndex((r) => r.some((p) => p.event.id === id));
+    const map = JSON.stringify(rows.map((r) => r.map((p) => p.event.id)));
+    assert.equal(rowOf("load:qwen"), rowOf("step:1") + 1, `the step's load is directly below it: ${map}`);
+    assert.ok(rowOf("load:gemma") > rowOf("aside:1"), `the aside's load is still below the aside: ${map}`);
+});
+
+test("laneRows: a child packed before its parent in time still lands below it", () => {
+    const ev = (kind, from, to, id, parent) => ({
+        event: { t: from, until: to, kind, ref: { hash: "s" }, id, ...(parent ? { parent } : {}) },
+        run: 0, from, to, clipped: false,
+    });
+    // A load that begins before the aside it is claimed by (loads precede the work they are for).
+    const rows = M.laneRows([ev("aside", 0.30, 0.60, "aside:1"), ev("load", 0.20, 0.30, "load:1", "aside:1")], 8);
+    const rowOf = (id) => rows.findIndex((r) => r.some((p) => p.event.id === id));
+    assert.ok(rowOf("load:1") > rowOf("aside:1"), JSON.stringify(rows.map((r) => r.map((p) => p.event.id))));
 });
 
 test("laneTier: the three depths, and everything unknown is machine", () => {

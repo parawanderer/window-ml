@@ -2912,9 +2912,12 @@ function EventTip({ scope }: { scope: string }) {
         <div class="rc-tip rc-tip-event" role="tooltip" ref={ref} style={style}>
             {/* Each phase, in the order it happened: the model, the human deciding, then the tool. */}
             <div class="rc-tip-line">
-                {/* Each section carries the swatch of the stripe it describes, so the tooltip and the block
-                    read as the same three things. */}
-                {first || e.model ? <i class="rc-tip-dot" style={phaseSwatch(first?.kind ?? "model", e.model)} /> : null}
+                {/* The header names the WHOLE block, so it carries a swatch only when the whole block is one colour
+                    (no phases: the model's). A phased block is several colours, and the header used to take its
+                    FIRST phase's swatch, so a step that began by waiting for a load led with a hollow ring that
+                    described one stretch of the bar while the line beside it named all of it. Each phase row
+                    below carries its own swatch. */}
+                {!first && e.model ? <i class="rc-tip-dot" style={phaseSwatch("model", e.model)} /> : null}
                 {/* WHAT THIS BLOCK IS, always — its own label ("qwen:32b serving", "loading gemma4:e2b"), not
                     a hardcoded "run" and not just the model name. The first PHASE used to take this line,
                     which meant a machine event with no phases said nothing but the model: a serving span and
@@ -3067,8 +3070,9 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
     const spans = placed.filter((p) => p.event.until != null);
     // Packed at the width a bar is DRAWN at, never less (see MIN_BAR_PX).
     const minSpan = Math.max(MIN_EV_SPAN, laneWidthPx.value > 0 ? MIN_BAR_PX / laneWidthPx.value : 0);
-    // …and a bar never packed flush against another: a pixel between them, or two read as one longer bar.
-    const rows = laneRows(spans, 4, minSpan, undefined, laneWidthPx.value > 0 ? 1 / laneWidthPx.value : 0);
+    // Bars may pack FLUSH: a run's steps follow each other within milliseconds, and `.rc-ev`'s hairline keeps two
+    // touching bars reading as two.
+    const rows = laneRows(spans, 4, minSpan);
     const [pulsed, setPulsed] = useState<string | null>(null);
     const lit = lineageOf(events, eventHover.value?.p.event.id);
     // The same focus, carried into the transcript: the log dims every step outside the hovered lineage, so a

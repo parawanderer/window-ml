@@ -425,10 +425,16 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 @keyframes rc-ev-live { 0%, 100% { opacity: .95; } 50% { opacity: .55; } }
 @media (prefers-reduced-motion: reduce) { .rc-ev.open { animation: none; } }
 .rc-ev { transition: opacity .12s ease; }
-/* The hovered block draws ABOVE its neighbours. An outline is painted on the element's own layer, so a bar
-   packed hard against the next one had that edge covered by it — and the one thing the outline is for is
-   telling you where this block ENDS when several abut. */
-.rc-ev:hover { opacity: 1; outline: 1px solid var(--fg-dim); z-index: 5; }
+/* The hovered block draws ABOVE its neighbours, so a bar packed hard against the next one keeps its edge — the one
+   thing the ring is for is telling you where this block ENDS when several abut.
+   The ring is drawn INSIDE the bar, on a pseudo-element over its content. It was an `outline`, which sits outside the
+   box, and `.rc-lane-row` clips to its 9px height: the top and bottom edges were cut away and only the ends showed,
+   and a bar running past the plot's edge lost those too. Inside, over the pattern overlays, it is the same on every
+   fill: flat, gradient, dotted or striped. */
+.rc-ev:hover { opacity: 1; z-index: 5; }
+.rc-ev::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 1;
+                box-shadow: inset 0 0 0 1px var(--fg-dim); opacity: 0; }
+.rc-ev:hover::after { opacity: 1; }
 /* A composite step: hard stops at each phase boundary, built inline from the phases themselves (the model's
    own colour for its work, a neutral for the human's wait, a wash of the same colour for the tool). The
    fallback here only matters if an event arrives with no phases. */
@@ -2684,10 +2690,12 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 
 /* The block you double-clicked, after the window has moved to it — the window is necessarily wider than a
    short block, so this is what turns "somewhere in here" into "this one". */
-@keyframes rcEvPulse { 0% { outline-color: var(--accent); } 100% { outline-color: transparent; } }
-/* Same reason as the hover outline, and it must beat it: a pulse says 'this is the one you clicked'. */
-.rc-ev.pulse { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 6; animation: rcEvPulse 1.4s ease-out forwards; }
-@media (prefers-reduced-motion: reduce) { .rc-ev.pulse { animation: none; } }
+@keyframes rcEvPulse { 0% { opacity: 1; } 100% { opacity: 0; } }
+/* Drawn inside the bar like the hover ring, and for the same reason (the row clips anything outside it); it must
+   beat the hover ring: a pulse says 'this is the one you clicked'. */
+.rc-ev.pulse { z-index: 6; }
+.rc-ev.pulse::after { box-shadow: inset 0 0 0 2px var(--accent); animation: rcEvPulse 1.4s ease-out forwards; }
+@media (prefers-reduced-motion: reduce) { .rc-ev.pulse::after { animation: none; opacity: 1; } }
 
 /* THE HOUSEKEEPING LOG VIEW (header ⋮ → Housekeeping log): a toolbar, one line about what this is, then the log's
    output cell taking the rest of the height (it rides `.view-bench`'s non-scrolling column, like the full bench). */
