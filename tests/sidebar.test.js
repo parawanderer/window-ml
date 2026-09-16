@@ -8952,3 +8952,71 @@ test("settings: the wire format is a THREE-state control, defaulting to auto", a
     await w.flush();
     assert.equal(w.syncStore.protoStream, "on");
 });
+
+// ---- Settings → Housekeeping: what the system decided on its own, in the shared output cell ----
+
+const HK = (t, subsystem, kind, extra = {}) => ({ t, subsystem, kind, origin: "worker", ...extra });
+const openHousekeeping = async (w, { inSettings = false } = {}) => {
+    if (!inSettings) await openSettings(w, "Advanced");
+    const btn = [...w.shadow.querySelectorAll(".disc-head")].find(b => /housekeeping log/i.test(b.textContent));
+    assert.ok(btn, "Advanced offers the housekeeping log");
+    btn.click();
+    await w.flush();
+    return btn;
+};
+
+test("housekeeping log: read on open, drawn in the output cell with a timestamp gutter, page reports marked", async () => {
+    const now = Date.now();
+    const w = await loadSidebarWorld({ housekeeping: [
+        HK(now - 3000, "sw", "start"),
+        HK(now - 2000, "pyodide", "cold-start", { reason: "prewarm", ms: 1850, origin: "offscreen" }),
+        HK(now - 1000, "fetch-cache", "evict", { reason: "budget", bytes: 41_000_000, key: "https://x.example/a.csv", origin: "page", tab: 7 }),
+    ] });
+    await openSettings(w, "Advanced");
+    assert.equal(w.hkCalls.length, 0, "nothing is read while the section is closed");
+    await openHousekeeping(w, { inSettings: true });
+    assert.equal(w.hkCalls.length, 1);
+    const cell = w.shadow.querySelector(".disc.open .r-outcell");
+    assert.ok(cell, "the log renders into the shared output cell (find, grip, tail-follow)");
+    const rows = [...cell.querySelectorAll(".r-ts-row")].map(r => r.querySelector(".r-ts-line").textContent);
+    assert.equal(rows.length, 3, "one line per event, oldest first");
+    assert.match(rows[1], /cold-start \(prewarm\).*1\.85s.*\[offscreen\]/);
+    assert.match(rows[2], /evict \(budget\).*https:\/\/x\.example\/a\.csv.*\[page tab 7\]/);
+    assert.ok(!/\[worker\]/.test(rows[0]), "the worker's own events carry no reporter tag");
+    assert.ok(cell.querySelector(".r-ts").textContent, "the gutter shows when each event happened");
+    assert.match(w.shadow.body.innerHTML, /3 events/);
+});
+
+test("housekeeping log: subsystem chips filter the lines, and a storage change updates the open log", async () => {
+    const now = Date.now();
+    const w = await loadSidebarWorld({ housekeeping: [HK(now - 2000, "sw", "start"), HK(now - 1000, "pyodide", "kill", { reason: "timeout", origin: "offscreen" })] });
+    await openHousekeeping(w);
+    const chips = () => [...w.shadow.querySelectorAll(".disc.open .rc-lane-chip")];
+    assert.deepEqual(chips().map(c => c.textContent), ["sw 1", "pyodide 1"]);
+    chips().find(c => c.textContent.startsWith("sw")).click();
+    await w.flush();
+    let lines = [...w.shadow.querySelectorAll(".disc.open .r-ts-line")].map(l => l.textContent);
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /^pyodide/);
+    w.setHousekeeping([HK(now - 2000, "sw", "start"), HK(now - 1000, "pyodide", "kill", { reason: "timeout", origin: "offscreen" }), HK(now, "pyodide", "cold-start", { reason: "run", ms: 900, origin: "offscreen" })]);
+    await w.flush();
+    lines = [...w.shadow.querySelectorAll(".disc.open .r-ts-line")].map(l => l.textContent);
+    assert.equal(lines.length, 2, "the new event arrived without reopening, and the sw filter still holds");
+    assert.equal(w.hkCalls.length, 1, "live updates come from storage, not from re-asking the worker");
+});
+
+test("housekeeping log: an empty log says so, and clear asks the worker (a cleared log shows its marker)", async () => {
+    const w = await loadSidebarWorld({ housekeeping: [] });
+    await openHousekeeping(w);
+    assert.match(w.shadow.body.innerHTML, /Nothing recorded since the browser started/);
+    w.setHousekeeping([HK(Date.now(), "sw", "start")]);
+    await w.flush();
+    [...w.shadow.querySelectorAll(".disc.open .raw-btn")].find(b => b.textContent === "clear").click();
+    await w.flush();
+    assert.deepEqual(w.hkCalls.at(-1), { clear: true });
+    w.setHousekeeping([HK(Date.now(), "log", "clear")]);
+    await w.flush();
+    const lines = [...w.shadow.querySelectorAll(".disc.open .r-ts-line")].map(l => l.textContent);
+    assert.equal(lines.length, 1);
+    assert.match(lines[0], /^log\s+clear$/, "a cleared log reads differently from an empty one");
+});
