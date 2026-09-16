@@ -77,6 +77,17 @@ session evicts oldest-first; an evicted value leaves its preview behind, and rea
   - A DataFrame returned from `python_exec` is written back as IPC, becoming a new pointer in the SAME
     representation — which is what makes a pointer reusable in both directions rather than a one-way import.
   - A DOM table is small by construction (extraction caps it) and stays inline.
+- **A fetched Arrow file needs no conversion at all.** `ml.fetch`/`fetch_url` should accept Arrow IPC alongside
+  Parquet and CSV — the File format (`.arrow`, `.feather`; `application/vnd.apache.arrow.file`; `ARROW1` magic,
+  with a footer that gives the schema and every record batch's length, so the row count is exact without reading
+  the data) and the Stream format (`.arrows`; `application/vnd.apache.arrow.stream`; no magic, so classified by
+  type or extension only). It is the cheapest format of the three, not an extra one: CSV needs a parse and a type
+  guess, Parquet one decode, and a File-format Arrow body is already the stored representation — validated and
+  kept as it arrived. A Stream-format body is rewritten once as a File, which is what makes column and slice
+  reads random-access. Compressed bodies are fine: the bundled build has lz4, zstd, snappy, gzip and brotli.
+- **Decoding happens in the offscreen document, not the service worker**, because a service worker cannot run
+  WebAssembly. The worker keeps the grant and the choke-point checks; the bytes go to the offscreen document
+  (transferred, not cloned) to be decoded and stored.
 - **Text, images and JSON stay what they are** — a text blob, the image bytes, the JSON text. Nothing here is
   improved by a columnar format, and a pointer's `kind` already says which it is.
 
@@ -105,8 +116,12 @@ Two kinds of reader, deliberately given different things:
 
 The offscreen worker reads the `Blob` from IndexedDB (the store and Pyodide share the offscreen document's
 process, so nothing crosses a message boundary), and passes it to Python as a **buffer**: one copy into
-Pyodide's WebAssembly memory, then `pyarrow.ipc.open_file(buffer)` and `to_pandas(types_mapper=pd.ArrowDtype)`,
-which keeps the columns Arrow-backed rather than converting them. The six copies above become one.
+Pyodide's WebAssembly memory, then `pyarrow.ipc.open_file(buffer)` and a plain `to_pandas()`, which does not
+copy a numeric column without nulls. The six copies above become one.
+
+Deliberately NOT `to_pandas(types_mapper=pd.ArrowDtype)`, though it keeps every column Arrow-backed: its dtypes
+print as `int64[pyarrow]` and `string[pyarrow]` — a third naming scheme, beside the preview's and plain pandas',
+and not what a model that has read a great deal of pandas will guess.
 
 **It is a buffer, never a live object handle.** Pyodide can pass JavaScript objects into Python as `JsProxy`
 handles, and that is exactly what the sandbox's `readonly` hardening removes: `harden()` unregisters the `js`
@@ -169,14 +184,20 @@ Two bugs in the table above are small and stand on their own:
 ## Bundling pyarrow
 
 pyarrow 22.0.0 is in this Pyodide release's lock file (`pyarrow-22.0.0-cp314-cp314-pyemscripten_2026_0_wasm32`,
-about 10 MB) and its build includes the Parquet, CSV, IPC/Feather, dataset and compute modules — checked in the
-wheel, since those are sometimes compiled out. It depends on numpy, pandas and `pyodide-unix-timezones`.
+about 10 MB). Verified by loading the wheel in this repo's own Pyodide rather than by reading the file list:
+Parquet read/write, CSV with a custom delimiter, and IPC File read/write — uncompressed, lz4 and zstd — all
+round-trip, and `pa.Codec.is_available` is true for lz4, zstd, snappy, gzip and brotli. Those are exactly the
+modules and codecs a WebAssembly build is most likely to have compiled out. It depends on numpy, pandas and `pyodide-unix-timezones`.
 
 - **Fetched with the other wheels, loaded on demand.** It goes into `PY_PACKAGES` (`python-env.ts`), which
   makes the offline fetch pick it up and — because CI's wheel cache is keyed on that file — refetches it in CI.
   But it is NOT loaded at sandbox start: that would add its load to every `python_exec` cold start, including
   the many that never touch a table. It loads the first time a stored table is opened, or a script imports
   `pyarrow` or calls `read_parquet`/`read_feather`.
+- **The dtypes a preview promises must be pandas 3's, exactly.** Measured, for the `pd.DataFrame(rows)` a table
+  becomes in `python_exec`: whole numbers are `int64`, and `float64` with a null; floats are `float64`; strings
+  are `str` with or without nulls; booleans are `bool`, but `object` with a null; an all-null column is `object`,
+  and so is a mix of strings and numbers.
 - **It changes pandas' string dtype.** pandas 3 makes string columns `str` rather than `object`, backed by
   pyarrow when pyarrow is importable. That is already visible — the table demo's DataFrame prints
   `region str` — and it DISAGREES with `TableLike.dtypes`, which says `object`, the pandas 2 name. The type
