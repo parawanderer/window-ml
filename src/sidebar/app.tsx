@@ -31,7 +31,8 @@ import { shownModel, sessionProfile } from "./model";
 import { exportSession, exportSessionJson, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, applyFocus, initThemeStyle } from "./prefs";
 import { DEFAULT_CODE_THEME } from "../code-themes";
-import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse } from "./icons";
+import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse, IconMore } from "./icons";
+import { HousekeepingView } from "./housekeeping-log";
 import { Settings, openSettingsAt } from "./settings";
 
 
@@ -144,6 +145,41 @@ function ExportMenu({ hash }: { hash: string }) {
 }
 
 
+/** THE HEADER'S "MORE PANELS" MENU (⋮). The header row is what you navigate the panel with, so a panel you
+ *  open rarely does not get an icon of its own there (see the note where the server-tool shortcut was
+ *  removed) — it gets a line in this menu instead, which costs the row one button however many panels it
+ *  lists. Each item REPLACES the view, like Settings, and `‹` returns to where you were. Shares the export
+ *  picker's `.menu` and dismissal. */
+function MoreMenu() {
+    const [open, setOpen] = useState(false);
+    const wrap = useRef<HTMLSpanElement>(null);
+    useEffect(() => {
+        if (!open) return;
+        const onDown = (e: Event) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+        document.addEventListener("pointerdown", onDown);
+        document.addEventListener("keydown", onKey);
+        return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
+    }, [open]);
+    const go = (to: { name: "housekeeping" }) => { setOpen(false); markReturn(); view.value = to; };
+    return (
+        <span class="menuwrap" ref={wrap}>
+            <button class={`tt hbtn${open ? " on" : ""}`} aria-label="More panels" aria-haspopup="menu" aria-expanded={open}
+                onClick={() => setOpen(o => !o)}>
+                <IconMore />
+                {open ? null : <span class="tt-pop" role="tooltip">More panels</span>}
+            </button>
+            {open ? (
+                <div class="menu" role="menu">
+                    <button class="menu-item" role="menuitem" onClick={() => go({ name: "housekeeping" })}>
+                        Housekeeping log<span class="menu-hint">what the extension decided on its own</span>
+                    </button>
+                </div>
+            ) : null}
+        </span>
+    );
+}
+
 // Top-level switch: the off-mode card or the full slide-out panel. Kept separate (not a branch inside
 // App) so App's hooks/effects — the ps polling, stick-to-bottom, title backfill — never run for the
 // card, which needs none of them.
@@ -215,9 +251,12 @@ function App() {
     // lives in the content-script host (sidebar/shell.ts), not here.
     const inSettings = v.name === "settings";
     const inBench = v.name === "bench";
+    const inHousekeeping = v.name === "housekeeping";
+    // A view that REPLACED the one you were reading: the header's panel buttons step aside while it is up.
+    const replaced = inSettings || inBench || inHousekeeping;
     // Where `‹` goes. Only from a view that REPLACED another one — from the sessions list there is nothing
     // behind you, and a stale value from a previous visit would send you somewhere you did not come from.
-    const backTo = (inBench || v.name === "settings") ? viewReturn.value : null;
+    const backTo = replaced ? viewReturn.value : null;
     const detailSession = v.name === "detail" ? sessionMap.get(v.hash) : null;
     // Lazily summarise session titles whenever the data or open-state changes.
     // `open` is read (not just used in deps) so App re-renders on open/close.
@@ -330,7 +369,7 @@ function App() {
                         <ProfileBadge profile={sessionProfile(detailSession)} />
                         {detailSession.kind === "agent" ? <AgentBadge /> : null}
                     </>
-                    : <b>{inSettings ? "Settings" : inBench ? "Python bench" : `Sessions (${sessionMap.size})`}</b>}
+                    : <b>{inSettings ? "Settings" : inBench ? "Python bench" : inHousekeeping ? "Housekeeping log" : `Sessions (${sessionMap.size})`}</b>}
                 {/* Same fact in both shapes: the bench is one thing, and which sandbox it is over does not
                     depend on whether it is docked. */}
                 {inBench ? <BenchVer /> : null}
@@ -363,8 +402,8 @@ function App() {
                     const to = viewReturn.value; viewReturn.value = null;
                     view.value = to ?? { name: "list" };
                 }}><IconCollapse /><span class="tt-pop" role="tooltip">Dock it to the bottom, so you can read a run while you work in it.</span></button> : null}
-                {!inSettings && !inBench ? <button class={`tt hbtn${vramOpen.value ? " on" : ""}`} aria-label="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /><span class="tt-pop" role="tooltip">VRAM monitor</span></button> : null}
-                {!inSettings && !inBench ? <button class={`tt hbtn${benchOpen.value ? " on" : ""}`} aria-label="Python bench" aria-pressed={benchOpen.value} onClick={() => {
+                {!replaced ? <button class={`tt hbtn${vramOpen.value ? " on" : ""}`} aria-label="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /><span class="tt-pop" role="tooltip">VRAM monitor</span></button> : null}
+                {!replaced ? <button class={`tt hbtn${benchOpen.value ? " on" : ""}`} aria-label="Python bench" aria-pressed={benchOpen.value} onClick={() => {
                     // The toolbar button TOGGLES; a code block's ▶ always opens (it is handing over a
                     // script). Both go through the same opener, which honours the dock preference.
                     if (benchOpen.value && benchDock.value !== "full") {
@@ -380,18 +419,20 @@ function App() {
                     time you scan the row — for a trip you make rarely, and which Settings → Advanced already
                     serves. `openSettingsAt("advanced", "servertools")` is intact, so bringing it back (or
                     linking it from somewhere better) is one line. */}
-                {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); markReturn(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
+                {!replaced ? <MoreMenu /> : null}
+                {!replaced ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); markReturn(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
             </div>
             <BackendOfflineBanner />
-            {vramOpen.value && !inSettings && !inBench ? <VramPanel /> : null}
+            {vramOpen.value && !replaced ? <VramPanel /> : null}
             {/* THE BENCH IS THE ONE VIEW THAT DOES NOT SCROLL. It is a split with a draggable divider, so it
                 has to be given the height rather than take it from its content — a `flex: 1` inside an
                 `overflow-y: auto` column resolves to the content's own height and the divider then has
                 nothing to divide. Every other view is a document and keeps the scroller. */}
-            <div class={`view${v.name === "bench" ? " view-bench" : ""}`} data-rev={r} ref={viewRef} onScroll={onViewScroll} onWheel={endPin} onTouchMove={endPin}>
+            <div class={`view${v.name === "bench" || inHousekeeping ? " view-bench" : ""}`} data-rev={r} ref={viewRef} onScroll={onViewScroll} onWheel={endPin} onTouchMove={endPin}>
                 <div ref={contentRef}>
                     {v.name === "settings" ? <Settings />
                         : v.name === "bench" ? <PythonBench />
+                        : inHousekeeping ? <HousekeepingView />
                             : v.name === "list" ? <ListView />
                                 : <DetailView hash={v.hash} />}
                 </div>
@@ -399,7 +440,7 @@ function App() {
             {/* THE BENCH, docked. A sibling of the scroll container rather than content inside it, so the
                 transcript keeps its own scroll position while you work below it — which is the whole point
                 of the drawer. Not on the settings or full-bench views, where it would be a second copy. */}
-            {benchOpen.value && benchDock.value === "drawer" && !inSettings && !inBench ? <BenchDrawer /> : null}
+            {benchOpen.value && benchDock.value === "drawer" && !replaced ? <BenchDrawer /> : null}
             {/* The run-stats readout lives in the composer's own footer, opposite the context gauge — the two
                 are the same kind of fact (what this session has spent, how full it is) and were split across
                 the composer, which made the spend line read as part of the transcript above it. */}

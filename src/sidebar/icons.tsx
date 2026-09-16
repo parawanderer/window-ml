@@ -42,6 +42,12 @@ export const IconGear = () => (
         <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
     </svg>
 );
+// More — three vertical dots: the header's menu of further panels (MoreMenu in app.tsx).
+export const IconMore = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true">
+        <circle cx="12" cy="5" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="12" cy="19" r="1.7" />
+    </svg>
+);
 // Export — Heroicons "arrow-down-tray" (MIT, https://heroicons.com).
 export const IconExport = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">

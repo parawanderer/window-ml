@@ -2677,9 +2677,15 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .rc-ev.pulse { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 6; animation: rcEvPulse 1.4s ease-out forwards; }
 @media (prefers-reduced-motion: reduce) { .rc-ev.pulse { animation: none; } }
 
-/* The housekeeping log's download/clear row (Settings → Advanced): a gap above the output cell, which otherwise
-   butts against the buttons because a settings row carries no margin of its own. */
-.hk-actions { margin: 2px 0 6px; }
+/* THE HOUSEKEEPING LOG VIEW (header ⋮ → Housekeeping log): a toolbar, one line about what this is, then the log's
+   output cell taking the rest of the height (it rides `.view-bench`'s non-scrolling column, like the full bench). */
+.hk-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+/* Filter chips, the count, then download/clear pushed to the far end. */
+.hk-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* How many events the log holds, beside the chips — a status, not a control. */
+.hk-count { color: var(--fg-faint); font-size: 0.83em; }
+/* One line about what this is, quieter than the log it explains. */
+.hk-about { margin: 0; color: var(--fg-faint); font-size: 0.83em; }
 /* Server-tool curation: a bundle, then its functions. Indented under their bundle so "which server is this
    from" is answered by position rather than by repeating the prefix on every row. */
 .srv-curate { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 0; }

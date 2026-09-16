@@ -3,7 +3,6 @@
 // than built as a list because a log IS output: the cell already gives it a timestamp gutter, find (Ctrl+F),
 // a resize grip and tail-follow, and a second list component would have grown half of those, differently.
 import { useEffect, useState } from "preact/hooks";
-import { Disclosure } from "./ui-kit";
 import { OutputCell, TimedOutput } from "./render-panel";
 import { downloadBlob } from "./download";
 import { formatBytes } from "../resource-model";
@@ -45,19 +44,17 @@ export function subsystemCounts(events: HousekeepingEvent[]): [string, number][]
 }
 
 /**
- * The HOUSEKEEPING LOG, as a disclosure: evictions, sweeps, service-worker restarts, Python cold starts and
- * pre-warms. Read only while open — the first read goes through the worker (which flushes what it has buffered),
- * after that `storage.session` changes push the ring straight in. Filter chips per subsystem ride the header
- * line, as the event lane's do.
+ * The HOUSEKEEPING LOG view (header ⋮ → Housekeeping log): evictions, sweeps, service-worker restarts, Python
+ * cold starts and pre-warms. Read on mount — the first read goes through the worker (which flushes what it has
+ * buffered), after that `storage.session` changes push the ring straight in. The output cell FILLS the view, so
+ * the log gets the panel's height rather than a capped box in the middle of it.
  */
-export function HousekeepingLog() {
-    const [open, setOpen] = useState(false);
+export function HousekeepingView() {
     const [events, setEvents] = useState<HousekeepingEvent[] | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [hidden, setHidden] = useState<Set<string>>(new Set());
 
     useEffect(() => {
-        if (!open) return;
         let live = true;
         chrome.runtime.sendMessage({ type: "DUMP_HOUSEKEEPING", payload: {} }, (r: { data?: HousekeepingEvent[]; error?: string } | undefined) => {
             if (!live) return;
@@ -70,12 +67,12 @@ export function HousekeepingLog() {
         };
         chrome.storage.onChanged.addListener(onChanged);
         return () => { live = false; chrome.storage.onChanged.removeListener(onChanged); };
-    }, [open]);
+    }, []);
 
     const all = events || [];
     const counts = subsystemCounts(all);
     const { text, marks } = housekeepingText(all, hidden);
-    const cleared = all.length > 0 && all[0].subsystem === "log" && all[0].kind === "clear";
+    const cleared = all.length === 1 && all[0].subsystem === "log" && all[0].kind === "clear";
     const toggle = (s: string) => setHidden((h) => { const n = new Set(h); if (n.has(s)) n.delete(s); else n.add(s); return n; });
     // The worker owns the ring; the cleared ring (one `log/clear` marker) arrives through storage.onChanged.
     const clear = () => chrome.runtime.sendMessage({ type: "DUMP_HOUSEKEEPING", payload: { clear: true } }, () => { void chrome.runtime.lastError; });
@@ -83,30 +80,31 @@ export function HousekeepingLog() {
         new Blob([JSON.stringify(all, null, 1)], { type: "application/json" }));
 
     return (
-        <Disclosure label="housekeeping log" open={open} onToggle={setOpen}
-            note={error ? "unavailable" : events == null ? (open ? "loading…" : undefined) : `${all.length} event${all.length === 1 ? "" : "s"}`}
-            aside={open && counts.length > 1 ? (
-                <div class="rc-lane-filter">
-                    {counts.map(([s, n]) => (
-                        <button class={`rc-lane-chip${hidden.has(s) ? " off" : ""}`} key={s} aria-pressed={!hidden.has(s)}
-                            aria-label={hidden.has(s) ? `Show ${s}` : `Hide ${s}`} onClick={() => toggle(s)}>{s} {n}</button>
-                    ))}
-                </div>
-            ) : null}>
-            <div class="set-note">
-                What the extension decided on its own: cache evictions, service-worker restarts (inferred when the next
-                one starts), Python cold starts and pre-warms. It holds the last {LOG_CAP.toLocaleString()} events and
-                clears when the browser restarts. Lines marked <code>[page]</code> were reported by a web page and are
-                a record only. <code>ml.__housekeeping()</code> returns the same events.
-            </div>
-            <div class="set-row hk-actions">
+        <div class="hk-view">
+            <div class="hk-bar">
+                {counts.length > 1 ? (
+                    <div class="rc-lane-filter">
+                        {counts.map(([s, n]) => (
+                            <button class={`rc-lane-chip${hidden.has(s) ? " off" : ""}`} key={s} aria-pressed={!hidden.has(s)}
+                                aria-label={hidden.has(s) ? `Show ${s}` : `Hide ${s}`} onClick={() => toggle(s)}>{s} {n}</button>
+                        ))}
+                    </div>
+                ) : null}
+                <span class="hk-count">{error ? "unavailable" : events == null ? "loading…" : `${all.length} event${all.length === 1 ? "" : "s"}`}</span>
+                <span class="sp" />
                 <button class="raw-btn" onClick={download} disabled={!all.length}>download</button>
-                <button class="raw-btn" onClick={clear} disabled={!all.length || (cleared && all.length === 1)}>clear</button>
+                <button class="raw-btn" onClick={clear} disabled={!all.length || cleared}>clear</button>
+            </div>
+            <div class="hint hk-about">
+                What the extension decided on its own: cache evictions, service-worker restarts (inferred when the next
+                one starts), Python cold starts and pre-warms. The last {LOG_CAP.toLocaleString()} events, cleared when
+                the browser restarts. <code>[page]</code> lines were reported by a web page. Same data:{" "}
+                <code>ml.__housekeeping()</code>.
             </div>
             {error ? <div class="hint err">could not read the log: {error}</div>
                 : events == null ? null
                     : !text ? <div class="hint">{all.length ? "Every subsystem is filtered out." : "Nothing recorded since the browser started."}</div>
-                        : <OutputCell text><TimedOutput text={text} marks={marks} /></OutputCell>}
-        </Disclosure>
+                        : <OutputCell text fill><TimedOutput text={text} marks={marks} /></OutputCell>}
+        </div>
     );
 }

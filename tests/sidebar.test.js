@@ -8953,16 +8953,18 @@ test("settings: the wire format is a THREE-state control, defaulting to auto", a
     assert.equal(w.syncStore.protoStream, "on");
 });
 
-// ---- Settings → Housekeeping: what the system decided on its own, in the shared output cell ----
+// ---- header ⋮ → Housekeeping log: what the system decided on its own, in the shared output cell ----
 
 const HK = (t, subsystem, kind, extra = {}) => ({ t, subsystem, kind, origin: "worker", ...extra });
-const openHousekeeping = async (w, { inSettings = false } = {}) => {
-    if (!inSettings) await openSettings(w, "Advanced");
-    const btn = [...w.shadow.querySelectorAll(".disc-head")].find(b => /housekeeping log/i.test(b.textContent));
-    assert.ok(btn, "Advanced offers the housekeeping log");
-    btn.click();
+const openHousekeeping = async (w) => {
+    const more = w.shadow.querySelector('[aria-label="More panels"]');
+    assert.ok(more, "the header has a More panels menu");
+    more.click();
     await w.flush();
-    return btn;
+    const items = [...w.shadow.querySelectorAll('.menu [role="menuitem"]')];
+    assert.match(items[0]?.textContent || "", /^Housekeeping log/, "the housekeeping log is the menu's first panel");
+    items[0].click();
+    await w.flush();
 };
 
 test("housekeeping log: read on open, drawn in the output cell with a timestamp gutter, page reports marked", async () => {
@@ -8972,11 +8974,12 @@ test("housekeeping log: read on open, drawn in the output cell with a timestamp 
         HK(now - 2000, "pyodide", "cold-start", { reason: "prewarm", ms: 1850, origin: "offscreen" }),
         HK(now - 1000, "fetch-cache", "evict", { reason: "budget", bytes: 41_000_000, key: "https://x.example/a.csv", origin: "page", tab: 7 }),
     ] });
-    await openSettings(w, "Advanced");
-    assert.equal(w.hkCalls.length, 0, "nothing is read while the section is closed");
-    await openHousekeeping(w, { inSettings: true });
+    await w.flush();
+    assert.equal(w.hkCalls.length, 0, "nothing is read until the view opens");
+    await openHousekeeping(w);
     assert.equal(w.hkCalls.length, 1);
-    const cell = w.shadow.querySelector(".disc.open .r-outcell");
+    assert.match(w.shadow.querySelector(".head b")?.textContent || "", /Housekeeping log/);
+    const cell = w.shadow.querySelector(".hk-view .r-outcell.fill");
     assert.ok(cell, "the log renders into the shared output cell (find, grip, tail-follow)");
     const rows = [...cell.querySelectorAll(".r-ts-row")].map(r => r.querySelector(".r-ts-line").textContent);
     assert.equal(rows.length, 3, "one line per event, oldest first");
@@ -8991,16 +8994,16 @@ test("housekeeping log: subsystem chips filter the lines, and a storage change u
     const now = Date.now();
     const w = await loadSidebarWorld({ housekeeping: [HK(now - 2000, "sw", "start"), HK(now - 1000, "pyodide", "kill", { reason: "timeout", origin: "offscreen" })] });
     await openHousekeeping(w);
-    const chips = () => [...w.shadow.querySelectorAll(".disc.open .rc-lane-chip")];
+    const chips = () => [...w.shadow.querySelectorAll(".hk-view .rc-lane-chip")];
     assert.deepEqual(chips().map(c => c.textContent), ["sw 1", "pyodide 1"]);
     chips().find(c => c.textContent.startsWith("sw")).click();
     await w.flush();
-    let lines = [...w.shadow.querySelectorAll(".disc.open .r-ts-line")].map(l => l.textContent);
+    let lines = [...w.shadow.querySelectorAll(".hk-view .r-ts-line")].map(l => l.textContent);
     assert.equal(lines.length, 1);
     assert.match(lines[0], /^pyodide/);
     w.setHousekeeping([HK(now - 2000, "sw", "start"), HK(now - 1000, "pyodide", "kill", { reason: "timeout", origin: "offscreen" }), HK(now, "pyodide", "cold-start", { reason: "run", ms: 900, origin: "offscreen" })]);
     await w.flush();
-    lines = [...w.shadow.querySelectorAll(".disc.open .r-ts-line")].map(l => l.textContent);
+    lines = [...w.shadow.querySelectorAll(".hk-view .r-ts-line")].map(l => l.textContent);
     assert.equal(lines.length, 2, "the new event arrived without reopening, and the sw filter still holds");
     assert.equal(w.hkCalls.length, 1, "live updates come from storage, not from re-asking the worker");
 });
@@ -9011,12 +9014,25 @@ test("housekeeping log: an empty log says so, and clear asks the worker (a clear
     assert.match(w.shadow.body.innerHTML, /Nothing recorded since the browser started/);
     w.setHousekeeping([HK(Date.now(), "sw", "start")]);
     await w.flush();
-    [...w.shadow.querySelectorAll(".disc.open .raw-btn")].find(b => b.textContent === "clear").click();
+    [...w.shadow.querySelectorAll(".hk-view .raw-btn")].find(b => b.textContent === "clear").click();
     await w.flush();
     assert.deepEqual(w.hkCalls.at(-1), { clear: true });
     w.setHousekeeping([HK(Date.now(), "log", "clear")]);
     await w.flush();
-    const lines = [...w.shadow.querySelectorAll(".disc.open .r-ts-line")].map(l => l.textContent);
+    const lines = [...w.shadow.querySelectorAll(".hk-view .r-ts-line")].map(l => l.textContent);
     assert.equal(lines.length, 1);
     assert.match(lines[0], /^log\s+clear$/, "a cleared log reads differently from an empty one");
+});
+
+test("housekeeping log: ‹ returns to the view it replaced, and the header's panel buttons step aside meanwhile", async () => {
+    const w = await loadSidebarWorld({ housekeeping: [HK(Date.now(), "sw", "start")] });
+    await w.flush();
+    await openHousekeeping(w);
+    assert.equal(w.shadow.querySelector('[aria-label="More panels"]'), null, "no menu while a replacing view is up");
+    assert.equal(w.shadow.querySelector('[aria-label="Settings"]'), null);
+    w.shadow.querySelector(".head .nav").click();
+    await w.flush();
+    assert.match(w.shadow.querySelector(".head b")?.textContent || "", /^Sessions/);
+    assert.ok(w.shadow.querySelector('[aria-label="More panels"]'));
+    assert.equal(w.shadow.querySelector(".hk-view"), null);
 });
