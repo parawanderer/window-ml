@@ -84,11 +84,11 @@ function usageFor(body, step) {
  * - url:       the chatUrl to configure the extension with (…/api/chat/completions)
  * - setScript: (steps: Array<StepOrFn>) => void   — the ordered turns for the NEXT run
  * - calls:     () => object[]                      — every chat request body received (for assertions)
- * @param {{ port?: number, model?: string, streamDelayMs?: number, continuousUsage?: boolean }} [opts]
+ * @param {{ port?: number, model?: string, streamDelayMs?: number, continuousUsage?: boolean, zeroRunningCount?: boolean, reasoningKey?: string }} [opts]
  */
 /** @param {number} ms */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0, continuousUsage = true } = {}) {
+export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0, continuousUsage = true, zeroRunningCount = false, reasoningKey = "reasoning_content" } = {}) {
     // A scriptable fake BOX as well as a fake model: /api/ps (what is resident) and /api/info (what capacity
     // exists) are what the resource panel polls, and both are settable mid-run so a test or demo can make
     // models load and evict on a timeline. `info: null` reproduces a stock Ollama, which doesn't serve the
@@ -137,18 +137,21 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
         // is exactly the stretch a count estimated from text used to freeze on. `continuousUsage: false` is a stock
         // server that ignores the ask, so the client falls back to its estimate.
         const liveUsage = continuousUsage && !!body?.stream_options?.continuous_usage_stats;
+        // `zeroRunningCount`: the shape a patched server with a runner that does not count sends (measured on the reference
+        // box, 2026-09-16, a llama-server runner): the usage object on every chunk, its count stuck at 0 until the end.
+        // `reasoningKey: "reasoning"`: ollama's /v1 spelling of the thinking channel, where OpenWebUI says `reasoning_content`.
         const promptTokens = usageFor(body, step).prompt_tokens;
         let running = 0;
         /** @param {any} d */
         const tokensIn = (d) => {
-            const text = String(d.content || "") + String(d.reasoning_content || "") + (d.tool_calls || []).map((/** @type {any} */ t) => String(t.function?.arguments || "") + String(t.function?.name || "")).join("");
+            const text = String(d.content || "") + String(d.reasoning_content || d.reasoning || "") + (d.tool_calls || []).map((/** @type {any} */ t) => String(t.function?.arguments || "") + String(t.function?.name || "")).join("");
             return text ? Math.max(1, Math.ceil(text.length / 4)) : 0;
         };
         /** @param {Record<string, unknown>} delta @param {Record<string, unknown>} [extra] */
         const send = (delta, extra = {}) => {
             if (liveUsage) running += tokensIn(delta);
             res.write(`data: ${JSON.stringify({ id: `chatcmpl-${callSeq}`, object: "chat.completion.chunk", model, choices: [{ index: 0, delta, ...extra }],
-                ...(liveUsage ? { usage: { prompt_tokens: promptTokens, completion_tokens: running, total_tokens: promptTokens + running } } : {}) })}\n\n`);
+                ...(liveUsage ? { usage: { prompt_tokens: promptTokens, completion_tokens: zeroRunningCount ? 0 : running, total_tokens: promptTokens + (zeroRunningCount ? 0 : running) } } : {}) })}\n\n`);
         };
         const choice = toChoice(step);
         const calls = choice.message.tool_calls;
@@ -159,7 +162,7 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
             const nCall = step.emit.filter((b) => b.kind === "call").length;
             let sent = 0;
             for (const beat of step.emit) {
-                if (beat.kind === "think") send({ reasoning_content: beat.text || "" });
+                if (beat.kind === "think") send({ [reasoningKey]: beat.text || "" });
                 else if (beat.kind === "answer") send({ content: beat.text || "" });
                 else if (calls) {
                     // First fragment carries the id and the name (as OpenAI does); the rest carry argument text.
@@ -175,11 +178,11 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
             }
             send({}, { finish_reason: calls ? "tool_calls" : "stop" });
         } else if (calls) {
-            for (const w of (step.reasoning || "").match(/\S+\s*/g) || []) { send({ reasoning_content: w }); await sleep(streamDelayMs); }
+            for (const w of (step.reasoning || "").match(/\S+\s*/g) || []) { send({ [reasoningKey]: w }); await sleep(streamDelayMs); }
             send({ tool_calls: calls.map((tc, i) => ({ index: i, id: tc.id, type: "function", function: { name: tc.function.name, arguments: tc.function.arguments } })) });
             send({}, { finish_reason: "tool_calls" });
         } else {
-            for (const w of (step.reasoning || "").match(/\S+\s*/g) || []) { send({ reasoning_content: w }); await sleep(streamDelayMs); }
+            for (const w of (step.reasoning || "").match(/\S+\s*/g) || []) { send({ [reasoningKey]: w }); await sleep(streamDelayMs); }
             for (const w of (choice.message.content || "").match(/\S+\s*/g) || []) { send({ content: w }); await sleep(streamDelayMs); }
             send({}, { finish_reason: "stop" });
         }
