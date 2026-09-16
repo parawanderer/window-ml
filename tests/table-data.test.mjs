@@ -9,7 +9,7 @@ import test from "node:test";
 import assert from "node:assert";
 import {
     tableFromDelimited, tableOf, tablePreview, sniffDelimiter, looksCsv,
-    namedColumns, dtypesOf, castTableColumns, parseCsv, MAX_TABLE_ROWS,
+    namedColumns, dtypesOf, castTableColumns, parseCsv, hasHeaderRow, MAX_TABLE_ROWS,
 } from "../src/table-data.ts";
 
 test("the delimiter is DISCOVERED, not assumed — comma, semicolon, tab and pipe all parse", () => {
@@ -90,6 +90,52 @@ test("blank and duplicate headers are named like pandas (Unnamed: N, a.1)", () =
     const t = tableFromDelimited("total,total\n1,2");
     assert.deepEqual(t.columns, ["total", "total.1"]);
     assert.deepEqual(Object.keys(t.dtypes), ["total", "total.1"]);
+});
+
+// ---- header detection: a data row mistaken for a header DELETES a record ----
+
+test("a headerless CSV keeps every record and numbers its columns, as read_csv(header=None)", () => {
+    const t = tableFromDelimited("1000,north,9.99\n1001,south,13.49\n1002,west,20.49");
+    assert.deepEqual(t.columns, ["0", "1", "2"]);
+    assert.equal(t.headerless, true);
+    assert.equal(t.shape[0], 3, "the first row is DATA — losing it is the bug this exists for");
+    assert.deepEqual(t.rows[0], [1000, "north", 9.99]);
+});
+
+test("a real header is detected: text over columns that are numbers underneath", () => {
+    const t = tableFromDelimited("id,region,revenue\n1000,north,9.99\n1001,south,13.49");
+    assert.deepEqual(t.columns, ["id", "region", "revenue"]);
+    assert.equal(t.headerless, undefined);
+    assert.equal(t.shape[0], 2);
+});
+
+test("an all-text table defaults to HAVING a header — the safer of the two wrong answers", () => {
+    // Nothing distinguishes row 0 from the body here, so the heuristic cannot decide. Guessing "header"
+    // costs a junk row VISIBLY; guessing "data" deletes a record and mislabels every column invisibly.
+    const t = tableFromDelimited("name,city\nAda,Lyon\nBob,Porto");
+    assert.deepEqual(t.columns, ["name", "city"]);
+    assert.equal(t.headerless, undefined);
+});
+
+test("header detection is overridable in both directions, because a heuristic will be wrong", () => {
+    assert.deepEqual(tableFromDelimited("id,name\n1,Ada", { header: false }).columns, ["0", "1"]);
+    assert.deepEqual(tableFromDelimited("1,Ada\n2,Bob", { header: true }).columns, ["1", "Ada"]);
+    assert.equal(tableFromDelimited("1,Ada\n2,Bob", { header: true }).shape[0], 1);
+});
+
+test("hasHeaderRow ignores text columns and decides on the ones that carry evidence", () => {
+    // `region` is text everywhere and says nothing; `revenue` is numeric in the body, so its first cell
+    // decides. A single-row table has nothing to compare against and defaults to a header.
+    assert.equal(hasHeaderRow([["region", "revenue"], ["north", "9.99"], ["south", "13.49"]]), true);
+    assert.equal(hasHeaderRow([["north", "9.99"], ["south", "13.49"], ["west", "20.49"]]), false);
+    assert.equal(hasHeaderRow([["a", "b"]]), true);
+});
+
+test("a headerless table SAYS so in the preview — numeric column names must not read as lost ones", () => {
+    const out = tablePreview(tableFromDelimited("1,Ada\n2,Bob\n3,Cy"));
+    assert.match(out, /no header row was detected/);
+    assert.match(out, /Nothing was dropped/);
+    assert.match(out, /"header": true/, "and says how to correct it");
 });
 
 // ---- classification: what must NOT look like a table ----

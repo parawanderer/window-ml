@@ -1810,6 +1810,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. Renders in INCOGNITO (no session/cookies): same-origin is FREE, cross-origin asks once then remembered (needs 'Allow in Incognito'). Add credentials:true to render in the user's SESSION (a normal tab with cookies) — always re-asks. Slower/heavier; never cached." },
                         ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
                         format: { type: "string", enum: ["markdown", "html"], description: "What DOCUMENT to fetch. \"markdown\" (default) negotiates for the site's own Markdown version of the page and falls back to converting its HTML. \"html\" returns the ORIGINAL markup in one plain request, no negotiation — for when you need the markup itself (a selector, an attribute, an embedded script). Data bodies (JSON/CSV/code) are unaffected either way." },
+                        header: { type: "boolean", description: "For a CSV/TSV only. Whether the first row is a HEADER. Detected automatically (a row of text over columns of numbers is a header), so pass this only to CORRECT it: `false` when the file starts straight into data and the columns came back named after the first record, `true` when a real header was mistaken for data. With no header the columns are numbered by position, exactly as read_csv(header=None)." },
                         pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). " + PIPE_REF + " For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
                     },
                     required: ["url"],
@@ -1824,7 +1825,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     const pipe = (typeof a?.pipe === "string" && a.pipe.trim()) ? a.pipe.trim() : undefined;
                     return { type: "action", verb: "fetch", target: String(a?.url ?? ""), ...(note ? { note } : {}), ...(ask ? { ask } : {}), ...(pipe ? { pipe } : {}) };
                 },
-                run: async ({ url, schema = false, credentials = false, rendered = false, ask = null, format = "markdown", pipe = null }: { url?: unknown; schema?: boolean; credentials?: boolean; rendered?: boolean; ask?: unknown; format?: unknown; pipe?: unknown } = {}, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
+                run: async ({ url, schema = false, credentials = false, rendered = false, ask = null, format = "markdown", pipe = null, header = undefined }: { url?: unknown; schema?: boolean; credentials?: boolean; rendered?: boolean; ask?: unknown; format?: unknown; pipe?: unknown; header?: boolean } = {}, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
                     if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
                     let r: import("./contract").FetchResult;
                     const wantHtml = format === "html";
@@ -1950,6 +1951,12 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     // model uses to filter a big doc to the relevant lines BEFORE the clip). For a LARGE json, prepend
                     // the shape so the structure survives the clip — but only when NOT piped (a piped body is already
                     // a filtered view) and the shape is actually SMALLER than the payload.
+                    // An explicit `header` re-parses the body for THIS call only. The cached result keeps the
+                    // auto-detected table: an override is one caller's correction, not a fact about the file,
+                    // and rewriting the cache would hand the next reader a table it never asked for.
+                    if (typeof header === "boolean" && r.table && r.type === "csv") {
+                        try { r = { ...r, table: tableFromDelimited(r.text, { header }) }; } catch { /* keep the detected one */ }
+                    }
                     // A TABLE the parser understood, and the model did not ask for its own scan of the raw text:
                     // show a `df.head()` rather than 4000 characters of rows. The clip is the reason — on a
                     // 48,000-row CSV it leaves the first sixty rows and hides that there are 48,000, so the model
@@ -1963,7 +1970,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         // the descriptor's kind), so a later step can `dereference … | keys` for the columns. Capped:
                         // this descriptor rides the debug stream and the JSON export, and a whole CSV does not belong
                         // in either. python_exec gets the FULL table from the fetch cache, by URL.
-                        return { content, render: { type: "table", columns: t.columns, rows: t.rows.slice(0, RENDER_TABLE_ROWS), rowCount: t.shape[0], ...(t.rows.length > RENDER_TABLE_ROWS ? { truncated: true } : {}) }, renderIn: inRender() };
+                        return { content, render: { type: "table", columns: t.columns, rows: t.rows.slice(0, RENDER_TABLE_ROWS), rowCount: t.shape[0], dtypes: t.dtypes, ...(t.delimiter ? { delimiter: t.delimiter } : {}), ...(t.headerless ? { headerless: true } : {}), ...(t.rows.length > RENDER_TABLE_ROWS ? { truncated: true } : {}) }, renderIn: inRender() };
                     }
                     const pd = doPipe(bodyText());
                     if (pd.err) return pd.err;

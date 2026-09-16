@@ -547,6 +547,10 @@ export interface TableLike {
     delimiter?: string;
     /** `rows` was capped at {@link MAX_TABLE_ROWS} — the table is a prefix of the source, not the whole of it. */
     truncated?: boolean;
+    /** The source had NO header row, so `columns` are positional (`0`, `1`, `2`) — `read_csv(header=None)`.
+     *  Recorded rather than left implicit: a reader who sees numeric column names should be able to tell that
+     *  it was DECIDED, not that the header was lost. */
+    headerless?: boolean;
 }
 
 export type ContentKind = "json" | "csv" | "parquet" | "html" | "xml" | "markdown" | "code" | "text";
@@ -1057,7 +1061,10 @@ export type RenderDescriptor = (
     // `rowCount` is the SOURCE's row count when `rows` is only a PREFIX of it (a fetched CSV caps what it
     // ships to the UI and the export). Without it a pointer to a 50,000-row table reports the 200 rows that
     // happened to be drawn — a plausible wrong number, and the one a model would answer with.
-    | { type: "table"; columns: string[]; rows: (string | number | boolean | null)[][]; rowCount?: number; truncated?: boolean }
+    // `dtypes`/`delimiter`/`headerless` let the VIEW say what the model is already told: what each column is,
+    // how the body was split (a guess, so a wrong one should be visible rather than inferred from mangled
+    // columns), and whether the column names were decided rather than read.
+    | { type: "table"; columns: string[]; rows: (string | number | boolean | null)[][]; rowCount?: number; truncated?: boolean; dtypes?: Record<string, string>; delimiter?: string; headerless?: boolean }
     | { type: "keyval"; pairs: [string, string][] }
     | { type: "elements"; items: { path: string; text?: string; index?: number }[] }
     // `locate`'s debug view as an ordered list of SUBSTEPS — each is one vision

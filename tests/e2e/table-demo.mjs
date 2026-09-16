@@ -121,7 +121,18 @@ const main = async () => {
             { tool: "exec", args: { js: SURVEY } },
             { tool: "exec", args: { js: VIA_POINTER } },
             { tool: "python_exec", args: { code: PY, mode: "readonly", tables: { df: SALES } } },
-            { content: "Fetched three table formats, scanned one, and totalled revenue by region." },
+            // The final answer CITES its own work instead of retyping it. Both references are the BARE TOOL
+            // NAME form — "the last python_exec call" — so the demo can write them without knowing any minted
+            // id, and the slots do the rest: `:in` is the code that ran, a bare reference is the output.
+            { content: [
+                "I totalled revenue by region over all 50,000 rows. The code I used was:",
+                "",
+                "![the code I ran](@tool:python_exec:in)",
+                "",
+                "Here is the result:",
+                "",
+                "![revenue by region](@tool:python_exec)",
+            ].join("\n") },
         ]);
 
         const page = await ext.context.newPage();
@@ -207,6 +218,20 @@ const main = async () => {
         await narrate(page, "7 — python_exec loads it from the CACHE as a real DataFrame", { sub: "no second request, no read_csv — and pandas reports the dtypes beat 1 promised" });
         log("\n--- 6b. python_exec with tables: { df: <the url> } ---\n" + (await outOf(6)).trim().slice(0, 800));
         await frame.page().screenshot({ path: path.join(ART, "6b-python-dataframe.png") });
+
+        // 7 — the ANSWER cites its own work. Both pointers expand IN PLACE: the code block and the
+        // DataFrame render inside the answer, rather than the model retyping either.
+        await narrate(page, "8 — the answer CITES its work with @tool: pointers", { sub: "`:in` expands to the code that ran; a bare reference expands to the output — here, the table itself" });
+        const answer = frame.locator(".asst-answer").last();
+        const answerText = await answer.textContent().catch(() => "");
+        log("\n--- 7. the final answer, with both pointers expanded ---");
+        log(`    pointer refs expanded in place:    ${await answer.locator(".tok-ref").count()}`);
+        log(`    code block rendered in the answer: ${await answer.locator(".code, pre").count() > 0}`);
+        log(`    table rendered in the answer:      ${await answer.locator(".r-df-table").count() > 0}`);
+        log(`    literal "@tool:" left in the text: ${/@tool:/.test(answerText)}   (should be false — they expand)`);
+        await answer.scrollIntoViewIfNeeded().catch(() => {});
+        await sleep(600);
+        await frame.page().screenshot({ path: path.join(ART, "7-answer-citations.png") });
 
         log(`\nScreenshots → ${ART}`);
         await narrateDone(page);

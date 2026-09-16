@@ -643,14 +643,10 @@ function zipStore(files: Sidecar[]): Blob {
     return new Blob(parts as BlobPart[], { type: "application/zip" });
 }
 
-// Trigger a client-side download (the iframe can't touch the filesystem).
-function downloadBlob(name: string, blob: Blob): void {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = name;
-    document.body.append(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 0);
-}
+// Trigger a client-side download (the iframe can't touch the filesystem). It lives in its own module now —
+// see download.ts for why a four-line helper could not stay next to the highlighter stylesheet.
+import { downloadBlob } from "./download";
+export { downloadBlob };
 
 const baseName = (s: Session): string => `ml-${s.kind === "agent" ? "agent" : "chat"}-${s.hash}`;
 

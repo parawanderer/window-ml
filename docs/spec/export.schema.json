@@ -925,6 +925,18 @@
                 },
                 "truncated": {
                   "type": "boolean"
+                },
+                "dtypes": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "delimiter": {
+                  "type": "string"
+                },
+                "headerless": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -1448,6 +1460,18 @@
                   "type": "number"
                 },
                 "truncated": {
+                  "type": "boolean"
+                },
+                "dtypes": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  }
+                },
+                "delimiter": {
+                  "type": "string"
+                },
+                "headerless": {
                   "type": "boolean"
                 }
               },

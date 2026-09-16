@@ -10,6 +10,7 @@ import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "preact/ho
 import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, TableSource, CodeRevision } from "../contract";
 import { codeDiff, diffStat } from "../diff";
+import { downloadBlob } from "./download";   // a table too large for the clipboard is saved as a file
 import { elementReference } from "../dom";
 import { pyFormat, lineChanged } from "../py-format";
 import { lineMapBetween } from "../line-map";
@@ -177,6 +178,36 @@ const csvField = (v: unknown): string => {
     const s = v == null ? "" : (dfCell(v) ?? "");
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
+// A delimiter read out loud. "semicolon-separated" is legible where "`;`-separated" is a character to
+// squint at, and this line exists precisely because the separator was a GUESS worth checking.
+const DELIM_NAME: Record<string, string> = { ",": "comma", "\t": "tab", ";": "semicolon", "|": "pipe" };
+
+/** What a column IS, shown before the affordance — a header tip that only offered "click to sort" said the
+ *  least interesting thing about the column. The dtype comes from the frame (so it is what pandas will infer,
+ *  not a guess made here); the counts are computed over the rows the PANEL holds, which is why a prefix says
+ *  so rather than presenting them as the column's.
+ *
+ *  Authored JSX, never a string: a column name comes from a fetched file's header, which is outside content
+ *  in exactly the way a tool result is, and the string overload of `cursorTipOn` renders markdown. */
+function ColumnTip({ name, dtype, rows, col, total }: { name: string; dtype?: string; rows: (string | number | boolean | null)[][]; col: number; total: number }) {
+    const vals = rows.map(r => r[col]);
+    const nulls = vals.filter(v => v == null || v === "").length;
+    const distinct = new Set(vals.filter(v => v != null && v !== "").map(v => String(v))).size;
+    const nums = vals.filter((v): v is number => typeof v === "number");
+    const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+    const partial = total > rows.length;
+    return (
+        <>
+            <div><b>{name}</b>{dtype ? <span class="dim"> · {dtype}</span> : null}</div>
+            <div class="dim">{fmt(rows.length - nulls)} values · {fmt(nulls)} null · {fmt(distinct)} distinct</div>
+            {nums.length ? <div class="dim">min {fmt(Math.min(...nums))} · max {fmt(Math.max(...nums))} · mean {fmt(nums.reduce((a, n) => a + n, 0) / nums.length)}</div> : null}
+            {partial ? <div class="dim">over the first {fmt(rows.length)} of {fmt(total)} rows</div> : null}
+            <div class="tip-rule" />
+            <div>Click to sort by this column.</div>
+        </>
+    );
+}
+
 /** A pandas DataFrame, drawn as JUPYTER draws one: numbered index gutter, sticky header, zebra rows,
  *  right-aligned monospace numbers, NaN styling — plus click-to-sort, drag-to-resize, collapse and
  *  copy-CSV. Zero-dep, no grid library. A cell with no JSON form renders as a marker naming its type
@@ -184,8 +215,13 @@ const csvField = (v: unknown): string => {
  *
  *  `noCollapse` drops the hide/show control. Collapsing is for a LOG, where a wide table sits in a scrolling
  *  transcript you are reading past; in the bench the tab strip already decides what is on screen, so a
- *  second control for "don't show me this" is one that undoes the choice you just made with the first. */
-export function PyDfTable({ columns, rows, noCollapse, rowCount }: { columns: string[]; rows: (string | number | boolean | null)[][]; noCollapse?: boolean; rowCount?: number }) {
+ *  second control for "don't show me this" is one that undoes the choice you just made with the first.
+ *
+ *  `rowCount` is the SOURCE's row count when `rows` is only a prefix of it, and it changes what the view is
+ *  allowed to claim: the footer counts off the real total, and "copy CSV" says how much of the table it is
+ *  actually handing you. `dtypes`/`delimiter`/`headerless` are what the MODEL is told about a fetched table,
+ *  shown here so the reader is not the only one guessing. */
+export function PyDfTable({ columns, rows, noCollapse, rowCount, dtypes, delimiter, headerless }: { columns: string[]; rows: (string | number | boolean | null)[][]; noCollapse?: boolean; rowCount?: number; dtypes?: Record<string, string>; delimiter?: string; headerless?: boolean }) {
     const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
     const [collapsed, setCollapsed] = useState(false);
     const [sort, setSort] = useState<{ c: number; dir: 1 | -1 } | null>(null);
@@ -204,10 +240,25 @@ export function PyDfTable({ columns, rows, noCollapse, rowCount }: { columns: st
     const shown = view.slice(0, PY_DF_ROWS);
 
     const cycleSort = (c: number) => setSort(s => !s || s.c !== c ? { c, dir: 1 } : s.dir === 1 ? { c, dir: -1 } : null);
+    // What the panel actually HOLDS. A fetched table ships at most RENDER_TABLE_ROWS rows here, so `rows` is
+    // frequently a prefix of a much larger table — and a control that says "copy CSV" while producing a
+    // prefix hands the user a file that claims to be the table. It leaves the panel and gets used elsewhere,
+    // which makes it the worst place to be quietly approximate.
+    const total = rowCount ?? rows.length;
+    const partial = total > rows.length;
+    // Past a few thousand rows the clipboard is the wrong sink — it is slow, it is silently size-limited in
+    // some browsers, and what you want with a table that size is a file. Hand over a file instead.
+    const CLIPBOARD_MAX_ROWS = 5000;
+    const asFile = rows.length > CLIPBOARD_MAX_ROWS;
+    const csvText = () => [cols.map(csvField).join(","), ...rows.map(r => cols.map((_, j) => csvField(r[j])).join(","))].join("\n");
     const copyCsv = () => {
-        const csv = [cols.map(csvField).join(","), ...rows.map(r => cols.map((_, j) => csvField(r[j])).join(","))].join("\n");
-        navigator.clipboard?.writeText(csv).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }, () => {});
+        if (asFile) { downloadBlob(`table-${rows.length}-rows.csv`, new Blob([csvText()], { type: "text/csv" })); return; }
+        navigator.clipboard?.writeText(csvText()).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }, () => {});
     };
+    const copyLabel = copied ? "Copied ✓" : partial ? `${asFile ? "save" : "copy"} ${rows.length.toLocaleString("en-US")} rows` : asFile ? "save CSV" : "copy CSV";
+    const copyTip = partial
+        ? `The panel holds the first ${rows.length.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} rows, so this is a PREFIX — not the table. For all of it, pass the source to python_exec.`
+        : asFile ? "Saves the whole table as a .csv file (too large for the clipboard)." : "Copies the whole table as CSV.";
     const startResize = (c: number, e: any) => {
         e.preventDefault(); e.stopPropagation();
         const th = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
@@ -230,7 +281,17 @@ export function PyDfTable({ columns, rows, noCollapse, rowCount }: { columns: st
             {noCollapse ? null : (
                 <div class="r-df-bar">
                     <button class="r-df-btn" onClick={() => setCollapsed(v => !v)}>{collapsed ? "▸ show table" : "▾ hide table"}</button>
-                    {!collapsed ? <button class="r-df-btn" onClick={copyCsv}>{copied ? "copied ✓" : "copy CSV"}</button> : null}
+                    {!collapsed ? <button class="r-df-btn" onClick={copyCsv} {...cursorTipOn(copyTip)}>{copyLabel}</button> : null}
+                    {/* HOW IT WAS READ, which the model is told and the reader was not: the shape, the
+                        delimiter we GUESSED (a wrong guess shows as mangled columns, so it should be legible
+                        rather than inferred), and whether the column names were decided rather than read. */}
+                    {!collapsed && (delimiter || headerless || rowCount) ? (
+                        <span class="r-df-meta">
+                            {rowCount ? `${total.toLocaleString("en-US")} rows × ${cols.length} columns` : null}
+                            {delimiter ? ` · ${DELIM_NAME[delimiter] || `"${delimiter}"`}-separated` : null}
+                            {headerless ? <span {...cursorTipOn("This file had no header row, so the columns are numbered by position — the same as read_csv(header=None). Nothing was lost.")}> · no header row</span> : null}
+                        </span>
+                    ) : null}
                 </div>
             )}
             {collapsed && !noCollapse ? null : <>
@@ -239,7 +300,7 @@ export function PyDfTable({ columns, rows, noCollapse, rowCount }: { columns: st
                         <thead><tr>
                             <th class="r-df-idx"></th>
                             {cols.map((c, j) => (
-                                <th key={j} style={widths[j] ? { width: `${widths[j]}px` } : undefined} onClick={() => cycleSort(j)} {...cursorTipOn("Click to sort by this column.")}>
+                                <th key={j} style={widths[j] ? { width: `${widths[j]}px` } : undefined} onClick={() => cycleSort(j)} {...cursorTipOn(<ColumnTip name={c} dtype={dtypes?.[c]} rows={rows} col={j} total={total} />)}>
                                     {c}{sort && sort.c === j ? <span class="r-df-sort">{sort.dir === 1 ? " ▲" : " ▼"}</span> : null}
                                     <span class="r-df-resize" aria-label="Drag to resize this column" {...cursorTipOn("Drag to resize this column.")} onPointerDown={(e: any) => startResize(j, e)} onClick={(e: any) => e.stopPropagation()} />
                                 </th>
@@ -1330,7 +1391,7 @@ export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, li
         // The SAME grid a DataFrame gets (scroll-capped, sticky header, sort, copy-CSV, hide) — answer-render
         // already made this call for a cited df, and a fetched CSV is the same kind of object. The bare
         // alternative had no max-height, so a 200-row fetched table rendered as an unbroken wall in the step.
-        case "table": return <PyDfTable columns={d.columns} rows={d.rows} rowCount={d.rowCount} />;
+        case "table": return <PyDfTable columns={d.columns} rows={d.rows} rowCount={d.rowCount} dtypes={d.dtypes} delimiter={d.delimiter} headerless={d.headerless} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
 /** The Markdown ladder as a resolution TREE: what was tried, what worked, what was never needed. Every rung is

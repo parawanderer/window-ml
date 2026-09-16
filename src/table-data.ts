@@ -58,17 +58,55 @@ export function parseCsv(text: string, delimiter = ","): string[][] {
 /** Delimited text → a {@link TableLike}: the first row becomes the header, the rest are rows, and numeric
  *  columns are cast for pandas unless `raw`. `delimiter` overrides discovery (a caller that KNOWS, like the
  *  Sheets export, should say so rather than let a comma-less first line be guessed at). Pure. */
-export function tableFromDelimited(text: string, opts: { delimiter?: string; raw?: boolean } = {}): TableLike {
+export function tableFromDelimited(text: string, opts: { delimiter?: string; raw?: boolean; header?: boolean | "auto" } = {}): TableLike {
     const { rows: all, delimiter, truncated } = parseDelimited(text, opts.delimiter);
-    const columns = namedColumns(all[0] || []);
-    const body = all.slice(1);
+    // Whether row 0 is a HEADER or the first record. Getting this wrong is not a cosmetic error: treating a
+    // data row as a header eats a record AND names the columns after its values, and the table then renders
+    // perfectly while being quietly short one row — wrong in the way that looks right.
+    const header = opts.header === undefined || opts.header === "auto" ? hasHeaderRow(all) : opts.header;
+    const columns = header ? namedColumns(all[0] || []) : positionalColumns(all[0]?.length || 0);
+    const body = header ? all.slice(1) : all;
     // Pad ragged rows to the header width so every row can be indexed by column position. Papa reports
     // these as errors; we do not reject on them, because a single malformed line in a large export should
     // cost that line's tail, not the whole table.
     const width = columns.length;
     const padded = width ? body.map(r => r.length === width ? r : Array.from({ length: width }, (_, i) => r[i] ?? "")) : body;
     const rows = opts.raw ? padded : castTableColumns(columns, padded);
-    return { ...tableOf(columns, rows), delimiter, ...(truncated ? { truncated: true } : {}) };
+    return { ...tableOf(columns, rows), delimiter, ...(header ? {} : { headerless: true }), ...(truncated ? { truncated: true } : {}) };
+}
+
+/** Positional column names for a table with no header row — `0`, `1`, `2`, exactly what `read_csv(header=None)`
+ *  produces, so the frame a model sees is one it already knows how to index. Pure. */
+export function positionalColumns(width: number): string[] {
+    return Array.from({ length: width }, (_, i) => String(i));
+}
+
+/** Does row 0 look like a HEADER rather than the first record? The argument is `csv.Sniffer.has_header`'s:
+ *  a header is text where the body is data, so the evidence is per column — a column whose BODY parses as
+ *  numbers but whose first cell does not is a header cell; one that parses as a number just like the rows
+ *  under it is a record.
+ *
+ *  Ties and all-text tables default to TRUE, which is the safer of the two wrong answers: a header mistaken
+ *  for data costs one junk row at the top of the frame, visibly; data mistaken for a header DELETES a record
+ *  and mislabels every column, invisibly. Pure. */
+export function hasHeaderRow(rows: string[][]): boolean {
+    if (rows.length < 2) return true;               // nothing to compare against
+    const [first, ...body] = rows;
+    let forHeader = 0, against = 0;
+    for (let c = 0; c < first.length; c++) {
+        // Is this column NUMERIC in the body? Same 90% rule the cast uses, so the two cannot disagree about
+        // what a numeric column is.
+        let seen = 0, numeric = 0;
+        for (const r of body) {
+            const v = String(r[c] ?? "").trim();
+            if (!v) continue;
+            seen++;
+            if (parseNumericCell(v) != null) numeric++;
+        }
+        if (!seen || numeric / seen < 0.9) continue;   // a text column tells us nothing either way
+        if (parseNumericCell(String(first[c] ?? "").trim()) == null) forHeader++; else against++;
+    }
+    return forHeader >= against;
 }
 
 /** Assemble a {@link TableLike} from columns + already-cast rows — the one place `shape` and `dtypes` are
@@ -230,6 +268,7 @@ export function tablePreview(t: TableLike, opts: { rows?: number; source?: strin
         lines.join("\n"),
         `[${nrows.toLocaleString("en-US")} rows x ${ncols} columns]${more}`,
         `dtypes: ${dtypes}`,
+        ...(t.headerless ? ["NOTE: no header row was detected, so the columns are numbered by position (as read_csv(header=None)). Nothing was dropped. If the first row IS a header, re-fetch with \"header\": true."] : []),
         ...(t.truncated ? [`NOTE: only the first ${MAX_TABLE_ROWS.toLocaleString("en-US")} rows were parsed; the source has more.`] : []),
         ...(opts.source ? [`Whole table cached: pass ${opts.source} to python_exec's \`tables\` for all ${nrows.toLocaleString("en-US")} rows as a DataFrame (no refetch, no read_csv).`] : []),
     ].join("\n");
