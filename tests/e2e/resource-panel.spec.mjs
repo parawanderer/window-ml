@@ -2211,23 +2211,22 @@ test("resource panel: pinching zooms the window — on the plot, the lane and th
         await expect.poll(winW, { timeout: 5000 }).toBeLessThan(widened);
         // A PLAIN wheel there still PANS rather than zooming — the two gestures must not collapse into one.
         //
-        // "Does not resize" is measured against the window's OWN drift, not against zero. A live chart follows
-        // the clock (the axis ticks while a run is in flight), so the width can move on its own between two
-        // reads — and asserting an exact zero therefore asserts that not much wall-clock passed, which is the
-        // bet that passes on a laptop and fails on a loaded runner. So take a control sample over the same
-        // interval with NO input, and require the wheel to do no more than that.
-        const idleFrom = await winW();
-        await sleep(300);
-        const drift = Math.abs((await winW()) - idleFrom);
-        const held = await winW();
+        // ASK ABOUT THE WINDOW, NOT ABOUT PIXELS. `winW` reads the scrub box's style width, which is a
+        // PERCENTAGE of the track — and the track is the whole session, which keeps growing while a run is in
+        // flight. So the same time-window renders as a smaller percentage a moment later, and "the wheel
+        // resized it" and "more samples arrived" are indistinguishable from that number. That is the whole
+        // reason this test passed on a laptop and failed on a loaded runner: nothing about the gesture.
+        //
+        // The window's DURATION is the thing the gesture either changes or does not, and it is what the panel
+        // persists. A pinch changes it (asserted above, through the width); a pan must not.
+        const heldWindow = await windowS();
         await frame.locator(".rc-scrub-track").evaluate((el) => {
             const r = el.getBoundingClientRect();
             el.dispatchEvent(new WheelEvent("wheel", { deltaX: 40, bubbles: true, cancelable: true,
                 clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
         });
         await sleep(300);
-        expect(Math.abs((await winW()) - held), "a plain wheel moves the window, it does not resize it")
-            .toBeLessThan(drift + 2);
+        expect(await windowS(), "a plain wheel moves the window, it does not resize it").toBe(heldWindow);
     } finally {
         await ext.close();
         await fake.stop();
