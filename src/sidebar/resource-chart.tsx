@@ -3399,10 +3399,15 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     // continuous zoom, and snapped to a new window when the run ended): see `sessionWindow`.
     const scopedWindow = useMemo(
         () => (laneScoped.value ? sessionWindow(events, scopedHash(), Date.now(), { followMs: resWindowS.value * 1000 }) : null),
-        [laneScoped.value, scopedHash(), events.length, samples.length, resWindowS.value]);
+        [laneScoped.value, scopedHash(), events.length, samples.at(-1)?.t, resWindowS.value]);
+    // KEYED ON THE NEWEST SAMPLE'S TIME, never on how many there are. The history is capped (RESOURCE_HISTORY), and a
+    // streamed box reaches the cap in about twenty minutes; from then on every reading drops one and adds one, the
+    // length never changes, and this memo never ran again. The window's right edge froze at the moment of the last
+    // recompute, the scrub strip read the view as scrolled back ("⏸ live"), and the live button did nothing, because
+    // it clears a zoom that was already clear.
     const window_ = useMemo(
         () => chartWindow(zoomRange.value, scopedWindow, resWindowS.value, Date.now(), samples[0]?.t),
-        [resWindowS.value, zoomRange.value, samples.length, scopedWindow]);
+        [resWindowS.value, zoomRange.value, samples.at(-1)?.t, samples[0]?.t, scopedWindow]);
     // The samples in the window, plus the nearest either side when the window is too narrow to draw itself —
     // see `windowSamples`. Zooming inside one long event used to leave fewer than two samples and an empty
     // chart, which reads as the panel having broken rather than as a window between two polls.

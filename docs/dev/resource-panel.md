@@ -361,6 +361,10 @@ per device, in bytes.
   climb before a model arrived (a pale wedge ahead of each step) and fall under its floor at an eviction. That was
   always the stated rule ("its base jumps, its thickness varies smoothly"); the edge did not implement it until
   `bandEdge`. So a device band turns a corner exactly where the model beneath it steps, and nowhere of its own.
+  The exception is a HAND-OFF: the base rises exactly as the band's thickness falls (or the reverse), which is the
+  same bytes changing owner at that sample, a load becoming the model it loaded. There the thickness is held up to
+  the corner too. Interpolated, the load thinned to zero across the interval while the model's step waited for the
+  sample, and a 43 GiB load drew as a dip to nothing and a spike back to full (real capture, 2026-09-16).
 - **THE SNAP MARK CARRIES THE MODEL'S COLOUR.** A model's colour is its identity across the whole panel, and
   a mark sitting ON that band was drawn in the panel's accent — saying "a reading" where every other surface
   says "this model", with nothing to tell several marks apart. It reads from `identity`, the same source
