@@ -47,23 +47,24 @@ test("parseCsv keeps its header row and its comma default (the Sheets path's con
 
 // ---- dtypes: pandas' rules, because the point is that a model can guess them ----
 
-test("dtypes follow read_csv: whole numbers are int64, a blank forces float64, text is object", () => {
+test("dtypes follow pandas 3: whole numbers are int64, a blank forces float64, text is str", () => {
     const t = tableFromDelimited([
         "id,price,qty,name",
         "1,12.50,3,Ada",
         "2,9.99,,Bob",       // the blank qty is what forces float64
         "3,4.00,7,Cy",
     ].join("\n"));
-    assert.deepEqual(t.dtypes, { id: "int64", price: "float64", qty: "float64", name: "object" });
+    assert.deepEqual(t.dtypes, { id: "int64", price: "float64", qty: "float64", name: "str" });
     assert.deepEqual(t.shape, [3, 4]);
 });
 
-test("a numeric column with a stray non-number stays object, but 90% numeric casts (the outlier → null)", () => {
+test("a numeric-looking column below the cast threshold stays TEXT (str), but 90% numeric casts (the outlier → null)", () => {
     const mostly = tableFromDelimited(["n", "1", "2", "3", "4", "5", "6", "7", "8", "9", "n/a"].join("\n"));
     assert.equal(mostly.dtypes.n, "float64");          // the outlier became null → NaN → float
     assert.equal(mostly.rows[9][0], null);
     const half = tableFromDelimited(["n", "1", "2", "nope", "also-nope"].join("\n"));
-    assert.equal(half.dtypes.n, "object");
+    // Not cast, so every cell is still a string — which pandas 3 calls `str`, not `object`.
+    assert.equal(half.dtypes.n, "str");
     assert.deepEqual(half.rows[2], ["nope"]);
 });
 
@@ -178,7 +179,7 @@ test("the preview reads as a df.head(): the rows, the real shape, and the dtypes
     const out = tablePreview(t, { rows: 3 });
     assert.match(out, /^id,label\n0,row0\n1,row1\n2,row2\n/);
     assert.match(out, /\[40 rows x 2 columns\] \(first 3\)/);
-    assert.match(out, /dtypes: id int64, label object/);
+    assert.match(out, /dtypes: id int64, label str/);
     assert.equal(out.includes("row3"), false);   // it is a HEAD, not the table
 });
 
@@ -214,7 +215,7 @@ test("a table cut at the row cap says so — a prefix must not read as the whole
 test("tableOf describes any producer's rows identically (a DOM table, a fetch, later Parquet)", () => {
     const t = tableOf(["a", "b"], [[1, "x"], [2, "y"]]);
     assert.deepEqual(t.shape, [2, 2]);
-    assert.deepEqual(t.dtypes, { a: "int64", b: "object" });
+    assert.deepEqual(t.dtypes, { a: "int64", b: "str" });
     assert.equal(t.delimiter, undefined);   // nothing was delimited
 });
 
@@ -231,10 +232,30 @@ test("a PREFIX of a table still reports the whole table's size", () => {
     assert.equal(tableOf(["a"], [[1], [2]], 2).truncated, undefined);
 });
 
+test("dtypesOf matches pandas 3.0.2 EXACTLY, case by case — measured in Pyodide, not recalled", () => {
+    // Each row here was produced by running `pd.DataFrame(rows).dtypes` in this repo's own Pyodide. Two surprise:
+    // strings with a null stay `str`, but booleans with a null become `object`. A preview that promises a dtype
+    // the DataFrame then contradicts is the sample-as-the-whole kind of wrong, in miniature.
+    const measured = [
+        ["ints", [[1], [2]], "int64"],
+        ["ints + null", [[1], [null]], "float64"],
+        ["floats", [[1.5], [2]], "float64"],
+        ["strings", [["a"], ["b"]], "str"],
+        ["strings + null", [["a"], [null]], "str"],
+        ["all null", [[null], [null]], "object"],
+        ["bools", [[true], [false]], "bool"],
+        ["str + num", [["a"], [1]], "object"],
+        ["bool + null", [[true], [null]], "object"],
+    ];
+    for (const [label, rows, want] of measured) {
+        assert.equal(dtypesOf(["c"], rows).c, want, label);
+    }
+});
+
 test("dtypesOf reads the CAST values, so it describes what pandas will actually get", () => {
-    // Strings that look numeric but were not cast (raw mode) are object — the description must not claim
+    // Strings that look numeric but were not cast (raw mode) are str — the description must not claim
     // a dtype the DataFrame will not have.
-    assert.deepEqual(dtypesOf(["n"], [["1"], ["2"]]), { n: "object" });
+    assert.deepEqual(dtypesOf(["n"], [["1"], ["2"]]), { n: "str" });
     assert.deepEqual(dtypesOf(["n"], [[1], [2]]), { n: "int64" });
     assert.deepEqual(dtypesOf(["n"], [[1], [null]]), { n: "float64" });
     assert.deepEqual(dtypesOf(["n"], []), { n: "object" });

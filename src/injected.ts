@@ -41,6 +41,10 @@ import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
 import { citeParam } from "./tool-params";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, googleSheetCsvUrl, googleSheetId, externalSheetIds, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom";
 import { castTableColumns, tableFromDelimited, tablePreview, tableShape, RENDER_TABLE_ROWS } from "./table-data";
+import { FetchCache, estimateFetchResultBytes } from "./fetch-cache";
+/** The page fetch cache's estimated memory budget. Enough for the table a step just fetched plus a few smaller
+ *  bodies; far below what an unbounded session used to accumulate in the user's tab. */
+const FETCH_CACHE_BUDGET_BYTES = 64_000_000;
 import { makeAnswerFacade, finalizeAnswer, resolveOutputs } from "./answer-set";
 import { isSelfSourceUrl } from "./self-source";
 import { BUILD_INFO } from "./build-info.gen";
@@ -100,7 +104,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
     // dialect's `ml.fetch` is bound to. The python_exec+Google-Sheet parallel: approve the source ONCE, then
     // operate on it freely. Page-scoped (module lifetime); holds only public, uncredentialed, non-rendered bytes
     // (a credentialed / rendered fetch is authenticated or session-bound → NEVER cached).
-    const mlFetchCache = new Map<string, import("./contract").FetchResult>();
+    // BUDGETED (fetch-cache.ts): it was a bare Map that kept every fetched body — and every parsed CSV's rows —
+    // in the user's tab for the life of the page. The most recent fetch is always kept, since the next step
+    // reading it is the handoff this cache exists for; evicted URLs are remembered so a miss can say so.
+    const mlFetchCache = new FetchCache<import("./contract").FetchResult>(FETCH_CACHE_BUDGET_BYTES, estimateFetchResultBytes);
 
     /** `ml.fetch(ownUrl, { rendered: true, credentials: true })` on a local page, answered from the live
      *  document (see `isCurrentPage`). `rendered` is set because that is what it is: a settled DOM, not a
@@ -1767,7 +1774,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     "the text, and you must not guess the separator: it is discovered (`,` `\\t` `;` `|`), quoted fields and " +
                     "embedded newlines are handled, and numeric columns are cast. You get a `df.head()`: the header, the " +
                     "first 5 rows, then `[N rows x M columns]` and `dtypes: <col> <dtype>, …` — pandas' own names " +
-                    "(`int64`, `float64`, `bool`, `object`), with the same rules, so a whole-number column holding one " +
+                    "(`int64`, `float64`, `bool`, `str`, `object`), with pandas 3's rules, so text is `str` and a whole-number column holding one " +
                     "blank is `float64` (NaN forces the float) and a Parquet file's dtypes are READ from its schema " +
                     "rather than inferred. The row count is the FILE\'s, not the preview\'s — 5 rows shown out of " +
                     "`[50,000 rows x 4 columns]` means there are 50,000. To work on ALL of them, pass the SAME URL to " +
@@ -2158,7 +2165,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 }
                 throw new Error(cached
                     ? `pythonExec tables — "${src}" was fetched but isn't a table (type: ${cached.type}). Only a CSV/TSV parses into a DataFrame this way.`
-                    : `pythonExec tables — "${src}" hasn't been fetched in this run. Call fetch_url on it first; its parsed table is then loaded from the cache.`);
+                    // EVICTED is not NEVER FETCHED. Telling a model a URL it fetched two steps ago was never
+                    // fetched sends it hunting for a mistake it did not make.
+                    : mlFetchCache.wasEvicted(src)
+                        ? `pythonExec tables — "${src}" was fetched earlier, but its parsed table has since been dropped from the page's fetch cache to keep memory bounded. Call fetch_url on it again (it is already approved), then pass the URL here.`
+                        : `pythonExec tables — "${src}" hasn't been fetched in this run. Call fetch_url on it first; its parsed table is then loaded from the cache.`);
             }
             if (isCurrent || (typeof src === "string" && googleSheetCsvUrl(src))) {
                 const target = isCurrent ? (typeof location !== "undefined" ? location.href : "") : String(src);

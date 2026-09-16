@@ -9,6 +9,7 @@ import type { FetchResult, FetchFormat, FetchAttempt } from "./contract";
 import { acceptLanguageFrom } from "./contract";
 import { classifyContent, jsonShape, markdownAlternateHref, resolveMarkdownAlternate, markdownSiblingUrl, isMarkdownResponse, typeFromExtension, typeFromHeader } from "./dom";
 import { looksParquet, tableFromParquet } from "./table-data";
+import { readCapped, decodeCapped } from "./body-read";
 import { ensureDebuggerAttached, releaseDebugger } from "./sw-cdp";
 import { incognitoEnableSteps } from "./util";
 
@@ -106,26 +107,41 @@ function maybeBinaryTable(contentType: string, url: string): boolean {
     return ct.includes("parquet") || ct === "application/octet-stream" || typeFromExtension(url)?.type === "parquet";
 }
 
+/** The most bytes a possibly-BINARY body may be read to. Larger than the text cap because a binary table is
+ *  denser than text and, unlike text, useless as a prefix — but still a cap, where there used to be none. A
+ *  mislabelled text body served as `application/octet-stream` can be read this far before it is recognised as
+ *  text; that is bounded, which is the point, where the old `arrayBuffer()` was not. */
+const FETCH_BINARY_MAX = 64_000_000;
+
 /** One GET, returning the pieces every rung needs. Never throws for a non-2xx — only for a network failure.
  *
- *  A response that might be a binary table is read as an ArrayBuffer and, if the magic says it is not one
- *  after all, decoded to text here — so a mislabelled body costs a decode rather than being corrupted by
- *  `res.text()` before anything can look at it. Nothing else runs a TextDecoder near these bytes. */
-async function rawGet(url: string, credentials: boolean, accept?: string): Promise<{ res: Response; text: string; bytes?: ArrayBuffer; truncated: boolean; ms: number }> {
+ *  THE CAP IS APPLIED WHILE READING (`readCapped`). This used to be `res.text()` followed by a slice, which caps
+ *  what is kept rather than what is read: a 1 GB body was held whole first. The text cap is now in BYTES, so a
+ *  body of multi-byte characters stops a little earlier in characters than it did — the bound that matters is
+ *  memory, and memory is bytes.
+ *
+ *  A response that might be a binary table is read as bytes and, if the magic says it is not one after all,
+ *  decoded to text here — so a mislabelled body costs a decode rather than being corrupted by a text read before
+ *  anything can look at it. */
+async function rawGet(url: string, credentials: boolean, accept?: string): Promise<{ res: Response; text: string; bytes?: ArrayBuffer; truncated: boolean; parquetTooLarge?: number; ms: number }> {
     const t0 = Date.now();
     const res = await fetch(url, { method: "GET", credentials: credentials ? "include" : "omit", redirect: "follow", headers: browserFetchHeaders(accept) });
-    if (maybeBinaryTable(res.headers.get("content-type") || "", res.url || url)) {
-        const bytes = await res.arrayBuffer();
-        if (looksParquet(bytes)) return { res, text: "", bytes, truncated: false, ms: Date.now() - t0 };
-        let text = "";
-        try { text = new TextDecoder().decode(bytes); } catch { /* not decodable → an empty text body */ }
-        const truncated = text.length > FETCH_URL_MAX;
-        return { res, text: truncated ? text.slice(0, FETCH_URL_MAX) : text, truncated, ms: Date.now() - t0 };
+    if (maybeBinaryTable(res.headers?.get?.("content-type") || "", res.url || url)) {
+        const { bytes, truncated } = await readCapped(res, FETCH_BINARY_MAX);
+        const isParquetStart = bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x41 && bytes[2] === 0x52 && bytes[3] === 0x31;
+        if (isParquetStart) {
+            // A Parquet file's footer — its schema and row-group index — is at the END, so a prefix of one cannot
+            // be read at all. Say it is too large rather than decoding a fragment or, worse, falling through to
+            // run a text decoder over compressed column data.
+            if (truncated) return { res, text: "", truncated: true, parquetTooLarge: FETCH_BINARY_MAX, ms: Date.now() - t0 };
+            const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+            if (looksParquet(buf)) return { res, text: "", bytes: buf, truncated: false, ms: Date.now() - t0 };
+        }
+        const cut = truncated || bytes.length > FETCH_URL_MAX;
+        return { res, text: decodeCapped(bytes.length > FETCH_URL_MAX ? bytes.subarray(0, FETCH_URL_MAX) : bytes, cut), truncated: cut, ms: Date.now() - t0 };
     }
-    let text = await res.text();
-    const truncated = text.length > FETCH_URL_MAX;
-    if (truncated) text = text.slice(0, FETCH_URL_MAX);
-    return { res, text, truncated, ms: Date.now() - t0 };
+    const { bytes, truncated } = await readCapped(res, FETCH_URL_MAX);
+    return { res, text: decodeCapped(bytes, truncated), truncated, ms: Date.now() - t0 };
 }
 
 /** Assemble the FetchResult from whichever response the ladder settled on. */
@@ -145,6 +161,19 @@ function buildResult(requested: string, r: { res: Response; text: string; trunca
         try { out.json = JSON.parse(r.text); out.schema = jsonShape(out.json); } catch { /* mislabelled → leave as text */ }
     }
     return out;
+}
+
+/** A Parquet body past the binary cap. Reported, not decoded: its footer is at the end, so the part that was
+ *  read is not a smaller table, it is unreadable — and `truncated` alone would suggest a usable prefix. */
+function parquetTooLargeResult(requested: string, res: Response, cap: number): FetchResult {
+    return {
+        url: res.url || requested, status: res.status, ok: res.ok, type: "parquet",
+        typeByHeader: typeFromHeader(res.headers?.get?.("content-type") || ""), typeByContent: "parquet",
+        typeByExtension: typeFromExtension(res.url || requested),
+        contentType: res.headers?.get?.("content-type") || "",
+        text: `(a Parquet file larger than ${Math.round(cap / 1e6)} MB — not read. Parquet keeps its schema and row index at the END of the file, so a prefix cannot be decoded.)`,
+        truncated: true, redirected: res.redirected || undefined,
+    };
 }
 
 /** A Parquet response → a FetchResult carrying the decoded table. `text` holds a one-line DESCRIPTION rather
@@ -194,6 +223,7 @@ export async function fetchUrlContent(url: string, credentials = false, format: 
     // to classify. It is decoded HERE, in the worker, rather than shipped to the page as bytes — the page
     // wants the table, and a TableLike crosses the message channel far more cheaply than the file does.
     if (first.bytes) return await parquetResult(url, first as { res: Response; bytes: ArrayBuffer });
+    if (first.parquetTooLarge) return parquetTooLargeResult(url, first.res, first.parquetTooLarge);
     if (!negotiating) return buildResult(url, first);
 
     const attempts: FetchAttempt[] = [];

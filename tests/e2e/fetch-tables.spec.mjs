@@ -129,8 +129,8 @@ test("a small CSV comes back as a df.head(): rows, real shape, and inferred dtyp
     expect(seen).toContain("1,Ada,12.5,3");               // a row, CAST — 12.50 is a float, printed as pandas would
     expect(seen).toMatch(/\[6 rows x 4 columns\]/);       // the shape, in pandas' own words
     // The column types are the point of the exercise: whole numbers int64, a decimal column float64,
-    // text object — the same answer read_csv would give.
-    expect(seen).toMatch(/dtypes: id int64, name object, price float64, qty int64/);
+    // text str — the same answer pandas 3 gives.
+    expect(seen).toMatch(/dtypes: id int64, name str, price float64, qty int64/);
     // A head, not a dump: five rows are shown, so the sixth is not there.
     expect(seen).not.toContain("6,Fay");
 });
@@ -141,7 +141,7 @@ test("a semicolon-separated export mislabelled text/plain is still discovered an
     expect(seen).toMatch(/type: csv/);
     expect(seen).toContain("city,population,area");       // parsed on ';', re-printed on ','
     expect(seen).toContain("Lyon,522969,47.87");
-    expect(seen).toMatch(/dtypes: city object, population int64, area float64/);
+    expect(seen).toMatch(/dtypes: city str, population int64, area float64/);
     // The failure this guards against is the old behaviour: one column called "city;population;area".
     expect(seen).not.toContain("city;population;area");
 });
@@ -187,7 +187,7 @@ test("a Parquet file decodes in the service worker, with dtypes read from its ow
     expect(seen).toContain("1,Ada,12.5,true");
     expect(seen).toMatch(/\[4 rows x 4 columns\]/);
     // `bool` is the dtype CSV can never produce: Parquet DECLARES it, so it is read, not guessed.
-    expect(seen).toMatch(/dtypes: id int64, name object, price float64, in_stock bool/);
+    expect(seen).toMatch(/dtypes: id int64, name str, price float64, in_stock bool/);
 });
 
 test("`pipe` opts out of the preview — a model that wrote a scan gets the lines its scan selected", async () => {
@@ -213,7 +213,8 @@ test("python_exec loads the fetched table from the cache — no refetch, no read
     // of the fetch cache as a real DataFrame, which is what makes the pandas-shaped preview honest.
     fake.setScript([
         { tool: "fetch_url", args: { url } },
-        { tool: "python_exec", args: { code: "print(df.shape, list(df.columns), str(df['price'].dtype), df['price'].sum())", mode: "readonly", tables: { df: url } } },
+        // The last print is formatted EXACTLY like the preview's dtypes line, so the two can be compared as strings.
+        { tool: "python_exec", args: { code: "print(df.shape, list(df.columns), str(df['price'].dtype), df['price'].sum())\nprint('dtypes: ' + ', '.join(f'{c} {t}' for c, t in df.dtypes.items()))", mode: "readonly", tables: { df: url } } },
         (req) => ({ content: req.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n") }),
     ]);
     const runPromise = page.evaluate((u) => window.ml.agent(`Fetch ${u} then total its price column.`, { env: false, approvalRouting: "both", extraTools: [window.ml.pythonTool()] }), url);
@@ -226,4 +227,11 @@ test("python_exec loads the fetched table from the cache — no refetch, no read
     expect(seen).toContain("['id', 'name', 'price', 'qty']");
     expect(seen).toContain("float64");
     expect(seen).toContain("49.83");            // 12.50 + 9.99 + 4.00 + 15.25 + 0.99 + 7.10
+    // THE INVARIANT, stated directly: the dtypes the preview PROMISED the model are the dtypes pandas actually
+    // printed for the same table in the same run. Not a list of expected names — those went stale once already
+    // (pandas 3 renamed text columns to `str` while the preview still said `object`).
+    const tools = fake.calls().at(-1).messages.filter((m) => m.role === "tool" && typeof m.content === "string").map((m) => m.content);
+    const promised = /dtypes: [^\n]+/.exec(tools[0] || "")?.[0];
+    expect(promised, "the fetch preview carries a dtypes line").toBeTruthy();
+    expect(tools[1], "pandas printed the same dtypes the preview promised").toContain(promised);
 });

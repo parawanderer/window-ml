@@ -135,24 +135,41 @@ export function namedColumns(raw: string[]): string[] {
     return out;
 }
 
-/** The dtype pandas will infer for each column of `rows`. Mirrors `read_csv`: a column of whole numbers is
- *  `int64`, but one blank cell in it forces `float64` (NaN is a float), and anything non-numeric is `object`.
- *  Read off the CAST values, so this describes what a consumer actually gets rather than what the file
- *  looked like. Pure. */
+/** The dtype pandas 3 gives each column of `rows` when they become `pd.DataFrame(rows)` — which is what a table
+ *  becomes in `python_exec`. MEASURED against pandas 3.0.2 rather than recalled, because two of the rules surprise:
+ *
+ *  | values | dtype |
+ *  | --- | --- |
+ *  | whole numbers | `int64` — `float64` if any cell is null |
+ *  | any fractional number | `float64` |
+ *  | strings | `str`, with or without nulls |
+ *  | booleans | `bool` — but `object` if any cell is null |
+ *  | all null, or a mix of kinds | `object` |
+ *
+ *  `str` is pandas 3's name; pandas 2 said `object`, and so did this function, which is what the preview told
+ *  the model while the real DataFrame printed `str`. An empty string is a STRING here, not a null: a numeric
+ *  column's blanks are already nulls by the time this runs (the cast makes them so), and a text column's
+ *  empty cells stay strings in the DataFrame too. Read off the CAST values, so this describes what a consumer
+ *  actually gets. Pure. */
 export function dtypesOf(columns: string[], rows: TableCell[][]): Record<string, TableDtype> {
     const out: Record<string, TableDtype> = {};
     columns.forEach((name, c) => {
-        let numeric = 0, ints = 0, nulls = 0, seen = 0;
+        let ints = 0, floats = 0, strs = 0, bools = 0, nulls = 0, other = 0;
         for (const r of rows) {
             const v = r[c];
-            seen++;
-            if (v == null || v === "") { nulls++; continue; }
-            if (typeof v === "number") { numeric++; if (Number.isInteger(v)) ints++; }
+            if (v == null) nulls++;
+            else if (typeof v === "number") { if (Number.isInteger(v)) ints++; else floats++; }
+            else if (typeof v === "string") strs++;
+            else if (typeof v === "boolean") bools++;
+            else other++;
         }
-        const values = seen - nulls;
-        out[name] = values === 0 || numeric < values ? "object"
-            : ints === numeric && nulls === 0 ? "int64"
-            : "float64";
+        const nums = ints + floats;
+        const kinds = (nums ? 1 : 0) + (strs ? 1 : 0) + (bools ? 1 : 0) + (other ? 1 : 0);
+        out[name] = kinds !== 1 ? "object"                                  // all null, or mixed
+            : nums ? (floats || nulls ? "float64" : "int64")
+            : strs ? "str"
+            : bools ? (nulls ? "object" : "bool")
+            : "object";
     });
     return out;
 }
@@ -333,17 +350,20 @@ function cellOf(v: unknown): TableCell {
     try { return JSON.stringify(v); } catch { return String(v); }
 }
 
-/** Parquet's DECLARED types → pandas dtypes, with the same NaN rule as everywhere else: an integer column
- *  holding a null is `float64`, because that is what it becomes in a DataFrame. Pure. */
+/** Parquet's DECLARED types → pandas dtypes, where the declaration decides: booleans, integers and floats,
+ *  with the same null rules `dtypesOf` measured (an integer column with a null is `float64`; a boolean one is
+ *  `object`). Every other declared type reaches the rows as strings — text, dates as ISO strings, nested values
+ *  as JSON — so those columns are described by their VALUES, the same way a CSV's are. Pure. */
 function parquetDtypes(columns: string[], fields: { element: { type?: string } }[], rows: TableCell[][]): Record<string, TableDtype> {
+    const byValue = dtypesOf(columns, rows);
     const out: Record<string, TableDtype> = {};
     columns.forEach((name, c) => {
         const t = String(fields[c]?.element?.type || "");
         const hasNull = rows.some(r => r[c] == null);
-        out[name] = t === "BOOLEAN" ? "bool"
+        out[name] = t === "BOOLEAN" ? (hasNull ? "object" : "bool")
             : /^(INT32|INT64|INT96)$/.test(t) ? (hasNull ? "float64" : "int64")
             : /^(FLOAT|DOUBLE)$/.test(t) ? "float64"
-            : "object";
+            : byValue[name];
     });
     return out;
 }
