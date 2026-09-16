@@ -524,6 +524,8 @@ function PythonInRender({ d, live, failLine, ctx, failed }: { d: Extract<RenderD
     const failNote = failLine != null && lineChanged(d.code, fmt, failLine)
         ? `This line failed. It is shown reflowed for reading — in the code as written it was one longer line.`
         : "This line failed.";
+    const block = useRef<HTMLDivElement>(null);
+    const find = useCodeFind(block);
     return (
         <div class="r-python r-py-in">
             <div class="r-py-mode">Mode: <span class="tt"><span class="r-py-modeval">{PY_MODE[d.mode].label}</span><span class="tt-pop left" role="tooltip">{PY_MODE[d.mode].tip}</span></span></div>
@@ -557,7 +559,9 @@ function PythonInRender({ d, live, failLine, ctx, failed }: { d: Extract<RenderD
                 Out are two independent RenderDescriptors rendered in two separate blocks, and threading one
                 through the other would couple them for the sake of one number. */}
             {d.revision ? <CodeDiff revision={d.revision} after={fmt.text} lang="python" hash={ctx?.hash} failed={failed} /> : null}
-            <div class="code-block" data-cite="in" data-rev={rv} data-py-map={fmt.changed ? JSON.stringify(fmt.map) : undefined}>
+            <div class="code-block" data-cite="in" data-rev={rv} data-py-map={fmt.changed ? JSON.stringify(fmt.map) : undefined}
+                ref={block} tabIndex={0} onKeyDown={find.onKey}>
+                {find.bar ? <div class="code-find">{find.bar}</div> : null}
                 {ctx ? <CodeTools ctx={ctx} lang="python" src={fmt.text} /> : null}
                 <Code text={fmt.text} lang="python" lineIds="pyline" markLine={failAt} markTitle={failNote} notes={notesForBlock(ctx, rv)} />
             </div>
@@ -660,10 +664,17 @@ export function findMatches(text: string, query: string, caseSensitive: boolean)
 const findOwner = signal(0);
 let nextCellId = 1;
 
+// Text that is ON SCREEN BUT NOT THE CONTENT: a line-number gutter, a tooltip's hidden prose, a margin note under
+// a code line, a code block's own toolbar and find bar. Searching "3" in a numbered block matched every gutter
+// digit, and a JSON tree's key descriptions matched as invisible hits the reader could never see.
+const FIND_SKIP = ".lno, .tt-pop, .lnote, .code-tools, .r-find";
+
 /** Map match offsets over a container's concatenated text back onto real DOM Ranges, so matches can be painted
  *  with the CSS Custom Highlight API — no DOM surgery, so the syntax highlighting underneath is untouched. */
 function rangesFor(root: HTMLElement, query: string, caseSensitive: boolean): Range[] {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: (n) => (n.parentElement?.closest(FIND_SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
     const nodes: Text[] = [];
     let text = "";
     for (let n = walker.nextNode(); n; n = walker.nextNode()) { nodes.push(n as Text); text += (n as Text).data; }
@@ -748,13 +759,6 @@ export function OutputCell({ children, text, corner, fill }: { children: Compone
     const box = useRef<HTMLDivElement>(null);
     const follow = useRef(true);                       // tail-follow armed? (parked at the bottom)
     const [dragH, setDragH] = useState<number | null>(null);   // a drag pins THIS cell; null → the configured cap
-    const id = useMemo(() => nextCellId++, []);
-    const findOpen = findOwner.value === id;
-    const [q, setQ] = useState("");
-    const [cs, setCs] = useState(false);               // case-sensitive toggle (the "Aa" button)
-    const [idx, setIdx] = useState(0);                 // which match is current
-    const [count, setCount] = useState(0);
-    const input = useRef<HTMLInputElement>(null);
     // `fill` gives up the cap and takes the height of whatever contains it. In the LOG a cell is capped so
     // one step's output cannot swallow the transcript; in the BENCH the pane IS the cap — you dragged the
     // divider to say how much you wanted — and a short box floating in a tall empty pane reads as output
@@ -772,15 +776,116 @@ export function OutputCell({ children, text, corner, fill }: { children: Compone
         const over = el.scrollHeight - el.clientHeight > 2;
         if (over !== overflows) setOverflows(over);
     });
+    // Park a match about a third of the way down THIS container. scrollIntoView would also scroll the panel
+    // and the page (and no-ops at `nearest` when the match is already visible), so do the arithmetic here.
+    const find = useFind(box, (el, r) => {
+        follow.current = false;   // the reader is navigating; don't yank them back to the tail
+        const box0 = el.getBoundingClientRect(), hit = r.getBoundingClientRect();
+        el.scrollTop += (hit.top - box0.top) - el.clientHeight / 3;
+        revealSideways(el, r, hit);
+    });
+    const onScroll = (): void => { const el = box.current; if (el) follow.current = atBottomOf(el); };
+    const onGrab = (e: any): void => {
+        e.preventDefault();
+        const startY = e.clientY, start = box.current?.getBoundingClientRect().height ?? cap;
+        const move = (ev: any): void => setDragH(Math.max(60, Math.round(start + (ev.clientY - startY))));
+        const up = (): void => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+    };
+    return (
+        <div class={`r-outcell${fill ? " fill" : ""}`}>
+            {/* Ctrl/Cmd+F opens an in-cell find (the cell is focusable so the shortcut is scoped to it, not the page). */}
+            {find.bar}
+            {/* `text` marks a cell whose content is PLAIN OUTPUT — a console stream, a traceback — as opposed
+                to a rendered structure (a table, a JSON tree). Only those honour the wrap preference, because
+                only those have lines to leave unbroken; forcing `white-space: pre` on a table would be about
+                a different thing entirely. */}
+            {/* A CORNER CONTROL belongs to the CELL, not to its content — the copy button used to live inside
+                the scrolling element, so it slid away with the text and, on a wide line, off the edge
+                entirely. The find bar was already positioned out here for the same reason; anything you
+                reach for WHILE reading has to stay where you last saw it. */}
+            {corner ? <span class="r-outcorner">{corner}</span> : null}
+            <div class={`r-outscroll${text ? " r-outtext" : ""}`} ref={box} tabIndex={0} onKeyDown={find.onKey} onScroll={onScroll}
+                style={cap > 0 ? { maxHeight: `${cap}px` } : undefined}>{children}</div>
+            {/* NOT in `fill`: there the pane is the cap and the bench's divider already resizes it, so a grip here
+                is a second resize gesture for the same edge — and dragging it would re-cap a cell whose whole point
+                is to have no cap of its own. */}
+            {!fill && (overflows || dragH != null) ? <div class="r-outgrip" role="separator" aria-label="Drag to resize this output" {...cursorTipOn("Drag to resize this output")} onPointerDown={onGrab} /> : null}
+        </div>
+    );
+}
+
+/** Scroll a match into view SIDEWAYS, and only as far as needed. Not on the container: with wrapping off a long line
+ *  scrolls horizontally, but the scroller is `code.hljs` inside it (the highlight theme puts overflow-x there) — so a
+ *  match to the right of the fold was painted and counted while the view never moved. Parking it at a fraction of the
+ *  width the way the vertical does would yank an already-visible match sideways on every ↑/↓, which no editor does. */
+function revealSideways(bound: HTMLElement, r: Range, hit: DOMRect): void {
+    const sx = scrollerX(r.startContainer, bound);
+    if (!sx) return;
+    const b = sx.getBoundingClientRect();
+    const pad = Math.min(40, sx.clientWidth / 4);
+    const left = hit.left - b.left, right = hit.right - b.left;
+    if (left < pad) sx.scrollLeft += left - pad;
+    else if (right > sx.clientWidth - pad) sx.scrollLeft += right - (sx.clientWidth - pad);
+}
+
+/** The nearest ancestor that actually SCROLLS vertically, else the document's scroller. A code block does not scroll
+ *  on its own (it grows to its content), so a match below the fold is brought up by whatever holds the block. */
+function scrollerY(from: HTMLElement): HTMLElement | null {
+    for (let el = from.parentElement; el; el = el.parentElement) {
+        if (el.scrollHeight <= el.clientHeight + 1) continue;
+        const ov = typeof getComputedStyle === "function" ? getComputedStyle(el).overflowY : "auto";
+        if (ov === "auto" || ov === "scroll") return el;
+    }
+    return (document.scrollingElement as HTMLElement | null) ?? null;
+}
+
+/** Find wired for a rendered CODE BLOCK (a python In, an exec's code): searches only the source itself (`pre.code`,
+ *  not the retry diff above it), and reveals a match by scrolling whatever contains the block, but only when the
+ *  match is out of view, so ↑/↓ through matches already on screen never moves the panel. */
+function useCodeFind(block: { current: HTMLElement | null }): ReturnType<typeof useFind> {
+    return useFind(block, (el, r) => {
+        const hit = r.getBoundingClientRect();
+        const sy = scrollerY(el);
+        if (sy) {
+            const top = sy === document.scrollingElement ? 0 : sy.getBoundingClientRect().top;
+            const h = sy === document.scrollingElement ? window.innerHeight : sy.clientHeight;
+            // 40px of headroom: the find bar sticks to the top of the view and would sit over a match parked there.
+            if (hit.top < top + 40 || hit.bottom > top + h - 8) sy.scrollTop += (hit.top - top) - h / 3;
+        }
+        revealSideways(el, r, hit);
+    }, ":scope > pre.code");
+}
+
+/**
+ * IN-PLACE FIND (Ctrl/Cmd+F) over a container's text: the query box, match case, the n-of-m count and ↑/↓, with
+ * every match painted through the CSS Custom Highlight API (no DOM surgery, so syntax highlighting underneath is
+ * untouched). Extracted from the output cell so a rendered CODE BLOCK searches the same way — one bar, one set of
+ * keys, one owner at a time (the highlight registry is global, so opening find in one place closes it in another).
+ *
+ * Wire it with `onKey` on the focusable element that owns the shortcut and render `bar` inside a positioned
+ * ancestor. `reveal` brings the current match into view: a scrolling cell parks it in its own box, a code block that
+ * does not scroll vertically lets its nearest scrolling ancestor do it. `within` narrows the SEARCHED text to a
+ * descendant of `box` (a selector), for a container whose other children are not the thing being read.
+ */
+export function useFind(box: { current: HTMLElement | null }, reveal: (el: HTMLElement, r: Range) => void, within?: string): { findOpen: boolean; onKey: (e: any) => void; bar: preact.JSX.Element | null } {
+    const id = useMemo(() => nextCellId++, []);
+    const findOpen = findOwner.value === id;
+    const [q, setQ] = useState("");
+    const [cs, setCs] = useState(false);               // case-sensitive toggle (the "Aa" button)
+    const [idx, setIdx] = useState(0);                 // which match is current
+    const [count, setCount] = useState(0);
+    const input = useRef<HTMLInputElement>(null);
+    const searchRoot = (el: HTMLElement): HTMLElement => (within ? el.querySelector<HTMLElement>(within) : null) ?? el;
     // Re-run the search whenever the query/case changes — and on every render, so a STREAMING cell keeps its
     // match count honest as new output lands. A LAYOUT effect, so the count lands in the same commit as the
     // query: as a plain effect it ran a frame later, and in between the bar showed the query beside the OLD
-    // count — "No results" for a query with matches, or the previous query's total. (Its test caught it: it
-    // read the count one tick after typing, and under load the frame had not come yet.)
+    // count — "No results" for a query with matches, or the previous query's total.
     useLayoutEffect(() => {
         if (!findOpen || !box.current) return;
         try {
-            const rs = rangesFor(box.current, q, cs);
+            const rs = rangesFor(searchRoot(box.current), q, cs);
             setCount(rs.length);
             paintFind(rs, rs.length ? rs[Math.min(idx, rs.length - 1)] : null);
         } catch (e) { console.error("ml find:", e); setCount(0); }
@@ -788,44 +893,18 @@ export function OutputCell({ children, text, corner, fill }: { children: Compone
     useEffect(() => {
         const el = box.current;
         if (!findOpen || !q || !el) return;
-        const rs = rangesFor(el, q, cs);
+        const rs = rangesFor(searchRoot(el), q, cs);
         const r = rs[Math.min(idx, Math.max(rs.length - 1, 0))];
-        if (!r) return;
-        follow.current = false;   // the reader is navigating; don't yank them back to the tail
-        reveal(el, r);
+        // Purely an affordance: where there's no layout to measure (jsdom) or the range went stale mid-stream,
+        // skip it. Never let it throw — the match is still painted and counted.
+        if (!r || typeof (r as { getBoundingClientRect?: unknown }).getBoundingClientRect !== "function") return;
+        try { reveal(el, r); } catch { /* detached range → nothing to scroll to */ }
     }, [q, cs, idx, findOpen]);
     useEffect(() => () => { if (findOwner.value === id) { findOwner.value = 0; clearFindPaint(); } }, []);   // unmount → drop the paint
 
-    // Park a match about a third of the way down THIS container. scrollIntoView would also scroll the panel
-    // and the page (and no-ops at `nearest` when the match is already visible), so do the arithmetic here.
-    const reveal = (el: HTMLDivElement, r: Range): void => {
-        // Purely an affordance: where there's no layout to measure (jsdom) or the range went stale mid-stream,
-        // skip it. Never let it throw — the match is still painted and counted, and a broken reveal used to
-        // take the whole search effect down with it (count stuck at 0).
-        if (typeof (r as { getBoundingClientRect?: unknown }).getBoundingClientRect !== "function") return;
-        try {
-            const box0 = el.getBoundingClientRect(), hit = r.getBoundingClientRect();
-            el.scrollTop += (hit.top - box0.top) - el.clientHeight / 3;
-            // SIDEWAYS TOO, and not on the same element. With wrapping off a long line scrolls horizontally,
-            // but the scroller is `code.hljs` inside the cell (the highlight theme puts overflow-x there) —
-            // so a match to the right of the fold was painted and counted while the view never moved, which
-            // reads as the find being broken on exactly the lines you needed it for.
-            const sx = scrollerX(r.startContainer, el);
-            if (sx) {
-                const b = sx.getBoundingClientRect();
-                // Only if it is actually out of view, and only just far enough. Parking it at a fraction of
-                // the width the way the vertical does would yank an already-visible match sideways on every
-                // ↑/↓, which no editor does and which loses your place in the line.
-                const pad = Math.min(40, sx.clientWidth / 4);
-                const left = hit.left - b.left, right = hit.right - b.left;
-                if (left < pad) sx.scrollLeft += left - pad;
-                else if (right > sx.clientWidth - pad) sx.scrollLeft += right - (sx.clientWidth - pad);
-            }
-        } catch { /* detached range → nothing to scroll to */ }
-    };
     const jump = (delta: number): void => {
         if (!count) return;
-        setIdx((idx + delta + count) % count);   // the reveal effect below scrolls to whatever becomes current
+        setIdx((idx + delta + count) % count);   // the reveal effect scrolls to whatever becomes current
     };
     const closeFind = (): void => { findOwner.value = 0; clearFindPaint(); setQ(""); setCount(0); setIdx(0); };
     const onKey = (e: any): void => {
@@ -842,47 +921,19 @@ export function OutputCell({ children, text, corner, fill }: { children: Compone
         if (e.key === "Enter") { e.preventDefault(); jump(e.shiftKey ? -1 : 1); }
         else if (e.key === "Escape") { e.preventDefault(); closeFind(); box.current?.focus({ preventScroll: true }); }
     };
-    const onScroll = (): void => { const el = box.current; if (el) follow.current = atBottomOf(el); };
-    const onGrab = (e: any): void => {
-        e.preventDefault();
-        const startY = e.clientY, start = box.current?.getBoundingClientRect().height ?? cap;
-        const move = (ev: any): void => setDragH(Math.max(60, Math.round(start + (ev.clientY - startY))));
-        const up = (): void => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
-        window.addEventListener("pointermove", move);
-        window.addEventListener("pointerup", up);
-    };
-    return (
-        <div class={`r-outcell${fill ? " fill" : ""}`}>
-            {/* Ctrl/Cmd+F opens an in-cell find (the cell is focusable so the shortcut is scoped to it, not the page). */}
-            {findOpen ? (
-                <div class="r-find" role="search">
-                    <input ref={input} class="r-find-q" value={q} placeholder="Find" spellcheck={false}
-                        onInput={(e: any) => { setIdx(0); setQ(e.target.value); }} onKeyDown={onFindKey} />
-                    <button class={`r-find-case${cs ? " on" : ""}`} aria-label="Match case" {...cursorTipOn("Match case")} aria-pressed={cs}
-                        onClick={() => { setIdx(0); setCs(v => !v); }}>Aa</button>
-                    <span class="r-find-n">{q ? (count ? `${Math.min(idx, Math.max(count - 1, 0)) + 1} of ${count}` : "No results") : ""}</span>
-                    <button class="r-find-nav" aria-label="Previous match" {...cursorTipOn("Previous match")} onClick={() => jump(-1)} disabled={!count}>↑</button>
-                    <button class="r-find-nav" aria-label="Next match" {...cursorTipOn("Next match")} onClick={() => jump(1)} disabled={!count}>↓</button>
-                    <button class="r-find-x" aria-label="Close find" {...cursorTipOn("Close (Esc)")} onClick={closeFind}>✕</button>
-                </div>
-            ) : null}
-            {/* `text` marks a cell whose content is PLAIN OUTPUT — a console stream, a traceback — as opposed
-                to a rendered structure (a table, a JSON tree). Only those honour the wrap preference, because
-                only those have lines to leave unbroken; forcing `white-space: pre` on a table would be about
-                a different thing entirely. */}
-            {/* A CORNER CONTROL belongs to the CELL, not to its content — the copy button used to live inside
-                the scrolling element, so it slid away with the text and, on a wide line, off the edge
-                entirely. The find bar was already positioned out here for the same reason; anything you
-                reach for WHILE reading has to stay where you last saw it. */}
-            {corner ? <span class="r-outcorner">{corner}</span> : null}
-            <div class={`r-outscroll${text ? " r-outtext" : ""}`} ref={box} tabIndex={0} onKeyDown={onKey} onScroll={onScroll}
-                style={cap > 0 ? { maxHeight: `${cap}px` } : undefined}>{children}</div>
-            {/* NOT in `fill`: there the pane is the cap and the bench's divider already resizes it, so a grip here
-                is a second resize gesture for the same edge — and dragging it would re-cap a cell whose whole point
-                is to have no cap of its own. */}
-            {!fill && (overflows || dragH != null) ? <div class="r-outgrip" role="separator" aria-label="Drag to resize this output" {...cursorTipOn("Drag to resize this output")} onPointerDown={onGrab} /> : null}
+    const bar = findOpen ? (
+        <div class="r-find" role="search">
+            <input ref={input} class="r-find-q" value={q} placeholder="Find" spellcheck={false}
+                onInput={(e: any) => { setIdx(0); setQ(e.target.value); }} onKeyDown={onFindKey} />
+            <button class={`r-find-case${cs ? " on" : ""}`} aria-label="Match case" {...cursorTipOn("Match case")} aria-pressed={cs}
+                onClick={() => { setIdx(0); setCs(v => !v); }}>Aa</button>
+            <span class="r-find-n">{q ? (count ? `${Math.min(idx, Math.max(count - 1, 0)) + 1} of ${count}` : "No results") : ""}</span>
+            <button class="r-find-nav" aria-label="Previous match" {...cursorTipOn("Previous match")} onClick={() => jump(-1)} disabled={!count}>↑</button>
+            <button class="r-find-nav" aria-label="Next match" {...cursorTipOn("Next match")} onClick={() => jump(1)} disabled={!count}>↓</button>
+            <button class="r-find-x" aria-label="Close find" {...cursorTipOn("Close (Esc)")} onClick={closeFind}>✕</button>
         </div>
-    );
+    ) : null;
+    return { findOpen, onKey, bar };
 }
 
 /** A python traceback, with its user frames turned into links.
@@ -1285,8 +1336,12 @@ export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDesc
     // The annotator has to number the lines the READER sees, and `Code` beautifies JS internally — so the
     // source it will draw is derived here rather than assumed to be `d.text`.
     const shown = displaySource(d.text, d.lang, d.format, d.marks);
+    const block = useRef<HTMLDivElement>(null);
+    const find = useCodeFind(block);
     return (
-        <div class="code-block" data-cite="in" data-rev={rv} data-py-map={map ? JSON.stringify(map) : undefined}>
+        <div class="code-block" data-cite="in" data-rev={rv} data-py-map={map ? JSON.stringify(map) : undefined}
+            ref={block} tabIndex={0} onKeyDown={find.onKey}>
+            {find.bar ? <div class="code-find">{find.bar}</div> : null}
             {d.revision ? <CodeDiff revision={d.revision} after={shown} lang={d.lang === "python" ? "python" : "javascript"} hash={ctx?.hash} failed={failed} /> : null}
             {ctx ? <CodeTools ctx={ctx} lang={d.lang === "python" ? "python" : "javascript"} src={shown} /> : null}
             {/* Said out loud, because the rendered text is not always what the caller typed: `exec` expands

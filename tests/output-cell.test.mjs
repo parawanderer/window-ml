@@ -8,7 +8,7 @@ import { JSDOM } from "jsdom";
 import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
 
-let h, render, OutputCell, findMatches, atBottomOf, scrollerX, doc;
+let h, render, OutputCell, RenderPanel, findMatches, atBottomOf, scrollerX, doc;
 
 before(async () => {
     const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
@@ -24,7 +24,7 @@ before(async () => {
     // Load preact through require, NOT `import("preact")`: tsx compiles the .tsx component to CJS, so an
     // ESM import here would be a SECOND preact instance and its hooks would have no current component.
     ({ h, render } = require_("preact"));
-    ({ OutputCell, findMatches, atBottomOf, scrollerX } = await import("../src/sidebar/render-panel.tsx"));
+    ({ OutputCell, RenderPanel, findMatches, atBottomOf, scrollerX } = await import("../src/sidebar/render-panel.tsx"));
 });
 
 // Preact defers effects to a rAF tick, and the find bar computes its match count IN an effect — so a
@@ -39,7 +39,7 @@ const mount = async (text) => {
     return host.querySelector(".r-outcell");
 };
 const openFind = async (cell) => {
-    cell.querySelector(".r-outscroll").dispatchEvent(new doc.defaultView.KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true }));
+    (cell.querySelector(".r-outscroll") ?? cell).dispatchEvent(new doc.defaultView.KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true }));
     await tick();
 };
 const type = async (cell, value) => {
@@ -250,6 +250,61 @@ test("find bar: only ONE cell owns it at a time (the highlight registry is globa
     await openIn(cells[1]);
     assert.ok(cells[1].querySelector(".r-find"), "…and moves to the second");
     assert.equal(cells[0].querySelector(".r-find"), null, "the first closes — two live searches would fight one registry");
+});
+
+/* ---------------- find in a rendered CODE BLOCK (a python In, an exec's code) ---------------- */
+
+// Render a step's code the way the log does, and hand back its `.code-block`.
+const mountCode = async (d, extra = {}) => {
+    const host = doc.getElementById("root");
+    render(null, host);
+    render(h(RenderPanel, { d, ...extra }), host);
+    await tick();
+    return host.querySelector(".code-block");
+};
+
+for (const [kind, d] of [
+    ["exec code", { type: "code", lang: "javascript", text: "const total = 3;\nreturn total + 3;" }],
+    ["python In", { type: "python-in", mode: "script", code: "total = 3\nreturn total + 3" }],
+]) {
+    test(`code block find (${kind}): Ctrl+F on the focused block opens the bar, Esc closes it`, async () => {
+        const block = await mountCode(d);
+        assert.equal(block.tabIndex, 0, "the block is focusable, so the shortcut is scoped to it and not the page");
+        assert.equal(block.querySelector(".r-find"), null);
+        await openFind(block);
+        assert.ok(block.querySelector(".code-find .r-find"), "the bar opens in the block's sticky holder");
+        assert.equal(await type(block, "total"), "1 of 2");
+        block.querySelector(".r-find-q").dispatchEvent(new doc.defaultView.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        await tick();
+        assert.equal(block.querySelector(".r-find"), null, "Esc closes it");
+    });
+
+    // A failing line numbers the gutter and carries a hidden explanation: neither is the code, and both used to count.
+    test(`code block find (${kind}): matches the SOURCE only, never the gutter numbers or the failing line's tip`, async () => {
+        const block = await mountCode(d, { failLine: 2 });
+        assert.ok(block.querySelector(".lno"), "precondition: the gutter is drawn");
+        assert.ok(block.querySelector(".cline-why"), "precondition: the failing line's explanation is in the DOM");
+        await openFind(block);
+        assert.equal(await type(block, "3"), "1 of 2", "the two 3s in the code; the gutter's 1 and 2 are not searched either way");
+        assert.equal(await type(block, "2"), "No results", "the gutter's '2' is not the code");
+        assert.equal(await type(block, "failed"), "No results", "the tooltip prose is not the code");
+    });
+}
+
+test("code block find: the block and an output cell share ONE owner", async () => {
+    const host = doc.getElementById("root");
+    render(null, host);
+    render(h("div", null,
+        h(RenderPanel, { d: { type: "code", lang: "javascript", text: "alpha" } }),
+        h(OutputCell, {}, h("pre", null, "alpha"))), host);
+    await tick();
+    const block = host.querySelector(".code-block"), cell = host.querySelector(".r-outcell");
+    await openFind(block);
+    assert.ok(block.querySelector(".r-find"));
+    cell.querySelector(".r-outscroll").dispatchEvent(new doc.defaultView.KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true }));
+    await tick();
+    assert.ok(cell.querySelector(".r-find"), "find moves to the cell");
+    assert.equal(block.querySelector(".r-find"), null, "and closes in the block");
 });
 
 test("output cell: dragging the grip resizes THIS cell only", async () => {
