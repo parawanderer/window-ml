@@ -63,8 +63,52 @@ Both halves that need it can reach it: the service worker (which owns the loop a
 offscreen document (which hosts Pyodide). The page cannot, and must not — every read goes through the run-bound
 resolver that already scopes `ml.dereference` to a tool call of the run that owns the pointer.
 
-**Lifetime** is the session's, the same as a pointer's today (`releaseSessionTokens`). A byte budget per
-session evicts oldest-first; an evicted value leaves its preview behind, and reads of it FAIL (below).
+An evicted value leaves its preview behind, and reads of it FAIL (below). How values are evicted is its own
+section, because the obvious answers — a TTL, or a budget per session — each fail on their own.
+
+### Eviction
+
+Three facts about the platform decide it.
+
+**Nothing is awake to enforce a timer.** The service worker is torn down after about thirty seconds idle and
+the offscreen document may be closed, so a TTL that expires at 3am has nobody to run it. Eviction happens at
+moments something is ALREADY running — a write, a service-worker start, a session start — plus a periodic
+`chrome.alarms` sweep, which can wake the worker (the `alarms` permission carries no install warning).
+
+**The session signal cannot be trusted.** Releasing a session's values in `releaseSessionTokens` covers the
+normal case, but that fires when the in-memory `bgRuns` entry is dropped. When the service worker is EVICTED
+instead, the entry vanishes and release never runs, so its blobs would be orphaned for good. Eviction therefore
+cannot depend on anything held in memory: every value has a **metadata row in IndexedDB itself** — id, session,
+bytes, `createdAt`, `lastReadAt` — and every sweep works from those rows.
+
+**A TTL and a budget each fail alone.** A TTL does not bound disk: ten large fetches in an hour fill it before
+any expire. A budget alone never frees anything: a 2 GB table stays until the next write needs room, which may
+be never.
+
+So the policy is layered:
+
+| Mechanism | When it runs | What it catches |
+| --- | --- | --- |
+| **Global byte budget**, least recently READ first | on every write | the main bound — new bytes arriving is exactly when room is needed |
+| **Explicit session release** | a session is ended, or deleted in the sidebar | the normal case, promptly |
+| **Idle sweep** — not read in about 24 hours | worker start, each write, and the alarm | orphans from evicted workers and abandoned sessions |
+| **Browser eviction** | under storage pressure, at Chrome's discretion | handled by the same loud-failure rule, not prevented |
+
+Two decisions inside that table:
+
+- **One budget across all sessions, not one per session.** Disk is one pool; a per-session budget lets fifty
+  sessions each fill their own. Recency is `lastReadAt`, not `createdAt`, so a table an active session keeps
+  reading survives, and the one nobody has touched goes first. A value being READ at the moment a write needs
+  room is never the one evicted.
+- **Best-effort storage, in a database of its own, deliberately.** Under pressure Chrome may wipe an origin's
+  IndexedDB wholesale. That is acceptable for a cache — but only if nothing that must survive shares the
+  database, and nothing does (sessions live in `chrome.storage.local`). Requesting `unlimitedStorage` would make
+  the cache persistent, which is the opposite of what a cache should be.
+
+**Resuming a saved session days later still works, degraded.** A session's PREVIEWS live with the session, so
+its transcript, the tables in the panel and the model's context are intact. Only a read that needed a value
+that has since gone fails, with the loud message below, and re-running the step recovers the data. That is the
+right trade: nobody should hold gigabytes of disk against the chance of a resume.
 
 ### 2. The representation — what the bytes are
 
@@ -157,8 +201,8 @@ A stored value can be gone — evicted by the budget, or the session released. A
 then FAIL, loudly, naming what is missing and what still exists:
 
 ```
-@tool:abc1234 held a 50,000-row table, but the table itself is no longer stored (evicted: this session
-passed its 256 MB budget). Its preview is still readable. Re-run the step that produced it for the data.
+@tool:abc1234 held a 50,000-row table, but the table itself is no longer stored (evicted: the value store
+passed its budget). Its preview is still readable. Re-run the step that produced it for the data.
 ```
 
 Falling back to the preview would reintroduce, at the one place nobody is looking, the exact bug this exists to
@@ -210,7 +254,8 @@ Each slice ships and is useful without the next:
 1. **The two independent fixes** — the capped streaming read, and `mlFetchCache` eviction.
 2. **`TableLike.dtypes` says `str`**, matching pandas 3.
 3. **pyarrow in the bundle**, loaded on demand; `read_parquet` works in `python_exec`.
-4. **The value store**: IndexedDB blobs keyed by pointer id, session lifetime, byte budget, loud failure on a miss.
+4. **The value store**: IndexedDB blobs keyed by pointer id with a metadata row each, the layered eviction above
+   (global budget on write, session release, idle sweep), and loud failure on a miss.
    Fetched tables store their bytes; nothing reads them yet except a new, explicit test path.
 5. **`python_exec` reads a pointer**: `tables: { df: "@tool:…" }` opens the stored IPC as a frame. The URL form
    stays as an alias. This is the slice that removes the JSON round trip.
@@ -232,8 +277,9 @@ is not.
 - **Is Arrow JS worth bundling?** Slice 7 can read columns out of IPC in the offscreen document with pyarrow and
   return plain arrays, which needs nothing new. Reading them in JS (Apache Arrow's reader) is faster and avoids
   waking Pyodide for a survey — at the cost of a sizeable dependency. Start without it.
-- **The byte budget.** 256 MB per session is a placeholder. IndexedDB's quota is generous, but disk the user did
-  not ask to spend is still disk; the budget should probably be a setting.
+- **The numbers.** A global budget (1 GB?) and a 24-hour idle sweep are placeholders. IndexedDB's quota is
+  generous, but disk the user did not ask to spend is still disk: the budget should probably be a setting, and
+  `navigator.storage.estimate()` should cap it below whatever the quota actually is.
 - **Other large values.** An image or a very long text output has the same preview-versus-value split, less
   sharply. The store is not table-specific, but nothing needs it except tables yet.
 - **`@tool:id:in:<line>`** (parked) addresses PART of a value. It should compose with this — a line range over a
