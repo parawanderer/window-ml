@@ -224,7 +224,7 @@ test("a meta-capability tool (chat_metadata) is answered BY THE LOOP with live t
     ] });
     deps.chatMeta = async () => ({
         model: "gemma4:31b", contextWindow: 262144, capabilities: ["tools", "vision"],
-        vramGB: 21.4, local: true, backend: "Ollama (native)", systemTokens: 900, toolTokens: 1500,
+        vramBytes: 23_000_000_000, local: true, backend: "Ollama (native)", systemTokens: 900, toolTokens: 1500,
     });
     // Model IS vision-capable (caps include "vision"), so `look` inlines the image into context (NOT a
     // sub-call → not flagged). `locate` is ALWAYS a delegated sub-call → flagged.
@@ -238,7 +238,9 @@ test("a meta-capability tool (chat_metadata) is answered BY THE LOOP with live t
     assert.match(done.result, /~1200 tokens/, "context in use = the last prompt-token count");
     assert.match(done.result, /40 tokens/, "generated = summed completion tokens");
     assert.match(done.result, /fixed overhead: ~2400 tokens.*system prompt ~900.*tool list ~1500/, "system + tool overhead");
-    assert.match(done.result, /21\.4 GB/, "VRAM resident");
+    // BINARY, like every memory figure in the panel: 23e9 bytes is 21.42 GiB, not "23.0 GB".
+    assert.match(done.result, /VRAM resident: 21\.42 GiB/, "VRAM resident, in GiB");
+    assert.doesNotMatch(done.result, /\d GB\b/, "no decimal GB anywhere in it");
     assert.match(done.result, /routed via: Ollama \(native\)/, "backend");
     assert.match(done.result, /`locate`.*NOT counted/, "flags locate's untracked sub-call tokens");
     assert.doesNotMatch(done.result, /`look`/, "a VISION model's look inlines the image into context — NOT flagged as untracked");
@@ -250,7 +252,7 @@ test("chat_metadata reports cumulative token SPEND + generation rate with its ba
         { content: "", tool_calls: [{ id: "m1", name: "chat_metadata", arguments: {} }], usage: { promptTokens: 1200, completionTokens: 40, totalTokens: 1240, evalMs: 2000 } },
         reply("info"),
     ] });
-    deps.chatMeta = async () => ({ model: "qwen3", contextWindow: 40960, capabilities: ["tools"], vramGB: null, local: true, backend: null, systemTokens: 100, toolTokens: 200 });
+    deps.chatMeta = async () => ({ model: "qwen3", contextWindow: 40960, capabilities: ["tools"], vramBytes: null, local: true, backend: null, systemTokens: 100, toolTokens: 200 });
     await runAgentLoop("x", { tools: [{ name: "chat_metadata", capabilities: ["meta"] }] }, deps);
     const done = calls.emits.find(e => e.tool === "chat_metadata" && !e.pending);
     assert.match(done.result, /cumulative tokens: 1200 in \+ 40 out = 1240 billed across 1 call\b/, "cumulative SPEND (in/out/total across N calls)");
@@ -263,7 +265,7 @@ test("chat_metadata reports the METERED delegated sub-call tokens when a tally e
         { content: "", tool_calls: [{ id: "m1", name: "chat_metadata", arguments: {} }], usage: { promptTokens: 1200, completionTokens: 40, totalTokens: 1240 } },
         reply("info"),
     ] });
-    deps.chatMeta = async () => ({ model: "qwen3", contextWindow: 40960, capabilities: ["tools"], vramGB: null, local: true, backend: null, systemTokens: 100, toolTokens: 200 });
+    deps.chatMeta = async () => ({ model: "qwen3", contextWindow: 40960, capabilities: ["tools"], vramBytes: null, local: true, backend: null, systemTokens: 100, toolTokens: 200 });
     // bus.ts metered 3 delegated vision sub-calls this turn (look/locate/verify) → 3300 prompt + 210 completion.
     deps.subcallTokens = () => ({ prompt: 3300, completion: 210, calls: 3 });
     const calls = { emits: [] }; deps.emit = (ev) => calls.emits.push(ev);

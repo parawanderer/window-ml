@@ -15,6 +15,7 @@
 import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor, ToolFeedback, SubcallUsage, TokenUsage, RunStats } from "./contract";
 import { tableOf } from "./table-data";
 import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract";
+import { formatBytes } from "./resource-model";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
@@ -97,12 +98,14 @@ export interface AgentLoopDeps {
 }
 
 /** Model facts for chat_metadata, resolved per-world. `local`: true = Ollama-resident, false = cloud/remote,
- *  null = undeterminable. `contextWindow`/`vramGB` are null when not resident or on a cloud model. */
+ *  null = undeterminable. `contextWindow`/`vramBytes` are null when not resident or on a cloud model. */
 export interface ChatMeta {
     model: string | null;
     contextWindow: number | null;
     capabilities: string[] | null;
-    vramGB?: number | null;
+    /** EXACT bytes resident in VRAM, rendered binary (GiB) like every other memory figure. It was decimal GB off
+     *  `size_vram / 1e9`, which reads ~7% larger than the panel's figure for the same model. */
+    vramBytes?: number | null;
     local?: boolean | null;
     backend?: string | null;   // "OpenWebUI" / "Ollama" / "OpenAI-compatible" — how the call is routed
     // ESTIMATED fixed-overhead tokens (~chars/4, no real tokenizer): the system prompt and the tool-schema
@@ -162,7 +165,7 @@ function formatChatMeta(
     L.push(`cumulative tokens: ${rs.inTokens} in + ${rs.outTokens} out = ${rs.totalTokens} billed across ${rs.calls} call${rs.calls === 1 ? "" : "s"} (input re-sent each turn, so it grows fast)`);
     const tps = fmtTokPerSec(rs);
     if (tps) L.push(`generation rate: ${tps} — ${rs.genBasis === "eval" ? "Ollama generation time (excludes network)" : rs.genBasis === "wall" ? "wall-clock per call (includes network/queue)" : "mixed (Ollama timing where available, else wall-clock)"}`);
-    if (cm?.vramGB) L.push(`VRAM resident: ~${cm.vramGB.toFixed(1)} GB`);
+    if (cm?.vramBytes) L.push(`VRAM resident: ${formatBytes(cm.vramBytes)}`);
     // conversation SHAPE — "messages" was ambiguous; split turns / your messages / model replies
     L.push(`conversation so far: ${role("user")} of your messages · ${role("assistant")} model replies${imgs ? ` · ${imgs} carried images` : ""}`);
     // Delegated sub-call tokens: `locate` is ALWAYS a delegated vision sub-call; `look` is only a sub-call
