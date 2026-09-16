@@ -354,6 +354,28 @@ test("a prompt-cache swap is drawn before the prefill, says what it did, and the
         const th = await text(0);
         expect(th).toMatch(/not in RAM — read from scratch/);
         expect(th).toMatch(/evicted 3 conversations \(6\.91 GiB\) to make room/);
+
+        // THE LAYOUT OF A PHASE ROW WITH CHIPS (reported off a real swap, 2026-09-16). Rows inherited `space-between`, so a
+        // row that wrapped spread its first line: the dot at the left edge, the name pushed right or centred, the chips
+        // and the duration on lines of their own. And a chip was `nowrap`, so a long one ran past the box.
+        for (const i of [0, 1]) {
+            await text(i);
+            const rows = await tip.evaluate((el) => {
+                const box = el.getBoundingClientRect();
+                return [...el.querySelectorAll(".rc-tip-line.sep")].map((row) => {
+                    const r = (n) => n?.getBoundingClientRect();
+                    const dot = r(row.querySelector(":scope > .rc-tip-dot")), name = r(row.querySelector(".rc-tip-name")), size = r(row.querySelector(".rc-tip-size"));
+                    const escaped = [...row.querySelectorAll("*")].filter((n) => { const q = n.getBoundingClientRect(); return q.width && (q.right > box.right + 0.5 || q.left < box.left - 0.5); }).map((n) => n.textContent.trim().slice(0, 40));
+                    return { text: row.textContent.replace(/\s+/g, " ").trim().slice(0, 60), gap: name && dot ? name.left - dot.right : null,
+                             sameLine: name && size ? Math.abs(name.top - size.top) < 4 : null, escaped };
+                });
+            });
+            for (const row of rows) {
+                expect(row.gap, `the name sits beside its dot: ${JSON.stringify(row)}`).toBeLessThan(8);
+                expect(row.sameLine, `the duration stays on the name's line: ${JSON.stringify(row)}`).toBe(true);
+                expect(row.escaped, `nothing runs past the tooltip: ${JSON.stringify(row)}`).toEqual([]);
+            }
+        }
     } finally { await ext.context.close(); await fake.stop(); }
 });
 

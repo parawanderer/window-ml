@@ -496,6 +496,14 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip-event .rc-tip-line { display: flex; align-items: center; flex-wrap: wrap; gap: 1px 5px; }
 .rc-tip-event .rc-tip-name { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
 .rc-tip-event .rc-tip-size { margin-left: auto; }
+/* A PHASE ROW of the event tooltip: swatch | body | duration. The body wraps its name and chips under each other while the
+   swatch and the duration hold the first line, and a chip longer than the tip wraps inside itself instead of running past
+   the box (a phase's chips can be a whole sentence: a prediction, an eviction). */
+.rc-tip-event .rc-tip-phase { flex-wrap: nowrap; align-items: flex-start; justify-content: flex-start; }
+.rc-tip-phase > .rc-tip-dot { margin-top: calc((1.4em - 7px) / 2); }
+.rc-tip-phase > .rc-tip-size { flex: 0 0 auto; }
+.rc-tip-phase-body { display: flex; flex-wrap: wrap; align-items: center; gap: 1px 5px; flex: 1 1 auto; min-width: 0; }
+.rc-tip-phase-body .rc-chip { white-space: normal; overflow-wrap: anywhere; }
 /* Figures as the same little blocks the model rows use: a chip is visibly ONE fact, where three numbers on a
    dim line gave no way to tell which belonged together. */
 .rc-tip-chips { display: flex; flex-wrap: wrap; gap: 3px; margin: 1px 0 2px; }
