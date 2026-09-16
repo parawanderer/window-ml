@@ -1183,8 +1183,8 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         // executeTool's binding, and `ml.dereference` reads whatever is bound.
                         const ro = await withRunDeref(toolCtx.deref, () => evalReadonly(roSrc, document, this,
                             makeAnswerFacade(answerSet, elLine), { checkpoint: () => answerSet.checkpoint() }));
-                        const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
-                        const { in: renderIn, out: renderOut } = descriptorFor(byName[name], { result, elements }, args);
+                        const { result, elements, render } = formatReadonlyExec(ro.value, ro.logs);
+                        const { in: renderIn, out: renderOut } = descriptorFor(byName[name], { result, elements, render }, args);
                         // Cached ml.fetch URLs this survey re-read → a "reused a grant you approved" note (transparency).
                         const urls = [...new Set(ro.reused)];
                         const reused = urls.length ? urls.map(u => ({ kind: "fetch-url" as const, detail: u })) : undefined;

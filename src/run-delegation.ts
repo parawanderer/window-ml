@@ -196,8 +196,8 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
             const { code } = expandPointers((args as { js: string }).js);
             const ro = await withRunDeref((ref, pipe) => derefViaBackground(runId, ref, pipe), () => evalReadonly(code, document,
                 typeof window !== "undefined" ? window.ml : null, makeAnswerFacade(set, elLine), { checkpoint: () => set.checkpoint() }));
-            const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
-            const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements }, args);
+            const { result, elements, render } = formatReadonlyExec(ro.value, ro.logs);
+            const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements, render }, args);
             const urls = [...new Set(ro.reused)];   // cached ml.fetch URLs this survey reused → the "reused a grant" note
             return { result, elementCount: elements ? elements.length : undefined, renderIn, renderOut, readonly: true, reused: urls.length ? urls.map(u => ({ kind: "fetch-url" as const, detail: u })) : undefined };
         } catch (e) {

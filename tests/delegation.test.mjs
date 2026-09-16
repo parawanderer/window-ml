@@ -175,6 +175,8 @@ test("readonlyTry: an in-dialect exec survey runs via the INTERPRETER (readonly:
         assert.equal(ran, false, "the tool's eval-backed run() is never invoked — the interpreter ran it");
         assert.match(env.result, /A|B/);
         assert.ok(env.renderIn, "the pretty-JS In render is computed too");
+        // The background-hosted survey renders the same exec-out cell as the page-hosted one.
+        assert.deepEqual(env.renderOut, { type: "exec-out", value: '["A","B"]' });
         endRun("ro");
     } finally { globalThis.document = prevDoc; globalThis.Element = prevEl; }
 });

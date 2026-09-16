@@ -3,7 +3,8 @@
 // read-only-exec result envelope. Extracted from injected.ts — these close over
 // only imported dom/security helpers, no bus/ml state.
 
-import type { ApprovalRequest, ApprovalDecision } from "./contract";
+import type { ApprovalRequest, ApprovalDecision, RenderDescriptor } from "./contract";
+import { UI_OUT_CAP } from "./contract";
 import { NotInDialect, Denied } from "./readonly-exec";
 import { clipOut, elPath } from "./dom";
 import { suspiciousArgsWarning } from "./security";
@@ -98,9 +99,24 @@ export function readonlyRefused(e: unknown): boolean {
     return e instanceof NotInDialect || e instanceof Denied;
 }
 
-export function formatReadonlyExec(result: unknown, logs: string[]): { result: string; elements?: Node[] } {
-    const logged = logs.length ? `console:\n${clipOut(logs.join("\n"), 500)}` : "";
+/** A read-only survey's result, twice: the model-facing string (`console:` then `value:`, clipped to the
+ *  dialect's 500-character budget) and the UI's `exec-out` descriptor, which an approved `exec` has always
+ *  had — console and value as their own sections, the rendered⇄raw toggle, and `seen` marking where the
+ *  model's view of the console ended. Without it an auto-approved survey rendered as one raw blob beside an
+ *  approved one's cell. The model's string is byte-identical either way (the raw-view rule).
+ *
+ *  An ELEMENT result keeps no descriptor here: the caller's `descriptorFor` draws it as the hoverable
+ *  element list, which is more use than its path as text. */
+export function formatReadonlyExec(result: unknown, logs: string[]): { result: string; elements?: Node[]; render?: RenderDescriptor } {
+    const MODEL_CAP = 500;
+    const joined = logs.join("\n");
+    const logged = logs.length ? `console:\n${clipOut(joined, MODEL_CAP)}` : "";
     const withLogs = (value: string) => logged ? `${logged}\n\nvalue: ${value}` : value;
+    const render = (value: string): RenderDescriptor => ({
+        type: "exec-out",
+        ...(logs.length ? { stdout: clipOut(joined, UI_OUT_CAP), seen: Math.min(joined.length, MODEL_CAP) } : {}),
+        value,
+    });
     if (typeof Element !== "undefined" && result instanceof Element) {
         return { result: withLogs(elPath(result)), elements: [result] };
     }
@@ -115,7 +131,7 @@ export function formatReadonlyExec(result: unknown, logs: string[]): { result: s
     }
     let value: string;
     if (result === undefined) value = "(undefined)";
-    else if (typeof result === "object") { try { value = clipOut(JSON.stringify(result), 500); } catch { value = clipOut(String(result), 500); } }
-    else value = clipOut(String(result), 500);
-    return { result: withLogs(value) };
+    else if (typeof result === "object") { try { value = clipOut(JSON.stringify(result), MODEL_CAP); } catch { value = clipOut(String(result), MODEL_CAP); } }
+    else value = clipOut(String(result), MODEL_CAP);
+    return { result: withLogs(value), render: render(value) };
 }

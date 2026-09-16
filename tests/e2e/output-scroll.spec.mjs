@@ -402,7 +402,9 @@ test("output cell (real layout): the find scrolls SIDEWAYS to a match past the f
             await sleep(200);
         }
 
-        const cell = frame.locator(".r-outscroll").last();
+        // The cell holding the WIDE line, by its content: an exec's Out is one cell per section (console, value),
+        // so "the last cell" is the value's — `ok`, which has nothing to scroll.
+        const cell = frame.locator(".r-outscroll", { hasText: "NEEDLEFAR" }).last();
         await expect(cell).toBeVisible({ timeout: 20000 });
         // The widest horizontal scroll offset anywhere inside the cell — which element owns the overflow is
         // exactly the thing under test, so the assertion does not name one.

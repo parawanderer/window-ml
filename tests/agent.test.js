@@ -2179,6 +2179,31 @@ test("autoApproveReadonly: a read-only exec survey runs with NO approval prompt"
     assert.equal(step.approval, "readonly", "step tagged as auto-approved");
 });
 
+// PARITY WITH AN APPROVED exec: the rendered Out of an auto-approved survey is the same `exec-out` cell — console
+// and value as their own sections, `seen` marking where the model's view of the console ended — rather than one
+// raw blob. The model-facing result is unchanged: the render is built from the same data.
+test("autoApproveReadonly: a survey's Out renders as exec-out (console + value sections), and the model's result is unchanged", async () => {
+    const world = loadPageWorld({
+        config: { model: "", ocrModel: "", autoApproveReadonly: true },
+        onRuntimeMessage: scriptedModel([toolCall("exec", { js: "console.log('x'.repeat(600)); return [1,2,3].map(n => n * 2)" }, "c1"), reply("done")]),
+    });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    const exec = world.ml.domTools.find(t => t.name === "exec");
+    await world.ml.agent("x", { tools: [exec], vision: false, approve: () => true });
+    const step = events.find(e => e.kind === "agent-step" && e.tool === "exec" && !e.pending);
+    assert.equal(step.approval, "readonly");
+    assert.equal(step.renderOut.type, "exec-out");
+    assert.equal(step.renderOut.value, "[2,4,6]");
+    assert.equal(step.renderOut.stdout.length, 600, "the UI keeps the whole console");
+    assert.equal(step.renderOut.seen, 500, "…and marks where the model's 500 characters ended");
+    assert.ok(step.result.startsWith("console:\n" + "x".repeat(500)), "the model's console is clipped at 500");
+    assert.match(step.result, /\n\nvalue: \[2,4,6\]$/, "the model-facing string keeps its console/value shape");
+});
+
 test("autoApproveReadonly: the agent reads its OWN setup (ml.config) with NO approval prompt", async () => {
     // "Which model am I?" is a pure read — it shouldn't cost the user an approval. The interpreter
     // hands the dialect a facade of ML_READONLY_METHODS only (see readonly-exec.test.mjs for the gate).

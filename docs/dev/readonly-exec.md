@@ -292,6 +292,12 @@ through every path, the pre-call size check with its timing, a failed survey lea
 - **After approval**: the real `exec` tool (`tools.ts`) expands pointers, resolves them, and runs the code with
   `eval`, or through CDP on a page whose CSP forbids `eval`.
 
+Both read-only callers format through ONE function, `formatReadonlyExec` (approval.ts), which returns the model's
+string (`console:` then `value:`, clipped at 500) AND the UI's `exec-out` descriptor — console and value as their
+own sections, `seen` at the model's cut — so an auto-approved survey renders like an approved `exec` instead of as
+one raw blob. A script error already had one. An element result is the exception: it keeps the hoverable
+element list. The read-only console carries no produced-at marks, so its output has no timestamp gutter.
+
 ## Extending the dialect
 
 The rule is in AGENTS.md. Every new construct, method or facade member needs, in the same change:
