@@ -269,6 +269,14 @@ table is complete (`!truncated`), and refuses a prefix with an error naming the 
 immediately for small tables, where the preview already is the value, and refuses rather than samples where it
 is not.
 
+## Acceptance
+
+Written before the slices, and run on every CI build: `tests/e2e/pointer-values.spec.mjs` (Arrow File, Stream and
+magic-byte classification over `fetch_url`, the Table facade from `ml.fetch`, `python_exec` opening a pointer, a
+Python DataFrame read back in full by `exec`, and a table past the page's parse cap read by pointer from both
+runtimes). Each is marked `pending(<slice>)` until its slice lands; the slice's change removes the marker. Part two
+of `tests/e2e/table-demo.mjs` walks the same path on screen.
+
 ## Open questions
 
 - **Does the page-hosted loop move its store too?** A page-hosted run's pointer rows live in the page today. The

@@ -549,7 +549,9 @@ thing. The parts:
   `capture-frames.mjs` (records real event-stream fixtures). Narrated demos (watched, never asserting):
   `approval-demo`, `resource-demo` (`BOX=`), `line-map-demo`, `cursor-demo`, `panel-news-demo`, `whole-box-demo`,
   `stream-demo`, `bench-editor-demo`, `bench-completion-demo`, `table-demo` (fetching CSV/Parquet, then
-  scanning, surveying and analysing them through pipe / readonly exec / full exec / python_exec).
+  scanning, surveying and analysing them through pipe / readonly exec / full exec / python_exec; part two is the
+  Arrow + cross-runtime pointer TARGET, captioned with what actually happened). Acceptance specs for unbuilt
+  slices (`pointer-values.spec.mjs`) mark each test `pending(…)`; run `SHOW_PENDING=1` to read why each fails.
 - **RULE — a demo says what it is doing, on screen: `narrate(page, "…", { sub: "…" })`** (harness.mjs). A
   demo is WATCHED, and a watcher who cannot tell which beat is running infers it from what moved — which is
   exactly backwards when the point of a beat is that something did NOT move. It draws a banner in the PAGE

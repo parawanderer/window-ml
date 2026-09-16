@@ -211,6 +211,18 @@ as in AGENTS.md — they are all under `src/`.
   `tests/e2e/artifacts/bench-completion-demo/`. Its first headless run caught the worker's per-run inputs being
   listed as kept variables, which is what a demo is for. The assertions are `tests/python.test.mjs` and
   `bench-dock.spec.mjs`.
+- **`table-demo.mjs`** — a **narrated demo, not a test** of fetched tables: `npm run build && node --import tsx
+  tests/e2e/table-demo.mjs` (`HOLD=0` exits). Part one (beats 1–8) is built behaviour: CSV / semicolon / Parquet
+  previews, `pipe`, the read-only survey, a full `exec` through a pointer, `python_exec` from the cache, and an
+  answer citing its work. Part two (beats 9–12) is a TARGET written before it exists: an Arrow file, `python_exec`
+  opening it by pointer, and JavaScript reading Python's table back in full. Its captions compute a verdict from
+  the tool message (`✓ works` / `✗ not built yet — got: …`), so the demo never claims what did not happen.
+- **ACCEPTANCE specs: `pointer-values.spec.mjs`.** Tests for `docs/spec/POINTER_VALUES.md` written before the
+  slices, each marked `pending("<slice>")` — a `test.fail()`, so it RUNS and Playwright reports "expected to fail,
+  but passed" the day a slice lands, which forces the marker off in that change. A marked test passes on ANY
+  failure, so when writing or reviewing one run it with **`SHOW_PENDING=1`** and read why each fails: a wrong
+  fixture looks exactly like missing behaviour otherwise (writing this spec, one did — `ml.fetch` on a URL
+  `fetch_url` had not approved). Arrow fixtures come from the `apache-arrow` dev dependency.
 - **`bench-editor-demo.mjs`** — a **narrated demo, not a test** of the Python bench's editor:
   `npm run build && node --import tsx tests/e2e/bench-editor-demo.mjs` opens a headful browser, switches
   to the bench, and types numpy into it so you can watch the plain textarea upgrade to CodeMirror, the
