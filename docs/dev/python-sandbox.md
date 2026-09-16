@@ -249,9 +249,23 @@ the resource panel away. Caught by the demo, which is what a demo is for.
 **A PYTHON COLD START is not the script.** The first `python_exec` of a session spends seconds fetching
 Pyodide and its wheels before a line runs, and one elapsed figure charges the script for time it never
 spent — the confusion a model's `load_duration` exists to settle. The **worker** measures it (it is the
-executor; anything downstream measures the message bus too), charges it to the call that PAID for it and
-reports nothing on every warm call after. It rides `ToolResult.remoteMs.bootMs` → the step → both surfaces:
+executor; anything downstream measures the message bus too). `bootMs` is how long the CALL waited for the
+runtime to finish starting, and is absent on a call that found it running. It is the call's wait rather than the
+start's duration because of the pre-warm (below): a call arriving halfway through a pre-warmed start waited only
+for the rest of it. It rides `ToolResult.remoteMs.bootMs` → the step → both surfaces:
 the footer reads `ran in 4.2s — 3.0s cold start, 1.2s script`, and the event lane draws a **`boot` phase**
 first, STRIPED like a model load because it is the step's wall time and none of the work you asked for. A
 phase rather than its own span, because unlike a model load it happens INSIDE the dispatch `toolMs` already
 measures — a span in front would draw the time twice.
+
+**THE PRE-WARM starts the runtime before anyone needs it**, on exactly two triggers: a run whose tools include
+`python_exec` starting (`injected.ts`, beside the hosting decision, so both loop paths pass it), and the Commander
+opening (`openComposer` in `shell.ts` — its runs always carry the tool). Never on a mere `ml.*` call: the runtime
+and its packages cost real memory. Both send `PYTHON_PREWARM` with a `trigger`; the background creates the
+offscreen document and posts `PY_PREWARM`; the worker calls `getPyodide("prewarm")` OUTSIDE the run chain and
+answers at once with `started` or `already`. Outside the chain because a run arriving meanwhile must wait on the
+start itself, and be charged for that wait, rather than queue behind a message that is waiting on it. Lazy
+packages are never loaded early. It has no watchdog of its own: nothing waits on it, and a run that later waits on
+a hung start arms its own start timeout. The housekeeping log records the trigger (`pyodide/prewarm`), the start
+(`pyodide/cold-start`, `reason: prewarm`) and whether the first run after it found the runtime warm
+(`pyodide/prewarm-used`) — which is how anyone finds out whether pre-warming pays for itself.

@@ -13,6 +13,22 @@ you add an emitter.
 | `background.ts` | Routes `HOUSEKEEPING_REPORT` / `DUMP_HOUSEKEEPING`, calls `start()` at load and `beat()` on every message. |
 | `injected.ts` | `ml.__housekeeping({ download })`. |
 
+## What reports today
+
+| Event | From | Notes |
+| --- | --- | --- |
+| `sw/start`, `sw/evicted-inferred` | the worker (`HousekeepingLog.start`) | See "Inferred eviction" below. |
+| `pyodide/prewarm` (`reason: run-start / commander`) | the worker (`PYTHON_PREWARM`) | Only when it actually started the runtime; an already-running one logs nothing. |
+| `pyodide/cold-start` (`ms`, `reason: prewarm / run`) | `offscreen.ts`, from the worker's `booted` message | The start itself, whatever caused it. A warm run reports nothing. |
+| `pyodide/prewarm-used` (`ms`, `detail.warm`) | `offscreen.ts` | The first run after a pre-warm: warm, or still starting and how long it waited. |
+| `pyodide/kill` (`reason: timeout / start-timeout / crashed`) | `offscreen.ts` `killWorker` | `detail.queuedRuns` is how many runs behind it failed with it; a crash keeps the worker's message in `detail.message`. |
+| `fetch-cache/evict` (`reason: budget`, `key`, `bytes`) | the page (`injected.ts`, `FetchCache`'s `onEvict`) | Page-origin, so only the tab that fetched the URL reads the key back. |
+
+`tests/e2e/housekeeping.spec.mjs` covers what only a real browser can: the log surviving a stopped worker (CDP
+`ServiceWorker.stopAllWorkers`), the next worker's inference, the offscreen origin coming from the sender, and a
+pre-warmed run's first `python_exec` finding the runtime warm. The Commander trigger has no test: the shell's
+`openComposer` is not loaded by any unit harness.
+
 ## Adding an emitter
 
 - **In the worker:** `recordHousekeeping({ subsystem, kind, reason?, key?, bytes?, ms?, detail? })` from
@@ -52,9 +68,10 @@ timer, but it only follows a message within a second, so it extends a worker's l
 - **`origin` is the worker's to set**, from `sender`, which the browser stamps: an extension URL is `offscreen`
   (`offscreen.html`) or `extension` (popup, DevTools panel, the overlay's iframe even though it sits in a tab);
   anything else from a tab is `page`, with its tab id. Whatever the payload claims is discarded.
-- **A page reads `key` and `detail` only on events its own tab reported.** A key can be another tab's fetched URL or
-  a session hash, and a saved session is resumable by anyone holding its hash. The decision itself (subsystem, kind,
-  reason, bytes) stays visible. Extension surfaces see everything.
+- **A page reads `key` and string `detail` values only on events its own tab reported.** A key can be another tab's
+  fetched URL or a session hash, and a saved session is resumable by anyone holding its hash; a string detail can
+  carry the same. The decision itself (subsystem, kind, reason, bytes, ms, numeric and boolean details) stays
+  visible. Extension surfaces see everything.
 - **A page cannot clear the log.** `clear` from our own surfaces leaves a single `log/clear` event, so a cleared log
   reads differently from an empty one.
 - **Nothing reads the log to decide anything.** Keep it that way: it is a record that a page can partly write.

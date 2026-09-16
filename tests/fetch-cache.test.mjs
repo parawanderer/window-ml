@@ -63,3 +63,13 @@ test("the size estimate charges a parsed table by the cell — where a parsed CS
     assert.equal(table - plain, 40_000 * 32, "10,000 rows × 4 columns");
     assert.ok(estimateFetchResultBytes({ text, json: {} }) > plain, "a parsed JSON value is charged for its object graph");
 });
+
+test("each budget eviction is reported with its key and bytes, and a failing reporter does not break the cache", () => {
+    const seen = [];
+    const cache = new FetchCache(10, (v) => v.length, 64, (key, bytes) => { seen.push([key, bytes]); throw new Error("reporter down"); });
+    cache.set("a", "xxxxxx");
+    cache.set("b", "yyyyyy");
+    assert.deepEqual(seen, [["a", 6]]);
+    assert.equal(cache.get("b"), "yyyyyy");
+    assert.ok(cache.wasEvicted("a"));
+});

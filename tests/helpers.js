@@ -196,6 +196,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 // capture the payload (esp. `hardened`) so tests can assert what the sandbox is told to run.
                 sendMessage: async (msg) => {
                     if (msg?.type === "PY_RUN") { pyRuns.push(msg); return onPyRun ? onPyRun(msg) : { ok: true, value: null, stdout: "" }; }
+                    if (msg?.type === "PY_PREWARM") { pyRuns.push(msg); return onPyRun ? onPyRun(msg) : { ok: true, prewarm: "started" }; }
                     return undefined;
                 },
             },
@@ -317,6 +318,7 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
         return undefined;
     };
     const runtimeCalls = [];
+    const prewarms = [];   // PYTHON_PREWARM payloads, in order
     const listeners = {};       // type -> fn[]
     const dispatchedEvents = []; // event types dispatched (for assertions)
     const runtimeMsgListeners = []; // chrome.runtime.onMessage listeners (content.js's reverse channel)
@@ -385,6 +387,9 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
                     // shifts every relay/agent test's message indices. (The handler itself is tested in
                     // tests/background.test.js against the real background.)
                     if (message && message.type === "CONTENT_READY") { queueMicrotask(() => cb && cb({ adopt: [] })); return; }
+                    // The Pyodide pre-warm a run with python_exec sends at start: a side call, answered here and kept
+                    // out of runtimeCalls, or it eats a scripted model turn. Recorded in `prewarms` for the tests of it.
+                    if (message && message.type === "PYTHON_PREWARM") { prewarms.push(message.payload); queueMicrotask(() => cb && cb({ data: "started" })); return; }
                     queueMicrotask(async () => {
                         let response = onRuntimeMessage ? await onRuntimeMessage(message) : undefined;
                         // Fall back to the default probe answer for the agent's
@@ -443,7 +448,7 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
         if (!async) resolve(undefined);   // no listener kept the channel open
     });
 
-    return { ml: win.ml, runtimeCalls, context, dispatchedEvents, fireRuntimeMessage };
+    return { ml: win.ml, runtimeCalls, prewarms, context, dispatchedEvents, fireRuntimeMessage };
 }
 
 // Boots ONLY injected.js over a real jsdom document, so the agent's DOM

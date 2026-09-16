@@ -26,8 +26,9 @@ export class FetchCache<V> {
      * @param budgetBytes The estimated size above which older entries are evicted.
      * @param sizeOf How to estimate one value's size.
      * @param rememberEvicted How many evicted keys to remember, so a later miss can say it WAS fetched.
+     * @param onEvict Told about each budget eviction, with the key and its estimated bytes (the housekeeping log).
      */
-    constructor(private readonly budgetBytes: number, private readonly sizeOf: (v: V) => number, private readonly rememberEvicted = 64) {}
+    constructor(private readonly budgetBytes: number, private readonly sizeOf: (v: V) => number, private readonly rememberEvicted = 64, private readonly onEvict?: (key: string, bytes: number) => void) {}
 
     /** The cached value, refreshing its recency — or undefined. */
     get(key: string): V | undefined {
@@ -52,6 +53,7 @@ export class FetchCache<V> {
             this.entries.delete(k);
             this.total -= e.bytes;
             this.remember(k);
+            try { this.onEvict?.(k, e.bytes); } catch { /* a reporter failing must not break the cache */ }
         }
     }
 

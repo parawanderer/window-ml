@@ -48,6 +48,7 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     // ml.__housekeeping() and page-side reports into it (see the background's DUMP_HOUSEKEEPING/HOUSEKEEPING_REPORT).
     DUMP_HOUSEKEEPING_REQUEST: { type: "DUMP_HOUSEKEEPING", responseType: "DUMP_HOUSEKEEPING_RESPONSE" },
     HOUSEKEEPING_REPORT_REQUEST: { type: "HOUSEKEEPING_REPORT", responseType: "HOUSEKEEPING_REPORT_RESPONSE" },
+    PYTHON_PREWARM_REQUEST: { type: "PYTHON_PREWARM", responseType: "PYTHON_PREWARM_RESPONSE" },
     UNLOAD_REQUEST: { type: "OLLAMA_UNLOAD", responseType: "UNLOAD_RESPONSE" },
     CAPTURE_TAB_REQUEST: { type: "CAPTURE_TAB", responseType: "CAPTURE_TAB_RESPONSE" },
     SAVE_SESSION_REQUEST: { type: "SAVE_SESSION", responseType: "SAVE_SESSION_RESPONSE" },

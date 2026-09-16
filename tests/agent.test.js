@@ -3912,3 +3912,14 @@ test("request hints: a one-shot ml.chat says nothing it cannot know; a conversat
     await world.ml.step([{ role: "user", content: "x" }]);
     assert.deepEqual(hints[4], { use: "agent" }, "ml.step is the tool-loop primitive: a program acts on the reply");
 });
+
+// Pyodide pre-warm: a run that can call python_exec starts the runtime at run start, so its first call does not
+// pay the cold start; a run that cannot never pays the memory.
+test("a run with python_exec asks for a Pyodide pre-warm at start; a run without it does not", async () => {
+    const withPy = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
+    await withPy.ml.agent("x", { tools: [withPy.ml.pythonTool()], vision: false });
+    assert.deepEqual(withPy.prewarms, [{ trigger: "run-start" }]);
+    const withoutPy = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
+    await withoutPy.ml.agent("x", { tools: [withoutPy.ml.defineTool({ name: "ping", run: () => "pong" })], vision: false });
+    assert.deepEqual(withoutPy.prewarms, []);
+});

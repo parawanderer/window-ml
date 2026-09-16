@@ -1557,6 +1557,7 @@ export type PageRequestType =
     | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST" | "DUMP_EVENTS_REQUEST" | "DUMP_LOADS_REQUEST"
     | "DUMP_HOUSEKEEPING_REQUEST"   // ml.__housekeeping(): what the system decided on its own
     | "HOUSEKEEPING_REPORT_REQUEST"   // a page-side mechanism (the fetch cache) reporting what it decided
+    | "PYTHON_PREWARM_REQUEST"   // a run with python_exec is starting: start Pyodide now so its first call does not wait
     | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST" | "FETCH_URL_REQUEST"
     | "CDP_SHADOW_RESOLVE_REQUEST"   // read-only: resolve a `>>>` selector into a SEALED closed shadow root via CDP (discovery)
     | "LIST_SERVER_TOOLS_REQUEST"   // discover the OpenWebUI server-side tools this key may use (valid `toolIds`)
@@ -1577,6 +1578,7 @@ export type BackgroundMessageType =
     | "DUMP_LOADS"   // ml.__loads(): one record per model load, collected for tuning the VRAM predictor
     | "DUMP_HOUSEKEEPING"   // ml.__housekeeping() + the DevTools panel: the housekeeping log (housekeeping.ts)
     | "HOUSEKEEPING_REPORT"   // another context reporting what it decided; origin is stamped from the sender
+    | "PYTHON_PREWARM"   // start Pyodide ahead of a run (run start with python_exec, or the Commander opening)
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE" | "FETCH_URL"
     | "CDP_SHADOW_RESOLVE"   // read-only CDP resolve of a `>>>` selector across sealed shadow roots (discovery half of sealed reach)
     | "LIST_SERVER_TOOLS"   // GET OpenWebUI /api/v1/tools/ — the server-side tools, with their function specs
@@ -2445,8 +2447,8 @@ export interface MlApi {
     __loads(opts?: { download?: boolean; clear?: boolean }): Promise<unknown[]>;
     /** The HOUSEKEEPING LOG: what the system decided on its own — evictions, sweeps, service-worker restarts
      *  (inferred), Python cold starts — oldest first, one structured event each (`{ t, subsystem, kind, reason?,
-     *  key?, bytes?, ms?, origin, detail? }`). `origin` says who reported it, and a page sees `key`/`detail` only
-     *  on events its own tab reported. Underscored: a debugging aid, not API. `{ download: true }` saves it. */
+     *  key?, bytes?, ms?, origin, detail? }`). `origin` says who reported it, and a page sees `key` and string
+     *  `detail` values only on events its own tab reported. Underscored: a debugging aid, not API. `{ download: true }` saves it. */
     __housekeeping(opts?: { download?: boolean }): Promise<unknown[]>;
     unload(model?: string | null): Promise<string[]>;
     /** List the OpenWebUI server-side tools available to the configured API key —

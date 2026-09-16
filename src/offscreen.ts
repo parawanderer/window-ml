@@ -21,7 +21,7 @@ const PY_START_TIMEOUT_MS = 120000;
 // `bootMs`/`runMs` come from the WORKER, which is the executor — anything measured downstream of it is
 // measuring the message bus as well. See python-worker.ts.
 type PyEnv = { python: string; pyodide: string; packages: { name: string; version?: string }[] };
-type PyResult = { ok: boolean; env?: PyEnv; completions?: { name: string; type: string; complete: string }[]; bench?: { id: string; vars: { name: string; type: string }[] }; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
+type PyResult = { prewarm?: "started" | "already" | "warm" | "starting"; ok: boolean; env?: PyEnv; completions?: { name: string; type: string; complete: string }[]; bench?: { id: string; vars: { name: string; type: string }[] }; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
 
 // The worker is same-origin (extension page → chrome-extension:// worker), so it needs no
 // web_accessible_resources entry; it inherits this page's 'wasm-unsafe-eval' CSP.
@@ -31,20 +31,32 @@ const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnT
 
 /** Arm a kill for run `id`: when it fires, that run fails with `error` and the (still-busy) worker is terminated,
  *  failing anything queued behind it. */
-function killAfter(id: number, ms: number, error: string): ReturnType<typeof setTimeout> {
+function killAfter(id: number, ms: number, error: string, reason: "timeout" | "start-timeout"): ReturnType<typeof setTimeout> {
     return setTimeout(() => {
         const entry = pending.get(id);
         if (!entry) return;   // already resolved
         pending.delete(id);
         entry.resolve({ ok: false, stdout: "", error });
-        killWorker("timeout");   // nuke the (still-busy) instance + fail any others queued behind it
+        killWorker(reason);   // nuke the (still-busy) instance + fail any others queued behind it
     }, ms);
+}
+
+/** Tells the worker's housekeeping log what this document decided (docs/dev/housekeeping.md). The worker stamps
+ *  it `offscreen` from the sender. Fire-and-forget: a log is never worth failing a run over. */
+function reportHousekeeping(report: { subsystem: string; kind: string; reason?: string; ms?: number; detail?: Record<string, string | number | boolean> }): void {
+    try { chrome.runtime.sendMessage({ type: "HOUSEKEEPING_REPORT", payload: report }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
 }
 
 // Terminate the worker and fail every still-pending run with `reason`. Used on a worker crash and
 // on a timeout kill (after the timed-out run itself has been resolved + removed from `pending`).
 function killWorker(reason: string): void {
-    if (worker) { try { worker.terminate(); } catch { /* already gone */ } worker = null; }
+    if (worker) {
+        try { worker.terminate(); } catch { /* already gone */ }
+        worker = null;
+        // A timeout names itself; anything else is the worker's own error message, kept as detail under "crashed".
+        const named = reason === "timeout" || reason === "start-timeout";
+        reportHousekeeping({ subsystem: "pyodide", kind: "kill", reason: named ? reason : "crashed", detail: { queuedRuns: pending.size, ...(named ? {} : { message: reason }) } });
+    }
     for (const { resolve, timer } of pending.values()) { clearTimeout(timer); resolve({ ok: false, stdout: "", error: `Python worker stopped (${reason}).` }); }
     pending.clear();
 }
@@ -53,6 +65,11 @@ function ensureWorker(): Worker {
     if (worker) return worker;
     const w = new Worker(chrome.runtime.getURL("python-worker.js"));
     w.onmessage = (e: MessageEvent) => {
+        // The runtime finished starting (not a reply to anything): what started it and how long it took.
+        if (e.data?.booted) {
+            reportHousekeeping({ subsystem: "pyodide", kind: "cold-start", reason: e.data.by === "prewarm" ? "prewarm" : "run", ms: e.data.ms });
+            return;
+        }
         // A `partial` message is a LIVE stdout chunk (opt-in streaming) — forward it to the background keyed by
         // this run's streamId (the page requestId), which relays it to the page; DON'T resolve the run.
         if (e.data?.partial) {
@@ -65,12 +82,14 @@ function ensureWorker(): Worker {
             const entry = pending.get(e.data.id);
             if (entry?.armOnStart) {
                 clearTimeout(entry.timer);
-                entry.timer = killAfter(e.data.id, PY_TIMEOUT_MS, `Python run exceeded ${PY_TIMEOUT_MS / 1000}s and was terminated — simplify the computation or reduce the input size.`);
+                entry.timer = killAfter(e.data.id, PY_TIMEOUT_MS, `Python run exceeded ${PY_TIMEOUT_MS / 1000}s and was terminated — simplify the computation or reduce the input size.`, "timeout");
             }
             return;
         }
         const { id, ...result } = e.data as { id: number } & PyResult;
         const entry = pending.get(id);
+        // The first run after a pre-warm: did it find the runtime warm, and how long did it still wait?
+        if (result.prewarm === "warm" || result.prewarm === "starting") reportHousekeeping({ subsystem: "pyodide", kind: "prewarm-used", ms: result.bootMs ?? 0, detail: { warm: result.prewarm === "warm" } });
         if (entry) { pending.delete(id); clearTimeout(entry.timer); entry.resolve(result); }
     };
     // A worker-level failure (load error, uncaught throw) would otherwise strand every pending run.
@@ -101,13 +120,22 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         // run queued behind a 10s one could expire 5s into its own work. So the post arms only the generous
         // START bound, and the worker's `started` (runtime up, script about to run) swaps in the script's cap.
         const timer = noTimeout || complete || bench?.reset ? (0 as unknown as ReturnType<typeof setTimeout>)
-            : killAfter(id, PY_START_TIMEOUT_MS, `The Python sandbox did not start within ${PY_START_TIMEOUT_MS / 1000}s and was terminated.`);
+            : killAfter(id, PY_START_TIMEOUT_MS, `The Python sandbox did not start within ${PY_START_TIMEOUT_MS / 1000}s and was terminated.`, "start-timeout");
         pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset) });   // streamId → the background can key live stdout chunks
         w.postMessage({ id, code, image, hardened, tables, stream, ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}) });
     });
 }
 
 chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
+    // Start the runtime ahead of a run that is likely to need it (see the background's PYTHON_PREWARM). No
+    // watchdog: nothing waits on it, and a run that later waits on a start that hangs arms its own.
+    if (msg?.type === "PY_PREWARM") {
+        const w = ensureWorker();
+        const id = nextId++;
+        pending.set(id, { resolve: (r) => sendResponse({ ok: r.ok, prewarm: r.prewarm }), timer: 0 as unknown as ReturnType<typeof setTimeout> });
+        w.postMessage({ id, prewarm: true });
+        return true;
+    }
     if (msg?.type !== "PY_RUN") return;
     // The worker serializes runs internally (single Pyodide instance + harden/unharden swap),
     // so we can forward straight through — no need to chain here.
