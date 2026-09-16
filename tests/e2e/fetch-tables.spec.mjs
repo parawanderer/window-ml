@@ -47,8 +47,12 @@ async function startDataServer() {
             { name: "in_stock", data: [true, false, true, true] },
         ],
     }));
+    // No header row: the first line is a record. Treating it as a header would eat it AND name the columns
+    // after its values — the failure that renders perfectly and is silently short one row.
+    const headerless = ["1000,north,9.99", "1001,south,13.49", "1002,west,20.49"].join("\n");
     const routes = {
         "/small.csv": [small, "text/csv"],
+        "/headerless.csv": [headerless, "text/csv"],
         "/euro.csv": [euro, "text/plain; charset=utf-8"],
         "/large.csv": [largeCsv, "text/csv"],
         "/data.parquet": [parquet, "application/octet-stream"],
@@ -155,6 +159,23 @@ test("a 50,000-row CSV reports its REAL size while showing five rows", async () 
     expect(seen.length).toBeLessThan(1000);
     // The model is told how to get the REST — by URL, from the cache, not by re-fetching or read_csv.
     expect(seen).toMatch(/pass "[^"]*\/large\.csv" to python_exec's `tables`/);
+});
+
+test("a CSV with no header row keeps every record and numbers its columns", async () => {
+    const seen = await fetchThroughAgent(data.url + "/headerless.csv");
+    expect(seen).toMatch(/type: csv/);
+    expect(seen).toMatch(/\[3 rows x 3 columns\]/);       // three records, not two
+    expect(seen).toContain("0,1,2");                       // positional names, as read_csv(header=None)
+    expect(seen).toContain("1000,north,9.99");             // the first record SURVIVED
+    expect(seen).toMatch(/no header row was detected/);    // and the model is told it was decided
+    expect(seen).toMatch(/"header": true/);                // with how to correct it
+});
+
+test("`header: false` overrides the detection when the heuristic gets it wrong", async () => {
+    const seen = await fetchThroughAgent(data.url + "/small.csv", { header: false });
+    expect(seen).toMatch(/\[7 rows x 4 columns\]/);       // the header line is now a record: 6 + 1
+    expect(seen).toContain("0,1,2,3");
+    expect(seen).toContain("id,name,price,qty");           // …as data
 });
 
 test("a Parquet file decodes in the service worker, with dtypes read from its own schema", async () => {
