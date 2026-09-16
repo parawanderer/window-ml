@@ -697,6 +697,13 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   **A child is never packed above its container** (`packBand` takes each event's row floor from its `parent`'s row).
   Tiers alone did not guarantee it: two runs of one session that ABUT could not share a row (the packer then kept a pixel
   between bars), so the second run opened a row below and its steps, packed next, took the free row ABOVE their own container.
+  **Within the machine tier, what a STEP owns is packed first, and never a child before its parent** (`packOrder`).
+  A step that waited 8 s for its model had the load bar two rows under it: an aside of the same run (a side task on
+  another model) started earlier, took the row under the step, and pushed the load below itself. A child packed before
+  its parent (a load that begins before the aside it is claimed by) had no floor to respect, so children wait for
+  their parent in the order.
+  **The hover and pulse rings are drawn INSIDE the bar** (`.rc-ev::after`, an inset shadow over the pattern overlays).
+  As an `outline` they sat outside the box, and `.rc-lane-row` clips to its height, so only the bar's ends showed.
 - **Double-clicking any block scopes the panel to it** (`scopeToSpan`, pure/tested), widening a block too
   short to frame around its own centre — a 40ms window contains no samples and draws as an empty plot. An
   open block has no end, so `now` stands in. A single click still navigates to the step: framing the time

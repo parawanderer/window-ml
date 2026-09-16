@@ -2745,6 +2745,40 @@ export function laneTier(kind: string): number {
     return 2;                                               // the machine: loads, serving, evictions
 }
 
+/** The order a band's events are packed in: TIER, then — within the machine tier — what belongs to one of the run's
+ *  own steps before anything else, then time; and never a child before its parent. A load a step waited for used to be
+ *  packed after an aside that merely started earlier (same tier), so the aside took the row under the step and the load
+ *  landed two rows down, detached from the wait it explains. The parent rule is what the row floor needs: a child packed
+ *  before its parent has no floor to respect. */
+function packOrder(placed: EventPlacement[], start: (p: EventPlacement) => number): EventPlacement[] {
+    const idOf = (p: EventPlacement) => (p.event as { id?: string }).id;
+    const parentOf = (p: EventPlacement) => (p.event as { parent?: string }).parent;
+    const byId = new Map<string, EventPlacement>();
+    for (const p of placed) { const id = idOf(p); if (id != null) byId.set(id, p); }
+    // 0: owned by a run's own work (a step, a gen); 1: anything else in the tier (an aside, and what hangs off one).
+    const ownerRank = (p: EventPlacement) => {
+        const parent = parentOf(p) != null ? byId.get(parentOf(p)!) : undefined;
+        return parent && laneTier(parent.event.kind) < laneTier(p.event.kind) ? 0 : 1;
+    };
+    const sorted = [...placed].sort((a, b) =>
+        laneTier(a.event.kind) - laneTier(b.event.kind) || ownerRank(a) - ownerRank(b) || start(a) - start(b));
+    // Children held back until their parent is emitted, then emitted right after it.
+    const out: EventPlacement[] = [], emitted = new Set<EventPlacement>(), waiting = new Map<EventPlacement, EventPlacement[]>();
+    const emit = (p: EventPlacement): void => {
+        out.push(p); emitted.add(p);
+        for (const c of waiting.get(p) ?? []) emit(c);
+        waiting.delete(p);
+    };
+    for (const p of sorted) {
+        const parent = parentOf(p) != null ? byId.get(parentOf(p)!) : undefined;
+        if (parent && parent !== p && !emitted.has(parent)) (waiting.get(parent) ?? waiting.set(parent, []).get(parent)!).push(p);
+        else emit(p);
+    }
+    // A cycle, or a parent that never came: emit what is left rather than drop it.
+    for (const kids of waiting.values()) for (const c of kids) if (!emitted.has(c)) emit(c);
+    return out;
+}
+
 function packBand(placed: EventPlacement[], maxRows: number, minSpan: number): EventPlacement[][] {
     const rows: EventPlacement[][] = [];
     // The END is the DRAWN end, not the true one: see MIN_EV_SPAN. The fallback pass lets a bar start exactly where
@@ -2773,8 +2807,7 @@ function packBand(placed: EventPlacement[], maxRows: number, minSpan: number): E
         const at = parent != null ? rowOf.get(parent) : undefined;
         return at == null ? 0 : at + 1;
     };
-    for (const p of [...placed].sort((a, b) =>
-        laneTier(a.event.kind) - laneTier(b.event.kind) || start(a) - start(b))) {
+    for (const p of packOrder(placed, start)) {
         const floor = below(p);
         const firstFit = (pad: boolean) => rows.findIndex((row, i) => i >= floor && fits(row, p, pad));
         let r = firstFit(true);

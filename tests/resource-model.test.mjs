@@ -1200,6 +1200,38 @@ test("laneRows: the container is above its children, and the machine is below bo
     assert.ok(rowOf("serve") > rowOf("tool"), "and so does a serving span");
 });
 
+// Reported from a real run: a step waited 8 s for its model to load, and the LOAD bar sat two rows under it, because an
+// aside of the same run (a side task on another model, same tier) started earlier and took the row under the step.
+test("laneRows: a load sits directly under the step that waited for it, even when an aside started earlier", () => {
+    const ev = (kind, from, to, id, parent, model) => ({
+        event: { t: from, until: to, kind, ref: { hash: "s" }, id, ...(parent ? { parent } : {}), ...(model ? { model } : {}) },
+        run: 0, from, to, clipped: false,
+    });
+    const placed = [
+        ev("run", 0.10, 1.00, "run:0"),
+        ev("tool", 0.15, 0.60, "step:1", "run:0", "qwen"),
+        ev("aside", 0.15, 0.45, "aside:1", undefined, "gemma"),       // starts with the step, before the load
+        ev("load", 0.16, 0.25, "load:gemma", "aside:1", "gemma"),     // the aside's own load
+        ev("load", 0.25, 0.45, "load:qwen", "step:1", "qwen"),        // the load the step waited for
+    ];
+    const rows = M.laneRows(placed, 8);
+    const rowOf = (id) => rows.findIndex((r) => r.some((p) => p.event.id === id));
+    const map = JSON.stringify(rows.map((r) => r.map((p) => p.event.id)));
+    assert.equal(rowOf("load:qwen"), rowOf("step:1") + 1, `the step's load is directly below it: ${map}`);
+    assert.ok(rowOf("load:gemma") > rowOf("aside:1"), `the aside's load is still below the aside: ${map}`);
+});
+
+test("laneRows: a child packed before its parent in time still lands below it", () => {
+    const ev = (kind, from, to, id, parent) => ({
+        event: { t: from, until: to, kind, ref: { hash: "s" }, id, ...(parent ? { parent } : {}) },
+        run: 0, from, to, clipped: false,
+    });
+    // A load that begins before the aside it is claimed by (loads precede the work they are for).
+    const rows = M.laneRows([ev("aside", 0.30, 0.60, "aside:1"), ev("load", 0.20, 0.30, "load:1", "aside:1")], 8);
+    const rowOf = (id) => rows.findIndex((r) => r.some((p) => p.event.id === id));
+    assert.ok(rowOf("load:1") > rowOf("aside:1"), JSON.stringify(rows.map((r) => r.map((p) => p.event.id))));
+});
+
 test("laneTier: the three depths, and everything unknown is machine", () => {
     // A tier is only a preference between things drawn at the same time — within one, packing is unchanged.
     assert.equal(M.laneTier("run"), M.laneTier("session"));
