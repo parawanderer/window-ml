@@ -1769,19 +1769,20 @@ test("status dot: in-flight (pulsing) while a turn is pending", async () => {
 test("status dot: tooltip shows the RIGHT variant's VRAM when a family shares a base name", async () => {
     const w = await loadSidebarWorld({ vram: [
         { model: "gemma4:e2b", vramGB: null, expiresAt: null },   // CPU-resident, listed first
-        { model: "gemma4:31b", vramGB: 47.4, expiresAt: null },
+        { model: "gemma4:31b", vramGB: 47.4, vramBytes: 47_400_000_000, expiresAt: null },
     ] });
     const dot = await openDetail(w, "sv", "gemma4:31b");
     assert.ok(dot.classList.contains("loaded"));
     const tip = dot.parentElement.querySelector(".tt-pop").textContent;
-    assert.match(tip, /47\.4 GB VRAM/, `tooltip should show the 31b's VRAM, got "${tip}"`);
+    // In GiB from the exact bytes, like the rest of the panel: 47.4e9 bytes is 44.14 GiB.
+    assert.match(tip, /44\.14 GiB VRAM/, `tooltip should show the 31b's VRAM, got "${tip}"`);
 });
 
 test("status dot: a CPU-resident model's tooltip says CPU, not a fake VRAM number", async () => {
-    const w = await loadSidebarWorld({ vram: [{ model: "gemma4:e2b", vramGB: null, sizeGB: 7.7, expiresAt: null }] });
+    const w = await loadSidebarWorld({ vram: [{ model: "gemma4:e2b", vramGB: null, sizeGB: 7.7, vramBytes: null, sizeBytes: 7_700_000_000, expiresAt: null }] });
     const dot = await openDetail(w, "scpu", "gemma4:e2b");
     const tip = dot.parentElement.querySelector(".tt-pop").textContent;
-    assert.match(tip, /on CPU \(7\.7 GB RAM\)/, `expected CPU RAM detail, got "${tip}"`);
+    assert.match(tip, /on CPU \(7\.17 GiB RAM\)/, `expected CPU RAM detail, got "${tip}"`);
 });
 
 test("status dot: tooltip flags partial CPU offload when size_vram < size", async () => {

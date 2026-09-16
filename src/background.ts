@@ -1222,9 +1222,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     const norm = (s: string) => s.replace(/:latest$/, "");
                     const lm = resident.find(x => x.model === model || x.name === model || norm(x.model || x.name || "") === norm(model));
                     const contextWindow = lm && typeof lm.context_length === "number" ? lm.context_length : null;
-                    const vramGB = lm && lm.size_vram ? +(lm.size_vram / 1e9).toFixed(1) : null;
+                    const vramBytes = lm && lm.size_vram ? lm.size_vram : null;
                     const local = capabilities !== null;   // caps came back from Ollama /api/show → resident/local
-                    return { model, contextWindow, capabilities, vramGB, local, ...overhead };
+                    return { model, contextWindow, capabilities, vramBytes, local, ...overhead };
                 },
             },
         )

@@ -165,7 +165,7 @@ function scanTemplate(src: string, start: number): { quasis: string[]; exprs: st
 
 // Multi-char punctuators, longest first so greedy matching is correct.
 const PUNCT = [
-    "===", "!==", "...", "?.", "=>", "==", "!=", "<=", ">=", "&&", "||", "??",
+    "===", "!==", "...", "?.", "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "**",
     ".", ",", "(", ")", "[", "]", "{", "}", "?", ":", "!", "<", ">",
     "+", "-", "*", "/", "%", "=", ";",   // `=` only for `const x = …`; assignment expressions still fail closed
 ];
@@ -245,6 +245,8 @@ type Node = any;
 const BP: Record<string, number> = {
     "??": 1, "||": 1, "&&": 2, "===": 3, "!==": 3, "==": 3, "!=": 3,
     "<": 4, ">": 4, "<=": 4, ">=": 4, "+": 5, "-": 5, "*": 6, "/": 6, "%": 6,
+    // EXPONENTIATION binds tighter than `*` and is RIGHT-associative (`2 ** 3 ** 2` is `2 ** 9`), exactly as in JS.
+    "**": 7,
 };
 
 class Parser {
@@ -375,7 +377,11 @@ class Parser {
             const t = this.peek();
             if (t.t !== "punct" || !(t.v in BP) || BP[t.v] < minbp) break;
             const op = t.v; this.i++;
-            const right = this.parseBinary(BP[op] + 1);
+            // JS refuses an UNPARENTHESISED unary operand on the left of `**` (`-2 ** 2` is a SyntaxError, because
+            // whether it means (-2)**2 or -(2**2) is exactly what a reader gets wrong). Refused here too, so the
+            // dialect never computes a value real JavaScript would not; `(-2) ** 2` parses, via the paren mark.
+            if (op === "**" && (left.type === "Unary" || left.type === "Await") && !left.paren) throw new NotInDialect("a unary operand before ** must be parenthesised");
+            const right = this.parseBinary(op === "**" ? BP[op] : BP[op] + 1);
             const logical = op === "&&" || op === "||" || op === "??";
             left = { type: logical ? "Logical" : "Binary", op, left, right };
         }
@@ -532,6 +538,8 @@ class Parser {
             this.eat("(");
             const e = this.parseExpression();
             this.eat(")");
+            // Marked, for the one place grouping changes what is legal: a parenthesised unary operand of `**`.
+            if (e && typeof e === "object") e.paren = true;
             return e;
         }
     }
@@ -1208,6 +1216,12 @@ class Evaluator {
                     case "<=": return l <= r; case ">=": return l >= r;
                     case "+": return this.sized(l + r); case "-": return l - r;
                     case "*": return l * r; case "/": return l / r; case "%": return l % r;
+                    // A NUMBER power is one O(1) operation. A BigInt one grows with the exponent inside a single host
+                    // operation no step budget sees, so it is refused outright (BigInt is not reachable in the dialect
+                    // today; this keeps it that way if it ever becomes so).
+                    case "**":
+                        if (typeof l === "bigint" || typeof r === "bigint") throw new NotInDialect("a BigInt power is not bounded");
+                        return l ** r;
                 }
                 throw new NotInDialect(`operator ${node.op}`);
             }

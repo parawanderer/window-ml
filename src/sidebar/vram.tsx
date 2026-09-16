@@ -850,11 +850,13 @@ export function modelLoadState(model: string, inFlight: boolean): { state: LoadS
     if (psError.value) return { state: "unknown", tip: "Load state unknown — no Ollama backend responding." };
     if (ps == null) return { state: "unknown", tip: "Checking load state…" };
     if (resident) {
-        // size_vram (vramGB) vs size (sizeGB) → fully-CPU / partial-offload / full-GPU.
-        const v = resident.vramGB, sz = resident.sizeGB;
+        // size_vram vs size → fully-CPU / partial-offload / full-GPU. From the EXACT bytes, in GiB like every other
+        // memory figure in the panel (the rounded decimal `vramGB` read ~7% larger than the chart for the same model).
+        const v = resident.vramBytes ?? (resident.vramGB != null ? resident.vramGB * 1e9 : null);
+        const sz = resident.sizeBytes ?? (resident.sizeGB != null ? resident.sizeGB * 1e9 : null);
         const where = !v
-            ? (sz ? `on CPU (${sz} GB RAM)` : "on CPU (RAM)")
-            : (sz && v < sz - 0.1 ? `${v} of ${sz} GB in VRAM — partial CPU offload (slower)` : `${v} GB VRAM`);
+            ? (sz ? `on CPU (${formatBytes(sz)} RAM)` : "on CPU (RAM)")
+            : (sz && v < sz * 0.99 ? `${formatBytes(v)} of ${formatBytes(sz)} in VRAM — partial CPU offload (slower)` : `${formatBytes(v)} VRAM`);
         const bits = [where, expiresIn(resident.expiresAt, resident.busy)].filter(Boolean);
         return { state: "loaded", tip: `Loaded — ${bits.join(" · ")}.` };
     }
