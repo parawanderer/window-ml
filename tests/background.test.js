@@ -3472,7 +3472,7 @@ test("protobuf stream: asks for it, decodes the deltas, and reports the usage fr
     client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
     await settle();
 
-    assert.equal(accept, "application/protobuf", "the one header that opts in");
+    assert.match(accept, /^application\/protobuf, text\/event-stream;q=0\.9$/, "the one header that opts in");
     const deltas = client.messages.filter(m => m.type === "chunk").map(m => m.delta);
     const done = client.messages.find(m => m.type === "done");
     assert.deepEqual(deltas, ["Hel", "lo"], "each Delta reaches the caller as it lands");
@@ -3623,7 +3623,7 @@ test("wire format: AUTO by default — it asks, with nobody having turned anythi
     // does not serve it answers exactly as it always did. There is nothing for a stock backend to go wrong
     // with, so there was nothing for the old default to protect.
     const { accept, content } = await streamUnder(undefined);
-    assert.equal(accept, "application/protobuf");
+    assert.match(accept, /^application\/protobuf, text\/event-stream;q=0\.9$/);
     assert.equal(content, "plain", "…and the SSE it answered with is read as SSE");
 });
 
@@ -3637,7 +3637,7 @@ test("wire format: AUTO absorbs a backend that will not serve it, in silence", a
     // THE MISS IS THE FALLBACK. An older build, a proxy that drops the header, or a stock server all answer
     // with what they always did — and under `auto` that is not an event, it is the expected other branch.
     const { accept, content, warnings } = await streamUnder("auto");
-    assert.equal(accept, "application/protobuf", "it still asks");
+    assert.match(accept, /^application\/protobuf, text\/event-stream;q=0\.9$/, "it still asks");
     assert.equal(content, "plain", "and the reply arrives");
     assert.deepEqual(warnings, [], "with nothing said about it");
 });
@@ -3648,7 +3648,7 @@ test("wire format: ON still answers when protobuf is not served — but says so"
     // That is the whole difference between the two states, and it is the half that is easy to get wrong in
     // the other direction — a hard failure would turn a saved envelope into a broken chat.
     const { accept, content, warnings } = await streamUnder("on");
-    assert.equal(accept, "application/protobuf");
+    assert.match(accept, /^application\/protobuf, text\/event-stream;q=0\.9$/);
     assert.equal(content, "plain", "the reply still arrives, over SSE");
     assert.equal(warnings.length, 1, "and the miss is reported");
     assert.match(warnings[0], /application\/protobuf/);
@@ -3657,7 +3657,7 @@ test("wire format: ON still answers when protobuf is not served — but says so"
 
 test("wire format: ON says nothing when it IS served", async () => {
     const { accept, content, warnings } = await streamUnder("on", { answerProto: true });
-    assert.equal(accept, "application/protobuf");
+    assert.match(accept, /^application\/protobuf, text\/event-stream;q=0\.9$/);
     assert.equal(content, "proto");
     assert.deepEqual(warnings, [], "a report only when the assertion was wrong");
 });
@@ -3682,7 +3682,7 @@ test("wire format: the BOOLEAN this replaced still reads correctly", async () =>
     // report about it — and reading it as an unrecognised value would silently mean "off", which is the
     // failure this mapping exists to prevent.
     const on = await streamUnder(true);
-    assert.equal(on.accept, "application/protobuf");
+    assert.match(on.accept, /^application\/protobuf, text\/event-stream;q=0\.9$/);
     assert.deepEqual(on.warnings, [], "`true` is AUTO, so a miss stays silent");
     const off = await streamUnder(false);
     assert.equal(off.accept, undefined);

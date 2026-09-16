@@ -697,7 +697,7 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
                     // ONE HEADER, and only where nothing can be lost by it — see `protoEligible`. A server
                     // that does not speak it answers with the SSE it always did, so this is safe to send
                     // hopefully rather than after sniffing a version.
-                    headers: stream && protoEligible ? { ...headers, Accept: "application/protobuf" } : headers,
+                    headers: stream && protoEligible ? { ...headers, Accept: PROTO_ACCEPT } : headers,
                     body: JSON.stringify({ ...requestBody, stream }),
                     signal,   // ABORT_TASK → this fetch rejects with an AbortError (kills a slow generation)
                 });
@@ -826,6 +826,10 @@ export async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): 
  * worker — the alternative is a line per streamed turn, which is how a warning stops being read.
  */
 const protoMissed = new Set<string>();
+/** What a streamed call asks for when protobuf is on. SSE is listed too, at a lower quality: a strict negotiator that
+ *  honours `Accept` and cannot produce protobuf would otherwise answer 406, and nothing retries that. The patched
+ *  server selects protobuf by the substring (`strings.Contains`), so the second type does not switch it off. */
+export const PROTO_ACCEPT = "application/protobuf, text/event-stream;q=0.9";
 function servedProto(res: Response, asked: ProtoMode | null, url: string): boolean {
     const ct = res.headers?.get?.("content-type") || "";
     if (ct.includes("application/protobuf")) return true;
