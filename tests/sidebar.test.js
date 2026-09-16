@@ -7630,6 +7630,8 @@ test("event lane: spans render, a tool step is one phased block, and clicking op
     const tip = w.shadow.querySelector(".rc-tip-event");
     assert.ok(tip, "the lane has its own tooltip");
     assert.match(tip.textContent, /qwen3\.8:27b/, "the model half");
+    // …and the HEADER names the model too: a step's label is its tool, and a tooltip is read on its own.
+    assert.equal(tip.querySelector(".rc-tip-line .rc-tip-aside-model")?.textContent, "qwen3.8:27b", "the header says which model generated this step");
     assert.match(tip.textContent, /python_exec/, "…then the tool half");
     // The figures are BADGES — one chip per fact, so it is visible which numbers belong together.
     const chips = [...tip.querySelectorAll(".rc-chip")].map((c) => c.textContent);
@@ -7708,6 +7710,10 @@ test("event lane: an eviction rules through the plot and names itself", async ()
     // something that happened.
     const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
     assert.match(css.slice(css.indexOf(".rc-rule::before")), /repeating-linear-gradient/);
+    // A moment inside a BREAK is the more specific target: its rule stacks above the gap mark, or the gap takes the
+    // hover and pointing at an eviction says "not measured".
+    const z = (sel) => Number((css.match(new RegExp(`\\${sel} \\{[^}]*z-index: (\\d+)`)) || [])[1]);
+    assert.ok(z(".rc-rule") > z(".rc-gap"), `rule z ${z(".rc-rule")} must be above gap z ${z(".rc-gap")}`);
 
     rule.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
     w.shadow.querySelector(".rc-plot").dispatchEvent(new w.window.MouseEvent("pointermove", { bubbles: true }));

@@ -376,7 +376,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-zoom.resized { border-style: dashed; border-color: color-mix(in srgb, var(--accent) 60%, transparent);
     color: var(--fg-dim); }
 .vram-zoom:hover { background: var(--panel-2-hover); }
-.rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: inherit; z-index: 3; }
+/* ABOVE a gap mark (z-index 3): a moment that happened inside a break is the more specific thing under the pointer,
+   and at equal z the later-rendered gap took the hover, so pointing at the rule said "not measured". */
+.rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: inherit; z-index: 4; }
 .rc-rule::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;
     background: repeating-linear-gradient(to bottom, var(--fg-dim) 0 3px, transparent 3px 6px); }
 /* The model's OWN colour when the event names one — a rule is an annotation on that model's trace, and
@@ -464,16 +466,16 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
     border-radius: 3px;
     opacity: .85;
 }
-/* A load is the wait before a token — striped, because it is time spent NOT generating. The real fill is
+/* A load is the wait before a token — DOTTED, because it is time spent NOT generating (stripes drew it as X's). The real fill is
    built inline from the model's colour (loadStripes); this is what it falls back to. */
-.rc-ev-load { background: repeating-linear-gradient(45deg, var(--warn, #f59e0b) 0 3px, var(--panel) 3px 8px);
+.rc-ev-load { background: radial-gradient(circle, var(--warn, #f59e0b) 1.2px, transparent 1.7px) 0 0 / 5px 5px, var(--panel);
               outline: 1px solid var(--border); outline-offset: -1px; }
-/* The CONTEXT half of a load, over the striped span: the KV cache and compute buffers being allocated. A
-   tighter, denser stripe than the weights half, with a hairline at the boundary, so the split reads as a
+/* The CONTEXT half of a load, over the dotted span: the KV cache and compute buffers being allocated. A
+   tighter, denser dot grid than the weights half, with a hairline at the boundary, so the split reads as a
    change of texture. Drawn as an overlay rather than as a gradient stop, because a stop takes a colour and a
    stripe is a pattern — the same reason the approval wait is an overlay. */
 .rc-ev-ctxphase { position: absolute; top: 0; bottom: 0; pointer-events: none;
-  background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--model, var(--warn, #f59e0b)) 80%, transparent) 0 2px, transparent 2px 5px);
+  background: radial-gradient(circle, color-mix(in srgb, var(--model, var(--warn, #f59e0b)) 80%, transparent) 0.8px, transparent 1.3px) 0 0 / 3px 3px, var(--panel);
   border-left: 1px solid color-mix(in srgb, var(--model, var(--fg)) 70%, transparent); }
 
 /* SERVING: the box working, from the server's own view — so it covers requests this browser never made,
@@ -482,8 +484,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    with them. */
 .rc-ev-serve { background: color-mix(in srgb, var(--model, var(--accent)) 55%, transparent);
                outline: 1px solid color-mix(in srgb, var(--model, var(--accent)) 35%, transparent); outline-offset: -1px; }
-.rc-tip-event { flex-direction: column; align-items: stretch; gap: 2px; min-width: 150px; }
-.rc-tip-event .rc-tip-line { display: flex; align-items: center; gap: 5px; }
+/* A phase row is a name, a chip of counts and a duration. At the shared 300px cap those ran past the box, so the
+   event tip is wider and its rows WRAP: the chip drops under the name rather than spilling over the chart. */
+.rc-tip-event { flex-direction: column; align-items: stretch; gap: 2px; min-width: 150px; width: max-content; max-width: min(420px, 94vw); }
+.rc-tip-event .rc-tip-line { display: flex; align-items: center; flex-wrap: wrap; gap: 1px 5px; }
+.rc-tip-event .rc-tip-name { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
 .rc-tip-event .rc-tip-size { margin-left: auto; }
 /* Figures as the same little blocks the model rows use: a chip is visibly ONE fact, where three numbers on a
    dim line gave no way to tell which belonged together. */
@@ -3003,11 +3008,11 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 
 /* A KEYBOARD-READ TIP IS ANCHORED TO ITS TRACK, not to the cursor. The reader is not moving the mouse, so an
    answer that follows it has nothing to follow — and a model split across cards shows one of these on EVERY
-   track it is on, which under a single cursor would be two tooltips stacked on the same few pixels. Absolute
-   inside .rc-plot (which is positioned), so each one belongs to the track whose reading it is. */
-.rc-tip.rc-tip-kb { position: absolute; top: 3px; bottom: auto; }
-.rc-tip.rc-tip-kb.right { right: 3px; left: auto; }
-.rc-tip.rc-tip-kb.left { left: 3px; right: auto; }
+   track it is on, which under a single cursor would be two tooltips stacked on the same few pixels. FIXED, like
+   every other tip, and placed against its track's measured corner by `tileKbTips` — it used to be absolute inside
+   .rc-plot, and .rc-plot clips (runs reach past the axis as it scrolls), so a drilled-in tip taller than its
+   track was cut off at the track's bottom edge. */
+.rc-tip.rc-tip-kb { position: fixed; bottom: auto; right: auto; }
 /* A SECTION HEAD inside a tooltip: the tip is a stack of readings and a drilled-in one has two groups of
    them, so each group says what it is rather than running the rows together. */
 .rc-tip-sec { color: var(--fg-faint); font-size: 0.86em; letter-spacing: .06em; text-transform: uppercase;

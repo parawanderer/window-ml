@@ -659,6 +659,23 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   scrub strip hatches the same hole at the same true width (`.rc-scrub-gap`).
   **A lane bar is packed at the width it is DRAWN** (`MIN_BAR_PX` from the lane's measured width, and a pixel between
   bars): reserving only `MIN_EV_SPAN` of a narrow lane let two bars at CSS `min-width` overlap.
+- **The chart draws with the samples EITHER SIDE of the window** (`windowSamples(…, { edges: true })`), always. Without
+  them the stretch from the last reading before the left edge to the first one inside was not drawn, so scrolling
+  back made each stretch pop in only when its first reading crossed the edge. The plot clips; a far neighbour is still
+  a gap. A caller that READS the window's edge (the header's "in use at") does not ask for them.
+- **A load is DOTTED, not striped** (`dots`, `loadStripes`): two stripe layers leaning opposite ways drew it as a row
+  of X's. The context half is a denser, smaller grid. In a TOOLTIP a patterned phase is a hollow ring
+  (`phaseSwatch`): a pattern in a 7px circle drew as a partial ring, like a spinner.
+- **Every event tooltip names its model** unless its label already does, and its rows WRAP inside a wider box
+  (`.rc-tip-event`): at the shared 300px cap a phase row's chip and duration ran out past the edge.
+- **A drilled-in (keyboard) tip is `position: fixed`**, placed against its track's corner by `tileKbTips` — absolute
+  inside `.rc-plot`, which clips, it lost its bottom rows (pinned by the split-model drill-in e2e test).
+- **A ruled moment stacks ABOVE a gap mark** (z-index 4 vs 3), and `GapTip` yields while an event is hovered: at equal
+  z the later-rendered gap took the pointer, so pointing at an eviction inside a break said "not measured".
+- **A model loading in the window stacks LAST among the models, its `load:`/`runner:` band directly on top**
+  (`bandOrder`, resource-model.ts). The load used to sit above every model while the band it becomes sat in
+  alphabetical order, so the allocation jumped across the stack when the server assigned it. The MODEL moves, not the
+  load: a load is a curve, and stepping stops at the first band that is not one (`stepBands`).
 - **Instants rule through the plot** (dashed — a solid line reads as part of the chart), and one eviction is
   drawn in every track, so hovering it anywhere thickens it everywhere. **So do a load's two internal edges**
   (`loadEdges`): weights loaded, then KV cache and compute buffers allocated (ready to serve), each with the
@@ -673,6 +690,9 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   under its own step. A `run` is the container the rest sit inside and the widest bar on screen, so it is
   drawn as a CHECKERBOARD rather than a solid fill (built from its own `--model`, so it keeps the identity
   the lane reads by) — solid, it read as the heaviest work in the lane rather than the thing holding it.
+  **A child is never packed above its container** (`packBand` takes each event's row floor from its `parent`'s row).
+  Tiers alone did not guarantee it: two runs of one session that ABUT cannot share a row (the pixel between bars),
+  so the second run opened a row below and its steps, packed next, took the free row ABOVE their own container.
 - **Double-clicking any block scopes the panel to it** (`scopeToSpan`, pure/tested), widening a block too
   short to frame around its own centre — a 40ms window contains no samples and draws as an empty plot. An
   open block has no end, so `now` stands in. A single click still navigates to the step: framing the time
@@ -701,7 +721,9 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
   in `tests/fixtures/real-edges.mjs`.
 - **`ml.__events({ download: true })` dumps what the panel derives its timeline FROM** — this tab's
   `__mlDebug` stream, the server's event frames with the wall clock each resolved to, the current `ps`/`info`
-  and the stream's status. For a lane doing something that makes no sense: the drawn events are derived by
+  and the stream's status. The `debug` ring is 500 events with streamed `agent-stream`/`agent-turn` deltas COALESCED
+  to the newest per session and step (`relayDebugEvent`): uncoalesced, a streamed run's deltas pushed its own `agent`
+  start out of the ring, and a dump held no run to rebuild. For a lane doing something that makes no sense: the drawn events are derived by
   pure functions, so the inputs let the exact picture be rebuilt and turned into a test, where a screenshot
   can only be described. Two capture rules: the resource panel must be OPEN (nothing subscribes to the stream
   when nobody is looking, so `frames` would be empty), and the `debug` ring holds everything only in
@@ -765,9 +787,10 @@ remembered (hovering a step cannot light it, and it cannot enter `usageByModel`)
 clicking still goes to the step you asked about, and its tooltip says outright that you triggered it. Stored
 in `store.ts` `asides` (a Map by hash, session-scoped and in memory only — it describes this READING session,
 not the run's record) and merged in at the `eventsFrom` call site rather than written into the session the
-debug reducer builds. Its tooltip is the ONE place a span names its model, because an aside runs on the
-UTILITY model while every other span runs on the session's own — which the panel already says in three
-places. `tests/e2e/aside-lane.spec.mjs` covers the seam neither unit test can: the merge, and the class the
+debug reducer builds. Its tooltip names its model, as every span's does now: that was once the aside's alone
+(it runs on the UTILITY model, every other span on the session's), but a tooltip is read on its own over a chart
+drawing several models, and a step named only by its tool left the reader to work out which model generated it.
+A label that already contains the model is not repeated. `tests/e2e/aside-lane.spec.mjs` covers the seam neither unit test can: the merge, and the class the
 lane paints. It also has to SEED A BOX (`setCapacity`/`setResident`) — with no samples the panel draws no
 tracks and no lane, and a lane that was never drawn cannot be missing a bar, so the first version of that
 test would have passed the day the feature broke.

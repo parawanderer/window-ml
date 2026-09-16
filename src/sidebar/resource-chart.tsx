@@ -19,6 +19,7 @@ import {
     OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
     presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, stepBands, bandEdge, runGap, type RunGap, serverGenNote, layersOnCard, predictionLine,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
+    bandOrder,
 } from "../resource-model";
 import { keysReach, resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
 import { sessionMap, models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot, predictView, timeGrid } from "./store";
@@ -116,23 +117,6 @@ const trackCursor = (surface: string) => (e: PointerEvent) => {
 };
 
 const W = 300, H = 72;
-
-/** Every band key present anywhere in the window, in a STABLE order — models first (alphabetical, so a row
- *  doesn't jump when one evicts and reloads), then the residual, then free. Without a fixed order the stack
- *  would reshuffle between samples and the areas would cross. */
-function bandOrder(frames: Band[][]): string[] {
-    const models = new Set<string>(), rest = new Set<string>(), ctx = new Map<string, string>();
-    for (const bands of frames) for (const b of bands) {
-        if (b.kind === "model" || b.kind === "unknown") models.add(b.key);
-        // A runner's overhead rides directly on its own model, so the pair reads as what that model costs.
-        else if (b.key.startsWith("ctx:") && b.of) ctx.set(`m:${b.of}`, b.key);
-        else if (b.kind === "other" && b.key !== "other") rest.add(b.key);
-    }
-    const byRank = [...rest].sort((a, b) => residualRank(a) - residualRank(b) || a.localeCompare(b));
-    // An overhead whose model never appears in the window still has to be drawn — just not beside anything.
-    const orphans = [...ctx].filter(([m]) => !models.has(m)).map(([, k]) => k);
-    return [...[...models].sort().flatMap((k) => (ctx.has(k) ? [k, ctx.get(k)!] : [k])), ...orphans, ...byRank, "other", "free"];
-}
 
 /** Which model each residual band is TINTED with (`Band.of`) — a runner's overhead, a load in flight. Kept
  *  apart from `bandIdentity` on purpose: identity makes a band hoverable, hideable and stepped as the model. */
@@ -989,15 +973,31 @@ function tileKbTips(root: Document | null): void {
     // beside the trace it describes and a tip on top of it. Marked before measuring, or the layout below
     // would be computed from heights that are about to change.
     els.forEach((el, i) => el.classList.toggle("dup", i < els.length - 1));
+    const view = root.defaultView;
+    const vw = view?.innerWidth ?? Infinity, vh = view?.innerHeight ?? Infinity;
     let prevBottom = -Infinity;
     for (const el of els) {
-        el.style.transform = "";                       // measure where it WANTS to be
+        el.style.transform = "";
+        // WHERE IT WANTS TO BE: the top corner of its own track, on the side away from the crosshair. Measured, since
+        // the tip is `position: fixed` — inside the plot it was clipped by the plot (see the CSS).
+        const plot = el.parentElement?.closest(".rc-plot") ?? el.parentElement;
+        const a = plot?.getBoundingClientRect();
+        if (a) {
+            const w = el.offsetWidth;
+            const left = el.classList.contains("right") ? a.right - PLOT_TIP_INSET - w : a.left + PLOT_TIP_INSET;
+            el.style.left = `${Math.max(4, Math.min(left, vw - w - 4))}px`;
+            el.style.top = `${a.top + PLOT_TIP_INSET}px`;
+        }
         const r = el.getBoundingClientRect();
-        const dy = r.top < prevBottom + KB_TIP_GAP ? prevBottom + KB_TIP_GAP - r.top : 0;
+        let dy = r.top < prevBottom + KB_TIP_GAP ? prevBottom + KB_TIP_GAP - r.top : 0;
+        // …and never off the bottom of the window, which a stack of drilled-in tips under a low track would reach.
+        if (r.bottom + dy > vh - 4) dy = Math.max(4 - r.top, vh - 4 - r.bottom);
         if (dy) el.style.transform = `translateY(${dy}px)`;
         prevBottom = r.bottom + dy;
     }
 }
+/** How far a keyboard-read tip sits inside its track's corner. */
+const PLOT_TIP_INSET = 3;
 
 /**
  * WHICH LAYERS THIS CARD IS HOLDING.
@@ -1934,13 +1934,12 @@ function serverSaid(label: string, model?: string): string {
 //
 // Which also fixes the bar: a load's two halves were told apart by a divider and a shade, and the shade did
 // almost none of the work.
-const loadStripes = (model?: string): string => {
-    const c = model ? colorFor(model) : "var(--warn, #f59e0b)";
-    // Two layers: the first leans one way over a transparent gap, the second the other way over the panel's
-    // ground, so what shows through the first is the second rather than whatever is behind the element.
-    return `repeating-linear-gradient(45deg, ${c} 0 2px, transparent 2px 7px), `
-        + `repeating-linear-gradient(-45deg, ${c} 0 2px, var(--panel) 2px 7px)`;
-};
+// DOTS, not stripes. Two stripe layers leaning opposite ways drew a load as a row of X's — busy at any size, and in a
+// 9px lane row it read as noise rather than as "waiting". A grid of dots on the panel's ground says the same thing
+// (time, not work) quietly, and a denser, smaller grid tells a load's second half from its first by texture.
+const dots = (c: string, r: number, cell: number): string =>
+    `radial-gradient(circle, ${c} ${r}px, transparent ${r + 0.5}px) 0 0 / ${cell}px ${cell}px, var(--panel)`;
+const loadStripes = (model?: string): string => dots(model ? colorFor(model) : "var(--warn, #f59e0b)", 1.2, 5);
 /** One half of a load: same colour, opposite leans, so the two are told apart by DIRECTION at any size. */
 const halfStripes = (c: string, lean: 45 | -45): string =>
     `repeating-linear-gradient(${lean}deg, ${c} 0 3px, var(--panel) 3px 8px)`;
@@ -1982,10 +1981,10 @@ const phaseFill = (kind: string, model?: string): string => {
         // A PROMPT-CACHE SWAP: memory being copied for this model before it can read the prompt — a wait, like a
         // load, so it is striped the way a load is, in a lighter weight of the model's colour.
         : kind === "swap" ? halfStripes(`color-mix(in srgb, ${base} 45%, transparent)`, 45)
-        : kind === "weights" ? halfStripes(base, 45)
-        // A load inside a step: the same wait the load's own span below it shows, striped the same way.
-        : kind === "load" ? halfStripes(`color-mix(in srgb, ${base} 70%, transparent)`, 45)
-        : kind === "context" ? halfStripes(`color-mix(in srgb, ${base} 55%, transparent)`, -45)
+        : kind === "weights" ? dots(base, 1.2, 5)
+        // A load inside a step: the same wait the load's own span below it shows, dotted the same way.
+        : kind === "load" ? dots(`color-mix(in srgb, ${base} 70%, transparent)`, 1.2, 5)
+        : kind === "context" ? dots(`color-mix(in srgb, ${base} 75%, transparent)`, 0.8, 3)
         : `color-mix(in srgb, ${base} 38%, transparent)`;
 };
 
@@ -2006,7 +2005,18 @@ function phaseSpans(phases: { kind: string; until: number }[], from: number, tot
 /** Whether a phase's fill is a PATTERN (stripes) rather than a colour. A pattern cannot be a gradient stop: one in
  *  the list makes the whole `background` invalid, the declaration is dropped, and the block draws as nothing. So
  *  a patterned phase gets a flat stop here and its stripes as an overlay (see `rc-ev-pattern`). */
-const isPattern = (fill: string): boolean => fill.startsWith("repeating-");
+const isPattern = (fill: string): boolean => fill.startsWith("repeating-") || fill.startsWith("radial-gradient(");
+
+/** A phase's SWATCH in a tooltip. A pattern squeezed into a 7px circle is unreadable — the stripes drew as a
+ *  partial ring, like a spinner — so a patterned phase (a wait: a load's halves, a cold start, a swap) is a HOLLOW
+ *  ring in its colour, and work is a solid dot. The distinction the pattern makes in the lane survives. */
+const phaseSwatch = (kind: string, model?: string): Record<string, string> => {
+    const fill = phaseFill(kind, model);
+    if (!isPattern(fill)) return { background: fill };
+    const base = model ? colorFor(model) : "var(--accent)";
+    const ring = kind === "boot" ? "var(--fg-faint)" : kind === "context" ? `color-mix(in srgb, ${base} 70%, transparent)` : base;
+    return { background: "transparent", boxShadow: `inset 0 0 0 1.5px ${ring}` };
+};
 
 function phaseGradient(phases: { kind: string; until: number }[], from: number, total: number, model?: string): string {
     const fill = (kind: string) => { const f = phaseFill(kind, model); return isPattern(f) ? "var(--panel)" : f; };
@@ -2099,9 +2109,11 @@ function onAxis(runs: ResourceSample[][], samples: ResourceSample[], scope: stri
 
 /** What a hovered break stands for: how long nothing was drawn, from when to when, and why. */
 function GapTip({ scope }: { scope: string }) {
-    const h = gapHover.value, at = cursorAt(scope);
+    const h = gapHover.value, at = cursorAt(scope), ev = eventHover.value;
     const { ref, style } = useTipPlacement(at);
-    if (!h || !at || h.scope !== scope) return null;
+    // AN EVENT WINS. A ruled moment inside a break sits over it, and entering the rule does not LEAVE the gap, so both
+    // hovers can be set at once — the event is what the pointer is on.
+    if (!h || !at || h.scope !== scope || (ev && ev.scope === scope)) return null;
     const { from, to, reported, isolated } = h.gap;
     return (
         <div class="rc-tip rc-tip-event rc-tip-gap" role="tooltip" ref={ref} style={style}>
@@ -2902,18 +2914,19 @@ function EventTip({ scope }: { scope: string }) {
             <div class="rc-tip-line">
                 {/* Each section carries the swatch of the stripe it describes, so the tooltip and the block
                     read as the same three things. */}
-                {first || e.model ? <i class="rc-tip-dot" style={{ background: phaseFill(first?.kind ?? "model", e.model) }} /> : null}
+                {first || e.model ? <i class="rc-tip-dot" style={phaseSwatch(first?.kind ?? "model", e.model)} /> : null}
                 {/* WHAT THIS BLOCK IS, always — its own label ("qwen:32b serving", "loading gemma4:e2b"), not
                     a hardcoded "run" and not just the model name. The first PHASE used to take this line,
                     which meant a machine event with no phases said nothing but the model: a serving span and
                     a load looked identical, and neither said which it was. Phases are rows below now, all of
                     them, so the header is the identity and the rows are how the time split. */}
                 <span class="rc-tip-name">{e.label || e.model}</span>
-                {/* An ASIDE names its MODEL too, and only it does. Every other span's model is the session's
-                    own — the panel says it in three places already — but an aside runs on the UTILITY model,
-                    and "which model spent this" is most of what a reader wants from a bar they triggered
-                    themselves. Elsewhere it would be the same string repeated on every tooltip. */}
-                {e.kind === "aside" && e.model ? <span class="rc-tip-aside-model">{e.model}</span> : null}
+                {/* THE MODEL, on every span that has one and does not already say it. This used to be the aside's
+                    alone, on the argument that every other span runs on the session's own model — but a tooltip is
+                    read on its own, over a chart that draws several models, and a step named only by its tool
+                    ("agent_api_docs") left the reader to work out which model generated it. A label that already
+                    names the model ("loading qwen3.8…", "qwen:32b serving") is not repeated. */}
+                {e.model && !(e.label || "").includes(e.model) ? <span class="rc-tip-aside-model">{e.model}</span> : null}
                 <span class="rc-tip-size">{ms(dur)}</span></div>
             {/* WHICH SESSION this belongs to — only while the lane is showing every session. Scoped, every
                 block on screen is from the one you are reading, and the pill would repeat the same eight
@@ -2955,7 +2968,7 @@ function EventTip({ scope }: { scope: string }) {
             {phases.map((ph, i) => (
                 <>
                     <div class="rc-tip-line sep" key={i}>
-                        <i class="rc-tip-dot" style={{ background: phaseFill(ph.kind, e.model) }} />
+                        <i class="rc-tip-dot" style={phaseSwatch(ph.kind, e.model)} />
                         {/* A bare "exec" reads as a label of unknown kind. Saying what it IS — a tool call,
                             with the name as code — is the difference between a word and an identifier. */}
                         <span class="rc-tip-name">{ph.kind === "tool"
@@ -3399,7 +3412,9 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     // or scrub since) no longer applies: see holdKey.
     const heldNow = chartHeld.value;
     const held = heldNow && heldNow.key === holdKey() ? heldNow.axis : null;
-    const windowed = useMemo(() => windowSamples(samples, held ?? window_), [samples, window_, held]);
+    // Both neighbours, so the trace reaches both edges as it scrolls — except the right one on a window HELD at the live
+    // edge: every reading that arrives is the one after it, and taking it moved the chart under the pointer.
+    const windowed = useMemo(() => windowSamples(samples, held ?? window_, { edges: held && (!window_ || window_.live) ? "left" : true }), [samples, window_, held]);
     // THE AXIS FOLLOWS THE CLOCK, not the last sample. The window above is recomputed when samples arrive (every
     // second while the box works, every 15 s idle), and a chart whose right edge is the last sample steps and freezes
     // at that cadence. So the DRAWN axis slides the window along to now on a short tick, while the window itself —

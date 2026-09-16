@@ -173,6 +173,14 @@ test("a server generation is split into prefill and decode, and says what each d
         expect(text).toMatch(/generating tokens \(decode\)/);
         expect(text).toMatch(/168 tokens · 317\.\d tok\/s/);
         expect(text, "another client's traffic is said to be").toMatch(/not started from this browser/);
+        // EVERYTHING INSIDE THE BOX. A phase row is a name, a chip of counts and a duration on one line, and at the
+        // tip's max width the chip and the duration ran out past its right edge, over the chart.
+        const spill = await tip.evaluate((el) => {
+            const box = el.getBoundingClientRect();
+            return [...el.querySelectorAll("*")].map((c) => ({ c: String(c.className?.baseVal ?? c.className), r: c.getBoundingClientRect().right }))
+                .filter((x) => x.r > box.right + 0.5).map((x) => `${x.c} +${Math.round(x.r - box.right)}px`);
+        });
+        expect(spill, "nothing in the tooltip extends past its edge").toEqual([]);
 
         // The COLD one says so only because the server said nothing was cached — and this older capture did not
         // say (it omitted the count), so it must not claim "cold" either.

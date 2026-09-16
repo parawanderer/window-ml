@@ -858,12 +858,13 @@ test("resource panel: the event lane draws phased blocks, dims by lineage, and c
         const toolBg = await toolBar.evaluate((e) => getComputedStyle(e).backgroundImage);
         expect(toolBg).toContain("gradient");
 
-        // A LOAD is time spent NOT generating, so it is striped rather than a solid block of the model's
-        // time — but it is that model's wait, so it keeps the colour. (An inline model-colour once overrode
-        // the striped class entirely, which is the exact confusion the stripes exist to prevent.)
+        // A LOAD is time spent NOT generating, so it is DOTTED rather than a solid block of the model's time —
+        // but it is that model's wait, so it keeps the colour. (An inline model-colour once overrode the patterned
+        // class entirely, which is the exact confusion the pattern exists to prevent. It was cross-hatched stripes
+        // until they drew as a row of X's.)
         const loadBg = await frame.locator(".rc-ev-load").first().evaluate((e) => getComputedStyle(e).backgroundImage);
-        expect(loadBg, "the load is striped").toContain("repeating-linear-gradient");
-        expect(toolBg, "…and the tool block is not, so the two can't be confused").not.toContain("repeating-linear-gradient");
+        expect(loadBg, "the load is dotted").toContain("radial-gradient");
+        expect(toolBg, "…and the tool block is not, so the two can't be confused").not.toContain("radial-gradient");
 
         // FREEZE the chart first. The panel keeps sampling, so the window slides and every bar moves left
         // underneath a stationary pointer — the hover then belongs to the bar that was entered while the
@@ -3174,6 +3175,22 @@ test("resource panel: drilling into a split model answers on both cards, per car
         expect(boxes[0].bottom, "and never overlapping").toBeLessThanOrEqual(boxes[1].top);
         expect(Math.abs(boxes[0].left - boxes[1].left), "…on the same side, since tiling is what keeps them apart")
             .toBeLessThan(2);
+        // NOT CLIPPED BY ITS TRACK. A drilled-in tip is taller than the ~110px track it is anchored to, and the plot
+        // clips (runs reach past the axis as it scrolls) — so a tip positioned inside it lost its bottom rows. What is
+        // actually PAINTED at each tip's last line must be the tip itself, not the chart behind it.
+        const painted = await tips.evaluateAll((els) => els.map((el) => {
+            const r = el.getBoundingClientRect();
+            // Tips are `pointer-events: none`, which hit-testing skips — so they are made hit-testable for the probe.
+            const was = el.style.pointerEvents;
+            el.style.pointerEvents = "auto";
+            const hit = el.ownerDocument.elementFromPoint(r.left + 8, r.bottom - 4);
+            el.style.pointerEvents = was;
+            return { ok: !!hit && el.contains(hit), bottom: r.bottom, vh: innerHeight, hit: String(hit?.className?.baseVal ?? hit?.className ?? hit) };
+        }));
+        for (const [i, p] of painted.entries()) {
+            expect(p.ok, `tip ${i}'s bottom edge is covered or clipped (found ${p.hit})`).toBe(true);
+            expect(p.bottom, `tip ${i} ends inside the window`).toBeLessThanOrEqual(p.vh);
+        }
         // THE SHARED LINES ARE SAID ONCE, at the bottom of the stack. The instant being read and the keys
         // that move the reading are facts about the READING, not about a card, so repeating them per card is
         // the same two lines twice in the one view where height is what everything competes for — and it is

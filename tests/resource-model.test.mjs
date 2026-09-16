@@ -804,6 +804,28 @@ test("laneRows: concurrent runs get their own BANDS, so neither tree is interlea
     assert.deepEqual(bRows[0].map((p) => p.event.kind), ["run"]);
 });
 
+// Two runs of ONE session that abut cannot share a row (the pixel between bars), so the second container opened a
+// row below — and its steps, packed after the containers, took the free top row ABOVE it.
+test("laneRows: a child is never drawn above its own container, even when the containers of one session abut", () => {
+    const ev = (kind, from, to, id, parent) => ({
+        event: { t: from, until: to, kind, ref: { hash: "s" }, ...(id ? { id } : {}), ...(parent ? { parent } : {}) },
+        run: 0, from, to, clipped: false,
+    });
+    const placed = [
+        ev("run", 0.00, 0.40, "run:1"), ev("tool", 0.05, 0.20, "step:1", "run:1"), ev("tool", 0.22, 0.38, "step:2", "run:1"),
+        ev("run", 0.40, 1.00, "run:2"), ev("tool", 0.45, 0.60, "step:3", "run:2"), ev("tool", 0.62, 0.95, "step:4", "run:2"),
+        ev("embed", 0.50, 0.55, "step:3:sub0", "step:3"),
+    ];
+    const rows = M.laneRows(placed, 8, M.MIN_EV_SPAN, M.MAX_LANE_ROWS, 0.001);
+    const rowOf = new Map();
+    rows.forEach((row, i) => row.forEach((p) => rowOf.set(p.event.id, i)));
+    for (const p of placed) {
+        if (!p.event.parent) continue;
+        assert.ok(rowOf.get(p.event.id) > rowOf.get(p.event.parent),
+            `${p.event.id} (row ${rowOf.get(p.event.id)}) sits below ${p.event.parent} (row ${rowOf.get(p.event.parent)}): ${JSON.stringify(rows.map((r) => r.map((q) => q.event.id)))}`);
+    }
+});
+
 test("laneRows: the SAME model running twice at once is still two bands — grouping is by RUN", () => {
     const ev = (hash, kind, from, to) => ({
         event: { t: from, until: to, kind, model: "qwen3.8:27b", ref: { hash } },
@@ -1449,7 +1471,18 @@ describe("windowSamples", () => {
 
     test("a window with plenty of samples uses exactly those", () => {
         const got = windowSamples(at(0, 1000, 2000, 3000, 4000), { from: 900, to: 3100 });
-        assert.deepEqual(got.map((s) => s.t), [1000, 2000, 3000], "no neighbours dragged in to stretch the scale");
+        assert.deepEqual(got.map((s) => s.t), [1000, 2000, 3000], "no neighbours dragged in for a caller that reads the window's edge");
+    });
+
+    test("for DRAWING (edges), the neighbours either side always come too, so the trace reaches both edges as it scrolls", () => {
+        // Without them the stretch from 0 to 1000 and from 3000 to 4000 is not drawn at all, and each one pops in only
+        // once its reading crosses into the window.
+        const got = windowSamples(at(0, 1000, 2000, 3000, 4000, 5000), { from: 900, to: 3100 }, { edges: true });
+        assert.deepEqual(got.map((s) => s.t), [0, 1000, 2000, 3000, 4000]);
+        assert.deepEqual(windowSamples(at(1000, 2000), { from: 900, to: 3100 }, { edges: true }).map((s) => s.t), [1000, 2000], "nothing invented where there is no neighbour");
+        // A window held at the LIVE edge takes only the left neighbour: the next reading to arrive is the right one, and
+        // borrowing it would change the chart under the pointer holding it.
+        assert.deepEqual(windowSamples(at(0, 1000, 2000, 3000, 4000), { from: 900, to: 3100 }, { edges: "left" }).map((s) => s.t), [0, 1000, 2000, 3000]);
     });
 
     test("a window between two polls borrows BOTH neighbours, so a line can cross it", () => {
@@ -2897,4 +2930,23 @@ test("predicted_decode on gen.end: the real frames, and a generation read agains
     assert.equal(M.predictionLine(oss), "85% of the predicted 244 tok/s, which is an upper bound: it leaves out reading the cache (a plain-llama estimate for this card)");
     // No prediction (an older build, or a machine not measured) → nothing drawn.
     assert.equal(M.predictionLine(M.genTimingsFrom(frames[0].timings)), null);
+});
+
+// A MODEL'S LOAD AND THE BAND IT BECOMES ARE ONE THING. The load (`load:<m>`) stacked above every model and the model's
+// own band in alphabetical order, so the allocation jumped across the stack the moment the server assigned it.
+test("bandOrder: a model loading in the window stacks last among the models, its load directly on top", () => {
+    const f = (...bands) => bands;
+    const frames = [
+        f({ key: "m:zeta", model: "zeta", bytes: 10, kind: "model" }, { key: "load:aaa", bytes: 4, kind: "other", of: "aaa" }),
+        f({ key: "m:zeta", model: "zeta", bytes: 10, kind: "model" }, { key: "runner:aaa", bytes: 6, kind: "other", of: "aaa" }),
+        f({ key: "m:aaa", model: "aaa", bytes: 8, kind: "model" }, { key: "ctx:aaa", bytes: 1, kind: "other", of: "aaa" }, { key: "helper", bytes: 1, kind: "other" }),
+    ];
+    const order = M.bandOrder(frames);
+    assert.deepEqual(order, ["m:zeta", "m:aaa", "ctx:aaa", "runner:aaa", "load:aaa", "helper", "other", "free"]);
+    // The models BELOW still step; the load is a curve, and stepping stops there — above every model, not among them.
+    const identity = { "m:zeta": "zeta", "m:aaa": "aaa" };
+    const tint = { "ctx:aaa": "aaa", "runner:aaa": "aaa", "load:aaa": "aaa" };
+    assert.deepEqual([...M.stepBands(order, identity, tint)], ["m:zeta", "m:aaa", "ctx:aaa", "runner:aaa"]);
+    // With no load in the window, plain alphabetical order.
+    assert.deepEqual(M.bandOrder([frames[2], [{ key: "m:zeta", model: "zeta", bytes: 10, kind: "model" }]]).slice(0, 3), ["m:aaa", "ctx:aaa", "m:zeta"]);
 });

@@ -1407,6 +1407,40 @@ export function bandEdge(series: number[], stepped: boolean, base: number[] | nu
     return out;
 }
 
+/** Every band key present anywhere in the window, in a STABLE order — models first (alphabetical, so a row doesn't jump
+ *  when one evicts and reloads), then the residual, then free. Without a fixed order the stack would reshuffle between
+ *  samples and the areas would cross.
+ *
+ *  A MODEL LOADING IN THE WINDOW STACKS LAST among the models, with its load directly on top. Its memory arrives first
+ *  as `load:<model>` (nothing attributes it to the model yet) and then becomes the model's own band — one thing — but
+ *  the load sat above EVERY model while the band it turned into sat in alphabetical order, so the allocation jumped
+ *  across the stack the moment it was assigned. The model is moved rather than the load: a `load:` band is a curve,
+ *  not a step, and stepping stops at the first band that is not (`stepBands`), so a load in the middle of the models
+ *  would have turned every model above it into a slope. */
+export function bandOrder(frames: Band[][]): string[] {
+    const models = new Set<string>(), rest = new Set<string>(), ctx = new Map<string, string>(), loading = new Map<string, string[]>();
+    for (const bands of frames) for (const b of bands) {
+        if (b.kind === "model" || b.kind === "unknown") models.add(b.key);
+        // A runner's overhead rides directly on its own model, so the pair reads as what that model costs.
+        else if (b.key.startsWith("ctx:") && b.of) ctx.set(`m:${b.of}`, b.key);
+        else if (b.kind === "other" && b.key !== "other") rest.add(b.key);
+    }
+    for (const k of rest) {
+        const m = /^(?:load|runner):(.+)$/.exec(k);
+        if (m && models.has(`m:${m[1]}`)) (loading.get(`m:${m[1]}`) ?? loading.set(`m:${m[1]}`, []).get(`m:${m[1]}`)!).push(k);
+    }
+    const attached = new Set([...loading.values()].flat());
+    const byRank = [...rest].filter((k) => !attached.has(k)).sort((a, b) => residualRank(a) - residualRank(b) || a.localeCompare(b));
+    // An overhead whose model never appears in the window still has to be drawn — just not beside anything.
+    const orphans = [...ctx].filter(([m]) => !models.has(m)).map(([, k]) => k);
+    const withCtx = (k: string) => (ctx.has(k) ? [k, ctx.get(k)!] : [k]);
+    const sorted = [...models].sort();
+    const settled = sorted.filter((k) => !loading.has(k)).flatMap(withCtx);
+    // runner:<m> before load:<m>: the runner is the model's measured process, the load the unattributed growth around it.
+    const arriving = sorted.filter((k) => loading.has(k)).flatMap((k) => [...withCtx(k), ...loading.get(k)!.sort((a, b) => b.localeCompare(a))]);
+    return [...settled, ...arriving, ...orphans, ...byRank, "other", "free"];
+}
+
 /** A residual band's position in the stack. A runner's overhead sits directly on its own model, so the pair
  *  reads as what that model costs; then loads in flight, ollama's helpers, other tenants, and the unlisted
  *  remainder last. Exported for the chart, which must order EVERY key or a band silently drops out. */
@@ -2156,7 +2190,7 @@ export function chartWindow(zoom: { from: number; to: number } | null, scoped: {
  *  Not interpolation: these are real measurements, drawn where they were actually taken. Inventing a sample
  *  at the window's edge would be a reading nobody took, which is the thing this panel refuses to do
  *  everywhere else (see the gaps, which stay gaps). */
-export function windowSamples<T extends { t: number }>(all: readonly T[], window: { from: number; to: number } | null): T[] {
+export function windowSamples<T extends { t: number }>(all: readonly T[], window: { from: number; to: number } | null, opts: { edges?: boolean | "left" } = {}): T[] {
     if (!window) return [...all];
     const inside: T[] = [];
     let before: T | null = null, after: T | null = null;
@@ -2165,9 +2199,16 @@ export function windowSamples<T extends { t: number }>(all: readonly T[], window
         if (s.t > window.to) { if (!after) after = s; continue; }   // …and the first one past the end
         inside.push(s);
     }
-    // Only reach outside when the window cannot draw itself. A window with plenty of samples must not have
-    // its scale stretched by a neighbour that is minutes away.
-    if (inside.length >= 2) return inside;
+    // `edges`: ALWAYS reach outside — what the CHART draws with. Without the neighbours, the stretch between the last
+    // reading before the left edge and the first one inside was not drawn at all, so scrolling back made each stretch
+    // pop in only once its first reading crossed the edge. The plot clips to the axis, and a neighbour minutes away
+    // is still a gap (the runs split there), so this draws what was measured right up to the edge and nothing more.
+    // Without it, only when the window cannot draw itself: a caller READING the window's last sample (the header's
+    // "in use at") must not be handed one from after it.
+    // `"left"`: the neighbour before only. For a window held still at the live edge, where the next reading to arrive
+    // is by definition the one after it — borrowing it would change the chart under a pointer that is holding it.
+    if (inside.length >= 2 && opts.edges === "left") return [...(before ? [before] : []), ...inside];
+    if (inside.length >= 2 && !opts.edges) return inside;
     return [...(before ? [before] : []), ...inside, ...(after ? [after] : [])];
 }
 
@@ -2720,21 +2761,37 @@ function packBand(placed: EventPlacement[], maxRows: number, minSpan: number, mi
         row.every((q) => end(q, pad) <= start(p) || end(p, pad) <= start(q));
     // TIER first, then time. Sorting by time alone let whatever happened to begin earliest take the top row,
     // which on a lane whose depth means containment is a wrong picture rather than an untidy one.
+    // A CHILD NEVER SITS ABOVE ITS CONTAINER. Tiers alone did not guarantee it: two runs of one session that ABUT
+    // cannot share a row (the pixel between bars), so the second run opened row 1 — and its steps, packed next,
+    // took the first row with room, row 0, above their own container. So an event whose parent is already placed
+    // may only use rows below that parent's.
+    const rowOf = new Map<string, number>();
+    const below = (p: EventPlacement): number => {
+        const parent = (p.event as { parent?: string }).parent;
+        const at = parent != null ? rowOf.get(parent) : undefined;
+        return at == null ? 0 : at + 1;
+    };
     for (const p of [...placed].sort((a, b) =>
         laneTier(a.event.kind) - laneTier(b.event.kind) || start(a) - start(b))) {
-        let r = rows.findIndex((row) => fits(row, p, true));
+        const floor = below(p);
+        const firstFit = (pad: boolean) => rows.findIndex((row, i) => i >= floor && fits(row, p, pad));
+        let r = firstFit(true);
         // Nothing fits WITH the separation reserved. Before opening a row, try again without it. Rows are the
         // lane's scarcest resource and its only claim about time: two bars on separate rows say they OVERLAP.
         // Spending a row to buy a bar 0.4% of clearance therefore asserts an overlap that isn't there, which
         // is the same misreading the separation exists to prevent, arrived at from the other side. This is the
         // ordinary case rather than an edge one — a model LOAD ends exactly where the block it precedes
         // begins, so every load abutted its own step and was pushed below it.
-        if (r < 0) r = rows.findIndex((row) => fits(row, p, false));
+        if (r < 0) r = firstFit(false);
         if (r < 0) {
+            // A new row, opening empty rows down to the floor if the container sits on the last one.
+            while (rows.length < floor && rows.length < maxRows) rows.push([]);
             if (rows.length >= maxRows) r = rows.length - 1;   // out of rows: crowd the last one rather than drop the event
             else { rows.push([]); r = rows.length - 1; }
         }
         rows[r].push(p);
+        const id = (p.event as { id?: string }).id;
+        if (id != null) rowOf.set(id, r);
     }
     // Each row back in time order: it is packed by tier, and a row read left to right should be in the order
     // the things on it happened.
