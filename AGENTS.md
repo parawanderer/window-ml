@@ -244,7 +244,8 @@ learned by shipping the wrong version first.
   read-only and throws on unknown keys: finish editing the plain `TableLike` BEFORE `asTable`, and never probe
   a value's shape in the dialect without checking `isTable` first.
 - **Wire formats.** The protobuf path is chosen from the RESPONSE's content type, never sniffed; no `TextDecoder`
-  anywhere near binary; `toolIds` keeps SSE permanently. A strict backend refusing an optional request key is
+  anywhere near binary — a fetched body is checked with `binaryKind` on its BYTES first, and a binary one is
+  described, never decoded; `toolIds` keeps SSE permanently. A strict backend refusing an optional request key is
   retried once without it — a wire nicety must never cost an answer.
 - **Sidebar.** One app, two surfaces: a new app→parent message must also be handled in `panel.ts`, and anything
   that acts back on the page needs the reverse channel (panel → background → content shell).

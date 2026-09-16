@@ -53,6 +53,14 @@ Binary is detected before classification, never after: a Parquet body run throug
 corrupt by the time anything could sniff it, so `rawGet` reads an ArrayBuffer whenever the type/extension
 makes it plausible, checks the `PAR1` magic at both ends, and decodes to text only when it was NOT Parquet.
 
+**Every other body is sniffed for BINARY on its bytes, before any decode** (`binaryKind`, body-read.ts): a NUL in
+the first 8,000 bytes, git's rule, with a UTF-16 byte-order mark read as text and a PDF named even without one.
+A binary body becomes `type: "binary"`, and its `text` describes it — the format named from its magic (Arrow IPC,
+ZIP, gzip, PNG, JPEG, GIF, WebP, PDF, SQLite, WebAssembly), the content type, the size — and says it is not shown.
+It skips the Markdown ladder. Before this, a body nobody recognised was decoded as UTF-8 and reached the model byte
+for byte, under a note claiming it was the site's authored Markdown. That note now needs an actual `accept` HIT:
+a ladder that STOPPED at rung 1 because the body was not HTML (a JSON API) resolves as `accept` too, and is not one.
+
 What the model gets is a `df.head()` plus `[N rows x M columns]` and the dtypes — the shape being the part a
 clip can never carry. `pipe` opts out (a model that wrote a scan wants its scan's lines), and `schema: true`
 answers with the frame. The RENDER descriptor ships at most `RENDER_TABLE_ROWS` rows to the sidebar and the

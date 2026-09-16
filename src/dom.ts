@@ -1156,7 +1156,7 @@ export const googleSheetCsvUrl = (url: string): string | null => {
     return `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid ? gid[1] : "0"}`;
 };
 
-export type ContentKind = "json" | "csv" | "parquet" | "html" | "xml" | "markdown" | "code" | "text";
+export type ContentKind = "json" | "csv" | "parquet" | "html" | "xml" | "markdown" | "code" | "text" | "binary";
 
 /** Classify by the Content-Type HEADER alone. Returns null for a GENERIC/absent header (text/plain,
  *  octet-stream, empty) — the signal to let the other cues decide (a server can mislabel: raw.github
