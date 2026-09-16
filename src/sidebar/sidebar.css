@@ -2757,6 +2757,15 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
     opacity: 0.35; transition: opacity 0.15s ease;
 }
 .code-block:hover .code-tools, .code-tools:focus-within { opacity: 1; }
+/* FIND IN A CODE BLOCK (Ctrl/Cmd+F with the block focused). The block is focusable for the shortcut, so a click
+   must not ring it; only keyboard focus does, as on the output cell. The bar takes the toolbar's corner, so the
+   toolbar steps aside while it is open. */
+.code-block:focus { outline: none; }
+.code-block:focus-visible { outline: 1px solid var(--fg-faint); outline-offset: 1px; }
+.code-block:has(> .code-find) > .code-tools { display: none; }
+/* The find bar's holder: a ZERO-HEIGHT sticky row, so the bar stays in view while you read further down a block
+   taller than the panel, and takes no room from the code. The bar itself is positioned inside it as usual. */
+.code-find { position: sticky; top: 4px; height: 0; z-index: 4; }
 /* ONE BUTTON in that toolbar. Sized off the code's own font so it never towers over the line it sits on. */
 .code-tool {
     font: inherit; font-size: 0.82em; line-height: 1;

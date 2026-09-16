@@ -524,6 +524,8 @@ function PythonInRender({ d, live, failLine, ctx, failed }: { d: Extract<RenderD
     const failNote = failLine != null && lineChanged(d.code, fmt, failLine)
         ? `This line failed. It is shown reflowed for reading — in the code as written it was one longer line.`
         : "This line failed.";
+    const block = useRef<HTMLDivElement>(null);
+    const find = useCodeFind(block);
     return (
         <div class="r-python r-py-in">
             <div class="r-py-mode">Mode: <span class="tt"><span class="r-py-modeval">{PY_MODE[d.mode].label}</span><span class="tt-pop left" role="tooltip">{PY_MODE[d.mode].tip}</span></span></div>
@@ -557,7 +559,9 @@ function PythonInRender({ d, live, failLine, ctx, failed }: { d: Extract<RenderD
                 Out are two independent RenderDescriptors rendered in two separate blocks, and threading one
                 through the other would couple them for the sake of one number. */}
             {d.revision ? <CodeDiff revision={d.revision} after={fmt.text} lang="python" hash={ctx?.hash} failed={failed} /> : null}
-            <div class="code-block" data-cite="in" data-rev={rv} data-py-map={fmt.changed ? JSON.stringify(fmt.map) : undefined}>
+            <div class="code-block" data-cite="in" data-rev={rv} data-py-map={fmt.changed ? JSON.stringify(fmt.map) : undefined}
+                ref={block} tabIndex={0} onKeyDown={find.onKey}>
+                {find.bar ? <div class="code-find">{find.bar}</div> : null}
                 {ctx ? <CodeTools ctx={ctx} lang="python" src={fmt.text} /> : null}
                 <Code text={fmt.text} lang="python" lineIds="pyline" markLine={failAt} markTitle={failNote} notes={notesForBlock(ctx, rv)} />
             </div>
@@ -660,10 +664,17 @@ export function findMatches(text: string, query: string, caseSensitive: boolean)
 const findOwner = signal(0);
 let nextCellId = 1;
 
+// Text that is ON SCREEN BUT NOT THE CONTENT: a line-number gutter, a tooltip's hidden prose, a margin note under
+// a code line, a code block's own toolbar and find bar. Searching "3" in a numbered block matched every gutter
+// digit, and a JSON tree's key descriptions matched as invisible hits the reader could never see.
+const FIND_SKIP = ".lno, .tt-pop, .lnote, .code-tools, .r-find";
+
 /** Map match offsets over a container's concatenated text back onto real DOM Ranges, so matches can be painted
  *  with the CSS Custom Highlight API — no DOM surgery, so the syntax highlighting underneath is untouched. */
 function rangesFor(root: HTMLElement, query: string, caseSensitive: boolean): Range[] {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode: (n) => (n.parentElement?.closest(FIND_SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    });
     const nodes: Text[] = [];
     let text = "";
     for (let n = walker.nextNode(); n; n = walker.nextNode()) { nodes.push(n as Text); text += (n as Text).data; }
@@ -819,6 +830,34 @@ function revealSideways(bound: HTMLElement, r: Range, hit: DOMRect): void {
     else if (right > sx.clientWidth - pad) sx.scrollLeft += right - (sx.clientWidth - pad);
 }
 
+/** The nearest ancestor that actually SCROLLS vertically, else the document's scroller. A code block does not scroll
+ *  on its own (it grows to its content), so a match below the fold is brought up by whatever holds the block. */
+function scrollerY(from: HTMLElement): HTMLElement | null {
+    for (let el = from.parentElement; el; el = el.parentElement) {
+        if (el.scrollHeight <= el.clientHeight + 1) continue;
+        const ov = typeof getComputedStyle === "function" ? getComputedStyle(el).overflowY : "auto";
+        if (ov === "auto" || ov === "scroll") return el;
+    }
+    return (document.scrollingElement as HTMLElement | null) ?? null;
+}
+
+/** Find wired for a rendered CODE BLOCK (a python In, an exec's code): searches only the source itself (`pre.code`,
+ *  not the retry diff above it), and reveals a match by scrolling whatever contains the block, but only when the
+ *  match is out of view, so ↑/↓ through matches already on screen never moves the panel. */
+function useCodeFind(block: { current: HTMLElement | null }): ReturnType<typeof useFind> {
+    return useFind(block, (el, r) => {
+        const hit = r.getBoundingClientRect();
+        const sy = scrollerY(el);
+        if (sy) {
+            const top = sy === document.scrollingElement ? 0 : sy.getBoundingClientRect().top;
+            const h = sy === document.scrollingElement ? window.innerHeight : sy.clientHeight;
+            // 40px of headroom: the find bar sticks to the top of the view and would sit over a match parked there.
+            if (hit.top < top + 40 || hit.bottom > top + h - 8) sy.scrollTop += (hit.top - top) - h / 3;
+        }
+        revealSideways(el, r, hit);
+    }, ":scope > pre.code");
+}
+
 /**
  * IN-PLACE FIND (Ctrl/Cmd+F) over a container's text: the query box, match case, the n-of-m count and ↑/↓, with
  * every match painted through the CSS Custom Highlight API (no DOM surgery, so syntax highlighting underneath is
@@ -827,9 +866,10 @@ function revealSideways(bound: HTMLElement, r: Range, hit: DOMRect): void {
  *
  * Wire it with `onKey` on the focusable element that owns the shortcut and render `bar` inside a positioned
  * ancestor. `reveal` brings the current match into view: a scrolling cell parks it in its own box, a code block that
- * does not scroll vertically lets its nearest scrolling ancestor do it.
+ * does not scroll vertically lets its nearest scrolling ancestor do it. `within` narrows the SEARCHED text to a
+ * descendant of `box` (a selector), for a container whose other children are not the thing being read.
  */
-export function useFind(box: { current: HTMLElement | null }, reveal: (el: HTMLElement, r: Range) => void): { findOpen: boolean; onKey: (e: any) => void; bar: preact.JSX.Element | null } {
+export function useFind(box: { current: HTMLElement | null }, reveal: (el: HTMLElement, r: Range) => void, within?: string): { findOpen: boolean; onKey: (e: any) => void; bar: preact.JSX.Element | null } {
     const id = useMemo(() => nextCellId++, []);
     const findOpen = findOwner.value === id;
     const [q, setQ] = useState("");
@@ -837,6 +877,7 @@ export function useFind(box: { current: HTMLElement | null }, reveal: (el: HTMLE
     const [idx, setIdx] = useState(0);                 // which match is current
     const [count, setCount] = useState(0);
     const input = useRef<HTMLInputElement>(null);
+    const searchRoot = (el: HTMLElement): HTMLElement => (within ? el.querySelector<HTMLElement>(within) : null) ?? el;
     // Re-run the search whenever the query/case changes — and on every render, so a STREAMING cell keeps its
     // match count honest as new output lands. A LAYOUT effect, so the count lands in the same commit as the
     // query: as a plain effect it ran a frame later, and in between the bar showed the query beside the OLD
@@ -844,7 +885,7 @@ export function useFind(box: { current: HTMLElement | null }, reveal: (el: HTMLE
     useLayoutEffect(() => {
         if (!findOpen || !box.current) return;
         try {
-            const rs = rangesFor(box.current, q, cs);
+            const rs = rangesFor(searchRoot(box.current), q, cs);
             setCount(rs.length);
             paintFind(rs, rs.length ? rs[Math.min(idx, rs.length - 1)] : null);
         } catch (e) { console.error("ml find:", e); setCount(0); }
@@ -852,7 +893,7 @@ export function useFind(box: { current: HTMLElement | null }, reveal: (el: HTMLE
     useEffect(() => {
         const el = box.current;
         if (!findOpen || !q || !el) return;
-        const rs = rangesFor(el, q, cs);
+        const rs = rangesFor(searchRoot(el), q, cs);
         const r = rs[Math.min(idx, Math.max(rs.length - 1, 0))];
         // Purely an affordance: where there's no layout to measure (jsdom) or the range went stale mid-stream,
         // skip it. Never let it throw — the match is still painted and counted.
@@ -1295,8 +1336,12 @@ export function CodeRender({ d, failLine, ctx, failed }: { d: Extract<RenderDesc
     // The annotator has to number the lines the READER sees, and `Code` beautifies JS internally — so the
     // source it will draw is derived here rather than assumed to be `d.text`.
     const shown = displaySource(d.text, d.lang, d.format, d.marks);
+    const block = useRef<HTMLDivElement>(null);
+    const find = useCodeFind(block);
     return (
-        <div class="code-block" data-cite="in" data-rev={rv} data-py-map={map ? JSON.stringify(map) : undefined}>
+        <div class="code-block" data-cite="in" data-rev={rv} data-py-map={map ? JSON.stringify(map) : undefined}
+            ref={block} tabIndex={0} onKeyDown={find.onKey}>
+            {find.bar ? <div class="code-find">{find.bar}</div> : null}
             {d.revision ? <CodeDiff revision={d.revision} after={shown} lang={d.lang === "python" ? "python" : "javascript"} hash={ctx?.hash} failed={failed} /> : null}
             {ctx ? <CodeTools ctx={ctx} lang={d.lang === "python" ? "python" : "javascript"} src={shown} /> : null}
             {/* Said out loud, because the rendered text is not always what the caller typed: `exec` expands

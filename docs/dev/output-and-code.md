@@ -40,6 +40,18 @@ inherits everything: a height cap (Settings → Appearance, per-cell drag-to-res
 CSS Custom Highlight API so the syntax highlighting underneath is untouched). `exec`'s Out is a rendered cell
 too (console / value / error sections), matching python's instead of a raw blob.
 
+*The same find in a rendered CODE BLOCK.* The find is a hook, `useFind(box, reveal, within?)`, so the python In
+and `CodeRender` (an exec's code, and a code block cited in an answer) search exactly as a cell does: focus the
+block, Ctrl+F. Three things differ, all because a code block does not scroll vertically on its own. The bar sits in
+a zero-height `position: sticky` holder (`.code-find`), so it stays on screen while you read further down a block
+taller than the panel; it takes the toolbar's corner, so `.code-tools` is hidden while it is open. A match is
+revealed by the nearest ancestor that scrolls, and only when it is out of view, so stepping through matches already
+on screen never moves the panel. And the search covers only `pre.code`, not the retry diff above it, which would
+double every hit. In every find, cell or block, text that is on screen but is not the content is skipped
+(`FIND_SKIP`: the line-number gutter, a tooltip's hidden prose, a margin note, the toolbar and the bar itself):
+"3" used to match gutter digits, and a JSON tree's key descriptions matched as invisible hits. Real layout is
+covered by `tests/e2e/code-block-find.spec.mjs`.
+
 *Per-line timestamps (the EXECUTOR stamps them).* Streamed output carries a **produced-at gutter** — when each
 line actually happened, not when the UI saw it. `ctx.stream(text, ts?)` lets the producer stamp the instant:
 python stamps in the Pyodide **worker** (the chunk then crosses worker → offscreen → SW → page, so anything
