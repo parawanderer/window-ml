@@ -8,7 +8,7 @@ import { JSDOM } from "jsdom";
 import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
 
-let h, render, OutputCell, RenderPanel, findMatches, atBottomOf, scrollerX, doc;
+let h, render, OutputCell, RenderPanel, ValueOut, findMatches, atBottomOf, scrollerX, doc;
 
 before(async () => {
     const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
@@ -24,7 +24,7 @@ before(async () => {
     // Load preact through require, NOT `import("preact")`: tsx compiles the .tsx component to CJS, so an
     // ESM import here would be a SECOND preact instance and its hooks would have no current component.
     ({ h, render } = require_("preact"));
-    ({ OutputCell, RenderPanel, findMatches, atBottomOf, scrollerX } = await import("../src/sidebar/render-panel.tsx"));
+    ({ OutputCell, RenderPanel, ValueOut, findMatches, atBottomOf, scrollerX } = await import("../src/sidebar/render-panel.tsx"));
 });
 
 // Preact defers effects to a rAF tick, and the find bar computes its match count IN an effect — so a
@@ -305,6 +305,71 @@ test("code block find: the block and an output cell share ONE owner", async () =
     await tick();
     assert.ok(cell.querySelector(".r-find"), "find moves to the cell");
     assert.equal(block.querySelector(".r-find"), null, "and closes in the block");
+});
+
+/* ---------------- a returned VALUE as a JSON tree ---------------- */
+
+const mountValue = async (text) => {
+    const host = doc.getElementById("root");
+    render(null, host);
+    render(h(ValueOut, { text }), host);
+    await tick();
+    return host.querySelector(".r-outcell");
+};
+const treeBtn = (cell) => [...cell.querySelectorAll(".r-outcorner button")].find(b => /^(tree|text)$/.test(b.textContent));
+
+test("value tree: text by default; the corner button draws the tree and back", async () => {
+    const cell = await mountValue(`{"name":"qwen3","sizes":[1,2,3]}`);
+    assert.ok(cell.querySelector("pre.code"), "text first: it is what the model read");
+    const btn = treeBtn(cell);
+    assert.ok(btn, "an object gets the button");
+    btn.click(); await tick();
+    assert.ok(cell.querySelector(".jt-value .jt-node"), "the tree is drawn");
+    assert.equal(cell.querySelector("pre.code"), null);
+    assert.match(cell.querySelector(".jt-value").textContent, /name:"qwen3"/);
+    treeBtn(cell).click(); await tick();
+    assert.ok(cell.querySelector("pre.code"), "and back to the text");
+});
+
+test("value tree: no button for a value that is not an object or array", async () => {
+    for (const text of [`42`, `"a string"`, `plain words`, `{'python': True}`]) {
+        const cell = await mountValue(text);
+        assert.equal(treeBtn(cell), undefined, text);
+    }
+});
+
+test("value tree: a CLIPPED value draws the part that arrived and says where it was cut", async () => {
+    const whole = JSON.stringify({ models: Array.from({ length: 30 }, (_, i) => ({ name: `m${i}`, size: i })) });
+    const text = `${whole.slice(0, 300)}… [+${whole.length - 300} chars truncated]`;
+    const cell = await mountValue(text);
+    treeBtn(cell).click(); await tick();
+    const models = [...cell.querySelectorAll(".jt-row.jt-branch")].find(r => /models/.test(r.textContent));
+    assert.match(models.textContent, /items, cut \]/, "the collapsed preview already says the array was cut");
+    models.click(); await tick();
+    // The text ends partway through a row object, so the cut is inside the LAST row: it says so while folded too.
+    const kids = [...models.parentElement.children].filter(e => e.classList.contains("jt-node"));
+    const lastRow = kids.at(-1).querySelector(".jt-row.jt-branch");
+    assert.match(lastRow.textContent, /cut \}/, "the last row's preview says it was cut");
+    assert.equal(kids.slice(0, -1).some(k => /cut/.test(k.textContent)), false, "no earlier row claims a cut");
+    lastRow.click(); await tick();
+    const cut = cell.querySelector(".jt-cut");
+    assert.ok(cut, "a cut row inside the open row object");
+    assert.equal(cut.textContent, `… cut here: ${(whole.length - 300).toLocaleString("en-US")} more characters were not kept`);
+    assert.equal(kids.at(-1).contains(cut), true, "inside the last row, where the text ended");
+});
+
+test("value tree: a long array draws a page of members, then 'show more'", async () => {
+    const cell = await mountValue(JSON.stringify(Array.from({ length: 450 }, (_, i) => i)));
+    treeBtn(cell).click(); await tick();
+    const count = () => cell.querySelectorAll(".jt-value .jt-number").length;
+    assert.equal(count(), 200);
+    const more = cell.querySelector(".jt-more");
+    assert.equal(more.textContent, "show 200 more of 250");
+    more.click(); await tick();
+    assert.equal(count(), 400);
+    cell.querySelector(".jt-more").click(); await tick();
+    assert.equal(count(), 450);
+    assert.equal(cell.querySelector(".jt-more"), null);
 });
 
 test("output cell: dragging the grip resizes THIS cell only", async () => {

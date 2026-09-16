@@ -1737,6 +1737,13 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 
 /* Zero-dep JSON tree (DevTools-console style). */
 .jt-node { }
+/* A returned value drawn as a tree (ValueOut's "tree" button): room for the corner button on the first row. */
+.jt-value { padding: 2px 44px 2px 4px; }
+/* The row where a clipped value's text ended, in the container that was still open there. */
+.jt-cut { color: var(--fg-faint); font-style: italic; }
+/* "show N more": an open container draws its members a page at a time. */
+.jt-more { font: inherit; font-size: 0.95em; padding: 0 4px; color: var(--accent); background: none; border: none; cursor: pointer; }
+.jt-more:hover { text-decoration: underline; }
 .jt-row { display: flex; align-items: baseline; gap: 4px; font: 0.86em/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .jt-row.jt-clickable { cursor: pointer; }
 .jt-row.jt-clickable:hover { background: var(--panel-2); border-radius: 3px; }

@@ -20,6 +20,8 @@ import {
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
 import { deepestUserLine } from "../py-format";
+import { JsonNode, type JsonSchemaNode } from "./json-tree";
+export { JsonNode, JtKey, jtPreview, type JsonSchemaNode } from "./json-tree";
 import { RenderPanel, OutputCell, SeenSplit, RanFor, RunningFor, inLineMap, type CodeCtx } from "./render-panel";
 import { ReplyBubble } from "./reply";
 import { CodeExplain, codeOf } from "./summaries";
@@ -486,66 +488,6 @@ export function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: num
 // The agent run's setup (model, maxSteps, tools, env/vision/systemAppend, + the resolved
 // system prompt) — a collapsed block at the top, the agent analogue of chat's
 // OptionsBlock.
-// A zero-dep collapsible JSON tree (DevTools-console style): objects/arrays fold with a one-line
-// preview, primitives render inline + typed. Used to inspect the agent's full tool definitions.
-export function jtPreview(v: object): string {
-    if (Array.isArray(v)) return v.length ? `[ ${v.length} item${v.length === 1 ? "" : "s"} ]` : "[ ]";
-    const keys = Object.keys(v);
-    if (!keys.length) return "{ }";
-    return `{ ${keys.slice(0, 4).join(", ")}${keys.length > 4 ? ", …" : ""} }`;
-}
-// A JSON-schema node (as much as we read of it): its own `description`, and children by `properties`
-// (object) or `items` (array). Passed alongside a value so JsonNode can annotate keys with their schema
-// description — at ANY depth, not just the top level (nested-object args get tooltips too).
-export interface JsonSchemaNode { description?: string; properties?: Record<string, JsonSchemaNode>; items?: JsonSchemaNode; }
-// A JSON key. When the schema gives it a description, it becomes a hoverable tooltip (same .tt/.tt-pop as
-// elsewhere) + a dotted underline so you can tell which keys carry docs — a debugging affordance over raw args.
-export function JtKey({ name, desc, unknown }: { name: string; desc?: string; unknown?: boolean }) {
-    if (unknown) return <span class="tt jt-key jt-key-unknown" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip">Not in this tool's parameter schema — likely a hallucinated argument, so the tool will ignore it or error.</span></span>;
-    // The description comes from the tool's own JSON Schema, which is written in markdown — backticked
-    // identifiers, mostly. Printed raw it showed the backticks, which reads as a rendering that gave up.
-    if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip"><TipText md={desc} /></span></span>;
-    return <span class="jt-key">{name}:</span>;
-}
-/** A JSON TREE — the raw args, a tool's parameter schema. Collapsible by default; `allOpen` makes it
- *  non-collapsible at EVERY depth, which is what the raw In view passes so nothing can be folded away
- *  from a Ctrl+F. Keys carry their schema `description` as a tooltip, and one not in the schema is
- *  flagged as a likely hallucinated argument. */
-export function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean }) {
-    const branch = !!v && typeof v === "object";
-    const [open, setOpen] = useState(allOpen || (defaultOpen ?? depth < 1));   // allOpen → expanded at EVERY depth (the raw In view)
-    const pad = { paddingLeft: `${depth * 13}px` };
-    if (!branch) {
-        const t = v === null ? "null" : typeof v;
-        return <div class="jt-row" style={pad}>
-            {k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null}
-            <span class={`jt-val jt-${t}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}</span>
-        </div>;
-    }
-    const arr = Array.isArray(v);
-    const entries: [string, unknown][] = arr
-        ? (v as unknown[]).map((x, i) => [String(i), x])
-        : Object.entries(v as Record<string, unknown>);
-    // Resolve each child's schema node: an array's elements share `items`; an object's are `properties[key]`.
-    const childOf = (ck: string): JsonSchemaNode | undefined => arr ? schema?.items : schema?.properties?.[ck];
-    // Only flag "not in schema" when this node's schema actually DEFINES its keys (a real `properties` map) —
-    // otherwise we don't know the allowed shape and mustn't false-flag. Arrays have no per-key schema.
-    const props = !arr && schema?.properties && typeof schema.properties === "object" ? schema.properties as Record<string, unknown> : null;
-    // allOpen (the raw In view) is non-collapsible → drop the chevron, so the opening brace isn't pushed
-    // right of the closing one and keys indent cleanly under it.
-    const collapsible = !allOpen;
-    return <div class="jt-node">
-        <div class={`jt-row jt-branch${collapsible ? " jt-clickable" : ""}`} style={pad} role={collapsible ? "button" : undefined} onClick={collapsible ? () => setOpen(o => !o) : undefined}>
-            {collapsible ? <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span> : null}
-            {k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null}
-            {open ? <span class="jt-brace">{arr ? "[" : "{"}</span> : <span class="jt-preview">{jtPreview(v as object)}</span>}
-        </div>
-        {open ? <>
-            {entries.map(([ek, ev]) => <JsonNode key={ek} k={arr ? undefined : ek} v={ev} depth={depth + 1} schema={childOf(ek)} desc={arr ? undefined : childOf(ek)?.description} unknown={!!props && !(ek in props)} allOpen={allOpen} />)}
-            <div class="jt-row" style={pad}><span class="jt-brace">{arr ? "]" : "}"}</span></div>
-        </> : null}
-    </div>;
-}
 // The raw In view: an always-expanded, schema-annotated JSON tree (hover a key with a schema description
 // for its docs). A tree isn't selectable like the old text block, so it carries a COPY button. And anything
 // that isn't a plain object/array — or that won't serialize — falls back to the old code renderer, which is

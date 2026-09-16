@@ -19,6 +19,8 @@ import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmt
 import { markdown, truncate, pretty, highlight } from "./format";
 import { codeNotes, notesState, notesHidden, fetchLineNotes, toggleLineNotes } from "./summaries";
 import { Prose } from "./prose";
+import { JsonNode, JT_CUT } from "./json-tree";
+import { parseLooseJson } from "../json-repair";
 import { notesByLine } from "./annotate";
 import {
     openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText, stepKey, displaySource, cursorTipOn, PointerChip, TipText,
@@ -1182,7 +1184,7 @@ function PyOutBody({ id, d, marks, lineMap, fill }: { id: PyOutSectionId; d: Ext
         // In a cell like the output above it: a returned value can be as long as anything printed on the way
         // there, and it is the half you most often want to search — so it is capped, scrollable and
         // Ctrl+F-able by being wrapped, rather than by each section inventing its own.
-        case "value": return <OutputCell fill={fill}><Code text={String(d.value)} lang="json" /></OutputCell>;
+        case "value": return <ValueOut text={String(d.value)} fill={fill} />;
     }
 }
 
@@ -1389,6 +1391,42 @@ function ExecError({ text, line, map }: { text: string; line?: number; map?: num
     );
 }
 
+/** Put the "cut here" marker where a clipped value's text ended: the last member of the innermost container that
+ *  was still open. Mutates `value`, which is a fresh parse. */
+function markCut(value: object, path: (string | number)[]): object {
+    let node: unknown = value;
+    for (const k of path) node = (node as Record<string | number, unknown>)?.[k];
+    if (Array.isArray(node)) node.push(JT_CUT);
+    else if (node && typeof node === "object") (node as Record<string, unknown>)["…"] = JT_CUT;
+    return value;
+}
+
+/** A tool's returned VALUE (exec, python_exec): the JSON text exactly as the model got it, plus a corner button that
+ *  draws it as a collapsible JSON TREE whenever it is an object or array. A value clipped for the UI (the
+ *  `… [+N chars truncated]` note) still gets its tree: the part that arrived whole, closed at the cut, with a row
+ *  saying where the cut was. Text stays the default, since it is what the model read and what Ctrl+F searches. */
+export function ValueOut({ text, fill }: { text: string; fill?: boolean }) {
+    const [asTree, setAsTree] = useState(false);
+    const loose = useMemo(() => parseLooseJson(text), [text]);
+    // Re-parsed rather than shared with `loose`, because marking the cut mutates the value.
+    const tree = useMemo(() => {
+        if (!asTree || !loose) return null;
+        const fresh = parseLooseJson(text)!;
+        return fresh.cutPath ? markCut(fresh.value, fresh.cutPath) : fresh.value;
+    }, [asTree, text]);
+    if (!loose) return <OutputCell fill={fill}><Code text={text} lang="json" /></OutputCell>;
+    const dropped = loose.droppedChars;
+    const cut = `… cut here${dropped != null ? `: ${dropped.toLocaleString("en-US")} more characters were not kept` : ""}`;
+    const tip = asTree ? "Show the value as text"
+        : `Show the value as a collapsible JSON tree${loose.repaired ? ". The text was cut off, so the tree ends at the last value that arrived whole." : ""}`;
+    const corner = <button class={`code-tool${asTree ? " on" : ""}`} aria-pressed={asTree} {...cursorTipOn(tip)} onClick={() => setAsTree(v => !v)}>{asTree ? "text" : "tree"}</button>;
+    return (
+        <OutputCell fill={fill} corner={corner}>
+            {tree ? <div class="jt-value"><JsonNode v={tree} defaultOpen cut={cut} /></div> : <Code text={text} lang="json" />}
+        </OutputCell>
+    );
+}
+
 function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][]; live?: boolean; ranMs?: number; ranSince?: number; lineMap?: number[] | null; remoteMs?: { durationMs: number; bootMs?: number } | null }) {
     return (
         <div class="r-python r-py-out">
@@ -1402,7 +1440,7 @@ function ExecOutRender({ d, marks, live, ranMs, ranSince, lineMap, remoteMs }: {
             </PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><OutputCell text><ExecError text={d.error} line={d.errorLine} map={lineMap} /></OutputCell></PyOutSection> : null}
-            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><OutputCell><Code text={d.value} lang="json" /></OutputCell></PyOutSection> : null}
+            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><ValueOut text={d.value} /></PyOutSection> : null}
             {!d.stdout ? <RanFor live={live} ms={ranMs} since={ranSince} remote={remoteMs} /> : null}
         </div>
     );
