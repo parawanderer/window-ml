@@ -564,3 +564,19 @@ test("chat_metadata: capacityLines lists each device, the VRAM total and system 
     assert.deepEqual(capacityLines(null), ["devices: not reported (the server has no /api/info — a stock Ollama or a cloud backend)"]);
     assert.deepEqual(capacityLines(undefined), [], "a world that did not look prints nothing");
 });
+
+
+test("chat_metadata: the machine is described only for a LOCAL model — a cloud model's hardware is not this box's", async () => {
+    const run = async (local) => {
+        const { deps, calls } = makeDeps({ turns: [
+            { content: "", tool_calls: [{ id: "m1", name: "chat_metadata", arguments: {} }], usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 } },
+            reply("ok"),
+        ] });
+        const cap = { devices: [{ id: "0", name: "CUDA0", runner: "CUDA", totalBytes: 10 * 1024 ** 3, freeBytes: 4 * 1024 ** 3, unified: false }], unavailable: [], host: { cores: 8, totalBytes: 0, freeBytes: 0, swapFreeBytes: null }, unified: false };
+        deps.chatMeta = async () => ({ model: "m", contextWindow: 4096, capabilities: local ? ["tools"] : null, local, backend: null, systemTokens: 1, toolTokens: 1, capacity: cap });
+        await runAgentLoop("x", { tools: [{ name: "chat_metadata", capabilities: ["meta"] }] }, deps);
+        return calls.emits.find(e => e.tool === "chat_metadata" && !e.pending).result;
+    };
+    assert.match(await run(true), /device CUDA0: 6\.00 GiB in use of 10\.00 GiB/);
+    assert.doesNotMatch(await run(false), /device |VRAM across|system RAM|devices: not reported/, "cloud: no machine lines at all");
+});

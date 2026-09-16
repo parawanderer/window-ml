@@ -192,7 +192,9 @@ function formatChatMeta(
     const tps = fmtTokPerSec(rs);
     if (tps) L.push(`generation rate: ${tps} — ${rs.genBasis === "eval" ? "Ollama generation time (excludes network)" : rs.genBasis === "wall" ? "wall-clock per call (includes network/queue)" : "mixed (Ollama timing where available, else wall-clock)"}`);
     if (cm?.vramBytes) L.push(`VRAM resident: ${formatBytes(cm.vramBytes)}`);
-    L.push(...capacityLines(cm?.capacity));
+    // The machine only for a LOCAL model: a cloud model runs on someone else's hardware, so this box's cards and RAM
+    // say nothing about it — and printing them invites the model to reason about memory it is not using.
+    if (cm?.local === true) L.push(...capacityLines(cm.capacity));
     // conversation SHAPE — "messages" was ambiguous; split turns / your messages / model replies
     L.push(`conversation so far: ${role("user")} of your messages · ${role("assistant")} model replies${imgs ? ` · ${imgs} carried images` : ""}`);
     // Delegated sub-call tokens: `locate` is ALWAYS a delegated vision sub-call; `look` is only a sub-call

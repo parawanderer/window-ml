@@ -1259,8 +1259,9 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     let toolJson = "";
                     try { toolJson = JSON.stringify(toolset.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }))); } catch { /* skip */ }
                     // The machine: devices and memory, from /api/info (null on a server that does not serve it).
-                    let capacity: import("./resource-model").Capacity | null = null;
-                    try { const raw = await mlApi.info(); capacity = raw ? parseInfo(raw) : null; } catch { /* unknown */ }
+                    // Asked only for a LOCAL model: a cloud model's hardware is not this box's.
+                    let capacity: import("./resource-model").Capacity | null | undefined;
+                    if (local === true) { try { const raw = await mlApi.info(); capacity = raw ? parseInfo(raw) : null; } catch { capacity = null; } }
                     return { model: runModel, contextWindow, capabilities, vramBytes, local, backend, systemTokens: est(systemPrompt), toolTokens: est(toolJson), capacity };
                 },
             };

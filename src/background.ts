@@ -1214,9 +1214,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     const backend = fmt === "ollama" ? "Ollama (native)"
                         : /open-?webui|\/api\/chat\/completions/i.test(url) ? "OpenWebUI (server-side tools available)"
                         : "OpenAI-compatible";
-                    // The machine: devices and memory, from /api/info (null on a server that does not serve it).
-                    const capacity = await fetchOllamaInfo().then((raw) => (raw ? parseInfo(raw) : null)).catch(() => null);
-                    const overhead = { systemTokens: est(p.systemPrompt), toolTokens: est(toolJson), backend, capacity };
+                    const overhead = { systemTokens: est(p.systemPrompt), toolTokens: est(toolJson), backend };
                     if (!model) return { model, contextWindow: null, capabilities: null, ...overhead };
                     const [capabilities, resident] = await Promise.all([
                         modelCapabilities(config, model).catch(() => null),
@@ -1227,7 +1225,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     const contextWindow = lm && typeof lm.context_length === "number" ? lm.context_length : null;
                     const vramBytes = lm && lm.size_vram ? lm.size_vram : null;
                     const local = capabilities !== null;   // caps came back from Ollama /api/show → resident/local
-                    return { model, contextWindow, capabilities, vramBytes, local, ...overhead };
+                    // The machine (devices and memory, /api/info) — asked only for a LOCAL model; null where the route is missing.
+                    const capacity = local ? await fetchOllamaInfo().then((raw) => (raw ? parseInfo(raw) : null)).catch(() => null) : undefined;
+                    return { model, contextWindow, capabilities, vramBytes, local, capacity, ...overhead };
                 },
             },
         )
