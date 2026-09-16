@@ -87,7 +87,9 @@ not know throws `NotInDialect`, so the parser can be deliberately incomplete and
 - Expressions, by precedence climbing (the `BP` table): literals, identifiers, member access (`.x`, `?.x`, `[e]`,
   `?.[e]`), calls (`f(a)`, `?.(a)`, spread arguments), arrows and function expressions, array and object literals
   (with spread and shorthand), `new Ctor(…)` for a bare name, unary `! - typeof`, binary arithmetic and comparison,
-  `&& || ??`, the ternary, `await`, and a simple `=` whose target is a member.
+  `**` (tighter than `*`, right-associative; an unparenthesised unary operand on its left — `-2 ** 2`, `await x ** 2`
+  — is refused, as JavaScript refuses it; a BigInt operand is refused because its cost grows with the exponent inside
+  one operation), `&& || ??`, the ternary, `await`, and a simple `=` whose target is a member.
 - Statements: `const`/`let`/`var` with one declarator (or a shorthand array or object destructuring pattern),
   `if`/`else`, `for (const x of …)`, `try`/`catch`/`finally`, `return`, blocks, expression statements. The value of
   a program is its last expression statement or its `return`.

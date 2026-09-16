@@ -1695,3 +1695,48 @@ test("table facade head(): a prefix shorter than the head asked for still says i
     assert.deepEqual(t.head(-3).shape, [0, 1]);
     assert.throws(() => t.select("n"), (e) => e instanceof NotATable && /t\.col\("n"\)/.test(e.message));
 });
+
+
+// --- EXPONENTIATION (`**`) ------------------------------------------------------------------------------------------
+// Models write `bytes / 1024 ** 3` constantly, and every one of those surveys fell to the approval gate on the tokenizer.
+// A new operator is a dialect extension, so it gets the full treatment: semantics, escapes, halting, failure.
+
+test("`**`: JavaScript's semantics — tighter than `*`, right-associative, parenthesised unary allowed", async () => {
+    assert.deepEqual((await run(`return [1024 ** 3, 2 ** 3 ** 2, 2 * 3 ** 2, (-2) ** 2, 2 ** -1, -(2 ** 2), (2 ** 3) ** 2]`)).value,
+        [1073741824, 512, 18, 4, 0.5, -4, 64]);
+    // The survey that motivated it: bytes to GiB.
+    assert.equal((await run(`const gb = b => (Number(b) / 1024 ** 3).toFixed(1); return gb(101972967424)`)).value, "95.0");
+});
+
+test("`**`: an unparenthesised unary left operand is refused, as JavaScript refuses it — never silently computed", async () => {
+    // Real JS throws a SyntaxError for each: whether `-2 ** 2` means (-2)**2 or -(2**2) is what a reader gets wrong,
+    // so the dialect must not pick an answer the approved run would never give.
+    for (const js of [`return -2 ** 2`, `return typeof 2 ** 2`, `return !1 ** 2`]) await assert.rejects(run(js), outOfDialect, js);
+});
+
+test("ADVERSARIAL `**`: it produces a number from anything and reaches nothing", async () => {
+    const doc = kindWorld();
+    // A page object as an operand coerces to NaN; the operator hands back a number, never the object or the realm.
+    assert.ok(Number.isNaN((await run(`return document.body ** 2`, doc)).value));
+    assert.ok(Number.isNaN((await run(`return "x" ** 2`, doc)).value));
+    for (const js of [
+        `return (document.body ** 1).constructor`,
+        `return (2 ** 2).constructor.constructor("return globalThis")()`,
+        `return document ** window`,
+        `return (2 ** 3)["__proto__"]`,
+    ]) await assert.rejects(run(js, doc), refused, js);
+    // A BigInt operand is refused before the host computes it: its cost grows with the exponent, in one operation.
+    const big = { ...ML, info: async () => ({ n: 10n }) };
+    await assert.rejects(evalReadonly(`const i = await ml.info(); return i.n ** 2`, world(), big), outOfDialect);
+});
+
+test("HALTING `**`: a power is one bounded operation — repeated squaring ends at Infinity, at once", async () => {
+    const r = await inWorker(`return [..."abcdefghijklmnopqrst"].reduce((a) => a ** 2, 2) + (10 ** 10 ** 10)`);
+    assert.ok(!r.hung, "finished");
+    assert.equal(r.value, Infinity);
+});
+
+test("FAILURE `**`: a survey that computes with it and then leaves the dialect leaves nothing behind", async () => {
+    const doc = kindWorld();
+    await assert.rejects(run(`const gib = 2 ** 30; const x = [gib]; document.querySelector("#d").click(); return x`, doc), outOfDialect);
+});
