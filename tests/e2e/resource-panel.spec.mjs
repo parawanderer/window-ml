@@ -2210,6 +2210,15 @@ test("resource panel: pinching zooms the window — on the plot, the lane and th
         expect(await pinch(".rc-scrub-track", -60), "the strip consumes it").toBe(true);
         await expect.poll(winW, { timeout: 5000 }).toBeLessThan(widened);
         // A PLAIN wheel there still PANS rather than zooming — the two gestures must not collapse into one.
+        //
+        // "Does not resize" is measured against the window's OWN drift, not against zero. A live chart follows
+        // the clock (the axis ticks while a run is in flight), so the width can move on its own between two
+        // reads — and asserting an exact zero therefore asserts that not much wall-clock passed, which is the
+        // bet that passes on a laptop and fails on a loaded runner. So take a control sample over the same
+        // interval with NO input, and require the wheel to do no more than that.
+        const idleFrom = await winW();
+        await sleep(300);
+        const drift = Math.abs((await winW()) - idleFrom);
         const held = await winW();
         await frame.locator(".rc-scrub-track").evaluate((el) => {
             const r = el.getBoundingClientRect();
@@ -2218,7 +2227,7 @@ test("resource panel: pinching zooms the window — on the plot, the lane and th
         });
         await sleep(300);
         expect(Math.abs((await winW()) - held), "a plain wheel moves the window, it does not resize it")
-            .toBeLessThan(2);
+            .toBeLessThan(drift + 2);
     } finally {
         await ext.close();
         await fake.stop();
