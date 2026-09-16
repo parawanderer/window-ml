@@ -39,7 +39,8 @@ import { expandPointers } from "./pointer-macro";   // `@tool:` → a real deref
 import { htmlToMarkdown } from "./html-to-md";
 import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX, PIPE_REF } from "./text-pipe";
 import { citeParam } from "./tool-params";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, googleSheetCsvUrl, googleSheetId, externalSheetIds, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom";
+import { castTableColumns, tableFromDelimited } from "./table-data";
 import { makeAnswerFacade, finalizeAnswer, resolveOutputs } from "./answer-set";
 import { isSelfSourceUrl } from "./self-source";
 import { BUILD_INFO } from "./build-info.gen";
@@ -2098,11 +2099,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     throw new Error(`pythonExec — "${String(src)}" isn't a Google Sheets URL.`);
                 }
                 const { csv, name: sheetName } = await makeBackgroundTaskPromise<{ csv: string; name: string | null }>("FETCH_SHEET_REQUEST", "FETCH_SHEET_RESPONSE", { url: csvUrl });
-                const all = parseCsv(csv), columns = all[0] || [], dataRows = all.slice(1);
+                // The Sheets export is ALWAYS comma-separated, so it is named rather than discovered: a sheet
+                // whose first row holds no comma (one column, or a title cell) would otherwise be guessed at.
+                const sheet = tableFromDelimited(csv, { delimiter: ",", raw });
                 const source: TableSource = isCurrent
                     ? { kind: "sheet-current", label: (typeof document !== "undefined" && document.title) ? document.title : "current sheet" }
                     : { kind: "sheet-external", label: googleSheetId(String(src)) || String(src), name: sheetName };   // label = id (for the link), name = the real title (chip)
-                return { name, source, data: { kind: "rows", columns, rows: raw ? dataRows : castTableColumns(columns, dataRows) } };
+                return { name, source, data: { kind: "rows", columns: sheet.columns, rows: sheet.rows } };
             }
             const data = this._resolveTable(src, raw);
             return { name, source: { kind: "dom", label: typeof src === "string" ? src : elPath(src) }, data };
