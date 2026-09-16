@@ -66,7 +66,8 @@ This is the "confirm with a real poll" step above, done once instead of after th
 both traps because it never trusts an exit code.
 
 **Do not run it in the foreground and wait.** Use `run_in_background: true` and carry on; the result
-arrives as a task notification. A full run of this workflow is ~10 minutes; the e2e job (3 parallel workers) is the long pole.
+arrives as a task notification. The e2e suite runs as three shards (`e2e (1/3)` … `e2e (3/3)`, each with 3 workers) plus an `e2e` job that is
+green only when all three are; a full run is about 6 minutes, the slowest shard still being the long pole.
 
 **And having backgrounded it, do not then poll its output file.** `until [ -s "$OUT" ]; do sleep 20;
 done` is a foreground wait wearing a disguise, and it is the commoner mistake by far — it happens
@@ -97,7 +98,8 @@ words, the crop box, and expected-vs-actual. The workflow also writes a pointer 
 | --- | --- |
 | `test` (Node 22/24/26) | `npm run typecheck` + the whole fast suite, including real-CPython tests when the pyodide wheels cache hits |
 | `build` | that `dist/` still builds, and uploads a loadable extension |
-| `e2e` | the built extension in a real Chromium — navigation, the SW lifecycle, layout, anything jsdom cannot represent |
+| `e2e (N/3)` | the built extension in a real Chromium — navigation, the SW lifecycle, layout, anything jsdom cannot represent. One third of the suite each (`--shard=N/3`); read the failing SHARD's log, not the `e2e` job's |
+| `e2e` | the three shards' verdict in one check: red if any shard was not green. Its own log only says which result it saw |
 | `e2e-real-model` | non-blocking, on demand / nightly only — a free hosted model, never a gate |
 
 ## Known-bad, so you don't chase them
