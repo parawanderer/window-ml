@@ -4,8 +4,9 @@
 // no `this` rewrite. injected.ts imports `AgentHandle` (used by createAgent/agent), the two same-origin
 // auto-approve predicates (used by the page loop), and the `AgentControl` type.
 import type { NeutralMessage, MlApi, AgentOptions, MlAgentHandle, AgentResult, AgentTranscriptEntry } from "./contract";
-import { tableShape } from "./table-data";
-import type { TableLike } from "./table-data";
+import { tableShape, asTable } from "./table-data";
+import { currentHasTool } from "./tool-exec";
+import type { TableLike, Table } from "./table-data";
 import type { DerefRead, DerefMeta, TokenKind } from "./token-pipe";
 import type { DerefValue } from "./contract";
 import { jsonShape, jsonValue } from "./dom";
@@ -160,7 +161,7 @@ export class DerefText extends String implements DerefValue {
     readonly tool: string;
     readonly step: number;
     readonly label?: string;
-    readonly table?: TableLike;
+    readonly table?: Table;
     readonly image?: string;
     readonly latex?: string;
 
@@ -174,7 +175,7 @@ export class DerefText extends String implements DerefValue {
         this.tool = meta?.tool ?? "";
         this.step = meta?.step ?? -1;
         if (meta?.label) this.label = meta.label;
-        if (meta?.table) this.table = meta.table;
+        if (meta?.table) this.table = asTable(meta.table, { python: currentHasTool("python_exec") });
         if (meta?.image) this.image = meta.image;
         if (meta?.latex) this.latex = meta.latex;
         this.#repipe = repipe;

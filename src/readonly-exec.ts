@@ -21,6 +21,8 @@
 // drivers — `runAsync` at the top level, and `runSync` for the arrows a host method
 // invokes (`.map`/`.filter` call their callback synchronously, so an `await` in there
 // can't be honoured and throws NotInDialect → the whole survey falls back to approval).
+import { isTable } from "./table-brand";   // the ONE import: a table facade is recognised by BRAND, and the brand module is itself dependency-free
+
 
 export class NotInDialect extends Error {}
 export class Denied extends Error {}
@@ -621,8 +623,10 @@ const DENIED_PROPS = new Set([
 // leaked `window` can't do anything: `window.fetch(…)` → method not allowlisted.
 // A live DOM collection (NodeList/HTMLCollection) — array-like with a numeric length + an `item()`
 // method, but NOT an Array. Detected structurally (no cross-realm/global dependency; works in jsdom).
+// A table facade is ruled out FIRST: it throws on a key it does not answer to (that is its job), and `length`
+// is one, so probing its shape would trip the guard meant for a model's pandas reach.
 const isDomCollection = (x: any): boolean =>
-    x != null && typeof x === "object" && !Array.isArray(x) && typeof x.length === "number" && typeof x.item === "function";
+    x != null && typeof x === "object" && !Array.isArray(x) && !isTable(x) && typeof x.length === "number" && typeof x.item === "function";
 
 // WHAT MAY BE CALLED, SCOPED TO WHAT IT IS CALLED ON.
 //
@@ -649,7 +653,7 @@ const isDomCollection = (x: any): boolean =>
 // Set, and must not be mutable.
 type MethodKind =
     | "array" | "string" | "number" | "date" | "regexp" | "set" | "map" | "promise"
-    | "element" | "document" | "collection" | "style" | "console"
+    | "element" | "document" | "collection" | "style" | "console" | "table"
     | "Math" | "JSON" | "ObjectCtor" | "ArrayCtor" | "PromiseCtor";
 
 const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
@@ -691,6 +695,11 @@ const BY_KIND: Record<MethodKind | "*", readonly string[]> = {
     // readMember. No setProperty/removeProperty: mutation, and they throw on a computed style anyway.
     style: ["getPropertyValue", "getPropertyPriority", "item"],
     console: ["log", "info", "warn", "error", "debug"],
+    // A fetched or dereferenced TABLE (table-data.ts's facade). These four names are the reason the gate is
+    // scoped at all: `select` picks columns here and CHANGES THE PAGE'S TEXT SELECTION on an `<input>`, so it
+    // could never have joined a flat list. Each returns plain data or another facade, reads nothing outside
+    // the table, and mutates nothing — the facade itself refuses writes.
+    table: ["col", "select", "records", "head"],
     Math: ["max", "min", "floor", "ceil", "round", "abs", "pow", "sqrt", "sign", "trunc"],
     JSON: ["stringify", "parse"],
     ObjectCtor: ["keys", "values", "entries", "fromEntries", "assign"],
@@ -726,6 +735,10 @@ function kindOf(obj: unknown): MethodKind | null {
     if (obj === (JSON as unknown)) return "JSON";
     if (obj === (Math as unknown)) return "Math";
     if (typeof obj !== "object") return null;
+    // BY IDENTITY, before anything structural: a table facade is a Proxy that THROWS on an unknown key, so
+    // shape-testing it would trip its own guard — and a page must not be able to CLAIM the kind, which a
+    // property or a well-known symbol would allow (see table-brand.ts). Only `asTable` grants membership.
+    if (isTable(obj)) return "table";
     const o = obj as Record<string, unknown>;
     // A String OBJECT, not a primitive: `ml.dereference` returns a String subclass (DerefText) so a pointer
     // read is usable as the string it is. It must get the string methods, or the wrapper silently costs the
@@ -952,6 +965,18 @@ class Evaluator {
         const src = args[0] as { length?: unknown } | null;
         if (key === "from" && src !== null && typeof src === "object" && !Array.isArray(src)
             && typeof src.length === "number" && src.length > MAX_COLLECTION) big();
+        // A TABLE facade builds its result in one host call: `records()` makes an object per row with a key per
+        // column, `select` a row per row with a cell per name. Rows × width is the work, checked here because the
+        // budget never sees inside the call. (Page tables are capped at 200k rows, so `col` alone never trips it;
+        // a wide `records()` over a big one does.)
+        if (isTable(obj)) {
+            const t = obj as { rows: unknown[]; columns: unknown[] };
+            const width = key === "records" ? t.columns.length
+                : key === "select" ? (Array.isArray(args[0]) ? args[0].length : 0)
+                    : key === "head" ? t.columns.length : 1;
+            const height = key === "head" ? Math.min(t.rows.length, Math.max(0, Number(args[0] ?? 5)) || 0) : t.rows.length;
+            if (height * width > MAX_COLLECTION) big();
+        }
     }
     // Containers the SCRIPT created (plain object/array literals, `new`, and the fresh arrays/objects our
     // allowlisted methods return — .map/.filter/.slice/Object.entries/JSON.parse/spread/…). ONLY these may be

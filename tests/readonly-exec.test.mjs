@@ -1568,3 +1568,126 @@ test("a runtime throw reports the LINE it happened on — an interpreter has no 
     // there would be answering a question nobody asked.
     await assert.rejects(run(`while (true) {}`), (e) => outOfDialect(e) && e.mlLine === undefined);
 });
+
+// --- the TABLE FACADE kind ----------------------------------------------------------------------------------
+//
+// A real run hands the dialect a table as a FACADE (`asTable`, table-data.ts): the data plus col / select /
+// records / head, branded so the dialect recognises it by identity. That is a new receiver kind with four new
+// methods, so it gets the full AGENTS.md treatment: the intended use, the escapes, the halting/cost argument,
+// and what a failed script leaves behind.
+import { asTable, NotATable } from "../src/table-data.ts";
+
+const FACADE_DATA = () => ({
+    columns: ["id", "name", "qty"],
+    rows: [[1, "Ada", 3], [2, "Bob", 10], [3, "Cy", 7]],
+    shape: [3, 3],
+    dtypes: { id: "int64", name: "str", qty: "int64" },
+});
+/** A run's pointer, resolving to a facade over `data` (the real DerefText wraps its table the same way). */
+const facadeRun = (js, data = FACADE_DATA(), doc = world()) => evalReadonly(expandPointers(js).code, doc, {
+    ...ML,
+    dereference: async () => ({ text: "id,name,qty", type: "table", id: "a1b2c3d", tool: "fetch_url", step: 1, table: asTable(data) }),
+});
+
+test("table facade: the four operations work in the dialect, and their results are the script's to use", async () => {
+    assert.deepEqual((await facadeRun(`return @tool:a1b2c3d.table.col("qty")`)).value, [3, 10, 7]);
+    assert.deepEqual((await facadeRun(`return @tool:a1b2c3d.table.select(["name"]).rows`)).value, [["Ada"], ["Bob"], ["Cy"]]);
+    assert.deepEqual((await facadeRun(`return @tool:a1b2c3d.table.records()[1]`)).value, { id: 2, name: "Bob", qty: 10 });
+    assert.deepEqual((await facadeRun(`return @tool:a1b2c3d.table.head(2).shape`)).value, [2, 3]);
+    // A fresh array from `col` is script-local, so sorting it is fine — it is not the table's.
+    assert.deepEqual((await facadeRun(`const q = @tool:a1b2c3d.table.col("qty"); q.sort((a, b) => a - b); return q`)).value, [3, 7, 10]);
+    assert.equal((await facadeRun(`return @tool:a1b2c3d.table.records().filter(r => r.qty > 5).length`)).value, 2);
+});
+
+test("table facade: a pandas reach is a RUNTIME error the model reads — not an escalation to a human", async () => {
+    // Approving the survey cannot make `t.revenue` exist, so a prompt would be spent on a typo.
+    await assert.rejects(facadeRun(`return @tool:a1b2c3d.table.qty`), (e) => e instanceof NotATable && !outOfDialect(e) && /t\.col\("qty"\)/.test(e.message));
+    await assert.rejects(facadeRun(`return @tool:a1b2c3d.table.groupby("name")`), (e) => !outOfDialect(e));
+    // And it is catchable in-dialect, like any runtime error.
+    assert.equal((await facadeRun(`try { @tool:a1b2c3d.table.qty } catch (e) { return "caught" }`)).value, "caught");
+});
+
+test("ADVERSARIAL (table facade): the kind cannot be FORGED — a lookalike gets no table methods", async () => {
+    // A page cannot mint the brand. An object with the right shape and the right method names is still an
+    // object, and on an `<input>` `select` stays the page-mutating method it is.
+    const doc = kindWorld();
+    await assert.rejects(run(`const fake = { columns: [], rows: [], shape: [0, 0], dtypes: {}, select() { return 1 } }; return fake.select(["a"])`, doc), refused);
+    await assert.rejects(run(`return document.querySelector("#i").select(["id"])`, doc), outOfDialect);
+    // Spreading a facade copies its DATA and its methods into a plain object — which is not branded.
+    await assert.rejects(facadeRun(`const copy = { ...@tool:a1b2c3d.table }; return copy.records()`), refused);
+});
+
+test("ADVERSARIAL (table facade): its methods and results lead nowhere — no realm, no method extraction", async () => {
+    for (const js of [
+        `return @tool:a1b2c3d.table.constructor`,
+        `return @tool:a1b2c3d.table.__proto__`,
+        `return @tool:a1b2c3d.table.col.constructor("return globalThis")()`,
+        `return @tool:a1b2c3d.table.col.call(document, "x")`,
+        `return @tool:a1b2c3d.table.select.apply(document.querySelector("#i"), [[]])`,
+        `return @tool:a1b2c3d.table.head(1).constructor`,
+        `return @tool:a1b2c3d.table.records()[0].constructor.constructor("return 1")()`,
+        `return Object.getPrototypeOf(@tool:a1b2c3d.table)`,
+    ]) await assert.rejects(facadeRun(js, FACADE_DATA(), kindWorld()), refused, js);
+    // A method pulled off the facade is the inert sentinel: calling it through a local is not a call on a table,
+    // and neither is handing it to something that would call it.
+    await assert.rejects(facadeRun(`const f = @tool:a1b2c3d.table.col; return f("qty")`), outOfDialect);
+    await assert.rejects(facadeRun(`const { records } = @tool:a1b2c3d.table; return records()`), outOfDialect);
+    await assert.rejects(facadeRun(`return [["qty"]].map(@tool:a1b2c3d.table.select)`), refused);
+});
+
+test("ADVERSARIAL (table facade): nothing a survey does changes the table a later step reads", async () => {
+    const data = FACADE_DATA();
+    for (const js of [
+        `@tool:a1b2c3d.table.rows.push([4, "Zed", 99])`,
+        `@tool:a1b2c3d.table.columns.push("x")`,
+        `@tool:a1b2c3d.table.head(2).columns.push("x")`,
+        `@tool:a1b2c3d.table.head(2).rows[0][1] = "EDITED"`,
+        `@tool:a1b2c3d.table.select(["name"]).columns[0] = "EDITED"`,
+        `@tool:a1b2c3d.table.rows = []`,
+        `@tool:a1b2c3d.table.head(1).rows = []`,
+        `delete @tool:a1b2c3d.table.head(1).rows`,
+        `Object.assign(@tool:a1b2c3d.table.head(1), { rows: [] })`,
+        `@tool:a1b2c3d.table.dtypes.qty = "str"`,
+    ]) await facadeRun(`${js}; return 1`, data).catch(() => { /* refused or thrown — either way it must not have landed */ });
+    assert.deepEqual(data, FACADE_DATA(), "the source table is exactly as it was");
+});
+
+test("HALTING (table facade): one call's work is checked BEFORE it runs, and refused when too large", async () => {
+    // records() and select() build rows × width in a single host call, which no step budget can see into. A
+    // wide table past the collection cap is refused up front (→ approval), not built.
+    const rows = Array.from({ length: 1_100 }, (_, i) => Array.from({ length: 1_000 }, (_, j) => i + j));
+    const columns = Array.from({ length: 1_000 }, (_, j) => `c${j}`);
+    const wide = { columns, rows, shape: [1_100, 1_000], dtypes: Object.fromEntries(columns.map((c) => [c, "int64"])) };
+    for (const js of [
+        `return @tool:a1b2c3d.table.records().length`,
+        `return @tool:a1b2c3d.table.select(@tool:a1b2c3d.table.columns).shape`,
+        `return @tool:a1b2c3d.table.head(2000).shape`,
+    ]) {
+        const t0 = Date.now();
+        await assert.rejects(facadeRun(js, wide), (e) => e instanceof NotInDialect && /too large/.test(e.message), js);
+        assert.ok(Date.now() - t0 < 1_000, `${js} was refused before doing the work`);
+    }
+    // Under the cap the same calls run: the check is about size, not about the method.
+    assert.equal((await facadeRun(`return @tool:a1b2c3d.table.head(900).shape[0]`, wide)).value, 900);
+    assert.deepEqual((await facadeRun(`return @tool:a1b2c3d.table.select(["c0", "c1"]).shape`, wide)).value, [1_100, 2]);
+    // No facade method takes a callback, so none can grow what it walks or recurse — the argument that halting
+    // needs is only this size check.
+});
+
+test("FAILURE (table facade): a survey that uses the table and then leaves the dialect leaves the table intact", async () => {
+    const data = FACADE_DATA();
+    await assert.rejects(facadeRun(`const h = @tool:a1b2c3d.table.head(2); const q = @tool:a1b2c3d.table.col("qty"); q.push(1); document.querySelector("#d").click()`, data, kindWorld()), outOfDialect);
+    assert.deepEqual(data, FACADE_DATA());
+});
+
+test("table facade head(): a prefix shorter than the head asked for still says it is a prefix, and dtypes are the source's", () => {
+    const t = asTable({ columns: ["n"], rows: [[1], [2]], shape: [50_000, 1], dtypes: { n: "float64" }, truncated: true });
+    const h = t.head(10);
+    assert.deepEqual(h.shape, [10, 1]);
+    assert.equal(h.truncated, true, "10 rows asked, 2 held: the head is missing rows");
+    assert.equal(t.head(2).truncated, undefined, "2 asked, 2 held: a complete head");
+    assert.equal(h.dtypes.n, "float64", "not re-measured from the two rows held (which look int64)");
+    assert.notStrictEqual(h.columns, t.columns, "a copy, so pushing to it cannot rewrite the source");
+    assert.deepEqual(t.head(-3).shape, [0, 1]);
+    assert.throws(() => t.select("n"), (e) => e instanceof NotATable && /t\.col\("n"\)/.test(e.message));
+});

@@ -114,7 +114,12 @@ test("DerefText carries what the loop knows about the pointer", () => {
     assert.equal(v.tool, "python_exec");
     assert.equal(v.step, 3);
     assert.equal(v.label, "the pricing table");
-    assert.deepEqual(v.table, { columns: ["a", "b"], rows: [[1, 2]] });
+    // The table arrives as the FACADE, so the pointer's table behaves like every other table in the codebase
+    // — same data, plus the four operations, and a throw instead of `undefined` on a pandas reach.
+    assert.deepEqual(v.table.columns, ["a", "b"]);
+    assert.deepEqual(v.table.rows, [[1, 2]]);
+    assert.deepEqual(v.table.records(), [{ a: 1, b: 2 }]);
+    assert.throws(() => v.table.groupby, /not a pandas DataFrame/);
     assert.equal(v.text, "a,b\n1,2");
 });
 

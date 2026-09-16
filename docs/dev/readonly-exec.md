@@ -252,6 +252,36 @@ to grow a collection while iterating it — the halting argument the collection 
 than re-made. Both have tests; a new kind of value flowing through an existing surface gets the contract
 re-checked even when no construct was added.
 
+### The table facade: a receiver kind of its own
+
+Every table a caller receives is a FACADE (`asTable`, table-data.ts; the `Table` type in contract.ts): the data
+above, plus `col(name)`, `select(names)`, `records()` and `head(n)`, and a Proxy that THROWS on any other key
+instead of answering `undefined` — `t.revenue` or `t[["a","b"]]` gets a message naming `t.col("revenue")` or
+`t.select([...])`. That one did need the dialect, as the `table` kind in `BY_KIND`:
+
+- **Recognised by BRAND, never by shape.** `table-brand.ts` holds a WeakSet that only `asTable` adds to, and
+  `kindOf` checks it before anything structural. A shape test would trip the facade's own throw, and a
+  property or `Symbol.for` brand could be copied by a page onto an `<input>` — whose `select()` is the
+  page-mutating method this whole scoping exists to keep out. A spread copy of a facade is a plain object, and
+  gets nothing.
+- **The facade is ruled out before structural probes.** `isDomCollection` reads `.length` and `.item`; on a
+  facade that throws. Any new structural probe over arbitrary values must check `isTable` first.
+- **A pandas reach is a RUNTIME error**, reported to the model and catchable in-dialect: no approval can make
+  `t.revenue` exist.
+- **Cost is checked BEFORE the call** (`preflight`): `records()`, `select()` and `head()` build rows × width in
+  one host call, which the step budget never sees, so over `MAX_COLLECTION` cells they are refused (→
+  approval). None of the four takes a callback, so none can grow what it walks or recurse; size is the whole
+  halting argument.
+- **Nothing reaches the source.** Results are fresh (owned by the script, so `col(...).sort()` is fine); `head`
+  and `select` copy the column list and keep the SOURCE's dtypes rather than re-measuring a prefix; the facade
+  refuses set, delete and defineProperty; the source's own arrays are not owned, so the ownership gate refuses
+  mutating them through any path.
+- **A prefix stays a prefix.** `head(n)` counts only its rows, except over a truncated table holding fewer than
+  `n`, where it is still missing rows and keeps `truncated`.
+
+Tests: the `table facade` block at the end of `tests/readonly-exec.test.mjs` (use, forgery, escapes, mutation
+through every path, the pre-call size check with its timing, a failed survey leaving the table intact).
+
 ## Where it is called
 
 - **Page-hosted runs**: `tryReadonly` in `injected.ts` expands pointers, binds the run's resolver, calls

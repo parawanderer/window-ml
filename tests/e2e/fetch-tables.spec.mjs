@@ -235,3 +235,36 @@ test("python_exec loads the fetched table from the cache — no refetch, no read
     expect(promised, "the fetch preview carries a dtypes line").toBeTruthy();
     expect(tools[1], "pandas printed the same dtypes the preview promised").toContain(promised);
 });
+
+// The FACADE through a real run: a fetched table used from read-only `exec`. Unit tests pin the dialect; only this
+// proves a facade result survives what happens after the survey — the tool result, the debug stream, the
+// sidebar — where a Proxy that reached a structured clone would throw instead of rendering.
+test("read-only exec uses the table facade: head() comes back as data, a pandas reach as an error the model reads", async () => {
+    const url = data.url + "/small.csv";
+    await fetchThroughAgent(url);   // into the page's fetch cache, which the dialect reads without egress
+    const before = fake.calls().length;
+    const gates = [];
+    fake.setScript([
+        { tool: "exec", args: { js: `const t = ml.fetch(${JSON.stringify(url)}).table; return t.head(2).records()` } },
+        { tool: "exec", args: { js: `return ml.fetch(${JSON.stringify(url)}).table.price` } },
+        { tool: "exec", args: { js: `const t = ml.fetch(${JSON.stringify(url)}).table; return t.select(["name", "qty"]).head(1)` } },
+        (req) => ({ content: req.messages.filter((m) => m.role === "tool").map((m) => m.content).join("\n---\n") }),
+    ]);
+    const run = page.evaluate(() => window.ml.agent("Survey the table.", { env: false, approvalRouting: "both" }));
+    const deadline = Date.now() + 40000;
+    while (Date.now() < deadline && fake.calls().length - before < 4) {
+        const pending = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+        for (const g of pending) { gates.push(g); await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), g.key); }
+        await new Promise((r) => setTimeout(r, 200));
+    }
+    const result = await run;
+    expect(gates, "every survey stayed in the read-only dialect: no approval was asked for").toEqual([]);
+    const tools = fake.calls().at(-1).messages.filter((m) => m.role === "tool").map((m) => m.content);
+    expect(tools.at(-3)).toContain('"name":"Ada"');
+    expect(tools.at(-3)).toContain('"name":"Bob"');
+    expect(tools.at(-3)).not.toContain("Cy");
+    expect(tools.at(-2)).toMatch(/not a pandas DataFrame/);
+    expect(tools.at(-2)).toMatch(/t\.col\("price"\)/);
+    expect(tools.at(-1)).toMatch(/"columns":\s*\[\s*"name",\s*"qty"\s*\]/);
+    expect(result.summary).toContain("---");
+});

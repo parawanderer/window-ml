@@ -9,7 +9,7 @@ import test from "node:test";
 import assert from "node:assert";
 import {
     tableFromDelimited, tableOf, tablePreview, sniffDelimiter, looksCsv,
-    namedColumns, dtypesOf, castTableColumns, parseCsv, hasHeaderRow, MAX_TABLE_ROWS,
+    namedColumns, dtypesOf, castTableColumns, parseCsv, hasHeaderRow, asTable, NotATable, MAX_TABLE_ROWS,
 } from "../src/table-data.ts";
 
 test("the delimiter is DISCOVERED, not assumed — comma, semicolon, tab and pipe all parse", () => {
@@ -259,4 +259,72 @@ test("dtypesOf reads the CAST values, so it describes what pandas will actually 
     assert.deepEqual(dtypesOf(["n"], [[1], [2]]), { n: "int64" });
     assert.deepEqual(dtypesOf(["n"], [[1], [null]]), { n: "float64" });
     assert.deepEqual(dtypesOf(["n"], []), { n: "object" });
+});
+
+// ---- the FACADE: a small real surface, and a throw instead of `undefined` ----
+//
+// The type describes itself in pandas' vocabulary, which invites pandas' SYNTAX. Plain JavaScript answers
+// `t[["a","b"]]` with `undefined`, and `undefined` flows into an answer without ever looking wrong — so the
+// contract here is that a pandas reach FAILS, loudly, naming the nearest thing that exists.
+
+const FACADE = () => asTable(tableFromDelimited("order_id,region,revenue\n1000,north,9.99\n1001,south,13.49\n1002,west,20.49"));
+
+test("the facade's four operations do what their pandas namesakes do", () => {
+    const t = FACADE();
+    assert.deepEqual(t.col("revenue"), [9.99, 13.49, 20.49]);
+    assert.deepEqual(t.select(["region", "revenue"]).columns, ["region", "revenue"]);
+    assert.deepEqual(t.select(["region", "revenue"]).rows[0], ["north", 9.99]);
+    assert.deepEqual(t.records()[0], { order_id: 1000, region: "north", revenue: 9.99 });
+    assert.deepEqual(t.head(2).rows, [[1000, "north", 9.99], [1001, "south", 13.49]]);
+    // The data stays reachable exactly as before — the facade ADDS, it does not replace.
+    assert.deepEqual(t.shape, [3, 3]);
+    assert.equal(t.dtypes.revenue, "float64");
+});
+
+test("head() is a smaller FRAME; select() keeps the row count it did not change", () => {
+    const t = FACADE();
+    assert.deepEqual(t.head(2).shape, [2, 3], "df.head(2).shape is (2, cols) — not the source's count");
+    assert.deepEqual(t.select(["region"]).shape, [3, 1], "choosing columns does not change how many rows there are");
+});
+
+test("a pandas reach THROWS and names the nearest real spelling", () => {
+    const t = FACADE();
+    // `t[["a","b"]]` reaches the proxy as the key "a,b" — an array stringifies on property access — which is
+    // the tell for the exact idiom, so the message can answer it precisely.
+    assert.throws(() => t[["region", "revenue"]], (e) => e instanceof NotATable && /t\.select\(\["region", "revenue"\]\)/.test(e.message));
+    assert.throws(() => t.revenue, (e) => e instanceof NotATable && /t\.col\("revenue"\)/.test(e.message));
+    // Something that is not a column at all gets the inventory instead of a guess.
+    assert.throws(() => t.groupby, (e) => e instanceof NotATable && /col\(name\) \/ select\(names\) \/ records\(\) \/ head\(n\)/.test(e.message));
+    assert.throws(() => t.col("nope"), (e) => e instanceof NotATable && /This table has: order_id, region, revenue/.test(e.message));
+});
+
+test("the python_exec hint appears ONLY when python_exec is actually available", () => {
+    const withPy = asTable(tableFromDelimited("a,b\n1,2"), { python: true });
+    const without = asTable(tableFromDelimited("a,b\n1,2"), { python: false });
+    assert.throws(() => withPy.groupby, /pass the table's source to python_exec/);
+    assert.throws(() => without.groupby, (e) => !/python_exec/.test(e.message), "advice for a tool the run does not have is worse than none");
+});
+
+test("the facade is READ-ONLY — it holds output a step already produced", () => {
+    const t = FACADE();
+    assert.throws(() => { t.rows = []; }, (e) => e instanceof NotATable && /read-only/.test(e.message));
+    assert.throws(() => { t.newThing = 1; }, NotATable);
+});
+
+test("INTEROP keys never throw — `await` and JSON.stringify read unknown objects speculatively", async () => {
+    const t = FACADE();
+    // `then` decides whether await treats this as a thenable. Throwing there breaks `await someTable`, which
+    // is exactly what a model writes after `ml.fetch`.
+    const awaited = await t;
+    assert.deepEqual(awaited.shape, [3, 3]);
+    const round = JSON.parse(JSON.stringify(t));
+    assert.deepEqual(round.columns, ["order_id", "region", "revenue"]);
+    assert.deepEqual(round.rows[0], [1000, "north", 9.99]);
+});
+
+test("a facade over a PREFIX keeps saying so — wrapping must not launder the sample", () => {
+    const t = asTable(tableOf(["a"], [[1], [2]], 50000));
+    assert.deepEqual(t.shape, [50000, 1]);
+    assert.equal(t.truncated, true);
+    assert.equal(t.select(["a"]).truncated, true, "a column subset of a prefix is still a prefix");
 });
