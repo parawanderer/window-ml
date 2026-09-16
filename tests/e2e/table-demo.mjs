@@ -88,15 +88,16 @@ const main = async () => {
         // The read-only survey. `ml.fetch` is CACHE-ONLY in the dialect, so this reads bytes the human already
         // approved — no egress, no prompt. It filters the parsed table rather than re-splitting the text.
         const SURVEY = [
-            `const t = ml.fetch(${JSON.stringify(SALES)}).table;`,
+            `const t = (await ml.fetch(${JSON.stringify(SALES)})).table;`,
             `const r = t.columns.indexOf("region"), u = t.columns.indexOf("units");`,
             `const west = t.rows.filter(row => row[r] === "west");`,
             `return { shape: t.shape, dtypes: t.dtypes, westRows: west.length, westUnits: west.reduce((a, row) => a + row[u], 0) };`,
         ].join("\n");
-        // The full exec, reaching the SAME table through the pointer minted by the fetch step. `@tool:` is
-        // resolved before the script runs, so it is not a promise and needs no await.
+        // The full exec, reaching the SAME table through the pointer the fetch step minted (it passed
+        // `token`). `@tool:` is resolved BEFORE the script runs, so it is not a promise and needs no await —
+        // and a LABEL is a legal reference form, so the demo can write one down without knowing the id.
         const VIA_POINTER = [
-            `const t = @tool:1.table;`,
+            `const t = @tool:"the sales table".table;`,
             `const rev = t.columns.indexOf("revenue");`,
             `const top = t.rows.slice().sort((a, b) => b[rev] - a[rev]).slice(0, 3);`,
             `console.log("columns:", t.columns.join(", "));`,
@@ -111,7 +112,9 @@ const main = async () => {
         ].join("\n");
 
         fake.setScript([
-            { tool: "fetch_url", args: { url: SALES } },
+            // `token` NAMES the output so a later step can point at it. Pointers are never minted
+            // automatically — an uncited output is never surfaced — so the model has to ask, as it does here.
+            { tool: "fetch_url", args: { url: SALES, token: "the sales table" } },
             { tool: "fetch_url", args: { url: `${data.url}/cities.csv` } },
             { tool: "fetch_url", args: { url: `${data.url}/stock.parquet` } },
             { tool: "fetch_url", args: { url: SALES, pipe: "grep west | head 3" } },
@@ -131,6 +134,9 @@ const main = async () => {
         await page.evaluate(() => {
             window.ml.agent("read the sales table and total revenue by region", {
                 approvalRouting: "both", extraTools: [window.ml.pythonTool()],
+                // Pointers are OFF by default (the HUD turns them on): without this no `@tool:` id is minted
+                // at all, and beat 6a has nothing to point at.
+                toolTokens: true,
             });
         });
 
@@ -153,12 +159,19 @@ const main = async () => {
         const steps = frame.locator(".astep");
         log(`\n(${await steps.count()} steps; ${gatesSeen} approval gate(s) opened in total)`);
 
-        /** Open one step and return the text of its Out block — what the MODEL was handed. */
+        // What the MODEL was handed, read from the TRANSCRIPT rather than off the screen. The rendered Out is
+        // a table element, so scraping it gives concatenated cells with no delimiters — fine to look at,
+        // useless to read in a log. The tool messages are the actual text, in order.
+        const toolMsgs = () => {
+            const last = fake.calls().at(-1);
+            return (last?.messages || []).filter((m) => m.role === "tool" && typeof m.content === "string").map((m) => m.content);
+        };
+        /** Open step `n` on screen (for the screenshot) and return the text the model got for it. */
         const outOf = async (n) => {
             const s = steps.nth(n);
             await s.locator(".astep-head").click().catch(() => {});
             await sleep(600);
-            return (await s.locator(".io-body").last().textContent().catch(() => "")) || "";
+            return toolMsgs()[n] || "(no tool message)";
         };
 
         // 1 — the CSV as a frame.

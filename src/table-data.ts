@@ -72,9 +72,15 @@ export function tableFromDelimited(text: string, opts: { delimiter?: string; raw
 }
 
 /** Assemble a {@link TableLike} from columns + already-cast rows — the one place `shape` and `dtypes` are
- *  derived, so every producer (CSV, a DOM table, a binary format) describes itself identically. Pure. */
-export function tableOf(columns: string[], rows: TableCell[][]): TableLike {
-    return { columns, rows, shape: [rows.length, columns.length], dtypes: dtypesOf(columns, rows) };
+ *  derived, so every producer (CSV, a DOM table, a binary format) describes itself identically. Pass
+ *  `rowCount` when `rows` is a PREFIX of a larger table: `shape` then reports the true size and `truncated`
+ *  is set, rather than the frame quietly describing the sample as though it were the whole. Pure. */
+export function tableOf(columns: string[], rows: TableCell[][], rowCount?: number): TableLike {
+    const total = rowCount ?? rows.length;
+    return {
+        columns, rows, shape: [total, columns.length], dtypes: dtypesOf(columns, rows),
+        ...(total > rows.length ? { truncated: true } : {}),
+    };
 }
 
 /** Header labels made usable as keys, the way pandas does it: a blank becomes `Unnamed: <position>`, and a

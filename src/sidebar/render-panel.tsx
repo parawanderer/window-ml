@@ -54,18 +54,6 @@ export function RenderElements({ items }: { items: { path: string; text?: string
         </div>
     );
 }
-/** A plain TABLE from a `table` render descriptor — the simple one. A DataFrame gets `PyDfTable`
- *  instead, which is the spreadsheet-shaped view with sorting, resizing and an index gutter. */
-export function RenderTable({ columns, rows }: { columns: string[]; rows: (string | number | boolean | null)[][] }) {
-    return (
-        <div class="r-table-wrap">
-            <table class="r-table">
-                <thead><tr>{columns.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
-                <tbody>{rows.map((row, i) => <tr key={i}>{row.map((c, j) => <td key={j} class={typeof c === "number" ? "r-td-num" : undefined}>{c == null ? "" : String(c)}</td>)}</tr>)}</tbody>
-            </table>
-        </div>
-    );
-}
 // The `locate` debug view: model + mode header, then (grounding) the VLM prompt, the
 // square the model saw with its box, and the element-location pass; (marks) just the
 // badged shot. Picked element at the bottom.
@@ -197,7 +185,7 @@ const csvField = (v: unknown): string => {
  *  `noCollapse` drops the hide/show control. Collapsing is for a LOG, where a wide table sits in a scrolling
  *  transcript you are reading past; in the bench the tab strip already decides what is on screen, so a
  *  second control for "don't show me this" is one that undoes the choice you just made with the first. */
-export function PyDfTable({ columns, rows, noCollapse }: { columns: string[]; rows: (string | number | boolean | null)[][]; noCollapse?: boolean }) {
+export function PyDfTable({ columns, rows, noCollapse, rowCount }: { columns: string[]; rows: (string | number | boolean | null)[][]; noCollapse?: boolean; rowCount?: number }) {
     const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
     const [collapsed, setCollapsed] = useState(false);
     const [sort, setSort] = useState<{ c: number; dir: 1 | -1 } | null>(null);
@@ -284,7 +272,7 @@ export function PyDfTable({ columns, rows, noCollapse }: { columns: string[]; ro
                         ))}</tbody>
                     </table>
                 </div>
-                {rows.length > PY_DF_ROWS ? <div class="dim r-py-more">… {rows.length - PY_DF_ROWS} more rows</div> : null}
+                {(rowCount ?? rows.length) > shown.length ? <div class="dim r-py-more">… {((rowCount ?? rows.length) - shown.length).toLocaleString("en-US")} more rows</div> : null}
             </>}
         </div>
     );
@@ -1339,7 +1327,10 @@ export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, li
                 <ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
         }
         case "code": return <CodeRender d={d} failLine={failLine} ctx={ctx} failed={failed} />;
-        case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
+        // The SAME grid a DataFrame gets (scroll-capped, sticky header, sort, copy-CSV, hide) — answer-render
+        // already made this call for a cited df, and a fetched CSV is the same kind of object. The bare
+        // alternative had no max-height, so a 200-row fetched table rendered as an unbroken wall in the step.
+        case "table": return <PyDfTable columns={d.columns} rows={d.rows} rowCount={d.rowCount} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
 /** The Markdown ladder as a resolution TREE: what was tried, what worked, what was never needed. Every rung is

@@ -919,6 +919,12 @@
                       ]
                     }
                   }
+                },
+                "rowCount": {
+                  "type": "number"
+                },
+                "truncated": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -1437,6 +1443,12 @@
                       ]
                     }
                   }
+                },
+                "rowCount": {
+                  "type": "number"
+                },
+                "truncated": {
+                  "type": "boolean"
                 }
               },
               "required": [

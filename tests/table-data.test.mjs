@@ -172,6 +172,19 @@ test("tableOf describes any producer's rows identically (a DOM table, a fetch, l
     assert.equal(t.delimiter, undefined);   // nothing was delimited
 });
 
+test("a PREFIX of a table still reports the whole table's size", () => {
+    // What a pointer to a fetched CSV holds: the render descriptor ships at most a couple of hundred rows to
+    // the UI and the export, so without the source count the pointer would describe a 50,000-row file as a
+    // 200-row one — a plausible number, and the one a model would then answer with.
+    const t = tableOf(["a"], [[1], [2]], 50000);
+    assert.deepEqual(t.shape, [50000, 1]);
+    assert.equal(t.truncated, true);
+    assert.equal(t.rows.length, 2);
+    assert.match(tablePreview(t), /\[50,000 rows x 1 columns\] \(first 2\)/);
+    // And a complete table is not marked truncated just because a count was passed.
+    assert.equal(tableOf(["a"], [[1], [2]], 2).truncated, undefined);
+});
+
 test("dtypesOf reads the CAST values, so it describes what pandas will actually get", () => {
     // Strings that look numeric but were not cast (raw mode) are object — the description must not claim
     // a dtype the DataFrame will not have.

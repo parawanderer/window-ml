@@ -751,7 +751,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // one does (`shape`, `dtypes`) rather than a bare grid — `dereference` and `ml.fetch` then hand
                 // back the same kind of object, which is the whole point of there being one table type.
                 const tbl = df ? tableOf(df.columns, df.rows)
-                    : r?.type === "table" ? tableOf(r.columns, r.rows) : undefined;
+                    : r?.type === "table" ? tableOf(r.columns, r.rows, r.rowCount) : undefined;
                 const looksJson = /^\s*[[{]/.test(result);
                 const kind: TokenKind = tbl ? "table"
                     : (r?.type === "image" || r?.type === "look") ? "image"

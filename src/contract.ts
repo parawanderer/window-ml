@@ -1054,7 +1054,10 @@ export type RenderDescriptor = (
     | { type: "code"; text: string; lang?: string; format?: boolean; note?: string; marks?: { start: number; end: number; from: string }[]; revision?: CodeRevision }
     // `null` is a real cell: a numeric column's blanks become null (pandas NaN) when a table is cast, and
     // RenderTable has always drawn them as empty — this type was simply narrower than both.
-    | { type: "table"; columns: string[]; rows: (string | number | boolean | null)[][] }
+    // `rowCount` is the SOURCE's row count when `rows` is only a PREFIX of it (a fetched CSV caps what it
+    // ships to the UI and the export). Without it a pointer to a 50,000-row table reports the 200 rows that
+    // happened to be drawn — a plausible wrong number, and the one a model would answer with.
+    | { type: "table"; columns: string[]; rows: (string | number | boolean | null)[][]; rowCount?: number; truncated?: boolean }
     | { type: "keyval"; pairs: [string, string][] }
     | { type: "elements"; items: { path: string; text?: string; index?: number }[] }
     // `locate`'s debug view as an ordered list of SUBSTEPS — each is one vision

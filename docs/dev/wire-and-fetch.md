@@ -31,6 +31,35 @@ resolution TREE in the In slot (`src/sidebar/fetch-ladder.ts` holds the labels o
 export sinks) — not decoration: a stub twin is a valid 200 Markdown document that is simply the wrong page.
 `pageInfo` reports a declared twin too, so an agent standing on a docs page knows to fetch rather than survey.
 
+**Tables (`csv`/`tsv`/`parquet` → `FetchResult.table`).** A table body is PARSED on the way through, into a
+pandas-shaped `TableLike` (`shape`, `columns`, `dtypes`, `rows` — contract.ts; the parsers are in
+`table-data.ts`). The CSV counterpart of `json`/`schema`, for the same reason: a caller that has to re-split
+the text is a caller that will get the separator wrong, which is exactly what `looksCsv` used to guarantee by
+assuming a comma. The delimiter is now DISCOVERED (`,` `\t` `;` `|`, by Papa Parse), so a semicolon export
+mislabelled `text/plain` stops classifying as prose.
+
+Three things about where the work happens, each load-bearing:
+
+**Delimited text parses PAGE-SIDE**, in `ml.fetch`'s `.then`, next to the `.markdown` distillation and for the
+same reason — the text has already crossed the message channel, so parsing there adds nothing to the wire,
+while parsing in the worker would send every row twice. **Parquet parses in the WORKER**, because the opposite
+is true: the bytes have no reason to reach the page at all, and a `TableLike` crosses far more cheaply than
+the file. Its `text` is a one-line description rather than the bytes, since every reader of `.text` expects
+something printable. **The decoder (hyparquet) is DYNAMICALLY imported** — `table-data.ts` is reachable from
+the page bundle through classification, and a static import would ship a Parquet decoder to every page the
+extension touches; deferred, esbuild tree-shakes it out of every bundle whose entry never calls it.
+
+Binary is detected before classification, never after: a Parquet body run through `res.text()` is already
+corrupt by the time anything could sniff it, so `rawGet` reads an ArrayBuffer whenever the type/extension
+makes it plausible, checks the `PAR1` magic at both ends, and decodes to text only when it was NOT Parquet.
+
+What the model gets is a `df.head()` plus `[N rows x M columns]` and the dtypes — the shape being the part a
+clip can never carry. `pipe` opts out (a model that wrote a scan wants its scan's lines), and `schema: true`
+answers with the frame. The RENDER descriptor ships at most `RENDER_TABLE_ROWS` rows to the sidebar and the
+export, but carries `rowCount`, so a pointer to a 50,000-row table does not describe itself as a 200-row one.
+`python_exec`'s `tables` takes the same URL and loads the parsed table out of the fetch cache — the cache is
+the gate, so it is not a new egress, and the sandbox never needs `read_csv` (it has no network anyway).
+
 **`ml.pipe(source, pipe)`** runs the text-pipe dialect over ANY string, not just one tool's output —
 `ml.pipe(await ml.fetch(url), "grep -i pricing | head -20")`. Named `pipe`, not `bash`: `PIPE_CMDS` includes
 `keys`/`values`/`schema`/`type`, which are not shell commands. A fetch result may be passed whole (its
