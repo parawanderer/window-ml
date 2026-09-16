@@ -2241,6 +2241,31 @@ const fetchResponse = (body, { contentType = "text/plain", url = "http://x/", st
     };
 };
 
+test("FETCH_URL: the size cap stops the READ — a 1 GB body is never pulled whole, then cut", async () => {
+    // The regression this guards: `res.text()` followed by a slice capped what was KEPT, after the whole body had
+    // been held. So the test counts what is PULLED from the body stream, and fails loudly if `text()` — which
+    // reads everything — is called at all.
+    const stats = { pulled: 0, textCalled: false };
+    const MB = 1_000_000;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => ({
+            ok: true, status: 200, url: call.url,
+            headers: { get: (h) => (String(h).toLowerCase() === "content-type" ? "text/plain" : null) },
+            body: { getReader: () => ({
+                read: async () => (stats.pulled >= 1000 ? { done: true } : (stats.pulled++, { done: false, value: new Uint8Array(MB).fill(0x61) })),
+                cancel: async () => {},
+            }) },
+            text: async () => { stats.textCalled = true; return "a".repeat(10); },
+        }),
+    });
+    const r = await bg.send({ type: "FETCH_URL", payload: { url: "https://api.example/huge.txt" } }, { tab: { id: 1, url: "https://api.example/" }, url: "https://api.example/" });
+    assert.equal(r.data.truncated, true, "the result says it was cut");
+    assert.ok(r.data.text.length <= 8 * MB, `kept ${r.data.text.length} chars`);
+    assert.ok(stats.pulled <= 10, `pulled ${stats.pulled} MB of a 1,000 MB body — the cap must stop the read`);
+    assert.equal(stats.textCalled, false, "text() reads the whole body; it must not be how a capped read is done");
+});
+
 test("FETCH_URL: exposes ONLY the safelisted response headers — never Cookie/Authorization/Set-Cookie", async () => {
     const bg = loadBackground({
         config: baseConfig(),
