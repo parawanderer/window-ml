@@ -855,7 +855,18 @@ test("cross-page (HUD card): a resume that navigates still shows the card on the
         { tool: "navigate", args: { url: "/step3" } },
         { content: "Resumed answer — the corner card must show THIS on step3." },
     ]);
-    await page.evaluate((h) => { window.postMessage({ __mlSessionSend: { hash: h, text: "Open the page at your current hash." } }, "*"); return true; }, hash);
+    // Post the resume until a model turn actually starts. `waitForMl` proves `window.ml` is up, but the
+    // session-send listener belongs to the page shell, which installs separately — so an early post can land
+    // on a window that is not listening yet and is simply dropped, and the test then waits 20s for a
+    // navigation that was never asked for. Re-posting is guarded on "no turn has started", so the resume
+    // cannot be delivered twice once one has.
+    const sendResume = () => page.evaluate((h) => { window.postMessage({ __mlSessionSend: { hash: h, text: "Open the page at your current hash." } }, "*"); return true; }, hash);
+    await sendResume();
+    await expect.poll(async () => {
+        if (fake.calls().length - before > 1) return true;    // the resumed turn reached the model
+        await sendResume().catch(() => {});                    // …still nobody listening: say it again
+        return fake.calls().length - before > 1;
+    }, { timeout: 20000 }).toBe(true);
     await expect.poll(() => page.url(), { timeout: 20000 }).toContain("/step3");
 
     // The corner HUD card must appear ON THE DESTINATION PAGE with the resumed answer — even though the resume
@@ -1171,9 +1182,18 @@ test("cross-page: the composer Stop cancels a background run blocked on an appro
 
     // Click Stop → __mlCancelSession → (fix) CANCEL_RUN → the background aborts the run's controller AND resolves
     // the open gate → the loop resolves { cancelled } and the destination-page sidebar clears to "cancelled".
-    await sb.locator(".cbtn.cstop").click();
-    await expect.poll(async () => ((await sb.locator("body").textContent()) || "").toLowerCase(), { timeout: 10000 })
-        .toContain("cancelled");
+    // Click Stop until it TAKES. Same reason the `.row` click above is retried: this page was re-adopted
+    // moments ago and the app can remount under the pointer, which leaves the click on a detached node and
+    // silently does nothing. Clicking Stop twice is harmless (the run is already cancelling), so the retry is
+    // safe — and the poll's exit condition is the effect, not the click.
+    await expect.poll(async () => {
+        try {
+            const body = ((await sb.locator("body").textContent()) || "").toLowerCase();
+            if (body.includes("cancelled")) return body;
+            await sb.locator(".cbtn.cstop").click({ timeout: 1000 }).catch(() => {});
+            return ((await sb.locator("body").textContent()) || "").toLowerCase();
+        } catch { return ""; }   // app mid-remount → try again next poll
+    }, { timeout: 20000 }).toContain("cancelled");
     expect(((await sb.locator("body").textContent()) || "").toLowerCase()).not.toContain("waiting for your approval");
     expect(fake.calls().length - before, "the gated exec never ran, so no 3rd model turn fired").toBe(2);
 
