@@ -503,9 +503,11 @@ function closeSidebarWorlds() {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [] } = {}) {
     const unloadCalls = [];
     const pyCalls = [];   // PYTHON_EXEC payloads the app sent (the bench)
+    const hkCalls = [];   // DUMP_HOUSEKEEPING payloads (the Settings → Housekeeping log)
+    let hkEvents = housekeeping;   // the log the worker would return; setHousekeeping() changes it AND fires storage.onChanged
     const printCalls = [];   // PRINT_SESSION payloads (the PDF export routes its rendered doc to the background)
     let psVram = vram;   // mutable so a test can change the resident set mid-run (setVram)
     const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
@@ -576,6 +578,7 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
                     else if (serverTools) reply = { data: serverTools };
                     cb(reply);
                 }
+                else if (type === "DUMP_HOUSEKEEPING") { hkCalls.push(msg.payload); cb({ data: hkEvents }); }
                 else if (type === "PYTHON_EXEC") { pyCalls.push(msg.payload); cb({ data: typeof pythonExec === "function" ? pythonExec(msg.payload) : (pythonExec || { ok: true, value: 42, stdout: "" }) }); }   // background wraps: { data: PyResult }
                 else cb({ data: null });
             },
@@ -586,7 +589,7 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
                 get: (defaults, cb) => cb({ ...defaults, ...localStore }),
                 set: (obj) => Object.assign(localStore, obj)
             },
-            onChanged: { addListener: (fn) => changeListeners.push(fn) }
+            onChanged: { addListener: (fn) => changeListeners.push(fn), removeListener: (fn) => { const i = changeListeners.indexOf(fn); if (i >= 0) changeListeners.splice(i, 1); } }
         }
     };
     win.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
@@ -606,7 +609,9 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     // has run, then flush the resulting async state update + re-render.
     const flush = async () => { await new Promise((r) => win.setTimeout(r, 30)); await tick(); };
     const setVram = (v) => { psVram = v; };   // change the resident set a later poll will see
-    return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, pyCalls, printCalls, setVram };
+    // Replace the housekeeping log the way the worker's flush does: the store changes and storage.onChanged fires.
+    const setHousekeeping = (events) => { const old = hkEvents; hkEvents = events; for (const fn of [...changeListeners]) fn({ ml_hk_log: { oldValue: old, newValue: events } }, "session"); };
+    return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, pyCalls, printCalls, hkCalls, setHousekeeping, setVram };
 }
 
 module.exports = { jsonResponse, htmlResponse, streamResponse, binaryStreamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };

@@ -12,6 +12,7 @@ you add an emitter.
 | `sw-housekeeping.ts` | The worker's one log over `chrome.storage.session`, `senderOrigin`, and the two message handlers. |
 | `background.ts` | Routes `HOUSEKEEPING_REPORT` / `DUMP_HOUSEKEEPING`, calls `start()` at load and `beat()` on every message. |
 | `injected.ts` | `ml.__housekeeping({ download })`. |
+| `sidebar/housekeeping-log.tsx` | The panel view: Settings → Advanced → Housekeeping, in both the overlay and DevTools. |
 
 ## What reports today
 
@@ -28,6 +29,21 @@ you add an emitter.
 `ServiceWorker.stopAllWorkers`), the next worker's inference, the offscreen origin coming from the sender, and a
 pre-warmed run's first `python_exec` finding the runtime warm. The Commander trigger has no test: the shell's
 `openComposer` is not loaded by any unit harness.
+
+## The panel view
+
+A disclosure in Settings → Advanced, not a header button: the header comment in `app.tsx` records why the row
+refuses rarely-used destinations (the server-tool list lost its icon for the same reason). Nothing is read while it
+is closed. Opening it asks the worker once (`DUMP_HOUSEKEEPING`, which flushes the buffer); after that
+`storage.onChanged` for `ml_hk_log` pushes the ring in, so the open log updates live without polling.
+
+The events render as TEXT inside the shared `OutputCell` + `TimedOutput`, one line per event, oldest first. That
+reuse is the design: a log is output, and the cell already has the timestamp gutter (one mark per line, at the
+event's `t`), Ctrl+F, the resize grip and tail-follow, which keeps the newest event in view. Subsystem filter chips
+ride the disclosure's header line, the event lane's `rc-lane-chip`s. Anything the worker did not record itself ends
+in `[offscreen]` or `[page tab N]`. A cleared log shows its `log clear` line; an empty one says nothing has been
+recorded since the browser started. `housekeepingText` is pure and tested in `tests/housekeeping-log.test.mjs`; the
+section itself in `tests/sidebar.test.js`.
 
 ## Adding an emitter
 

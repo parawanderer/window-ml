@@ -19,6 +19,7 @@ import { CODE_THEME_PRESETS, DEFAULT_CODE_THEME, VSCODE_THEME_ID, convertVscodeT
 import { convertStored } from "./code-theme-css";
 import { IconCheck } from "./icons";
 import { Disclosure } from "./ui-kit";
+import { HousekeepingLog } from "./housekeeping-log";
 
 /** The chart-window lengths the picker offers by name. The scrub strip can set others by drag, which is
  *  why the select needs to know which values it already has an option for. */
@@ -1216,6 +1217,9 @@ export function Settings() {
                 {/* A read-only probe of the BACKEND, like the Python sandbox one below it. */}
 
                 <ServerToolsSection />
+                <Section id="housekeeping" title="Housekeeping">
+                    <HousekeepingLog />
+                </Section>
                 <Section id="javascript" title="JavaScript">
                 <div class="set-note">Auto-approve <b>read-only</b> <code>exec</code> surveys (querySelectorAll → filter → map, no mutation). They run through a mediated interpreter that never touches <code>window</code>/<code>fetch</code> and never <code>eval</code>s a string (so it also works on Trusted-Types pages). Anything mutating or unrecognised still asks for approval.</div>
                 <label class="set-check">

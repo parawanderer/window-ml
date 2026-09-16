@@ -2677,6 +2677,9 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .rc-ev.pulse { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 6; animation: rcEvPulse 1.4s ease-out forwards; }
 @media (prefers-reduced-motion: reduce) { .rc-ev.pulse { animation: none; } }
 
+/* The housekeeping log's download/clear row (Settings → Advanced): a gap above the output cell, which otherwise
+   butts against the buttons because a settings row carries no margin of its own. */
+.hk-actions { margin: 2px 0 6px; }
 /* Server-tool curation: a bundle, then its functions. Indented under their bundle so "which server is this
    from" is answered by position rather than by repeating the prefix on every row. */
 .srv-curate { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 0; }
