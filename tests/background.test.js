@@ -4027,7 +4027,7 @@ test("housekeeping: a page reads another tab's events without their key or detai
     const evicts = data.filter((e) => e.kind === "evict");
     assert.equal(evicts[0].key, "https://mine/a.csv");
     assert.equal(evicts[1].key, undefined);
-    assert.equal(evicts[1].detail, undefined);
+    assert.deepEqual(evicts[1].detail, { n: 1 }, "numbers stay; only strings can identify");
     assert.equal(evicts[1].bytes, 6);
     const refused = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: { clear: true } }, PAGE(1));
     assert.match(refused.error, /cannot clear/);
@@ -4036,4 +4036,19 @@ test("housekeeping: a page reads another tab's events without their key or detai
     await bg.send({ type: "DUMP_HOUSEKEEPING", payload: { clear: true } }, EXT());
     const after = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: {} }, EXT());
     assert.deepEqual(after.data.map((e) => `${e.subsystem}/${e.kind}`), ["log/clear"]);
+});
+
+test("PYTHON_PREWARM starts Pyodide in the offscreen document and logs it only when it started something", async () => {
+    let answer = "started";
+    const bg = loadBackground({ onFetch: () => jsonResponse({}), onPyRun: (m) => (m.type === "PY_PREWARM" ? { ok: true, prewarm: answer } : { ok: true, stdout: "" }) });
+    assert.equal((await bg.send({ type: "PYTHON_PREWARM", payload: { trigger: "commander" } }, PAGE(3))).data, "started");
+    assert.equal(bg.pyRuns.at(-1).type, "PY_PREWARM");
+    answer = "already";
+    await bg.send({ type: "PYTHON_PREWARM", payload: { trigger: "run-start" } }, PAGE(3));
+    const { data } = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: {} }, EXT());
+    const prewarms = data.filter((e) => e.subsystem === "pyodide" && e.kind === "prewarm");
+    assert.deepEqual(prewarms.map((e) => [e.reason, e.origin]), [["commander", "worker"]], "an already-warm runtime logs nothing");
+    const bad = await bg.send({ type: "PYTHON_PREWARM", payload: { trigger: "any-ml-call" } }, PAGE(3));
+    assert.match(bad.error, /needs a trigger/);
+    assert.equal(bg.pyRuns.length, 2, "an unknown trigger starts nothing");
 });

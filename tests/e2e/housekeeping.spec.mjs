@@ -64,6 +64,32 @@ test("a Python cold start is reported by the offscreen document and stamped offs
         const cold = events.filter((e) => e.subsystem === "pyodide" && e.kind === "cold-start");
         expect(cold.length, "one cold start for two runs: the warm run reports nothing").toBe(1);
         expect(cold[0].origin).toBe("offscreen");
-        expect(cold[0].ms).toBe(first.bootMs);
+        expect(cold[0].reason).toBe("run");
+        // The event times the start itself; the run's bootMs is how long IT waited, measured a moment earlier.
+        expect(Math.abs(cold[0].ms - first.bootMs), `start ${cold[0].ms}ms vs the run's wait ${first.bootMs}ms`).toBeLessThan(250);
+    } finally { await ext.close(); await fake.stop(); }
+});
+
+test("a run with python_exec pre-warms Pyodide at start, and its first call finds the runtime warm", async () => {
+    test.skip(!HAS_PYODIDE, "needs the bundled Pyodide (npm run fetch-pyodide) — self-skips without it");
+    test.setTimeout(90_000);
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model" });
+        fake.setScript([{ content: "Done." }]);
+        const page = await ext.context.newPage();
+        await page.goto(`${fake.url}/api/version`);
+        await waitForMl(page);
+        await page.evaluate(() => window.ml.agent("nothing to compute", { extraTools: [window.ml.pythonTool()], vision: false }));
+        const warmed = await logUntil(page, (ev) => ev.some((e) => e.kind === "cold-start"), 60_000);
+        expect(warmed.find((e) => e.kind === "prewarm")?.reason, "the worker logged the pre-warm and its trigger").toBe("run-start");
+        expect(warmed.find((e) => e.kind === "cold-start")?.reason, "the start was the pre-warm's, not a run's").toBe("prewarm");
+        const r = await page.evaluate(() => window.ml.pythonExec("1 + 1"));
+        expect(r.ok, r.error).toBe(true);
+        expect(r.bootMs, "a warm runtime charges the run no cold start").toBeUndefined();
+        const used = (await logUntil(page, (ev) => ev.some((e) => e.kind === "prewarm-used"))).find((e) => e.kind === "prewarm-used");
+        expect(used?.detail?.warm, "a page reads booleans in details it did not report").toBe(true);
+        expect(used?.origin).toBe("offscreen");
     } finally { await ext.close(); await fake.stop(); }
 });

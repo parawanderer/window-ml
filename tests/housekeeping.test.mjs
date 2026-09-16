@@ -110,16 +110,19 @@ test("sanitizeReport keeps nothing a hostile page sends verbatim", () => {
     assert.equal(Object.keys(many.detail).length, 16);
 });
 
-test("a page reads key and detail only on the events its own tab reported", () => {
+test("a page reads key and string details only on the events its own tab reported", () => {
     const events = [
-        { t: 1, subsystem: "fetch-cache", kind: "evict", key: "https://mine", detail: { a: 1 }, origin: "page", tab: 1 },
-        { t: 2, subsystem: "fetch-cache", kind: "evict", key: "https://theirs", detail: { a: 2 }, origin: "page", tab: 2 },
+        { t: 1, subsystem: "fetch-cache", kind: "evict", key: "https://mine", detail: { a: 1, s: "mine" }, origin: "page", tab: 1 },
+        { t: 2, subsystem: "fetch-cache", kind: "evict", key: "https://theirs", detail: { a: 2, url: "https://theirs" }, origin: "page", tab: 2 },
         { t: 3, subsystem: "value-store", kind: "evict", key: "session-hash", bytes: 10, origin: "worker" },
+        { t: 4, subsystem: "pyodide", kind: "kill", detail: { message: "hash abc" }, origin: "offscreen" },
     ];
     const seen = eventsForReader(events, 1);
     assert.equal(seen[0].key, "https://mine");
+    assert.equal(seen[0].detail.s, "mine");
     assert.equal(seen[1].key, undefined);
-    assert.equal(seen[1].detail, undefined);
+    assert.deepEqual(seen[1].detail, { a: 2 }, "a number identifies nothing and stays; the string goes");
+    assert.equal(seen[3].detail, undefined, "a detail left empty is dropped");
     assert.equal(seen[2].key, undefined);
     assert.equal(seen[2].bytes, 10, "the decision itself stays visible");
     assert.deepEqual(eventsForReader(events, null), events, "an extension surface sees everything");

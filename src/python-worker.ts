@@ -16,21 +16,32 @@ import { wrapUserCode, harden, unharden, COMPLETE_HELPER, completeIn, RESET, typ
 type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
 // two never have to be inferred from one another.
-type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number; bench?: BenchSession };
+// `prewarm` is on the first run after a pre-warm started the runtime: whether that run found it `warm` or still
+// `starting`.
+type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting" };
 /** A kept-state bench namespace after a run: which one it is (`id`, new whenever it is created afresh — a
  *  reset, or the worker restarting under it) and the variables the USER has in it, prelude names excluded. */
 type BenchSession = { id: string; vars: { name: string; type: string }[] };
 
 let pyodideReady: Promise<any> | null = null;
-// HOW LONG THE COLD START TOOK, charged to the run that PAID for it. A first python_exec spends several
-// seconds fetching the runtime and its wheels before a line of the script runs, and a plain "ran in 4.2s"
-// blames the script for time it never spent — the same confusion a model's `load_duration` exists to
-// settle ("it was slow" and "it was not there yet" are different answers, and only one is about the code).
-// Measured HERE because the worker is the executor: anything downstream is measuring the message bus too.
-// Read once and cleared, so only the first call reports it; every later run is a warm start with none.
-let pendingBootMs: number | null = null;
-export const takeBootMs = (): number | null => { const b = pendingBootMs; pendingBootMs = null; return b; };
-function getPyodide(): Promise<any> {
+// Whether the runtime has finished starting. A run that finds it false WAITED for the start, and that wait is
+// its `bootMs`: a first python_exec spends several seconds fetching the runtime and its wheels before a line of
+// the script runs, and a plain "ran in 4.2s" blames the script for time it never spent — the same confusion a
+// model's `load_duration` exists to settle. Measured HERE because the worker is the executor: anything
+// downstream is measuring the message bus too. It is the run's own WAIT rather than the start's duration
+// because of the pre-warm: a run arriving halfway through a pre-warmed start waited only for the rest of it.
+let pyodideLive = false;
+// Set when a PRE-WARM started the runtime and no run has used it yet: the first run reports whether it found
+// the runtime warm, which is how the housekeeping log shows whether pre-warming pays for itself.
+let prewarmUnused = false;
+/**
+ * The runtime, started on first call. When that first call starts it, the worker posts `{ booted, ms, by }` once
+ * the start finishes, for the housekeeping log.
+ *
+ * @param by What started it: a pre-warm, or anything that needs the interpreter now.
+ */
+function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
+    if (!pyodideReady) prewarmUnused = by === "prewarm";
     if (!pyodideReady) pyodideReady = (async () => {
         // Resolve the bundled ESM + its asset dir relative to THIS worker's URL
         // (chrome-extension://<id>/python-worker.js) — no `chrome` needed in the worker.
@@ -39,7 +50,8 @@ function getPyodide(): Promise<any> {
         const { loadPyodide } = await import(new URL("pyodide/pyodide.mjs", base).href);
         const py = await loadPyodide({ indexURL: new URL("pyodide/", base).href });
         await py.loadPackage(PY_PACKAGE_LOADS);
-        pendingBootMs = Date.now() - t0;
+        pyodideLive = true;
+        self.postMessage({ booted: true, ms: Date.now() - t0, by });
         return py;
     })();
     return pyodideReady;
@@ -83,15 +95,19 @@ _jv.dumps([{"name": _k, "type": type(_v).__name__} for _k, _v in sorted(_ml_v_ns
 }
 
 async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void, persist = false, onStarted?: () => void): Promise<RunResult> {
+    const wasLive = pyodideLive;
+    const w0 = Date.now();
     const py = await getPyodide();
-    const boot = takeBootMs();
+    const boot = wasLive ? null : Date.now() - w0;
+    const prewarm = prewarmUnused ? (wasLive ? "warm" : "starting") : undefined;
+    prewarmUnused = false;
     // The runtime is up: from here on the time is the SCRIPT's. Said out loud so the offscreen watchdog can time
     // the script rather than the cold start and the queue in front of it (see runInWorker in offscreen.ts).
     onStarted?.();
     // The script's own clock starts AFTER the runtime is up, so the two numbers add to the wall time
     // rather than overlapping — which is what lets the panel show them as one bar split in two.
     const t0 = Date.now();
-    const timed = (r: RunResult): RunResult => ({ ...r, runMs: Date.now() - t0, ...(boot != null ? { bootMs: boot } : {}) });
+    const timed = (r: RunResult): RunResult => ({ ...r, runMs: Date.now() - t0, ...(boot != null ? { bootMs: boot } : {}), ...(prewarm ? { prewarm } : {}) });
     // Where this run executes: the bench's kept namespace for its mode, or the main one a `python_exec` resets.
     const bench = persist ? benchNamespace(py, hardened) : null;
     const ns = bench ? bench.ns : py.globals;
@@ -196,6 +212,15 @@ async function complete(code: string, line: number, column: number, bench?: "rea
 self.onmessage = (e: MessageEvent) => {
     const msg = e.data as RunMsg;
     if (!msg || typeof msg.id !== "number") return;
+    // A PRE-WARM: start the runtime now so the run that needs it later does not wait. Deliberately NOT on the
+    // run chain — a run arriving meanwhile must wait on the start itself (and be charged for that wait), not
+    // queue behind a message that is itself waiting on it. Answers at once with whether it started anything.
+    if ((msg as unknown as { prewarm?: boolean }).prewarm) {
+        const started = pyodideReady == null;
+        getPyodide("prewarm").catch(() => { /* the run that needs it reports the failure */ });
+        self.postMessage({ id: msg.id, ok: true, stdout: "", prewarm: started ? "started" : "already" });
+        return;
+    }
     // An ENV query, not a run. It goes through the same serialized chain so it cannot land between a run's
     // globals being set and its code executing — the interpreter is one thread and this reads from it.
     if ((msg as unknown as { env?: boolean }).env) {

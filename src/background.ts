@@ -22,7 +22,7 @@ import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, she
 import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
-import { housekeeping, handleHousekeepingReport, handleHousekeepingDump } from "./sw-housekeeping";   // what the system decided on its own (docs/dev/housekeeping.md)
+import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, recordHousekeeping } from "./sw-housekeeping";   // what the system decided on its own (docs/dev/housekeeping.md)
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -1260,6 +1260,22 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             })
             .finally(() => { runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); releaseDebugger(tabId); });   // detach the run's CDP debugger (attached once, reused across execs/clicks)
         return true;   // async: sendResponse fires when the whole run finishes
+    }
+    if (message.type === "PYTHON_PREWARM") {
+        // Start Pyodide ahead of a run likely to need it: a run whose tools include python_exec starting, or the
+        // Commander opening (its runs always have it). Only those two — booting the runtime and its packages
+        // costs real memory, so a mere ml.* read never pays it. Idempotent in the worker, and logged only when it
+        // actually started something. A page can send this, and could already start the runtime by running code.
+        const trigger = (message.payload as { trigger?: string } | undefined)?.trigger;
+        if (trigger !== "run-start" && trigger !== "commander") { sendResponse({ error: "PYTHON_PREWARM needs a trigger: run-start or commander." }); return true; }
+        ensureOffscreen()
+            .then(() => chrome.runtime.sendMessage({ type: "PY_PREWARM" }))
+            .then((r: { prewarm?: string } | undefined) => {
+                if (r?.prewarm === "started") recordHousekeeping({ subsystem: "pyodide", kind: "prewarm", reason: trigger });
+                sendResponse({ data: r?.prewarm ?? null });
+            })
+            .catch((e) => sendResponse({ error: String((e as Error)?.message || e) }));
+        return true;
     }
     if (message.type === "PYTHON_EXEC") {
         // Route the sandboxed-Python run to the offscreen Pyodide host (the service worker can't run WASM).

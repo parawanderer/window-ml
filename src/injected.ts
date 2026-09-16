@@ -908,6 +908,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // `approve`/`onStep`/`logDebug` and rich tool renders don't apply on the background path.
             const surface = agentCfg?.debugMode;
             const hasApprovalTool = toolset.some(t => !!t.requiresApproval);
+            // A run that can call python_exec starts Pyodide now, in parallel with the model's first turn, so the
+            // first call does not pay the multi-second cold start. Both hosting paths pass through here.
+            if (toolset.some(t => t.name === "python_exec"))
+                makeBackgroundTaskPromise("PYTHON_PREWARM_REQUEST", "PYTHON_PREWARM_RESPONSE", { trigger: "run-start" }).catch(() => { /* a pre-warm is never worth a failure */ });
             // Off-mode closure: with no debug surface, a privileged run on a NON-whitelisted origin still
             // routes to the unforgeable background gate — the shell mounts an acrylic corner CARD (shell.ts
             // + app.tsx CardApp) that renders the pending approval and returns the decision via the same
@@ -2897,7 +2901,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * restarts (inferred from a heartbeat, since an evicted worker writes nothing on its way out), Python
          * cold starts. One structured event each, oldest first, kept in `chrome.storage.session` so it outlives
          * the worker and clears with the browser. `origin` is who reported it, stamped by the worker; this page
-         * sees `key` and `detail` only on events its own tab reported. Underscored: a debugging aid, not API.
+         * sees `key` and string `detail` values only on events its own tab reported. Underscored: a debugging aid, not API.
          * See docs/dev/housekeeping.md.
          *
          * @param opts.download Save it as `ml-housekeeping-<time>.json` instead of only returning it.

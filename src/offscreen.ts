@@ -21,7 +21,7 @@ const PY_START_TIMEOUT_MS = 120000;
 // `bootMs`/`runMs` come from the WORKER, which is the executor — anything measured downstream of it is
 // measuring the message bus as well. See python-worker.ts.
 type PyEnv = { python: string; pyodide: string; packages: { name: string; version?: string }[] };
-type PyResult = { ok: boolean; env?: PyEnv; completions?: { name: string; type: string; complete: string }[]; bench?: { id: string; vars: { name: string; type: string }[] }; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
+type PyResult = { prewarm?: "started" | "already" | "warm" | "starting"; ok: boolean; env?: PyEnv; completions?: { name: string; type: string; complete: string }[]; bench?: { id: string; vars: { name: string; type: string }[] }; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number };
 
 // The worker is same-origin (extension page → chrome-extension:// worker), so it needs no
 // web_accessible_resources entry; it inherits this page's 'wasm-unsafe-eval' CSP.
@@ -65,6 +65,11 @@ function ensureWorker(): Worker {
     if (worker) return worker;
     const w = new Worker(chrome.runtime.getURL("python-worker.js"));
     w.onmessage = (e: MessageEvent) => {
+        // The runtime finished starting (not a reply to anything): what started it and how long it took.
+        if (e.data?.booted) {
+            reportHousekeeping({ subsystem: "pyodide", kind: "cold-start", reason: e.data.by === "prewarm" ? "prewarm" : "run", ms: e.data.ms });
+            return;
+        }
         // A `partial` message is a LIVE stdout chunk (opt-in streaming) — forward it to the background keyed by
         // this run's streamId (the page requestId), which relays it to the page; DON'T resolve the run.
         if (e.data?.partial) {
@@ -83,8 +88,8 @@ function ensureWorker(): Worker {
         }
         const { id, ...result } = e.data as { id: number } & PyResult;
         const entry = pending.get(id);
-        // `bootMs` is on exactly the run that paid for starting the runtime: the cold start, for the log.
-        if (typeof result.bootMs === "number") reportHousekeeping({ subsystem: "pyodide", kind: "cold-start", ms: result.bootMs });
+        // The first run after a pre-warm: did it find the runtime warm, and how long did it still wait?
+        if (result.prewarm === "warm" || result.prewarm === "starting") reportHousekeeping({ subsystem: "pyodide", kind: "prewarm-used", ms: result.bootMs ?? 0, detail: { warm: result.prewarm === "warm" } });
         if (entry) { pending.delete(id); clearTimeout(entry.timer); entry.resolve(result); }
     };
     // A worker-level failure (load error, uncaught throw) would otherwise strand every pending run.
@@ -122,6 +127,15 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
 }
 
 chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
+    // Start the runtime ahead of a run that is likely to need it (see the background's PYTHON_PREWARM). No
+    // watchdog: nothing waits on it, and a run that later waits on a start that hangs arms its own.
+    if (msg?.type === "PY_PREWARM") {
+        const w = ensureWorker();
+        const id = nextId++;
+        pending.set(id, { resolve: (r) => sendResponse({ ok: r.ok, prewarm: r.prewarm }), timer: 0 as unknown as ReturnType<typeof setTimeout> });
+        w.postMessage({ id, prewarm: true });
+        return true;
+    }
     if (msg?.type !== "PY_RUN") return;
     // The worker serializes runs internally (single Pyodide instance + harden/unharden swap),
     // so we can forward straight through — no need to chain here.

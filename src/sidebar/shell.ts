@@ -1194,6 +1194,9 @@ let composerPendingCtx: ElementContext | null = null;   // a right-click's resol
 let addToRunPending: ElementContext | null | undefined = undefined;   // "Add to current run" ctx awaiting the app's ready
 function openComposer(ctx: ElementContext | null = null): void {
     if (!hudActive()) return;
+    // A Commander run always has python_exec, so start Pyodide while the person is still typing (see the
+    // background's PYTHON_PREWARM).
+    try { chrome.runtime.sendMessage({ type: "PYTHON_PREWARM", payload: { trigger: "commander" } }).catch(() => { /* no worker */ }); } catch { /* context gone */ }
     if (!cardHost) mountCard();
     if (cardReady && frame) {
         frame.contentWindow?.postMessage({ __mlSidebarComposer: "open" }, "*");
