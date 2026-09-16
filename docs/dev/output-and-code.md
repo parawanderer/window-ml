@@ -52,6 +52,19 @@ double every hit. In every find, cell or block, text that is on screen but is no
 "3" used to match gutter digits, and a JSON tree's key descriptions matched as invisible hits. Real layout is
 covered by `tests/e2e/code-block-find.spec.mjs`.
 
+*A returned VALUE can be drawn as a tree (`ValueOut`, render-panel.tsx).* exec's and python_exec's value section
+shows the JSON text the model got, with a corner "tree" button whenever that text is an object or array. The
+interesting values are the big ones, and those are exactly the ones clipped for the UI (`clipOut`'s
+`… [+N chars truncated]`), which `JSON.parse` refuses. `parseLooseJson` (src/json-repair.ts) strips the note, keeps
+every value that arrived WHOLE, drops a string, number, key or literal cut in half, and closes the brackets that
+were open at that point. It never invents a value, and text that is not JSON (a Python repr, `NaN`) gets no button
+rather than a half-drawn tree. The tree marks the cut: a `JT_CUT` sentinel is appended to the innermost container
+still open, drawn as "… cut here: N more characters were not kept", and every folded ancestor's preview says
+"cut", so the reader can find it without expanding the whole value. Text stays the default: it is what the model
+read, and a folded tree hides members from Ctrl+F. The tree itself (`JsonNode`) lives in `json-tree.tsx` so the
+renderers can use it without importing agent-detail.tsx, and an open container draws `JT_PAGE` members at a time
+(except the raw In view's `allOpen`, which must stay fully searchable).
+
 *Per-line timestamps (the EXECUTOR stamps them).* Streamed output carries a **produced-at gutter** — when each
 line actually happened, not when the UI saw it. `ctx.stream(text, ts?)` lets the producer stamp the instant:
 python stamps in the Pyodide **worker** (the chunk then crosses worker → offscreen → SW → page, so anything
