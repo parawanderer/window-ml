@@ -1774,7 +1774,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     "the text, and you must not guess the separator: it is discovered (`,` `\\t` `;` `|`), quoted fields and " +
                     "embedded newlines are handled, and numeric columns are cast. You get a `df.head()`: the header, the " +
                     "first 5 rows, then `[N rows x M columns]` and `dtypes: <col> <dtype>, …` — pandas' own names " +
-                    "(`int64`, `float64`, `bool`, `object`), with the same rules, so a whole-number column holding one " +
+                    "(`int64`, `float64`, `bool`, `str`, `object`), with pandas 3's rules, so text is `str` and a whole-number column holding one " +
                     "blank is `float64` (NaN forces the float) and a Parquet file's dtypes are READ from its schema " +
                     "rather than inferred. The row count is the FILE\'s, not the preview\'s — 5 rows shown out of " +
                     "`[50,000 rows x 4 columns]` means there are 50,000. To work on ALL of them, pass the SAME URL to " +

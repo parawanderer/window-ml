@@ -501,7 +501,9 @@ export type TableCell = string | number | boolean | null;
 /** The pandas dtype a column will have once these rows reach a DataFrame. Deliberately pandas' OWN names
  *  rather than ours: the audience is a model that has read a great deal of pandas and none of this codebase,
  *  and `int64` needs no explanation where `"integer"` would invite the question of what we mean by it. */
-export type TableDtype = "int64" | "float64" | "bool" | "object";
+// pandas 3's names specifically: a text column is `str` (pandas 2 said `object`), and `object` is left for
+// what pandas 3 still calls that — an all-null column, a boolean column with a null, a mix of kinds.
+export type TableDtype = "int64" | "float64" | "bool" | "str" | "object";
 
 /** A parsed table, however it was produced (CSV/TSV text, a DOM table, later Parquet). The shape
  *  `python_exec` loads as a DataFrame, and the shape the fetch preview renders — so a table crosses from
