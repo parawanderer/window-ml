@@ -579,7 +579,7 @@ export interface Table extends TableLike {
     head(n?: number): Table;
 }
 
-export type ContentKind = "json" | "csv" | "parquet" | "html" | "xml" | "markdown" | "code" | "text" | "binary";
+export type ContentKind = "json" | "csv" | "parquet" | "arrow" | "html" | "xml" | "markdown" | "code" | "text" | "binary";
 export interface FetchResult {
     url: string;              // the response URL (after any redirects)
     status: number;           // HTTP status code

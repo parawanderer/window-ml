@@ -31,7 +31,7 @@ resolution TREE in the In slot (`src/sidebar/fetch-ladder.ts` holds the labels o
 export sinks) — not decoration: a stub twin is a valid 200 Markdown document that is simply the wrong page.
 `pageInfo` reports a declared twin too, so an agent standing on a docs page knows to fetch rather than survey.
 
-**Tables (`csv`/`tsv`/`parquet` → `FetchResult.table`).** A table body is PARSED on the way through, into a
+**Tables (`csv`/`tsv`/`parquet`/`arrow` → `FetchResult.table`).** A table body is PARSED on the way through, into a
 pandas-shaped `TableLike` (`shape`, `columns`, `dtypes`, `rows` — contract.ts; the parsers are in
 `table-data.ts`). The CSV counterpart of `json`/`schema`, for the same reason: a caller that has to re-split
 the text is a caller that will get the separator wrong, which is exactly what `looksCsv` used to guarantee by
@@ -48,6 +48,13 @@ the file. Its `text` is a one-line description rather than the bytes, since ever
 something printable. **The decoder (hyparquet) is DYNAMICALLY imported** — `table-data.ts` is reachable from
 the page bundle through classification, and a static import would ship a Parquet decoder to every page the
 extension touches; deferred, esbuild tree-shakes it out of every bundle whose entry never calls it.
+
+**Arrow IPC parses in the WORKER too** (`tableFromArrow`, `apache-arrow`, dynamically imported like hyparquet — about
+220 KB minified, all of it in `background.js`; its one `new Function` is in the table BUILDER, which the reader never
+calls). The File format is recognised by its `ARROW1` magic whatever it is served as; the Stream format has no
+magic, so only its media type (`application/vnd.apache.arrow.stream`) or extension (`.arrows`) sends it to the
+decoder, and a body that claimed to be a stream but does not decode is described as `binary`. dtypes come from the
+schema with pandas' null rules, exactly as Parquet's do; dates and timestamps become ISO strings.
 
 Binary is detected before classification, never after: a Parquet body run through `res.text()` is already
 corrupt by the time anything could sniff it, so `rawGet` reads an ArrayBuffer whenever the type/extension

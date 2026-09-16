@@ -378,31 +378,94 @@ function parquetDtypes(columns: string[], fields: { element: { type?: string } }
     return out;
 }
 
-// ---- Other binary formats (Arrow IPC / Feather, and whatever comes next) ----
+// ---- Arrow IPC (File and Stream formats; Feather v2 is the File format) ----
+
+const ARROW_FILE_MAGIC = [0x41, 0x52, 0x52, 0x4f, 0x57, 0x31];   // "ARROW1"
+
+/** Does this body START like an Arrow IPC FILE? Magic at the start only — the File format's footer is not
+ *  magic-marked. The Stream format has no magic at all, so a stream is recognised by its media type or
+ *  extension, and the decode then settles it. */
+export function looksArrowFile(bytes: ArrayBuffer): boolean {
+    const b = new Uint8Array(bytes);
+    return b.length >= ARROW_FILE_MAGIC.length && ARROW_FILE_MAGIC.every((c, i) => b[i] === c);
+}
+
+/** Arrow IPC bytes (File or Stream) → a {@link TableLike}, like `tableFromParquet`: `shape` is the file's real
+ *  row count, dtypes are READ from its schema, and only the first {@link MAX_TABLE_ROWS} rows become cells.
+ *  Throws when the bytes are not Arrow. */
+export async function tableFromArrow(bytes: ArrayBuffer, opts: { maxRows?: number } = {}): Promise<TableLike> {
+    // DYNAMIC for the same reason as hyparquet above: this module reaches the page bundle, and the decoder
+    // (~220 KB minified) belongs only in `background.js`. Its one `new Function` is in the table BUILDER, which
+    // a reader never calls, so MV3's CSP is not in play.
+    const { tableFromIPC } = await import("apache-arrow");
+    const table = tableFromIPC(new Uint8Array(bytes));
+    const fields = table.schema.fields;
+    const columns = namedColumns(fields.map(f => f.name));
+    const total = table.numRows;
+    const keep = Math.min(total, opts.maxRows ?? MAX_TABLE_ROWS);
+    const vectors = fields.map((_, c) => table.getChildAt(c));
+    const kinds = fields.map(f => arrowKind(f.type));
+    const rows: TableCell[][] = [];
+    for (let r = 0; r < keep; r++) rows.push(vectors.map((v, c) => arrowCell(v?.get(r), kinds[c])));
+    return {
+        columns, rows, shape: [total, columns.length],
+        dtypes: arrowDtypes(columns, kinds, rows),
+        ...(keep < total ? { truncated: true } : {}),
+    };
+}
+
+/** What an Arrow type is, for the two decisions made about it: how its values become cells and which pandas
+ *  dtype it declares. */
+type ArrowKind = "int" | "float" | "bool" | "str" | "time" | "other";
+function arrowKind(type: { typeId: number; dictionary?: unknown; valueType?: unknown }): ArrowKind {
+    // Type ids from the Arrow spec (apache-arrow's `Type` enum); a dictionary is described by its VALUES.
+    const t = (type as { dictionary?: { typeId: number } }).dictionary ?? type;
+    switch (t.typeId) {
+        case 2: return "int";                       // Int (8/16/32/64, signed or not)
+        case 3: return "float";                     // FloatingPoint
+        case 6: return "bool";                      // Bool
+        case 5: case 20: case 24: return "str";     // Utf8, LargeUtf8, Utf8View
+        case 8: case 9: case 10: return "time";     // Date, Time, Timestamp
+        default: return "other";
+    }
+}
+
+/** One Arrow value → a cell. Times become ISO strings (Arrow JS hands back epoch milliseconds for dates and
+ *  timestamps), everything else goes through `cellOf`, as Parquet's do. */
+function arrowCell(v: unknown, kind: ArrowKind): TableCell {
+    if (v == null) return null;
+    if (kind === "time" && (typeof v === "number" || typeof v === "bigint")) {
+        const d = new Date(Number(v));
+        return Number.isNaN(d.getTime()) ? String(v) : d.toISOString();
+    }
+    return cellOf(v);
+}
+
+/** Arrow's DECLARED types → pandas dtypes, with pandas' null rules, exactly as `parquetDtypes` does it: what
+ *  `pyarrow`'s `to_pandas()` produces for the same file. Other types are described by their values. */
+function arrowDtypes(columns: string[], kinds: ArrowKind[], rows: TableCell[][]): Record<string, TableDtype> {
+    const byValue = dtypesOf(columns, rows);
+    const out: Record<string, TableDtype> = {};
+    columns.forEach((name, c) => {
+        const hasNull = rows.some(r => r[c] == null);
+        const k = kinds[c];
+        out[name] = k === "bool" ? (hasNull ? "object" : "bool")
+            : k === "int" ? (hasNull ? "float64" : "int64")
+            : k === "float" ? "float64"
+            : k === "str" ? "str"
+            : byValue[name];
+    });
+    return out;
+}
+
+// ---- Other binary formats (whatever comes next) ----
 //
-// Adding one means writing a single function beside `tableFromParquet` — `tableFromX(bytes): TableLike` —
-// and a classification cue. Nothing else in the codebase changes: the fetch result, the model-facing
-// preview, the pointer store, the sidebar render and the `python_exec` handoff all speak TableLike, and
-// none of them asks where a table came from.
-//
-// The work each new format actually needs:
-//
-// 1. **A decoder that clears MV3's CSP.** Pure JS, no wasm, no `new Function`. For Arrow IPC/Feather that is
-//    `apache-arrow` (the official JS implementation) — much larger than hyparquet, which is why it is worth
-//    waiting for a real use case rather than adding speculatively.
-// 2. **Classification, on bytes.** A `ContentKind`, a Content-Type and extension in dom.ts, and a magic-byte
-//    check like `looksParquet` (Arrow IPC files start `ARROW1`). The text sniffs in `typeFromContent` are no
-//    help: a binary body that reached them as a string is already corrupt (see the "no TextDecoder anywhere
-//    near binary" trap in AGENTS.md), which is why the binary branch happens in sw-fetch BEFORE classification.
-// 3. **Honest `shape` and `truncated`.** Report the file's real row count even when only a prefix was
-//    decoded, exactly as the Parquet path does — a preview that describes what it managed to read, rather
-//    than what is there, is how a model comes to answer a question about 10,000 rows of a 10,000,000-row file.
-// 4. **dtypes from the format's own schema**, never from `castTableColumns`. That function exists because CSV
-//    has no types to read; a format that declares them should be believed instead.
-//
-// The one thing NOT to reach for here is zero-copy handoff to Pyodide (Arrow's real attraction). That is a
-// different and much bigger piece of work than parsing — it belongs with the cross-runtime notes in
-// `docs/dev/python-sandbox.md`, not in a parser.
+// Arrow IPC above is the worked example of adding one: a `tableFromX(bytes): TableLike` beside Parquet's, a
+// `ContentKind` + Content-Type + extension in dom.ts, and a branch in sw-fetch's `rawGet` that recognises the
+// format ON BYTES before any text decode. Nothing else changes: the preview, the pointer store, the sidebar and the
+// `python_exec` handoff all speak TableLike. Keep the three rules those two follow — the decoder dynamically
+// imported (CSP-clean, out of the page bundle), `shape` the file's real row count however much is decoded, and
+// dtypes from the format's own schema rather than `castTableColumns`.
 
 // ---- The table FACADE ----
 //

@@ -264,3 +264,33 @@ test("an unrecognised binary served as octet-stream is described too, not decode
     assert.equal(r.type, "binary");
     assert.match(r.text, /unrecognised binary data, served as application\/octet-stream, 8 bytes/);
 });
+
+// ARROW IPC over the fetch path: decoded in the worker like Parquet, never negotiated, never decoded as text.
+const { tableFromArrays, tableToIPC, vectorFromArray, Utf8, Int64 } = await import("apache-arrow");
+const arrowBytes = (format) => tableToIPC(tableFromArrays({ sku: vectorFromArray(["A", "B"], new Utf8()), n: vectorFromArray([1n, 2n], new Int64()) }), format);
+
+test("an Arrow FILE served with its media type comes back as type arrow with the table", async () => {
+    const calls = net({ "https://a1.test/stock.arrow": bin("application/vnd.apache.arrow.file", arrowBytes("file")) });
+    const r = await fetchUrlContent("https://a1.test/stock.arrow");
+    assert.equal(r.type, "arrow");
+    assert.deepEqual(r.table.shape, [2, 2]);
+    assert.deepEqual(r.table.dtypes, { sku: "str", n: "int64" });
+    assert.equal(r.negotiation, undefined);
+    assert.equal(calls.length, 1);
+});
+
+test("an Arrow FILE served as octet-stream is recognised by its magic; a STREAM by its media type", async () => {
+    net({ "https://a2.test/export.bin": bin("application/octet-stream", arrowBytes("file")),
+          "https://a2.test/live": bin("application/vnd.apache.arrow.stream", arrowBytes("stream")) });
+    assert.equal((await fetchUrlContent("https://a2.test/export.bin")).type, "arrow");
+    const s = await fetchUrlContent("https://a2.test/live");
+    assert.equal(s.type, "arrow");
+    assert.deepEqual(s.table.rows, [["A", 1], ["B", 2]]);
+});
+
+test("a body that CLAIMS to be an Arrow stream but does not decode is described as binary, not guessed at", async () => {
+    net({ "https://a3.test/bad.arrows": bin("application/vnd.apache.arrow.stream", new Uint8Array([9, 0, 9, 0, 9, 0, 9, 0])) });
+    const r = await fetchUrlContent("https://a3.test/bad.arrows");
+    assert.equal(r.type, "binary");
+    assert.equal(r.table, undefined);
+});

@@ -345,3 +345,43 @@ test("a table at EXACTLY the cap is complete, with or without a header", () => {
     assert.equal(over.truncated, true);
     assert.deepEqual(over.shape, [MAX_TABLE_ROWS + 1, 1]);
 });
+
+// ---- Arrow IPC: the File and Stream formats, decoded with dtypes READ from the schema ----
+import { tableFromArrays, tableToIPC, vectorFromArray, Utf8, Bool, Float64, Int64, Int32, Dictionary, DateMillisecond } from "apache-arrow";
+import { tableFromArrow, looksArrowFile } from "../src/table-data.ts";
+
+const arrowBuf = (u8) => u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+const stock = () => tableFromArrays({
+    sku: vectorFromArray(["A-100", "A-101", "B-200"], new Utf8()),
+    price: vectorFromArray([12.5, null, 4.0], new Float64()),
+    stock: vectorFromArray([3n, 0n, 41n], new Int64()),
+    maybe: vectorFromArray([1n, null, 3n], new Int64()),
+    discontinued: vectorFromArray([false, true, false], new Bool()),
+    region: vectorFromArray(["north", "south", "north"], new Dictionary(new Utf8(), new Int32())),
+    day: vectorFromArray([new Date(0), new Date(86_400_000), null], new DateMillisecond()),
+});
+
+test("an Arrow IPC FILE decodes to a TableLike whose dtypes are pandas' for the declared types, nulls included", async () => {
+    const t = await tableFromArrow(arrowBuf(tableToIPC(stock(), "file")));
+    assert.deepEqual(t.columns, ["sku", "price", "stock", "maybe", "discontinued", "region", "day"]);
+    assert.deepEqual(t.shape, [3, 7]);
+    assert.deepEqual(t.dtypes, { sku: "str", price: "float64", stock: "int64", maybe: "float64", discontinued: "bool", region: "str", day: "str" });
+    assert.deepEqual(t.rows[0], ["A-100", 12.5, 3, 1, false, "north", "1970-01-01T00:00:00.000Z"]);
+    assert.deepEqual(t.rows[1].slice(1, 4), [null, 0, null]);
+    assert.equal(t.truncated, undefined);
+});
+
+test("an Arrow IPC STREAM decodes the same, and a capped decode keeps the file's real row count", async () => {
+    const stream = arrowBuf(tableToIPC(stock(), "stream"));
+    assert.equal(looksArrowFile(stream), false, "a stream has no magic");
+    const t = await tableFromArrow(stream, { maxRows: 2 });
+    assert.equal(t.rows.length, 2);
+    assert.deepEqual(t.shape, [3, 7], "shape is the source's, not the decoded prefix's");
+    assert.equal(t.truncated, true);
+});
+
+test("looksArrowFile reads the ARROW1 magic, and bytes that are not Arrow do not decode", async () => {
+    assert.equal(looksArrowFile(arrowBuf(tableToIPC(stock(), "file"))), true);
+    assert.equal(looksArrowFile(arrowBuf(new TextEncoder().encode("id,name\n1,a"))), false);
+    await assert.rejects(tableFromArrow(arrowBuf(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]))));
+});

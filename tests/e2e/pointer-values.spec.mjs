@@ -114,7 +114,6 @@ async function runSteps(steps, { timeout = 60_000 } = {}) {
 // ---- Arrow over the fetch path -------------------------------------------------------------------------------
 
 test("an Arrow IPC FILE fetches as a table: type arrow, the real shape, dtypes READ from its schema", async () => {
-    pending("POINTER_VALUES: Arrow IPC accepted over ml.fetch / fetch_url (not built)");
     const [seen] = await runSteps([{ tool: "fetch_url", args: { url: `${data.url}/stock.arrow` } }]);
     expect(seen, "setup: the fetch reached the tool").toContain("stock.arrow");
     expect(seen).toMatch(/type: arrow/);
@@ -124,7 +123,6 @@ test("an Arrow IPC FILE fetches as a table: type arrow, the real shape, dtypes R
 });
 
 test("an Arrow IPC STREAM (.arrows, its own media type) fetches as the same table", async () => {
-    pending("POINTER_VALUES: Arrow IPC stream format over fetch_url (not built)");
     const [seen] = await runSteps([{ tool: "fetch_url", args: { url: `${data.url}/stock.arrows` } }]);
     expect(seen, "setup: the fetch reached the tool").toContain("stock.arrows");
     expect(seen).toMatch(/type: arrow/);
@@ -132,7 +130,6 @@ test("an Arrow IPC STREAM (.arrows, its own media type) fetches as the same tabl
 });
 
 test("an Arrow file served as application/octet-stream is recognised by its ARROW1 magic", async () => {
-    pending("POINTER_VALUES: Arrow IPC classified by magic bytes (not built)");
     const [seen] = await runSteps([{ tool: "fetch_url", args: { url: `${data.url}/export.bin` } }]);
     expect(seen, "setup: the fetch reached the tool").toContain("export.bin");
     expect(seen).toMatch(/type: arrow/);
@@ -140,7 +137,6 @@ test("an Arrow file served as application/octet-stream is recognised by its ARRO
 });
 
 test("ml.fetch on an Arrow file hands the page the Table facade", async () => {
-    pending("POINTER_VALUES: Arrow IPC accepted over ml.fetch (not built)");
     // A page may `ml.fetch` only a URL the run's fetch_url already had approved, so fetch it that way first.
     await runSteps([{ tool: "fetch_url", args: { url: `${data.url}/stock.arrow` } }]);
     const r = await page.evaluate(async (u) => {
@@ -158,7 +154,7 @@ test("ml.fetch on an Arrow file hands the page the Table facade", async () => {
 test("python_exec opens a fetched table by POINTER — tables: { df: \"@tool:…\" } — as a DataFrame", async () => {
     test.skip(!HAS_PYODIDE, "needs the bundled Pyodide (npm run fetch-pyodide)");
     test.setTimeout(120_000);
-    pending("POINTER_VALUES slice 5: python_exec reads a pointer (Arrow fetch not built either)");
+    pending("POINTER_VALUES slice 5: python_exec reads a pointer");
     const [fetched, py] = await runSteps([
         { tool: "fetch_url", args: { url: `${data.url}/stock.arrow`, token: "the stock table" } },
         { tool: "python_exec", args: { mode: "readonly", tables: { df: '@tool:"the stock table"' },

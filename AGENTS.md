@@ -238,8 +238,8 @@ learned by shipping the wrong version first.
   producer — a fetched CSV/TSV/Parquet, a DOM table, the Sheets export, a pointer read. Never hand-split a
   delimited body: the separator is DISCOVERED, and assuming a comma is the bug this replaced. `shape` is the
   SOURCE's row count even when `rows` is a prefix, so pass `rowCount` to `tableOf` whenever you cap. Delimited
-  text parses page-side (the text already crossed the wire); Parquet parses in the worker and its decoder is
-  dynamically imported so it never reaches the page bundle. A code EXTENSION beats a guessed delimiter — source
+  text parses page-side (the text already crossed the wire); Parquet and Arrow IPC parse in the worker and their decoders
+  are dynamically imported so they never reach the page bundle. A code EXTENSION beats a guessed delimiter — source
   full of semicolons parses as a clean two-column table otherwise. A caller gets the `Table` FACADE, which is
   read-only and throws on unknown keys: finish editing the plain `TableLike` BEFORE `asTable`, and never probe
   a value's shape in the dialect without checking `isTable` first.
