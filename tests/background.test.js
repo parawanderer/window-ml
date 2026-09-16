@@ -4057,3 +4057,22 @@ test("PYTHON_PREWARM starts Pyodide in the offscreen document and logs it only w
     assert.match(bad.error, /needs a trigger/);
     assert.equal(bg.pyRuns.length, 2, "an unknown trigger starts nothing");
 });
+
+// THE DEBUG RING KEEPS THE RUN. A streamed turn fans a delta every ~100 ms, and 500 of them pushed the run's own `agent`
+// start out of the ring — a late DevTools panel had nowhere to put the steps, and `ml.__events()` dumped no run at all.
+test("debug ring: streamed deltas are coalesced per step, so a long streamed run keeps its start event", async () => {
+    const bg = loadBackground({ onFetch: () => jsonResponse({}) });
+    const sender = { tab: { id: 12, url: "https://site.example/" } };
+    // Fire-and-forget, like the content script: ML_DEBUG_EVENT never answers, so its promise never settles. Relaying is synchronous.
+    const send = (event) => { void bg.send({ type: "ML_DEBUG_EVENT", event }, sender); };
+    await send({ kind: "agent", id: "r1", ts: 1, session: { hash: "r1", turn: 0 }, task: "t" });
+    for (let i = 0; i < 600; i++) await send({ kind: "agent-stream", id: "r1", ts: 2 + i, session: { hash: "r1", turn: 1 }, step: 1, reasoning: "x".repeat(i) });
+    await send({ kind: "agent-turn", id: "r1", ts: 700, session: { hash: "r1", turn: 1 }, step: 1, phases: [] });
+    await send({ kind: "agent-turn", id: "r1", ts: 701, session: { hash: "r1", turn: 1 }, step: 1, phases: [{ kind: "think", at: 0 }] });
+    await send({ kind: "agent-stream", id: "r1", ts: 800, session: { hash: "r1", turn: 2 }, step: 2, content: "y" });
+    const { data } = await bg.send({ type: "DUMP_EVENTS", payload: {} }, sender);
+    const kinds = data.debug.map((e) => `${e.kind}${e.step != null ? `@${e.step}` : ""}`);
+    assert.deepEqual(kinds, ["agent", "agent-stream@1", "agent-turn@1", "agent-stream@2"], kinds.join(","));
+    assert.equal(data.debug[1].reasoning.length, 599, "the newest delta is the one kept");
+    assert.equal(data.debug[2].phases.length, 1);
+});

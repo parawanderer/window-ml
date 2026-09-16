@@ -1923,9 +1923,23 @@ const devtoolsPorts = new Map<number, Set<chrome.runtime.Port>>();
 const debugBuffer = new Map<number, unknown[]>();
 const DEBUG_BUFFER_CAP = 500;   // drop-oldest ring; screenshots are big, so keep it modest
 
+/** Debug events that carry ACCUMULATED state for one step — the reducer REPLACES with each, never appends — so only the
+ *  newest per session and step means anything in a replay. */
+const COALESCED_DEBUG_KINDS = new Set(["agent-stream", "agent-turn"]);
+
 function relayDebugEvent(tabId: number, event: unknown): void {
     let buf = debugBuffer.get(tabId);
     if (!buf) { buf = []; debugBuffer.set(tabId, buf); }
+    // COALESCE the live deltas. A streamed turn sends one every ~100 ms, and in a 500-event ring they pushed out the
+    // run's own `agent` start: a DevTools panel opened late had no session to put the steps in, and `ml.__events()`
+    // dumped 450 stream deltas and no run. Each carries everything so far, so the newest replaces the last.
+    const ev = event as { kind?: string; step?: number; session?: { hash?: string } } | null;
+    if (ev?.kind && COALESCED_DEBUG_KINDS.has(ev.kind)) {
+        for (let i = buf.length - 1; i >= 0; i--) {
+            const o = buf[i] as { kind?: string; step?: number; session?: { hash?: string } };
+            if (o?.kind === ev.kind && o.step === ev.step && o.session?.hash === ev.session?.hash) { buf.splice(i, 1); break; }
+        }
+    }
     buf.push(event);
     if (buf.length > DEBUG_BUFFER_CAP) buf.splice(0, buf.length - DEBUG_BUFFER_CAP);
     const ports = devtoolsPorts.get(tabId);
