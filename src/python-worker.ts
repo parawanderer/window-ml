@@ -10,7 +10,7 @@
 // (wrapUserCode/harden/unharden) is the same shared, real-CPython-tested module the
 // offscreen path used. The offscreen doc is now a thin id-matched relay (offscreen.ts).
 
-import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES } from "./python-env";
+import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
 import { wrapUserCode, harden, unharden, COMPLETE_HELPER, completeIn, RESET, type PyCompletion } from "./python-runtime";
 
 type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean };
@@ -50,6 +50,9 @@ function getPyodide(by: "prewarm" | "run" = "run"): Promise<any> {
         const { loadPyodide } = await import(new URL("pyodide/pyodide.mjs", base).href);
         const py = await loadPyodide({ indexURL: new URL("pyodide/", base).href });
         await py.loadPackage(PY_PACKAGE_LOADS);
+        // Before ANY run, so before the first hardening: a package that needs the `js` bridge to import (pyarrow's
+        // timezone helper) is imported here, where the bridge exists. See python-env.ts `prepare`.
+        if (PY_STARTUP_PREPARE) py.runPython(PY_STARTUP_PREPARE);
         pyodideLive = true;
         self.postMessage({ booted: true, ms: Date.now() - t0, by });
         return py;

@@ -258,6 +258,23 @@ first, STRIPED like a model load because it is the step's wall time and none of 
 phase rather than its own span, because unlike a model load it happens INSIDE the dispatch `toolMs` already
 measures — a span in front would draw the time twice.
 
+**pyarrow LOADS AT START, and is prepared before any run.** It was built to load on demand (a text match on the
+script, before it ran), and that cannot work: pandas decides whether pyarrow exists when PANDAS is imported —
+`pandas.compat.pyarrow` sets `HAS_PYARROW`/`pa_version_under…`, a dozen modules copy those by value, and which of
+its own arrow modules it imports depends on them — and the prelude imports pandas on the first run. pyarrow
+arriving later left pandas half-switched: `to_parquet` died in `unregister_extension_type`, and patching the
+flags moved the failure to `NameError: pa`. Measured in Node, loading it at start costs ~1.5 s of cold start
+(3.1 s → 4.7 s); the pre-warm absorbs most of that, and pandas behaves the same in every run (its `str` columns
+are pyarrow-backed from the first).
+
+`PyPackage.prepare` runs once, unhardened, right after the start-up packages load (`PY_STARTUP_PREPARE`, in
+`getPyodide`). pyarrow needs it: its `unix_timezones` dependency does `import js` at import time, and a `readonly`
+run has no `js` — while its prelude's `import pandas` imports pyarrow. Importing it first, where `js` exists, puts
+it in the module cache; but that module then HOLDS `js` as an attribute, and `import unix_timezones;
+unix_timezones.js` would hand a hardened script the global scope hardening removed, so `prepare` deletes it.
+`tests/python.test.mjs` has the escape test, which fails with that deletion removed. A new package with a
+`prepare` gets the same check: look for a `js` attribute on every module it brought in.
+
 **THE PRE-WARM starts the runtime before anyone needs it**, on exactly two triggers: a run whose tools include
 `python_exec` starting (`injected.ts`, beside the hosting decision, so both loop paths pass it), and the Commander
 opening (`openComposer` in `shell.ts` — its runs always carry the tool). Never on a mere `ml.*` call: the runtime

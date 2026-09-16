@@ -8,7 +8,19 @@
 // `label` is what the model sees in the tool description (empty = hidden, e.g. a parser dep).
 // `lazy` = the wheel is FETCHED (so it works offline) but not loaded at sandbox start and never offered to
 // the model: tooling the bench loads on first use, so a `python_exec` pays nothing for it.
-export interface PyPackage { load: string; prelude: string; label: string; lazy?: boolean; }
+// `prepare` = Python run ONCE when the sandbox starts, after the packages load and UNHARDENED, before any script
+// (or the prelude) imports anything — for a package that cannot be imported cold inside a hardened run.
+export interface PyPackage { load: string; prelude: string; label: string; lazy?: boolean; prepare?: string; }
+
+/** pyarrow's one-time preparation (see its entry). `import pyarrow` imports `unix_timezones`, which does `import js`
+ *  to read the browser's timezone — and a `readonly` run has no `js`, while the prelude's `import pandas` imports
+ *  pyarrow. So it is imported here first, where `js` exists; every later import hits the module cache. The `js` it
+ *  bound is then DELETED from that module, or `unix_timezones.js` would hand a hardened script the JavaScript
+ *  global scope hardening removed (`tests/python.test.mjs` has the escape test). */
+const PYARROW_PREPARE = `import pyarrow
+import unix_timezones as _ml_utz
+_ml_utz.__dict__.pop('js', None)
+del _ml_utz`;
 
 export const PY_PACKAGES: PyPackage[] = [
     { load: "numpy", prelude: "import numpy as np", label: "numpy (np)" },
@@ -30,12 +42,22 @@ export const PY_PACKAGES: PyPackage[] = [
     // one persists). Lazy: loaded the first time someone asks for a completion, never at start-up, and
     // hidden from the model — it is not something a script is meant to import. Pulls in parso via the lock.
     { load: "jedi", prelude: "", label: "", lazy: true },
+    // pyarrow: Parquet, Feather and Arrow IPC for pandas, and the columnar format pointer values are stored in
+    // (docs/spec/POINTER_VALUES.md). Loaded at START, not on first use, although it is 10 MB and ~1.5 s of cold
+    // start: pandas decides whether pyarrow exists when pandas is IMPORTED, and caches it in a dozen modules and
+    // in which of its own modules it imported, so pyarrow arriving after the prelude's `import pandas` left pandas
+    // half-switched (`to_parquet` failing in `unregister_extension_type`, then `NameError: pa`). The pre-warm
+    // absorbs most cold starts. Not pre-imported by the prelude beyond what pandas does itself.
+    { load: "pyarrow", prelude: "", label: "pyarrow (pd.read_parquet / to_parquet / read_feather; Arrow IPC via pyarrow.ipc)", prepare: PYARROW_PREPARE },
 ];
 
 /** Loaded when the sandbox STARTS. Lazy tooling is excluded: see `PY_LAZY_LOADS`. */
 export const PY_PACKAGE_LOADS: string[] = PY_PACKAGES.filter(p => !p.lazy).map(p => p.load);
 /** Fetched with the rest but loaded on first use — the bench editor's completion engine. */
 export const PY_LAZY_LOADS: string[] = PY_PACKAGES.filter(p => p.lazy).map(p => p.load);
+/** The start-up packages' `prepare` code, joined: run once, unhardened, right after they load. */
+export const PY_STARTUP_PREPARE: string = PY_PACKAGES.filter(p => !p.lazy && p.prepare).map(p => p.prepare).join("\n");
+
 export const PY_PRELUDE_IMPORTS: string = PY_PACKAGES.filter(p => p.prelude).map(p => p.prelude).join("\n");
 export const PY_PACKAGE_LABELS: string = PY_PACKAGES.filter(p => p.label).map(p => p.label).join(", ");
 

@@ -93,3 +93,23 @@ test("a run with python_exec pre-warms Pyodide at start, and its first call find
         expect(used?.origin).toBe("offscreen");
     } finally { await ext.close(); await fake.stop(); }
 });
+
+test("a readonly script reads and writes Parquet through pyarrow, after an ordinary run warmed pandas", async () => {
+    test.skip(!HAS_PYODIDE, "needs the bundled Pyodide (npm run fetch-pyodide) — self-skips without it");
+    test.setTimeout(120_000);
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model" });
+        const page = await ext.context.newPage();
+        await page.goto(`${fake.url}/api/version`);
+        await waitForMl(page);
+        // The ORDER that broke loading pyarrow later: pandas imported by an ordinary run first.
+        const warm = await page.evaluate(() => window.ml.pythonExec("return int(pd.Series([1, 2]).sum())"));
+        expect(warm.ok, warm.error).toBe(true);
+        const code = "buf = io.BytesIO()\npd.DataFrame({'a': [1, 2, 3], 's': ['x', None, 'z']}).to_parquet(buf)\nbuf.seek(0)\nd = pd.read_parquet(buf)\nreturn [int(d['a'].sum()), str(d['s'].dtype)]";
+        const r = await page.evaluate((c) => window.ml.pythonExec(c), code);
+        expect(r.ok, r.error).toBe(true);
+        expect(r.value).toEqual([6, "str"]);
+    } finally { await ext.close(); await fake.stop(); }
+});
