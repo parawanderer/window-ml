@@ -204,9 +204,10 @@ async function runDelegatedToolIn(runId: string, name: string, args: Record<stri
             // Same split as the page path, through the same predicate: the dialect refusing escalates, the
             // script throwing is reported. `readonly: true` is what says "this was answered without a gate".
             if (readonlyRefused(e)) return { result: "", readonly: false };
-            const msg = `Error: ${errText(e)}`;
+            const at = (e as { mlLine?: number })?.mlLine ?? null;
+            const msg = `Error: ${errText(e)}${at ? ` (line ${at})` : ""}`;
             const { in: renderIn } = descriptorFor(tool, { result: msg }, args);
-            return { result: msg, renderIn, renderOut: { type: "exec-out" as const, error: errText(e) }, readonly: true };
+            return { result: msg, renderIn, renderOut: { type: "exec-out" as const, error: `${errText(e)}${at ? ` (line ${at})` : ""}`, ...(at ? { errorLine: at } : {}) }, readonly: true };
         }
     }
     // A tool (look/locate, or click/type/wait with verify) may make its own delegated vision sub-calls —

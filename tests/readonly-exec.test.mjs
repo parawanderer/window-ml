@@ -1551,3 +1551,20 @@ test("the ml and answer facades still answer by IDENTITY, and absence there stil
     await assert.rejects(run(`return ml.chat("hi")`), outOfDialect);
     await assert.rejects(runAns(`ml.answer.frobnicate()`), outOfDialect);
 });
+
+test("a runtime throw reports the LINE it happened on — an interpreter has no stack to read one from", async () => {
+    // The model is retrying this code, and "line 4" is the difference between a targeted fix and a rewrite.
+    // It used to come free: a throwing survey escalated, and the approved path read the line off a real
+    // JavaScript stack. Now the throw is answered here, so the line has to be carried here — and a stack
+    // would be the INTERPRETER's, not the script's.
+    const js = [
+        `const rows = [1, 2, 3];`,
+        `const doubled = rows.map(n => n * 2);`,
+        `const oops = doubled.frobnicate();`,
+        `return oops;`,
+    ].join("\n");
+    await assert.rejects(run(js), (e) => e.mlLine === 3, "the line of the statement that threw");
+    // A REFUSAL carries none: it is about the script's shape, it escalates to a human, and a line number
+    // there would be answering a question nobody asked.
+    await assert.rejects(run(`while (true) {}`), (e) => outOfDialect(e) && e.mlLine === undefined);
+});

@@ -1178,9 +1178,12 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         // readonlyRefused — approving a typo cannot make it run, and the approved attempt
                         // throws the same error a moment later having spent the interrupt.
                         if (readonlyRefused(e)) return null;
-                        const msg = `Error: ${errText(e)}`;
+                        // The line the interpreter was on, when it knows it — the same fact the approved path
+                        // reports from a real stack, and the model is retrying this code either way.
+                        const at = (e as { mlLine?: number })?.mlLine ?? null;
+                        const msg = `Error: ${errText(e)}${at ? ` (line ${at})` : ""}`;
                         const { in: renderIn } = descriptorFor(byName[name], { result: msg }, args);
-                        return { result: msg, renderIn, renderOut: { type: "exec-out" as const, error: errText(e) } };
+                        return { result: msg, renderIn, renderOut: { type: "exec-out" as const, error: `${errText(e)}${at ? ` (line ${at})` : ""}`, ...(at ? { errorLine: at } : {}) } };
                     }
                 } : undefined,
                 precheck: async (name, args) => {

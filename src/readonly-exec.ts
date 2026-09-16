@@ -99,7 +99,11 @@ export function riskyRegex(source: string): string | null {
 
 // ---------------------------------------------------------------- tokenizer ---
 
-interface Tok { t: "num" | "str" | "name" | "punct" | "eof" | "template" | "regex"; v: string; quasis?: string[]; exprs?: string[]; flags?: string; }
+// `ln` is the 1-based source line the token starts on. It exists for ONE purpose: when a script throws a
+// runtime error, the model is told WHERE. That used to come free, because a throwing survey escalated to the
+// approved path and `execErrorLine` read it off a real stack — but a runtime error is now answered here
+// instead of escalating, and an interpreter's stack is the INTERPRETER's, not the script's.
+interface Tok { t: "num" | "str" | "name" | "punct" | "eof" | "template" | "regex"; v: string; ln: number; quasis?: string[]; exprs?: string[]; flags?: string; }
 
 // After these tokens a `/` begins a REGEX (an expression is expected); after a value-producing token
 // (a number/string/template, an identifier, or a closing `)`/`]`/`}`) a `/` is DIVISION. The keyword
@@ -167,6 +171,10 @@ const PUNCT = [
 function tokenize(src: string): Tok[] {
     const toks: Tok[] = [];
     let i = 0;
+    // The line a token starts on. A single cursor walked forward, never rescanned: every push below happens
+    // while `i` is still at the token's first character, and pushes run in increasing `i`.
+    let lineAt = 0, lineNo = 1;
+    const ln = (): number => { while (lineAt < i) { if (src[lineAt] === "\n") lineNo++; lineAt++; } return lineNo; };
     const isIdStart = (c: string) => /[A-Za-z_$]/.test(c);
     const isId = (c: string) => /[A-Za-z0-9_$]/.test(c);
     while (i < src.length) {
@@ -194,13 +202,13 @@ function tokenize(src: string): Tok[] {
             j++;   // past the closing `/`
             let flags = "";
             while (j < src.length && /[a-z]/i.test(src[j])) { flags += src[j]; j++; }
-            toks.push({ t: "regex", v: body, flags }); i = j; continue;
+            toks.push({ t: "regex", v: body, flags, ln: ln() }); i = j; continue;
         }
-        if (c === "`") { const { quasis, exprs, end } = scanTemplate(src, i); toks.push({ t: "template", v: "", quasis, exprs }); i = end; continue; }
+        if (c === "`") { const { quasis, exprs, end } = scanTemplate(src, i); toks.push({ t: "template", v: "", quasis, exprs, ln: ln() }); i = end; continue; }
         if (c >= "0" && c <= "9") {
             let j = i + 1;
             while (j < src.length && /[0-9.]/.test(src[j])) j++;
-            toks.push({ t: "num", v: src.slice(i, j) }); i = j; continue;
+            toks.push({ t: "num", v: src.slice(i, j), ln: ln() }); i = j; continue;
         }
         if (c === '"' || c === "'") {
             let j = i + 1, out = "";
@@ -212,18 +220,18 @@ function tokenize(src: string): Tok[] {
                 } else { out += src[j]; j++; }
             }
             if (j >= src.length) throw new NotInDialect("unterminated string");
-            toks.push({ t: "str", v: out }); i = j + 1; continue;
+            toks.push({ t: "str", v: out, ln: ln() }); i = j + 1; continue;
         }
         if (isIdStart(c)) {
             let j = i + 1;
             while (j < src.length && isId(src[j])) j++;
-            toks.push({ t: "name", v: src.slice(i, j) }); i = j; continue;
+            toks.push({ t: "name", v: src.slice(i, j), ln: ln() }); i = j; continue;
         }
         const p = PUNCT.find(x => src.startsWith(x, i));
         if (!p) throw new NotInDialect(`unexpected character '${c}'`);
-        toks.push({ t: "punct", v: p }); i += p.length; continue;
+        toks.push({ t: "punct", v: p, ln: ln() }); i += p.length; continue;
     }
-    toks.push({ t: "eof", v: "" });
+    toks.push({ t: "eof", v: "", ln: ln() });
     return toks;
 }
 
@@ -251,6 +259,15 @@ class Parser {
         return { type: "Program", body };
     }
     parseStatement(): Node {
+        // Stamp the statement with the line it starts on — the granularity a reader and a model both want
+        // ("line 4"), and the only one an interpreter can report honestly without carrying positions through
+        // every expression node.
+        const ln = this.peek().ln;
+        const node = this.parseStatementInner();
+        if (node.ln === undefined) node.ln = ln;
+        return node;
+    }
+    parseStatementInner(): Node {
         const t = this.peek();
         if (this.is("{")) return this.parseBlock();   // a bare block (e.g. an if body)
         if (t.t === "name" && t.v === "if") {
@@ -883,6 +900,8 @@ class Evaluator {
     private ourFns = new WeakMap<Function, { node: Node; scope: any }>();
     private depth = 0;
     // What is left of the step budget. Spent by every node evaluated and every element iterated.
+    /** The source line of the statement being evaluated — reported when a script throws. */
+    line = 0;
     private fuel: number;
     // Collections being iterated right now (a count, since loops over one collection can nest). A mutator or a
     // property write on one of these is refused: that is what keeps every loop's trip count fixed at its start.
@@ -1004,6 +1023,10 @@ class Evaluator {
 
     *eval(node: Node, scope: any): Ev {
         this.tick();
+        // The line of the statement currently executing, so a runtime throw can say WHERE. Only statements
+        // carry one (parseStatement stamps them), and a nested statement overwrites it on the way in without
+        // restoring on the way out — which is right: the innermost statement that was running IS the answer.
+        if (node.ln !== undefined) this.line = node.ln;
         switch (node.type) {
             case "Program": {
                 let last: unknown;
@@ -1398,10 +1421,21 @@ export async function evalReadonly(code: string, doc: Document, ml?: unknown, an
     // is the one thing a survey can change: an add before a fall-back would outlive it, and the human would then be
     // asked to approve a script whose first half had already run. The caller's checkpoint restores it.
     const restore = opts.checkpoint?.();
+    const ev = new Evaluator(facade, opts.stepBudget);
     try {
-        const value = await runAsync(new Evaluator(facade, opts.stepBudget).eval(ast, root));
+        const value = await runAsync(ev.eval(ast, root));
         return { value, logs, reused };
-    } catch (e) { restore?.(); throw e; }
+    } catch (e) {
+        restore?.();
+        // WHERE it threw, for a RUNTIME error. A refusal is about the script's shape and needs no line; a
+        // throw is about one statement, and "line 4" is the difference between a targeted fix and a rewrite
+        // — which the model used to get for free, because a throwing survey escalated and the approved path
+        // read the line off a real stack. It is answered here now, so the line has to come from here.
+        if (!(e instanceof NotInDialect) && !(e instanceof Denied) && e instanceof Error && ev.line) {
+            (e as Error & { mlLine?: number }).mlLine = ev.line;
+        }
+        throw e;
+    }
 }
 
 function safeStr(x: unknown): string { try { return JSON.stringify(x); } catch { return String(x); } }
