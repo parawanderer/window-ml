@@ -64,8 +64,8 @@ function grownFiles(base, staged) {
     }).filter((f) => f.now > LIMIT && f.now > f.before);
 }
 
-const ADVICE = "consider refactoring this into separate logical modules, and moving the tests that cover them "
-    + "into per-module files where that follows";
+const ADVICE = "consider refactoring this into separate logical modules (`node scripts/move-symbols.mjs` does the move), "
+    + "and moving the tests that cover them into per-module files where that follows";
 
 function report(items) {
     const ci = !!process.env.GITHUB_ACTIONS;
