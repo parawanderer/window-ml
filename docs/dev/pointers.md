@@ -115,3 +115,15 @@ background-hosted paths with no page round-trip and no approval.
 - **`ml.pipe(source, pipe)`** runs the same dialect over ANY string, not just a captured tool output:
   `ml.pipe(await ml.fetch(url), "grep -i pricing | head -20")`. So the scanning vocabulary is one language
   wherever text comes from, and a stage never round-trips through a re-joined string.
+
+**The value store (`value-store.ts`), POINTER_VALUES slice 4.** Where a pointer's value lives when it is larger than its
+preview: an IndexedDB database of its own (`ml-values`), a `Blob` per value plus a metadata ROW (`session`, `bytes`,
+`format`, `source`, `createdAt`, `lastReadAt`), reachable from the service worker and the offscreen document, never the page.
+Every eviction decision is `planEviction` (pure): idle values (unread for `IDLE_MS`) first, then least recently READ until
+ONE global byte budget holds the incoming write, with `protect` for a value being read at that moment. A write the whole
+budget cannot hold is refused (`ValueTooLarge`) rather than evicting everything for nothing. Ending a session evicts what
+it claimed (`releaseSession`); a periodic `sweep` catches orphans, because the service worker is evicted without warning
+and an in-memory idea of ownership dies with it. Every evicted key leaves a TOMBSTONE (kept `TOMBSTONE_MS`), so a read
+fails with `ValueMissing` saying WHY (budget, idle, session end) and telling the reader to re-run the step, and never
+degrades to the preview. `onEvict` is where the caller reports to the housekeeping log (`subsystem: "value-store"`). The
+store is not wired to anything yet: capture, claim, release and the alarm are the next step.

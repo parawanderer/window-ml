@@ -33,6 +33,7 @@
     "@types/chrome": "^0.2.2",
     "@types/node": "^26.4.1",
     "esbuild": "^0.28.1",
+    "fake-indexeddb": "^6.2.5",
     "hyparquet-writer": "^0.16.9",
     "jsdom": "^29.1.1",
     "marked": "^18.0.11",
