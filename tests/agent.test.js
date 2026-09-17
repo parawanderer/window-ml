@@ -4034,3 +4034,20 @@ test("fetch_url: a preview table passes on the stored value's key in its render;
     const small = await world.ml.fetchTool().run({ url: "https://x.test/small.parquet" });
     assert.equal(small.render.value, undefined, "a table the preview already holds names no stored value");
 });
+
+test("ml.fetch: a CSV whose text is a prefix of a body the worker read whole reports the WHOLE table's row count", { timeout: 5000 }, async () => {
+    const world = loadDomWorld(`<p>hi</p>`, { url: "https://x.test/" });
+    const text = "id,v\n1,2\n3,4\n5,";   // cut mid-row, as a capped read ends
+    world.window.addEventListener("message", (e) => {
+        if (e.data?.type !== "FETCH_URL_REQUEST") return;
+        const whole = e.data.payload.url.includes("whole");
+        const result = { url: e.data.payload.url, status: 200, ok: true, type: "csv", typeByHeader: "csv", typeByContent: "csv", typeByExtension: { type: "csv" }, contentType: "text/csv", text, truncated: true, ...(whole ? { bodyLines: 600_001, valueKey: "v0123456789abcdef" } : {}) };
+        world.window.postMessage({ type: "FETCH_URL_RESPONSE", requestId: e.data.requestId, result }, "*");
+    });
+    const stored = await world.ml.fetch("https://x.test/whole.csv");
+    assert.deepEqual(stored.table.rows, [[1, 2], [3, 4]], "the half row at the cut is still dropped");
+    assert.deepEqual(stored.table.shape, [600_000, 2], "header excluded, every row of the body counted");
+    assert.equal(stored.table.truncated, true);
+    const cut = await world.ml.fetch("https://x.test/cut.csv");
+    assert.deepEqual(cut.table.shape, [2, 2], "no whole body read: the prefix is all that is known");
+});

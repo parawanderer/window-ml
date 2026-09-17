@@ -293,7 +293,7 @@ export function tablePreview(t: TableLike, opts: { rows?: number; source?: strin
         `[${nrows.toLocaleString("en-US")} rows x ${ncols} columns]${more}`,
         `dtypes: ${dtypes}`,
         ...(t.headerless ? ["NOTE: no header row was detected, so the columns are numbered by position (as read_csv(header=None)). Nothing was dropped. If the first row IS a header, re-fetch with \"header\": true."] : []),
-        ...(t.truncated ? [`NOTE: only the first ${MAX_TABLE_ROWS.toLocaleString("en-US")} rows were parsed; the source has more.`] : []),
+        ...(t.truncated ? [`NOTE: only the first ${t.rows.length.toLocaleString("en-US")} rows were parsed; the source has more.`] : []),
         // What python_exec gets from the cache is what was KEPT. Past the cap that is a prefix, and the hint must say
         // so rather than promise every row the shape counts.
         ...(opts.source ? [t.truncated

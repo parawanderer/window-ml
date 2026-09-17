@@ -318,13 +318,25 @@ test("value store: a CSV past the parse cap hands over its whole text; one insid
     assert.deepEqual(c.got.map((x) => x.format), ["tsv"]);
 });
 
-test("value store: a CSV cut off at the read cap is NOT kept, since a stored prefix would later read as the whole file", async () => {
-    const huge = csvRows(MAX_TABLE_ROWS + 5).padEnd(8_000_001, "9");
-    net({ "https://v2.test/huge.csv": (u) => res(u, 200, "text/csv", huge) });
+test("value store: a CSV past the TEXT cap is read whole and kept, with its real length; one past the table read cap is not", async () => {
+    // ~9.6 MB: the page gets 8 MB of it as text, the store gets all of it.
+    const rows = 800_000;
+    const big = csvRows(rows);
+    net({ "https://v2.test/huge.csv": (u) => res(u, 200, "text/csv", big) });
     const a = kept();
     const r = await fetchUrlContent("https://v2.test/huge.csv", false, "markdown", a.keep);
-    assert.equal(r.truncated, true);
-    assert.deepEqual(a.got, []);
+    assert.equal(r.truncated, true, "the TEXT is still a prefix");
+    assert.ok(r.text.length <= 8_000_000);
+    assert.equal(r.bodyLines, rows + 1, "the whole body's lines: header plus every row");
+    assert.deepEqual(a.got.map((b) => [b.format, b.bytes.byteLength]), [["csv", Buffer.byteLength(big)]], "every byte, not the prefix");
+    // Past the table read cap (64 MB) the body is a prefix like any other, so nothing is stored and no length is claimed.
+    const past = "id,v\n" + "1,2\n".repeat(16_500_000);
+    net({ "https://v2.test/past.csv": (u) => res(u, 200, "text/csv", past) });
+    const b = kept();
+    const p = await fetchUrlContent("https://v2.test/past.csv", false, "markdown", b.keep);
+    assert.equal(p.truncated, true);
+    assert.equal(p.bodyLines, undefined);
+    assert.deepEqual(b.got, []);
 });
 
 test("value store: an Arrow table past the parse cap hands over its bytes, tagged file or stream; a small one does not", async () => {

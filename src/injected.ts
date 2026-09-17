@@ -2834,6 +2834,10 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
                                 parsed.rows.pop();
                                 parsed.shape = [parsed.rows.length, parsed.columns.length];
                                 parsed.truncated = true;
+                                // …unless the worker read the whole body (it is stored), in which case its real length is
+                                // known: the preview is a prefix of a table this big, not the whole of a table this small.
+                                const whole = typeof r.bodyLines === "number" ? r.bodyLines - (parsed.headerless ? 0 : 1) : 0;
+                                if (whole > parsed.rows.length) parsed.shape = [whole, parsed.columns.length];
                             }
                             r.table = parsed;
                         } catch { /* leave undefined — callers fall back to .text */ }

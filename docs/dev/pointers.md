@@ -131,8 +131,10 @@ service worker's side is `sw-values.ts`:
 
 - **Capture.** `fetchUrlContent` hands the whole body to a `keep` callback when the table it returns is a preview: Parquet
   or Arrow past `MAX_TABLE_ROWS` (the bytes as fetched, `arrow-file` or `arrow-stream`), or delimited text with more lines
-  than the page will parse (the text, `csv` or `tsv`). A body clipped at the read cap is never kept, since a stored prefix
-  would later read as the whole file. The `FETCH_URL` handler stores it only AFTER the redirect guard has released the
+  than the page will parse (the text, `csv` or `tsv`). A body that SAYS it is delimited (media type or extension) is read
+  to `FETCH_TABLE_MAX` (64 MB) rather than the 8 MB text cap: the page still gets 8 MB of text, the whole body is kept,
+  and `FetchResult.bodyLines` lets the page's preview report the real row count. A body clipped at a read cap is never
+  kept, since a stored prefix would later read as the whole file. The `FETCH_URL` handler stores it only AFTER the redirect guard has released the
   result, and names it on `FetchResult.valueKey`. It is stored unclaimed.
 - **Claim.** `fetch_url` copies the key onto its table render as `value`, only when its table is truncated. The loop notes
   it on the pointer (`TokenValue.value`) and calls `claimValue`, which a background run binds to its runId. A page-hosted
