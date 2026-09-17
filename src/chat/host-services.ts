@@ -75,5 +75,7 @@ export function hostServices(store: ChatStore, platform: ClientPlatform): Sideba
         sheetTitle: async () => null,
         savePref: (key, value) => platform.prefs.set(key, value),
         bench: false,
+        // The values live in the runtime's own browser, which this page does not share.
+        storedTable: null,
     };
 }

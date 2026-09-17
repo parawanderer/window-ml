@@ -507,7 +507,7 @@ function closeSidebarWorlds() {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [] } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null, serverTools = null, housekeeping = [], indexedDB = null } = {}) {
     const unloadCalls = [];
     const pyCalls = [];   // PYTHON_EXEC payloads the app sent (the bench)
     const hkCalls = [];   // DUMP_HOUSEKEEPING payloads (the Settings → Housekeeping log)
@@ -597,6 +597,9 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
         }
     };
     win.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+    // The value store an extension frame reads a stored table from. Absent by default, as in a realm with no IndexedDB, which
+    // leaves `services().storedTable` null; a test passes a `fake-indexeddb` IDBFactory to give the frame one.
+    if (indexedDB) { win.indexedDB = indexedDB; win.TextDecoder ??= TextDecoder; }
     win.eval(fs.readFileSync(path.join(DIST, "sidebar-app.js"), "utf8"));
 
     const tick = () => new Promise((r) => win.setTimeout(r, 0));   // flush async mount / Preact renders

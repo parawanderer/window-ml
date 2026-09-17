@@ -14,7 +14,8 @@ import { downloadBlob } from "./download";   // a table too large for the clipbo
 import { elementReference } from "../dom";
 import { pyFormat, lineChanged } from "../py-format";
 import { lineMapBetween } from "../line-map";
-import { services } from "./services";
+import { services, type StoredTableRead } from "./services";
+import { summarizeColumns, summarizeRows, type ColumnSummary } from "../table-summary";
 import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, lsSet, BENCH_CODE_KEY, surface, codeLineNumbers, openBench, benchTimes } from "./store";
 import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmtDur, hourNow, armHourTick, dayBreaks } from "./timestamps";
 import { markdown, truncate, pretty, highlight } from "./format";
@@ -211,6 +212,72 @@ function ColumnTip({ name, dtype, rows, col, total }: { name: string; dtype?: st
     );
 }
 
+/** A stored table read whole, as column arrays. */
+type WholeTable = { rowCount: number; columns: Record<string, (string | number | boolean | null)[]> };
+// Whole tables read this session, by value key, so reopening a step or flipping its view does not decode the table
+// again. A few only: each can be hundreds of thousands of rows.
+const wholeTables = new Map<string, Promise<WholeTable>>();
+const WHOLE_TABLES_KEPT = 4;
+/** Read a stored table whole through the host (services().storedTable), sharing one read per key; null where the host
+ *  cannot reach a value store. A failed read is not kept, so the next attempt tries again. */
+function readWholeTable(key: string, opts: StoredTableRead): Promise<WholeTable> | null {
+    const read = services().storedTable;
+    if (!read) return null;
+    let p = wholeTables.get(key);
+    if (!p) {
+        p = read(key, opts);
+        wholeTables.set(key, p);
+        p.catch(() => wholeTables.delete(key));
+        while (wholeTables.size > WHOLE_TABLES_KEPT) wholeTables.delete(wholeTables.keys().next().value as string);
+    }
+    return p;
+}
+
+/** The table view's SUMMARY mode (docs/spec/TABLE_VIEW.md): one row per column with its dtype, counts, and a glance at
+ *  its values (a histogram and range for numbers, the top values for anything else, the split for booleans). `basis`
+ *  says what the summary was computed over, because a summary of a preview must never pass for the table's. */
+function TableSummary({ summary, basis }: { summary: ColumnSummary[]; basis: string }) {
+    const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
+    return (
+        <div class="r-df-scroll">
+            <div class="dim r-df-basis">{basis}</div>
+            <table class="r-df-table r-df-sum">
+                <thead><tr><th>column</th><th>dtype</th><th class="r-td-num">non-null</th><th class="r-td-num">null</th><th class="r-td-num">distinct</th><th>values</th></tr></thead>
+                <tbody>{summary.map((c) => {
+                    const peak = c.numeric ? Math.max(...c.numeric.hist, 1) : 1;
+                    const total = c.count || 1;
+                    return (
+                        <tr key={c.name}>
+                            <td>{c.name}</td>
+                            <td class="dim">{c.dtype}</td>
+                            <td class="r-td-num">{fmt(c.count)}</td>
+                            <td class={`r-td-num${c.nulls ? "" : " dim"}`}>{fmt(c.nulls)}</td>
+                            <td class="r-td-num">{fmt(c.distinct)}</td>
+                            <td>{c.numeric ? (
+                                <span class="r-df-sumval">
+                                    <span class="r-df-spark" aria-hidden="true">{c.numeric.hist.map((h, i) => <i key={i} style={{ height: `${h ? Math.max(8, (h / peak) * 100) : 0}%` }} />)}</span>
+                                    {fmt(c.numeric.min)} … {fmt(c.numeric.max)} · mean {fmt(c.numeric.mean)}
+                                </span>
+                            ) : c.bool ? (
+                                <span class="r-df-sumval">
+                                    <span class="r-df-split" aria-hidden="true"><i style={{ width: `${(c.bool.true / total) * 100}%` }} /></span>
+                                    true {fmt(c.bool.true)} · false {fmt(c.bool.false)}
+                                </span>
+                            ) : c.top?.length ? (
+                                <span class="r-df-sumval">
+                                    <span class="r-df-split" aria-hidden="true"><i style={{ width: `${(c.topShare ?? 0) * 100}%` }} /></span>
+                                    {c.top.map((t) => `${t.value} ${fmt(t.count)}`).join(" · ")}
+                                    <span class="dim"> ({Math.round((c.topShare ?? 0) * 100)}%)</span>
+                                </span>
+                            ) : <span class="dim">no values</span>}</td>
+                        </tr>
+                    );
+                })}</tbody>
+            </table>
+        </div>
+    );
+}
+
 /** A pandas DataFrame, drawn as JUPYTER draws one: numbered index gutter, sticky header, zebra rows,
  *  right-aligned monospace numbers, NaN styling — plus click-to-sort, drag-to-resize, collapse and
  *  copy-CSV. Zero-dep, no grid library. A cell with no JSON form renders as a marker naming its type
@@ -223,13 +290,20 @@ function ColumnTip({ name, dtype, rows, col, total }: { name: string; dtype?: st
  *  `rowCount` is the SOURCE's row count when `rows` is only a prefix of it, and it changes what the view is
  *  allowed to claim: the footer counts off the real total, and "copy CSV" says how much of the table it is
  *  actually handing you. `dtypes`/`delimiter`/`headerless` are what the MODEL is told about a fetched table,
- *  shown here so the reader is not the only one guessing. */
-export function PyDfTable({ columns, rows, noCollapse, rowCount, dtypes, delimiter, headerless }: { columns: string[]; rows: (string | number | boolean | null)[][]; noCollapse?: boolean; rowCount?: number; dtypes?: Record<string, string>; delimiter?: string; headerless?: boolean }) {
+ *  shown here so the reader is not the only one guessing.
+ *
+ *  Two modes (docs/spec/TABLE_VIEW.md): ROWS, and a per-column SUMMARY that is the default once the table is larger than
+ *  the rows the grid draws, since past that the rows on screen are a prefix nobody chose. `value` is the value-store key
+ *  of the whole table when `rows` is its preview: the summary is then computed over every row, and the copy control
+ *  copies (or saves) all of them. Without it, both work over the preview and say so. */
+export function PyDfTable({ columns, rows, noCollapse, rowCount, dtypes, delimiter, headerless, value }: { columns: string[]; rows: (string | number | boolean | null)[][]; noCollapse?: boolean; rowCount?: number; dtypes?: Record<string, string>; delimiter?: string; headerless?: boolean; value?: string }) {
     const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
     const [collapsed, setCollapsed] = useState(false);
     const [sort, setSort] = useState<{ c: number; dir: 1 | -1 } | null>(null);
     const [widths, setWidths] = useState<Record<number, number>>({});
     const [copied, setCopied] = useState(false);
+    const [mode, setMode] = useState<"rows" | "summary">((rowCount ?? rows.length) > PY_DF_ROWS ? "summary" : "rows");
+    const [whole, setWhole] = useState<{ data?: WholeTable; error?: string; loading?: boolean }>({});
 
     // Sort a [originalIndex, row] view so the gutter keeps the pandas index (like sort_values);
     // numbers compare numerically, strings by locale, nulls (NaN) always sink to the bottom.
@@ -252,16 +326,50 @@ export function PyDfTable({ columns, rows, noCollapse, rowCount, dtypes, delimit
     // Past a few thousand rows the clipboard is the wrong sink — it is slow, it is silently size-limited in
     // some browsers, and what you want with a table that size is a file. Hand over a file instead.
     const CLIPBOARD_MAX_ROWS = 5000;
-    const asFile = rows.length > CLIPBOARD_MAX_ROWS;
-    const csvText = () => [cols.map(csvField).join(","), ...rows.map(r => cols.map((_, j) => csvField(r[j])).join(","))].join("\n");
-    const copyCsv = () => {
-        if (asFile) { downloadBlob(`table-${rows.length}-rows.csv`, new Blob([csvText()], { type: "text/csv" })); return; }
-        navigator.clipboard?.writeText(csvText()).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }, () => {});
+    // The WHOLE table, when the value store holds it and this host can reach the store. Read on demand (a summary shown,
+    // a copy asked for), shared across views of the same value.
+    const reachable = partial && !!value && !!services().storedTable && !whole.error;
+    const loadWhole = (): Promise<WholeTable | null> => {
+        const p = reachable ? readWholeTable(value!, { columns: cols, ...(delimiter ? { delimiter } : {}), ...(headerless ? { headerless: true } : {}) }) : null;
+        if (!p) return Promise.resolve(whole.data ?? null);
+        if (!whole.data) setWhole({ loading: true });
+        return p.then((data) => { setWhole({ data }); return data; }, (e) => { setWhole({ error: String((e as Error)?.message ?? e) }); return null; });
     };
-    const copyLabel = copied ? "Copied ✓" : partial ? `${asFile ? "save" : "copy"} ${rows.length.toLocaleString("en-US")} rows` : asFile ? "save CSV" : "copy CSV";
-    const copyTip = partial
-        ? `The panel holds the first ${rows.length.toLocaleString("en-US")} of ${total.toLocaleString("en-US")} rows, so this is a PREFIX — not the table. For all of it, pass the source to python_exec.`
+    useEffect(() => {
+        if (mode === "summary" && !collapsed && reachable && !whole.data && !whole.loading) void loadWhole();
+    }, [mode, collapsed, value]);
+    const summary = useMemo(() => mode !== "summary" ? null
+        : whole.data ? summarizeColumns(cols, cols.map((c) => whole.data!.columns[c] ?? []), dtypes)
+        : summarizeRows(cols, rows, dtypes), [mode, whole.data, rows, cols.join("\u0000")]);
+    const fmtN = (n: number) => n.toLocaleString("en-US");
+    const basis = whole.data ? `Summary of all ${fmtN(whole.data.rowCount)} rows.`
+        : !partial ? `Summary of all ${fmtN(total)} rows.`
+        : whole.loading ? `Summary of the first ${fmtN(rows.length)} of ${fmtN(total)} rows, while the whole table loads…`
+        : whole.error ? `Summary of the first ${fmtN(rows.length)} of ${fmtN(total)} rows only. The whole table could not be read: ${whole.error}`
+        : `Summary of the first ${fmtN(rows.length)} of ${fmtN(total)} rows only: the whole table is not stored.`;
+    const asFile = (reachable ? total : rows.length) > CLIPBOARD_MAX_ROWS;
+    const csvOf = (n: number, cell: (r: number, j: number) => unknown) =>
+        [cols.map(csvField).join(","), ...Array.from({ length: n }, (_, r) => cols.map((_, j) => csvField(cell(r, j))).join(","))].join("\n");
+    const deliver = (text: string, n: number) => {
+        if (asFile) { downloadBlob(`table-${n}-rows.csv`, new Blob([text], { type: "text/csv" })); return; }
+        navigator.clipboard?.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }, () => {});
+    };
+    const copyCsv = async () => {
+        if (reachable) {
+            const d = await loadWhole();
+            if (d) { deliver(csvOf(d.rowCount, (r, j) => d.columns[cols[j]]?.[r]), d.rowCount); return; }
+            return;   // the error is now on the control's tip, and its label falls back to the prefix
+        }
+        deliver(csvOf(rows.length, (r, j) => rows[r][j]), rows.length);
+    };
+    const copyLabel = copied ? "Copied ✓" : reachable ? `${asFile ? "save" : "copy"} all ${fmtN(total)} rows`
+        : partial ? `${asFile ? "save" : "copy"} ${fmtN(rows.length)} rows` : asFile ? "save CSV" : "copy CSV";
+    const copyTip = reachable
+        ? `Reads the whole table (${fmtN(total)} rows) from the value store and ${asFile ? "saves it as a .csv file" : "copies it as CSV"}.`
+        : partial
+        ? `The panel holds the first ${fmtN(rows.length)} of ${fmtN(total)} rows, so this is a PREFIX — not the table.${whole.error ? ` The whole table could not be read: ${whole.error}` : ""} For all of it, pass the source to python_exec.`
         : asFile ? "Saves the whole table as a .csv file (too large for the clipboard)." : "Copies the whole table as CSV.";
+    const modeTip = mode === "summary" ? "Show the rows." : `Summarise each column: dtype, nulls, distinct values, and a glance at the values${partial ? (value ? ", over the whole table" : ", over the rows the panel holds") : ""}.`;
     const startResize = (c: number, e: any) => {
         e.preventDefault(); e.stopPropagation();
         const th = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
@@ -273,7 +381,7 @@ export function PyDfTable({ columns, rows, noCollapse, rowCount, dtypes, delimit
 
     return (
         <div class={`r-df${noCollapse ? " r-df-bare" : ""}`}
-            {...(noCollapse ? { onContextMenu: (e: MouseEvent) => openCtxMenu(e, [{ label: copied ? "Copied ✓" : "Copy as CSV", run: copyCsv }]) } : {})}>
+            {...(noCollapse ? { onContextMenu: (e: MouseEvent) => openCtxMenu(e, [{ label: copied ? "Copied ✓" : "Copy as CSV", run: () => { void copyCsv(); } }, { label: mode === "summary" ? "Show rows" : "Summarise columns", run: () => setMode((m) => (m === "summary" ? "rows" : "summary")) }]) } : {})}>
             {/* NO BAR IN THE BENCH. `hide table` is meaningless where the tab strip already decides what is
                 on screen, and `copy CSV` alone then owned a whole row directly above the grid — the least
                 important thing in the pane in its most prominent place. Below the grid was worse: it either
@@ -284,7 +392,8 @@ export function PyDfTable({ columns, rows, noCollapse, rowCount, dtypes, delimit
             {noCollapse ? null : (
                 <div class="r-df-bar">
                     <button class="r-df-btn" onClick={() => setCollapsed(v => !v)}>{collapsed ? "▸ show table" : "▾ hide table"}</button>
-                    {!collapsed ? <button class="r-df-btn" onClick={copyCsv} {...cursorTipOn(copyTip)}>{copyLabel}</button> : null}
+                    {!collapsed ? <button class="r-df-btn" onClick={() => { void copyCsv(); }} {...cursorTipOn(copyTip)}>{copyLabel}</button> : null}
+                    {!collapsed ? <button class="r-df-btn" onClick={() => setMode((m) => (m === "summary" ? "rows" : "summary"))} {...cursorTipOn(modeTip)}>{mode === "summary" ? "rows" : "summary"}</button> : null}
                     {/* HOW IT WAS READ, which the model is told and the reader was not: the shape, the
                         delimiter we GUESSED (a wrong guess shows as mangled columns, so it should be legible
                         rather than inferred), and whether the column names were decided rather than read. */}
@@ -297,7 +406,7 @@ export function PyDfTable({ columns, rows, noCollapse, rowCount, dtypes, delimit
                     ) : null}
                 </div>
             )}
-            {collapsed && !noCollapse ? null : <>
+            {collapsed && !noCollapse ? null : mode === "summary" && summary ? <TableSummary summary={summary} basis={basis} /> : <>
                 <div class="r-df-scroll">
                     <table class="r-df-table">
                         <thead><tr>
@@ -1182,7 +1291,7 @@ function PyOutBody({ id, d, marks, lineMap, fill }: { id: PyOutSectionId; d: Ext
         case "error": return <OutputCell fill={fill}><Traceback text={d.error!} map={lineMap} /></OutputCell>;
         case "image": return <div class="r-image"><ClickableImg src={d.image!} alt="output image" /><div class="r-image-label">returned image</div></div>;
         case "token": return <code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code>;
-        case "df": return <PyDfTable columns={d.df!.columns} rows={d.df!.rows} rowCount={d.df!.rowCount} noCollapse={fill} />;
+        case "df": return <PyDfTable columns={d.df!.columns} rows={d.df!.rows} rowCount={d.df!.rowCount} value={d.df!.value} noCollapse={fill} />;
         // A sympy return auto-flagged `latex` → typeset the value (display mode), not a raw code block.
         case "latex": return <div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} />;
         // In a cell like the output above it: a returned value can be as long as anything printed on the way
@@ -1531,7 +1640,7 @@ export function RenderPanel({ d, marks, live, failLine, ranMs, ranSince, ctx, li
         // The SAME grid a DataFrame gets (scroll-capped, sticky header, sort, copy-CSV, hide) — answer-render
         // already made this call for a cited df, and a fetched CSV is the same kind of object. The bare
         // alternative had no max-height, so a 200-row fetched table rendered as an unbroken wall in the step.
-        case "table": return <PyDfTable columns={d.columns} rows={d.rows} rowCount={d.rowCount} dtypes={d.dtypes} delimiter={d.delimiter} headerless={d.headerless} />;
+        case "table": return <PyDfTable columns={d.columns} rows={d.rows} rowCount={d.rowCount} dtypes={d.dtypes} delimiter={d.delimiter} headerless={d.headerless} value={d.value} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
 /** The Markdown ladder as a resolution TREE: what was tried, what worked, what was never needed. Every rung is

@@ -9104,3 +9104,54 @@ test("a thinking block shows the counted token figure without `~`, and the estim
     await w2.flush();
     assert.equal(w2.shadow.querySelector(".athinking .astep-tokest")?.textContent, "~350 tokens", "not counted: marked as the estimate it is");
 });
+
+// The table view's two modes (docs/spec/TABLE_VIEW.md): a table larger than the grid draws opens as a per-column SUMMARY,
+// computed over the WHOLE table when the value store holds it and over the preview (saying so) when it does not; the copy
+// control copies all of it only when all of it is reachable.
+const bigTable = (value) => ({ type: "table", columns: ["id", "region"], rows: Array.from({ length: 200 }, (_, i) => [i, i % 2 ? "south" : "north"]), rowCount: 300, dtypes: { id: "int64", region: "str" }, delimiter: ",", ...(value ? { value } : {}) });
+const openTableStep = async (w, hash, renderOut) => {
+    await w.dispatch(agentStart(hash, "read the table"));
+    await w.dispatch(agentStep(hash, 1, { tool: "fetch_url", arguments: { url: "https://x.test/t.csv" }, result: "type: csv", renderOut }));
+    await w.dispatch(agentResult(hash, "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();
+    await w.tick();
+};
+const btn = (w, re) => [...w.shadow.querySelectorAll(".r-df-btn")].find((b) => re.test(b.textContent));
+
+test("table view: a table past the grid's rows opens as a SUMMARY of its preview, saying so, and flips to the rows", async () => {
+    const w = await loadSidebarWorld();
+    await openTableStep(w, "tv1", bigTable());
+    assert.match(w.shadow.querySelector(".r-df-basis").textContent, /Summary of the first 200 of 300 rows only: the whole table is not stored\./);
+    const sumRows = [...w.shadow.querySelectorAll(".r-df-sum tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent));
+    assert.deepEqual(sumRows.map((r) => r.slice(0, 5)), [["id", "int64", "200", "0", "200"], ["region", "str", "200", "0", "2"]]);
+    assert.match(sumRows[1][5], /north 100 · south 100/);
+    assert.ok(btn(w, /^copy 200 rows$/), "no store: the copy control still names the prefix");
+    btn(w, /^rows$/).click();
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".r-df-sum"), null);
+    assert.equal(w.shadow.querySelectorAll(".r-df-table tbody tr").length, 200);
+});
+
+test("table view: with the whole table in the value store, the summary covers every row and the copy control copies all of it", async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const { ValueStore } = await import("../src/value-store.ts");
+    const idb = new IDBFactory();
+    const csv = ["id,region", ...Array.from({ length: 300 }, (_, i) => `${i},${i < 250 ? "north" : "west"}`)].join("\n");
+    const { key } = await new ValueStore({ idb, budgetBytes: () => 1e9 }).put(new Blob([csv]), { format: "csv" });
+    const w = await loadSidebarWorld({ indexedDB: idb });
+    await openTableStep(w, "tv2", bigTable(key));
+    for (let i = 0; i < 40 && !/all 300 rows/.test(w.shadow.querySelector(".r-df-basis")?.textContent ?? ""); i++) await w.tick();
+    assert.match(w.shadow.querySelector(".r-df-basis").textContent, /^Summary of all 300 rows\.$/);
+    const region = [...w.shadow.querySelectorAll(".r-df-sum tbody tr")][1];
+    assert.match(region.textContent, /north 250 · west 50/, "the values past the preview are in it");
+    assert.ok(btn(w, /^copy all 300 rows$/));
+
+    // A key the store no longer holds: the summary falls back to the preview and says why.
+    const w2 = await loadSidebarWorld({ indexedDB: idb });
+    await openTableStep(w2, "tv3", bigTable("v00000000000000ff"));
+    for (let i = 0; i < 40 && !/could not be read/.test(w2.shadow.querySelector(".r-df-basis")?.textContent ?? ""); i++) await w2.tick();
+    assert.match(w2.shadow.querySelector(".r-df-basis").textContent, /first 200 of 300 rows only\. The whole table could not be read: the stored value v00000000000000ff is not in the store/);
+    assert.ok(btn(w2, /^copy 200 rows$/), "and the copy control goes back to naming the prefix");
+});
