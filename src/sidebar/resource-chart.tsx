@@ -17,7 +17,7 @@ import {
     scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
     filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
     OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, stepBands, bandEdge, runGap, type RunGap, serverGenNote, layersOnCard, predictionLine,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, type RibbonSpan, stepBands, bandEdge, runGap, type RunGap, serverGenNote, layersOnCard, predictionLine,
     type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
     bandOrder,
 } from "../resource-model";
@@ -795,6 +795,11 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                     </span>
                 )}
             </div>
+            {/* WHAT THIS CARD WAS DOING, in a strip of its own ABOVE the plot rather than along its top edge: drawn on the
+                plot, a card near full memory hid it in its own bands. Same axis as the plot, same runs and gaps. */}
+            {/* Drawn drilled in too: hovering a lane generation drills the chart into its model, and that hover is exactly
+                when the strip has something to show (the stretches of the hovered event, lit). Same height either way. */}
+            {ribbon.length ? <PhaseStrip runs={runs} spans={ribbon} events={events} scope={scope} /> : null}
             <div class="rc-plot"
                 onPointerDown={startBrush(runs)}
                 onPointerMove={(e: PointerEvent) => { trackCursor(scope)(e); trackCrosshair(runs)(e); }}
@@ -813,7 +818,6 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 }}>
                 <TimeGrid />
                 {onAxis(runs, samples, scope, (run, i) => (<>
-                        {!deep && ribbon.length ? <PhaseRibbon run={run} spans={ribbon} /> : null}
                         <StackedArea frames={run.map(bandsOf)} times={run.map((sm) => sm.t)} ceiling={ceiling} hidden={hidden} scope={scope}
                             deep={deep} loads={deep ? events.filter((e) => e.kind === "load" && e.model === deep.model && e.until != null) : []}
                             snapIndex={snapUnder(runs)?.run === i ? snapUnder(runs)!.index : null} />
@@ -2592,6 +2596,18 @@ const eventKey = (e: ResourceEvent): string => `${e.kind}:${e.t}:${e.model ?? ""
 const barKey = (e: ResourceEvent): string => e.id ?? `${eventKey(e)}:${e.ref?.hash ?? ""}:${e.ref?.seq ?? ""}:${e.label}`;
 const hotEvent = signal<string | null>(null);
 
+/** WHICH EVENTS A HOVER LIGHTS, for every surface that dims around it (the lane, each card's phase strip): the hovered event
+ *  itself, by its bar key, plus its lineage. Null when nothing should dim — no hover, or a hover on an event that is no
+ *  longer among `events` (a held signal outlives the bar it named, and dimming everything for it reads as the lane
+ *  vanishing). The key, not only the lineage id: a server-reported generation has no id, so hovering one dimmed nothing. */
+function litBy(events: readonly ResourceEvent[], hovered: ResourceEvent | undefined): ((e: ResourceEvent) => boolean) | null {
+    if (!hovered) return null;
+    const key = barKey(hovered);
+    if (!events.some((e) => barKey(e) === key)) return null;
+    const lineage = lineageOf(events, hovered.id);
+    return (e) => barKey(e) === key || (e.id != null && lineage.has(e.id));
+}
+
 /** The hovered event, and WHICH surface owns it. Every track's plot renders a tip (a ruled instant is hovered
  *  in the plot, where its meaning is) and so does the lane — all driven by this one signal, so without an
  *  owner every one of them rendered the same tooltip at once, four deep on a three-track panel. */
@@ -2709,24 +2725,48 @@ function PredictLines({ run, loads, deviceId, ceiling }: { run: ResourceSample[]
     );
 }
 
+/** Height of one model's row in the phase strip, gap included (px). */
+const STRIP_ROW = 6;
+
 /**
- * WHAT A CARD WAS DOING, along the top edge of its track: one thin row per model that generated on it, each
- * timed phase in the lane's own fill for that kind — prefill dense, decode lighter, a cache swap striped — so the
- * ribbon and the lane read as one legend. Nothing is drawn for time nobody timed (an unpatched server, a tool
- * running), which is why an empty stretch claims nothing, idle included. Rows are per MODEL because two models
- * on one card do generate at once.
+ * WHAT A CARD WAS DOING, in a reserved strip above its plot: one row per model that generated on it, each timed phase in
+ * the lane's own fill for that kind (prefill dense, decode lighter, a cache swap striped), so the strip and the lane
+ * read as one legend. Nothing is drawn for time nobody timed (an unpatched server, a tool running), which is why an
+ * empty stretch claims nothing, idle included. Rows are per MODEL because two models on one card do generate at once.
+ *
+ * It is the lane's content seen per card, so it answers the way the lane does: hovering a stretch shows that event's
+ * tooltip, lights it in the lane and dims every other event there and in every card's strip; hovering a lane bar lights
+ * its stretches here. It used to sit on the plot's top edge, where a card near full memory drew over it.
  */
-function PhaseRibbon({ run, spans }: { run: { t: number }[]; spans: { t: number; until: number; kind: string; model: string }[] }) {
-    if (run.length < 2) return null;
-    const first = run[0].t, last = run[run.length - 1].t;
-    const rows = [...new Set(spans.map((s) => s.model))].sort();
+function PhaseStrip({ runs, spans, events, scope }: { runs: ResourceSample[][]; spans: RibbonSpan[]; events: ResourceEvent[]; scope: string }) {
+    const axis = liveAxis;
+    if (!axis) return null;
+    const rows = [...new Set(spans.map((s) => s.model))].sort().slice(0, 3);
+    // The same focus the lane dims by: the hovered event, its ancestors and its own descendants.
+    const lit = litBy(events, eventHover.value?.p.event);
+    const isLit = (e: ResourceEvent): boolean => !lit || lit(e);
     return (
-        <div class="rc-ribbon" aria-hidden="true" style={{ height: `${Math.min(rows.length, 3) * 3}px` }}>
-            {spans.filter((s) => s.until > first && s.t < last && rows.indexOf(s.model) < 3).map((s) => {
-                const from = runFrac(run, Math.max(first, s.t)), to = runFrac(run, Math.min(last, s.until));
-                return <i key={`${s.model}:${s.t}:${s.kind}`} class={`rc-ribbon-seg k-${s.kind}`}
-                    style={{ left: `${from * 100}%`, width: `max(1px, ${(to - from) * 100}%)`, top: `${rows.indexOf(s.model) * 3}px`,
-                             background: phaseFill(s.kind, s.model) }} />;
+        <div class="rc-strip" style={{ height: `${rows.length * STRIP_ROW - 1}px` }}>
+            {runs.map((run, i) => {
+                if (run.length < 2) return null;
+                const first = run[0].t, last = run[run.length - 1].t;
+                const a = axisFrac(axis, first), b = axisFrac(axis, last);
+                return (
+                    <div class="rc-seg" key={i} style={{ left: `${a * 100}%`, width: `${Math.max(0, b - a) * 100}%` }}>
+                        {spans.filter((s) => s.until > first && s.t < last && rows.includes(s.model)).map((s) => {
+                            const from = runFrac(run, Math.max(first, s.t)), to = runFrac(run, Math.min(last, s.until));
+                            // The event's own placement on the axis, as the lane places it, so the tooltip is the lane's.
+                            const p: EventPlacement = { event: s.event, run: 0, from: axisFrac(axis, s.event.t), to: axisFrac(axis, s.event.until ?? s.event.t), clipped: false };
+                            return <i key={`${s.model}:${s.t}:${s.kind}`} class={`rc-ribbon-seg k-${s.kind}${isLit(s.event) ? "" : " away"}`}
+                                data-model={s.model}
+                                style={{ left: `${from * 100}%`, width: `max(1px, ${(to - from) * 100}%)`, top: `${rows.indexOf(s.model) * STRIP_ROW}px`,
+                                         background: phaseFill(s.kind, s.model) }}
+                                onPointerEnter={(ev: PointerEvent) => { eventHover.value = { p, scope }; hoverModel.value = s.model; trackCursor(scope)(ev); }}
+                                onPointerMove={trackCursor(scope)}
+                                onPointerLeave={() => { eventHover.value = null; hoverModel.value = null; hoverAt.value = null; }} />;
+                        })}
+                    </div>
+                );
             })}
         </div>
     );
@@ -3080,6 +3120,7 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
     const rows = laneRows(spans, 4, minSpan);
     const [pulsed, setPulsed] = useState<string | null>(null);
     const lit = lineageOf(events, eventHover.value?.p.event.id);
+    const litFn = litBy(events, eventHover.value?.p.event);
     // The same focus, carried into the transcript: the log dims every step outside the hovered lineage, so a
     // bar and the rows it is about light up together. Derived from the lineage rather than from the one
     // hovered event, so a sub-call still points at the step that spawned it.
@@ -3212,7 +3253,7 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
                                     : e.phases && total > 0 ? phaseGradient(e.phases, e.t, total, e.model) : undefined;
                                 // Hovering one event dims everything outside its LINEAGE: a sub-call only means
                                 // something next to the step that spawned it and the run that contains it.
-                                const away = lit.size > 0 && !(e.id && lit.has(e.id));
+                                const away = !!litFn && !litFn(e);
                                 return (
                                     <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}${e.open ? " open" : ""}${e.id && e.id === pulsed ? " pulse" : ""}`} key={barKey(e)}
                                         style={{ left: `${p.from * 100}%`, width: `${w}%`,

@@ -253,13 +253,19 @@ per device, in bytes.
   own side task — a session title or a step summary, which are not lane events of their own — and says so; a
   live run caught it being called "a session this panel isn't showing" about the run on screen. A replay is deduped by the END and the figures, never
   the start, which moves when a replay lost its `gen.start`.
-- **WHAT EACH CARD WAS DOING: the phase ribbon** (`ribbonSpans`, `PhaseRibbon`). A thin row per model along the
-  top of a per-card track, drawing only TIMED phases — the engine's prefill/decode, our own streamed channels
+- **WHAT EACH CARD WAS DOING: the phase strip** (`ribbonSpans`, `PhaseStrip`). A thin row per model in a strip
+  RESERVED above a per-card plot (it was drawn on the plot's top edge, where a card near full memory drew over it),
+  drawing only TIMED phases — the engine's prefill/decode, our own streamed channels
   (which ARE the decode), a prompt-cache swap — in the lane's own fills, so the two read as one legend. So the
   card tracks answer "reading the prompt or generating?" with the lane collapsed. A span goes to the cards the
   nearest sample places its model on (a split model's work shows on each). Empty ribbon claims nothing, idle
   included: an unpatched server times no phases. It follows the lane's kind toggles ("calls" off removes it).
   Rows are per model because two models on one card generate at once (the real capture has four).
+  It answers the way the lane does, from the same `eventHover`: hovering a stretch shows that event's lane tooltip,
+  lights it in the lane and dims every other event there and in every card's strip; hovering a lane bar lights its
+  stretches. Both surfaces dim through `litBy` (the hovered bar key plus its lineage): lineage alone needs an id, and
+  a server-reported generation has none, so hovering one used to dim nothing. The strip stays up when the chart is
+  drilled into a model, since a lane hover drills in and that is when the lit stretches matter.
 - **THE HOST-RAM PROMPT CACHE, AND THE SWAP NO OTHER TIMING CONTAINS** (`GenTimings.swap`, `SwapChips`,
   `RunnerActivity.promptCache`; `ollama-slop:promptcache2`). Two conversations on one model share its single
   slot; when they take turns, llama-server parks the outgoing one's KV cache in host RAM (`--cache-ram`, 8 GiB

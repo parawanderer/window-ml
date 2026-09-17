@@ -2748,7 +2748,8 @@ test("ribbonSpans: a card's timed generation phases, on every card the model is 
     const step = { t: 4000, until: 9000, kind: "tool", label: "", model: "small:3b",
         phases: [{ kind: "model", until: 4500 }, { kind: "think", until: 6000 }, { kind: "call", until: 6500 }, { kind: "tool", until: 9000 }] };
     const on0 = M.ribbonSpans([gen, step], samples, "0", 2);
-    assert.deepEqual(on0, [{ t: 1100, until: 1500, kind: "prefill", model: "split:70b" }, { t: 1500, until: 3000, kind: "decode", model: "split:70b" }],
+    assert.ok(on0.every((s) => s.event === gen), "each stretch carries the event it is part of (the strip's hover answers with it)");
+    assert.deepEqual(on0.map(({ event, ...rest }) => rest), [{ t: 1100, until: 1500, kind: "prefill", model: "split:70b" }, { t: 1500, until: 3000, kind: "decode", model: "split:70b" }],
         "the split model's work on its first card; the small model is not on this card");
     const on1 = M.ribbonSpans([gen, step], samples, "1", 2);
     assert.equal(on1.filter((s) => s.model === "split:70b").length, 2, "…and on its second, since a split model works on both");

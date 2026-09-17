@@ -1285,6 +1285,49 @@ test("the phase ribbon draws each model's prefill and decode along its card, and
         const rows = await track.locator(".rc-ribbon-seg").evaluateAll((els) => new Set(els.map((e) => e.style.top)).size);
         expect(rows, "a row per model, since two models on one card can generate at once").toBeGreaterThan(1);
 
+        // A RESERVED STRIP ABOVE THE PLOT, not the plot's top edge: there a card near full memory drew over it.
+        const place = await track.evaluate((el) => {
+            const strip = el.querySelector(".rc-strip")?.getBoundingClientRect(), plot = el.querySelector(".rc-plot")?.getBoundingClientRect();
+            return { strip: strip && { top: strip.top, bottom: strip.bottom }, plot: plot && { top: plot.top }, inPlot: !!el.querySelector(".rc-plot .rc-ribbon-seg") };
+        });
+        expect(place.inPlot, "no stretch is drawn inside the plot").toBe(false);
+        expect(place.strip.bottom, `the strip sits above the plot: ${JSON.stringify(place)}`).toBeLessThanOrEqual(place.plot.top + 0.5);
+
+        // HOVERING A STRETCH answers like the lane: the event's tooltip, the lane dims every other event, the strip dims the
+        // other events' stretches.
+        // At this capture's zoom a stretch is about a pixel wide and neighbours overlap, so hover one that is the topmost
+        // element under its own centre: a pointer aimed at a covered one lands on its neighbour.
+        const hittable = await track.locator(".rc-ribbon-seg.k-decode").evaluateAll((els) => els.findIndex((e) => {
+            const r = e.getBoundingClientRect();
+            return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === e;
+        }));
+        expect(hittable, "some decode stretch can be hovered").toBeGreaterThanOrEqual(0);
+        const seg = track.locator(".rc-ribbon-seg.k-decode").nth(hittable);
+        const segModel = await seg.getAttribute("data-model");
+        await seg.hover({ force: true });
+        const tip = frame.locator(".rc-tip-event");
+        await expect(tip).toBeVisible({ timeout: 5000 });
+        expect(await tip.textContent()).toContain(segModel);
+        await expect.poll(() => frame.locator(".rc-ev-gen:not(.away)").count(), { timeout: 3000 }).toBe(1);
+        expect(await frame.locator(".rc-ev-gen.away").count(), "every other generation in the lane is dimmed").toBe(4);
+        expect(await track.locator(".rc-ribbon-seg.away").count(), "other generations' stretches dim in the strip").toBeGreaterThan(0);
+        expect(await seg.evaluate((el) => el.classList.contains("away")), "the hovered stretch stays lit").toBe(false);
+
+        // …and the other way round: hovering a lane bar lights its stretches and dims the rest.
+        await frame.locator(".vram-head").first().hover();
+        await expect.poll(() => track.locator(".rc-ribbon-seg.away").count(), { timeout: 3000 }).toBe(0);
+        const bars = frame.locator(".rc-ev-gen");
+        const hitBar = await bars.evaluateAll((els) => els.findIndex((e) => {
+            const r = e.getBoundingClientRect();
+            return r.width > 0 && document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) === e;
+        }));
+        expect(hitBar, "some lane generation can be hovered").toBeGreaterThanOrEqual(0);
+        await bars.nth(hitBar).hover();
+        await expect(tip).toBeVisible({ timeout: 5000 });
+        await expect.poll(() => track.locator(".rc-ribbon-seg.away").count(), { timeout: 3000 }).toBeGreaterThan(0);
+        expect(await track.locator(`.rc-ribbon-seg:not(.away)`).count(), "the hovered bar's own stretches stay lit").toBeGreaterThan(0);
+        await frame.locator(".vram-head").first().hover();
+
         // ONE set of kind toggles: "calls" off in the lane's chips takes the ribbon away with the lane's bars.
         await frame.locator(".rc-lane-filter .rc-lane-chip", { hasText: /^calls/ }).first().click();
         await expect.poll(() => track.locator(".rc-ribbon-seg").count(), { timeout: 5000 }).toBe(0);
