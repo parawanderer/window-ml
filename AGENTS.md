@@ -214,6 +214,7 @@ learned by shipping the wrong version first.
 | the resource panel (VRAM/RAM) and the event lane | `docs/dev/resource-panel.md` (+ `docs/spec/RESOURCE_PANEL.md`) |
 | the overlay vs DevTools surfaces, `debugMode`, shared UI components | `docs/dev/sidebar.md` |
 | the chat page (`src/chat/`): the client store, hosts, stream rules, the web build | `docs/dev/chat-page.md` (+ `docs/spec/CHAT_PAGE.md`, `docs/spec/SESSION_CONTRACT.md`) |
+| the hub client (`src/hub/`): HPKE over WebCrypto, certificates, sealed commands, encrypted streams | `docs/dev/hub-client.md` |
 | the patched Ollama/OpenWebUI features and how the client reads them | `docs/FORKED-BACKENDS.md` |
 | the e2e harness, observe, the bench, live probes, demos | `docs/dev/e2e-harness.md` (+ each tool's skill in `.claude/skills/`) |
 
@@ -258,6 +259,11 @@ learned by shipping the wrong version first.
   reuse them; an entry point installs the implementation before rendering. Gate an affordance on the seam's questions
   (`sideCalls(session)`, `bench`), never on this browser's `config`. A session's key is `Session.hash`, which is
   `runtime:hash` in a multi-runtime client: split keys on the LAST `:`.
+- **Hub client.** A hub is trusted with nothing, including who sent something: what a runtime acts on is the signature
+  inside the seal, never `Envelope.sender`. The checks in `seal.ts` are in a deliberate order and the nonce is last, so
+  only an authenticated command inside its clock window can fill the replay window. Bytes reaching WebCrypto are
+  `Uint8Array<ArrayBuffer>` (`bytes()` at every protobuf boundary), and the two implementations are kept honest by
+  vectors in both directions, not by reading the spec twice.
 - **Chat page.** `src/chat/` never reaches `chrome`: the web build fails on a `chrome.*` reference. Events reach
   `sessionMap` only through `SessionFeed` and `onDebug`, never written by hand, and a transcript changes only when the
   runtime says so (no optimistic updates). The background's session index (`session-index.ts`) is fed where the DevTools

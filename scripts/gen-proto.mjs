@@ -18,7 +18,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PROTO_DIR = join(ROOT, "src", "proto");
@@ -65,9 +65,30 @@ export const TARGETS = {
             "useOptionals=none",
         ],
     },
+    /**
+     * The hub's own wire (window-ml-hub): frames, identities and certificates, and the sealed commands and streams the
+     * client here encrypts. ENCODERS TOO, unlike the two above: this side speaks as well as listens. Three files that
+     * import each other, so they are generated together and land beside each other, renamed to `.gen.ts` with their
+     * imports rewritten to match.
+     */
+    hub: {
+        protos: ["wmlhub/v1/hub.proto", "wmlhub/v1/identity.proto", "wmlhub/v1/seal.proto"],
+        dir: "wmlhub/v1",
+        opts: [
+            "outputJsonMethods=false",
+            "outputClientImpl=false",
+            // seq, epoch, times and sizes: all exact in a double, and a Long dependency for them would be absurd
+            "forceLong=number",
+            "esModuleInterop=true",
+            "useOptionals=none",
+        ],
+    },
 };
 
-const pinOf = (target) => JSON.parse(readFileSync(join(PROTO_DIR, `${TARGETS[target].proto}.pin.json`), "utf8"));
+const protosOf = (target) => TARGETS[target].protos ?? [TARGETS[target].proto];
+
+const pinOf = (target, proto = protosOf(target)[0]) =>
+    JSON.parse(readFileSync(join(PROTO_DIR, `${proto}.pin.json`), "utf8"));
 
 /**
  * Is the vendored schema BYTE-FOR-BYTE the file at the pinned commit?
@@ -76,8 +97,9 @@ const pinOf = (target) => JSON.parse(readFileSync(join(PROTO_DIR, `${TARGETS[tar
  * offline, which is the point: a copy of someone else's contract that can only be checked when a private
  * host is reachable is a copy nobody checks. The remote half is a bonus, run only where `gh` is authed.
  */
-export function checkPin({ remote = true, target = "chat" } = {}) {
-    const PIN = pinOf(target), file = TARGETS[target].proto;
+export function checkPin({ remote = true, target = "chat", proto = null } = {}) {
+    const file = proto ?? protosOf(target)[0];
+    const PIN = pinOf(target, file);
     const local = execFileSync("git", ["hash-object", join(PROTO_DIR, file)], { encoding: "utf8" }).trim();
     if (local !== PIN.blob)
         throw new Error(`${file} is not the pinned file: ${local} != ${PIN.blob}. `
@@ -114,29 +136,49 @@ export function generate(intoDir, target = "chat") {
     mkdirSync(intoDir, { recursive: true });
     execFileSync("protoc", [
         `-I${PROTO_DIR}`, `--plugin=protoc-gen-ts_proto=${PLUGIN}`,
-        `--ts_proto_out=${intoDir}`, `--ts_proto_opt=${t.opts.join(",")}`, t.proto,
+        `--ts_proto_out=${intoDir}`, `--ts_proto_opt=${t.opts.join(",")}`, ...protosOf(target),
     ], { stdio: ["ignore", "ignore", "pipe"] });
-    return readFileSync(join(intoDir, t.emitted), "utf8");
+    if (!t.protos) return readFileSync(join(intoDir, t.emitted), "utf8");
+    // Several files that import each other: hand back each one's source, with the sibling imports pointing at the
+    // `.gen` names they are checked in under.
+    const sources = new Map();
+    for (const proto of t.protos) {
+        const name = basename(proto, ".proto");
+        const src = readFileSync(join(intoDir, t.dir, `${name}.ts`), "utf8")
+            .replace(/from "\.\/([a-z0-9_-]+)"/g, 'from "./$1.gen"');
+        sources.set(`${t.dir}/${name}.gen.ts`, src);
+    }
+    return sources;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
     for (const target of Object.keys(TARGETS)) {
-        const { proto, out } = TARGETS[target], PIN = pinOf(target), OUT = join(PROTO_DIR, out);
-        if (process.argv.includes("--check")) {
-            const r = checkPin({ target });
-            console.log(`${proto} matches ${PIN.repo}@${PIN.commit.slice(0, 7)} (${r.remote ? "verified against GitHub" : "offline check only"})`);
-            if (r.stale)
-                console.log(`NOTE: upstream has moved on — newest commit touching ${PIN.path} is ${r.tip.slice(0, 7)}. `
-                    + "Re-vendor and re-pin if you want it.");
-            if (!protocVersion()) { console.log("protoc absent — cannot diff the generated output"); continue; }
+        for (const proto of protosOf(target)) {
+            const PIN = pinOf(target, proto);
+            if (process.argv.includes("--check")) {
+                const r = checkPin({ target, proto });
+                console.log(`${proto} matches ${PIN.repo}@${PIN.commit.slice(0, 7)} (${r.remote ? "verified against GitHub" : "offline check only"})`);
+                if (r.stale)
+                    console.log(`NOTE: upstream has moved on — newest commit touching ${PIN.path} is ${r.tip.slice(0, 7)}. `
+                        + "Re-vendor and re-pin if you want it.");
+            }
+            checkPin({ remote: false, target, proto });
         }
-        checkPin({ remote: false, target });
+        if (process.argv.includes("--check") && !protocVersion()) {
+            console.log("protoc absent — cannot diff the generated output");
+            continue;
+        }
         const tmp = join(ROOT, "node_modules", ".cache", "protogen");
         rmSync(tmp, { recursive: true, force: true });
-        const src = generate(tmp, target);
-        const before = existsSync(OUT) ? readFileSync(OUT, "utf8") : null;
-        writeFileSync(OUT, src);
+        const generated = generate(tmp, target);
+        const files = generated instanceof Map ? generated : new Map([[TARGETS[target].out, generated]]);
+        for (const [out, src] of files) {
+            const OUT = join(PROTO_DIR, out);
+            mkdirSync(dirname(OUT), { recursive: true });
+            const before = existsSync(OUT) ? readFileSync(OUT, "utf8") : null;
+            writeFileSync(OUT, src);
+            console.log(before === src ? `unchanged ${OUT}` : `generated ${OUT}`);
+        }
         rmSync(tmp, { recursive: true, force: true });
-        console.log(before === src ? `unchanged ${OUT}` : `generated ${OUT}`);
     }
 }

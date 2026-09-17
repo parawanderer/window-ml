@@ -21,6 +21,7 @@ tmp/
 # docs/spec/export.schema.json, and `tests/proto.test.mjs` regenerates and diffs it where protoc exists.
 !src/proto/chat.gen.ts
 !src/proto/events.gen.ts
+!src/proto/wmlhub/v1/*.gen.ts
 tools/annotate-preview.html
 tools/legend-notebook.html
 pyodide-wheels
