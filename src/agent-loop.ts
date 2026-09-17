@@ -518,6 +518,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             id: v.id, tool: v.tool, kind: v.kind, step: v.step,
             ...(v.label ? { label: v.label } : {}),
             ...(v.table ? { table: v.table } : {}),
+            // The stored table's key, only from a host that claims values: it serves stored reads to the run holding them.
+            ...(v.value && opts.claimValue ? { value: v.value } : {}),
             ...(v.image ? { image: v.image } : {}),
             ...(v.latex ? { latex: v.latex } : {}),
         };

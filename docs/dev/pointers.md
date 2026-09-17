@@ -148,3 +148,18 @@ Nothing READS a stored value yet: `python_exec` opening one is slice 5. Until th
 `globalThis.__mlValues` (`rows()`, `read(key)`, reachable only through `serviceWorker.evaluate`), which
 `tests/e2e/value-store.spec.mjs` uses to check a real fetch is stored and claimed, evicted by the next one under a small
 budget, and that reading it then fails with the reason.
+
+**Reading a stored table from JavaScript (slice 7).** A pointer read of a background-hosted run carries the key
+(`DerefMeta.value`, only from a host that claims values). `derefViaBackground` attaches a PAGE-SIDE `readColumns`
+to the read, bound to the runId, and `DerefText` hands it to `asTable`, which makes a STORED facade
+(`brandStored`):
+
+- `col`, `select`, `records`, and a `head` longer than the preview, read every row and return promises. `rows` stays
+  the preview. A missed `await` throws a message saying to await, where it would otherwise read `undefined`.
+- The read goes through the relay (`PAGE_VALUE_COLUMNS` → content → `VALUE_COLUMNS`). The worker answers only for a run
+  it hosts (`derefByRun`), active on the SENDER's tab, that holds the value.
+- The worker decodes the stored bytes (`storedColumns`, table-data.ts) with the preview's own parsers, uncapped: a
+  delimited body with the preview's delimiter and header decision, Parquet with hyparquet, Arrow with apache-arrow.
+  One read returns at most `MAX_STORED_READ_CELLS` (5M); past that it names `python_exec`.
+- In the read-only dialect the reads are awaited like `ml` calls, sized by `shape` before the request, and bounded
+  in total per script (`MAX_STORED_CELLS`); see `docs/dev/readonly-exec.md`.

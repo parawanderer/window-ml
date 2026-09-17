@@ -385,3 +385,49 @@ test("looksArrowFile reads the ARROW1 magic, and bytes that are not Arrow do not
     assert.equal(looksArrowFile(arrowBuf(new TextEncoder().encode("id,name\n1,a"))), false);
     await assert.rejects(tableFromArrow(arrowBuf(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]))));
 });
+
+// --- Stored tables (POINTER_VALUES slice 7) ------------------------------------------------------------------------
+import { storedColumns, asTable as asTableS, NotATable as NotATableS, MAX_TABLE_ROWS as MAX_ROWS_S } from "../src/table-data.ts";
+import { isStoredTable } from "../src/table-brand.ts";
+
+const enc = (s) => { const u = new TextEncoder().encode(s); return u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength); };
+
+test("storedColumns: a delimited body is read WHOLE, past the preview's row cap, split and cast as the preview was", async () => {
+    const n = MAX_ROWS_S + 5;
+    const csv = ["id;name", ...Array.from({ length: n }, (_, i) => `${i};x${i}`)].join("\n");
+    const r = await storedColumns(enc(csv), "csv", ["id"], { delimiter: ";" });
+    assert.equal(r.rowCount, n);
+    assert.equal(r.columns.id.length, n);
+    assert.equal(r.columns.id[n - 1], n - 1, "cast to numbers, as the preview's column was");
+    const tsv = await storedColumns(enc("1\t2\n3\t4\n"), "tsv", ["0", "1"], { headerless: true });
+    assert.deepEqual(tsv, { rowCount: 2, columns: { 0: [1, 3], 1: [2, 4] } }, "headerless: no record eaten as a header");
+});
+
+test("storedColumns: Arrow file and stream by column; an unknown column or format fails with what there is", async () => {
+    const t = tableFromArrays({ sku: vectorFromArray(["A", "B", "C"], new Utf8()), n: vectorFromArray([1n, 2n, 3n], new Int64()) });
+    const buf = (u) => u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength);
+    assert.deepEqual(await storedColumns(buf(tableToIPC(t, "file")), "arrow-file", ["n"]), { rowCount: 3, columns: { n: [1, 2, 3] } });
+    assert.deepEqual((await storedColumns(buf(tableToIPC(t, "stream")), "arrow-stream", ["sku", "n"])).columns.sku, ["A", "B", "C"]);
+    await assert.rejects(storedColumns(buf(tableToIPC(t, "file")), "arrow-file", ["price"]), (e) => e instanceof NotATableS && /No column "price"\. This table has: sku, n/.test(e.message));
+    await assert.rejects(storedColumns(enc("x"), "xlsx", ["a"]), /cannot be read by column: xlsx/);
+});
+
+test("stored facade (full exec): reads are promises over every row; a missed await says so; a head within the preview stays synchronous", async () => {
+    const calls = [];
+    const reader = async (names) => { calls.push(names); return { rowCount: 500, columns: Object.fromEntries(names.map((c) => [c, Array.from({ length: 500 }, (_, i) => (c === "n" ? i : `s${i}`))])) }; };
+    const t = asTableS({ columns: ["n", "s"], rows: [[0, "s0"], [1, "s1"]], shape: [500, 2], dtypes: { n: "int64", s: "str" }, truncated: true }, { readColumns: reader });
+    assert.equal(isStoredTable(t), true);
+    const col = t.col("n");
+    assert.throws(() => col.length, (e) => e instanceof NotATableS && /t\.col\("n"\) reads a stored table, so it is a request that returns a promise: write `await t\.col\("n"\)`/.test(e.message));
+    assert.equal((await col).length, 500);
+    assert.deepEqual((await t.select(["s"])).shape, [500, 1]);
+    assert.deepEqual((await t.records())[499], { n: 499, s: "s499" });
+    assert.deepEqual(t.head(2).shape, [2, 2], "the preview holds these rows: no request");
+    assert.deepEqual((await t.head(300)).rows[299], [299, "s299"]);
+    assert.equal(calls.length, 4);
+    assert.throws(() => t.col("nope"), /No column "nope"/, "an unknown column fails before any request");
+    // A table whose preview IS the whole table never reads, reader or not.
+    const whole = asTableS({ columns: ["n"], rows: [[1]], shape: [1, 1], dtypes: { n: "int64" } }, { readColumns: reader });
+    assert.equal(isStoredTable(whole), false);
+    assert.deepEqual(whole.col("n"), [1]);
+});

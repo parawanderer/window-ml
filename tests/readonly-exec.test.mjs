@@ -1740,3 +1740,81 @@ test("FAILURE `**`: a survey that computes with it and then leaves the dialect l
     const doc = kindWorld();
     await assert.rejects(run(`const gib = 2 ** 30; const x = [gib]; document.querySelector("#d").click(); return x`, doc), outOfDialect);
 });
+
+// --- STORED tables (POINTER_VALUES slice 7) -------------------------------------------------------------------------
+// A facade over a PREVIEW whose whole table is in the value store: `col` / `select` / `records` (and a `head` past the
+// preview) read every row through a reader bound to the run, and return promises. No construct was added, but a new kind
+// of value flows through the table surface, so the contract is re-checked: the reads are awaited, their work is sized by
+// the table's SHAPE (not the preview in `rows`), their total is bounded, the reader cannot be reached, and a failed
+// script leaves nothing behind.
+const STORED_PREVIEW = (total) => ({ columns: ["n", "s"], rows: [[0, "a"], [1, "b"]], shape: [total, 2], dtypes: { n: "int64", s: "str" }, truncated: true });
+function storedRun(js, { total = 1000, doc = world() } = {}) {
+    const calls = [];
+    const reader = async (names) => {
+        calls.push(names);
+        return { rowCount: total, columns: Object.fromEntries(names.map((n) => [n, Array.from({ length: total }, (_, i) => (n === "n" ? i : `v${i}`))])) };
+    };
+    const run = evalReadonly(expandPointers(js).code, doc, {
+        ...ML,
+        dereference: async () => ({ text: "n,s", type: "table", id: "a1b2c3d", tool: "fetch_url", step: 1, table: asTable(STORED_PREVIEW(total), { readColumns: reader }) }),
+    });
+    return { run, calls };
+}
+
+test("stored table: a column read covers EVERY row and is awaited for the survey, with or without `await`", async () => {
+    const plain = storedRun(`const t = @tool:a1b2c3d.table; return [t.shape[0], t.rows.length, t.col("n").length, t.col("n")[999]]`);
+    assert.deepEqual((await plain.run).value, [1000, 2, 1000, 999], "rows is still the preview; col is the whole column");
+    const awaited = storedRun(`const t = @tool:a1b2c3d.table; const x = await t.col("n"); return x.reduce((a, b) => a + b, 0)`);
+    assert.equal((await awaited.run).value, 499500);
+    assert.deepEqual((await storedRun(`return @tool:a1b2c3d.table.select(["s"]).shape`).run).value, [1000, 1]);
+    assert.deepEqual((await storedRun(`return @tool:a1b2c3d.table.records()[999]`).run).value, { n: 999, s: "v999" });
+    const head = storedRun(`const t = @tool:a1b2c3d.table; return [t.head(2).shape, t.head(500).shape]`);
+    assert.deepEqual((await head.run).value, [[2, 2], [500, 2]]);
+    assert.equal(head.calls.length, 1, "a head the preview holds is answered from it; only the longer one is a read");
+});
+
+test("ADVERSARIAL (stored table): the reader cannot be reached, extracted or pointed elsewhere", async () => {
+    for (const js of [
+        `return @tool:a1b2c3d.table.readColumns`,
+        `return @tool:a1b2c3d.table.col.call(document, "n")`,
+        `return @tool:a1b2c3d.table.col("n").constructor`,
+        `return @tool:a1b2c3d.table.col("n").then.constructor("return globalThis")()`,
+        `const f = @tool:a1b2c3d.table.col; return f("n")`,
+        `return [["n"]].map(@tool:a1b2c3d.table.select)`,
+    ]) {
+        const { run, calls } = storedRun(js, { doc: kindWorld() });
+        await assert.rejects(run, (e) => outOfDialect(e) || e instanceof NotATable || e instanceof TypeError, js);
+        assert.ok(calls.length <= 1, `${js}: no read beyond what the script plainly asked for`);
+    }
+    // Inside a callback there is nowhere to await: the read falls out of dialect instead of leaking a promise into data.
+    await assert.rejects(storedRun(`return ["n"].map((c) => @tool:a1b2c3d.table.col(c).length)`).run, outOfDialect);
+    // An unknown column fails before any request, with the columns it does have.
+    const miss = storedRun(`return @tool:a1b2c3d.table.col("nope")`);
+    await assert.rejects(miss.run, (e) => e instanceof NotATable && /No column "nope"\. This table has: n, s/.test(e.message));
+    assert.equal(miss.calls.length, 0);
+});
+
+test("HALTING (stored table): a read is sized by the table's shape before it is made, and all reads in a script are bounded", async () => {
+    // Two rows in hand, two million in the store: a col is a million-plus cells of work in one host call.
+    const big = storedRun(`return @tool:a1b2c3d.table.col("n").length`, { total: 2_000_000 });
+    await assert.rejects(big.run, (e) => e instanceof NotInDialect && /too large/.test(e.message));
+    assert.equal(big.calls.length, 0, "refused before the request, not after");
+    // Each read below is under the cap, but a loop of them is not: the total stops the script (→ approval).
+    const loop = storedRun(`const t = @tool:a1b2c3d.table; const counts = []; for (const i of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) counts.push(t.col("n").length); return counts`, { total: 900_000 });
+    const t0 = Date.now();
+    await assert.rejects(loop.run, (e) => e instanceof NotInDialect && /cells of stored tables/.test(e.message));
+    assert.ok(loop.calls.length <= 6, `stopped after ${loop.calls.length} reads of 900,000 cells, at the 5,000,000 total`);
+    assert.ok(Date.now() - t0 < 10_000);
+});
+
+test("FAILURE (stored table): a survey that reads a stored column and then leaves the dialect leaves the table as it was", async () => {
+    const data = STORED_PREVIEW(1000);
+    const calls = [];
+    const reader = async (names) => { calls.push(names); return { rowCount: 1000, columns: { n: Array.from({ length: 1000 }, (_, i) => i) } }; };
+    const run = evalReadonly(expandPointers(`const x = @tool:a1b2c3d.table.col("n"); x.push(-1); document.querySelector("#d").click()`).code, kindWorld(), {
+        ...ML,
+        dereference: async () => ({ text: "n,s", type: "table", id: "a1b2c3d", tool: "fetch_url", step: 1, table: asTable(data, { readColumns: reader }) }),
+    });
+    await assert.rejects(run, outOfDialect);
+    assert.deepEqual(data, STORED_PREVIEW(1000), "the preview is untouched; the column the script got was its own copy");
+});

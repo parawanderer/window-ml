@@ -284,6 +284,29 @@ instead of answering `undefined` — `t.revenue` or `t[["a","b"]]` gets a messag
 Tests: the `table facade` block at the end of `tests/readonly-exec.test.mjs` (use, forgery, escapes, mutation
 through every path, the pre-call size check with its timing, a failed survey leaving the table intact).
 
+### A stored table: the same kind, reads that are requests
+
+A pointer's table whose whole value is in the value store (POINTER_VALUES slice 7) is the same `table` receiver
+with the same four methods, but `col`, `select`, `records` and a `head` past the preview read EVERY row through a
+reader bound to the run, and return promises. No construct was added, and the contract was re-checked for the new
+value:
+
+- **Awaited like `ml` calls.** A call on a stored facade (`isStoredTable`, a second brand granted only by `asTable`)
+  that returns a promise is yielded to the driver, so a survey writes `t.col("x").length` with no `await`. Inside
+  a `.map` callback there is nowhere to await, so the read falls out of dialect rather than leaking a promise into
+  the data.
+- **Sized by `shape`, before the request.** The preflight measures a stored table by `shape[0]`, not by the preview
+  in `rows`, so a column of a two-million-row table is refused (→ approval) without being fetched.
+- **Bounded in total.** Each read is one host call doing work proportional to the table, which the step budget
+  never sees, so reads across one script are capped at `MAX_STORED_CELLS` (5M). A loop of under-cap reads stops
+  there.
+- **The reader is unreachable.** It is a closure inside the facade: not a property, not extractable as a method
+  (the METHOD_REF rules apply to `col` as to any method), and the returned promise leads nowhere (`.then` is not a
+  callable in dialect).
+- **Nothing is left behind.** A read only fetches, and the column handed back is a fresh array owned by the script.
+
+Tests: the `stored table` block in `tests/readonly-exec.test.mjs`.
+
 ## Where it is called
 
 - **Page-hosted runs**: `tryReadonly` in `injected.ts` expands pointers, binds the run's resolver, calls

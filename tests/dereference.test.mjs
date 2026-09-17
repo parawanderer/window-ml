@@ -446,6 +446,17 @@ test("a python_exec that returned a frame past its preview makes a pointer with 
     assert.deepEqual(claimed, ["v00000000000000aa"]);
 });
 
+test("a pointer read carries its stored table's key only from a host that claims values", async () => {
+    const PREVIEW = { ...STOCK, rowCount: 300_000, value: "v0123456789abcdef" };
+    const script = [call("fetch_url", { url: "https://x.test/big.csv", token: "the big table" })];
+    const tool = () => ({ result: "type: csv", renderOut: PREVIEW });
+    let read;
+    await drive(script, tool, { claimValue: () => {}, tokenSink: (fn) => { read = fn; } });
+    assert.equal(read('@tool:"the big table"').meta.value, "v0123456789abcdef");
+    await drive(script, tool, { tokenSink: (fn) => { read = fn; } });
+    assert.equal(read('@tool:"the big table"').meta.value, undefined, "a page-hosted run reads the preview as before");
+});
+
 test("python_exec: a pointer to something that is not a table says what it is instead", async () => {
     const { results, got } = await drive(
         [call("exec", { js: "x", token: "the log" }), call("python_exec", { code: "1", tables: { df: '@tool:"the log"' } }, "c2")],
