@@ -31,7 +31,7 @@ import type {
     MlHistory,
     TableSource,
     TablePreview,
-    ServerToolResult
+    ServerToolResult, DerefValue, ShotBox, ServerTool, OllamaInfo, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer, RequestHint, RequestUse
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated, hintSession } from "./contract";
 import { evalReadonly } from "./readonly-exec";
@@ -53,7 +53,6 @@ import { BUILD_INFO } from "./build-info.gen";
 import { accessibleName, roleOf, ariaState } from "./a11y";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, PIPE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
-import type { DerefValue, ShotBox, ServerTool, OllamaInfo, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer, RequestHint, RequestUse } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
@@ -66,7 +65,8 @@ import { validateArgs, validateExtend } from "./validate";
 import { makeDynamicTools } from "./dynamic-tools";
 import type { DynamicToolNamespace } from "./dynamic-tools";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec, readonlyRefused } from "./approval";
-import { buildServerTools, buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
+import { buildServerTools, buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
+import { buildPythonTool } from "./python-tool";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
 import { executeTool, toolContext, currentAnswer, currentDeref, currentServerAllow, currentRunSession, currentHasTool, withRunDeref } from "./tool-exec";
