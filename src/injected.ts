@@ -29,9 +29,9 @@ import type {
     LoadedModel,
     TokenUsage,
     MlHistory,
-    TableSource,
+    TableSource, TableValue,
     TablePreview,
-    ServerToolResult
+    ServerToolResult, DerefValue, ShotBox, ServerTool, OllamaInfo, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer, RequestHint, RequestUse
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated, hintSession } from "./contract";
 import { evalReadonly } from "./readonly-exec";
@@ -53,7 +53,6 @@ import { BUILD_INFO } from "./build-info.gen";
 import { accessibleName, roleOf, ariaState } from "./a11y";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, PIPE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
-import type { DerefValue, ShotBox, ServerTool, OllamaInfo, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer, RequestHint, RequestUse } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
@@ -66,7 +65,8 @@ import { validateArgs, validateExtend } from "./validate";
 import { makeDynamicTools } from "./dynamic-tools";
 import type { DynamicToolNamespace } from "./dynamic-tools";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec, readonlyRefused } from "./approval";
-import { buildServerTools, buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
+import { buildServerTools, buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
+import { buildPythonTool } from "./python-tool";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
 import { executeTool, toolContext, currentAnswer, currentDeref, currentServerAllow, currentRunSession, currentHasTool, withRunDeref } from "./tool-exec";
@@ -91,6 +91,11 @@ let _embedTurn = 0;
 const embedSession = () => ({ hash: (_embedHash ||= `embed${Math.random().toString(16).slice(2, 8)}`), turn: _embedTurn });
 const embedTurn = () => ++_embedTurn;
 
+/** Is this a table handed over BY VALUE (see {@link TableValue})? The `Table` facade throws on keys it does not have, so
+ *  it is recognised by its brand before anything probes it. */
+const isTableValue = (v: unknown): v is TableValue =>
+    isTable(v) || (!!v && typeof v === "object" && !(typeof Element !== "undefined" && v instanceof Element)
+        && Array.isArray((v as { columns?: unknown }).columns) && Array.isArray((v as { rows?: unknown }).rows));
 type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } };
 
 (function() {
@@ -2102,7 +2107,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @returns {Promise<{ ok, value?, stdout, error?, inputImage?, inputTables? }>}
          *   `inputImage`/`inputTables` are what the sandbox saw (for the debug render).
          */
-        pythonExec: async function(code: string, { image = null, mode = "readonly", margin = 0, tableRaw = false, tables = null, onStdout = undefined }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null; onStdout?: (chunk: string, ts?: number) => void } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; bootMs?: number; runMs?: number }> {
+        pythonExec: async function(code: string, { image = null, mode = "readonly", margin = 0, tableRaw = false, tables = null, onStdout = undefined }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | TableValue | Record<string, string | Element | TableValue> | null; onStdout?: (chunk: string, ts?: number) => void } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; bootMs?: number; runMs?: number }> {
             // raw: the sandbox must see the container's/point's actual pixels — NOT the
             // look-verify overlay (the drawn @box outline / @pt marker) or its padding.
             // `margin` sets the crop radius around an @pt (default: the look-radius).
@@ -2114,7 +2119,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // `tables` is a single source (→ `df`) OR a map { name: source }. Normalize to an ordered
             // [name, src] list; every source auto-dispatches by shape (a Sheets URL / 'current' →
             // sheet, else a DOM selector/Element) so one call can join a page table and a sheet.
-            const specs: { name: string; src: string | Element }[] = [];
+            const specs: { name: string; src: string | Element | TableValue }[] = [];
             // Args arrive off the wire as JSON, so `tables` can be any shape regardless of the declared type.
             // An ARRAY is neither documented form, but models write `tables: ["current"]` — the schema is a
             // `oneOf`, and wrapping a lone value in a list is an easy slip. A ONE-element array is unambiguous
@@ -2129,9 +2134,9 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 else throw new Error(`pythonExec tables: got an array of ${tableArg.length} sources, which carries no variable NAMES — a list can't say what to call each DataFrame. Pass a MAP so each one has a name you can use in the code, e.g. {"sales": ${JSON.stringify(String(tableArg[0]))}, "targets": ${JSON.stringify(String(tableArg[1]))}}. For ONE table, pass the source string on its own and it loads as \`df\`.`);
             }
             if (tableArg != null) {
-                if (typeof tableArg === "string" || (typeof Element !== "undefined" && tableArg instanceof Element)) specs.push({ name: "df", src: tableArg as string | Element });
+                if (typeof tableArg === "string" || (typeof Element !== "undefined" && tableArg instanceof Element) || isTableValue(tableArg)) specs.push({ name: "df", src: tableArg as string | Element | TableValue });
                 else if (typeof tableArg !== "object") throw new Error(`pythonExec tables: expected a source string or a {name: source} map, got ${typeof tableArg}.`);
-                else for (const [name, src] of Object.entries(tableArg as Record<string, string>)) {
+                else for (const [name, src] of Object.entries(tableArg as Record<string, string | TableValue>)) {
                     const nameErr = pyVarNameError(name);
                     if (nameErr) throw new Error(`pythonExec tables: ${nameErr}`);
                     specs.push({ name, src });
@@ -2166,7 +2171,19 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * a DOM selector/Element (a page table). `source` carries the provenance for the debug
          * render's label + tooltip. Page-side; async (sheets go through the background fetch).
          */
-        _loadTable: async function(name: string, src: string | Element, raw = false): Promise<LoadedTable> {
+        _loadTable: async function(name: string, src: string | Element | TableValue, raw = false): Promise<LoadedTable> {
+            // A TABLE BY VALUE: a pointer's table the loop resolved, or a table a page script already holds. Whole tables
+            // only. A prefix analysed as a DataFrame gives confident wrong numbers (a sum over the first 200 of 48,231
+            // rows), so it is refused with the forms that load the rest.
+            if (isTableValue(src)) {
+                const facade = isTable(src);
+                const pointer = facade ? undefined : src.pointer;
+                const what = pointer ?? "this table";
+                const total = src.shape?.[0];
+                if (src.truncated || (typeof total === "number" && total > src.rows.length))
+                    throw new Error(`pythonExec tables — ${what} holds ${src.rows.length.toLocaleString("en-US")} of ${typeof total === "number" ? total.toLocaleString("en-US") : "more"} rows, a preview rather than the whole table, so it is not loaded. Pass the URL fetch_url read (tables: {df: "<the url>"}) to load the whole parsed table.`);
+                return { name, source: { kind: "pointer", label: pointer ?? "a table value" }, data: { kind: "rows", columns: [...src.columns], rows: src.rows as (string | number | boolean | null)[][] } };
+            }
             const isCurrent = src === "current";
             // A URL THE RUN ALREADY FETCHED. `fetch_url` parses a CSV into a TableLike and the fetch cache holds
             // it, so naming that URL here loads the WHOLE table as a DataFrame with no second request, no

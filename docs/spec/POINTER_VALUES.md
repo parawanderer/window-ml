@@ -254,8 +254,8 @@ modules and codecs a WebAssembly build is most likely to have compiled out. It d
 
 Each slice ships and is useful without the next:
 
-1. **The two independent fixes** — the capped streaming read, and `mlFetchCache` eviction.
-2. **`TableLike.dtypes` says `str`**, matching pandas 3.
+1. **The two independent fixes** — the capped streaming read, and `mlFetchCache` eviction. **Built** (#80).
+2. **`TableLike.dtypes` says `str`**, matching pandas 3. **Built** (#80).
 3. **pyarrow in the bundle**; `read_parquet` works in `python_exec`. **Built — loaded at START, not on demand**:
    pandas fixes its view of pyarrow when pandas is imported, so a late load left it half-switched. ~1.5 s of cold
    start, mostly absorbed by the pre-warm. Why, and the `import js` its timezone dependency needed:
@@ -273,7 +273,9 @@ Each slice ships and is useful without the next:
 The shippable step before all of it, and worth doing now: `python_exec` accepts `@tool:<id>` when the pointer's
 table is complete (`!truncated`), and refuses a prefix with an error naming the URL form. It gives the idiom
 immediately for small tables, where the preview already is the value, and refuses rather than samples where it
-is not.
+is not. **Built**: the loop resolves the pointer and hands the table down by value (`resolveTablePointers`), and
+`ml.pythonExec` loads a `TableValue` only when it is whole. It unmarks the acceptance test "python_exec opens a fetched
+table by POINTER"; the past-the-parse-cap test stays pending on slices 4, 5 and 7.
 
 ## Acceptance
 

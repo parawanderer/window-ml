@@ -13,6 +13,7 @@ const TOOLS = [
     { name: "python_exec", description: "", parameters: { type: "object", properties: {} } },
     { name: "look", description: "", parameters: { type: "object", properties: {} } },
     { name: "dereference", description: "", parameters: { type: "object", properties: {} } },
+    { name: "fetch_url", description: "", parameters: { type: "object", properties: {} } },
 ];
 const call = (name, args, id = "c1") => ({ content: "", tool_calls: [{ id, name, arguments: args }] });
 
@@ -384,4 +385,44 @@ test("dereference: an empty session says how to fill it, not that something went
     assert.doesNotMatch(out, /^Error/);
     assert.match(out, /No pointers captured yet/);
     assert.match(out, /token: true/, "and names the way to create one");
+});
+
+// A TABLE POINTER as a python_exec source (POINTER_VALUES, the interim step): the loop owns the store, so it resolves
+// `tables: { df: "@tool:…" }` to the table itself and hands that down, labelled with where it came from. Whether it is
+// the WHOLE table is ml.pythonExec's call (it refuses a preview); the loop only resolves.
+const STOCK = { type: "table", columns: ["sku", "stock"], rows: [["a", 5], ["b", 7]], rowCount: 2 };
+test("python_exec: a table pointer in `tables` is resolved to the table, in the map and the single-source form", async () => {
+    const { got } = await drive(
+        [call("fetch_url", { url: "https://x.test/stock.arrow", token: "the stock table" }),
+         call("python_exec", { code: "return len(df)", tables: { df: '@tool:"the stock table"', other: "#sales" } }, "c2"),
+         call("python_exec", { code: "return len(df)", tables: '@tool:"the stock table"' }, "c3")],
+        (name) => (name === "fetch_url" ? { result: "type: arrow", renderOut: STOCK } : { result: "2" }));
+    const [mapCall, singleCall] = got.filter((g) => g.name === "python_exec");
+    const df = mapCall.args.tables.df;
+    assert.deepEqual(df.columns, ["sku", "stock"]);
+    assert.deepEqual(df.rows, [["a", 5], ["b", 7]], "the rows themselves travel, not the pointer");
+    assert.deepEqual(df.shape, [2, 2], "…with the shape, so the loader can tell a whole table from a preview");
+    assert.match(df.pointer, /^@tool:[0-9a-f]{7} \("the stock table"\)$/, "…and named by the pointer it came from");
+    assert.equal(mapCall.args.tables.other, "#sales", "a selector beside it passes through untouched");
+    assert.deepEqual(singleCall.args.tables.rows, df.rows, "the single-source string form resolves the same way");
+});
+
+test("python_exec: a pointer to something that is not a table says what it is instead", async () => {
+    const { results, got } = await drive(
+        [call("exec", { js: "x", token: "the log" }), call("python_exec", { code: "1", tables: { df: '@tool:"the log"' } }, "c2")],
+        () => ({ result: "some text output" }));
+    const out = results.find((r) => r.name === "python_exec").result;
+    assert.match(out, /^Error: @tool:[0-9a-f]{7} is text, .*not a table, so python_exec cannot load it as a DataFrame/);
+    assert.equal(got.filter((g) => g.name === "python_exec").length, 0, "the tool never ran");
+});
+
+test("python_exec: an unresolvable table pointer faults like any other bad pointer, and plain sources are untouched", async () => {
+    const { results, got } = await drive(
+        [call("python_exec", { code: "1", tables: { df: "@tool:zzzzzzz" } }),
+         call("python_exec", { code: "1", tables: { df: "https://x.test/a.csv", t: "current" } }, "c2")],
+        () => ({ result: "ok" }));
+    assert.match(results.find((r) => r.name === "python_exec").result, /MemoryFault: pointer '@tool:zzzzzzz' does not exist/);
+    const ran = got.filter((g) => g.name === "python_exec");
+    assert.equal(ran.length, 1, "only the call with no pointer ran");
+    assert.deepEqual(ran[0].args.tables, { df: "https://x.test/a.csv", t: "current" }, "and its sources are exactly as written");
 });

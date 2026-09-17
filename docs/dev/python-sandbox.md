@@ -36,6 +36,14 @@ Before that fallback ships, `_resolveTable` **guards the cases read_html would c
 exists, its rows don't → pandas' `No tables found matching pattern '.+'`), a wrapper with **no
 `<table>` inside**, or an **unparseable ARIA grid** each throw an actionable page-side message
 ("reveal/scroll it into view…") instead of the obscure downstream `ValueError`.
+**An `@tool:` pointer to a table** (`tables: { df: "@tool:\"the stock table\"" }`, or the single-source string) is
+resolved by the AGENT LOOP, which owns the pointer store (`resolveTablePointers`, beside `look`'s image pointer): the
+call's arguments are rewritten for execution only, so the step's raw view keeps what the model wrote, and the table
+travels down BY VALUE with its `shape` and the pointer's name. `ml.pythonExec` accepts such a `TableValue` from any
+caller (a page script's table, the `Table` facade from `ml.fetch`) and loads it only when it is WHOLE: a preview
+(`truncated`, or fewer rows than `shape` says) is refused with the URL form that loads the whole parsed table, because a
+DataFrame over a prefix answers confidently and wrongly. This is POINTER_VALUES' interim step; the value store (slice 4)
+is what lets a pointer reach past the page's parse cap.
 **A Google Sheets URL** or **`'current'`** (the sheet you're on) is fetched as CSV. Numeric
 columns are **auto-cast page-side** (`dom.ts` `castTableColumns`, pure/tested: a column
 ≥90%-numeric after stripping currency/commas/%/accounting-parens → `number|null`, else strings)
