@@ -4298,7 +4298,7 @@ test("resource panel: a full mesh is said as one — every pair linked — and A
         const bb = await plot.boundingBox();
         await plot.hover({ position: { x: bb.width / 2, y: bb.height * 0.5 } });
         const links = frame.locator(".rc-tip-pools .rc-tip-links");
-        await expect(links).toContainText("all 8 cards, every pair directly linked (28 pairs) · xGMI ×1 (XGMI) · 64.0 GB/s", { timeout: 5000 });
+        await expect(links).toContainText("all 8 cards, every pair directly linked (28 pairs) · xGMI (XGMI) · 64.0 GB/s", { timeout: 5000 });
         expect(await links.locator(".rc-tip-row").count(), "one line for the mesh, not seven adjacent walls").toBe(1);
     } finally { await ext.close(); await fake.stop(); }
 });

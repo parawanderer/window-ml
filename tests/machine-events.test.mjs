@@ -72,8 +72,24 @@ test("evict and unload stay DIFFERENT answers, and unload does not claim to know
     // that was wrong every time a load pushed a model out.
     assert.match(machineEventFrom({ kind: "evict", model: "m", reason: "oom-retry" }, 1).label, /evicted \(oom-retry\)/);
     const unload = machineEventFrom({ kind: "unload", model: "m" }, 1).label;
-    assert.match(unload, /keep-alive ran out, or another load displaced it/);
+    assert.match(unload, /keep-alive ran out, or another load displaced it/, "no reason: the hedged wording, never a guess");
     assert.doesNotMatch(unload, /\(idle\)/);
+    assert.match(machineEventFrom({ kind: "unload", model: "m", reason: "something-new" }, 1).label, /or another load displaced it/, "an unknown reason is no reason");
+});
+
+// The fork's own captures of each reason (events-unload-reasons-2026-09-17.ndjson): the lane says which one happened.
+test("unload says WHY when the server does", async () => {
+    reset();
+    const { readFileSync } = await import("node:fs");
+    const frames = readFileSync(new URL("./fixtures/hw/events-unload-reasons-2026-09-17.ndjson", import.meta.url), "utf8")
+        .split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+    const labels = Object.fromEntries(frames.map((f) => [f.reason, machineEventFrom(f, 1).label]));
+    assert.deepEqual(Object.keys(labels).sort(), ["displaced", "expired", "requested"]);
+    assert.match(labels.displaced, /qwen3\.8-flash-next:vision unloaded \(displaced to make room for another load\)/);
+    assert.match(labels.expired, /unloaded \(its keep-alive ran out\)$/);
+    assert.match(labels.requested, /unloaded \(on request\)$/);
+    for (const r of ["leased", "load-failed", "oom-retry"])
+        assert.doesNotMatch(machineEventFrom({ kind: "unload", model: "m", reason: r }, 1).label, /or another load displaced it/, `${r} has its own words`);
 });
 
 test("a failed load is an error, and releases the span it would have closed", () => {

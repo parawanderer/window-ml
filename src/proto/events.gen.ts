@@ -51,7 +51,17 @@ export interface EventFrame {
     | string
     | undefined;
   /** Milliseconds since this connection's hello. Negative on backfilled frames. */
-  t?: number | undefined;
+  t?:
+    | number
+    | undefined;
+  /**
+   * Wall clock, Unix milliseconds, on every frame including backfilled ones, where it is
+   * when the event happened and not when it was replayed. Use this to place a frame on a
+   * timeline -- it is the only field that means anything outside the connection that
+   * produced it, which is what a relayed frame needs. Use `t` to measure durations: it is
+   * monotonic and cannot step when the box's clock does.
+   */
+  at_ms?: number | undefined;
   unavailable_gpus: UnavailableGPU[];
   serverTime?:
     | string
@@ -336,6 +346,13 @@ export interface ProcessModelResponse {
     | undefined;
   /** Per device. Absent means the model is on the host, not that the split is unknown. */
   gpus: ProcessGPU[];
+  /**
+   * The same split for whatever this model spilled to host memory, absent when it spilled
+   * nothing. On the row and not only on the load edge because a spill is a state that lasts
+   * as long as the model is resident: `size` minus `size_vram` says how much went to the
+   * host, and this says what did.
+   */
+  memory_host?: MemoryBreakdown | undefined;
 }
 
 /** The /api/ps body, byte-identical to what that endpoint serves. */
