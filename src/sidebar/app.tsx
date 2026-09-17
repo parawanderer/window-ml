@@ -18,6 +18,8 @@ import { installTooltipLayer } from "./tooltip-layer";
 import { ContextMenu, CursorTipLayer, Hash, highlightPos } from "./ui-kit";
 import type { InvocationInfo } from "../contract";
 import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
+import { installServices } from "./services";
+import { extensionServices } from "./services-ext";
 import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge, EmbedRunView } from "./reply";
 import { AgentRunView } from "./agent-detail";
 import { Composer } from "./composer";
@@ -511,6 +513,9 @@ function onMessage(e: MessageEvent): void {
 }
 
 function mount(): void {
+    // The shared session components reach the background and this frame's parent through the services seam; in an
+    // extension frame that is the same messaging they used to call inline (services-ext.ts).
+    installServices(extensionServices);
     initThemeStyle();
     const root = document.getElementById("root") || document.body;
     chrome.storage.sync.get(DEFAULT_CONFIG, (cfg: any) => { config.value = cfg as MlConfig; applyTheme(); });

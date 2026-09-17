@@ -4,6 +4,7 @@
 // dividers, and the run container (AgentRunView / LiveStream / PendingNote). Extracted from app.tsx; it
 // sits above ./reply (uses ReplyBubble) and the ui-kit / answer-render / render-panel / debug-reducer layers.
 import type { ComponentChildren } from "preact";
+import { services } from "./services";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { RenderDescriptor, DebugAgentConfig, PersistGrant } from "../contract";
 import { resolveOutputCap, runStats, fmtTokPerSec, runStatsProvenance } from "../contract";
@@ -177,15 +178,16 @@ export function externalSheetGrant(args?: Record<string, unknown>): string[] {
 // A first-time fetch of a new origin needs the extension's host access to that site (the background SW fetch
 // is withheld under "On click" site access). Because this iframe is extension-origin, approving the gate can
 // grant the host in the same gesture (decideGate) — this note tells the user a Chrome permission prompt will
-// appear, so it isn't a surprise. Async-checks chrome.permissions.contains; renders nothing when already
-// granted (or on a page-loop run with no chrome), so a normal already-allowed fetch stays silent.
+// appear, so it isn't a surprise. Asks the host (`services().hostAccess`); renders nothing when already granted,
+// or where the host has no host permissions (a phone), so a normal already-allowed fetch stays silent.
 export function HostAccessNote({ st }: { st: AgentStep }) {
     const pat = grantHostPattern(st);
     const [missing, setMissing] = useState(false);
     useEffect(() => {
         let live = true;
-        if (!pat || typeof chrome === "undefined" || !chrome.permissions?.contains) { setMissing(false); return; }
-        chrome.permissions.contains({ origins: [pat] }).then((has: boolean) => { if (live) setMissing(!has); }).catch(() => {});
+        const access = services().hostAccess;
+        if (!pat || !access) { setMissing(false); return; }
+        void access.has(pat).then((has) => { if (live) setMissing(!has); });
         return () => { live = false; };
     }, [pat]);
     if (!pat || !missing) return null;

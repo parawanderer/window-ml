@@ -3,9 +3,9 @@
 // (ToolStep). Extracted from app.tsx so both the HUD-card and the agent-detail views can share it
 // without a cycle. Depends only on store / ui-kit / format.
 import { config, rev, noteAside } from "./store";
+import { services, splitStepKey } from "./services";
 import type { AgentStep } from "./store";
 import { stepKey } from "./ui-kit";
-import { hintSession } from "../contract";
 import { truncate } from "./format";
 import { NOTES_SCHEMA, notesMessages, parseNotes, type LineNote } from "./annotate";
 
@@ -79,23 +79,21 @@ export function fetchLineNotes(key: string, lang: string, src: string, output?: 
     // would be dishonest — but it is not the agent's work, and charging it to the run would make two runs
     // incomparable on the strength of how much someone poked at one. Recorded on the SESSION, with no
     // usage, so the run's own totals are untouched. See store.ts `Aside`.
-    const [hash, seqStr] = key.split(":");
+    const { session: hash, seq } = splitStepKey(key);   // the LAST `:`: a session key may itself be `runtime:hash`
     const started = Date.now();
-    chrome.runtime.sendMessage(
-        // A side task about THIS session (RequestHint: `use: "utility"` from the profile, the session's id).
-        { type: "FETCH_LLM", payload: { messages: notesMessages(lang, src, output), extend: "utility", schema: NOTES_SCHEMA, maxTokens: 700, think: false, hint: { session: hintSession(hash) } } },
-        (resp: any) => {
-            const notes = chrome.runtime.lastError || !resp || resp.error ? [] : parseNotes(String(resp.data ?? ""), lineCount);
+    // A side task about THIS session (the host tags the request with the session's id).
+    void services().sideCall({ purpose: "explain", session: hash, messages: notesMessages(lang, src, output), schema: NOTES_SCHEMA, maxTokens: 700 })
+        .then((r) => {
+            const notes = r.ok ? parseNotes(r.content, lineCount) : [];
             notesState.delete(key);
             // No usable notes is an ERROR STATE, not an empty success: a button that visibly does nothing
             // reads as broken, and the reader has no way to tell a model that declined from a call that
             // never went out.
             if (notes.length) codeNotes.set(key, notes); else notesState.set(key, "error");
             noteAside(hash, { t: started, ms: Date.now() - started, label: "annotating the code",
-                              model: config.value.utilityModel || undefined, seq: Number(seqStr), requestId: resp?.usage?.requestId });
+                              model: config.value.utilityModel || undefined, seq, requestId: r.ok ? r.requestId : undefined });
             rev.value++;
-        },
-    );
+        });
 }
 
 /** Show/hide without re-asking. */
@@ -120,19 +118,16 @@ export function ensureActionSummary(hash: string, seq: number, tool: string, arg
 // Shared: run a short utility-model call and store the one-line reply as the step's summary.
 export function fetchUtilityLine(messages: { role: string; content: string }[], key: string): void {
     const started = Date.now();
-    chrome.runtime.sendMessage(
-        // `key` is a stepKey (`<hash>:<seq>`): the gloss is a side task about that session (RequestHint).
-        { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 70, think: false, hint: { session: hintSession(key.split(":")[0]) } } },
-        (resp: any) => {
-            if (chrome.runtime.lastError || !resp || resp.error) return;
-            const line = String(resp.data || "").trim().split("\n").map(s => s.trim()).filter(Boolean)[0] || "";
-            const s = truncate(line.replace(/^["'`*]+|["'`*]+$/g, "").trim(), 160);
-            const [h, sq] = key.split(":");
-            if (h) noteAside(h, { t: started, ms: Date.now() - started, label: "summarising",
-                                  model: config.value.utilityModel || undefined, seq: Number(sq), requestId: resp?.usage?.requestId });
-            if (s) { codeSummaries.set(key, s); rev.value++; }
-        },
-    );
+    // `key` is a stepKey (`<session key>:<seq>`): the gloss is a side task about that session.
+    const { session, seq } = splitStepKey(key);
+    void services().sideCall({ purpose: "summary", session, messages, maxTokens: 70 }).then((r) => {
+        if (!r.ok) return;
+        const line = r.content.trim().split("\n").map(s => s.trim()).filter(Boolean)[0] || "";
+        const s = truncate(line.replace(/^["'`*]+|["'`*]+$/g, "").trim(), 160);
+        if (session) noteAside(session, { t: started, ms: Date.now() - started, label: "summarising",
+                                          model: config.value.utilityModel || undefined, seq, requestId: r.requestId });
+        if (s) { codeSummaries.set(key, s); rev.value++; }
+    });
 }
 
 // A pending call's INTENT: prefer the tool-provided `action` descriptor (deterministic; custom tools

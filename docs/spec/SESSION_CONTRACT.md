@@ -105,6 +105,29 @@ wrapped in a `SessionEventEnvelope`: `v`, the global `session` id, an `epoch` an
   another session's record by mislabelling an event.
 - `gone` ends a subscription when the session is deleted.
 
+## Render descriptors: new kinds and fallbacks
+
+Tool output reaches a client as render descriptors (`renderIn` / `renderOut` on a step, `RenderDescriptor` in
+`src/contract.ts`): serializable data, never code. The relay does not read them, so a new kind of output needs no
+contract or hub change. What decides how it looks is the client's renderer, picked by `type`. So that a runtime can add
+kinds faster than every client ships renderers for them:
+
+- **An experimental descriptor's `type` starts with `x-`** (`x-intent-mask`). When it settles it becomes an ordinary
+  type. Both steps are additive.
+- **Any descriptor may carry `fallback`**: another descriptor, of a type clients already know, showing the same
+  output more plainly (a flattened `image` for a layered one). A client that has no renderer for `type` draws
+  `fallback`; with neither, it shows the raw data as text. The exports follow the same rule.
+- **Prefer a general type to a one-off**: a layered image (a base plus named layers, each with a blend, an opacity and
+  whether it starts visible) serves an intent mask, a segmentation mask and an attention map alike.
+- **Heavy data travels by reference.** A descriptor carries something drawable (a tensor channel as a PNG layer), and
+  the raw value, when it matters, as a pointer the client fetches on demand, so a phone never receives a tensor it did
+  not ask for.
+- **Untrusted like everything else**: images are `data:image/*` within size caps, labels render as escaped text, and a
+  malformed descriptor falls back rather than breaking the view. Whether a layer is toggled on is a display
+  preference, kept on the client.
+
+`fallback` is added to `RenderDescriptor`'s types with the first descriptor that uses it.
+
 ## Commands
 
 Each command names the scope it needs (`COMMAND_SCOPE`) and, where it is optional, the capability that offers it. A

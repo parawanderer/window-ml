@@ -3,6 +3,7 @@
 // start a new turn). Includes the shared image-attach hook (file/paste → data URLs) and the thumb-strip /
 // element-pill chips, reused by the HUD Spotlight composer. Extracted from app.tsx.
 import { useState, useRef, useEffect } from "preact/hooks";
+import { services } from "./services";
 import type { ElementContext } from "../contract";
 import { config, rev } from "./store";
 import type { Session } from "./store";
@@ -90,11 +91,11 @@ export function Composer({ s }: { s: Session }) {
     const running = s.status === "pending";
     const empty = !text.trim() && !att.imgs.length;   // an IMAGE-only send is allowed
     const stop = running && empty;   // in-flight + empty box → the button cancels the run/turn (Claude-Code style)
-    const cancel = () => window.parent.postMessage({ __mlSidebarApp: "sessionCancel", hash: s.hash }, "*");
+    const cancel = () => services().cancelSession(s.hash);
     const send = () => {
         const t = text.trim();
         if (!t && !att.imgs.length) return;
-        window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash: s.hash, text: t, images: att.imgs }, "*");
+        services().sendToSession(s.hash, t, att.imgs);
         setText(""); att.clear();
     };
     const act = () => (stop ? cancel() : send());

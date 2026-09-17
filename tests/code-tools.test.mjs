@@ -25,6 +25,9 @@ before(async () => {
         storage: { local: { get: () => {}, set: () => {} }, sync: { get: () => {}, set: () => {} } },
     };
     ({ h, render } = require_("preact"));
+    // Rendered without the app, so this test is the entry point: it installs the extension frames' services, as
+    // app.tsx does, and the explain call reaches the mocked `chrome.runtime` above.
+    (await import("../src/sidebar/services.ts")).installServices((await import("../src/sidebar/services-ext.ts")).extensionServices);
     ({ RenderPanel } = await import("../src/sidebar/render-panel.tsx"));
     store = await import("../src/sidebar/store.ts");
     summaries = await import("../src/sidebar/summaries.tsx");
