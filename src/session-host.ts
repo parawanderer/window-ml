@@ -69,8 +69,12 @@ export type Scope = "view" | "drive" | "approve" | "screen" | "desktop";
  *  offer, so a wrong grant here costs a greyed-out button or a `forbidden` result, never access. */
 export interface Grant {
     scope: Scope;
-    /** Which sessions it covers. `all` (the default when absent), `started` (only sessions this principal
-     *  started: an orchestrator's grant over its own subagents), or an explicit list. */
+    /** Which sessions it covers. `all` (the default when absent), `started`, or an explicit list.
+     *
+     *  `started` is TRANSITIVE: the sessions this principal started AND every session descended from one of them
+     *  through `lineage`, on any runtime. A coordinator's subagent that starts its own subagents (a browser opening
+     *  dedicated tabs) stays visible and steerable to the coordinator. The runtime checks it by walking the
+     *  session's lineage up to a session the principal started. */
     sessions?: "all" | "started" | SessionKey[];
     /** Epoch ms after which the grant no longer holds. Absent: until unpaired. */
     expires?: number;
@@ -119,6 +123,8 @@ export interface RuntimeInfo {
     id: RuntimeId;
     /** a label the runtime's owner chose (untrusted text) */
     name: string;
+    /** OPEN on the wire: a runtime may report a kind this client does not know (an app with accessibility APIs, a
+     *  CAD wrapper), and the client renders it as a generic runtime. */
     kind: "browser" | "desktop" | "headless";
     online: boolean;
     /** epoch ms, client clock, of the last traffic seen from it; absent for the local host */
@@ -139,7 +145,10 @@ export interface RuntimeInfo {
 export type SessionKind = "chat" | "agent" | "embed";
 
 /** Where a session is, for a list. `waiting` is blocked on an approval gate; `capped` stopped at its step cap and
- *  can be continued; `interrupted` stopped without finishing (the runtime restarted under it). */
+ *  can be continued; `interrupted` stopped without finishing (the runtime restarted under it).
+ *
+ *  OPEN on the wire: a client reads a status it does not know as `running` (in progress, not finished), so a later
+ *  status (a session blocked on a question) degrades to "working" rather than to "done". */
 export type SessionStatus = "running" | "waiting" | "done" | "error" | "cancelled" | "capped" | "interrupted";
 
 /** Links a session to the step of another session that started it: the agent-to-agent tree. `parent` may be on
@@ -230,12 +239,20 @@ export type SessionStreamMessage =
 
 /* ------------------------------ commands ------------------------------ */
 
-/** Where an agent runs. A tab id is local to its runtime. */
+/** Where an agent runs. A tab id is local to its runtime. OPEN on the wire: a runtime answers a target kind it does
+ *  not offer (a desktop window, an app) with `unsupported`. */
 export type AgentTarget =
     | { kind: "tab"; tabId: number }
     | { kind: "blank"; url?: string }
     /** RESERVED: requires `capabilities.headless` */
     | { kind: "headless" };
+
+/** A client-chosen key that makes a command safe to retry. A runtime that has already carried out a command with
+ *  this key from the same principal (within its dedupe window, at least ten minutes) returns that first result again
+ *  and does nothing else. It exists for commands whose repeat would do something twice: starting a session, or
+ *  delivering a message. A caller that retries after `aborted` or a dropped connection reuses the key; a new intent
+ *  gets a new one. A relay carries it unchanged. */
+export type IdempotencyKey = string;
 
 /** An image a client sends: a `data:image/*` URL. Runtimes cap the count and size and drop anything else. */
 export type ImageDataUrl = string;
@@ -246,7 +263,7 @@ export type ImageDataUrl = string;
 export type Command =
     /** A message to a session: steers a running agent (seen at its next step boundary), or starts the next turn of
      *  an idle agent or chat. Text, images, or both. */
-    | { type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; elementContext?: ElementContext }
+    | { type: "session.send"; session: SessionId; text: string; images?: ImageDataUrl[]; elementContext?: ElementContext; idempotencyKey?: IdempotencyKey }
     | { type: "session.cancel"; session: SessionId }
     /** continue an agent that stopped at its step cap, with a fresh step budget */
     | { type: "session.continue"; session: SessionId }
@@ -260,6 +277,7 @@ export type Command =
         model?: string; system?: string; think?: boolean | null;
         /** absent: the session is saved */
         ephemeral?: true;
+        idempotencyKey?: IdempotencyKey;
     }
     | {
         type: "agent.start"; runtime: RuntimeId; task: string; images?: ImageDataUrl[]; target: AgentTarget;
@@ -272,6 +290,7 @@ export type Command =
         ephemeral?: true;
         /** RESERVED: requires `capabilities.lineage` */
         lineage?: Lineage;
+        idempotencyKey?: IdempotencyKey;
     }
     | { type: "tabs.list"; runtime: RuntimeId }
     /** A screenshot on demand, never streamed. `maxBytes` is a ceiling the runtime may lower. */
