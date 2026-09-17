@@ -2417,7 +2417,7 @@ test("linkPhrase: a link said plainly, in the vendor's own vocabulary", () => {
     assert.equal(M.linkPhrase(M.linkBetween(t, pci(0), pci(2))), "PCIe, through the CPU's host bridge (PHB)");
     const p = M.topologyFrom(TOPOLOGIES.partial);
     assert.equal(M.linkPhrase(M.linkBetween(p, pci(1), pci(2))), "not classified: NVML did not report a path for this pair");
-    assert.equal(M.linkPhrase({ a: "x", b: "y", type: "xgmi", linkCount: 2 }), "xGMI ×2");
+    assert.equal(M.linkPhrase({ a: "x", b: "y", type: "xgmi" }), "xGMI", "an xGMI pair has no count to say");
 });
 
 test("utilization: its own series, its own preset where a card reports it, and never mixed with memory", () => {
@@ -2767,7 +2767,10 @@ test("AMD's fabric (xGMI) is a bridge like NVLink: a pair, a full mesh, and said
     const pair = M.topologyFrom(TOPOLOGIES.amdBridged);
     const link = M.linkBetween(pair, pci(0), pci(1));
     assert.equal(M.isBridge(link), true);
-    assert.equal(M.linkPhrase(link), "xGMI ×1 (XGMI) · 64.0 GB/s", "the AMD driver's rate is not a PCIe peak, so it is not marked as one");
+    assert.equal(M.linkPhrase(link), "xGMI (XGMI) · 64.0 GB/s", "the AMD driver's rate is not a PCIe peak, so it is not marked as one");
+    assert.equal(link.linkCount, undefined, "and no link count is invented for a fabric that reports none");
+    assert.equal(M.topologyFrom({ status: "ok", links: [{ a: "p0", b: "p1", type: "xgmi", link_count: 3 }] }).links[0].linkCount, undefined,
+        "a `link_count` key, which no server sends, is not read");
     // Eight MI300X, every pair linked with no switch: one fully bridged group, every wall a bridge.
     const mesh = M.topologyFrom(TOPOLOGIES.xgmi8);
     const walls = M.bridgeWalls([0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ pciId: pci(i) })), mesh);

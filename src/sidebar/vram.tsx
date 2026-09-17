@@ -442,6 +442,16 @@ const pushMachine = (e: ResourceEvent): void => {
     machineEvents.value = addMachineEvent(machineEvents.value, e, MACHINE_EVENTS_CAP);
 };
 
+/** What each `unload` reason means, in the lane's words (events.proto, and the fork's report of 2026-09-17). */
+const UNLOAD_WHY: Record<string, string> = {
+    expired: "its keep-alive ran out",
+    requested: "on request",
+    displaced: "displaced to make room for another load",
+    leased: "a job outside ollama took the GPUs",
+    "load-failed": "its own load failed",
+    "oom-retry": "out of memory: everything resident was dropped to retry",
+};
+
 /** One edge frame → what the lane draws. Returns nothing for the frames that are not events in their own
  *  right (`sample`, `heartbeat`, `hello`) and for a `load.complete` with no start to close, which is what a
  *  reconnect mid-load looks like — half a span is worse than none, since its left edge would be invented. */
@@ -567,11 +577,11 @@ export function machineEventFrom(frame: Pick<WireFrame, "kind"> & Omit<Partial<W
         // something, the other simply expired. Inferring them by diffing polls could never tell them apart.
         case "evict":
             return model ? { t: at, kind: "evict", label: `${model} evicted${frame.reason ? ` (${frame.reason})` : ""}`, model, via: "server" as const } : null;
-        // NOT "idle". The server has ONE runner-termination path, reached both when a keep-alive runs out and when a model
-        // is displaced to make room for another load, and it emits `unload` with no reason for either (fork schema report,
-        // 2026-09-17: loading a 113 GB model freed a resident 104 GB one as `unload`). `evict` is only the OOM-retry path.
+        // The server says WHY since fork 10b026a3 (`reason`). Before that one termination path covered a keep-alive running
+        // out AND a model displaced for another load, with no reason, and the lane guessed "idle". An absent or unknown
+        // reason keeps the hedged wording rather than guessing again. `evict` is only the OOM-retry path.
         case "unload":
-            return model ? { t: at, kind: "evict", label: `${model} unloaded (its keep-alive ran out, or another load displaced it)`, model, via: "server" as const } : null;
+            return model ? { t: at, kind: "evict", label: `${model} unloaded (${UNLOAD_WHY[frame.reason ?? ""] ?? "its keep-alive ran out, or another load displaced it"})`, model, via: "server" as const } : null;
         default:
             return null;
     }

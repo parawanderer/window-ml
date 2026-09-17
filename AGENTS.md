@@ -231,7 +231,7 @@ learned by shipping the wrong version first.
   lane test seeds `ml_res_sections: { lane: true }` and a box (`setCapacity`/`setResident`) or nothing is drawn.
 - **Event-stream frames.** Typed from the fork's own schema (`src/proto/events.proto`, pinned; `events-wire.ts` reads it
   as `Wire<T>`, every key maybe absent). Never hand-add a frame field: re-vendor, re-pin, `npm run gen-proto`. An
-  `optional` field is sent at zero, so absent means not reported; `unload` does not mean idle.
+  `optional` field is sent at zero, so absent means not reported; an `unload` says why in `reason`, never assume idle.
 - **Event lane.** Spans run BACKWARDS from a finish stamp; a tool step is ONE event with phases; a load is its own
   event. Phases are drawn only where something TIMED them.
 - **Pointers.** `PIPE_CMDS` is the single source for every description of the dialect. The three reference forms

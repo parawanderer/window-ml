@@ -91,9 +91,8 @@ export function loadedFrom(rows: readonly unknown[]): LoadedModel[] {
             // WHAT the VRAM holds, carried RAW and parsed once downstream (`residencyOf` → `memorySplit`),
             // so the sum invariant is checked in one place rather than by each consumer that reads it.
             ...(m.memory ? { memory: m.memory } : {}),
-            // NOT IN THE SCHEMA for an /api/ps row (events.proto at aa1536a has `memory_host` on the event frame only, on
-            // load edges): read in case the row gains it, and absent today.
-            ...((m as { memory_host?: unknown }).memory_host ? { memoryHost: (m as { memory_host?: unknown }).memory_host } : {}),
+            // What spilled to host memory, by kind. ABSENT means nothing spilled, which on this field is the good news.
+            ...(m.memory_host ? { memoryHost: m.memory_host } : {}),
             ...(typeof m.weights_on_disk === "number" ? { weightsOnDisk: m.weights_on_disk } : {}),
             // WHICH LAYERS WENT WHERE, raw and parsed once downstream like `memory`. Opt-in on the server
             // (`OLLAMA_LAYER_PLACEMENT=1`) and absent by default, so this is another "missing means not

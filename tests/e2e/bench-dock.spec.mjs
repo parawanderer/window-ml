@@ -396,7 +396,8 @@ test("the output pane tabs its sections, and lands you on the value rather than 
         await tabs.filter({ hasText: "stdout" }).click();
         await expect(frame.locator(".bench-outbody")).toContainText("one");
         await expect(frame.locator(".bench-outbody")).toContainText("two");
-        await expect(frame.locator(".bench-outbody")).not.toContainText("42");
+        // The value's KEY, not its number: stdout carries a timestamp gutter, and "41:42" contains "42".
+        await expect(frame.locator(".bench-outbody")).not.toContainText("answer");
     } finally { await ext.context.close(); await fake.stop(); }
 });
 

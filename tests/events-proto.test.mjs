@@ -141,7 +141,7 @@ test("every captured frame parses, and its kind is one the schema's contract nam
         assert.ok(listed.has(f.kind), `${source}: kind ${f.kind} is not in the schema's list`);
         seen.add(f.kind);
     }
-    // The fork recorded these vectors to cover 13 of the kinds; the rest (evict, load.failed, lease.*) it would not
-    // manufacture on a box in use. Pinned so a lost fixture is noticed.
-    assert.ok(seen.size >= 13, `kinds covered by captures: ${[...seen].sort().join(", ")}`);
+    // The fork's vectors cover 17 of the 18 kinds; `evict` needs a runtime out-of-memory, which it will not manufacture on a
+    // box in use. Pinned so a lost fixture is noticed.
+    assert.ok(seen.size >= 17, `kinds covered by captures: ${[...seen].sort().join(", ")}`);
 });
