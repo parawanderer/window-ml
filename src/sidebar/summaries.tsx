@@ -9,9 +9,9 @@ import { stepKey } from "./ui-kit";
 import { truncate } from "./format";
 import { NOTES_SCHEMA, notesMessages, parseNotes, type LineNote } from "./annotate";
 
-// Utility-model auto-summaries (card title, code/action approval summaries) are gated on BOTH a
-// configured utility model AND the "summarise with the utility model" toggle (config.autoTitles).
-export const utilitySummariesOn = () => config.value.autoTitles && !!config.value.utilityModel.trim();
+// Utility-model auto-summaries (card title, code/action approval summaries) are gated on BOTH the host being able
+// to make a side call about the session AND the "summarise with the utility model" toggle (config.autoTitles).
+export const utilitySummariesOn = (session: string) => config.value.autoTitles && services().sideCalls(session);
 
 // Plain-English summary of a CODE approval's snippet, via the utility model — so the human reads "sums
 // every quarter and finds the top rep" ABOVE the actual code (which still shows, as the consent
@@ -25,7 +25,7 @@ export const codeSummaryTried = new Set<string>();
 // `output` (present only in the Show-work trace, where the code has ALREADY run) lets the gloss describe
 // what it actually DID/found, not just what it would do — the approval-card path passes none (pre-run).
 export function fetchCodeSummary(hash: string, seq: number, lang: string, code: string, output?: string): void {
-    if (!config.value.utilityModel.trim() || !code.trim()) return;
+    if (!services().sideCalls(hash) || !code.trim()) return;
     const key = stepKey(hash, seq);
     if (codeSummaryTried.has(key)) return;
     codeSummaryTried.add(key);
@@ -42,7 +42,7 @@ export function fetchCodeSummary(hash: string, seq: number, lang: string, code: 
 }
 // AUTO path (the approval card's gloss) — additionally gated on the auto-summarise toggle.
 export function ensureCodeSummary(hash: string, seq: number, lang: string, code: string): void {
-    if (utilitySummariesOn()) fetchCodeSummary(hash, seq, lang, code);
+    if (utilitySummariesOn(hash)) fetchCodeSummary(hash, seq, lang, code);
 }
 // The on-demand "Explain this Python/JS" affordance in the Show-work trace (card surface only). Lazy —
 // ONE utility-model call, only when clicked; shows the gloss inline once it lands.
@@ -69,7 +69,7 @@ export const notesHidden = new Set<string>();
 /** Ask for the notes on one block. `src` MUST be the text as drawn (reflowed), because the model keys its
  *  answer to the line numbers it is given and the panel draws them against what is on screen. */
 export function fetchLineNotes(key: string, lang: string, src: string, output?: string): void {
-    if (!config.value.utilityModel.trim() || !src.trim()) return;
+    if (!services().sideCalls(splitStepKey(key).session) || !src.trim()) return;
     if (notesState.get(key) === "loading" || codeNotes.has(key)) return;
     notesState.set(key, "loading");
     notesHidden.delete(key);
@@ -105,7 +105,7 @@ export function toggleLineNotes(key: string): void {
 // A tool with NO deterministic intent (a custom approval-gated tool, no `action` render) still gets a
 // human description — the utility model paraphrases the call. Same cache/plumbing as the code summary.
 export function ensureActionSummary(hash: string, seq: number, tool: string, args: Record<string, unknown>): void {
-    if (!utilitySummariesOn() || !tool) return;
+    if (!utilitySummariesOn(hash) || !tool) return;
     const key = stepKey(hash, seq);
     if (codeSummaryTried.has(key)) return;
     codeSummaryTried.add(key);

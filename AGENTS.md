@@ -213,6 +213,7 @@ learned by shipping the wrong version first.
 | the housekeeping log (`ml.__housekeeping()`), or anything that evicts, sweeps or restarts on its own | `docs/dev/housekeeping.md` (+ `docs/spec/HOUSEKEEPING_LOG.md`) |
 | the resource panel (VRAM/RAM) and the event lane | `docs/dev/resource-panel.md` (+ `docs/spec/RESOURCE_PANEL.md`) |
 | the overlay vs DevTools surfaces, `debugMode`, shared UI components | `docs/dev/sidebar.md` |
+| the chat page (`src/chat/`): the client store, hosts, stream rules, the web build | `docs/dev/chat-page.md` (+ `docs/spec/CHAT_PAGE.md`, `docs/spec/SESSION_CONTRACT.md`) |
 | the patched Ollama/OpenWebUI features and how the client reads them | `docs/FORKED-BACKENDS.md` |
 | the e2e harness, observe, the bench, live probes, demos | `docs/dev/e2e-harness.md` (+ each tool's skill in `.claude/skills/`) |
 
@@ -253,8 +254,12 @@ learned by shipping the wrong version first.
 - **Sidebar.** One app, two surfaces: a new app→parent message must also be handled in `panel.ts`, and anything
   that acts back on the page needs the reverse channel (panel → background → content shell). The shared session
   views call `services()` (`services.ts`), never `chrome.*` or the parent frame, because the chat page and a phone app
-  reuse them; an entry point installs the implementation before rendering. A session's key is `Session.hash`, which is
+  reuse them; an entry point installs the implementation before rendering. Gate an affordance on the seam's questions
+  (`sideCalls(session)`, `bench`), never on this browser's `config`. A session's key is `Session.hash`, which is
   `runtime:hash` in a multi-runtime client: split keys on the LAST `:`.
+- **Chat page.** `src/chat/` never reaches `chrome`: the web build fails on a `chrome.*` reference. Events reach
+  `sessionMap` only through `SessionFeed` and `onDebug`, never written by hand, and a transcript changes only when the
+  runtime says so (no optimistic updates).
 - **Exports.** Diff two runs with `run.json` after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`.
 
 ## Showing a run: the log, the exports and tooltips
@@ -562,7 +567,9 @@ thing. The parts:
   extension. `run-once.mjs` is the core observe and the bench share (seeded histories included). `bench/` is a
   typed matrix over `runOnce` with spread, not point estimates, and its own CI job. Debug probes against LIVE
   backends (never in CI): `server-tool-live.mjs`, `md-ladder-live.mjs`, `proto-stream-live.mjs`,
-  `capture-frames.mjs` (records real event-stream fixtures). Narrated demos (watched, never asserting):
+  `capture-frames.mjs` (records real event-stream fixtures). The chat page's web build has its own: `chat-shots.mjs`
+  (phone + desktop screenshots against the fake host, `SERVE=1` to just serve it) and `window.__chatFake` to script it
+  (skill: `chat-web`). Narrated demos (watched, never asserting):
   `approval-demo`, `resource-demo` (`BOX=`), `line-map-demo`, `cursor-demo`, `panel-news-demo`, `whole-box-demo`,
   `stream-demo`, `bench-editor-demo`, `bench-completion-demo`, `table-demo` (fetching CSV/Parquet, then
   scanning, surveying and analysing them through pipe / readonly exec / full exec / python_exec; part two is the

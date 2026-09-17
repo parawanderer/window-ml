@@ -1,6 +1,6 @@
 # Spec: the chat page, a full-tab view over the same sessions
 
-**Status: agreed direction, in progress** (2026-09-15; architecture added 2026-09-17). Decisions below are Shane's unless marked as a proposal.
+**Status: agreed direction, in progress** (2026-09-15; architecture added 2026-09-17; slice 1 built 2026-09-17). Decisions below are Shane's unless marked as a proposal.
 
 ## What it is
 
@@ -236,6 +236,9 @@ coordinates, and offers live viewing only when the runtime has the capability.
 
 1. **The core against a fake host**: `src/chat/` with the client store keyed by `runtime:hash`, both layouts,
    `CompositeHost`, `FakeHost`, `ClientPlatform` with both adapters, both entry points, and the `chrome`-free build check.
+   **Done except the extension's entry and adapter**, which need a host to point at and come with slice 3: the services
+   seam (#110), then the store, the hosts, the web adapter, both layouts and the web build with its check. How it is
+   built: `docs/dev/chat-page.md`.
 2. **Background plumbing for the local host**: the cross-tab session index, per-session event rings with epoch and
    cursor, `tabs.list`, starting an agent on a chosen or blank tab from an extension page, delete.
 3. **`LocalHost`**: `chat.html` over slice 2, plus `side.call`, `page.highlight` and screenshots. The local host then

@@ -1834,6 +1834,9 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 
 /* rendered markdown */
 .md { color: var(--fg); word-break: break-word; }
+/* Display math wider than the column scrolls inside its own box. KaTeX lays an equation out as one unbreakable line, so
+   a narrow panel or a phone otherwise cuts it off at the edge with no way to read the rest. */
+.katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
 /* The reply's own markdown body gets breathing room (the header sits tight to the
    edge; the prose shouldn't). Scoped to the direct child so thinking / agent-thought
    / tool-output markdown elsewhere is unaffected. */

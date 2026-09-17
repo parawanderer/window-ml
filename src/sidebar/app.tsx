@@ -6,7 +6,7 @@
 // — the core primitive stays dependency-free.
 import { render } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
-import type { MlDebugEvent, MlConfig, ElementContext } from "../contract";
+import type { MlDebugEvent, MlConfig, ElementContext, InvocationInfo } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, resWindowPref, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, laneEnabled, showLane, showModels, LANEH_KEY, laneH, LANE_H_DEFAULT, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, FOCUS_KEY, focusMode,
@@ -16,12 +16,10 @@ import {
     vramOpen, sidebarOpen, backendError, backendLoading, surface, atBottom, resWindowS, vramH } from "./store";
 import { installTooltipLayer } from "./tooltip-layer";
 import { ContextMenu, CursorTipLayer, Hash, highlightPos } from "./ui-kit";
-import type { InvocationInfo } from "../contract";
 import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { installServices } from "./services";
 import { extensionServices } from "./services-ext";
-import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge, EmbedRunView } from "./reply";
-import { AgentRunView } from "./agent-detail";
+import { ProfileBadge, SessionRow, AgentBadge } from "./reply";
 import { Composer } from "./composer";
 import { chartKey, keyRelay, fetchModels, pollPs, connectResourceStream, pollBackendHealth, VramPanel, PythonBench, BenchDrawer, BenchVer, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
 import { CardApp, endActiveCardDrag } from "./hud-card";
@@ -36,6 +34,7 @@ import { DEFAULT_CODE_THEME } from "../code-themes";
 import { IconWarn, IconTimer, IconGear, IconExport, IconVram, IconBench, IconTools, IconBrain, IconClose, IconCollapse, IconMore } from "./icons";
 import { HousekeepingView } from "./housekeeping-log";
 import { Settings, openSettingsAt } from "./settings";
+import { DetailView } from "./session-detail";
 
 
 /* ------------------------------ components ------------------------------- */
@@ -89,20 +88,6 @@ function EmptySessions({ rev }: { rev: number }) {
         </div>
     );
 }
-
-function DetailView({ hash }: { hash: string }) {
-    // Re-renders via App's rev subscription (App cascades to this pure component);
-    // turn updates are immutable (see onDebug) so children re-render too.
-    const s = sessionMap.get(hash);
-    if (!s) return <div class="empty">Session not found.</div>;
-    if (s.kind === "agent") return <AgentRunView s={s} />;
-    // An EMBED session is not a conversation. It reports through the chat events — a model call is a model
-    // call, and reusing the machinery costs no new event kind — but rendering it as user/assistant bubbles
-    // presents a request for vectors as something somebody said, which is where the confusion starts.
-    if (s.kind === "embed") return <EmbedRunView s={s} />;
-    return <><OptionsBlock s={s} />{s.turns.map(t => <MessageTurn key={t.id} t={t} hash={s.hash} />)}</>;
-}
-
 
 // Export button + its format menu. Two shapes of the same log: a markdown bundle
 // (for a coding assistant — screenshots as real .png sidecars) or a PDF via the

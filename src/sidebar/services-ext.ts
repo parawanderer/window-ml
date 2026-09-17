@@ -4,6 +4,7 @@
 // content-script shell, or panel.ts) over `postMessage`. The parent can prove a message came from this extension
 // iframe, which is what makes an approval posted this way unforgeable by the page.
 import { hintSession } from "../contract";
+import { config } from "./store";
 import { bareHash, type SidebarServices, type SideCallRequest, type SideCallResult } from "./services";
 
 const toParent = (msg: unknown): void => window.parent.postMessage(msg, "*");
@@ -35,6 +36,10 @@ function sideCall(req: SideCallRequest): Promise<SideCallResult> {
 /** The extension frames' services. Installed by `app.tsx` before it renders. */
 export const extensionServices: SidebarServices = {
     sideCall,
+    // Without a utility model, `extend: "utility"` falls back to the (expensive) main model, and someone who has not
+    // set one has not asked for glosses.
+    sideCalls: () => !!config.value.utilityModel.trim(),
+    bench: true,
     // The shell forwards it to the background as SET_APPROVAL, having checked it came from this iframe.
     answerApproval: (hash, seq, decision, persist) => toParent({ __mlSidebarApp: "approval", hash, seq, decision, persist }),
     sendToSession: (hash, text, images) => toParent({ __mlSidebarApp: "sessionSend", hash, text, images }),

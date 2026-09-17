@@ -1,0 +1,79 @@
+/* THE CHAT PAGE'S LAYOUT, on top of sidebar.css (loaded first: the tokens, the transcript, the composer). Only what a
+   whole page needs that a panel does not: two panes, the runtime groups, notices, and the phone-width rules. */
+
+/* A page is read from further away than a panel docked beside one: a larger base size. */
+:root { --fs: 14px; }
+html, body, #root { height: 100%; }
+/* The chat page's two-pane grid (the session list, then one session), one pane when `.narrow`. `dvh` is the height that
+   excludes a phone's collapsing toolbars, so the composer is never under them. */
+.chat { font-size: var(--fs); height: 100vh; height: 100dvh; display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); }
+.chat.narrow { grid-template-columns: minmax(0, 1fr); }
+.chat-list, .chat-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chat-list { border-right: 1px solid var(--border); background: var(--bg); }
+.chat.narrow .chat-list { border-right: none; }
+.chat-pick { margin: auto; }
+
+/* A runtime's heading in the list: a dot for reachable, its name, and what this device may do there. */
+.chat-group { margin-bottom: 14px; }
+.chat-rt { display: flex; align-items: center; gap: 7px; padding: 4px 2px 6px; color: var(--fg-dim); font-size: .92em; }
+.chat-rt-name { color: var(--fg); font-weight: 600; }
+.chat-rt-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-faint); flex: 0 0 auto; }
+.chat-rt-dot.on { background: var(--ok); }
+.chat-rt.off .chat-rt-name { color: var(--fg-dim); }
+.chat-rt-note { color: var(--fg-faint); }
+.chat-rt-empty { color: var(--fg-faint); padding: 2px 2px 6px; font-size: .92em; }
+/* A small label chip in the chat page's own chrome (view only, connecting…). */
+.chat-chip { font-size: .8em; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--fg-dim); white-space: nowrap; }
+.chat-chip.warn { color: var(--warn); }
+
+/* A session row: the panel's `.row`, two lines tall, with the open one marked. */
+.chat-row { align-items: flex-start; }
+.chat-row .dot { margin-top: .45em; }
+.chat-row.active { border-color: var(--accent); background: var(--panel-2); }
+.chat-row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.chat-row-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--fg-faint); font-size: .86em; }
+.chat-status.st-waiting { color: var(--warn); }
+.chat-status.st-error, .chat-status.st-cancelled, .chat-status.st-interrupted { color: var(--err); }
+/* Open approvals on a session in the list: the one thing on a phone that is waiting on the person holding it. */
+.chat-appr-badge { background: var(--warn); color: #1a1400; border-radius: 999px; padding: 0 7px; font-weight: 600; }
+
+/* The session header: a title that ellipsizes, with the runtime and model under it. */
+.chat-head { gap: 10px; }
+.chat-head-title { display: flex; flex-direction: column; min-width: 0; }
+.chat-head-title b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-head-sub { color: var(--fg-faint); font-size: .86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The pinned "waiting on your approval" bar: the gate may be far down a long run, and on a phone that is several screens. */
+.chat-waiting {
+    display: flex; align-items: center; gap: 8px; width: 100%; border: none; border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--warn) 16%, var(--bg)); color: var(--fg); padding: 8px 12px; font: inherit; cursor: pointer; text-align: left;
+}
+.chat-waiting-go { margin-left: auto; color: var(--warn); font-weight: 600; }
+.chat-transcript { padding: 10px 14px; }
+.chat:not(.narrow) .chat-transcript > div { max-width: 920px; margin: 0 auto; }
+.chat-truncated, .chat-readonly { color: var(--fg-dim); font-size: .92em; }
+.chat-truncated { border: 1px dashed var(--border); border-radius: 7px; padding: 6px 10px; margin-bottom: 10px; }
+.chat-readonly { border-top: 1px solid var(--border); padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); }
+
+/* Notices: a stack at the bottom, above the composer's reach but never over the send button for long. */
+.chat-notices { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; z-index: 50; width: min(92vw, 460px); }
+.chat-notice { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 20px rgb(0 0 0 / .3); }
+.chat-notice.error { border-color: var(--err); }
+.chat-notice span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.chat-notice-x { background: none; border: none; color: var(--fg-dim); font-size: 1.2em; cursor: pointer; min-width: 32px; min-height: 32px; }
+
+/* The web adapter's full-size image. */
+.chat-lightbox { position: fixed; inset: 0; background: rgb(0 0 0 / .85); display: flex; align-items: center; justify-content: center; z-index: 60; cursor: zoom-out; }
+.chat-lightbox img { max-width: 96vw; max-height: 96vh; object-fit: contain; }
+
+/* PHONE WIDTH: one pane, bigger touch targets, and the composer clear of the home indicator. */
+.chat.narrow { --fs: 15px; }
+.chat.narrow .head { padding: 8px 10px; min-height: 52px; }
+.chat.narrow .nav { min-width: 40px; min-height: 36px; }
+.chat.narrow .chat-row { padding: 10px 12px; min-height: 56px; }
+.chat.narrow .chat-transcript { padding: 8px 10px; }
+/* The step pill sits over a turn's first line, which a panel's wide first line leaves room for and a phone's does not:
+   floated, the text and the step row flow around it instead of under it. */
+.chat.narrow .aturn-head { position: static; float: right; margin: 0 -2px 2px 6px; }
+.chat.narrow .composer { padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
+.chat.narrow .cbtn { min-width: 40px; min-height: 40px; }
+.chat.narrow .appr-btn { min-height: 40px; }

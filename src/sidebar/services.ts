@@ -32,6 +32,12 @@ export type HighlightRef = { selector?: string; token?: string; kind?: "approve"
 /** Everything the shared session components ask of their host. */
 export interface SidebarServices {
     sideCall(req: SideCallRequest): Promise<SideCallResult>;
+    /** Can a side call about this session be made here? The extension asks whether a utility model is set; a
+     *  session host asks the session's runtime (its `sideCalls` capability). Read during render, so an
+     *  implementation over signals keeps the caller subscribed. */
+    sideCalls(session: string): boolean;
+    /** Is there a Python bench to open a script in? Only the extension frames have one today. */
+    bench: boolean;
     /** answer an approval gate by the pending step's `seq` */
     answerApproval(session: string, seq: number, decision: boolean, persist: boolean): void;
     /** a message to a session: steers a running agent, or starts its next turn */
@@ -65,6 +71,8 @@ export function splitStepKey(key: string): { session: string; seq: number } {
  *  renderer used somewhere unexpected degrades instead of breaking. */
 const UNAVAILABLE: SidebarServices = {
     sideCall: async () => ({ ok: false, error: "no host is installed" }),
+    sideCalls: () => false,
+    bench: false,
     answerApproval() {},
     sendToSession() {},
     cancelSession() {},

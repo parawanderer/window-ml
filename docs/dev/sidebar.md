@@ -62,6 +62,13 @@ available here" instead of throwing. `tests/portable-session-views.test.mjs` wal
 direct `chrome.*` call or a parent post, so the seam cannot erode. Extension-only surfaces (the HUD card's own
 controls, Settings, the resource panel, the bench) still call `chrome` directly: they are not reused off the extension.
 
+The seam also answers two QUESTIONS the views used to answer by reading the extension's own state:
+`sideCalls(session)` (can a title, summary or explain call be made about this session here?) and `bench` (is there a
+Python bench to hand a script to?). The extension answers the first from its utility-model setting and the second with
+yes; the chat page answers from the session's runtime (its `sideCalls` capability and this client's grant) and no.
+Gate an affordance on the question, never on `config.value.utilityModel`: the config is this browser's, and a session
+from another runtime is glossed by that runtime's utility model or not at all.
+
 **A session's key (`Session.hash`).** The bare 8-hex hash for the sidebar's own sessions; `runtime:hash` when a client
 reduces several runtimes' events (`onDebug(ev, runtime)`), because a hash is unique only within its runtime. Every
 session-keyed map (steps, asides, decided gates, summaries) uses it, so runtimes stay apart without those maps knowing.

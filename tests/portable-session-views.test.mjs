@@ -10,7 +10,7 @@ import path from "node:path";
 
 const SRC = path.resolve(import.meta.dirname, "../src");
 /** The views the chat core reuses, and the state they reduce into. */
-const ROOTS = ["sidebar/reply.tsx", "sidebar/agent-detail.tsx", "sidebar/composer.tsx", "sidebar/debug-reducer.ts", "sidebar/store.ts"];
+const ROOTS = ["sidebar/session-detail.tsx", "sidebar/reply.tsx", "sidebar/agent-detail.tsx", "sidebar/composer.tsx", "sidebar/debug-reducer.ts", "sidebar/store.ts"];
 /** The extension frames' own implementation of the seam: the one place those calls belong. */
 const ALLOWED = new Set(["sidebar/services-ext.ts"]);
 

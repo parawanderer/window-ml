@@ -9,7 +9,7 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { RenderDescriptor, DebugAgentConfig, PersistGrant } from "../contract";
 import { resolveOutputCap, runStats, fmtTokPerSec, runStatsProvenance } from "../contract";
 import { externalSheetIds } from "../dom";
-import { config, surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode } from "./store";
+import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode } from "./store";
 import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
@@ -429,7 +429,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
             {/* On-demand plain-English gloss for a code step — CARD's Show-work trace only (the debug panel
                 keeps the raw code); needs a utility model. Lives UNDER the (collapsed) step, not inside the
                 expand, so you can annotate a call without opening its whole In/Out. */}
-            {surface.value === "card" && (st.tool === "exec" || st.tool === "python_exec") && hash && st.seq != null && !st.pending && config.value.utilityModel.trim()
+            {surface.value === "card" && (st.tool === "exec" || st.tool === "python_exec") && hash && st.seq != null && !st.pending && services().sideCalls(hash)
                 ? <CodeExplain hash={hash} seq={st.seq} lang={st.tool === "python_exec" ? "python" : "javascript"} code={codeOf(st)?.text || ""} result={st.result} />
                 : null}
             {/* Approval bar at the BOTTOM — after In/Out — so you review the call (its rendered In)

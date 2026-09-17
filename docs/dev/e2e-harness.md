@@ -142,6 +142,12 @@ as in AGENTS.md — they are all under `src/`.
   the call path. `HOLD=0` exits instead of holding the browser open. The assertions are
   `tests/e2e/line-map.spec.mjs`.
 
+- **`chat-shots.mjs`** and **`chat-web.spec.mjs`**: the chat page's web build (`dist-web/`), which is not the
+  extension, so neither uses `launchExtension`. Both serve the build with `static-server.mjs` and open it in a plain
+  Chromium, against the fake host's demo world. `chat-shots.mjs` writes a phone and a desktop screenshot of the list and
+  of every demo session (`OUT`, `THEME=light`, `SERVE=1` to serve and wait); the spec drives the page through its own UI
+  and reads `window.__chatFake.commands` back, because a transcript can look right while the wrong command was sent.
+  `E2E_DIST_WEB=<dir>` points both at a build made elsewhere. Scripting the fake host: the `chat-web` skill.
 - **`capture-frames.mjs`** — a **capture probe, not a test**: `node --import tsx tests/e2e/capture-frames.mjs
   > tests/e2e/fixtures/events-<name>.json` connects straight to the `.env` box's `/api/events` and dumps the
   retained ring, so a stream fixture is a RECORDING rather than a guess (`SECS`, `SINCE`; it exits saying so
