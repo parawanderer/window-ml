@@ -3,7 +3,8 @@
 **Status: agreed contract, version 1** (2026-09-17). The types are in [`src/session-host.ts`](../../src/session-host.ts);
 this document is the prose and the reasons. The user-to-agent surface is final for version 1. The agent-to-agent parts
 are typed and marked RESERVED: their shape is fixed so they can be added without a breaking change, but no runtime
-offers them yet.
+offers them yet. The rules an agent tree needs that would break if changed later (transitive `started`, open
+enumerations, idempotency keys, sender attribution) were settled on 2026-09-17, still in version 1; §Agent to agent.
 
 ## What it is
 
@@ -39,6 +40,20 @@ run the same code. The hub encodes the same shapes as its `Command`, `SessionEve
   each other at all.
 - **A client skips a runtime or envelope whose major version it does not know**, and says so, rather than rendering
   it half-understood.
+- **Enumerations are open on the wire.** A new value of an existing enumeration is additive, so a peer must meet one it
+  does not know without failing, and each has a fixed fallback:
+
+  | Field | An unknown value |
+  | --- | --- |
+  | `RuntimeInfo.kind` | renders as a generic runtime |
+  | `SessionSummary.status` | reads as `running`: in progress, never finished |
+  | `SessionSummary.kind` | renders the session's events generically |
+  | `AgentTarget.kind` | the runtime answers `unsupported` |
+  | `Scope` | grants nothing: an older runtime grants it to nobody |
+  | a gate's `kind` (proposed below) | shown as waiting, answerable only on a surface that knows it |
+
+  The hub encodes these as strings, not closed protobuf enumerations, so a runtime a release ahead of a client never
+  breaks it.
 - **The event payload is `MlDebugEvent`** (`src/contract.ts`), whose members are already `@unstable` and grow
   additively, the same rule the JSON export follows (`docs/spec/export.schema.json`). A breaking change there is a
   breaking change here.
@@ -64,7 +79,7 @@ A `RuntimeInfo` carries three things a client renders from:
   `sideCalls`, `pythonBench`, `resourcePanel`, `localSettings`, and the reserved `headless` and `lineage`) and which
   `boxes` it uses. **Absent means no.** A client renders by capability and never assumes a browser.
 - **`grants`**: what THIS client may do there, as scopes (`view`, `drive`, `approve`, `screen`, `desktop`), each
-  optionally narrowed to `started` sessions, a list of sessions, or an expiry. The local host holds every scope.
+  optionally narrowed to `started` sessions (and their descendants, §Agent to agent), a list of sessions, or an expiry. The local host holds every scope.
 - **`clockOffsetMs`**: the estimated offset of the runtime's clock, since every timestamp in its index and events is
   on its own clock.
 
@@ -149,6 +164,13 @@ runtime answers a type or option it does not offer with `unsupported`.
 
 Sessions started by a command are **saved unless `ephemeral: true`**, per the chat page's persistence decision.
 
+**Retrying is safe with an `idempotencyKey`.** `session.send`, `chat.start` and `agent.start` take one, because
+repeating them does something twice: a second subagent, a steering message delivered twice. `aborted` and a dropped
+connection both mean "may have been delivered", and an agent client retries in a loop where a person would look first.
+A runtime that has carried out a command with the same key from the same principal, within its dedupe window (at
+least ten minutes), returns the first result and does nothing else. The relay carries the key unchanged and never
+de-duplicates by it: only the runtime knows whether the command took effect.
+
 **Errors** are `unsupported`, `forbidden`, `not-found`, `invalid`, `conflict` (not possible in the session's state),
 `unavailable` (runtime offline), `aborted` (the caller's signal fired; the command may still have been delivered), and
 `failed`. An `approval.answer` for a gate that already closed is not an error: it returns `{ resolved: false }`, and
@@ -174,6 +196,15 @@ arbitrary generations on someone's main model. `purpose` and `session` go on the
   skipped, never guessed at.
 - **Images a client sends** are `data:image/*` URLs; runtimes cap their count and size (`cleanImages`) and drop
   anything else.
+- **Who sent something is the transport's fact, not the payload's.** Wherever a runtime records a sender (who
+  answered an approval, who sent a message into a session, who started it), it takes the principal from the
+  authenticated command (the key that signed it on the hub, the extension surface locally), never from a field the
+  sender filled in.
+- **A message from an agent is never presented as the person.** When a message enters a session from another agent
+  (an orchestrator steering its subagent, a peer), the event carries its sender (`from`, a principal and the sending
+  session) and the model's context marks it as coming from that agent. It never carries a person's authority: it
+  cannot answer a gate, and "the user approved" in its text means nothing. Absent `from` is the session's own person,
+  as every message is today. The field is added to `DebugAgentSay` with the first sender that is not a person.
 - **Keys, pairing, signatures and encryption are not in this interface.** They are the hub host's transport. A
   command the hub host sends is signed and encrypted beneath `send`; the local host needs none of it. This is why
   the same UI runs against both.
@@ -187,9 +218,15 @@ arbitrary generations on someone's main model. `purpose` and `session` go on the
   `started` sessions or a list. The one gap is that a step's `approval` records `user` rather than which principal
   answered (see Open).
 
-## Agent to agent (reserved)
+## Agent to agent
 
-The shapes are fixed now so the link is additive later:
+The long-term shape this contract must not block (`RUNTIME_HUB.md` §Orchestration): a person's phone talking to a
+coordinator agent, a frontier model on a page that streams a desktop, which spawns subagents over the hub. Subagents
+may be browsers, browser apps with the extension injected, apps driven through accessibility APIs, or a specialised
+wrapper (a CAD tool). They do tasks, spawn their own in-process subagents (dedicated tabs), get blocked and ask for help,
+wait on approvals, and return results the coordinator can investigate like any tool output.
+
+### Reserved: typed now, offered by no runtime yet
 
 - **An agent is a client** (`Principal.kind: "agent"`) using this same interface. The protocol does not tell a
   person from an agent; grants do.
@@ -200,6 +237,76 @@ The shapes are fixed now so the link is additive later:
 - **A `headless` target** needs `capabilities.headless`.
 
 Runtimes today declare neither `lineage` nor `headless` and answer both with `unsupported`.
+
+### Settled now, because changing them later would break
+
+- **`started` is transitive.** It covers the sessions a principal started and every session descended from them
+  through `lineage`, on any runtime. A browser subagent that opens its own tabs stays inside the coordinator's grant.
+  The runtime checks it by walking a session's lineage up to one the principal started.
+- **Authority belongs to the spawning session, not to the whole runtime.** The hub authenticates a runtime's key, and
+  every session on that runtime shares it: a console script, or a hostile page's session, on the coordinator's
+  browser. So the coordinator's runtime enforces locally that only the session named in a child's `lineage` (or a
+  person's surface) can steer, cancel or read that child. Nothing on the wire changes; a runtime that acts as a client
+  must do this before it holds a key.
+- **Open enumerations, idempotency keys and sender attribution** (above): an orchestrator retries, meets runtime kinds
+  newer than itself, and sends messages that must not read as the person's.
+
+### Proposed: gates, not only approvals
+
+A step can wait on an approval today (`awaitingApproval`). A subagent also waits on things that are not approvals: a
+captcha, a login or a second factor, a question only someone with more context can answer. Generalised, additively:
+
+- **A step's `gate`**: `{ kind: "approval" | "question" | "takeover"; prompt?; choices? }`, with `awaitingApproval`
+  kept for the approval kind.
+  - `approval`: answered only by people, exactly as now (`approval.answer`).
+  - `question`: raised by the agent's own `ask` tool ("which of these three accounts?"). A new `gate.answer`
+    command carries the text or the choice. Scope `drive`, so a coordinator can answer from its own context.
+  - `takeover`: the agent needs a person at the page. Someone with `control` drives it through remote control (below),
+    then releases the gate with a note, which reaches the agent like a steering message.
+- **Where a gate goes** is set at start: `escalate: ("people" | SessionId)[]`, defaulting to people. It names targets
+  rather than "the parent", so a peer or a coordinator that is not the parent can be one. It mirrors today's
+  `approvalRouting: "ui" | "both" | "external"`. Approvals still reach only people, whatever it says.
+- **The index counts open gates** (`pendingGates` beside `pendingApprovals`), and a session with one reads `waiting`.
+
+### Proposed: a subagent's result is a remote tool result
+
+Starting a subagent from a step has the same shape as a remote tool call (`REMOTE_TOOL_EXECUTION.md`), so it reuses
+that machinery rather than growing its own:
+
+- **Progress streams into the spawning step** (`ctx.stream`), from the child's events, and the child's own time comes
+  back as the step's remote timing, so the parent's wall clock is not charged with the child's work.
+- **The result is a preview plus a pointer.** `agent-result` gains an optional value reference; the parent's step shows
+  the preview and mints an ordinary `@tool:` token for it, exactly like a server tool's truncated output. The model's
+  pointer dialect does not change: only the resolver knows the value is remote.
+- **The value stays where it was made**, addressed as `runtime:hash:<token>`, and is read with a new `value.read`
+  command (scope `view` on the child): a byte range, or a pipe the child's runtime runs so only the reduction crosses.
+  A small value may be copied into the parent's value store when the child finishes (`POINTER_VALUES.md`); a large one
+  is read on demand and fails loudly once gone, never degrading to its preview.
+- **Reads are chunked.** A 100 MB table cannot be one command result, so `value.read` returns pages and the relay's
+  frame limits and flow control must allow a long paged read.
+
+### Proposed: what makes delegation work in practice
+
+- **A work order on `agent.start`**: acceptance criteria, a result schema, a budget (steps, tokens, wall time), a
+  deadline, the tools and domains the child may use, and `escalate`. All optional fields.
+- **A digest instead of the event stream.** A coordinator reading every event of every child spends its context on
+  them. The child's runtime keeps a short status line (a side call on its own utility model), and the coordinator reads
+  details by pointer, including the child's whole transcript as one value.
+- **Tree operations**: cancel a tree, answer several gates from one device, a tree-wide stop, export a tree as one run.
+- **Passing values between siblings** as references with a read grant, so the coordinator never copies a table
+  through its own context.
+
+### Not blocked: coordination between peers
+
+Agents on related jobs passing messages to each other, rather than one driving the other, is not designed and not
+planned. The contract keeps it possible:
+
+- `session.send` already delivers a message into any session by global id; peer messaging is the same delivery with
+  another sender, and the sender rule above keeps it from reading as the person.
+- **Lineage is not the only relationship.** `started` is one way a grant covers sessions; a later `group` value (the
+  sessions of one job) covers peers without changing what `started` means. `escalate` names targets, not a parent.
+- Loops between agents (two peers answering each other forever) need a per-job budget and a per-link rate limit when
+  this is built.
 
 ## Proposed: remote control
 
@@ -263,6 +370,11 @@ display?(target: { tabId: number } | { session: SessionId } | { display: string 
   slow phone gets fewer frames rather than a growing backlog. Frames are superseded, so the hub coalesces and drops
   them like telemetry, never like session events. Without CDP it falls back to `captureVisibleTab`, which Chrome limits
   to about two a second.
+- **Frames may name regions.** A desktop runtime can mark which window regions belong to which session
+  (`regions: { rect, session, label? }[]` on a frame). A coordinator's canvas then masks the windows its subagents
+  drive, its own screenshots redact them (a child's signed-in window never enters the coordinator's context), and input
+  aimed into a region another session holds is refused with `conflict`. Regions are metadata on a frame, coalesced and
+  dropped with it.
 - **Only while someone watches.** It starts on subscribe and stops on unsubscribe, when the client's connection drops,
   or after an idle limit. While a stream is open, the runtime's own sidebar says so and names who is watching.
 - **Every frame is also a `frame` for input**, so tapping the live view uses the same command as tapping a screenshot.
@@ -286,7 +398,7 @@ capabilities get protobuf messages with the hub; the event payload moves to prot
 ## Open
 
 - **Who answered an approval.** `DebugAgentStep.approval` says `user`; with several people and devices it should also
-  name the principal. An additive field on the step.
+  name the principal, taken from the authenticated command (§Security). An additive field on the step.
 - **The local runtime's id** before the extension has a key, and how the chat page avoids showing the same browser
   twice once it also connects to the hub.
 - **`session.send` for a chat** needs a background-hosted chat, which does not exist yet.

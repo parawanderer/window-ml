@@ -18,9 +18,11 @@ disabled "headless" option as a placeholder for this.
 
 - **Where a headless agent's page lives**: a hidden tab, an offscreen document, a CDP headless target. Each has
   different limits (what it can render, what CSP it runs under, whether it survives the service worker).
-- **Subagents**: how a run spawns another, what the child may do (its own tools, its own approvals, a budget), how
-  its session nests under the parent's in the sessions list and the lane, and whether its result comes back as a
-  tool result or a pointer.
+- **Subagents**: how a run spawns another and where the child's page lives. The contract side has a direction
+  (`SESSION_CONTRACT.md` §Agent to agent, 2026-09-17): a subagent's result comes back as a remote tool result, a
+  preview plus a pointer whose value stays on the child's runtime; a blocked child opens a gate (approval, question,
+  takeover) routed by `escalate`; a work order on the start carries the child's tools, budget and result schema; the
+  child nests under the spawning step through `lineage`, and `started` grants cover the whole subtree.
 - **Runs that outlive the service worker by design**: long or scheduled work rather than a run that happens to
   survive an eviction.
 - **The box**: several agents at once on one GPU box compete for it. The request hints (`use`, `session`) are where

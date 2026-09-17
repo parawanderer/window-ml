@@ -40,6 +40,9 @@ make a runtime do? The answer has to be nothing.
 5. **Scopes, attenuated, never widened.** See Principals and scopes. A grant can be passed on only as a subset.
 6. **The consent model does not change.** Approval-gated tools still ask. Remote driving adds places to answer
    from; it never removes a question.
+7. **Who sent something comes from the signature.** A runtime records a command's principal (who answered, who
+   steered, who started a session) from the key that signed it, never from a field inside the body. The hub
+   authenticates keys and routes; it never asserts a sender on anyone's behalf.
 
 **What the hub can still do**, stated so nobody assumes otherwise: drop or delay messages, see which principals are
 online and when, and see the sizes and timing of traffic. It cannot read or originate a command.
@@ -78,6 +81,12 @@ Scopes are granted per pairing and checked on every command.
 
 - **Attenuation.** A holder may pass a scope on only as a subset: to a narrower set of sessions, for less time, or
   without `approve`. Nothing can mint a scope it does not hold.
+- **`started` covers a whole subtree.** An orchestrator's grant over what it started extends to every session
+  descended from those through lineage, on any runtime, so a subagent's own subagents stay visible and steerable to
+  it (`SESSION_CONTRACT.md` §Agent to agent).
+- **A key is shared by every session on its runtime, so authority is also checked there.** The hub sees the
+  orchestrator runtime's key; the runtime itself makes sure only the session that spawned a child (or a person's
+  surface) uses the grant over that child, and not a console script or another page's session on the same browser.
 - **Spawned runtimes inherit, narrowed.** A runtime started by an orchestrator (a browser on a desktop) is
   provisioned at start with its parent's device allowlist, each entry no wider than the parent's, plus a `view` and
   `drive` grant for the orchestrator. The person's phone can therefore watch and answer a subagent without pairing
@@ -399,6 +408,18 @@ as starting browsers) and driving subagents in those browsers.
   approval-gated the way `exec` is, and `desktop` is a scope a person grants.
 - **The tree is drawn as one** (see Rendering a subagent), in the root's own lane, on any client with `view` on the
   sessions in it.
+- **Subagents are not only browsers.** A browser app with the extension injected, an app driven through accessibility
+  APIs, or a specialised wrapper (a CAD tool) is a runtime like any other if it speaks the contract (see The contract):
+  its own `kind` (the enumeration is open), its tools as steps, its output as render descriptors with fallbacks.
+- **Blocked, it asks.** A subagent that hits a captcha, a login or a question it cannot answer opens a gate, and the
+  gate goes where the spawn said: to the coordinator, to the person's devices, or both. Approvals go only to people
+  whatever it says. A takeover gate is answered by a person driving the page through remote control
+  (`SESSION_CONTRACT.md` §Proposed: gates).
+- **Its result is a pointer.** The spawning step gets a preview and an ordinary `@tool:` token; the value stays on the
+  child's runtime and is read on demand, paged (`value.read`). The relay therefore carries long paged reads, bounded
+  by its per-account limits like any other traffic.
+- **The desktop canvas knows whose windows are whose.** Display frames can name regions by session, so the
+  coordinator's view masks the windows its subagents drive and its input cannot land in them.
 
 This is the goal approvals over IPC were built toward (`docs/dev/agent-tools.md` names it: one wrapper driving a
 desktop with delegated subagents), and it overlaps [`HEADLESS_AGENTS.md`](HEADLESS_AGENTS.md), where subagents and
@@ -413,6 +434,7 @@ headless runtimes are still open.
 - Group keys for box telemetry: rotation when a device is unpaired.
 - Whether the local chat page also connects to the hub to show other runtimes, or stays local-only.
 - How much history a client can pull (the rings are bounded; saved sessions live on the runtime).
+- Frame sizes and flow control for paged value reads (`value.read`), which can run to hundreds of megabytes.
 - The hint fields (`runtime`, `root`) need the patched Ollama's agreement before use.
 - The schemas and conformance vectors (see The contract) are written as the hub is implemented, not before.
 
