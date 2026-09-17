@@ -93,10 +93,27 @@ export interface End {
   cachedTokens?: number | undefined;
 }
 
+/**
+ * Something in the stream that is not part of the completion. Open WebUI's own chat route
+ * puts these in: `{"sources": [...]}` ahead of the first token for a retrieval or knowledge
+ * hit, and whatever a filter function emits. ollama never sends one -- it has nothing to put
+ * in it -- but the definition lives here so the two encoders of this format cannot disagree
+ * about the wire.
+ *
+ * The JSON is carried verbatim rather than modelled. A client hands it to its caller without
+ * interpreting it, and a shape modelled here would have to track Open WebUI's, which is not
+ * this file's to define. It is also what keeps the frame total: a payload the encoder does
+ * not recognise becomes one of these instead of being dropped.
+ */
+export interface Event {
+  json: string;
+}
+
 export interface Frame {
   start?: Start | undefined;
   delta?: Delta | undefined;
   end?: End | undefined;
+  event?: Event | undefined;
 }
 
 function createBaseStart(): Start {
@@ -620,8 +637,56 @@ export const End: MessageFns<End> = {
   },
 };
 
+function createBaseEvent(): Event {
+  return { json: "" };
+}
+
+export const Event: MessageFns<Event> = {
+  decode(input: BinaryReader | Uint8Array, length?: number): Event {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseEvent();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.json = reader.string();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  create<I extends Exact<DeepPartial<Event>, I>>(base?: I): Event {
+    return Event.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<Event>, I>>(object: I): Event {
+    const message = createBaseEvent();
+    message.json = object.json ?? "";
+    return message;
+  },
+};
+
 function createBaseFrame(): Frame {
-  return { start: undefined, delta: undefined, end: undefined };
+  return { start: undefined, delta: undefined, end: undefined, event: undefined };
 }
 
 export const Frame: MessageFns<Frame> = {
@@ -662,6 +727,14 @@ export const Frame: MessageFns<Frame> = {
             message.end = End.decode(reader, reader.uint32());
             continue;
           }
+          case 4: {
+            if (tag !== 34) {
+              break;
+            }
+
+            message.event = Event.decode(reader, reader.uint32());
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -682,6 +755,7 @@ export const Frame: MessageFns<Frame> = {
     message.start = (object.start !== undefined && object.start !== null) ? Start.fromPartial(object.start) : undefined;
     message.delta = (object.delta !== undefined && object.delta !== null) ? Delta.fromPartial(object.delta) : undefined;
     message.end = (object.end !== undefined && object.end !== null) ? End.fromPartial(object.end) : undefined;
+    message.event = (object.event !== undefined && object.event !== null) ? Event.fromPartial(object.event) : undefined;
     return message;
   },
 };

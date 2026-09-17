@@ -250,7 +250,7 @@ learned by shipping the wrong version first.
   value store, so its `col`/`select`/`records` return promises and its size is `shape`, never `rows.length`.
 - **Wire formats.** The protobuf path is chosen from the RESPONSE's content type, never sniffed; no `TextDecoder`
   anywhere near binary — a fetched body is checked with `binaryKind` on its BYTES first, and a binary one is
-  described, never decoded; `toolIds` keeps SSE permanently. A strict backend refusing an optional request key is
+  described, never decoded; the protobuf `Accept` carries `events=1` (OpenWebUI's own route serves it only then, and its `Event` frame is what carries `sources`). A strict backend refusing an optional request key is
   retried once without it — a wire nicety must never cost an answer.
 - **Sidebar.** One app, two surfaces: a new app→parent message must also be handled in `panel.ts`, and anything
   that acts back on the page needs the reverse channel (panel → background → content shell). The shared session

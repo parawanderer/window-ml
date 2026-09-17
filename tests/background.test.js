@@ -3430,19 +3430,15 @@ test("START_RUN: a REMOTE tool's output is citable on the background path, so a 
 // it always did and the miss IS the fallback.
 
 /** Frame a protobuf message the way the server does: its byte length as a varint, then its bytes. */
-const pbFrame = (body) => {
-    const out = [];
-    let n = body.length;
-    do { out.push(n > 127 ? (n & 0x7f) | 0x80 : n); n >>>= 7; } while (n);
-    return [...out, ...body];
-};
+const varint = (n) => { const out = []; do { out.push(n > 127 ? (n & 0x7f) | 0x80 : n); n >>>= 7; } while (n); return out; };
+const pbFrame = (body) => [...varint(body.length), ...body];
 /** A length-delimited protobuf string field. */
 const pbStr = (field, text) => {
     const b = [...new TextEncoder().encode(text)];
-    return [(field << 3) | 2, b.length, ...b];
+    return [(field << 3) | 2, ...varint(b.length), ...b];
 };
 /** A varint field. */
-const pbVar = (field, n) => [(field << 3) | 0, n];
+const pbVar = (field, n) => [(field << 3) | 0, ...varint(n)];
 /** Frame.delta{content} — Frame field 2, Delta field 1. */
 const pbDelta = (text) => { const d = pbStr(1, text); return pbFrame([0x12, d.length, ...d]); };
 /** Frame.end{finish_reason, prompt_tokens, completion_tokens} — Frame field 3. */
@@ -3450,6 +3446,8 @@ const pbEnd = (reason, pt, ct) => {
     const e = [...pbStr(1, reason), ...pbVar(2, pt), ...pbVar(3, ct)];
     return pbFrame([0x1a, e.length, ...e]);
 };
+/** Frame.event{json} — Frame field 4: anything in the stream that is not a completion chunk, carried verbatim. */
+const pbEvent = (json) => { const e = pbStr(1, json); return pbFrame([0x22, ...varint(e.length), ...e]); };
 /** Frame.start{id, model} — Frame field 1. */
 const pbStart = (id, model) => {
     const st = [...pbStr(1, id), ...pbStr(2, model)];
@@ -3472,7 +3470,7 @@ test("protobuf stream: asks for it, decodes the deltas, and reports the usage fr
     client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
     await settle();
 
-    assert.match(accept, /^application\/protobuf, text\/event-stream;q=0\.9$/, "the one header that opts in");
+    assert.match(accept, /^application\/protobuf; events=1, text\/event-stream;q=0\.9$/, "the one header that opts in");
     const deltas = client.messages.filter(m => m.type === "chunk").map(m => m.delta);
     const done = client.messages.find(m => m.type === "done");
     assert.deepEqual(deltas, ["Hel", "lo"], "each Delta reaches the caller as it lands");
@@ -3551,12 +3549,11 @@ test("protobuf stream: a TOOL CALL decodes out of a Delta, and the hand-back is 
     assert.equal(done?.usage?.promptTokens, 5);
 });
 
-test("protobuf stream: a toolIds call keeps SSE — the schema has nowhere to put SOURCES", async () => {
-    // PERMANENT, not a gap waiting on a field — which is why this gate did not go away when the encoder
-    // gained tool calls. `sources` is emitted by OpenWebUI ahead of the model's first token, on the route
-    // that proxies ollama's NATIVE /api/chat and parses it line by line; the protobuf encoder lives on the
-    // raw-passthrough route that path never touches. A field for it could never be filled, and a permanently
-    // empty one is indistinguishable from "there were none".
+test("protobuf stream: a toolIds call ASKS too, now that provenance rides the stream", async () => {
+    // The old gate excluded `toolIds` because `sources` had nowhere to go in the schema. It never protected
+    // provenance: `sources` reaches that stream without `tool_ids` by four other routes (attached knowledge,
+    // `files` on the request, folder files, web search). The fork carries anything that is not a completion
+    // chunk as an `Event` frame instead, so the gate is gone and the header says the client understands one.
     let accept = "unset";
     const bg = loadBackground({
         config: { ...baseConfig(), protoStream: "auto" },
@@ -3568,7 +3565,7 @@ test("protobuf stream: a toolIds call keeps SSE — the schema has nowhere to pu
     const client = bg.connect("LLM_STREAM");
     client.send({ payload: { messages: [{ role: "user", content: "hi" }], toolIds: ["srv1"] } });
     await settle();
-    assert.equal(accept, undefined, "no Accept: application/protobuf on a tool call");
+    assert.match(accept, /^application\/protobuf; events=1,/, "a tool call asks for protobuf, and says it reads Event frames");
 });
 
 test("protobuf stream: a delta for ANOTHER choice is ignored, as it is on the SSE path", async () => {
@@ -3588,6 +3585,33 @@ test("protobuf stream: a delta for ANOTHER choice is ignored, as it is on the SS
     const done = client.messages.find(m => m.type === "done");
     assert.equal(done?.content, "right", "the other choice's tokens are not spliced in");
     assert.deepEqual(client.messages.filter(m => m.type === "chunk").map(m => m.delta), ["right"]);
+});
+
+test("protobuf stream: an Event frame carries OpenWebUI's provenance, read by the same parser the SSE line used", async () => {
+    // The fork's own chat route puts `{"sources": […]}` into the stream ahead of the first token, and anything it
+    // does not recognise as a completion chunk becomes an Event too. Carried verbatim, so this hands it to
+    // `streamChunk` rather than modelling OpenWebUI's shape in the schema.
+    const sources = JSON.stringify({ sources: [{ source: { type: "file", id: "5c69c62" }, document: ["The capital of Ruritania is Strelsau.\n"] }] });
+    const bg = loadBackground({
+        config: { ...baseConfig(), protoStream: "auto" },
+        onFetch: () => binaryStreamResponse([[...pbEvent(sources), ...pbDelta("Strelsau"), ...pbEnd("stop", 389, 16)]]),
+    });
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "capital?" }] } });
+    await settle();
+    const done = client.messages.find(m => m.type === "done");
+    assert.equal(done?.content, "Strelsau");
+    assert.deepEqual(done?.sources?.[0]?.source, { type: "file", id: "5c69c62" }, "provenance survives the format");
+    // An Event holding something else is not a completion chunk and must not become one.
+    const other = JSON.stringify({ selected_model_id: "arena-pick" });
+    const bg2 = loadBackground({
+        config: { ...baseConfig(), protoStream: "auto" },
+        onFetch: () => binaryStreamResponse([[...pbEvent(other), ...pbDelta("hi"), ...pbEnd("stop", 1, 1)]]),
+    });
+    const c2 = bg2.connect("LLM_STREAM");
+    c2.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+    assert.equal(c2.messages.find(m => m.type === "done")?.content, "hi", "…and nothing of it leaks into the text");
 });
 
 // ---------------------------------------------------------------------------------------------------------
@@ -3623,7 +3647,7 @@ test("wire format: AUTO by default — it asks, with nobody having turned anythi
     // does not serve it answers exactly as it always did. There is nothing for a stock backend to go wrong
     // with, so there was nothing for the old default to protect.
     const { accept, content } = await streamUnder(undefined);
-    assert.match(accept, /^application\/protobuf, text\/event-stream;q=0\.9$/);
+    assert.match(accept, /^application\/protobuf; events=1, text\/event-stream;q=0\.9$/);
     assert.equal(content, "plain", "…and the SSE it answered with is read as SSE");
 });
 
@@ -3637,7 +3661,7 @@ test("wire format: AUTO absorbs a backend that will not serve it, in silence", a
     // THE MISS IS THE FALLBACK. An older build, a proxy that drops the header, or a stock server all answer
     // with what they always did — and under `auto` that is not an event, it is the expected other branch.
     const { accept, content, warnings } = await streamUnder("auto");
-    assert.match(accept, /^application\/protobuf, text\/event-stream;q=0\.9$/, "it still asks");
+    assert.match(accept, /^application\/protobuf; events=1, text\/event-stream;q=0\.9$/, "it still asks");
     assert.equal(content, "plain", "and the reply arrives");
     assert.deepEqual(warnings, [], "with nothing said about it");
 });
@@ -3648,7 +3672,7 @@ test("wire format: ON still answers when protobuf is not served — but says so"
     // That is the whole difference between the two states, and it is the half that is easy to get wrong in
     // the other direction — a hard failure would turn a saved envelope into a broken chat.
     const { accept, content, warnings } = await streamUnder("on");
-    assert.match(accept, /^application\/protobuf, text\/event-stream;q=0\.9$/);
+    assert.match(accept, /^application\/protobuf; events=1, text\/event-stream;q=0\.9$/);
     assert.equal(content, "plain", "the reply still arrives, over SSE");
     assert.equal(warnings.length, 1, "and the miss is reported");
     assert.match(warnings[0], /application\/protobuf/);
@@ -3657,7 +3681,7 @@ test("wire format: ON still answers when protobuf is not served — but says so"
 
 test("wire format: ON says nothing when it IS served", async () => {
     const { accept, content, warnings } = await streamUnder("on", { answerProto: true });
-    assert.match(accept, /^application\/protobuf, text\/event-stream;q=0\.9$/);
+    assert.match(accept, /^application\/protobuf; events=1, text\/event-stream;q=0\.9$/);
     assert.equal(content, "proto");
     assert.deepEqual(warnings, [], "a report only when the assertion was wrong");
 });
@@ -3682,16 +3706,16 @@ test("wire format: the BOOLEAN this replaced still reads correctly", async () =>
     // report about it — and reading it as an unrecognised value would silently mean "off", which is the
     // failure this mapping exists to prevent.
     const on = await streamUnder(true);
-    assert.match(on.accept, /^application\/protobuf, text\/event-stream;q=0\.9$/);
+    assert.match(on.accept, /^application\/protobuf; events=1, text\/event-stream;q=0\.9$/);
     assert.deepEqual(on.warnings, [], "`true` is AUTO, so a miss stays silent");
     const off = await streamUnder(false);
     assert.equal(off.accept, undefined);
 });
 
-test("wire format: a toolIds call is exempt under ON too — and reports nothing", async () => {
-    // The gate is about what the FORMAT can carry, so insisting cannot lift it. And a call that never asked
-    // must not report a miss: it would name a failure the user cannot act on, on the one route where the
-    // format is deliberately not used.
+test("wire format: a toolIds call asks under ON too, and a server that answers SSE is reported", async () => {
+    // The old exemption was about what the format could carry (`sources` had no frame). It can carry it now, so a
+    // tool call asks like any other — and under ON a server that still answers SSE is exactly what the user turned
+    // this on to hear about.
     let accept = "unset";
     const warnings = [];
     const bg = loadBackground({
@@ -3705,8 +3729,8 @@ test("wire format: a toolIds call is exempt under ON too — and reports nothing
     const client = bg.connect("LLM_STREAM");
     client.send({ payload: { messages: [{ role: "user", content: "hi" }], toolIds: ["srv1"] } });
     await settle();
-    assert.equal(accept, undefined, "no header on a tool call");
-    assert.deepEqual(warnings, [], "and no report about a format it never asked for");
+    assert.match(accept, /^application\/protobuf; events=1,/, "a tool call asks");
+    assert.ok(warnings.some((w) => /protobuf/i.test(w)), `the SSE answer is reported under ON: ${JSON.stringify(warnings)}`);
 });
 
 // ---------------------------------------------------------------------------------------------------------
