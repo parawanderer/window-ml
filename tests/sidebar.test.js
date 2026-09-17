@@ -5625,6 +5625,26 @@ test("DevTools run-stats bar: tok/s shows when enabled + a provenance tooltip re
     assert.match(bar.querySelector(".tt-pop").textContent, /Ollama generation time/, "the tooltip records the rate's provenance");
 });
 
+// LIVE, with the run OPEN (reported 2026-09-16: the bar sat still while tokens streamed). Two faults: the bar reads the
+// stats signals, so it was memoized on a session object that is mutated in place and never re-rendered mid-run; and it
+// summed finished calls only, ignoring the engine's running count on the call streaming now.
+test("DevTools run-stats bar: OUT climbs while a call streams, then settles on the call's own count", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rlive", "compute"));
+    await w.dispatch(agentStep("rlive", 1, { seq: 1, tool: "python_exec", arguments: { code: "1" }, result: "1", usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, genMs: 500 } }));
+    await openRun(w);
+    const out = () => w.shadow.querySelector(".run-stats")?.textContent.match(/([\d,]+) out/)?.[1];
+    assert.equal(out(), "20", "the finished call");
+    const stream = (tokens) => w.dispatch({ kind: "agent-stream", id: "rlive", ts: Date.now(), save: false, session: { hash: "rlive", turn: 2 }, step: 2, localStep: 2, reasoning: "thinking about it", tokens });
+    await stream(7); await w.flush();
+    assert.equal(out(), "27", "the streaming call's running count is added as it arrives");
+    await stream(35); await w.flush();
+    assert.equal(out(), "55", "…and keeps climbing (a running total, never summed)");
+    await w.dispatch(agentStep("rlive", 2, { seq: 2, thought: "done", usage: { promptTokens: 140, completionTokens: 40, totalTokens: 180, genMs: 600 } }));
+    await w.flush();
+    assert.equal(out(), "60", "the landed step replaces the live count with its own, counted once");
+});
+
 test("DevTools run-stats bar: renders nothing before any usage is reported", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("rstat3", "compute"));
