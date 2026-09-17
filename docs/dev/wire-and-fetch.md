@@ -147,7 +147,9 @@ call, because argument fragments carry neither. `streamAgentTurn` now asks for t
 chunk — `stream_options: {include_usage, continuous_usage_stats}` on the OpenAI route (vLLM's name and shape,
 so it works there too), `stream_metrics: true` on ollama's native one, `Delta.completion_tokens` (field 6) on
 protobuf — and carries it as `tokens` on `agent-stream` → `liveStream.tokens` → the orb, which shows it
-unrounded and without the `~` an estimate gets. Three facts about it: it is a RUNNING TOTAL, never summed; it
+unrounded and without the `~` an estimate gets. The DevTools footer (`RunStatsBar`) adds it to "out" while the call
+streams (`liveOutTokens`) and drops it once the step lands with its own usage; the bar subscribes to `rev` itself, since
+reading the stats signals memoizes it on a session object that is mutated in place. Three facts about it: it is a RUNNING TOTAL, never summed; it
 includes thinking tokens and the end-of-sequence token that produces no text, so it can exceed what the text
 shows; and a new count is news on its own, so a chunk carrying only an argument fragment still fans a delta.
 **A strict backend may refuse the unfamiliar key** with a 400, so a refusal is retried once without it and

@@ -29,6 +29,15 @@ export function usageSamples(s: Session): TokenUsage[] {
     return all.sort((a, b) => (a.ts - b.ts) || (a.i - b.i)).map((x) => x.u);
 }
 
+/** OUTPUT TOKENS OF THE MODEL CALL STILL STREAMING — the engine's running count on `liveStream`, which no usage sample
+ *  holds yet (usage lands with the step). 0 when nothing is streaming, when the server sends no running count, or once
+ *  a step for that call has landed with its own usage, so the same call is never counted twice. */
+export function liveOutTokens(s: Session): number {
+    const ls = s.liveStream;
+    if (!ls || ls.tokens == null) return 0;
+    return (s.steps || []).some((st) => st.step === ls.step && st.usage) ? 0 : ls.tokens;
+}
+
 /** HOW FULL THE CONTEXT IS RIGHT NOW — the latest sample's prompt+completion, which is what the composer's
  *  gauge fills against. The LATEST, not a sum: every turn re-sends the whole history, so summing would
  *  count the same tokens once per turn and race past the window while the model is nowhere near it. */

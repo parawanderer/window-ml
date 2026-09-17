@@ -13,7 +13,7 @@ import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
 import { IconChevron, IconWarn, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
-import { usageSamples } from "./usage";
+import { usageSamples, liveOutTokens } from "./usage";
 import {
     Code, CopyBtn, SheetChip, Hash, Stamp, ClickableImg, Dot, Disclosure,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
@@ -656,18 +656,25 @@ export function NavDivider({ url }: { url: string }) {
 // figure is independently toggled in Settings → Appearance (chrome.storage.local prefs); with both off, or no
 // usage reported yet, it renders nothing. Panel chrome — the HUD card has no such bar.
 export function RunStatsBar({ s }: { s: Session }) {
+    // SUBSCRIBED TO `rev`, and the read is kept in the output (a bare read is dropped by the minifier). This component reads
+    // the stats signals, which makes @preact/signals memoize it on its props, and `s` is the same mutated object for the
+    // whole run: without its own subscription the bar skipped every re-render the transcript got and froze mid-run.
+    const r = rev.value;
     const rs = runStats(usageSamples(s));
+    // The call streaming now counts as it goes, from the engine's running total. `in` and the rate stay per finished call:
+    // the prompt count and the generation time only arrive with the call's usage.
+    const live = liveOutTokens(s);
     const tps = fmtTokPerSec(rs);
-    const showTok = showStatsTokens.value && rs.calls > 0;
+    const showTok = showStatsTokens.value && (rs.calls > 0 || live > 0);
     const showTps = showStatsTps.value && tps != null;
-    if (!showTok && !showTps) return null;
+    if (!showTok && !showTps) return <span data-rev={r} hidden />;
     return (
-        <div class="run-stats tt" role="status" aria-label="run token stats">
+        <div class="run-stats tt" role="status" aria-label="run token stats" data-rev={r}>
             {/* Two figures, each with its own direction. One ↕ for the pair meant the arrow said "tokens"
                 and the WORDS carried the direction — which is backwards for something read in passing. */}
             {showTok ? <>
                 <span class="rstat"><span class="rstat-ic" aria-hidden="true"><IconIn /></span>{rs.inTokens.toLocaleString()} in</span>
-                <span class="rstat"><span class="rstat-ic" aria-hidden="true"><IconOut /></span>{rs.outTokens.toLocaleString()} out</span>
+                <span class="rstat"><span class="rstat-ic" aria-hidden="true"><IconOut /></span>{(rs.outTokens + live).toLocaleString()} out</span>
             </> : null}
             {showTps ? <span class="rstat rstat-tps">{tps}</span> : null}
             <span class="tt-pop left" role="tooltip">{runStatsProvenance(rs)}</span>
