@@ -156,9 +156,21 @@ How a client comes to be allowed to use a runtime, as the screens see it. The pr
 belong to the hub ([`RUNTIME_HUB.md`](RUNTIME_HUB.md) §Security, where the pairing flow is still open); this is what
 the UI needs from them.
 
+**Pairing is not part of the chat page.** Its screens are standalone components with no dependency on the chat core's
+layout or store, rendered by whichever surface wants them:
+
+- **Runtime side** (show a pairing offer, confirm a request, the paired-devices list): the extension renders these in
+  its Settings, which the in-page sidebar, the DevTools panel and the chat page all share, and can open them from
+  elsewhere too (the toolbar popup, a notification that a device is asking to pair, a dedicated extension page).
+- **Device side** (scan an offer, show the comparison code, the runtimes this device is paired with): the phone app,
+  and the extension page when this browser pairs itself as a client of another runtime.
+- **The components take their dependencies as props**: the hub client library's pairing API, and the host's
+  `ClientPlatform` for storage and QR scanning (a camera on a phone, a pasted code on a desktop). So any surface that
+  can supply those can render them, and none is the one place pairing happens.
+
 **Pairing a device, done in person at the runtime:**
 
-1. On the runtime, **Settings → Paired devices → Pair a device** shows a QR code. It holds the hub's address, the
+1. On the runtime, **Pair a device** (in Settings on any extension surface, or wherever else it is offered) shows a QR code. It holds the hub's address, the
    runtime's public key, a one-time pairing secret, and an expiry of a couple of minutes.
 2. The phone app scans it (or the person types a short code), creates its own key, connects to the hub, and sends a
    pairing request to the runtime, proven with the secret.
@@ -217,7 +229,8 @@ coordinates, and offers live viewing only when the runtime has the capability.
 4. **Persistence**: saved agent sessions (IndexedDB), the Commander persist toggle and its Settings default, delete.
 5. **Resume on a new page.**
 6. **The phone app**: manifest and service worker, then pairing and `HubHost` over the hub's client library.
-7. **Pairing screens**, over the hub's client library: pair a device, the paired devices list, delegation.
+7. **Pairing components**, standalone and usable from any surface, over the hub's client library: pair a device, the
+   paired devices list, delegation.
 8. **Remote control**: the viewer, input at a point, then streaming, once the contract additions are agreed.
 
 ## Open
