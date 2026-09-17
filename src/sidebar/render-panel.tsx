@@ -236,10 +236,10 @@ function readWholeTable(key: string, opts: StoredTableRead): Promise<WholeTable>
 /** The table view's SUMMARY mode (docs/spec/TABLE_VIEW.md): one row per column with its dtype, counts, and a glance at
  *  its values (a histogram and range for numbers, the top values for anything else, the split for booleans). `basis`
  *  says what the summary was computed over, because a summary of a preview must never pass for the table's. */
-function TableSummary({ summary, basis }: { summary: ColumnSummary[]; basis: string }) {
+function TableSummary({ summary, basis, style }: { summary: ColumnSummary[]; basis: string; style?: Record<string, string> }) {
     const fmt = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 2 });
     return (
-        <div class="r-df-scroll">
+        <div class="r-df-scroll" style={style}>
             <div class="dim r-df-basis">{basis}</div>
             <table class="r-df-table r-df-sum">
                 <thead><tr><th>column</th><th>dtype</th><th class="r-td-num">non-null</th><th class="r-td-num">null</th><th class="r-td-num">distinct</th><th>values</th></tr></thead>
@@ -304,6 +304,34 @@ export function PyDfTable({ columns, rows, noCollapse, rowCount, dtypes, delimit
     const [copied, setCopied] = useState(false);
     const [mode, setMode] = useState<"rows" | "summary">((rowCount ?? rows.length) > PY_DF_ROWS ? "summary" : "rows");
     const [whole, setWhole] = useState<{ data?: WholeTable; error?: string; loading?: boolean }>({});
+    // FIND and HEIGHT, as the output cell has them: Ctrl/Cmd+F in the focused table searches the grid on screen (the rows,
+    // or in summary mode the column names and their values), and a grip under it drags the 320px cap taller.
+    const body = useRef<HTMLDivElement>(null);
+    const [dragH, setDragH] = useState<number | null>(null);
+    const [overflows, setOverflows] = useState(false);
+    const scroller = (): HTMLElement | null => body.current?.querySelector<HTMLElement>(":scope > .r-df-scroll") ?? null;
+    useEffect(() => {
+        const el = scroller();
+        const over = !!el && el.scrollHeight - el.clientHeight > 2;
+        if (over !== overflows) setOverflows(over);
+    });
+    const find = useFind(body, (_el, r) => {
+        const sc = scroller();
+        if (!sc) return;
+        const box0 = sc.getBoundingClientRect(), hit = r.getBoundingClientRect();
+        // Only when the match is out of view, with headroom for the find bar that sits over the grid's top edge.
+        if (hit.top < box0.top + 40 || hit.bottom > box0.bottom - 8) sc.scrollTop += (hit.top - box0.top) - sc.clientHeight / 3;
+        revealSideways(sc, r, hit);
+    }, ":scope > .r-df-scroll");
+    const onGrab = (e: any): void => {
+        e.preventDefault();
+        const startY = e.clientY, start = scroller()?.getBoundingClientRect().height ?? 320;
+        const move = (ev: any): void => setDragH(Math.max(60, Math.round(start + (ev.clientY - startY))));
+        const up = (): void => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+    };
+    const scrollStyle = dragH != null ? { maxHeight: `${dragH}px` } : undefined;
 
     // Sort a [originalIndex, row] view so the gutter keeps the pandas index (like sort_values);
     // numbers compare numerically, strings by locale, nulls (NaN) always sink to the bottom.
@@ -406,8 +434,10 @@ export function PyDfTable({ columns, rows, noCollapse, rowCount, dtypes, delimit
                     ) : null}
                 </div>
             )}
-            {collapsed && !noCollapse ? null : mode === "summary" && summary ? <TableSummary summary={summary} basis={basis} /> : <>
-                <div class="r-df-scroll">
+            {collapsed && !noCollapse ? null : <><div class="r-df-body" ref={body} tabIndex={0} onKeyDown={find.onKey}>
+                {find.bar}
+                {mode === "summary" && summary ? <TableSummary summary={summary} basis={basis} style={scrollStyle} /> : <>
+                <div class="r-df-scroll" style={scrollStyle}>
                     <table class="r-df-table">
                         <thead><tr>
                             <th class="r-df-idx"></th>
@@ -446,6 +476,9 @@ export function PyDfTable({ columns, rows, noCollapse, rowCount, dtypes, delimit
                     </table>
                 </div>
                 {(rowCount ?? rows.length) > shown.length ? <div class="dim r-py-more">… {((rowCount ?? rows.length) - shown.length).toLocaleString("en-US")} more rows</div> : null}
+                </>}
+            </div>
+            {!noCollapse && (overflows || dragH != null) ? <div class="r-outgrip" role="separator" aria-label="Drag to resize this table" {...cursorTipOn("Drag to resize this table")} onPointerDown={onGrab} /> : null}
             </>}
         </div>
     );
@@ -782,7 +815,7 @@ let nextCellId = 1;
 // Text that is ON SCREEN BUT NOT THE CONTENT: a line-number gutter, a tooltip's hidden prose, a margin note under
 // a code line, a code block's own toolbar and find bar. Searching "3" in a numbered block matched every gutter
 // digit, and a JSON tree's key descriptions matched as invisible hits the reader could never see.
-const FIND_SKIP = ".lno, .tt-pop, .lnote, .code-tools, .r-find";
+const FIND_SKIP = ".lno, .tt-pop, .lnote, .code-tools, .r-find, .r-df-idx, .r-df-basis";
 
 /** Map match offsets over a container's concatenated text back onto real DOM Ranges, so matches can be painted
  *  with the CSS Custom Highlight API — no DOM surgery, so the syntax highlighting underneath is untouched. */

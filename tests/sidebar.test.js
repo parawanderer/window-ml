@@ -9155,3 +9155,26 @@ test("table view: with the whole table in the value store, the summary covers ev
     assert.match(w2.shadow.querySelector(".r-df-basis").textContent, /first 200 of 300 rows only\. The whole table could not be read: the stored value v00000000000000ff is not in the store/);
     assert.ok(btn(w2, /^copy 200 rows$/), "and the copy control goes back to naming the prefix");
 });
+
+test("table view: Ctrl+F in a focused table finds cells in the grid on screen (not its index gutter), in either mode", async () => {
+    const w = await loadSidebarWorld();
+    await openTableStep(w, "tv4", { ...bigTable(), rowCount: 20, rows: bigTable().rows.slice(0, 20).map(([i, r]) => [i + 1000, i === 7 ? "needle" : r]) });
+    const df = w.shadow.querySelector(".r-df");
+    assert.equal(df.querySelector(".r-df-sum"), null, "20 rows: the rows view");
+    const search = async (text) => {
+        const q = df.querySelector(".r-find-q");
+        q.value = text; q.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+        await w.flush();
+        return df.querySelector(".r-find-n").textContent;
+    };
+    df.querySelector(".r-df-body").dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true }));
+    await w.tick();
+    assert.ok(df.querySelector(".r-find-q"), "the find bar opens on the table");
+    assert.equal(await search("needle"), "1 of 1");
+    assert.equal(await search("7"), "1 of 2", "the ids 1007 and 1017, not the gutter's 7 and 17 as well: the index is not data");
+    // Summary mode searches what it shows: column names and their values.
+    btn(w, /^summary$/).click();
+    await w.tick();
+    assert.ok(df.querySelector(".r-df-sum"));
+    assert.match(await search("region"), /^1 of 1$/);
+});
