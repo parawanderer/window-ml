@@ -2987,6 +2987,10 @@ export function genTimingsFrom(raw: unknown): GenTimings | null {
  *  kind of work, so it is not drawn rather than drawn as a guess. */
 export const RIBBON_KINDS: ReadonlySet<string> = new Set(["prefill", "decode", "swap", "think", "answer", "call"]);
 
+/** One stretch of a card's phase strip: a timed phase of one generation, and the EVENT it is part of, so hovering the
+ *  stretch can answer with that event's tooltip and light it in the lane. */
+export interface RibbonSpan { t: number; until: number; kind: PhaseKind; model: string; event: ResourceEvent }
+
 /**
  * WHAT A CARD WAS DOING, as spans for its ribbon: every timed generation phase of every model that was ON this
  * card at the time. Which card is read from the sample nearest the span (a split model is on several, and its
@@ -2995,7 +2999,7 @@ export const RIBBON_KINDS: ReadonlySet<string> = new Set(["prefill", "decode", "
  *
  * Absence is NOT idle: an unpatched server times no phases at all, so an empty ribbon claims nothing.
  */
-export function ribbonSpans(events: ResourceEvent[], samples: ResourceSample[], deviceId: string, deviceCount: number): { t: number; until: number; kind: PhaseKind; model: string }[] {
+export function ribbonSpans(events: ResourceEvent[], samples: ResourceSample[], deviceId: string, deviceCount: number): RibbonSpan[] {
     const sorted = [...samples].sort((a, b) => a.t - b.t);
     const nearest = (t: number): ResourceSample | undefined => {
         let best: ResourceSample | undefined, d = Infinity;
@@ -3007,14 +3011,14 @@ export function ribbonSpans(events: ResourceEvent[], samples: ResourceSample[], 
         if (!m || m.vramBytes <= 0) return false;
         return deviceCount <= 1 || (m.perDevice[deviceId] ?? 0) > 0 || m.perDevice[deviceId] === null;
     };
-    const out: { t: number; until: number; kind: PhaseKind; model: string }[] = [];
+    const out: RibbonSpan[] = [];
     for (const e of events) {
         if (!e.model || !e.phases?.length || e.until == null) continue;
         if (!e.phases.some((p) => RIBBON_KINDS.has(p.kind))) continue;
         if (!onCard(e.model, (e.t + e.until) / 2)) continue;
         let from = e.t;
         for (const p of e.phases) {
-            if (RIBBON_KINDS.has(p.kind) && p.until > from) out.push({ t: from, until: p.until, kind: p.kind, model: normModel(e.model) });
+            if (RIBBON_KINDS.has(p.kind) && p.until > from) out.push({ t: from, until: p.until, kind: p.kind, model: normModel(e.model), event: e });
             from = p.until;
         }
     }
