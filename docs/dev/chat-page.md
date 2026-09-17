@@ -137,8 +137,36 @@ five seconds, so a streaming run does not upsert the list on every delta.
 **The client.** `LocalHost` takes `connect` (the extension entry passes `chrome.runtime.connect`), so it has no
 `chrome` reference and its tests run it against the real server over an in-memory port. On a disconnect it answers
 in-flight commands `unavailable`, marks the runtime offline, reconnects with backoff, asks for the index again, and
-re-subscribes each open session from the last position it delivered. Commands all answer `unsupported` until each
-lands (slice 2a's second half).
+re-subscribes each open session from the last position it delivered.
+
+## The local commands
+
+`src/session-commands.ts` maps each contract command onto a path the extension already has, over injected
+dependencies (`sw-sessions.ts` supplies the browser's, `background.ts` the runs'), so every decision is tested without a
+browser. Nothing new decides a gate, starts a loop or builds a request.
+
+| Command | Path |
+| --- | --- |
+| `approval.answer` | the one `resolveApproval`, keyed `hash:seq`; `resolved: false` when the gate already closed |
+| `session.send` | a RUNNING background loop: straight into its inbox (what a handle's `say` reaches through `INJECT_MESSAGE`), shown as an `agent-say` the loop marks seen. Anything else, or a message with images or an element: the session's page, through the composer's own handler |
+| `session.cancel` | a background run: `cancelBackgroundRun` (the `CANCEL_RUN` body, factored out); otherwise the page |
+| `session.continue` | only a `capped` session, through the page |
+| `session.delete` | refused while running; forgets the stored chat (`ml_session_<hash>`), the resumable snapshot and pointer store, then the index row |
+| `page.highlight` | `ML_HL_REMOTE` to the session's tab with `anyMode`, since the shell otherwise draws remote highlights only in devtools mode |
+| `side.call` | `fetchLLM` on the utility profile, `think: false`, `maxTokens` capped at 1024, the session on the hint; `unsupported` without a utility model, which `capabilities.sideCalls` also says (kept current from storage) |
+| `tab.screenshot` | `captureVisibleTab`, only for a tab in front in its window; PNG, then JPEG at falling quality until it fits `maxBytes` (ceiling 4 MB); size read from the image header |
+| `tabs.list` | `chrome.tabs.query`, http(s) tabs only |
+
+**The page says what it did.** The composer's page path was fire-and-forget, so the result could not say whether a
+message steered a run, started a turn, or reached nothing (a reloaded page no longer holds an unsaved chat). A command
+now carries a `reqId`; the shell relays it into the page and waits up to three seconds for the page's
+`__mlSessionDone` (`steer`, `turn`, `cancelled`, `continued`, `busy`, `none`), and the command answers from that:
+`none` is `not-found`, no reply is `unavailable`. The page's answer is its own claim about its own session and decides
+nothing: the transcript still changes only through the session's events. The DevTools composer sends no `reqId` and is
+unchanged.
+
+**A screenshot of a background tab is refused, not taken with the debugger.** CDP could capture it, but attaching
+puts the debugging banner on someone's screen for a look they did not start.
 
 ## Not yet
 

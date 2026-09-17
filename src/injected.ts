@@ -3143,12 +3143,13 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
     // AbortController per session hash and abort it on cancel. Only composer-driven turns are tracked (a
     // console `history.chat()` isn't), which is fine: the stop button only fronts turns the composer started.
     const chatInflight = new Map<string, AbortController>();
-    async function continueChatSession(hash: string, text: string, images?: (string | HTMLImageElement)[]): Promise<void> {
+    async function continueChatSession(hash: string, text: string, images?: (string | HTMLImageElement)[], started?: (found: boolean) => void): Promise<void> {
         // Same-tab sessions live in the registry; a saved session from another tab/reload rehydrates.
         const resume = (window.ml as unknown as { resumeChat: (h: string) => Promise<MlHistory> }).resumeChat;
         let h = sessionRegistry.get(hash);
-        if (!h) { try { h = await resume(hash); } catch { return; } }   // unknown/unsaved hash → nothing to continue
-        if (!h) return;
+        if (!h) { try { h = await resume(hash); } catch { started?.(false); return; } }   // unknown/unsaved hash → nothing to continue
+        if (!h) { started?.(false); return; }
+        started?.(true);
         const ctrl = new AbortController();
         chatInflight.set(hash, ctrl);
         try { await h.chat(text, { images: images || [], signal: ctrl.signal }); }
@@ -3158,7 +3159,13 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
 
     window.addEventListener("message", (e: MessageEvent) => {
         if (e.source !== window || !e.data) return;
-        const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[]; elementContext?: import("./contract").ElementContext }; __mlCancelSession?: { hash: string }; __mlContinueRun?: { hash: string } };
+        const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[]; elementContext?: import("./contract").ElementContext; reqId?: string }; __mlCancelSession?: { hash: string; reqId?: string }; __mlContinueRun?: { hash: string; reqId?: string } };
+        // A request the shell relayed from an extension page (the chat page) carries a `reqId` and wants to hear what
+        // happened, so the page can say "steered", "started a turn" or "not on this page" instead of guessing.
+        const reqId = d.__mlSessionSend?.reqId ?? d.__mlCancelSession?.reqId ?? d.__mlContinueRun?.reqId;
+        const done = (outcome: "steer" | "turn" | "cancelled" | "continued" | "busy" | "none"): void => {
+            if (typeof reqId === "string") window.postMessage({ __mlSessionDone: { reqId, outcome } }, "*");
+        };
         try {
             if (d.__mlContinueRun) {
                 // "Continue (+N steps)" on a step-capped run: resume it with an EMPTY task — a resume re-enters
@@ -3167,9 +3174,10 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
                 // the __mlSessionSend empty-text guard on purpose (there IS no text — it's "just keep going").
                 const hash = String(d.__mlContinueRun.hash);
                 const h = handleRegistry.get(hash);
-                if (h) { if (!h.running) void h.run(""); return; }   // page-hosted handle: continue over prior messages
+                if (h) { if (!h.running) { void h.run(""); done("continued"); } else done("busy"); return; }   // page-hosted handle: continue over prior messages
                 const bg = agentRegistry.get(hash);
-                if (bg) { void bg.resume(""); return; }              // background-hosted / cross-page run: RESUME_RUN, empty task
+                if (bg) { void bg.resume(""); done("continued"); return; }              // background-hosted / cross-page run: RESUME_RUN, empty task
+                done("none");
                 return;
             }
             if (d.__mlSessionSend) {
@@ -3181,11 +3189,11 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
                 // element's clean content + selector. An element-only send (no typed text) is then non-empty.
                 const ec = d.__mlSessionSend.elementContext;
                 const text = (ec && typeof ec.selector === "string") ? askAboutTask(rawText, ec) : rawText;
-                if (!text && !(images && images.length)) return;   // allow an image-only follow-up
+                if (!text && !(images && images.length)) { done("none"); return; }   // allow an image-only follow-up
                 const h = handleRegistry.get(hash);
                 // An AGENT handle holds live state: steer a RUNNING loop (say — text only, no image mid-steer),
                 // else a new turn (run, which carries this turn's images).
-                if (h) { if (h.running) h.say(text); else void h.run(text, images); return; }
+                if (h) { if (h.running) { h.say(text); done("steer"); } else { void h.run(text, images); done("turn"); } return; }
                 // No local handle — e.g. a HUD run that NAVIGATED (its page-side handle died with the old
                 // document). If it re-adopted as a resumable BACKGROUND run (agentRegistry, keyed by hash),
                 // continue it with a follow-up TURN rather than dropping the message into the chat path.
@@ -3193,26 +3201,29 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
                 if (bg) {
                     emitDebug({ kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text });
                     void bg.resume(text);
+                    done("turn");
                     return;
                 }
                 // Otherwise it's a plain chat session — continue the conversation with another turn.
-                void continueChatSession(hash, text, images);
+                void continueChatSession(hash, text, images, (found) => done(found ? "turn" : "none"));
                 return;
             }
             if (d.__mlCancelSession) {
                 const hash = String(d.__mlCancelSession.hash);
                 const h = handleRegistry.get(hash);
-                if (h) { h.cancel(); return; }   // agent loop hosted on THIS page
+                if (h) { h.cancel(); done("cancelled"); return; }   // agent loop hosted on THIS page
                 // No local handle — a HUD/cross-page run that NAVIGATED (its page-side handle died with the old
                 // document) and re-adopted as a resumable BACKGROUND run (agentRegistry). Relay CANCEL_RUN so the
                 // background aborts the run's OWN controller AND resolves any open approval gate (mirrors the
                 // __mlSessionSend agentRegistry fallback). Without this, the composer's Stop button was inert
                 // cross-page — the run stayed stuck "waiting for your approval…" with no way to cancel it.
-                if (agentRegistry.has(hash)) { window.postMessage({ type: "CANCEL_RUN_REQUEST", payload: { runId: hash } }, "*"); return; }
-                chatInflight.get(hash)?.abort();  // chat turn started from the composer
+                if (agentRegistry.has(hash)) { window.postMessage({ type: "CANCEL_RUN_REQUEST", payload: { runId: hash } }, "*"); done("cancelled"); return; }
+                const inflight = chatInflight.get(hash);   // chat turn started from the composer
+                inflight?.abort();
+                done(inflight ? "cancelled" : "none");
                 return;
             }
-        } catch (err) { console.error("ml: session composer action failed:", err); }
+        } catch (err) { console.error("ml: session composer action failed:", err); done("none"); }
     });
 
     // Readiness signal for scripts (e.g. userscripts) that may run before this

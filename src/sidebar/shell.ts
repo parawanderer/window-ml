@@ -700,12 +700,36 @@ function showHighlight(ref: { selector?: string; index?: number; token?: string;
 // hide→show window: snapshot the position and snap back on any scroll until we restore.
 let scrollPin: { x: number; y: number; onScroll: () => void } | null = null;
 
+/** Chat-page session actions waiting for the page to say what it did, by request id. */
+const sessionDoneWaiters = new Map<string, (outcome: string) => void>();
+/** How long a page gets to answer before the action is reported as unanswered. */
+const SESSION_DONE_MS = 3000;
+/** Relay the page's answer to one session action back to the background, or `no-answer` when the page never replies (a
+ *  page whose `window.ml` has not loaded, or one that swallowed the message). What the page reports is its own claim
+ *  about its own session, so it decides nothing: the transcript still changes only through the session's events. */
+function awaitSessionDone(reqId: string, sendResponse: (r: unknown) => void): void {
+    const timer = setTimeout(() => finish("no-answer"), SESSION_DONE_MS);
+    const finish = (outcome: string): void => {
+        if (!sessionDoneWaiters.delete(reqId)) return;
+        clearTimeout(timer);
+        try { sendResponse({ outcome }); } catch { /* the background stopped waiting */ }
+    };
+    sessionDoneWaiters.set(reqId, finish);
+}
+
 function onWindowMessage(e: MessageEvent): void {
     const d = e.data;
     if (!d) return;
     // injected.js just loaded and is listening (a page-load race: it may have missed the
     // handshake we posted before its <script> ran). Re-send it, if the bus is meant to be live.
     if (d.__mlSidebar === "hello" && e.source === window) { if (busLive()) handshake(); return; }
+    // The page's answer to a session action the chat page asked for (see awaitSessionDone).
+    if (d.__mlSessionDone && e.source === window) {
+        const { reqId, outcome } = d.__mlSessionDone as { reqId?: unknown; outcome?: unknown };
+        const reply = typeof reqId === "string" ? sessionDoneWaiters.get(reqId) : undefined;
+        if (reply) reply(typeof outcome === "string" ? outcome : "none");
+        return;
+    }
     // injected.js asks us to hide the overlay for a screenshot (so the sidebar
     // isn't captured into the agent's `look`). Hide, then ack after two frames so
     // the hidden state has painted before the capture fires.
@@ -1323,8 +1347,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // draw the box in this content script (which DOES share the page DOM). Only in devtools mode —
 // the overlay gets highlights straight from its own iframe via window-message. Read-only (a
 // pointer-events:none box, no page mutation), so even a spurious relay is harmless.
-chrome.runtime.onMessage.addListener((msg) => {
-    if (msg?.type === "ML_HL_REMOTE" && mode === "devtools") showHighlight(msg.ref || null);
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    // `anyMode`: the chat page highlights on the tab a session runs on, whatever this tab's debug surface is.
+    if (msg?.type === "ML_HL_REMOTE" && (mode === "devtools" || msg.anyMode === true)) showHighlight(msg.ref || null);
     // The Spotlight shortcut (background `commands` → this tab). Open the HUD composer; no-op unless the
     // HUD is the active surface (off / devtools-coexist).
     else if (msg?.type === "ML_OPEN_COMPOSER") openComposer();
@@ -1353,8 +1378,13 @@ chrome.runtime.onMessage.addListener((msg) => {
     // DevTools session composer (panel → background → here): relay to the PAGE, which drives the handle
     // by hash (steer/run/cancel). Any mode — the page's handle registry is what acts, not this shell.
     else if (msg?.type === "ML_SESSION_TO_PAGE") {
-        if (msg.action === "send") window.postMessage({ __mlSessionSend: { hash: msg.hash, text: msg.text, images: cleanImages(msg.images) } }, "*");
-        else if (msg.action === "cancel") window.postMessage({ __mlCancelSession: { hash: msg.hash } }, "*");
-        else if (msg.action === "continue") window.postMessage({ __mlContinueRun: { hash: msg.hash } }, "*");
+        // A `reqId` (the chat page's commands) asks for what the page did; the DevTools composer sends none.
+        const reqId = typeof msg.reqId === "string" ? msg.reqId : undefined;
+        const ec = msg.elementContext && typeof msg.elementContext.selector === "string" ? msg.elementContext : undefined;
+        if (msg.action === "send") window.postMessage({ __mlSessionSend: { hash: msg.hash, text: msg.text, images: cleanImages(msg.images), ...(ec ? { elementContext: ec } : {}), reqId } }, "*");
+        else if (msg.action === "cancel") window.postMessage({ __mlCancelSession: { hash: msg.hash, reqId } }, "*");
+        else if (msg.action === "continue") window.postMessage({ __mlContinueRun: { hash: msg.hash, reqId } }, "*");
+        else return;
+        if (reqId) { awaitSessionDone(reqId, sendResponse); return true; }   // async: the page answers by window message
     }
 });
