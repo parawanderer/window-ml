@@ -265,6 +265,8 @@ beside it, so a compatible server can be written from it alone.
 - **`Hint`**: what a requester attaches to a model request and a compatible box echoes on `gen.end`: `use`, `session`,
   `request`, `runtime`, `root`, `after`, `synthetic`.
 - **`Command`** and **`Capability`**: the signed commands and scope grants in Security and Principals and scopes.
+  Their shapes, with the session index and the event envelope, are the session contract
+  ([`SESSION_CONTRACT.md`](SESSION_CONTRACT.md)), which a client uses the same way against the local extension.
 - **Conformance vectors**: recorded streams (real captures, as `tests/fixtures/hw/` holds for the box today) and the
   lane and chart each should produce, so an implementer can check they are drawn correctly.
 
@@ -356,7 +358,7 @@ Small, stateless where it can be, and scaled by account. Not a stream of JSON te
   retained.
 - **Approvals reach a sleeping phone by push**, carrying nothing but "an approval is waiting": the decision itself is
   made in the app, signed, over the relay.
-- **Language**: Go or Rust. Either keeps per-connection memory small; Go is the simpler to write, Rust the tighter.
+- **Language**: Rust (decided 2026-09-17). Per-connection memory stays small, and `prost` covers the protobuf framing.
 
 ## Runtimes
 

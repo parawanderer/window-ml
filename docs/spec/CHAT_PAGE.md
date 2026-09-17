@@ -21,6 +21,7 @@ The page consumes session events from two kinds of source and renders them the s
   browser, a phone-driven setup, later a headless runtime.
 
 So the page is written against one store interface from the start: subscribe to a source's events, send it commands.
+That interface is `SessionHost` ([`SESSION_CONTRACT.md`](SESSION_CONTRACT.md), `src/session-host.ts`).
 Local is the first implementation; the hub transport is a second, not a rewrite. Sessions are keyed by source (a
 runtime) and hash, and what the page offers for a session follows what its runtime can do.
 
