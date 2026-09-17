@@ -132,18 +132,21 @@ to read and forge nothing, and whoever serves the app's code controls the keys t
 relay could be replaced by one that reads the device's key or signs commands itself. So the app's code reaches the
 phone by a route the hub has no part in, and it connects to the hub only as a client.
 
-**Packaging it** (open, the choice is not made):
+**Packaged as a native app with Capacitor** (decided 2026-09-17). Capacitor wraps the `dist-web/` build in native iOS
+and Android projects, and the same build still runs in a browser, as a plain page or a PWA:
 
-| | A native wrapper (Capacitor, or Tauri's mobile target) | A progressive web app from its own static origin |
-| --- | --- | --- |
-| Where the code comes from | the app package you build and sign; updates are an install | a static host you control (not the hub); updates arrive silently |
-| Keys | the platform keystore (iOS Keychain, Android Keystore) | non-extractable WebCrypto keys in IndexedDB |
-| Approvals on a sleeping phone | APNs / FCM push, reliable in the background | web push; on iOS only once installed to the home screen |
-| Cost | a mobile toolchain, and signing (an Apple developer account for iOS) | HTTPS hosting; the host is trusted like any code source |
+- **The native app is the real client.** Its code is the package you build and sign (an update is an install), keys
+  live in the platform keystore (iOS Keychain, Android Keystore, through a secure-storage plugin), approvals reach a
+  sleeping phone by APNs / FCM push, and pairing scans the QR code with the camera.
+- **The browser build is for development and testing**: the same core against a `FakeHost`, at phone width, with no
+  toolchain. Its keys are WebCrypto keys in IndexedDB and its code comes from wherever it is served, so it is not paired
+  with `approve` or `control` grants on a runtime that matters.
+- **`ClientPlatform` has a Capacitor adapter** beside the web adapter: storage and keys, push, the camera, share and
+  downloads. The core does not know which one it has.
+- The cost is a mobile toolchain (Xcode and Android Studio) and signing (an Apple developer account for iOS).
 
 Either way the push carries nothing but "an approval is waiting" ([`RUNTIME_HUB.md`](RUNTIME_HUB.md)); the decision is
-made in the app, signed, over the relay. `dist-web/` is the same bundle for both, so the choice can wait until the UI
-works against a fake host.
+made in the app, signed, over the relay.
 
 - **Touch**, handled in the core rather than as a phone fork:
   - the layout collapses from two panes to one below a width breakpoint (the list, then a session), with open approvals
@@ -151,8 +154,8 @@ works against a fake host.
   - hover-only affordances get a tap equivalent: the panel's tooltips (`cursorTipOn`) are pointer-only today;
   - touch targets have a minimum size, and the composer stays above the on-screen keyboard.
 
-What it takes, in order: the web entry and web adapter with a `FakeHost` (buildable now); the packaging; then pairing
-and `HubHost`, once the hub's client library exists.
+What it takes, in order: the web entry and web adapter with a `FakeHost` (buildable now); the Capacitor projects and
+its adapter; then pairing and `HubHost`, once the hub's client library exists.
 
 ### Testing both places
 
@@ -239,8 +242,8 @@ coordinates, and offers live viewing only when the runtime has the capability.
    works end to end.
 4. **Persistence**: saved agent sessions (IndexedDB), the Commander persist toggle and its Settings default, delete.
 5. **Resume on a new page.**
-6. **The phone app**: the packaging (native wrapper or PWA, not served by the hub), then `HubHost` over the hub's
-   client library.
+6. **The phone app**: the Capacitor projects and their `ClientPlatform` adapter (never served by the hub), then
+   `HubHost` over the hub's client library.
 7. **Pairing components**, standalone and usable from any surface, over the hub's client library: pair a device, the
    paired devices list, delegation.
 8. **Remote control**: the viewer, input at a point, then streaming, once the contract additions are agreed.
