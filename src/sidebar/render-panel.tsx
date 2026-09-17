@@ -1182,7 +1182,7 @@ function PyOutBody({ id, d, marks, lineMap, fill }: { id: PyOutSectionId; d: Ext
         case "error": return <OutputCell fill={fill}><Traceback text={d.error!} map={lineMap} /></OutputCell>;
         case "image": return <div class="r-image"><ClickableImg src={d.image!} alt="output image" /><div class="r-image-label">returned image</div></div>;
         case "token": return <code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code>;
-        case "df": return <PyDfTable columns={d.df!.columns} rows={d.df!.rows} noCollapse={fill} />;
+        case "df": return <PyDfTable columns={d.df!.columns} rows={d.df!.rows} rowCount={d.df!.rowCount} noCollapse={fill} />;
         // A sympy return auto-flagged `latex` → typeset the value (display mode), not a raw code block.
         case "latex": return <div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} />;
         // In a cell like the output above it: a returned value can be as long as anything printed on the way

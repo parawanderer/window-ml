@@ -1186,6 +1186,12 @@
                           ]
                         }
                       }
+                    },
+                    "rowCount": {
+                      "type": "number"
+                    },
+                    "value": {
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -1731,6 +1737,12 @@
                           ]
                         }
                       }
+                    },
+                    "rowCount": {
+                      "type": "number"
+                    },
+                    "value": {
+                      "type": "string"
                     }
                   },
                   "required": [

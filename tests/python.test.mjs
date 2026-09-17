@@ -11,7 +11,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 // Static (not conditional-require) — python-runtime.ts is chrome-free and side-effect-free,
 // so importing it costs nothing when the wheels are absent; `skip` still gates every test.
-import { wrapUserCode, harden, unharden, injectStoredTable } from "../src/python-runtime.ts";
+import { wrapUserCode, harden, unharden, injectStoredTable, takeIpc } from "../src/python-runtime.ts";
 // For the sympy→UI INTEGRATION test: the sidebar app (jsdom) to render the real WASM output. CommonJS helper.
 const { loadSidebarWorld, closeSidebarWorlds } = createRequire(import.meta.url)("./helpers");
 after(closeSidebarWorlds);   // close jsdom windows so their timers don't keep the runner alive (the leak gotcha)
@@ -57,7 +57,9 @@ async function pyRun(code, { tables = null, image = null, hardened = false } = {
     let table; if (typeof tj === "string") { try { table = JSON.parse(tj); } catch { /* */ } }
     const rh = py.globals.get("_json_render");
     const render = rh === "latex" || rh === "img" ? rh : undefined;
-    return { ok: true, value, stdout, table, render };
+    const ipc = takeIpc(py.globals);
+    try { py.globals.delete("_ipc_result"); } catch { /* not set */ }
+    return { ok: true, value, stdout, table, render, ipc };
 }
 const rows = (name, columns, r) => ({ name, data: { kind: "rows", columns, rows: r } });
 
@@ -744,4 +746,28 @@ test("ADVERSARIAL stored table: the buffer is gone after loading, and what Pytho
 test("stored table: an unknown format fails loudly rather than loading nothing", { skip, timeout: 120000 }, async () => {
     // The prelude runs before the script's own wrapper, so this throws out of the run; the worker reports it as the error.
     await assert.rejects(pyRun("return 1", { tables: [stored("df", "xlsx", "nope")] }), /a stored table in a format the sandbox does not read: xlsx/);
+});
+
+// ── Returned frames become stored tables (POINTER_VALUES slice 6) ─────────────────────────────────────────────────────
+test("a returned DataFrame past its preview carries its whole row count and comes back as Arrow IPC holding every row", { skip: skipArrow, timeout: 120000 }, async () => {
+    const r = await pyRun("return pd.DataFrame({'x': range(1000), 'y': [i * 0.5 for i in range(1000)]})", { hardened: true });
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.table.rows.length, 200, "the preview stays capped");
+    assert.equal(r.table.rowCount, 1000, "…and says how big the frame is");
+    assert.ok(r.ipc instanceof ArrayBuffer);
+    const { tableFromIPC } = await import("apache-arrow");
+    const t = tableFromIPC(new Uint8Array(r.ipc));
+    assert.equal(t.numRows, 1000);
+    assert.deepEqual(t.schema.fields.map((f) => f.name), ["x", "y"]);
+    assert.equal(Number(t.getChild("x").get(999)), 999);
+});
+
+test("a frame inside its preview stores nothing, and one Arrow cannot hold still reports its size", { skip: skipArrow, timeout: 120000 }, async () => {
+    const small = await pyRun("return pd.DataFrame({'x': range(10)})", { hardened: true });
+    assert.equal(small.table.rowCount, undefined);
+    assert.equal(small.ipc, undefined, "a preview that is the whole frame needs no stored value");
+    const mixed = await pyRun("return pd.DataFrame({'x': [1, 'a', 2.5, object()] * 100})", { hardened: true });
+    assert.equal(mixed.ok, true, mixed.error);
+    assert.equal(mixed.table.rowCount, 400);
+    assert.equal(mixed.ipc, undefined, "mixed object cells do not convert to Arrow, so nothing is stored");
 });

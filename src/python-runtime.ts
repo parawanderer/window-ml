@@ -330,10 +330,12 @@ except Exception:
 # If the result is a DataFrame/Series, ALSO serialize it structurally ({columns, rows}) so the UI can
 # render a real table (PyDfTable) instead of a text repr. Capped rows; a Series becomes a 1-col frame.
 _json_table = None
+_ipc_result = None
 try:
     _cls = result.__class__.__name__
     if _cls in ('DataFrame', 'Series') and hasattr(result, 'to_json'):
         _dfr = result.to_frame() if _cls == 'Series' else result
+        _ml_full = _dfr
         _dfr = _dfr.head(200)
         # A CELL PANDAS CANNOT REPRESENT SERIALISES AS AN EMPTY OBJECT. An arbitrary object — a class instance, a
         # function, a nested frame — comes out of to_json as an empty object, and an empty object is a
@@ -356,7 +358,22 @@ try:
         except Exception:
             pass   # a frame this cannot walk still serialises the way it always did
         _split = _json.loads(_dfr.to_json(orient='split', date_format='iso'))
-        _json_table = _json.dumps({'columns': [str(_c) for _c in _split.get('columns', [])], 'rows': _split.get('data', [])})
+        _ml_n = len(_ml_full)
+        _json_table = _json.dumps({'columns': [str(_c) for _c in _split.get('columns', [])], 'rows': _split.get('data', []), **({'rowCount': _ml_n} if _ml_n > len(_dfr) else {})})
+        # PAST THE PREVIEW, the whole frame is written as Arrow IPC for the value store, so a later step reads every row by
+        # pointer (POINTER_VALUES slice 6). The index is dropped, as the preview above drops it. A frame Arrow cannot
+        # hold (mixed-type object columns, non-string column names) is simply not stored: its preview still says how
+        # big it is.
+        if _ml_n > len(_dfr):
+            try:
+                import pyarrow as _pa
+                _ml_at = _pa.Table.from_pandas(_ml_full, preserve_index=False)
+                _ml_sink = _pa.BufferOutputStream()
+                with _pa.ipc.new_file(_ml_sink, _ml_at.schema) as _ml_w:
+                    _ml_w.write_table(_ml_at)
+                _ipc_result = _ml_sink.getvalue().to_pybytes()
+            except Exception:
+                _ipc_result = None
 except Exception:
     _json_table = None
 `;
@@ -498,4 +515,14 @@ export function injectStoredTable(py: any, ns: any, t: any, name: string, bound:
     bound.push(name);
     const { buffer: _dropped, ...data } = t.data;
     return { ...t, data: { ...data, buf: name } };
+}
+
+/** The returned frame's IPC bytes (`_ipc_result`, set by the wrapper), as an ArrayBuffer of their own, or undefined. */
+export function takeIpc(ns: any): ArrayBuffer | undefined {
+    const b = ns.get("_ipc_result");
+    if (!b || typeof b.toJs !== "function") return undefined;
+    try {
+        const u8 = b.toJs() as Uint8Array;
+        return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer;
+    } finally { b.destroy?.(); }
 }

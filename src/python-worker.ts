@@ -11,14 +11,14 @@
 // offscreen path used. The offscreen doc is now a thin id-matched relay (offscreen.ts).
 
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
-import { wrapUserCode, harden, unharden, COMPLETE_HELPER, completeIn, RESET, injectStoredTable, type PyCompletion } from "./python-runtime";
+import { wrapUserCode, harden, unharden, COMPLETE_HELPER, completeIn, RESET, injectStoredTable, takeIpc, type PyCompletion } from "./python-runtime";
 
 type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
 // two never have to be inferred from one another.
 // `prewarm` is on the first run after a pre-warm started the runtime: whether that run found it `warm` or still
 // `starting`.
-type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting" };
+type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string; ipc?: ArrayBuffer; table?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number }; render?: "latex" | "img"; bootMs?: number; runMs?: number; bench?: BenchSession; prewarm?: "warm" | "starting" };
 /** A kept-state bench namespace after a run: which one it is (`id`, new whenever it is created afresh — a
  *  reset, or the worker restarting under it) and the variables the USER has in it, prelude names excluded. */
 type BenchSession = { id: string; vars: { name: string; type: string }[] };
@@ -142,20 +142,23 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         const tableJson = ns.get("_json_table");
         let table: RunResult["table"];
         if (typeof tableJson === "string") { try { table = JSON.parse(tableJson); } catch { /* keep text */ } }
+        // The whole returned frame as Arrow IPC, when it is larger than its preview: copied out of Pyodide once and
+        // transferred to the offscreen document, which stores it. Never from the bench, whose results nothing points at.
+        const ipc = bench ? undefined : takeIpc(ns);
         const jsonResult = ns.get("_json_result");
         // Auto-render hint from the return TYPE ('latex' for a sympy expr; 'img' folded into a data: value).
         const renderHint = ns.get("_json_render");
         const render = renderHint === "latex" || renderHint === "img" ? renderHint : undefined;
         if (typeof jsonResult === "string") {
             let value: unknown; try { value = JSON.parse(jsonResult); } catch { value = jsonResult; }
-            return timed({ ok: true, value, stdout, ...(table ? { table } : {}), ...(render ? { render } : {}), ...kept });
+            return timed({ ok: true, value, stdout, ...(table ? { table } : {}), ...(ipc ? { ipc } : {}), ...(render ? { render } : {}), ...kept });
         }
         // Fallback for a non-JSON-serializable return (rare — models return images via
         // to_base64): convert via toJs, then destroy the proxy so it can't leak.
         const r = ns.get("result");
         const value = r && r.toJs ? r.toJs({ dict_converter: Object.fromEntries }) : r;
         if (r && r.destroy) r.destroy();
-        return timed({ ok: true, value: sanitize(value), stdout, ...kept });
+        return timed({ ok: true, value: sanitize(value), stdout, ...(ipc ? { ipc } : {}), ...kept });
     } catch (e: any) {
         return timed({ ok: false, stdout: "", error: String((e && e.message) || e) });   // wrapper didn't run (syntax error)
     } finally {
@@ -165,6 +168,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         }
         if (onStdout) { try { ns.delete("_ml_stdout_cb"); } catch { /* ignore */ } }   // don't leak the cb into the next run
         for (const name of tableBufs) { try { ns.delete(name); } catch { /* the prelude already took it */ } }
+        try { ns.delete("_ipc_result"); } catch { /* not set */ }
         // A `python_exec` leaves its injected screenshot and tables in main until the NEXT run's reset — and
         // main is where the loader redirects live, reading `img`/`tables` at call time. So a bench script's
         // `pd.read_csv("sales")` could have been handed the model's last table. Clear them now instead.
@@ -264,7 +268,7 @@ self.onmessage = (e: MessageEvent) => {
     runChain = runChain
         .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout, msg.persist === true, onStarted))
         .then(
-            (result: RunResult) => self.postMessage({ id: msg.id, ...result }),
+            (result: RunResult) => self.postMessage({ id: msg.id, ...result }, { transfer: result.ipc ? [result.ipc] : [] }),
             (err: unknown) => self.postMessage({ id: msg.id, ok: false, stdout: "", error: String(err) }),
         );
 };

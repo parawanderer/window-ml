@@ -1132,7 +1132,7 @@ export type RenderDescriptor = (
     // the raw/JSON value, or a Python traceback.
     // `valueSeen` (python-out, exec-out): how many characters of `value` the model received; absent → all of it. The
     // panel keeps more of a value than the tool's output cap, and marks the rest as never sent.
-    | { type: "python-out"; stdout?: string; seen?: number; image?: string; token?: string; value?: string; valueSeen?: number; error?: string; latex?: boolean; df?: { columns: string[]; rows: (string | number | null)[][] } }
+    | { type: "python-out"; stdout?: string; seen?: number; image?: string; token?: string; value?: string; valueSeen?: number; error?: string; latex?: boolean; df?: { columns: string[]; rows: (string | number | null)[][]; rowCount?: number; value?: string } }
     // `exec`'s Out, the JS twin of python-out: the SAME data its raw result string carries, split into
     // sections (console / value / error) so a JS run reads like a notebook cell too instead of one blob.
     // `errorLine` is the line of the MODEL'S source that threw (exec-trace.ts) — absent when it cannot be

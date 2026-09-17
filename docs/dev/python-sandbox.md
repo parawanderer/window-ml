@@ -66,6 +66,18 @@ reads the whole table instead, POINTER_VALUES slice 5:
     with what the model was shown.
 
   The prelude pops the buffer, and the worker deletes the name in `finally`.
+
+**A returned DataFrame larger than its 200-row preview becomes a stored table** (slice 6):
+
+- The wrapper adds the frame's real `rowCount` to `_json_table`, and writes the whole frame as Arrow IPC to `_ipc_result`
+  (`pa.Table.from_pandas(preserve_index=False)`, dropping the index as the preview does). A frame Arrow cannot hold,
+  such as mixed object cells, is not stored, and its preview still says how big it is.
+- The worker copies the bytes out (`takeIpc`, python-runtime.ts) and transfers them to the offscreen document. Bench
+  runs never store.
+- The offscreen document stores them as `arrow-file` (source `python_exec`) under the budget the service worker sent
+  with the run (`valueBudget`, since that document cannot read settings), and returns `valueKey`.
+- `pythonExec` puts `value` and `rowCount` on `resultTable`, so the `python-out` render's `df` carries both. The loop's
+  pointer then has the whole `shape` and claims the value, and a later `python_exec` reads it through slice 5.
 **A Google Sheets URL** or **`'current'`** (the sheet you're on) is fetched as CSV. Numeric
 columns are **auto-cast page-side** (`dom.ts` `castTableColumns`, pure/tested: a column
 ≥90%-numeric after stripping currency/commas/%/accounting-parens → `number|null`, else strings)

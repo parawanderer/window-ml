@@ -16,8 +16,9 @@ const QUOTA_SHARE = 0.5;
 const SWEEP_ALARM = "value-store-sweep";
 const SWEEP_EVERY_MIN = 60;
 
-/** The budget in bytes: the setting, lowered to half the origin's quota when the browser reports a smaller one. */
-async function budgetBytes(): Promise<number> {
+/** The budget in bytes: the setting, lowered to half the origin's quota when the browser reports a smaller one. Also sent
+ *  with a Python run, since the offscreen document that stores a returned frame cannot read the settings. */
+export async function budgetBytes(): Promise<number> {
     const { valueStoreBudgetMB } = await chrome.storage.sync.get({ valueStoreBudgetMB: DEFAULT_CONFIG.valueStoreBudgetMB }) as { valueStoreBudgetMB: number };
     const set = Math.max(0, Number(valueStoreBudgetMB) || 0) * 1024 * 1024;
     const quota = await navigator.storage?.estimate?.().then((e) => e.quota).catch(() => undefined);
