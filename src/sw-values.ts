@@ -72,3 +72,17 @@ export function startValueSweeps(): void {
     chrome.alarms.onAlarm.addListener((a) => { if (a.name === SWEEP_ALARM) sweep(); });
     void chrome.alarms.get(SWEEP_ALARM).then((a) => { if (!a) void chrome.alarms.create(SWEEP_ALARM, { periodInMinutes: SWEEP_EVERY_MIN }); }).catch(() => {});
 }
+
+// TEST-ONLY (reachable only from the service worker's realm via serviceWorker.evaluate, like __mlEvictForTest; no page can
+// reach it, and nothing in the product calls it): the "explicit test path" the spec names for slice 4, before any tool
+// reads a stored value. `read` answers with the row and size, or the error a real reader would get, since a Blob does not
+// cross `evaluate`.
+(globalThis as unknown as { __mlValues?: unknown }).__mlValues = {
+    rows: async () => (await values()?.rows()) ?? [],
+    read: async (key: string) => {
+        const s = values();
+        if (!s) return { error: "no value store in this realm" };
+        try { const { row, blob } = await s.get(key); return { row, bytes: blob.size }; }
+        catch (e) { return { name: (e as Error).name, error: (e as Error).message }; }
+    },
+};
