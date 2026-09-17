@@ -116,3 +116,18 @@ test("python_exec reads a stored table WHOLE by pointer; once a later fetch evic
     expect(seen[1], "and the note says the size that was loaded, not the preview's").toContain("a 250000×3 DataFrame → `df`");
     expect(seen[3], "the evicted value fails loudly, never the preview").toMatch(/could not load `df` from @tool:[0-9a-f]{7} \("the orders"\): the stored value v[0-9a-f]{16} \(http[^)]*copy=3\) was evicted to keep the value store within its storage budget/);
 });
+
+test("a DataFrame python_exec returns is stored whole, and a later python_exec reads every row by its pointer", async () => {
+    test.skip(!HAS_PYODIDE, "needs the bundled Pyodide (npm run fetch-pyodide)");
+    test.setTimeout(180_000);
+    const { seen } = await runSteps([
+        { tool: "python_exec", args: { mode: "readonly", token: "the frame", code: "import pandas as pd\nreturn pd.DataFrame({'x': range(1000), 'y': [i * 0.5 for i in range(1000)]})" } },
+        { tool: "python_exec", args: { mode: "readonly", tables: { df: '@tool:"the frame"' }, code: "return [len(df), int(df['x'].sum()), float(df['y'].max())]" } },
+    ]);
+    expect(seen[0], "setup: python produced a frame").toMatch(/1000 rows/);
+    expect(seen[1]).toContain("a 1000×2 DataFrame → `df`");
+    expect(seen[1]).toContain("[1000,499500,499.5]");
+    const stored = (await rows()).filter((r) => r.source === "python_exec");
+    expect(stored).toHaveLength(1);
+    expect(stored[0].format).toBe("arrow-file");
+});

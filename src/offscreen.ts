@@ -20,9 +20,31 @@ const PY_START_TIMEOUT_MS = 120000;
 
 import { ValueStore } from "./value-store";
 
-// The value store, read here rather than in the worker: the bytes are TRANSFERRED to the worker (no copy), and the one copy
-// is the worker's, into Pyodide's memory. Only reads happen here, so the budget never applies.
+// The value store, reached here rather than in the worker: stored bytes are TRANSFERRED to the worker (no copy), and the
+// one copy is the worker's, into Pyodide's memory. A returned frame's IPC comes back the same way and is written here,
+// under the budget the service worker sent with the run (this document cannot read the settings).
 let values: ValueStore | null = null;
+let writeBudget = 0;
+const store = (): ValueStore => values ??= new ValueStore({
+    budgetBytes: () => writeBudget,
+    onEvict: (e) => reportHousekeeping({ subsystem: "value-store", kind: "evict", reason: e.reason, key: e.key, bytes: e.bytes, ...(e.source ? { detail: { source: e.source } } : {}) }),
+});
+
+/**
+ * A returned DataFrame larger than its preview → the value store, named on the result as `valueKey` (POINTER_VALUES
+ * slice 6). The IPC bytes never go further: an ArrayBuffer does not survive the message to the service worker. A
+ * frame the budget cannot hold is reported and left unstored; the run still succeeds with its preview.
+ */
+async function storeReturnedTable(r: PyResult & { ipc?: ArrayBuffer; valueKey?: string }, budget: unknown): Promise<PyResult> {
+    const { ipc, ...rest } = r;
+    if (!ipc || !(typeof budget === "number" && budget > 0)) return rest;
+    writeBudget = budget;
+    try { return { ...rest, valueKey: (await store().put(new Blob([ipc]), { format: "arrow-file", source: "python_exec" })).key } as PyResult; }
+    catch (e) {
+        reportHousekeeping({ subsystem: "value-store", kind: "refuse", reason: (e as Error)?.name === "ValueTooLarge" ? "budget" : "error", bytes: ipc.byteLength, detail: { source: "python_exec" } });
+        return rest;
+    }
+}
 
 /**
  * Swap each `tables` entry that names a STORED value (`data.kind === "value"`) for one carrying its bytes and format, and
@@ -31,13 +53,12 @@ let values: ValueStore | null = null;
  */
 async function withStoredTables(tables: unknown): Promise<{ tables: unknown; transfer: ArrayBuffer[] } | { error: string }> {
     if (!Array.isArray(tables) || !tables.some((t) => t?.data?.kind === "value")) return { tables, transfer: [] };
-    values ??= new ValueStore({ budgetBytes: () => Number.POSITIVE_INFINITY });
     const transfer: ArrayBuffer[] = [];
     const out: unknown[] = [];
     for (const t of tables) {
         if (t?.data?.kind !== "value") { out.push(t); continue; }
         try {
-            const { row, blob } = await values.get(String(t.data.key));
+            const { row, blob } = await store().get(String(t.data.key));
             const buffer = await blob.arrayBuffer();
             transfer.push(buffer);
             out.push({ ...t, data: { ...t.data, format: row.format, buffer } });
@@ -73,7 +94,7 @@ function killAfter(id: number, ms: number, error: string, reason: "timeout" | "s
 
 /** Tells the worker's housekeeping log what this document decided (docs/dev/housekeeping.md). The worker stamps
  *  it `offscreen` from the sender. Fire-and-forget: a log is never worth failing a run over. */
-function reportHousekeeping(report: { subsystem: string; kind: string; reason?: string; ms?: number; detail?: Record<string, string | number | boolean> }): void {
+function reportHousekeeping(report: { subsystem: string; kind: string; reason?: string; key?: string; bytes?: number; ms?: number; detail?: Record<string, string | number | boolean> }): void {
     try { chrome.runtime.sendMessage({ type: "HOUSEKEEPING_REPORT", payload: report }).catch(() => { /* no worker listening */ }); } catch { /* context gone */ }
 }
 
@@ -172,7 +193,8 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     withStoredTables(msg.tables ?? null)
         .then((t) => "error" in t
             ? { ok: false, stdout: "", error: t.error }
-            : runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer))
+            : runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer)
+                .then((r) => storeReturnedTable(r, msg.valueBudget)))
         .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
     return true;   // keep the channel open for the async result
 });

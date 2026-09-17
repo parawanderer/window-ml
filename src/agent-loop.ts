@@ -810,11 +810,11 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // back the same kind of object, which is the whole point of there being one table type.
                 // How a delimited body was split travels with it: a stored value is re-read the same way, so pandas
                 // cannot disagree with the preview the model was shown.
-                const tbl = df ? tableOf(df.columns, df.rows)
+                const tbl = df ? tableOf(df.columns, df.rows, df.rowCount)
                     : r?.type === "table" ? { ...tableOf(r.columns, r.rows, r.rowCount), ...(r.delimiter ? { delimiter: r.delimiter } : {}), ...(r.headerless ? { headerless: true } : {}) } : undefined;
                 // The WHOLE table, when the render is a preview of one the store holds: the pointer names it, so the
                 // run holds it.
-                const value = r?.type === "table" ? r.value : undefined;
+                const value = r?.type === "table" ? r.value : df?.value;
                 if (value) opts.claimValue?.(value);
                 const looksJson = /^\s*[[{]/.test(result);
                 const kind: TokenKind = tbl ? "table"

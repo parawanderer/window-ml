@@ -24,7 +24,7 @@ import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configure
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, recordHousekeeping } from "./sw-housekeeping";
-import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
+import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, budgetBytes as valueBudgetBytes } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -1361,7 +1361,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // watching it; in the bench a person chose it, is sitting in front of it, and can close the panel.
             const noTimeout = !!message.payload?.noTimeout
                 && (sender.url || "").startsWith(chrome.runtime.getURL(""));
-            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: complete ? true : message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(message.payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };
+            // A run whose returned frame may become a pointer carries the store's budget; the bench's and a completion's never do.
+            const valueBudget = persist || complete ? 0 : await valueBudgetBytes().catch(() => 0);
+            const payload = { type: "PY_RUN", ...(valueBudget ? { valueBudget } : {}), code: message.payload?.code, image: message.payload?.image ?? null, hardened: complete ? true : message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId, ...(noTimeout ? { noTimeout: true } : {}), ...(message.payload?.env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(persist ? { persist: true } : {}), ...(benchReset ? { benchReset: true } : {}) };
             const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
             attempt()
                 .catch((err) => {

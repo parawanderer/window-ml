@@ -433,6 +433,19 @@ test("python_exec: a pointer to a STORED table hands down its key with the split
     assert.equal(page.value, undefined, "a page-hosted run holds no stored value, so it gets the preview (and its refusal)");
 });
 
+test("a python_exec that returned a frame past its preview makes a pointer with the WHOLE size, naming its stored value", async () => {
+    const claimed = [], store = new TokenStore();
+    const df = { columns: ["x"], rows: [[0], [1]], rowCount: 1000, value: "v00000000000000aa" };
+    await drive([call("python_exec", { code: "return frame", token: "the frame" })],
+        () => ({ result: "[1000 rows x 1 columns]", renderOut: { type: "python-out", stdout: "", df } }),
+        { tokenStore: store, claimValue: (k) => claimed.push(k) });
+    const [v] = store.all();
+    assert.deepEqual(v.table.shape, [1000, 1], "not the 2 rows the render holds");
+    assert.equal(v.table.truncated, true);
+    assert.equal(v.value, "v00000000000000aa");
+    assert.deepEqual(claimed, ["v00000000000000aa"]);
+});
+
 test("python_exec: a pointer to something that is not a table says what it is instead", async () => {
     const { results, got } = await drive(
         [call("exec", { js: "x", token: "the log" }), call("python_exec", { code: "1", tables: { df: '@tool:"the log"' } }, "c2")],
