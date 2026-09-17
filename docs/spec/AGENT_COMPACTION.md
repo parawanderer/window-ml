@@ -102,11 +102,32 @@ Worth doing properly before building much, because the claims are easy to make a
 The bench (`tests/e2e/bench/`) already runs a matrix of cells with spread across seeds, and the pointer A/B pilot is the
 precedent (`docs/POINTER-IDENTIFIERS.md`).
 
-- **Arms:** no compaction; harness compaction at a threshold; agent `collapse`; both.
+The order matters, because each step can end the idea more cheaply than the one after it.
+
+1. **Measure the ceiling, with nothing built.** Take real `run.json` exports and, for each tool output, find the last
+   turn anything used it: a `dereference` of its pointer, a citation in an answer, a later tool call's arguments naming
+   it or quoting it. Count the tokens that sit in the context after that point, turn by turn, in every request that
+   re-sent them. That is the most any compaction policy could remove, since a perfect one drops each output the moment
+   it stops mattering. If it is a small share of prompt tokens on real sessions, the idea stops here. It also needs a
+   known limit to be honest: an output the model read but never quoted still shaped what it did, so "never used again"
+   is an upper bound on what is safe to drop, not a measurement of it.
+2. **Try a mechanical rule** before any model judgement: an output is stale when a later call of the same tool with the
+   same arguments superseded it (the build re-run, the URL re-fetched), or when nothing used it for N turns. No prompt
+   clause, no tool schema. Measure what it removes against the ceiling, and what it costs in reprocessing, since the
+   server reports prefill time and cache misses.
+3. **Then the model-driven `collapse`**, scored against the rule from step 2, not against doing nothing. It earns its
+   prompt cost only by beating the rule.
+
+For steps 2 and 3:
+
+- **Arms:** no compaction; the mechanical rule; agent `collapse`; both.
 - **Tasks:** long-horizon ones that produce stale output as a matter of course: a fix-build-retest loop, a table
   survey that refines its query several times, a multi-page read.
-- **Measures:** prompt tokens per turn and in total; prefill time and cache misses (the server reports both); task
-  success; collapses made; expands of collapsed pointers (regret); whether answers still cite the right pointers.
+- **Measures:** prompt tokens per turn and in total; prefill time and cache misses; task success; collapses made;
+  expands of collapsed pointers (regret, the headline number for step 3); whether answers still cite the right pointers.
+- **The collapse log is training data either way.** Each collapse with its reason, and each expand that followed, labels
+  what turned out to matter; an expand right after a collapse is a clean negative. That is the route to the "post-training"
+  column in the README if prompting alone does not get there.
 - **Questions behind the measures:** does a context of descriptors keep a model on task over a longer horizon than a
   context of raw output? Does a type signature (a table's schema and shape) steer the code a model writes better than
   pasted rows? Can an off-the-shelf instruction-tuned model manage its own context usefully, or does this need
@@ -118,6 +139,8 @@ precedent (`docs/POINTER-IDENTIFIERS.md`).
 - A separate `expand`, or `dereference` only? Does an expand restore the result into the history, or add a new result?
 - Can a collapse be undone, and does undoing it cost another prefill?
 - Should the harness suggest candidates ("these five outputs are 70% of your context") rather than leave it to the model?
+- For the ceiling in step 1: which uses count? A quoted value is easy to find; an output that only informed a decision
+  leaves no trace in the transcript.
 - How does a collapsed step look in the sidebar, and in `run.md`, so the reader sees both what the model saw and what
   was there?
 - Does a collapse belong to the session (surviving resume) or to the turn?
