@@ -28,12 +28,18 @@ runtime) and hash, and what the page offers for a session follows what its runti
 ## Decisions
 
 - **Where a chat's agent runs.** An extension page is not a web page, so an agent chat needs a primary page. When
-  starting one you choose: attach it to a tab you already have, or give it a blank tab. The agent runs as a
+  starting one you choose: attach it to a tab you already have, or give it a blank tab. A "blank tab" is a new tab at a
+  URL you give (prefilled from a start-page setting or the last one used), because a content script cannot run on a
+  new-tab page or `about:blank` (2026-09-17). The agent runs as a
   background-hosted run (the loop in the service worker, DOM tools delegated to the bound tab). A third option,
   headless, is shown disabled as a placeholder: headless agents and subagents are deliberately deferred.
 - **Plain chats live here too.** A conversation with no page tools needs no tab at all.
 - **One index across tabs.** The overlay and the DevTools panel show one tab's sessions; this page shows every session
   from every tab, plus saved ones. The background holds the index.
+- **What the index captures** (2026-09-17). Always: runs the background hosts, and every session on a tab whose debug
+  panel is in overlay or devtools mode. With the debug panel off, a page's own sessions (a console `ml.chat`, a page
+  script's agent) are listed only when the `listPageSessions` setting is on (DevTools Settings, default off), because
+  reporting them wakes every page's debug bus, which off mode otherwise keeps dormant and free.
 - **Persistence.**
   - Ephemeral sessions stay a valid concept (a console `ml.agent(…)`, a page script).
   - Every session started from this page is saved (`save: true`), chats and agents alike.
@@ -241,6 +247,9 @@ coordinates, and offers live viewing only when the runtime has the capability.
    built: `docs/dev/chat-page.md`.
 2. **Background plumbing for the local host**: the cross-tab session index, per-session event rings with epoch and
    cursor, `tabs.list`, starting an agent on a chosen or blank tab from an extension page, delete.
+   **In progress**: the index, the rings, the `ml-sessions` port, `LocalHost` and the capture setting are built
+   (`docs/dev/chat-page.md` §The local index); the commands on existing sessions come next, then `chat.start` and
+   `agent.start`.
 3. **`LocalHost`**: `chat.html` over slice 2, plus `side.call`, `page.highlight` and screenshots. The local host then
    works end to end.
 4. **Persistence**: saved agent sessions (IndexedDB), the Commander persist toggle and its Settings default, delete.
@@ -256,4 +265,5 @@ coordinates, and offers live viewing only when the runtime has the capability.
 - How much of a session to store: full debug events (what the log renders) or the transcript plus outputs, rebuilding
   the render from those.
 - Storage limits and eviction for saved sessions with many screenshots.
-- Whether the index shows ephemeral sessions from tabs that have since closed.
+- Whether the index shows ephemeral sessions from tabs that have since closed. For now it does, as `interrupted` when
+  they were still running, until the index's caps or the worker's eviction forget them.

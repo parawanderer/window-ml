@@ -330,6 +330,9 @@ let materializeTimer = 0;          // clears the one-shot .ml-materialize (frost
 let cardCorner = "bottom-right";   // config.cardCorner (set from storage) → which corner the card anchors to
 let agentHud = "progress";         // config.agentHud → "progress" shows the working pill, "quiet" hides it
 let agentHudInDevtools = false;    // config → also show the corner card/pill alongside the DevTools panel
+let listPageSessions = false;      // config → off mode still wakes the page bus, to report its sessions to the chat page's index
+/** Is injected's debug bus live? Always with a debug surface; in off mode only when the page's sessions are being listed. */
+const busLive = (): boolean => mode !== "off" || listPageSessions;
 // The corner HUD (card/pill) is active in OFF mode, and in DEVTOOLS when the coexist toggle is on
 // (OVERLAY never uses it — the slide-out already covers the page).
 const hudActive = (): boolean => mode === "off" || (mode === "devtools" && agentHudInDevtools);
@@ -701,9 +704,8 @@ function onWindowMessage(e: MessageEvent): void {
     const d = e.data;
     if (!d) return;
     // injected.js just loaded and is listening (a page-load race: it may have missed the
-    // handshake we posted before its <script> ran). Re-send it. `mode` is never "off" while
-    // this listener is attached; guard anyway.
-    if (d.__mlSidebar === "hello" && e.source === window) { if (mode !== "off") handshake(); return; }
+    // handshake we posted before its <script> ran). Re-send it, if the bus is meant to be live.
+    if (d.__mlSidebar === "hello" && e.source === window) { if (busLive()) handshake(); return; }
     // injected.js asks us to hide the overlay for a screenshot (so the sidebar
     // isn't captured into the agent's `look`). Hide, then ack after two frames so
     // the hidden state has painted before the capture fires.
@@ -757,7 +759,9 @@ function onWindowMessage(e: MessageEvent): void {
         // buffers until its iframe app handshakes — flushed in order (see the app-ready branch). In off
         // mode the page's bus is dormant so only background-tagged events arrive; in devtools BOTH the
         // page's own injected events (agent start/result) AND the background steps flow.
-        if (hudActive()) {
+        // In off mode the card is fed only by the background stream: with `listPageSessions` the page's own events
+        // flow too, and a card that mounted for a console `ml.chat` would be a new thing on every page.
+        if (hudActive() && (mode !== "off" || d.__mlFromBg)) {
             // Mount on ANY agent-family event, not just the `agent` start — a re-adopted run's card is fed
             // by the background replay, and if its start event were ever dropped (a burst landing before this
             // listener, an on-click late injection) mounting only on `agent` would leave the card permanently
@@ -776,7 +780,12 @@ function onWindowMessage(e: MessageEvent): void {
         // panel via relayDebugEvent), else a duplicate. OVERLAY: relay into the in-page iframe app.
         if (mode === "devtools" && !d.__mlFromBg) {
             try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_EVENT", event: ev }).catch(() => {}); } catch { /* context gone */ }
-        } else if (mode === "overlay") {
+        } else if (!d.__mlFromBg && busLive()) {
+            // Every other surface: the page's own events go to the background's session index too, which the chat page
+            // reads (background-origin events are already there). ML_DEBUG_EVENT would also feed a DevTools buffer.
+            try { void chrome.runtime.sendMessage({ type: "ML_SESSION_EVENT", event: ev }).catch(() => {}); } catch { /* context gone */ }
+        }
+        if (mode === "overlay") {
             // Buffer until the iframe app handshakes (overlayReady) — a fresh page after a nav gets the run's
             // REPLAYED history, which can arrive before the app is listening; posting to a not-ready app drops
             // it (the "Sessions (0)" on a re-adopted run). Flushed in order on the app's `ready` (below).
@@ -1029,7 +1038,8 @@ function startResize(e: PointerEvent): void {
 // when we first post) can't strand it un-live. Idempotent (bus guards a double replay).
 function handshake(): void {
     window.postMessage({ __mlSidebar: "present" }, "*");
-    if (mode === "devtools") window.postMessage({ __mlSidebar: "ready" }, "*");
+    // Only the overlay has an iframe app to hand back `ready`; everywhere else the bus goes live at once.
+    if (mode !== "overlay") window.postMessage({ __mlSidebar: "ready" }, "*");
 }
 
 /**
@@ -1066,7 +1076,8 @@ function relayPointerOut(): void {
 // Start listening on the page window. `handshakeInjected` is true for the overlay/devtools surfaces
 // (bring injected.js live + clear the stale DevTools-panel buffer); false for OFF mode, whose card is
 // fed by the background stream, not injected's bus — so injected stays dormant and off keeps its
-// near-zero footprint (just this idle listener, waiting for a background run).
+// near-zero footprint (just this idle listener, waiting for a background run). The exception is OFF with
+// `listPageSessions`, which the person turned on to see this page's own sessions in the chat page.
 function attach(handshakeInjected: boolean): void {
     window.addEventListener("message", onWindowMessage);
     window.addEventListener("keydown", relayChartKey, true);
@@ -1217,9 +1228,9 @@ function teardown(): void {
     window.removeEventListener("keydown", relayChartKey, true);
     window.removeEventListener("pointermove", relayPointerOut, true);
     chartKeys = [];
-    // Only overlay/devtools handshook injected; off left its bus dormant, so there's nothing to switch
-    // off. `mode` is still the OLD surface here (applyMode tears down before advancing).
-    if (mode !== "off") window.postMessage({ __mlSidebar: "gone" }, "*");
+    // Only a live bus needs switching off (off mode leaves it dormant unless `listPageSessions`). `mode` is
+    // still the OLD surface here (applyMode tears down before advancing).
+    if (busLive()) window.postMessage({ __mlSidebar: "gone" }, "*");
 }
 
 // The single entry point for the three debug surfaces. `off` draws nothing up-front and leaves
@@ -1234,7 +1245,7 @@ function applyMode(next: DebugMode): void {
     started = true;
     teardown();
     mode = next;
-    if (mode === "off") { attach(false); return; }   // listen for a background run; the card mounts lazily
+    if (mode === "off") { attach(listPageSessions); return; }   // listen for a background run; the card mounts lazily
     attach(true);
     if (mode === "overlay") mountOverlay();
 }
@@ -1269,7 +1280,8 @@ window.addEventListener("resize", () => { if (cardWrap) layoutCard(); });
 let startupQueue: MessageEvent[] | null = [];
 const captureStartup = (e: MessageEvent): void => { if (startupQueue) startupQueue.push(e); };
 window.addEventListener("message", captureStartup);
-chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right", agentHud: "progress", agentHudInDevtools: false }, (cfg) => {
+chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right", agentHud: "progress", agentHudInDevtools: false, listPageSessions: false }, (cfg) => {
+    listPageSessions = !!cfg.listPageSessions;
     rawTheme = (cfg.theme as string) || "auto";
     cardCorner = (cfg.cardCorner as string) || "bottom-right";
     agentHud = (cfg.agentHud as string) || "progress";
@@ -1288,6 +1300,20 @@ chrome.storage.onChanged.addListener((changes, area) => {
         agentHudInDevtools = !!changes.agentHudInDevtools.newValue;
         // Turned OFF while a devtools card is up → drop it (turning ON takes effect on the next run).
         if (!hudActive() && cardHost) unmountCard();
+    }
+    if (changes.listPageSessions) {
+        const next = !!changes.listPageSessions.newValue;
+        // Only off mode changes anything: a debug surface keeps the bus live either way.
+        if (next !== listPageSessions && started && mode === "off") {
+            if (next) {
+                listPageSessions = true;
+                try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_RESET" }).catch(() => {}); } catch { /* context gone */ }
+                handshake();
+            } else {
+                window.postMessage({ __mlSidebar: "gone" }, "*");
+            }
+        }
+        listPageSessions = next;
     }
     if (changes.debugMode) applyMode((changes.debugMode.newValue || "off") as DebugMode);
 });

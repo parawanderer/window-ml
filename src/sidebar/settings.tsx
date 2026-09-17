@@ -1131,6 +1131,12 @@ export function Settings() {
                     </select>
                     <div class="set-hint">Where this debug log renders. <b>In-page</b> = a slide-out on every page. <b>DevTools</b> = the “window.ml” tab, no on-page overlay. (Same setting as the toolbar popup.)</div>
                 </label>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.listPageSessions}
+                        onChange={(e: any) => setField("listPageSessions", e.target.checked)} />
+                    <span>List console and page-script sessions in the chat page when the debug panel is off</span>
+                </label>
+                <div class="set-hint">Agents the extension runs are always listed. With the panel off, a page's own <code>ml.chat</code> and <code>ml.agent</code> calls are not, because reporting them costs every page a little work.</div>
                 </Section>
 
                 <Section id="agenthud" title="Agent HUD">

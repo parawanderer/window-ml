@@ -23,6 +23,7 @@ import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, she
 import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
+import { ingestSessionEvent, senderPage, serveSessionsPort, sessionServer } from "./sw-sessions";   // the cross-tab session index the chat page reads
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, recordHousekeeping } from "./sw-housekeeping";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns, budgetBytes as valueBudgetBytes } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 
@@ -268,7 +269,7 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url); });
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseDebugger(tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
 }
 
 // ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
@@ -424,11 +425,33 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // The content-script shell forwards each __mlDebug event here so a DevTools panel
     // (which can't see page window-messages) can mirror the overlay's stream. Fire-and-
     // forget — no response. RESET clears a tab's buffer on navigation (fresh page).
-    if (message.type === "ML_DEBUG_EVENT") { if (sender.tab?.id != null) relayDebugEvent(sender.tab.id, message.event); return; }
+    if (message.type === "ML_DEBUG_EVENT") {
+        if (sender.tab?.id != null) {
+            relayDebugEvent(sender.tab.id, message.event);
+            ingestSessionEvent(message.event, { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) });
+        }
+        return;
+    }
+    // A page's own session events, forwarded by the shell for the session index only (overlay mode, whose events
+    // otherwise never leave the page, and off mode with `listPageSessions`). Bound to the sending tab: the index
+    // refuses a page writing into a session another tab owns.
+    if (message.type === "ML_SESSION_EVENT") {
+        if (sender.tab?.id != null) ingestSessionEvent(message.event, { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) });
+        return;
+    }
     // Await the startup rehydrate before deciding whether to wipe: right after an SW respawn (e.g. a site-access
     // grant cycled the worker), a fresh page's ML_DEBUG_RESET can RACE hydratePersistedRuns — if it wins,
     // activeRuns/bgRuns are still empty and it wipes an interrupted run's session before it's re-tracked.
-    if (message.type === "ML_DEBUG_RESET") { const tid = sender.tab?.id; if (tid != null) void hydrationDone.then(() => resetDebug(tid)); return; }
+    if (message.type === "ML_DEBUG_RESET") {
+        const tid = sender.tab?.id;
+        if (tid != null) {
+            // A new document in the tab: the runs the old one hosted cannot finish. Synchronous, so the new document's
+            // first events (which follow this message) are not caught by it.
+            sessionServer.pageGone(tid, { closed: false });
+            void hydrationDone.then(() => resetDebug(tid));
+        }
+        return;
+    }
     // DevTools-panel hover-highlight reverse channel: the panel (a devtools page) can't reach the
     // inspected page, so it asks us to relay its highlight request to that tab's content-script shell,
     // which draws the box. Only the extension can call a typed background message like this — a web page
@@ -761,6 +784,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // this can't double-relay. Gating on `surface === "devtools"` left an off/card run's panel (if the
             // user also has one open) stuck on the connect-time replay — the "panel stopped updating" bug.
             relayDebugEvent(tabId, event);
+            ingestSessionEvent(event, { tabId, trusted: true });
             // Cross-page: remember this step so a fresh page after a nav can rebuild the card mid-run.
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
@@ -770,6 +794,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             if (abortCtl.signal.aborted) return;
             chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
             relayDebugEvent(tabId, event);   // always feed a connected panel (see emitStep — no double, no-op if none)
+            ingestSessionEvent(event, { tabId, trusted: true });
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
         /** "A model call is underway" — the one stamp for it, since the pending step START fires only once a
@@ -801,6 +826,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // too — regardless of surface. Gating on `devtools` left an off/card run's answer never reaching a
             // connected panel (stuck on "running"). No double (page-side isn't fanning here); no-op without a panel.
             relayDebugEvent(tabId, event);
+            ingestSessionEvent(event, { tabId, trusted: true });
         };
         // Only a FRESH run announces the session start; a RESUME continues an existing sidebar/card
         // session (re-emitting `agent` would wipe its accumulated steps), so it streams new steps + a
@@ -2024,6 +2050,9 @@ chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "ml-resource") return;
     subscribeResourceEvents(port);
 });
+
+// The chat page's local host: the cross-tab session index and each session's events (sw-sessions.ts).
+chrome.runtime.onConnect.addListener(serveSessionsPort);
 
 chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "ml-devtools") return;

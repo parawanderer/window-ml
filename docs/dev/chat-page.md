@@ -18,6 +18,15 @@ The spec is [`docs/spec/CHAT_PAGE.md`](../spec/CHAT_PAGE.md) and the contract it
 | `demo-world.ts` | The fake host's runtimes and sessions: one of each state the page has to draw. |
 | `chat-app.tsx`, `chat.css` | The page: list and session, two panes or one. |
 | `web.tsx`, `chat.html` | The web entry, built to `dist-web/` by `scripts/build-web.mjs`. |
+| `local-host.ts` | This browser as a `SessionHost`: the client of the background's `ml-sessions` port, reconnecting when the worker is evicted. |
+
+Background side, outside `src/chat/` because the extension bundles it:
+
+| File | What it is |
+| --- | --- |
+| `src/session-index.ts` | The cross-tab session index: one row and one event ring per session, with the contract's epoch and cursor. Pure. |
+| `src/session-server.ts` | The `ml-sessions` port protocol over the index, and the command hand-off. Pure over a port-like object. |
+| `src/sw-sessions.ts` | The worker's index and server, and the sender check on the port. |
 
 ## One reducer, one transcript
 
@@ -80,9 +89,62 @@ a reload stays put and a back gesture returns to the list, touch-sized controls,
 under a phone's toolbars. The step pill floats there instead of overlapping a turn's first line, which a panel's wide
 first line leaves room for and a phone's does not.
 
+## The local index
+
+The background keeps one `SessionIndex` for the worker's life (`sw-sessions.ts`), fed from the places that already
+feed the DevTools panel, so the index holds what a panel would show, for every tab at once:
+
+- **A background-hosted run's own events** wherever `relayDebugEvent` fans them (`emitStep`, `fanEvent`, and
+  `emitLifecycle` when the background is the one fanning). These are TRUSTED and bind the session to the run's tab.
+- **A page's own events**, forwarded by the content-script shell: `ML_DEBUG_EVENT` in devtools mode (as before),
+  `ML_SESSION_EVENT` in overlay mode (whose events otherwise never leave the page), and `ML_SESSION_EVENT` in off mode
+  only with the `listPageSessions` setting. These are UNTRUSTED: the index accepts one only for a session the sending
+  tab owns, or that no tab owns, and takes the page's URL from `sender.tab`, never from the event.
+
+Off mode leaves each page's debug bus dormant, which is what makes it free, so waking it for the index is a setting
+(default off, in DevTools Settings) rather than a default. When it is on, the corner card still takes only
+background-tagged events: a console `ml.chat` must not put a card on the page.
+
+**Ingest where the panel is fed, not everywhere an event exists.** A background-hosted run's start and result are
+emitted by the page-side caller in overlay and devtools mode, and by the background in off mode or after a navigation
+(`emitLifecycle`'s comment has the rules). Ingesting at the background's buffer point as well would have recorded both.
+The index also de-duplicates by meaning (a second start unless `resumed`, a result identical to the one before with
+nothing in between, a repeated `sayId`, a chat turn's id), which covers off mode with `listPageSessions`, where the page
+and the background both report.
+
+**Ownership.** A trusted event for a session a DIFFERENT tab created untrusted means the page squatted the hash: the
+record is replaced and its generation (the epoch's suffix) is bumped, so subscribers reset. Once background-hosted, a
+session accepts from pages only its owner tab's events, which is how a steer (`agent-say`, which only the page emits)
+still lands. A closed tab releases its sessions; a page-hosted session left `running` by a closed tab or a new
+document (`ML_DEBUG_RESET`) becomes `interrupted`.
+
+**The ring.** Per session, bounded by count and by serialized size, plus a total size cap that trims the least
+recently changed sessions first, and a session cap that forgets finished sessions first. Live output is coalesced as
+it arrives: the newest `agent-stream` and `agent-turn` per step, the newest output delta per `seq`, and a finished step
+or a result drops the deltas it supersedes. Each carries its accumulated state, so a client that applied a dropped
+entry is not behind. Only a cap loses history, and `lostThrough` records how far, which is what `truncated` reports.
+
+**Opening a subscription.** From a position under the current epoch that the ring still covers: only the tail. From
+anything else: `reset`, the whole ring, `backfilled`. For a session the worker does not hold (never seen, or lost with a
+previous worker): `backfilled` alone, truncated when the client held something, so the page keeps its transcript. The
+epoch is `<spawn>.<generation>`, with a fresh spawn id per worker life, so no position from an evicted worker resumes.
+
+**A list row** is derived by the index, not the sidebar reducer (which lives in the panel bundle with its signals): an
+agent's status follows the reducer's seal (a straggler step from a finished turn does not reopen it), gates are counted
+by the `seq` of steps pending with `awaitingApproval`, and a row whose only change is `lastTs` is reported at most every
+five seconds, so a streaming run does not upsert the list on every delta.
+
+**The client.** `LocalHost` takes `connect` (the extension entry passes `chrome.runtime.connect`), so it has no
+`chrome` reference and its tests run it against the real server over an in-memory port. On a disconnect it answers
+in-flight commands `unavailable`, marks the runtime offline, reconnects with backoff, asks for the index again, and
+re-subscribes each open session from the last position it delivered. Commands all answer `unsupported` until each
+lands (slice 2a's second half).
+
 ## Not yet
 
 - The extension entry (`chat.html` over `LocalHost`) is slice 3, and its `ClientPlatform` adapter comes with it.
+- The index lives in worker memory: an evicted worker comes back with an empty list. Saved sessions surviving that is
+  slice 4.
 - `CompositeHost.events` attaches to the host that owns a runtime when it subscribes, and does not move if a
   higher-priority host reports that runtime later.
 - The panel's tooltips (`cursorTipOn`) are pointer-only, so on a touch screen their prose is unreachable.
