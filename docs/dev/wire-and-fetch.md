@@ -113,13 +113,25 @@ is what makes it the definition rather than a copy of one). `npm run gen-proto -
 vendored copy OFFLINE (a blob id is content-addressed, so it holds in CI and a fresh checkout), confirms the
 commit still carries that blob when GitHub is reachable, and reports when upstream has moved on — which a
 content hash alone cannot, since "we match commit X" stays true forever.
-**`toolIds` KEEPS SSE**, and that is PERMANENT rather than a gap waiting on a field. `sources` is not part of
-a completion: OpenWebUI emits it ahead of the model's first token, narrating a retrieval it already did, on
-`/api/chat/completions` — which proxies ollama's NATIVE `/api/chat` and parses the stream line by line to run
-filter functions. The protobuf encoder lives on `/ollama/v1/chat/completions`, a raw passthrough that path
-never touches, so a `sources` field could never be filled: permanently empty is not "no sources" and not
-"sources dropped" but indistinguishable from both, where an absent field says "ask elsewhere". Serving
-protobuf for that class means teaching OpenWebUI's transcoder to emit it — real work, not a schema line. **No `TextDecoder` anywhere in this path** — it
+**TWO ENCODERS NOW, and `toolIds` no longer keeps SSE.** The second is OpenWebUI's own `/api/chat/completions` in
+the fork (`parawanderer/open-webui`, branch `ml/tool-execute-api`), which is the route most setups actually use.
+What had made that impossible was `sources`, OpenWebUI's retrieval provenance, emitted ahead of the first token with
+nowhere to go in the schema — so `toolIds` calls were excluded. Two findings from the people who own that route
+killed the exclusion rather than the feature: `sources` reaches that stream WITHOUT `tool_ids` by four routes (a
+model's attached knowledge, `files` on the request, folder files, `features.web_search`), so the gate never
+protected provenance; and the browser UI does not use this branch at all (it takes a socket.io path, since an API
+client sends no `chat_id`/`message_id`), so changing it cannot affect the UI. The schema gained one message —
+`Event { string json = 1; }`, field 4 of the oneof — and anything that is not a completion chunk becomes one,
+carried verbatim: this hands it to the same `format.streamChunk` the SSE line went through, so there is one reader
+of that shape whichever wire delivered it.
+**The header therefore carries a parameter: `Accept: application/protobuf; events=1, text/event-stream;q=0.9`.**
+OpenWebUI's route serves protobuf ONLY with `events=1`, deliberately — a decoder generated before that frame
+existed would skip field 4 in silence, and the frame it skipped would be the provenance one. The ollama passthrough
+ignores the parameter and never sends an `Event`.
+**And the case for it is decode cost, not bytes.** Measured on the box over a 795-delta reply: SSE 196,781 B,
+gzipped SSE 11,788 B, protobuf 7,864 B — so gzip alone would capture 98% of the byte saving. Decoding costs 0.497 ms
+for SSE, 0.560 ms for gzipped SSE (the inflate adds to a `JSON.parse` that already dominated) and 0.080 ms for
+protobuf: 6.2x cheaper, and the only option that wins on both axes. **No `TextDecoder` anywhere in this path** — it
 is binary, and decoding it as UTF-8 corrupts it silently rather than throwing. The framing half
 (`src/protostream.ts`) is ours because it is not in the schema: `fetch()` chunk boundaries have nothing to do
 with message boundaries, so the reader buffers and yields only whole frames, refuses a length prefix claiming

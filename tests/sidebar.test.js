@@ -8934,36 +8934,35 @@ test("python bench: the BUTTON still toggles — the outside-click handler must 
 // time — the same URL is not a mistake to warn about: asking costs one header and the SSE answer is the
 // expected other branch. Warning there would put a permanent caveat under a setting nobody chose, which is
 // the noise that teaches people to skip the times it means something.
-test("settings: protobuf streaming SAYS when the configured URL can never serve it", async () => {
-    const onOwui = await loadSidebarWorld({
-        sync: { protoStream: "on", chatUrl: "http://gpubox:3000/api/chat/completions" },
+test("settings: protobuf streaming SAYS when the configured URL has no encoder behind it", async () => {
+    // A ROUTE WITH NO ENCODER. Both chat routes have one now (OpenWebUI's own, on the patched build, and the
+    // ollama passthrough), so the warning is for a URL that is neither.
+    const onOther = await loadSidebarWorld({
+        sync: { protoStream: "on", chatUrl: "http://gpubox:3000/v1/chat/completions" },
     });
-    await openSettings(onOwui, "Advanced");
-    await onOwui.flush();
-    const warn = [...onOwui.shadow.querySelectorAll(".set-warn")].map((e) => e.textContent).join(" ");
-    assert.match(warn, /never serves protobuf/, "it says the URL cannot do it");
-    assert.match(warn, /\/ollama\/v1\/chat\/completions/, "…and names the one that can");
-    // …and the TRADE, because the answer is not simply "change the URL": that route is ollama's, so it has
-    // none of OpenWebUI's own features. A warning that only says "wrong URL" invites a change that quietly
-    // loses server-side tools.
-    assert.match(warn, /server-side tools|citations/i, "…and what pointing at it costs");
+    await openSettings(onOther, "Advanced");
+    await onOther.flush();
+    const warn = [...onOther.shadow.querySelectorAll(".set-warn")].map((e) => e.textContent).join(" ");
+    assert.match(warn, /serves no protobuf encoder/, "it says the URL cannot do it");
+    assert.match(warn, /\/ollama\/v1\/chat\/completions/, "…and names the ones that can");
+    assert.match(warn, /a stock one answers SSE/i, "…and that OpenWebUI's own route needs the patched build");
 
-    // On the route that DOES serve it, no warning — an unconditional caveat is noise that undermines the
-    // times it is true.
-    const onOllama = await loadSidebarWorld({
-        sync: { protoStream: "on", chatUrl: "http://gpubox:3000/ollama/v1/chat/completions" },
-    });
-    await openSettings(onOllama, "Advanced");
-    await onOllama.flush();
-    assert.doesNotMatch([...onOllama.shadow.querySelectorAll(".set-warn")].map((e) => e.textContent).join(" "),
-        /never serves protobuf/);
+    // On a route that DOES serve it, no warning — an unconditional caveat is noise that undermines the times
+    // it is true. Both of them now.
+    for (const chatUrl of ["http://gpubox:3000/ollama/v1/chat/completions", "http://gpubox:3000/api/chat/completions"]) {
+        const w = await loadSidebarWorld({ sync: { protoStream: "on", chatUrl } });
+        await openSettings(w, "Advanced");
+        await w.flush();
+        assert.doesNotMatch([...w.shadow.querySelectorAll(".set-warn")].map((e) => e.textContent).join(" "),
+            /serves no protobuf encoder/, chatUrl);
+    }
 
     // …and none at all while the feature is OFF, whatever the URL is.
     const off = await loadSidebarWorld({ sync: { protoStream: "off", chatUrl: "http://gpubox:3000/api/chat/completions" } });
     await openSettings(off, "Advanced");
     await off.flush();
     assert.doesNotMatch([...off.shadow.querySelectorAll(".set-warn")].map((e) => e.textContent).join(" "),
-        /never serves protobuf/);
+        /serves no protobuf encoder/);
 
     // …nor under AUTO, which is the DEFAULT — so a fresh profile on OpenWebUI's own route, the commonest
     // setup there is, must not open Settings to a warning about a preference it never expressed.
@@ -8971,7 +8970,7 @@ test("settings: protobuf streaming SAYS when the configured URL can never serve 
     await openSettings(auto, "Advanced");
     await auto.flush();
     assert.doesNotMatch([...auto.shadow.querySelectorAll(".set-warn")].map((e) => e.textContent).join(" "),
-        /never serves protobuf/);
+        /serves no protobuf encoder/);
 });
 
 test("settings: the wire format is a THREE-state control, defaulting to auto", async () => {

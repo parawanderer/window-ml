@@ -517,16 +517,15 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
      * back with `finish=tool_calls` and `get_weather({"city":"Paris"})` decoded out of a Delta. Reasoning
      * rides it too.
      *
-     * `toolIds` DOES NOT, and this is permanent rather than a gap waiting on a field. `sources` is not part
-     * of a completion at all: OpenWebUI emits it, ahead of the model's first token, narrating a retrieval it
-     * already did — and it does so on `/api/chat/completions`, which proxies ollama's NATIVE `/api/chat` and
-     * parses the stream line by line to run filter functions. The protobuf encoder lives on
-     * `/ollama/v1/chat/completions`, a raw passthrough that path never touches. So a `sources` field in the
-     * schema could never be populated: it would be permanently empty, which is not "no sources" and not
-     * "sources dropped" but indistinguishable from both — an absent field says "ask elsewhere", an
-     * always-empty one says "there were none". Confirmed by the people who own both routes; a protobuf
-     * server-tool stream would mean teaching OpenWebUI's transcoder to emit it, which is real work and not
-     * this. Until then such a call keeps the format that carries provenance.
+     * `toolIds` USED TO BE EXCLUDED, because `sources` — OpenWebUI's retrieval provenance, emitted ahead of the
+     * model's first token — had nowhere to go in the schema. That gate is gone, and the reason it had to go is
+     * sharper than the reason it existed: `sources` reaches this stream WITHOUT `tool_ids` by four routes (a
+     * model's attached knowledge, `files` on the request, folder files, `features.web_search`), so gating on
+     * `toolIds` never protected provenance in the first place. The fork now carries anything that is not a
+     * completion chunk as an `Event` frame, verbatim, and this reads it through the same parser the SSE line
+     * went through (`format.streamChunk`). Measured by the people who own that route: on a long reply protobuf
+     * is 25x smaller than the SSE and, more to the point, 6x cheaper to decode, where gzipped SSE is slightly
+     * SLOWER to decode than plain.
      *
      * A `schema` call never streams at all (structured output skips the streaming path), so it is excluded
      * for tidiness rather than because anything would be lost.
@@ -534,8 +533,7 @@ export async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSig
      * Ollama-native is excluded because it is NDJSON with its own shape; this replaces the OpenAI SSE.
      */
     const proto = protoMode(config.protoStream);
-    const protoEligible = proto !== "off" && (config.apiFormat || "openai") !== "ollama"
-        && !payload.toolIds?.length && !payload.schema;
+    const protoEligible = proto !== "off" && (config.apiFormat || "openai") !== "ollama" && !payload.schema;
     // WHAT THE CONSUMER NEEDS TO KNOW: the mode this call actually went out under, or null when it never
     // asked. `"on"` and `"auto"` send the identical request — they differ only in what a non-protobuf answer
     // MEANS — so the distinction has to travel to the place that reads the Content-Type, and eligibility has
@@ -829,7 +827,12 @@ const protoMissed = new Set<string>();
 /** What a streamed call asks for when protobuf is on. SSE is listed too, at a lower quality: a strict negotiator that
  *  honours `Accept` and cannot produce protobuf would otherwise answer 406, and nothing retries that. The patched
  *  server selects protobuf by the substring (`strings.Contains`), so the second type does not switch it off. */
-export const PROTO_ACCEPT = "application/protobuf, text/event-stream;q=0.9";
+// `events=1` says this client understands the `Event` frame — anything in the stream that is not a completion chunk,
+// carried verbatim (OpenWebUI's `sources` line, whatever a filter emits). OpenWebUI's own route serves protobuf ONLY
+// with it, deliberately: a decoder generated before that frame existed would skip field 4 of the oneof in silence, and
+// the frame it skipped would be the provenance one. Plain `application/protobuf` still gets protobuf from ollama's
+// passthrough, which never sends an Event.
+export const PROTO_ACCEPT = "application/protobuf; events=1, text/event-stream;q=0.9";
 function servedProto(res: Response, asked: ProtoMode | null, url: string): boolean {
     const ct = res.headers?.get?.("content-type") || "";
     if (ct.includes("application/protobuf")) return true;
@@ -900,7 +903,7 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
     const consumeProto = async (res: Response) => {
         const reader = res.body!.getReader();
         const frames = createFrameReader();
-        let content = "", reasoning = "", sawToolCall = false;
+        let content = "", reasoning = "", sawToolCall = false, sources: unknown[] = [];
         let usage: TokenUsage | null = null;
         const handle = (bytes: Uint8Array) => {
             const f = Frame.decode(bytes);
@@ -928,6 +931,13 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
                     ...(f.end.cachedTokens !== undefined ? { cached_tokens: f.end.cachedTokens } : {}),
                 });
             }
+            // NOT A COMPLETION CHUNK: OpenWebUI's own route puts `{"sources": […]}` and whatever a filter emits into
+            // the stream. The JSON is carried verbatim, so it goes through the SAME parser the SSE line would have —
+            // one reader of that shape, whichever wire delivered it.
+            if (f.event?.json) {
+                const c = format.streamChunk(`data: ${f.event.json}`);
+                if (c?.sources?.length) sources = c.sources;
+            }
             // `Start` carries the id/model/created that JSON repeated per token. Nothing downstream reads
             // them — the resolved model is already known here — so they are decoded and dropped.
         };
@@ -940,7 +950,7 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
         // finished answer is a wrong answer dressed as a complete one, and the caller cannot tell — so this
         // is a transport failure, the same rule `createToolStream` follows for a stream with no result frame.
         if (frames.pending) throw new Error("protobuf stream ended mid-frame");
-        return { content, sawToolCall, sources: [] as unknown[], reasoning: reasoning || null, usage };
+        return { content, sawToolCall, sources, reasoning: reasoning || null, usage };
     };
 
     if (payload.toolIds?.length) {
@@ -1062,6 +1072,8 @@ export async function streamAgentTurn(
                         ...(runningCountOf(f.delta.completionTokens) != null ? { tokens: runningCountOf(f.delta.completionTokens) } : {}),
                     });
                 }
+                // Provenance and anything else that is not a completion chunk, through the SSE parser (see consumeProto).
+                if (f.event?.json) handleChunk(format.streamChunk(`data: ${f.event.json}`));
                 if (f.end) {
                     handleChunk({ delta: "", reasoning: "", toolCall: f.end.finishReason === "tool_calls", toolCallDelta: null, sources: null,
                                   usage: normalizeUsage({ prompt_tokens: f.end.promptTokens, completion_tokens: f.end.completionTokens,

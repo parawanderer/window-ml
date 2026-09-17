@@ -22,9 +22,9 @@ const env = (() => {
 })();
 const LIVE = process.env.USE_ENV === "1" && !!env.OPENWEBUI_URL;
 const BASE = (env.OPENWEBUI_URL || "").replace(/\/+$/, "");
-// THE ONLY ROUTE THAT SERVES IT. OpenWebUI's own `/api/chat/completions` re-encodes the model's stream as
-// SSE, so protobuf can never come back there — measured, and the settings panel says so. The encoder is on
-// the ollama passthrough.
+// TWO ROUTES SERVE IT on a patched box: the ollama passthrough (used below) and OpenWebUI's own
+// `/api/chat/completions`, which carries its `sources` line as an `Event` frame and answers protobuf only when the
+// Accept says `events=1`. The passthrough is the default here because it is the one the ollama fork owns.
 const CHAT_URL = process.env.CHAT_URL || `${BASE}/ollama/v1/chat/completions`;
 const MODEL = process.env.E2E_MODEL || env.OPENWEBUI_MODEL;
 
@@ -165,16 +165,13 @@ test("turned OFF, the same call is plain SSE and nothing else changes", async ()
     } finally { await ext.context.close(); }
 });
 
-test("a backend that will not serve it still works — we ask, get SSE, and parse SSE", async () => {
-    // THE MISS IS THE FALLBACK. OpenWebUI's own chat route re-encodes the model's stream as SSE, so it can
-    // never answer protobuf however politely we ask — which makes it the perfect real backend for this:
-    // same box, same model, a route that genuinely will not do it. This is what protects anyone pointing the
-    // extension at a stock Ollama or an older build.
+test("OpenWebUI's own chat route serves it too, and the answer is intact", async () => {
+    // THE ROUTE MOST SETUPS USE. It re-encodes the model's stream itself, so protobuf there is OpenWebUI's own
+    // encoder (the fork), not ollama's — and it answers protobuf only when the Accept carries `events=1`, because a
+    // decoder generated before the `Event` frame existed would skip the frame that carries provenance in silence.
     //
-    // Under "on", the state that INSISTS, because it is the one where getting this wrong would be worst: a
-    // hard failure there would trade a saved envelope for a chat that does not work, against a route half
-    // the users of this extension are pointed at. "on" buys a report, never a refusal — asserted here
-    // against the real route rather than against a stub that agrees with us.
+    // Under "on", the state that INSISTS, because it is the one where getting this wrong would be worst: a hard
+    // failure would trade a saved envelope for a chat that does not work. "on" buys a report, never a refusal.
     const ext = await launchExtension();
     try {
         await configureExtension(ext.sw, {
@@ -192,10 +189,9 @@ test("a backend that will not serve it still works — we ask, get SSE, and pars
             return { text, chunks: seen.length };
         });
         const last = (await wire(ext.sw)).filter((c) => /chat\/completions/.test(c.url)).at(-1);
-        expect(last.accept, "we asked").toMatch(/^application\/protobuf\b/);
-        expect(last.type, "it declined").toContain("text/event-stream");
-        // …and none of that reached the caller, which is the point of negotiating by the response.
-        expect(out.text.toLowerCase(), "the answer is intact anyway").toContain("quick brown fox");
+        expect(last.accept, "we asked, and said we read Event frames").toMatch(/^application\/protobuf; events=1\b/);
+        expect(last.type, `the route answered ${last.type}`).toContain("application/protobuf");
+        expect(out.text.toLowerCase(), "the answer is intact").toContain("quick brown fox");
         expect(out.chunks, "and it still streamed").toBeGreaterThan(1);
     } finally { await ext.context.close(); }
 });

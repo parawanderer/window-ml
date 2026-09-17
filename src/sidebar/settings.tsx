@@ -1306,18 +1306,16 @@ export function Settings() {
                             ? "The default. Asking costs one header and the miss is the fallback, so there is nothing here for a stock backend to go wrong with."
                             : "The header is never sent."}</div>
                 </label>
-                {/* A SETTING THAT SILENTLY DOES NOTHING is the thing this panel is not allowed to have, and
-                    this one can: the encoder lives on the ollama PASSTHROUGH route, and OpenWebUI's own
-                    `/api/chat/completions` re-encodes ollama's native stream as SSE — so on that URL the
-                    header is sent, the answer is SSE, and everything works exactly as before while the
-                    setting implies otherwise. Checked against the URL you configured rather than discovered
-                    at runtime, so it says so BEFORE you go looking for a difference.
+                {/* WHICH URLS CAN ANSWER. Two encoders now: the ollama passthrough (`/ollama/v1/chat/completions`)
+                    and OpenWebUI's own `/api/chat/completions` on the patched fork, which carries its `sources`
+                    line as an `Event` frame. A STOCK OpenWebUI re-encodes the stream as SSE on its own route, so
+                    the header is sent, the answer is SSE, and nothing goes wrong while the setting implies
+                    otherwise — which is what this says, checked against the URL you configured.
 
-                    ON ONLY. Under AUTO — the default — this same URL is not a mistake worth a warning: the
-                    header costs one line and the SSE answer is the expected other branch, so a caveat there
-                    would sit permanently under a preference nobody expressed. */}
-                {protoMode(c.protoStream) === "on" && !/\/ollama\/v\d+\/chat\/completions/.test(c.chatUrl || "") ? (
-                    <div class="set-warn">Your Server URL is <code>{(c.chatUrl || "").replace(/^https?:\/\/[^/]+/, "") || "(unset)"}</code>, which never serves protobuf — OpenWebUI re-encodes the model's stream as SSE there, so this will have no effect. The encoder is on the ollama passthrough, <code>/ollama/v1/chat/completions</code>. Pointing at it costs OpenWebUI's own features on that route (server-side tools, RAG and the source citations that come with them), which is the trade rather than a bug.</div>
+                    ON ONLY. Under AUTO — the default — the SSE answer is the expected other branch, so a caveat
+                    there would sit permanently under a preference nobody expressed. */}
+                {protoMode(c.protoStream) === "on" && !/\/(ollama\/v\d+|api)\/chat\/completions/.test(c.chatUrl || "") ? (
+                    <div class="set-warn">Your Server URL is <code>{(c.chatUrl || "").replace(/^https?:\/\/[^/]+/, "") || "(unset)"}</code>, which serves no protobuf encoder. They are on the ollama passthrough, <code>/ollama/v1/chat/completions</code>, and on OpenWebUI's own <code>/api/chat/completions</code> when it is the patched build (a stock one answers SSE there).</div>
                 ) : null}
                 </Section>
 
