@@ -11,7 +11,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 // Static (not conditional-require) — python-runtime.ts is chrome-free and side-effect-free,
 // so importing it costs nothing when the wheels are absent; `skip` still gates every test.
-import { wrapUserCode, harden, unharden } from "../src/python-runtime.ts";
+import { wrapUserCode, harden, unharden, injectStoredTable } from "../src/python-runtime.ts";
 // For the sympy→UI INTEGRATION test: the sidebar app (jsdom) to render the real WASM output. CommonJS helper.
 const { loadSidebarWorld, closeSidebarWorlds } = createRequire(import.meta.url)("./helpers");
 after(closeSidebarWorlds);   // close jsdom windows so their timers don't keep the runner alive (the leak gotcha)
@@ -39,10 +39,16 @@ before(async () => {
 // the next test (which runs serially).
 async function pyRun(code, { tables = null, image = null, hardened = false } = {}) {
     py.globals.set("INJECTED_IMAGE_B64", image);
-    py.globals.set("INJECTED_TABLES_JSON", Array.isArray(tables) && tables.length ? JSON.stringify(tables) : null);
+    // A stored table's bytes go in exactly as the worker puts them (injectStoredTable), and are cleared the same way.
+    const bufs = [];
+    const injected = Array.isArray(tables) ? tables.map((t, i) => injectStoredTable(py, py.globals, t, `_ml_tbuf_${i}`, bufs)) : tables;
+    py.globals.set("INJECTED_TABLES_JSON", Array.isArray(injected) && injected.length ? JSON.stringify(injected) : null);
     const saved = hardened ? harden(py) : null;
     try { await py.runPythonAsync(wrapUserCode(code, hardened)); }
-    finally { if (saved) unharden(py, saved); }
+    finally {
+        if (saved) unharden(py, saved);
+        for (const name of bufs) { try { py.globals.delete(name); } catch { /* the prelude took it */ } }
+    }
     const stdout = String(py.globals.get("_stdout") ?? "");
     if (py.globals.get("_err")) return { ok: false, stdout, error: String(py.globals.get("_err")) };
     const jr = py.globals.get("_json_result");
@@ -682,4 +688,60 @@ test("ADVERSARIAL pyarrow: its preparation leaves no route to `js` for a hardene
     assert.deepEqual(r.value, { attr: false, cached: false, leaks: [] });
     const imp = await pyRun("import js\nreturn 'reached'", { hardened: true });
     assert.equal(imp.ok, false, "`import js` still fails in a hardened run with pyarrow loaded");
+});
+
+// ── Stored tables (POINTER_VALUES slice 5) ────────────────────────────────────────────────────────────────────────────
+// A table the value store holds reaches Python as ONE copy of its bytes in a bytearray, decoded by the format it arrived
+// in, in the HARDENED sandbox (the buffer is not a JsProxy, so nothing the hardening removed comes back).
+const stored = (name, format, bytes, extra = {}) => {
+    const u8 = bytes instanceof Uint8Array ? bytes : new TextEncoder().encode(bytes);
+    return { name, data: { kind: "value", key: "v0000000000000001", label: "@tool:abc1234", format, buffer: u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength), columns: [], ...extra } };
+};
+
+test("stored table: Arrow IPC file and stream load as DataFrames with their own dtypes, in a hardened run", { skip: skipArrow, timeout: 120000 }, async () => {
+    const { tableFromArrays, tableToIPC, vectorFromArray, Utf8, Int64 } = await import("apache-arrow");
+    const t = tableFromArrays({ sku: vectorFromArray(["A", "B", "C"], new Utf8()), n: vectorFromArray([1n, 2n, 3n], new Int64()) });
+    const code = "return [list(df.shape), str(df.dtypes['n']), int(df['n'].sum()), list(tables['s'].columns)]";
+    const r = await pyRun(code, { hardened: true, tables: [stored("df", "arrow-file", tableToIPC(t, "file")), stored("s", "arrow-stream", tableToIPC(t, "stream"))] });
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(r.value, [[3, 2], "int64", 6, ["sku", "n"]]);
+});
+
+test("stored table: Parquet loads through pyarrow", { skip: skipArrow, timeout: 120000 }, async () => {
+    const made = py.runPython("import io as _i, pandas as _p\n_b = _i.BytesIO()\n_p.DataFrame({'x': [1.5, 2.5], 'y': ['a', 'b']}).to_parquet(_b)\n_b.getvalue()");
+    const bytes = made?.toJs ? made.toJs() : made;
+    made?.destroy?.();
+    const r = await pyRun("return [list(df.shape), float(df['x'].sum()), str(df.dtypes['x'])]", { hardened: true, tables: [stored("df", "parquet", bytes)] });
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(r.value, [[2, 2], 4, "float64"]);
+});
+
+test("stored table: delimited text is re-read with the PREVIEW's delimiter, columns and header decision", { skip, timeout: 120000 }, async () => {
+    // A header row whose names the preview had already decided on, split on ';'.
+    const withHeader = await pyRun("return [list(df.columns), list(df.shape), int(df['qty'].sum())]",
+        { tables: [stored("df", "csv", "region;qty\nnorth;3\nsouth;4\n", { delimiter: ";", columns: ["region", "qty"] })] });
+    assert.equal(withHeader.ok, true, withHeader.error);
+    assert.deepEqual(withHeader.value, [["region", "qty"], [2, 2], 7]);
+    // No header row: the first line is data, and the columns are the preview's positional names.
+    const headerless = await pyRun("return [list(df.columns), list(df.shape)]",
+        { tables: [stored("df", "tsv", "1\t2\n3\t4\n", { headerless: true, columns: ["0", "1"] })] });
+    assert.equal(headerless.ok, true, headerless.error);
+    assert.deepEqual(headerless.value, [["0", "1"], [2, 2]], "no record was eaten as a header");
+});
+
+test("ADVERSARIAL stored table: the buffer is gone after loading, and what Python holds is plain data with no route to `js`", { skip, timeout: 120000 }, async () => {
+    const r = await pyRun([
+        "import sys",
+        "left = [k for k in globals() if k.startswith('_ml_tbuf')]",
+        "return {'left': left, 'js': 'js' in sys.modules, 'type': type(df).__name__}",
+    ].join("\n"), { hardened: true, tables: [stored("df", "csv", "a,b\n1,2\n", { columns: ["a", "b"] })] });
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(r.value, { left: [], js: false, type: "DataFrame" });
+    const escape = await pyRun("import js\nreturn 'reached'", { hardened: true, tables: [stored("df", "csv", "a\n1\n", { columns: ["a"] })] });
+    assert.equal(escape.ok, false, "loading a stored table does not bring `js` back");
+});
+
+test("stored table: an unknown format fails loudly rather than loading nothing", { skip, timeout: 120000 }, async () => {
+    // The prelude runs before the script's own wrapper, so this throws out of the run; the worker reports it as the error.
+    await assert.rejects(pyRun("return 1", { tables: [stored("df", "xlsx", "nope")] }), /a stored table in a format the sandbox does not read: xlsx/);
 });

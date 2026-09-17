@@ -3234,6 +3234,18 @@ test("pythonExec tables: a PREVIEW by value is refused, and nothing reaches the 
     assert.equal(ran, false, "a refused table never runs any Python");
 });
 
+test("pythonExec tables: a preview whose WHOLE table is stored goes to the sandbox by key, with no rows, and the log shows the preview", async () => {
+    let pyTables = null;
+    const world = loadPageWorld({ onRuntimeMessage: (m) => {
+        if (m.type === "PYTHON_EXEC") { pyTables = m.payload.tables; return { data: { ok: true, value: "300000", stdout: "" } }; }
+        return undefined;
+    } });
+    const r = await world.ml.pythonExec("return len(df)", { tables: { df: { columns: ["a", "b"], rows: [[1, 2], [3, 4]], shape: [300000, 2], truncated: true, delimiter: ";", pointer: "@tool:abc1234", value: "v0123456789abcdef" } } });
+    assert.deepEqual(JSON.parse(JSON.stringify(pyTables[0].data)), { kind: "value", key: "v0123456789abcdef", label: "@tool:abc1234", columns: ["a", "b"], delimiter: ";" },
+        "the key and how to read it, never the preview rows");
+    assert.deepEqual(JSON.parse(JSON.stringify(r.inputTables[0])), { name: "df", source: { kind: "pointer", label: "@tool:abc1234" }, columns: ["a", "b"], rows: [[1, 2], [3, 4]], rowCount: 300000 });
+});
+
 test("pythonExec tables: an invalid variable name in the map is rejected", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: { ok: true, value: 1, stdout: "" } }) });
     await assert.rejects(world.ml.pythonExec("return 1", { tables: { "2bad": "#t" } }), /valid Python variable name/);

@@ -96,7 +96,9 @@ const embedTurn = () => ++_embedTurn;
 const isTableValue = (v: unknown): v is TableValue =>
     isTable(v) || (!!v && typeof v === "object" && !(typeof Element !== "undefined" && v instanceof Element)
         && Array.isArray((v as { columns?: unknown }).columns) && Array.isArray((v as { rows?: unknown }).rows));
-type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } };
+// `value`: the whole table is in the value store under `key`, and the sandbox reads it there; only its preview rows (for the
+// render) stay page-side, and they never travel with the run.
+type LoadedTable = { name: string; source: TableSource; preview?: (string | number | boolean | null)[][]; rowCount?: number; data: { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } | { kind: "value"; key: string; label: string; columns: string[]; delimiter?: string; headerless?: boolean } };
 
 (function() {
 
@@ -2161,7 +2163,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             if (r.table) extra.resultTable = r.table;   // a returned DataFrame → the UI renders a real table
             if (loaded.length) extra.inputTables = loaded.map(l => ({
                 name: l.name, source: l.source,
-                ...(l.data.kind === "rows" ? { columns: l.data.columns, rows: l.data.rows } : { html: true }),
+                ...(l.data.kind === "rows" ? { columns: l.data.columns, rows: l.data.rows } : l.data.kind === "value" ? { columns: l.data.columns, rows: l.preview ?? [], ...(l.rowCount != null ? { rowCount: l.rowCount } : {}) } : { html: true }),
             }));
             return Object.keys(extra).length ? { ...r, ...extra } : r;
         },
@@ -2180,7 +2182,14 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 const pointer = facade ? undefined : src.pointer;
                 const what = pointer ?? "this table";
                 const total = src.shape?.[0];
-                if (src.truncated || (typeof total === "number" && total > src.rows.length))
+                const preview = src.truncated || (typeof total === "number" && total > src.rows.length);
+                // A preview whose whole table is STORED: the sandbox reads the stored bytes (the background checks this
+                // run holds them). The columns and split decisions go along, so pandas names and parses it as the
+                // preview did.
+                if (preview && !facade && src.value)
+                    return { name, source: { kind: "pointer", label: pointer ?? "a table value" }, preview: src.rows as (string | number | boolean | null)[][], ...(typeof total === "number" ? { rowCount: total } : {}),
+                        data: { kind: "value", key: src.value, label: what, columns: [...src.columns], ...(src.delimiter ? { delimiter: src.delimiter } : {}), ...(src.headerless ? { headerless: true } : {}) } };
+                if (preview)
                     throw new Error(`pythonExec tables — ${what} holds ${src.rows.length.toLocaleString("en-US")} of ${typeof total === "number" ? total.toLocaleString("en-US") : "more"} rows, a preview rather than the whole table, so it is not loaded. Pass the URL fetch_url read (tables: {df: "<the url>"}) to load the whole parsed table.`);
                 return { name, source: { kind: "pointer", label: pointer ?? "a table value" }, data: { kind: "rows", columns: [...src.columns], rows: src.rows as (string | number | boolean | null)[][] } };
             }

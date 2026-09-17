@@ -11,7 +11,7 @@
 // offscreen path used. The offscreen doc is now a thin id-matched relay (offscreen.ts).
 
 import { PY_PACKAGE_LOADS, PY_LAZY_LOADS, PY_BENCH_BASE_NAMES, PY_STARTUP_PREPARE } from "./python-env";
-import { wrapUserCode, harden, unharden, COMPLETE_HELPER, completeIn, RESET, type PyCompletion } from "./python-runtime";
+import { wrapUserCode, harden, unharden, COMPLETE_HELPER, completeIn, RESET, injectStoredTable, type PyCompletion } from "./python-runtime";
 
 type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean; env?: boolean; complete?: { line: number; column: number; bench?: "readonly" | "full" }; persist?: boolean; benchReset?: boolean };
 // `bootMs` is present ONLY on the call that paid for the cold start; `runMs` is the script itself, so the
@@ -116,9 +116,11 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     const ns = bench ? bench.ns : py.globals;
     // Read only by PRELUDE_DATA, which a kept-state run does not execute — so never put into a bench namespace,
     // where they were listed as two variables no script had defined (and offered by completion).
+    const tableBufs: string[] = [];
     if (!bench) {
         ns.set("INJECTED_IMAGE_B64", image);
-        ns.set("INJECTED_TABLES_JSON", Array.isArray(tables) && tables.length ? JSON.stringify(tables) : null);
+        const injected = Array.isArray(tables) ? tables.map((t, i) => injectStoredTable(py, ns, t, `_ml_tbuf_${i}`, tableBufs)) : tables;
+        ns.set("INJECTED_TABLES_JSON", Array.isArray(injected) && injected.length ? JSON.stringify(injected) : null);
     }
     // LIVE stdout tee (opt-in streaming): the prelude's _MlTee calls this per print(). Set only when the
     // caller wants live output; cleared in finally so a later non-streaming run doesn't reuse a stale cb (it
@@ -162,6 +164,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
             ns.set("INJECTED_TABLES_JSON", null);
         }
         if (onStdout) { try { ns.delete("_ml_stdout_cb"); } catch { /* ignore */ } }   // don't leak the cb into the next run
+        for (const name of tableBufs) { try { ns.delete(name); } catch { /* the prelude already took it */ } }
         // A `python_exec` leaves its injected screenshot and tables in main until the NEXT run's reset — and
         // main is where the loader redirects live, reading `img`/`tables` at call time. So a bench script's
         // `pd.read_csv("sales")` could have been handed the model's last table. Clear them now instead.

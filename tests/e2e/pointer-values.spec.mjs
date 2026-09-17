@@ -182,7 +182,8 @@ test("a DataFrame python_exec returns becomes a table POINTER that a later exec 
 test("a table past the page's parse cap reads every row by pointer, in JavaScript and in Python alike", async () => {
     test.skip(!HAS_PYODIDE, "needs the bundled Pyodide (npm run fetch-pyodide)");
     test.setTimeout(180_000);
-    pending("POINTER_VALUES slices 4, 5 + 7: the value store holds the whole table; both runtimes read it by pointer");
+    // Slices 4 and 5 are built (the Python half is proven in value-store.spec.mjs); the JavaScript read is slice 7.
+    pending("POINTER_VALUES slice 7: the facade reads a stored table lazily");
     const [fetched, js, py] = await runSteps([
         { tool: "fetch_url", args: { url: `${data.url}/big.csv`, token: "the big table" } },
         { tool: "exec", args: { js: 'const t = @tool:"the big table".table; return [t.shape[0], (await t.col("revenue")).length]' } },

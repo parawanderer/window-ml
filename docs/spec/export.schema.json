@@ -2077,6 +2077,9 @@
         },
         "html": {
           "type": "boolean"
+        },
+        "rowCount": {
+          "type": "number"
         }
       },
       "required": [

@@ -54,6 +54,12 @@ export function claimValue(key: string, session: string): void {
     void values()?.claim(key, session).catch(() => {});
 }
 
+/** The sessions holding a stored value, or null when the key is not stored (or there is no store). */
+export async function valueHolders(key: string): Promise<string[] | null> {
+    const row = (await values()?.rows().catch(() => []))?.find((r) => r.key === key);
+    return row ? row.sessions : null;
+}
+
 /** A session is gone: release what it held. */
 export function releaseSessionValues(session: string): void {
     void values()?.releaseSession(session).catch(() => {});
