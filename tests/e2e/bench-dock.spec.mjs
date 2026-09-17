@@ -562,7 +562,8 @@ test("the output fills its pane — text and a DataFrame alike — and the table
         await expect(frame.locator(".bench-outbody .r-df-btn")).toHaveCount(0);
         await frame.locator(".bench-outbody .r-df-table").click({ button: "right" });
         await expect(frame.locator(".ctx-menu"), "right-click offers it instead").toBeVisible();
-        await expect(frame.locator(".ctx-item")).toHaveText([/Copy as CSV/i]);
+        // Copy, and the summary toggle the bar would otherwise hold.
+        await expect(frame.locator(".ctx-item")).toHaveText([/Copy as CSV/i, /Summarise columns/i]);
     } finally { await ext.context.close(); await fake.stop(); }
 });
 
