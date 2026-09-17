@@ -16,18 +16,25 @@ const HAS_PYODIDE = existsSync(join(dirname(fileURLToPath(import.meta.url)), "..
 
 /** Past MAX_TABLE_ROWS (200,000) and under the 8 MB read cap: its preview is not the whole table. */
 const ROWS = 250_000;
+/** Past the 8 MB TEXT cap (~11 MB): the page gets a prefix of it, and only the value store holds all of it. */
+const HUGE_ROWS = 700_000;
 
 async function startDataServer() {
     const lines = ["order_id,region,revenue"];
     for (let i = 0; i < ROWS; i++) lines.push(`${i},${["north", "south", "east", "west"][i % 4]},${(i % 97) + 0.5}`);
     const body = lines.join("\n");
+    const huge = ["order_id,region,revenue"];
+    for (let i = 0; i < HUGE_ROWS; i++) huge.push(`${i},${["north", "south", "east", "west"][i % 4]},${(i % 97) + 0.5}`);
+    const hugeBody = huge.join("\n");
     const srv = createServer((req, res) => {
-        if (!(req.url || "").startsWith("/orders.csv")) { res.writeHead(404); return res.end("no"); }
+        const path = (req.url || "").split("?")[0];
+        const b = path === "/orders.csv" ? body : path === "/huge.csv" ? hugeBody : null;
+        if (b == null) { res.writeHead(404); return res.end("no"); }
         res.writeHead(200, { "content-type": "text/csv", "cache-control": "no-store" });
-        res.end(body);
+        res.end(b);
     });
     await new Promise((r) => srv.listen(0, "127.0.0.1", r));
-    return { url: `http://127.0.0.1:${srv.address().port}`, bytes: Buffer.byteLength(body), stop: () => new Promise((r) => srv.close(r)) };
+    return { url: `http://127.0.0.1:${srv.address().port}`, bytes: Buffer.byteLength(body), hugeBytes: Buffer.byteLength(hugeBody), stop: () => new Promise((r) => srv.close(r)) };
 }
 
 let ext, fake, data, page;
@@ -144,4 +151,21 @@ test("exec reads a stored table's columns in full, on the approved path as well 
     expect(seen[0], "setup: a preview").toMatch(/\[250,000 rows x 3 columns\]/);
     expect(seen[1], "rows is the pointer's 200-row preview; the column is every row").toContain("[200,250000]");
     expect(seen[2]).toContain(`[250000,${((ROWS - 1) % 97) + 0.5}]`);
+});
+
+test("a CSV past the 8 MB text cap is stored WHOLE: its preview counts every row, and both runtimes read all of them", async () => {
+    test.setTimeout(240_000);
+    // Room for this one body; the earlier tests shrink the budget to force evictions.
+    await configureExtension(ext.sw, { valueStoreBudgetMB: 64 });
+    const steps = [
+        { tool: "fetch_url", args: { url: `${data.url}/huge.csv`, token: "the huge table" } },
+        { tool: "exec", args: { js: 'const t = @tool:"the huge table".table; const r = t.col("revenue"); return [t.shape[0], r.length, r[r.length - 1]]' } },
+    ];
+    if (HAS_PYODIDE) steps.push({ tool: "python_exec", args: { mode: "readonly", tables: { df: '@tool:"the huge table"' }, code: "return [len(df), int(df['order_id'].max())]" } });
+    const { seen } = await runSteps(steps);
+    expect(seen[0], "the preview says how big the table is, not how much of it fit in 8 MB").toMatch(/\[700,000 rows x 3 columns\]/);
+    const stored = (await rows()).filter((r) => r.source === `${data.url}/huge.csv`);
+    expect(stored.map((r) => [r.format, r.bytes]), "every byte of the body, not the 8 MB prefix").toEqual([["csv", data.hugeBytes]]);
+    expect(seen[1]).toContain(`[${HUGE_ROWS},${HUGE_ROWS},${((HUGE_ROWS - 1) % 97) + 0.5}]`);
+    if (HAS_PYODIDE) expect(seen[2]).toContain(`[${HUGE_ROWS},${HUGE_ROWS - 1}]`);
 });

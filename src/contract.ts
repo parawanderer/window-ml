@@ -620,6 +620,7 @@ export interface FetchResult {
     table?: Table | TableLike;
     truncated?: boolean;      // the body was clipped to the size cap
     valueKey?: string;        // value-store key of the WHOLE body when `table` is a preview (past the parse cap); not readable page-side
+    bodyLines?: number;       // for a CSV/TSV whose `text` is a prefix of a body read whole: the whole body's line count
     redirected?: boolean;     // the request followed ≥1 redirect (`url` above is the FINAL landing URL — the
                               // intermediate chain isn't visible to fetch; a redirect log needs chrome.webRequest)
     /** The Markdown ladder's trace, when negotiation ran (absent for `format: "html"` and for data bodies that

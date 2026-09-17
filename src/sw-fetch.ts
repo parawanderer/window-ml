@@ -114,6 +114,10 @@ function maybeBinaryTable(contentType: string, url: string): boolean {
  *  mislabelled text body served as `application/octet-stream` can be read this far before it is recognised as
  *  text; that is bounded, which is the point, where the old `arrayBuffer()` was not. */
 const FETCH_BINARY_MAX = 64_000_000;
+/** The most bytes a DELIMITED table body (CSV/TSV, by its media type or extension) is read to. The page still gets only
+ *  the first `FETCH_URL_MAX` as text; the rest is read so the whole body can go to the value store, where a table past
+ *  the text cap is exactly what a pointer read needs. Past this it is a prefix like any other text, and nothing is stored. */
+const FETCH_TABLE_MAX = 64_000_000;
 
 /** One GET, returning the pieces every rung needs. Never throws for a non-2xx — only for a network failure.
  *
@@ -125,7 +129,7 @@ const FETCH_BINARY_MAX = 64_000_000;
  *  A response that might be a binary table is read as bytes and, if the magic says it is not one after all,
  *  decoded to text here — so a mislabelled body costs a decode rather than being corrupted by a text read before
  *  anything can look at it. */
-async function rawGet(url: string, credentials: boolean, accept?: string): Promise<{ res: Response; text: string; bytes?: ArrayBuffer; arrow?: ArrayBuffer; truncated: boolean; parquetTooLarge?: number; arrowTooLarge?: number; binary?: { kind: string; size: number }; ms: number }> {
+async function rawGet(url: string, credentials: boolean, accept?: string): Promise<{ res: Response; text: string; bytes?: ArrayBuffer; arrow?: ArrayBuffer; whole?: Uint8Array; truncated: boolean; parquetTooLarge?: number; arrowTooLarge?: number; binary?: { kind: string; size: number }; ms: number }> {
     const t0 = Date.now();
     const res = await fetch(url, { method: "GET", credentials: credentials ? "include" : "omit", redirect: "follow", headers: browserFetchHeaders(accept) });
     if (maybeBinaryTable(res.headers?.get?.("content-type") || "", res.url || url)) {
@@ -154,11 +158,16 @@ async function rawGet(url: string, credentials: boolean, accept?: string): Promi
         if (kind) return { res, text: "", truncated, binary: { kind, size: bytes.length }, ms: Date.now() - t0 };
         return { res, text: decodeCapped(bytes.length > FETCH_URL_MAX ? bytes.subarray(0, FETCH_URL_MAX) : bytes, cut), truncated: cut, ms: Date.now() - t0 };
     }
-    const { bytes, truncated } = await readCapped(res, FETCH_URL_MAX);
+    // A body that SAYS it is a delimited table is read further than text, so one past the text cap can still be stored
+    // whole. The claim only sets how far to read: what the body is, is still decided from its bytes and content.
+    const delimited = typeFromHeader(res.headers?.get?.("content-type") || "") === "csv" || typeFromExtension(res.url || url)?.type === "csv";
+    const { bytes, truncated } = await readCapped(res, delimited ? FETCH_TABLE_MAX : FETCH_URL_MAX);
     // Checked on the BYTES, before any decode: a body nobody recognised was decoded as UTF-8 and reached the model
     // as control characters and replacement glyphs, labelled as text.
     const kind = binaryKind(bytes);
     if (kind) return { res, text: "", truncated, binary: { kind, size: bytes.length }, ms: Date.now() - t0 };
+    if (bytes.length > FETCH_URL_MAX)
+        return { res, text: decodeCapped(bytes.subarray(0, FETCH_URL_MAX), true), truncated: true, ...(truncated ? {} : { whole: bytes }), ms: Date.now() - t0 };
     return { res, text: decodeCapped(bytes, truncated), truncated, ms: Date.now() - t0 };
 }
 
@@ -176,14 +185,24 @@ function pastParseCap(text: string): boolean {
     return false;
 }
 
-/** Hand a delimited body to `keep` when the page will only parse a prefix of it. A body clipped at the read cap is not
- *  kept: it is not the whole file either, and a stored prefix would be read later as though it were. */
-function keepDelimited(out: FetchResult, keep: KeepBody | undefined): FetchResult {
-    if (keep && out.type === "csv" && !out.truncated && out.ok && pastParseCap(out.text)) {
-        const tsv = /tab-separated/i.test(out.contentType) || /\.tsv(?:$|[?#])/i.test(out.url);
-        keep({ bytes: out.text, format: tsv ? "tsv" : "csv" });
-    }
+/** Hand a delimited body to `keep` when the page will only parse a prefix of it: text past the parse cap, or a body past
+ *  the TEXT cap that was read whole (`whole`), which also tells the page its real length (`bodyLines`). A body clipped at
+ *  the read cap is not kept: it is not the whole file either, and a stored prefix would be read later as though it were. */
+function keepDelimited(out: FetchResult, keep: KeepBody | undefined, whole?: Uint8Array): FetchResult {
+    if (out.type !== "csv" || !out.ok) return out;
+    const format = /tab-separated/i.test(out.contentType) || /\.tsv(?:$|[?#])/i.test(out.url) ? "tsv" : "csv";
+    if (whole) {
+        out.bodyLines = lineCount(whole);
+        keep?.({ bytes: whole.buffer.slice(whole.byteOffset, whole.byteOffset + whole.byteLength) as ArrayBuffer, format });
+    } else if (keep && !out.truncated && pastParseCap(out.text)) keep({ bytes: out.text, format });
     return out;
+}
+
+/** Lines in a body, by line ends (a last line without one still counts). Over-counts a quoted field holding a newline. */
+function lineCount(bytes: Uint8Array): number {
+    let n = 0;
+    for (let i = 0; i < bytes.length; i++) if (bytes[i] === 0x0a) n++;
+    return bytes.length && bytes[bytes.length - 1] !== 0x0a ? n + 1 : n;
 }
 
 /** Assemble the FetchResult from whichever response the ladder settled on. */
@@ -326,7 +345,7 @@ export async function fetchUrlContent(url: string, credentials = false, format: 
     if (first.arrow) return await arrowResult(url, first as typeof first & { arrow: ArrayBuffer }, keep);
     if (first.arrowTooLarge) return arrowTooLargeResult(url, first.res, first.arrowTooLarge);
     if (first.binary) return binaryResult(url, first as typeof first & { binary: { kind: string; size: number } });
-    if (!negotiating) return keepDelimited(buildResult(url, first), keep);
+    if (!negotiating) return keepDelimited(buildResult(url, first), keep, first.whole);
 
     const attempts: FetchAttempt[] = [];
     const record = (a: FetchAttempt): FetchAttempt => { attempts.push(a); return a; };
@@ -355,7 +374,7 @@ export async function fetchUrlContent(url: string, credentials = false, format: 
         record({ strategy: "sibling", url: "", outcome: "skipped", note: "not attempted" });
         record({ strategy: "convert", url: "", outcome: "skipped", note: "not needed" });
         firstResult.negotiation = { wanted: format, attempts, resolvedBy: "accept" };
-        return keepDelimited(firstResult, keep);
+        return keepDelimited(firstResult, keep, first.whole);
     }
     // Every later rung derives from the FINAL url, not the requested one: a redirect is how `…/guide` becomes
     // `…/guide/`, which is exactly what flips the sibling from `.md` to `index.md`.
