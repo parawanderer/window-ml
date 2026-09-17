@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// THE COMPONENT INDEX — one grep-able line per reusable UI thing in the sidebar.
+// THE COMPONENT INDEX — one grep-able line per reusable UI thing in the sidebar and the chat page (src/chat/).
 //
 //   node scripts/components.mjs                  # everything
 //   node scripts/components.mjs | grep -i pill   # …by CONCEPT, which is the point
@@ -25,7 +25,10 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const SRC = path.join(ROOT, "src", "sidebar");
+/** Where reusable UI lives: the sidebar's, and the chat page's, which builds on it. */
+const SRC_DIRS = [path.join(ROOT, "src", "sidebar"), path.join(ROOT, "src", "chat")];
+/** The stylesheets whose classes are indexed and ratcheted. */
+const CSS_FILES = ["src/sidebar/sidebar.css", "src/chat/chat.css"];
 const onlyUndocumented = process.argv.includes("--undocumented");
 const newCssAt = process.argv.indexOf("--new-css");
 
@@ -65,8 +68,7 @@ const add = (name, kind, file, line, doc) =>
     rows.push({ name, kind, where: `${path.relative(ROOT, file)}:${line}`, doc: doc ? firstSentence(doc) : "" });
 
 // --- exported components and hooks -------------------------------------------------------------------
-for (const f of readdirSync(SRC).filter((f) => f.endsWith(".tsx") || f.endsWith(".ts"))) {
-    const file = path.join(SRC, f);
+for (const file of SRC_DIRS.flatMap((dir) => readdirSync(dir).filter((f) => f.endsWith(".tsx") || f.endsWith(".ts")).map((f) => path.join(dir, f)))) {
     const lines = readFileSync(file, "utf8").split("\n");
     lines.forEach((l, i) => {
         // `export function Name(` / `export const Name = (` / `export const Name = ({`. Capitalised = a
@@ -90,9 +92,8 @@ for (const f of readdirSync(SRC).filter((f) => f.endsWith(".tsx") || f.endsWith(
 // The grip and the chip were both CSS, not components — an index that only knows about JSX would have
 // missed the two clearest cases it exists for. Only classes with a comment above them: an undocumented
 // rule has nothing to search on, and listing every selector would bury the ones that mean something.
-const cssFile = path.join(SRC, "sidebar.css");
-const css = readFileSync(cssFile, "utf8").split("\n");
-css.forEach((l, i) => {
+const sheets = CSS_FILES.map((rel) => ({ file: path.join(ROOT, rel), lines: readFileSync(path.join(ROOT, rel), "utf8").split("\n") }));
+for (const { file: cssFile, lines: css } of sheets) css.forEach((l, i) => {
     const m = /^(\.[a-z][a-z0-9-]*)(?:[,\s{:])/.exec(l);
     if (!m) return;
     // Walk up to the OPENING `/*`, not just over lines that look like comment lines: a block whose
@@ -111,7 +112,7 @@ css.forEach((l, i) => {
 // class this branch adds beside an existing documented one is judged on its own comment, not its neighbour's.
 function cssClassDocs() {
     const doc = new Map();
-    css.forEach((l, i) => {
+    for (const { lines: css } of sheets) css.forEach((l, i) => {
         const m = /^(\.[a-z][a-z0-9-]*)(?:[,\s{:])/.exec(l);
         if (!m) return;
         // A class declared in several places is documented if ANY of them explains it — the others are
@@ -151,7 +152,7 @@ if (newCssAt >= 0) {
     const range = staged ? ["diff", "--cached", "--unified=0", base] : ["diff", "--unified=0", `${base}...HEAD`];
     let diff;
     try {
-        diff = execFileSync("git", [...range, "--", "src/sidebar/sidebar.css"],
+        diff = execFileSync("git", [...range, "--", ...CSS_FILES],
             { cwd: ROOT, encoding: "utf8" });
     } catch {
         // No such ref (a shallow clone, a fork with no origin/main). SKIP rather than fail: a ratchet that

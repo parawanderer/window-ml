@@ -301,7 +301,7 @@ const blockSummaryTried = new Set<string>();
 export const blockKey = (hash: string, i: number): string => `${hash}:${i}`;
 /** A one-line gloss of what a whole turn did, via the utility model — the folded label on a turn block. */
 export function ensureBlockSummary(hash: string, i: number, prompt: string, result: string): void {
-    if (!config.value.utilityModel.trim()) return;   // no utility model → the prompt fallback simply stays
+    if (!services().sideCalls(hash)) return;   // no side calls here → the prompt fallback simply stays
     const key = blockKey(hash, i);
     if (blockSummaries.has(key) || blockSummaryTried.has(key)) return;
     blockSummaryTried.add(key);

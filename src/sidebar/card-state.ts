@@ -109,7 +109,7 @@ export const selectedRun = (): Session | null => {
 // Lazily summarise the run's task with the utility model (if configured) for the toast headline —
 // the sidebar's title machinery, but ungated on sidebarOpen (irrelevant to the card).
 export function ensureCardTitle(s: Session): void {
-    if (s.title || cardTitleTried.has(s.hash) || !utilitySummariesOn()) return;
+    if (s.title || cardTitleTried.has(s.hash) || !utilitySummariesOn(s.hash)) return;
     cardTitleTried.add(s.hash);
     genTitle(s.hash, s.task || "");
 }

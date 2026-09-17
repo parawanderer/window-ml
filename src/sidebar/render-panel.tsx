@@ -14,7 +14,8 @@ import { downloadBlob } from "./download";   // a table too large for the clipbo
 import { elementReference } from "../dom";
 import { pyFormat, lineChanged } from "../py-format";
 import { lineMapBetween } from "../line-map";
-import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, config, lsSet, BENCH_CODE_KEY, surface, codeLineNumbers, openBench, benchTimes } from "./store";
+import { services } from "./services";
+import { rev, view, sessionMap, outMaxH, showOutTimes, focusMode, lsSet, BENCH_CODE_KEY, surface, codeLineNumbers, openBench, benchTimes } from "./store";
 import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, fmtDur, hourNow, armHourTick, dayBreaks } from "./timestamps";
 import { markdown, truncate, pretty, highlight } from "./format";
 import { codeNotes, notesState, notesHidden, fetchLineNotes, toggleLineNotes } from "./summaries";
@@ -378,13 +379,13 @@ function CodeTools({ ctx, lang, src }: { ctx: CodeCtx; lang: string; src: string
     const key = stepKey(ctx.hash, ctx.seq);
     const notes = codeNotes.get(key);
     const state = notesState.get(key);
-    const hasUtility = !!config.value.utilityModel.trim();
+    const hasUtility = services().sideCalls(ctx.hash);
     const say = (msg: string) => { setFlash(msg); setTimeout(() => setFlash(""), 1600); };
     // The HUD card is a READING surface — an answer and the steps behind it, over the page. The bench is a
     // debug tool on the panel's own navigation, which the card does not have: sending someone there from a
     // corner card would either do nothing or replace what they were reading. Explain stays, because
     // understanding the code IS what that card is for.
-    const python = lang === "python" && surface.value !== "card";
+    const python = lang === "python" && surface.value !== "card" && services().bench;
     return (
         <div class="code-tools" data-rev={rv}>
             {flash ? <span class="code-tools-flash">{flash}</span> : null}
@@ -399,7 +400,7 @@ function CodeTools({ ctx, lang, src }: { ctx: CodeCtx; lang: string; src: string
                     onClick={() => fetchLineNotes(key, lang, src, ctx.result)}>
                     <span>💡 {state === "loading" ? "reading…" : state === "error" ? "retry" : "explain"}</span>
                     <span class="tt-pop wrap left" role="tooltip">{!hasUtility
-                        ? "Set a utility model in Settings to annotate code."
+                        ? "Annotating code needs a utility model: set one in Settings (on the session's own runtime, for a remote one)."
                         : state === "error"
                             ? "The utility model returned nothing usable. Ask again?"
                             : "Annotate the interesting lines with the utility model, given this code and what it printed. Model-generated and approximate — a good-enough gloss, not a precise explanation."}</span>

@@ -12,6 +12,7 @@ import { generatePreview as generateLegendPreview } from "./tools/preview-legend
 import { writeApiDocs } from "./scripts/gen-api-docs.mjs";
 import { writeBuildInfo } from "./scripts/gen-build-info.mjs";
 import { writeSchema } from "./scripts/gen-export-schema.mjs";
+import { buildWeb } from "./scripts/build-web.mjs";
 
 // output name (dist/<name>.js)  ->  source entry
 const ENTRIES = {
@@ -170,6 +171,9 @@ if (watch) {
     // the latter so a failing legend case can be reviewed by eye). Open the HTMLs in a browser.
     await generatePreview();
     await generateLegendPreview();
+    // The chat page's web bundle (dist-web/), which fails on any `chrome.*` reference. Only for the real build: a
+    // variant built elsewhere with --outdir is an experiment on the extension, and has no web page to go with it.
+    if (!argValue("--outdir")) await buildWeb();
     // Everything succeeded, so the staged build replaces the live one. Anything that throws above leaves
     // `dist/` exactly as it was — the whole point — and the stage is cleaned up on the way out.
     rmSync(OUTDIR, { recursive: true, force: true });

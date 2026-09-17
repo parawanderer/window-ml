@@ -69,7 +69,7 @@ test("without a utility model the explain button is present but disabled, and sa
     const host = await mount(PY);
     const btn = host.querySelector(".code-tool");
     assert.ok(btn.disabled);
-    assert.match(btn.querySelector(".tt-pop").textContent, /Set a utility model/);
+    assert.match(btn.querySelector(".tt-pop").textContent, /needs a utility model: set one in Settings/);
 });
 
 test("explain asks the UTILITY model, over the lines the reader is shown", async () => {
@@ -176,4 +176,23 @@ test("…and it honours the dock: with full-page remembered, it goes there and r
     assert.equal(store.view.value.name, "bench");
     assert.deepEqual(store.viewReturn.value, { name: "detail", hash: "h1" }, "…so `back` is a return");
     store.benchDock.value = "drawer"; store.view.value = { name: "list" };
+});
+
+test("the HOST decides: a host with no side calls and no bench disables explain and offers copy, whatever this browser's config says", async () => {
+    reset();   // a utility model IS configured here
+    const services = await import("../src/sidebar/services.ts");
+    const ext = (await import("../src/sidebar/services-ext.ts")).extensionServices;
+    // A chat page over a runtime without `sideCalls` answers the seam's questions for that session, not for this browser.
+    services.installServices({ ...ext, sideCalls: () => false, bench: false });
+    try {
+        const host = await mount(PY);
+        const [explain, second] = host.querySelectorAll(".code-tool");
+        assert.ok(explain.disabled, "no side calls on the session's runtime");
+        assert.match(second.textContent, /copy/, "no bench to hand the script to, so the second button copies");
+        explain.click();
+        await tick();
+        assert.equal(sent.length, 0, "nothing reached the extension's utility model");
+    } finally {
+        services.installServices(ext);
+    }
 });
