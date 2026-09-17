@@ -21,7 +21,7 @@
 // drivers — `runAsync` at the top level, and `runSync` for the arrows a host method
 // invokes (`.map`/`.filter` call their callback synchronously, so an `await` in there
 // can't be honoured and throws NotInDialect → the whole survey falls back to approval).
-import { isTable } from "./table-brand";   // the ONE import: a table facade is recognised by BRAND, and the brand module is itself dependency-free
+import { isTable, isStoredTable } from "./table-brand";   // the ONE import: a table facade is recognised by BRAND, and the brand module is itself dependency-free
 
 
 export class NotInDialect extends Error {}
@@ -47,6 +47,8 @@ export const STEP_BUDGET = 3_000_000;
 /** The largest array, Set or Map one step may produce. A single host call (`Array(n).join()`, `concat`, `Array.from
  *  ({ length })`) does O(n) work without the budget seeing it, so its size is what bounds its cost. */
 export const MAX_COLLECTION = 1_000_000;
+/** The most cells one script may read out of STORED tables in total (each read is a request over the whole table). */
+export const MAX_STORED_CELLS = 5_000_000;
 /** The longest string one step may produce, for the same reason (`repeat`, `padStart`, doubling by `+`). */
 export const MAX_STRING = 10_000_000;
 /** How deep calls may nest. Recursion is allowed, the way `ml.range` allows a loop: bounded. Deep enough to walk
@@ -924,6 +926,9 @@ class Evaluator {
     /** The source line of the statement being evaluated — reported when a script throws. */
     line = 0;
     private fuel: number;
+    /** Cells read out of STORED tables so far in this run. Each read is one host call doing work proportional to the
+     *  table, which the step budget never sees, so the total has its own bound (MAX_STORED_CELLS). */
+    private storedCells = 0;
     // Collections being iterated right now (a count, since loops over one collection can nest). A mutator or a
     // property write on one of these is refused: that is what keeps every loop's trip count fixed at its start.
     private iterating = new Map<object, number>();
@@ -977,13 +982,21 @@ class Evaluator {
         // column, `select` a row per row with a cell per name. Rows × width is the work, checked here because the
         // budget never sees inside the call. (Page tables are capped at 200k rows, so `col` alone never trips it;
         // a wide `records()` over a big one does.)
+        // A STORED table's reads cover every row (its `shape`), not the preview in `rows`, and each is a request the
+        // step budget cannot see, so their total across the run is bounded too.
         if (isTable(obj)) {
-            const t = obj as { rows: unknown[]; columns: unknown[] };
+            const t = obj as { rows: unknown[]; columns: unknown[]; shape: [number, number] };
+            const stored = isStoredTable(obj);
+            const all = stored ? t.shape[0] : t.rows.length;
             const width = key === "records" ? t.columns.length
                 : key === "select" ? (Array.isArray(args[0]) ? args[0].length : 0)
                     : key === "head" ? t.columns.length : 1;
-            const height = key === "head" ? Math.min(t.rows.length, Math.max(0, Number(args[0] ?? 5)) || 0) : t.rows.length;
+            const height = key === "head" ? Math.min(all, Math.max(0, Number(args[0] ?? 5)) || 0) : all;
             if (height * width > MAX_COLLECTION) big();
+            if (stored && (key === "col" || key === "select" || key === "records" || (key === "head" && height > t.rows.length))) {
+                this.storedCells += height * width;
+                if (this.storedCells > MAX_STORED_CELLS) throw new NotInDialect(`reading over ${MAX_STORED_CELLS.toLocaleString("en-US")} cells of stored tables in one script, which is too much work to run without asking`);
+            }
         }
     }
     // Containers the SCRIPT created (plain object/array literals, `new`, and the fresh arrays/objects our
@@ -1376,7 +1389,9 @@ class Evaluator {
             // Object.entries/JSON.parse/…) becomes mutable, so `arr.filter(…).push(x)` and the accumulator
             // idioms work. Page arrays are never RETURNED by an allowlisted method (they all build new ones),
             // so this can't launder a live page container — the mutator gate above still refuses page arrays.
-            if (onMl) return this.own(this.sized((out != null && typeof (out as { then?: unknown }).then === "function") ? yield out : out));
+            // A STORED table's reads are requests too (POINTER_VALUES slice 7), awaited the same way. Inside a `.map`
+            // callback there is nowhere to await, so one there falls out of dialect rather than handing back a promise.
+            if (onMl || isStoredTable(obj)) return this.own(this.sized((out != null && typeof (out as { then?: unknown }).then === "function") ? yield out : out));
             // Accommodate a common model mistake: querySelectorAll / getElementsBy* return a NodeList /
             // HTMLCollection, which have no .map/.filter, so `querySelectorAll('x').map(…)` throws (the
             // model forgets to spread). In this read-only dialect it's safe to just hand back a real

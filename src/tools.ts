@@ -56,7 +56,7 @@ function derefValue(read: DerefRead): DerefText {
     if (read.warning) { try { console.warn(read.warning); } catch { /* no console in this realm */ } }
     const g = globalThis as unknown as { ml?: { dereference?: (r: string, o: { pipe: string | string[] }) => Promise<DerefText> } };
     const id = read.meta?.id ? `@tool:${read.meta.id}` : "";
-    return new DerefText(read.value, read.meta, (stages) => Promise.resolve(g.ml!.dereference!(id, { pipe: stages })));
+    return new DerefText(read.value, read.meta, (stages) => Promise.resolve(g.ml!.dereference!(id, { pipe: stages })), read.readColumns);
 }
 
 // A single-element tool (describeElement/ancestors) uses the FIRST of N matches — say so, so

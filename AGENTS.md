@@ -246,7 +246,8 @@ learned by shipping the wrong version first.
   are dynamically imported so they never reach the page bundle. A code EXTENSION beats a guessed delimiter — source
   full of semicolons parses as a clean two-column table otherwise. A caller gets the `Table` FACADE, which is
   read-only and throws on unknown keys: finish editing the plain `TableLike` BEFORE `asTable`, and never probe
-  a value's shape in the dialect without checking `isTable` first.
+  a value's shape in the dialect without checking `isTable` first. A STORED table's facade (`isStoredTable`) reads the
+  value store, so its `col`/`select`/`records` return promises and its size is `shape`, never `rows.length`.
 - **Wire formats.** The protobuf path is chosen from the RESPONSE's content type, never sniffed; no `TextDecoder`
   anywhere near binary — a fetched body is checked with `binaryKind` on its BYTES first, and a binary one is
   described, never decoded; `toolIds` keeps SSE permanently. A strict backend refusing an optional request key is

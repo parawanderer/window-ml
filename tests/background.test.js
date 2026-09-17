@@ -4153,3 +4153,17 @@ test("SECURITY (PYTHON_EXEC): a page may read a STORED table only while a run on
     await bg.send({ type: "PYTHON_EXEC", payload: table(held.key) }, { tab: { id: 9 }, url: "chrome-extension://test/sidebar.html" });
     assert.deepEqual(bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => m.tables[0].data.key), ["v00000000000000ff", held.key]);
 });
+
+test("SECURITY (VALUE_COLUMNS): a stored table's columns are read only for a background run this worker hosts on the sender's tab", async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const { ValueStore } = await import("../src/value-store.ts");
+    const idb = new IDBFactory();
+    const held = await new ValueStore({ idb, budgetBytes: () => 1e9 }).put(new Blob(["a\n1\n2\n"]), { format: "csv", session: "run-1" });
+    const bg = loadBackground({ config: baseConfig(), indexedDB: idb });
+    const page = { tab: { id: 9 }, url: "https://evil.example/attack" };
+    for (const runId of ["run-1", "", "no-such-run"]) {
+        const r = await bg.send({ type: "VALUE_COLUMNS", runId, key: held.key, names: ["a"] }, page);
+        assert.match(r.error, /^No active background run ".*" on this page to read a stored table for\./, `runId ${JSON.stringify(runId)}: knowing a key and a run's id is not enough`);
+        assert.equal(r.columns, undefined);
+    }
+});

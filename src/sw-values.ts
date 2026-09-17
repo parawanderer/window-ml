@@ -7,6 +7,7 @@
 // sweep runs when the worker starts and on an alarm, because nothing else is awake to run it.
 
 import { ValueStore, ValueTooLarge } from "./value-store";
+import { storedColumns } from "./table-data";
 import type { FetchedBody } from "./sw-fetch";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { DEFAULT_CONFIG } from "./contract";
@@ -59,6 +60,15 @@ export function claimValue(key: string, session: string): void {
 export async function valueHolders(key: string): Promise<string[] | null> {
     const row = (await values()?.rows().catch(() => []))?.find((r) => r.key === key);
     return row ? row.sessions : null;
+}
+
+/** Named columns of a stored table, every row, decoded here from the bytes as stored. Throws the store's ValueMissing
+ *  (with its reason) for a value that is gone, and the decoder's error for an unknown column or an oversized read. */
+export async function readStoredColumns(key: string, names: string[], opts: { delimiter?: string; headerless?: boolean }): Promise<{ rowCount: number; columns: Record<string, unknown[]> }> {
+    const s = values();
+    if (!s) throw new Error("there is no value store in this context");
+    const { row, blob } = await s.get(key);
+    return storedColumns(await blob.arrayBuffer(), row.format, names, opts);
 }
 
 /** A session is gone: release what it held. */

@@ -24,7 +24,7 @@ import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configure
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, recordHousekeeping } from "./sw-housekeeping";
-import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, budgetBytes as valueBudgetBytes } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
+import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns, budgetBytes as valueBudgetBytes } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -1381,6 +1381,27 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     }
     // A page-side tool of a background-hosted run calling `ml.dereference`. Answered only for a run WE are
     // hosting, from that run's own pointer store — the resolver the loop handed us at start (tokenSink).
+    // A stored table's columns (`t.col(…)` on a stored table's facade, POINTER_VALUES slice 7). Answered only for a run WE
+    // host, running on the SENDER's tab, that holds the value: the key reaches the page with the pointer, so the key
+    // alone must never be enough.
+    if (message.type === "VALUE_COLUMNS") {
+        (async () => {
+            const runId = String(message.runId || ""), key = String(message.key || "");
+            const names = Array.isArray(message.names) ? (message.names as unknown[]).map(String) : [];
+            const tabId = sender.tab?.id;
+            if (!derefByRun.has(runId) || tabId == null || !activeRuns.get(tabId)?.has(runId)) {
+                sendResponse({ error: `No active background run "${runId}" on this page to read a stored table for.` });
+                return;
+            }
+            const holders = await valueHolders(key);
+            if (holders && !holders.includes(runId)) { sendResponse({ error: "That stored table is not held by this run." }); return; }
+            try {
+                const r = await readStoredColumns(key, names, { ...(typeof message.delimiter === "string" ? { delimiter: message.delimiter } : {}), ...(message.headerless ? { headerless: true } : {}) });
+                sendResponse(r);
+            } catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
+        })();
+        return true;
+    }
     if (message.type === "DEREF_TOKEN") {
         const fn = derefByRun.get(String(message.runId || ""));
         if (!fn) { sendResponse({ error: `No active background run "${message.runId}" to read pointers from.` }); return true; }

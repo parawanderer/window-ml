@@ -220,7 +220,7 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
             // so the sync path in `exec` deliberately falls through to this one. Wrapped so the type is the
             // promise it actually is rather than the union the declaration allows.
             const again = (stages: string | string[]): Promise<DerefValue> => Promise.resolve(window.ml.dereference(ref, { pipe: stages }));
-            return new DerefText(read.value, read.meta, again);
+            return new DerefText(read.value, read.meta, again, read.readColumns);
         },
         /**
          * The TypeScript-like type of some JSON — one document, or the JOINED type of several.

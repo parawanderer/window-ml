@@ -25,3 +25,19 @@ export function brandTable<T extends object>(t: T): T {
 export function isTable(x: unknown): boolean {
     return typeof x === "object" && x !== null && facades.has(x as object);
 }
+
+// A STORED table: a facade over a preview whose whole table is in the value store, so its `col`/`select`/`records` read
+// every row (a request) rather than the rows in hand. The dialect sizes that work by the table's `shape`, not by
+// `rows.length`, which is how it tells the two apart; granted only by `asTable`, like the brand above.
+const stored = new WeakSet<object>();
+
+/** Mark a table facade as stored. Called only by `asTable`. */
+export function brandStored<T extends object>(t: T): T {
+    stored.add(t);
+    return t;
+}
+
+/** Is this a facade whose reads go to the value store? */
+export function isStoredTable(x: unknown): boolean {
+    return typeof x === "object" && x !== null && stored.has(x as object);
+}

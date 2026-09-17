@@ -131,3 +131,17 @@ test("a DataFrame python_exec returns is stored whole, and a later python_exec r
     expect(stored).toHaveLength(1);
     expect(stored[0].format).toBe("arrow-file");
 });
+
+test("exec reads a stored table's columns in full, on the approved path as well as the read-only one", async () => {
+    test.setTimeout(120_000);
+    const { seen } = await runSteps([
+        { tool: "fetch_url", args: { url: `${data.url}/orders.csv?copy=5`, token: "all orders" } },
+        // Read-only (auto-approved): the read is awaited for the survey.
+        { tool: "exec", args: { js: 'const t = @tool:"all orders".table; return [t.rows.length, t.col("revenue").length]' } },
+        // Out of the dialect (it writes a global), so approved: a real `eval`, where the read is a promise.
+        { tool: "exec", args: { js: 'window.__mlStoredRead = 1; const t = @tool:"all orders".table; const r = await t.col("revenue"); return [r.length, r[ROWS_MINUS_ONE]]'.replace("ROWS_MINUS_ONE", String(ROWS - 1)) } },
+    ]);
+    expect(seen[0], "setup: a preview").toMatch(/\[250,000 rows x 3 columns\]/);
+    expect(seen[1], "rows is the pointer's 200-row preview; the column is every row").toContain("[200,250000]");
+    expect(seen[2]).toContain(`[250000,${((ROWS - 1) % 97) + 0.5}]`);
+});

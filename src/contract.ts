@@ -242,12 +242,16 @@ export interface DerefMeta {
      *  {@link TableLike}, so a dereferenced table describes itself exactly as a fetched one does: `shape`,
      *  `columns`, `dtypes`, `rows`. The read-only dialect can traverse it as plain data. */
     table?: TableLike;
+    /** The value-store key of the WHOLE table when `table` is only its preview. Present only for a run that holds it. */
+    value?: string;
     /** A `data:image/…;base64,…` URL when the step produced an image. */
     image?: string;
     latex?: string;
 }
 
-export interface DerefRead { value: string; warning?: string; meta?: DerefMeta }
+// `readColumns` is attached PAGE-SIDE by the resolver of a background-hosted run when `meta.value` names a stored table;
+// it never crosses a message boundary. It is what turns the pointer's table facade into a stored one (asTable).
+export interface DerefRead { value: string; warning?: string; meta?: DerefMeta; readColumns?: import("./table-data").StoredColumnReader }
 
 /**
  * What `ml.dereference` resolves to: the pointer's text, with what the loop knows about it attached.
@@ -571,7 +575,11 @@ export interface TableLike {
  *  It is NOT a DataFrame: `t.price`, `t[["a", "b"]]`, `t.groupby(…)` throw an error naming the nearest real
  *  spelling rather than returning `undefined`. For grouping, joins and the rest of pandas, hand the source URL to
  *  `python_exec`'s `tables`. Read-only: writing to it throws; copy what you need first. Available in the
- *  read-only `exec` dialect, where a call that would build more than a million cells at once asks first. */
+ *  read-only `exec` dialect, where a call that would build more than a million cells at once asks first.
+ *
+ *  A STORED table (a pointer's preview whose whole table is kept: `rows.length < shape[0]`) reads every row, so
+ *  `col`, `select`, `records` and a `head` longer than `rows` return promises: `await t.col("revenue")`. `rows` is
+ *  still the preview. The read-only dialect awaits them for you. */
 export interface Table extends TableLike {
     /** One column's values, by name. `t.col("revenue")` → `[9.99, 13.49, …]`. Throws on an unknown name. */
     col(name: string): TableCell[];

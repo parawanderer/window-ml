@@ -252,6 +252,16 @@ window.addEventListener("message", (event: MessageEvent) => {
         });
         return;
     }
+    // A stored table's columns, read for a background-hosted run (`t.col(…)` on a stored table's facade). Id-matched like
+    // PAGE_DEREF; the worker checks the run is hosted on this tab and holds the value.
+    if (data.type === "PAGE_VALUE_COLUMNS") {
+        const d = data as { id?: string; runId?: string; key?: string; names?: string[]; delimiter?: string; headerless?: boolean };
+        chrome.runtime.sendMessage({ type: "VALUE_COLUMNS", runId: d.runId, key: d.key, names: d.names, delimiter: d.delimiter, headerless: d.headerless }, (resp: { rowCount?: number; columns?: unknown; error?: string } = {}) => {
+            const err = chrome.runtime.lastError?.message || resp?.error;
+            window.postMessage({ type: "PAGE_VALUE_COLUMNS_RESULT", id: d.id, ...(err ? { error: err } : { rowCount: resp?.rowCount, columns: resp?.columns }) }, "*");
+        });
+        return;
+    }
     if (data.type === "PAGE_TOOL_STREAM") {
         chrome.runtime.sendMessage({ type: "PAGE_TOOL_STREAM", runId: (data as { runId?: string }).runId, chunk: (data as { chunk?: string }).chunk, ts: (data as { ts?: number }).ts });
         return;

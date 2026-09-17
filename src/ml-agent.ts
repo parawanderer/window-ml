@@ -6,7 +6,7 @@
 import type { NeutralMessage, MlApi, AgentOptions, MlAgentHandle, AgentResult, AgentTranscriptEntry } from "./contract";
 import { tableShape, asTable } from "./table-data";
 import { currentHasTool } from "./tool-exec";
-import type { TableLike, Table } from "./table-data";
+import type { TableLike, Table, StoredColumnReader } from "./table-data";
 import type { DerefRead, DerefMeta, TokenKind } from "./token-pipe";
 import type { DerefValue } from "./contract";
 import { jsonShape, jsonValue } from "./dom";
@@ -168,14 +168,14 @@ export class DerefText extends String implements DerefValue {
     #json?: { v: unknown };            // memo: absent = not parsed yet, { v: undefined } = parsed, not JSON
     #repipe: (stages: string | string[]) => Promise<DerefValue>;
 
-    constructor(text: string, meta: DerefMeta | undefined, repipe: (stages: string | string[]) => Promise<DerefValue>) {
+    constructor(text: string, meta: DerefMeta | undefined, repipe: (stages: string | string[]) => Promise<DerefValue>, readColumns?: StoredColumnReader) {
         super(text);
         this.type = meta?.kind ?? "text";
         this.id = meta?.id ?? "";
         this.tool = meta?.tool ?? "";
         this.step = meta?.step ?? -1;
         if (meta?.label) this.label = meta.label;
-        if (meta?.table) this.table = asTable(meta.table, { python: currentHasTool("python_exec") });
+        if (meta?.table) this.table = asTable(meta.table, { python: currentHasTool("python_exec"), ...(readColumns ? { readColumns } : {}) });
         if (meta?.image) this.image = meta.image;
         if (meta?.latex) this.latex = meta.latex;
         this.#repipe = repipe;
@@ -208,6 +208,22 @@ export class DerefText extends String implements DerefValue {
     }
 }
 
+/** Named columns of a stored table, every row, read by the service worker for the background-hosted run `runId`, which
+ *  must hold the value. The same id-matched relay as a pointer read. */
+export function columnsViaBackground(runId: string, key: string, names: string[], opts: { delimiter?: string; headerless?: boolean }): Promise<{ rowCount: number; columns: Record<string, (string | number | boolean | null)[]> }> {
+    return new Promise((resolve, reject) => {
+        const id = `cols-${Math.random().toString(16).slice(2)}`;
+        const onMsg = (e: MessageEvent) => {
+            const d = e.data as { type?: string; id?: string; rowCount?: number; columns?: Record<string, (string | number | boolean | null)[]>; error?: string } | undefined;
+            if (!d || d.type !== "PAGE_VALUE_COLUMNS_RESULT" || d.id !== id) return;
+            window.removeEventListener("message", onMsg);
+            if (d.error) reject(new Error(d.error)); else resolve({ rowCount: d.rowCount ?? 0, columns: d.columns ?? {} });
+        };
+        window.addEventListener("message", onMsg);
+        window.postMessage({ type: "PAGE_VALUE_COLUMNS", id, runId, key, names, ...opts }, "*");
+    });
+}
+
 export function derefViaBackground(runId: string, ref: string, pipe?: string | string[]): Promise<DerefRead> {
     return new Promise((resolve, reject) => {
         const id = `deref-${Math.random().toString(16).slice(2)}`;
@@ -215,7 +231,12 @@ export function derefViaBackground(runId: string, ref: string, pipe?: string | s
             const d = e.data as { type?: string; id?: string; value?: string; warning?: string; meta?: DerefMeta; error?: string } | undefined;
             if (!d || d.type !== "PAGE_DEREF_RESULT" || d.id !== id) return;
             window.removeEventListener("message", onMsg);
-            if (d.error) reject(new Error(d.error)); else resolve({ value: d.value ?? "", ...(d.warning ? { warning: d.warning } : {}), ...(d.meta ? { meta: d.meta } : {}) });
+            if (d.error) { reject(new Error(d.error)); return; }
+            // A stored table's columns are read through this run too, so the reader is bound here, where the runId is.
+            const key = d.meta?.table ? d.meta.value : undefined;
+            const table = d.meta?.table;
+            resolve({ value: d.value ?? "", ...(d.warning ? { warning: d.warning } : {}), ...(d.meta ? { meta: d.meta } : {}),
+                ...(key && table ? { readColumns: (names: string[]) => columnsViaBackground(runId, key, names, { delimiter: table.delimiter, headerless: table.headerless }) } : {}) });
         };
         window.addEventListener("message", onMsg);
         // `pipe` may be an ARRAY of stages (structured-clones fine); `??` not `||` so an array survives.
