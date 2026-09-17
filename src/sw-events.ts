@@ -153,7 +153,7 @@ async function connect(): Promise<void> {
             if (frame.t >= 0) lastFrameAt = Math.max(lastFrameAt ?? 0, at);
             status.frames++; status.lastAt = at;
             frameRing.push({ frame, at });
-            void keepRecords(recorder.push(frame as ResourceFrame & Record<string, unknown>, at));
+            void keepRecords(recorder.push(frame, at));
             if (frameRing.length > FRAME_RING) frameRing.splice(0, frameRing.length - FRAME_RING);
             status.kinds[frame.kind] = (status.kinds[frame.kind] || 0) + 1;
             if (frame.kind === "sample") status.samples++;
@@ -165,7 +165,7 @@ async function connect(): Promise<void> {
                 ...(lost ? { lost } : {}),
                 ...(frame.kind === "hello" && frame.unavailable_gpus ? { unavailable: frame.unavailable_gpus } : {}),
                 ...(frame.kind === "sample" ? {
-                    loaded: loadedFrom((frame.ps?.models as unknown[]) || []),
+                    loaded: loadedFrom(frame.ps?.models ?? []),
                     info: frame.info ?? null,
                 } : {}),
             });

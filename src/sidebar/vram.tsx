@@ -1,6 +1,7 @@
 // Model / VRAM diagnostics — the server model-list fetch, the Ollama /api/ps VRAM monitor panel + its
 // polling, per-model load-state, backend-health probing, and the Python sandbox bench. A separate,
 // self-contained surface from the run views. Extracted from app.tsx.
+import type { WireFrame } from "../events-wire";
 import { useState, useEffect, useRef, useMemo } from "preact/hooks";
 import type { RenderDescriptor } from "../contract";
 import { fmtCtx, isBackendUnreachable } from "../contract";
@@ -444,7 +445,7 @@ const pushMachine = (e: ResourceEvent): void => {
 /** One edge frame → what the lane draws. Returns nothing for the frames that are not events in their own
  *  right (`sample`, `heartbeat`, `hello`) and for a `load.complete` with no start to close, which is what a
  *  reconnect mid-load looks like — half a span is worse than none, since its left edge would be invented. */
-export function machineEventFrom(frame: { kind: string; model?: string; reason?: string; duration_ms?: number; weights_ms?: number; context_ms?: number; size_vram?: number; size_total?: number; timings?: unknown; estimate?: unknown; memory?: unknown }, at: number): ResourceEvent | null {
+export function machineEventFrom(frame: Pick<WireFrame, "kind"> & Omit<Partial<WireFrame>, "kind">, at: number): ResourceEvent | null {
     // CANONICALISED ONCE, here at the boundary, so nothing downstream has to know that the same model has two
     // spellings on one server: the stream says `registry.ollama.ai/library/gemma4:31b`, `/api/ps` says
     // `gemma4:31b`. Matching them late — at the colour, at the legend, at the off-box check — means every new
@@ -470,7 +471,7 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
                 // HOW MUCH the weights were, as the server measured it. The durations say how long each half
                 // took; this says what each half MOVED, which is the other half of the same question — and a
                 // 6s weights step that moved 17 GiB reads very differently from one that moved 300 MiB.
-                open.weightsBytes = frame.size_vram;
+                open.weightsBytes = frame.size_vram ?? undefined;
             }
             return null;
         case "load.complete": {
@@ -566,8 +567,11 @@ export function machineEventFrom(frame: { kind: string; model?: string; reason?:
         // something, the other simply expired. Inferring them by diffing polls could never tell them apart.
         case "evict":
             return model ? { t: at, kind: "evict", label: `${model} evicted${frame.reason ? ` (${frame.reason})` : ""}`, model, via: "server" as const } : null;
+        // NOT "idle". The server has ONE runner-termination path, reached both when a keep-alive runs out and when a model
+        // is displaced to make room for another load, and it emits `unload` with no reason for either (fork schema report,
+        // 2026-09-17: loading a 113 GB model freed a resident 104 GB one as `unload`). `evict` is only the OOM-retry path.
         case "unload":
-            return model ? { t: at, kind: "evict", label: `${model} unloaded (idle)`, model, via: "server" as const } : null;
+            return model ? { t: at, kind: "evict", label: `${model} unloaded (its keep-alive ran out, or another load displaced it)`, model, via: "server" as const } : null;
         default:
             return null;
     }

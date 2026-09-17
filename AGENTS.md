@@ -228,6 +228,9 @@ learned by shipping the wrong version first.
   line band rides the steps' corners (`bandEdge`), or the stack draws wedges. A residual's note names its OWN
   backend's context (CUDA / HIP / generic; host RAM and unified memory have their own), never CUDA by default. A
   lane test seeds `ml_res_sections: { lane: true }` and a box (`setCapacity`/`setResident`) or nothing is drawn.
+- **Event-stream frames.** Typed from the fork's own schema (`src/proto/events.proto`, pinned; `events-wire.ts` reads it
+  as `Wire<T>`, every key maybe absent). Never hand-add a frame field: re-vendor, re-pin, `npm run gen-proto`. An
+  `optional` field is sent at zero, so absent means not reported; `unload` does not mean idle.
 - **Event lane.** Spans run BACKWARDS from a finish stamp; a tool step is ONE event with phases; a load is its own
   event. Phases are drawn only where something TIMED them.
 - **Pointers.** `PIPE_CMDS` is the single source for every description of the dialect. The three reference forms
