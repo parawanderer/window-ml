@@ -178,6 +178,75 @@ The shapes are fixed now so the link is additive later:
 
 Runtimes today declare neither `lineage` nor `headless` and answer both with `unsupported`.
 
+## Proposed: remote control
+
+**Status: proposal, not in `session-host.ts`** (2026-09-17, from the UI session). Controlling an agent from a phone
+needs to see its page and sometimes act on it directly: dismiss a dialog the agent is stuck on, sign in where it cannot.
+All three parts are additive. They go into the types once agreed, and streaming stays open until its mechanism is
+chosen.
+
+### 1. A one-off screenshot
+
+`tab.screenshot` already covers a tab (scope `screen`, capability `screenshots`). Two additions:
+
+- **The result says what coordinates it is in**: the image's pixel size, the viewport's CSS size, `devicePixelRatio`,
+  the scroll offset, and a `frame` id the runtime can recognise later (see input below).
+- **A desktop runtime's display** as a target (`{ display: string }`), under the `desktop` capability and scope.
+
+### 2. Input at a point
+
+A new command, sketched:
+
+```ts
+| {
+    type: "input.pointer"; target: { tabId: number } | { session: SessionId } | { display: string };
+    /** the frame the client was looking at; the runtime maps the point through it */
+    frame: string;
+    action: "click" | "double" | "move" | "down" | "up" | "scroll";
+    x: number; y: number;          // in that frame's image pixels
+    button?: "left" | "middle" | "right";
+    deltaX?: number; deltaY?: number;
+  }
+| { type: "input.text"; target: …; frame: string; text: string }
+| { type: "input.key"; target: …; frame: string; key: string; modifiers?: ("alt" | "ctrl" | "meta" | "shift")[] }
+```
+
+- **Coordinates are in the frame the client saw**, not the viewport. The runtime maps them through that frame's size,
+  pixel ratio and scroll. If the viewport has since resized or scrolled, it refuses with `conflict` instead of clicking
+  a different element than the one tapped.
+- **A new scope, `control`.** Acting as the user in a logged-in browser is more than `drive`, which only reaches the
+  page through the agent and its approval gates, and different from `screen`, which only sees. It is never held by an
+  agent client by default, and never implied by another scope. A new `Scope` value is additive: an older runtime
+  grants it to nobody. The matching capability is `input`.
+- **Trusted input through CDP**, as the agent's own reserved clicks already use (`cdpClick` in `sw-cdp.ts`). Chrome's
+  debugger banner is then the visible signal on the machine that the page is being driven.
+- **Recorded in the session.** When a session's agent is running on the target, the input is added to its events (a new
+  event kind naming the principal and the action), so the log shows it, and the agent is told at its next step boundary
+  that the page changed under it, as a steering message is.
+
+### 3. Streaming the display (open)
+
+A subscription, not a command: an optional host method, offered under a `screencast` capability and the `screen` scope.
+
+```ts
+display?(target: { tabId: number } | { session: SessionId } | { display: string },
+         listener: (frame: DisplayFrame | { type: "ended"; reason: string }) => void,
+         opts?: { maxWidth?: number; quality?: number; maxFps?: number }): Unsubscribe;
+// DisplayFrame: { type: "frame"; frame: string; image: ImageDataUrl; width; height; viewport; dpr; ts }
+```
+
+- **Version 1, screencast frames over the relay.** CDP `Page.startScreencast` sends JPEG frames and waits for an ack
+  before sending more, which gives backpressure for free: the runtime acks once the subscriber's queue has room, so a
+  slow phone gets fewer frames rather than a growing backlog. Frames are superseded, so the hub coalesces and drops
+  them like telemetry, never like session events. Without CDP it falls back to `captureVisibleTab`, which Chrome limits
+  to about two a second.
+- **Only while someone watches.** It starts on subscribe and stops on unsubscribe, when the client's connection drops,
+  or after an idle limit. While a stream is open, the runtime's own sidebar says so and names who is watching.
+- **Every frame is also a `frame` for input**, so tapping the live view uses the same command as tapping a screenshot.
+- **Later, real video** (WebRTC from `tabCapture` or a desktop capture) for smooth frame rates. Media would flow outside
+  the relay's envelope, so it keeps the hub blind only if the runtime and the device check each other's DTLS
+  fingerprints, signed by their paired keys. A different security story, so it waits until frames are not enough.
+
 ## Not in the contract
 
 Display preferences and themes (client storage); the envelope, keys, pairing and encryption (hub transport); box
