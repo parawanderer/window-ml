@@ -110,8 +110,10 @@ const PHB = { type: "pcie", path: "PHB", pcie_path: "PHB" };
 // RTX 3090 NVLink 3.0 bridge: 4 links. The rate is a MOCK figure — the server reads it or omits it.
 const NV4 = { type: "nvlink", path: "NV4", nvlink_count: 4, pcie_path: "PHB", bandwidth_bytes_per_sec: 112_500_000_000 };
 const NV12 = { type: "nvlink", path: "NV12", nvlink_count: 12, pcie_path: "SYS", bandwidth_bytes_per_sec: 600_000_000_000 };
-// AMD Infinity Fabric (xGMI): the rate is the AMD driver's own figure where it reads one (`kfd_io_link`). MOCK.
-const XGMI = { type: "xgmi", path: "XGMI", link_count: 1, pcie_path: "SYS", bandwidth_bytes_per_sec: 64_000_000_000, bandwidth_source: "kfd_io_link" };
+// AMD Infinity Fabric (xGMI): the rate is the AMD driver's own figure where it reads one (`kfd_io_link`). MOCK, but in the
+// shape the fork reports (discover/topology_linux.go, the KFD path): type, path and bandwidth, and NO link count, which KFD
+// does not describe. An earlier mock carried an invented `link_count: 1`.
+const XGMI = { type: "xgmi", path: "XGMI", pcie_path: "SYS", bandwidth_bytes_per_sec: 64_000_000_000, bandwidth_source: "kfd_io_link" };
 const hw = (name) => JSON.parse(readFileSync(new URL(`./hw/${name}-2026-09-11.json`, import.meta.url), "utf8"));
 const TOPOLOGIES = {
     // REAL: gpubox's two cards across the CPU's host bridge — no NVLink PHY on either — with the link's PEAK

@@ -250,6 +250,7 @@ export interface TopoLink {
     type: "nvlink" | "xgmi" | "pcie" | "unknown" | string;
     path?: string;
     pciePath?: string;
+    /** How many NVLink links the pair has (`nvlink_count`). NVLink only: no other fabric reports a count. */
     linkCount?: number;
     /** NVLink generation, as the driver reports it — on a direct NVLink pair only. */
     version?: number;
@@ -296,9 +297,9 @@ export function topologyFrom(raw: unknown): Topology | null {
             a, b, type: typeof l.type === "string" && l.type ? l.type : "unknown",
             ...(typeof l.path === "string" && l.path ? { path: l.path } : {}),
             ...(typeof l.pcie_path === "string" && l.pcie_path ? { pciePath: l.pcie_path } : {}),
-            // `link_count` is NOT IN THE SCHEMA (events.proto at aa1536a has `nvlink_count` only): it is the mock AMD xGMI
-            // link in tests/fixtures/boxes.mjs, read as a fallback in case a non-NVLink fabric reports a count that way.
-            ...(n(l.nvlink_count) ?? n((l as { link_count?: unknown }).link_count) ? { linkCount: (n(l.nvlink_count) ?? n((l as { link_count?: unknown }).link_count))! } : {}),
+            // NVLink only. A non-NVLink fabric reports NO count: KFD describes an xGMI pair by type and bandwidth and never
+            // says how many physical links make it up (fork schema report, 2026-09-17), so no count is inferred for one.
+            ...(n(l.nvlink_count) ? { linkCount: n(l.nvlink_count)! } : {}),
             ...(n(l.nvlink_version) ? { version: n(l.nvlink_version)! } : {}),
             ...(n(l.bandwidth_bytes_per_sec) ? { bandwidthBytesPerSec: n(l.bandwidth_bytes_per_sec)! } : {}),
             ...(typeof l.bandwidth_source === "string" && l.bandwidth_source ? { bandwidthSource: l.bandwidth_source } : {}),
@@ -1227,7 +1228,7 @@ export function residencyFrom(raw: unknown): ModelResidency {
                 const one = memorySplit(g.memory, Number(g.size_vram) || 0);
                 if (one) per[String(g.gpu_id ?? "")] = one;
             }
-            const host = memorySplit((m as { memory_host?: unknown }).memory_host, 0)   // not on an /api/ps row per the schema; see loadedFrom;
+            const host = memorySplit(m.memory_host, 0);
             return {
                 ...(whole ? { memory: whole } : {}),
                 ...(Object.keys(per).length ? { perDeviceMemory: per } : {}),

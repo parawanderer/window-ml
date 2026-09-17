@@ -218,9 +218,10 @@ broken:
   all, so `/api/ps` is not coarse during a load, it is EMPTY (measured: `load.start` t=4102,
   `load.complete` t=48053, every poll across it empty). It also tells `evict` from `unload`, which diffing polls
   sees as one disappearance either way — but NOT as the names suggest: `evict` is only the OOM-retry path
-  (`reason: "oom-retry"`), and `unload` is the one termination path, reached both by a keep-alive running out
-  and by a model displaced to make room for another load, with no reason for either (fork schema report,
-  2026-09-17). The lane says so rather than guessing "idle". `sw-events.ts` holds ONE
+  (`reason: "oom-retry"`), and `unload` is the one termination path, which since fork `10b026a3` carries a `reason`
+  (`expired`, `requested`, `displaced`, `leased`, `load-failed`, `oom-retry`). The lane words each one, and keeps a
+  hedged "keep-alive ran out, or another load displaced it" for an older server or an unknown reason. The same
+  build puts `memory_host` on an `/api/ps` row (absent = nothing spilled) and `at_ms` (wall clock) on every frame. `sw-events.ts` holds ONE
   connection per worker while a panel is open, `resource-events.ts` is the pure frame model + NDJSON
   reader, and `machineEventFrom` (vram.tsx) turns edges into lane spans. **The frame is TYPED from the fork's own
   schema**, `api/events.proto`, vendored and pinned at `src/proto/events.proto` (`events.proto.pin.json`) and generated
