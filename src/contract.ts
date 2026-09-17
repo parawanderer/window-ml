@@ -1074,7 +1074,13 @@ export interface LocateSubstep {
  *  you're on (label = its page title); `sheet-external` = a Google Sheet fetched by URL with the
  *  user's approval (label = its spreadsheet id); `fetch` = a CSV/table already fetched by `fetch_url`
  *  and read back out of the fetch cache (label = its URL), so no second request was made. */
-export interface TableSource { kind: "dom" | "sheet-current" | "sheet-external" | "fetch"; label: string; name?: string | null; }
+export interface TableSource { kind: "dom" | "sheet-current" | "sheet-external" | "fetch" | "pointer"; label: string; name?: string | null; }
+
+/** A table handed to `ml.pythonExec` BY VALUE rather than by where it lives: a {@link TableLike} (a fetched table, the
+ *  `Table` facade `ml.fetch` returns, a pointer's table) carrying its rows. It loads only when it is the WHOLE table:
+ *  a prefix (`truncated`, or fewer rows than `shape` says) is refused rather than analysed as if it were complete.
+ *  `pointer` names the `@tool:` it was resolved from, for the error and the log. */
+export type TableValue = Pick<TableLike, "columns" | "rows"> & Partial<Pick<TableLike, "shape" | "truncated">> & { pointer?: string };
 /** One loaded DataFrame for the `python-in` render: its variable name, its source, and either a
  *  rows preview (`columns`+`rows`) or `html: true` (loaded via `pd.read_html`, no clean preview). */
 export interface TablePreview { name: string; source: TableSource; columns?: string[]; rows?: (string | number | boolean | null)[][]; html?: boolean; }
@@ -2384,7 +2390,7 @@ export interface MlApi {
     fetchTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; render?: "latex" | "img"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | TableValue | Record<string, string | Element | TableValue> | null; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; render?: "latex" | "img"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] }; bootMs?: number; runMs?: number }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
     /** Read-only self-introspection tool for ml.agent (pass via `extraTools`): reports the run's model,
@@ -2530,7 +2536,7 @@ export interface MlApi {
     _fetchImageBase64(url: string): Promise<string>;
     _stitchFullPage(capture: () => Promise<string>): Promise<string>;
     _resolveTable(target: string | Element, raw?: boolean): { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string };
-    _loadTable(name: string, src: string | Element, raw?: boolean): Promise<{ name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } }>;
+    _loadTable(name: string, src: string | Element | TableValue, raw?: boolean): Promise<{ name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } }>;
     _resolveVisionModel(agentModel: string | null, vision: boolean | string | null): Promise<string | null>;
     _modelSees(model: string | null): Promise<boolean>;
     _nativeLookTool(memory?: VisionMemory): MlTool;

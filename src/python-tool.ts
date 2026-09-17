@@ -46,7 +46,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
     const currentClause = onSheet ? " Or `'current'` for THIS Google Sheet."
         : singleTable ? " Or `'current'` for the one table on this page." : "";
     const tablesDesc = "Spreadsheet/table data → pandas DataFrame(s). A SINGLE source string (a CSS selector " +
-        "for a page <table>/ARIA grid, or a Google Sheets URL) → loaded as `df`." + currentClause +
+        "for a page <table>/ARIA grid, a Google Sheets URL, a URL fetch_url already read, or an `@tool:` pointer to a table " +
+        "such as a fetch_url of a CSV/Parquet/Arrow file) → loaded as `df`." + currentClause +
         " OR a map { variable_name: source } (keys = Python identifiers) → each loaded under its name so you can " +
         "join them, e.g. {\"sales\":\"#report\",\"targets\":\"https://docs.google.com/spreadsheets/d/…\"} → use " +
         "`sales`/`targets` directly (also in a `tables` dict, tables['sales']). A Google Sheet is fetched FOR you by " +

@@ -154,7 +154,6 @@ test("ml.fetch on an Arrow file hands the page the Table facade", async () => {
 test("python_exec opens a fetched table by POINTER — tables: { df: \"@tool:…\" } — as a DataFrame", async () => {
     test.skip(!HAS_PYODIDE, "needs the bundled Pyodide (npm run fetch-pyodide)");
     test.setTimeout(120_000);
-    pending("POINTER_VALUES slice 5: python_exec reads a pointer");
     const [fetched, py] = await runSteps([
         { tool: "fetch_url", args: { url: `${data.url}/stock.arrow`, token: "the stock table" } },
         { tool: "python_exec", args: { mode: "readonly", tables: { df: '@tool:"the stock table"' },

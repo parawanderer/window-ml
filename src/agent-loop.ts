@@ -520,12 +520,32 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         };
         return { value: derefPipe(v, TokenStore.slotOf(ref), pipe), ...(warning ? { warning } : {}), meta };
     });
-    /** Rewrite a `look` at an image pointer into a look at that image; anything else passes through.
-     *  A bad pointer becomes an ERROR RESULT, never a throw: the model should read the fault and correct the
+    /** `python_exec` with a TABLE POINTER as a `tables` source (`tables: { df: "@tool:…" }`, or the single-source form).
+     *  The store lives here, so the loop resolves the pointer and hands the TABLE down by value (with the pointer's
+     *  name for the log); `ml.pythonExec` loads it, and refuses it when it is only a preview. Other sources pass through
+     *  untouched. A bad pointer, or one that is not a table, is an ERROR RESULT for the model to correct. */
+    const resolveTablePointers = (args: Record<string, unknown>, step: number): { args?: Record<string, unknown>; error?: string } | null => {
+        const tables = args?.tables;
+        const isRef = (v: unknown): v is string => typeof v === "string" && /^\s*@tool:/.test(v);
+        const refs = typeof tables === "string" ? (isRef(tables) ? [tables] : [])
+            : tables && typeof tables === "object" && !Array.isArray(tables) ? Object.values(tables).filter(isRef) : [];
+        if (!refs.length) return null;
+        const resolved = new Map<string, unknown>();
+        for (const ref of refs) {
+            const { value: v } = tokenStore.resolveRef(ref.trim(), opts.labelMatch);
+            if (!v) return { error: memoryFault(ref.trim(), tokenStore.nearest(ref.trim()), step) };
+            if (!v.table) return { error: `@tool:${v.id} is ${describeToken(v)}, not a table, so python_exec cannot load it as a DataFrame. Pass a pointer to a table (a fetch_url of a CSV/TSV/Parquet/Arrow file, a python_exec that returned a DataFrame), a URL fetch_url read, a CSS selector, or 'current'.` };
+            resolved.set(ref, { ...v.table, pointer: `@tool:${v.id}${v.label ? ` (${JSON.stringify(v.label)})` : ""}` });
+        }
+        const swap = (x: unknown) => (isRef(x) ? resolved.get(x) : x);
+        return { args: { ...args, tables: typeof tables === "string" ? swap(tables) : Object.fromEntries(Object.entries(tables as Record<string, unknown>).map(([k, x]) => [k, swap(x)])) } };
+    };
+    /** Rewrite a `look` at an image pointer into a look at that image, and a `python_exec` table pointer into the table;
+     *  anything else passes through. A bad pointer becomes an ERROR RESULT, never a throw: the model should read the fault and correct the
      *  call, exactly as it does for `dereference`, rather than the run dying on a mistyped id. */
     const lookArgs = (name: string, a: Record<string, unknown>, step: number): { args: Record<string, unknown> } | { error: string } => {
-        if (name !== "look") return { args: a };
-        const r = resolveLookPointer(a, step);
+        if (name !== "look" && name !== "python_exec") return { args: a };
+        const r = name === "look" ? resolveLookPointer(a, step) : resolveTablePointers(a, step);
         if (!r) return { args: a };
         return r.error ? { error: r.error } : { args: r.args! };
     };

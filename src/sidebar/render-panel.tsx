@@ -347,6 +347,7 @@ function tableSourceDesc(s: TableSource): { short: string; tip: string } {
         case "sheet-external": return { short: `sheet ${s.label}`, tip: "This data was fetched from an EXTERNAL Google Sheet with your approval." };
         case "sheet-current": return { short: s.label, tip: "This data was fetched from the Google Sheet you're currently on." };
         case "fetch": return { short: s.label, tip: `This table was parsed from ${s.label}, which the agent had already fetched — it was read from the fetch cache, not requested again.` };
+        case "pointer": return { short: s.label, tip: `This table is the one ${s.label} points at, handed over whole: nothing was fetched or parsed again.` };
         default: return { short: s.label, tip: `This data was extracted from a table on the current page (${s.label}).` };
     }
 }

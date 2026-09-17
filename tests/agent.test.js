@@ -3207,6 +3207,33 @@ test("pythonExec tables:'current' off a Google Sheet (with no table) errors befo
     assert.equal(fetched, false, "no privileged fetch when the page isn't a sheet");
 });
 
+// A TABLE BY VALUE (a pointer's table the loop resolved, or one a page script holds): loaded whole, labelled by its pointer,
+// and REFUSED when it is only a preview, because a sum over the first rows of a larger table is a confident wrong answer.
+test("pythonExec tables: a whole table by value loads its rows, labelled by the pointer it came from", async () => {
+    let pyTables = null;
+    const world = loadPageWorld({ onRuntimeMessage: (m) => {
+        if (m.type === "PYTHON_EXEC") { pyTables = m.payload.tables; return { data: { ok: true, value: "12", stdout: "" } }; }
+        return undefined;
+    } });
+    const r = await world.ml.pythonExec("return int(df['stock'].sum())", { tables: { df: { columns: ["sku", "stock"], rows: [["a", 5], ["b", 7]], shape: [2, 2], pointer: '@tool:abc1234 ("the stock table")' } } });
+    assert.equal(pyTables.length, 1);
+    assert.equal(pyTables[0].name, "df");
+    assert.deepEqual(JSON.parse(JSON.stringify(pyTables[0].data)), { kind: "rows", columns: ["sku", "stock"], rows: [["a", 5], ["b", 7]] });
+    assert.deepEqual(JSON.parse(JSON.stringify(r.inputTables[0].source)), { kind: "pointer", label: '@tool:abc1234 ("the stock table")' }, "the log names where the table came from");
+});
+
+test("pythonExec tables: a PREVIEW by value is refused, and nothing reaches the sandbox", async () => {
+    let ran = false;
+    const world = loadPageWorld({ onRuntimeMessage: (m) => { if (m.type === "PYTHON_EXEC") ran = true; return { data: { ok: true, value: 1, stdout: "" } }; } });
+    await assert.rejects(
+        world.ml.pythonExec("return len(df)", { tables: { df: { columns: ["a"], rows: [[1], [2]], shape: [48231, 1], pointer: "@tool:abc1234" } } }),
+        /@tool:abc1234 holds 2 of 48,231 rows, a preview rather than the whole table, so it is not loaded\. Pass the URL fetch_url read/);
+    await assert.rejects(
+        world.ml.pythonExec("return len(df)", { tables: { columns: ["a"], rows: [[1]], truncated: true } }),
+        /this table holds 1 of more rows/, "`truncated` alone is enough, even with no shape");
+    assert.equal(ran, false, "a refused table never runs any Python");
+});
+
 test("pythonExec tables: an invalid variable name in the map is rejected", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: { ok: true, value: 1, stdout: "" } }) });
     await assert.rejects(world.ml.pythonExec("return 1", { tables: { "2bad": "#t" } }), /valid Python variable name/);
