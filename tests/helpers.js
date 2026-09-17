@@ -128,6 +128,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
     const listeners = [];
     const connectListeners = [];
+    const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
     const stored = { ...config };
     const localStore = { ...local };   // seed chrome.storage.local (e.g. ml_bgrun_* snapshots for durable-resume tests)
     const sessionStore = { ...session };   // seed chrome.storage.session (e.g. a housekeeping heartbeat left by an "earlier" worker)
@@ -249,6 +250,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 // The PDF-print flow opens a print.html tab and later removes it by id.
                 create: async (props) => { tabsCreated.push(props); return { id: 4242 + tabsCreated.length }; },
                 remove: async (id) => { tabsRemoved.push(id); },
+                onRemoved: { addListener: (fn) => tabRemovedListeners.push(fn) },
             }
         }
     };
@@ -273,20 +275,26 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         // Simulates chrome.runtime.sendMessage hitting the listener.
         send: (message, sender = {}) =>
             new Promise((resolve) => listeners[0](message, sender, resolve)),
+        /** Simulates the user closing a tab (chrome.tabs.onRemoved). */
+        closeTab: (tabId) => { for (const fn of tabRemovedListeners) fn(tabId, {}); },
         // Simulates the content script opening a streaming Port. Returns a client
         // handle: send(msg) posts to the background port; onMessage(fn) receives
         // background pushes; messages[] collects them.
-        connect: (name = "LLM_STREAM") => {
+        connect: (name = "LLM_STREAM", sender = undefined) => {
             const messages = [];
             const clientHandlers = [];
             const backgroundHandlers = [];
             const disconnectHandlers = [];   // background-side port.onDisconnect listeners
+            let disconnected = false;
             const port = {
                 name,
+                // who opened it: `{ url }` for an extension page, `{ url, tab }` for a content script
+                ...(sender ? { sender } : {}),
                 onMessage: { addListener: (fn) => backgroundHandlers.push(fn) },
                 postMessage: (msg) => { messages.push(msg); for (const h of clientHandlers) h(msg); },
                 onDisconnect: { addListener: (fn) => disconnectHandlers.push(fn) },
-                disconnect: () => {}
+                // the background closing the port itself
+                disconnect: () => { disconnected = true; }
             };
             for (const fn of connectListeners) fn(port);
             return {
@@ -295,7 +303,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 send: (msg) => { for (const h of backgroundHandlers) h(msg); },
                 // Simulate content.js disconnecting the port (what an ABORT_REQUEST triggers) →
                 // fires the background's onDisconnect handlers, which abort the streaming fetch.
-                disconnect: () => { for (const h of disconnectHandlers) h(); }
+                disconnect: () => { for (const h of disconnectHandlers) h(); },
+                /** did the background close this port? */
+                wasDisconnected: () => disconnected,
             };
         }
     };

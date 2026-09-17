@@ -97,6 +97,9 @@ export interface MlConfig {
     agentHud: AgentHud;
     /** also show the corner HUD alongside the DevTools panel (coexist) */
     agentHudInDevtools: boolean;
+    /** With the debug panel off, still report every page's own sessions (console calls, page scripts) to the chat
+     *  page's session index. Off by default: it wakes each page's debug bus, which is otherwise dormant and free. */
+    listPageSessions: boolean;
     /** Small "utility" model for cheap side tasks (e.g. session-title summaries).
      *  Empty → fall back to the main `model`. numCtx/forceCpu apply only when set. */
     utilityModel: string;
@@ -726,6 +729,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     cardCorner: "bottom-right",
     agentHud: "progress",
     agentHudInDevtools: false,
+    listPageSessions: false,
     utilityModel: "",
     utilityNumCtx: 4096,
     utilityForceCpu: false,

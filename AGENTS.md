@@ -260,7 +260,10 @@ learned by shipping the wrong version first.
   `runtime:hash` in a multi-runtime client: split keys on the LAST `:`.
 - **Chat page.** `src/chat/` never reaches `chrome`: the web build fails on a `chrome.*` reference. Events reach
   `sessionMap` only through `SessionFeed` and `onDebug`, never written by hand, and a transcript changes only when the
-  runtime says so (no optimistic updates).
+  runtime says so (no optimistic updates). The background's session index (`session-index.ts`) is fed where the DevTools
+  panel is fed, never at a second point: a background run's start and result are emitted page-side on some surfaces and
+  background-side on others, and feeding both records a run twice. A page's forwarded event is untrusted and bound to
+  its tab.
 - **Exports.** Diff two runs with `run.json` after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`.
 
 ## Showing a run: the log, the exports and tooltips
