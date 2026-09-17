@@ -538,7 +538,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const { value: v } = tokenStore.resolveRef(ref.trim(), opts.labelMatch);
             if (!v) return { error: memoryFault(ref.trim(), tokenStore.nearest(ref.trim()), step) };
             if (!v.table) return { error: `@tool:${v.id} is ${describeToken(v)}, not a table, so python_exec cannot load it as a DataFrame. Pass a pointer to a table (a fetch_url of a CSV/TSV/Parquet/Arrow file, a python_exec that returned a DataFrame), a URL fetch_url read, a CSS selector, or 'current'.` };
-            resolved.set(ref, { ...v.table, pointer: `@tool:${v.id}${v.label ? ` (${JSON.stringify(v.label)})` : ""}` });
+            // `value` names the WHOLE table in the value store when `table` is its preview: the loader reads that instead.
+            // Only from a host that claims values, since the store serves a stored table only to a run holding it; a
+            // page-hosted run gets the preview refusal that names the URL form.
+            resolved.set(ref, { ...v.table, pointer: `@tool:${v.id}${v.label ? ` (${JSON.stringify(v.label)})` : ""}`, ...(v.value && opts.claimValue ? { value: v.value } : {}) });
         }
         const swap = (x: unknown) => (isRef(x) ? resolved.get(x) : x);
         return { args: { ...args, tables: typeof tables === "string" ? swap(tables) : Object.fromEntries(Object.entries(tables as Record<string, unknown>).map(([k, x]) => [k, swap(x)])) } };
@@ -805,8 +808,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // Described through tableOf, so a POINTER to a table carries the same pandas surface a fetched
                 // one does (`shape`, `dtypes`) rather than a bare grid — `dereference` and `ml.fetch` then hand
                 // back the same kind of object, which is the whole point of there being one table type.
+                // How a delimited body was split travels with it: a stored value is re-read the same way, so pandas
+                // cannot disagree with the preview the model was shown.
                 const tbl = df ? tableOf(df.columns, df.rows)
-                    : r?.type === "table" ? tableOf(r.columns, r.rows, r.rowCount) : undefined;
+                    : r?.type === "table" ? { ...tableOf(r.columns, r.rows, r.rowCount), ...(r.delimiter ? { delimiter: r.delimiter } : {}), ...(r.headerless ? { headerless: true } : {}) } : undefined;
                 // The WHOLE table, when the render is a preview of one the store holds: the pointer names it, so the
                 // run holds it.
                 const value = r?.type === "table" ? r.value : undefined;

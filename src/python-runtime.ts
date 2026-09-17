@@ -46,6 +46,25 @@ _tsj = globals().get("INJECTED_TABLES_JSON")
 if _tsj:
     import json as _json
     def _build_df(_t):
+        # A STORED table (the value store): its bytes were copied once into a bytearray bound as _t["buf"], and are
+        # decoded here by the format they arrived in. A delimited body is re-read with the columns, delimiter and
+        # header decision its preview already made, so pandas cannot disagree with what the model was shown.
+        if _t.get("kind") == "value":
+            _buf = globals().pop(_t.get("buf") or "", None)
+            if _buf is None:
+                raise RuntimeError("the stored table was not handed to the sandbox")
+            _fmt = _t.get("format")
+            if _fmt in ("arrow-file", "arrow-stream"):
+                import pyarrow as _pa, pyarrow.ipc as _ipc
+                _src = _pa.py_buffer(_buf)
+                return (_ipc.open_file(_src) if _fmt == "arrow-file" else _ipc.open_stream(_src)).read_all().to_pandas()
+            if _fmt == "parquet":
+                import pyarrow as _pa, pyarrow.parquet as _pq
+                return _pq.read_table(_pa.BufferReader(_pa.py_buffer(_buf))).to_pandas()
+            if _fmt in ("csv", "tsv"):
+                _sep = _t.get("delimiter") or ("\t" if _fmt == "tsv" else ",")
+                return pd.read_csv(io.BytesIO(_buf), sep=_sep, header=None if _t.get("headerless") else 0, names=_t.get("columns") or None)
+            raise RuntimeError("a stored table in a format the sandbox does not read: " + str(_fmt))
         if _t.get("kind") == "rows":
             _cols = _t.get("columns") or []
             _rows = _t.get("rows") or []
@@ -459,4 +478,24 @@ export function completeIn(py: any, code: string, line: number, column: number, 
         for (const k of ["_ml_c_code", "_ml_c_ns"]) { try { py.globals.delete(k); } catch { /* absent */ } }
         unharden(py, saved);
     }
+}
+
+/**
+ * A STORED table's bytes into Python: ONE copy, straight into a `bytearray` in Pyodide's memory, bound as `name` for the
+ * prelude to decode (and drop). It is a buffer, never a JsProxy: a proxy is a handle into this realm, which the readonly
+ * hardening exists to remove, while a `bytearray` carries no capability at all. Returns the entry with its buffer
+ * replaced by that name, since an ArrayBuffer does not survive the JSON the prelude reads.
+ */
+export function injectStoredTable(py: any, ns: any, t: any, name: string, bound: string[]): unknown {
+    const buffer = t?.data?.kind === "value" ? t.data.buffer : undefined;
+    if (!(buffer instanceof ArrayBuffer)) return t;
+    const bytes = py.runPython("bytearray")(buffer.byteLength);
+    try {
+        const view = bytes.getBuffer("u8");
+        try { view.data.set(new Uint8Array(buffer)); } finally { view.release(); }
+        ns.set(name, bytes);
+    } finally { bytes.destroy(); }
+    bound.push(name);
+    const { buffer: _dropped, ...data } = t.data;
+    return { ...t, data: { ...data, buf: name } };
 }

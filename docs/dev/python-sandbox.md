@@ -42,8 +42,30 @@ call's arguments are rewritten for execution only, so the step's raw view keeps 
 travels down BY VALUE with its `shape` and the pointer's name. `ml.pythonExec` accepts such a `TableValue` from any
 caller (a page script's table, the `Table` facade from `ml.fetch`) and loads it only when it is WHOLE: a preview
 (`truncated`, or fewer rows than `shape` says) is refused with the URL form that loads the whole parsed table, because a
-DataFrame over a prefix answers confidently and wrongly. This is POINTER_VALUES' interim step; the value store (slice 4)
-is what lets a pointer reach past the page's parse cap.
+DataFrame over a prefix answers confidently and wrongly.
+
+**A pointer to a STORED table** (a fetched table past the parse cap, whose body the value store holds; `docs/dev/pointers.md`)
+reads the whole table instead, POINTER_VALUES slice 5:
+
+- The loop adds the store key (`value`) and the preview's `delimiter`/`headerless` to the `TableValue`. It does this only
+  when its host claims values (`claimValue`, a background run), so a page-hosted run still gets the preview refusal.
+- `_loadTable` sends `{ kind: "value", key, label, columns, delimiter?, headerless? }` and none of the preview rows. The
+  log shows the preview with the whole table's `rowCount`, and the model's load note gives the whole size.
+- The background `PYTHON_EXEC` handler refuses a key unless a run active on the sender's tab holds it. Our own surfaces
+  are trusted. A key that is no longer stored passes, so the read fails with the store's reason.
+- The offscreen document reads the Blob (`withStoredTables`) and TRANSFERS its ArrayBuffer to the worker. A missing value
+  fails the whole run with the store's message: `python_exec could not load \`df\` from @tool:… (…): the stored value …
+  was evicted …`.
+- The worker makes the ONE copy: `injectStoredTable` (python-runtime.ts, so the CPython tests use it) allocates a
+  `bytearray`, fills it through `getBuffer`, and binds it as `_ml_tbuf_<i>`. It is a buffer, never a JsProxy, so it
+  crosses the hardened boundary without widening it.
+- The prelude decodes by stored format:
+  - `arrow-file` / `arrow-stream`: `pyarrow.ipc` → `to_pandas()`.
+  - `parquet`: `pyarrow.parquet.read_table` → `to_pandas()`.
+  - `csv` / `tsv`: `pd.read_csv` with the preview's `sep`, header decision and column `names`, so pandas cannot disagree
+    with what the model was shown.
+
+  The prelude pops the buffer, and the worker deletes the name in `finally`.
 **A Google Sheets URL** or **`'current'`** (the sheet you're on) is fetched as CSV. Numeric
 columns are **auto-cast page-side** (`dom.ts` `castTableColumns`, pure/tested: a column
 ≥90%-numeric after stripping currency/commas/%/accounting-parens → `number|null`, else strings)

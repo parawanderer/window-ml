@@ -550,7 +550,7 @@ function PythonInRender({ d, live, failLine, ctx, failed }: { d: Extract<RenderD
                             ? <SheetChip id={t.source.label} label={t.source.name || undefined} />   /* id → a friendly chip; name = the real sheet title */
                             : <span class="tt r-py-src"><span class="r-py-srcval">{src.short}</span><span class="tt-pop left" role="tooltip">{src.tip}</span></span>}
                 </>}>
-                    {t.rows ? <PyDfTable columns={t.columns || []} rows={t.rows} />
+                    {t.rows ? <PyDfTable columns={t.columns || []} rows={t.rows} rowCount={t.rowCount} />
                         : <div class="dim r-py-more">loaded via pd.read_html (no clean row preview)</div>}
                 </PyInTable>;
             })}

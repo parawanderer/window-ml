@@ -266,7 +266,11 @@ Each slice ships and is useful without the next:
    (`value-store.ts`, #115), and the capture, claim, release, sweep and budget setting (`sw-values.ts`). Bytes are kept
    in the format they arrived in; conversion to Arrow IPC comes with slice 5, where pyarrow does it.
 5. **`python_exec` reads a pointer**: `tables: { df: "@tool:…" }` opens the stored IPC as a frame. The URL form
-   stays as an alias. This is the slice that removes the JSON round trip.
+   stays as an alias. This is the slice that removes the JSON round trip. **Built**, with one departure: the stored bytes
+   are read in the format they ARRIVED in (Arrow IPC, Parquet via pyarrow, delimited text via `pd.read_csv` with the
+   preview's decisions), not converted to IPC at capture. Converting at capture would wake Pyodide for every large
+   fetch, including the ones nothing reads; IPC conversion moves to slice 7, which is the first reader that needs random
+   access. How it works: `docs/dev/python-sandbox.md`.
 6. **Python writes pointers back**: a returned DataFrame is stored as IPC and becomes a table pointer.
 7. **The facade reads stored tables lazily**, by column and slice.
 8. **The features that were waiting on this**: copy-all and save-as-file (`docs/spec/TABLE_VIEW.md`), and a

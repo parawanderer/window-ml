@@ -1086,10 +1086,10 @@ export interface TableSource { kind: "dom" | "sheet-current" | "sheet-external" 
  *  `Table` facade `ml.fetch` returns, a pointer's table) carrying its rows. It loads only when it is the WHOLE table:
  *  a prefix (`truncated`, or fewer rows than `shape` says) is refused rather than analysed as if it were complete.
  *  `pointer` names the `@tool:` it was resolved from, for the error and the log. */
-export type TableValue = Pick<TableLike, "columns" | "rows"> & Partial<Pick<TableLike, "shape" | "truncated">> & { pointer?: string };
+export type TableValue = Pick<TableLike, "columns" | "rows"> & Partial<Pick<TableLike, "shape" | "truncated" | "delimiter" | "headerless">> & { pointer?: string; value?: string };
 /** One loaded DataFrame for the `python-in` render: its variable name, its source, and either a
  *  rows preview (`columns`+`rows`) or `html: true` (loaded via `pd.read_html`, no clean preview). */
-export interface TablePreview { name: string; source: TableSource; columns?: string[]; rows?: (string | number | boolean | null)[][]; html?: boolean; }
+export interface TablePreview { name: string; source: TableSource; columns?: string[]; rows?: (string | number | boolean | null)[][]; html?: boolean; rowCount?: number; }
 
 /** @unstable INTERNAL, and reachable from the published JSON export — a new variant/member may
  *  appear in any release, so the generated `docs/spec/export.schema.json` marks it open rather
@@ -2543,7 +2543,7 @@ export interface MlApi {
     _fetchImageBase64(url: string): Promise<string>;
     _stitchFullPage(capture: () => Promise<string>): Promise<string>;
     _resolveTable(target: string | Element, raw?: boolean): { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string };
-    _loadTable(name: string, src: string | Element | TableValue, raw?: boolean): Promise<{ name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } }>;
+    _loadTable(name: string, src: string | Element | TableValue, raw?: boolean): Promise<{ name: string; source: TableSource; preview?: (string | number | boolean | null)[][]; rowCount?: number; data: { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } | { kind: "value"; key: string; label: string; columns: string[]; delimiter?: string; headerless?: boolean } }>;
     _resolveVisionModel(agentModel: string | null, vision: boolean | string | null): Promise<string | null>;
     _modelSees(model: string | null): Promise<boolean>;
     _nativeLookTool(memory?: VisionMemory): MlTool;

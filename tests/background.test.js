@@ -4129,3 +4129,27 @@ test("FETCH_URL: the value store's budget is the setting, and each eviction or r
     assert.deepEqual(none.keys, [undefined], "a body larger than the whole budget is not stored, and the fetch still answers");
     assert.deepEqual(none.events.map((e) => [e.kind, e.reason, e.key]), [["refuse", "budget", "https://api.example/c.csv"]]);
 });
+
+test("SECURITY (PYTHON_EXEC): a page may read a STORED table only while a run on its own tab holds it", async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const { ValueStore } = await import("../src/value-store.ts");
+    const idb = new IDBFactory();
+    const seed = new ValueStore({ idb, budgetBytes: () => 1e9 });
+    const held = await seed.put(new Blob(["a\n1\n"]), { format: "csv", session: "run-elsewhere" });
+    const loose = await seed.put(new Blob(["a\n1\n"]), { format: "csv" });
+    const bg = loadBackground({ config: baseConfig(), indexedDB: idb });
+    const table = (key) => ({ code: "return len(df)", tables: [{ name: "df", data: { kind: "value", key, label: "@tool:abc1234", columns: ["a"] } }] });
+    const page = { tab: { id: 9 }, url: "https://evil.example/attack" };
+
+    for (const key of [held.key, loose.key]) {
+        const r = await bg.send({ type: "PYTHON_EXEC", payload: table(key) }, page);
+        assert.match(r.error, /^Refused: that stored table belongs to a run that is not running on this page\./, `${key} is not this page's`);
+    }
+    assert.equal(bg.pyRuns.filter((m) => m.type === "PY_RUN").length, 0, "nothing reached the sandbox");
+
+    // A key the store no longer holds goes through, so the offscreen read fails with the store's own reason.
+    await bg.send({ type: "PYTHON_EXEC", payload: table("v00000000000000ff") }, page);
+    // And our own surface (the bench) is trusted, as for every other PYTHON_EXEC decision.
+    await bg.send({ type: "PYTHON_EXEC", payload: table(held.key) }, { tab: { id: 9 }, url: "chrome-extension://test/sidebar.html" });
+    assert.deepEqual(bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => m.tables[0].data.key), ["v00000000000000ff", held.key]);
+});

@@ -129,7 +129,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             // (do they read_csv? what variable?). State it plainly at the top so they infer the setup:
             // `img`/`df`/named DataFrames are PRE-loaded, reference them directly.
             const loaded: string[] = [];
-            for (const t of r.inputTables || []) loaded.push(t.rows ? `a ${t.rows.length}×${(t.columns?.length || t.rows[0]?.length || 0)} DataFrame → \`${t.name}\`` : `a DataFrame → \`${t.name}\``);
+            // `rowCount` is the WHOLE table's when the render holds only its preview (a stored table): the model is told the size it has.
+            for (const t of r.inputTables || []) loaded.push(t.rows ? `a ${t.rowCount ?? t.rows.length}×${(t.columns?.length || t.rows[0]?.length || 0)} DataFrame → \`${t.name}\`` : `a DataFrame → \`${t.name}\``);
             if (r.inputImage) loaded.push("the screenshot → `img` (PIL) / `img_np` (numpy)");
             const loadedNote = loaded.length ? `[loaded, reference directly] ${loaded.join(", ")}.\n\n` : "";
             const capNote = capClamped ? `(output limit clamped to ${PY_OUT_MAX} chars — the hard ceiling.)\n\n` : "";

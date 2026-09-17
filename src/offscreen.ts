@@ -18,6 +18,36 @@ const PY_TIMEOUT_MS = 15000;
 // run (an unarmed completion, a boot that never finishes) is still cleared.
 const PY_START_TIMEOUT_MS = 120000;
 
+import { ValueStore } from "./value-store";
+
+// The value store, read here rather than in the worker: the bytes are TRANSFERRED to the worker (no copy), and the one copy
+// is the worker's, into Pyodide's memory. Only reads happen here, so the budget never applies.
+let values: ValueStore | null = null;
+
+/**
+ * Swap each `tables` entry that names a STORED value (`data.kind === "value"`) for one carrying its bytes and format, and
+ * list the buffers to transfer. A value that is gone fails the whole run with the store's reason: a table that was
+ * asked for and silently left out would run the script against nothing.
+ */
+async function withStoredTables(tables: unknown): Promise<{ tables: unknown; transfer: ArrayBuffer[] } | { error: string }> {
+    if (!Array.isArray(tables) || !tables.some((t) => t?.data?.kind === "value")) return { tables, transfer: [] };
+    values ??= new ValueStore({ budgetBytes: () => Number.POSITIVE_INFINITY });
+    const transfer: ArrayBuffer[] = [];
+    const out: unknown[] = [];
+    for (const t of tables) {
+        if (t?.data?.kind !== "value") { out.push(t); continue; }
+        try {
+            const { row, blob } = await values.get(String(t.data.key));
+            const buffer = await blob.arrayBuffer();
+            transfer.push(buffer);
+            out.push({ ...t, data: { ...t.data, format: row.format, buffer } });
+        } catch (e) {
+            return { error: `python_exec could not load \`${t.name}\` from ${t.data.label ?? "its pointer"}: ${(e as Error)?.message ?? e}` };
+        }
+    }
+    return { tables: out, transfer };
+}
+
 // `bootMs`/`runMs` come from the WORKER, which is the executor — anything measured downstream of it is
 // measuring the message bus as well. See python-worker.ts.
 type PyEnv = { python: string; pyodide: string; packages: { name: string; version?: string }[] };
@@ -104,7 +134,7 @@ function ensureWorker(): Worker {
  *   ends there wedges the single Pyodide instance for every later call with nobody watching. In the bench a
  *   person is sitting in front of it, chose this, and can close the panel.
  */
-function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }): Promise<PyResult> {
+function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string, env?: boolean, noTimeout?: boolean, complete?: { line: number; column: number; bench?: string }, bench?: { persist?: boolean; reset?: boolean }, transfer: ArrayBuffer[] = []): Promise<PyResult> {
     const w = ensureWorker();
     const id = nextId++;
     return new Promise((resolve) => {
@@ -122,7 +152,7 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
         const timer = noTimeout || complete || bench?.reset ? (0 as unknown as ReturnType<typeof setTimeout>)
             : killAfter(id, PY_START_TIMEOUT_MS, `The Python sandbox did not start within ${PY_START_TIMEOUT_MS / 1000}s and was terminated.`, "start-timeout");
         pending.set(id, { resolve, timer, streamId, armOnStart: !(noTimeout || complete || bench?.reset) });   // streamId → the background can key live stdout chunks
-        w.postMessage({ id, code, image, hardened, tables, stream, ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}) });
+        w.postMessage({ id, code, image, hardened, tables, stream, ...(env ? { env: true } : {}), ...(complete ? { complete } : {}), ...(bench?.persist ? { persist: true } : {}), ...(bench?.reset ? { benchReset: true } : {}) }, transfer);
     });
 }
 
@@ -139,7 +169,10 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     if (msg?.type !== "PY_RUN") return;
     // The worker serializes runs internally (single Pyodide instance + harden/unharden swap),
     // so we can forward straight through — no need to chain here.
-    runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset })
+    withStoredTables(msg.tables ?? null)
+        .then((t) => "error" in t
+            ? { ok: false, stdout: "", error: t.error }
+            : runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, t.tables, msg.stream, msg.streamId, msg.env, msg.noTimeout, msg.complete, { persist: msg.persist, reset: msg.benchReset }, t.transfer))
         .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
     return true;   // keep the channel open for the async result
 });

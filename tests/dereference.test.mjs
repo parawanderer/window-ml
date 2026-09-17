@@ -421,6 +421,18 @@ test("a table pointer whose render names a STORED value keeps the key and claims
     assert.deepEqual(claimed, ["v0123456789abcdef"]);
 });
 
+test("python_exec: a pointer to a STORED table hands down its key with the split decisions, but only from a host that claims values", async () => {
+    const PREVIEW = { ...STOCK, rowCount: 300_000, value: "v0123456789abcdef", delimiter: ";", headerless: true };
+    const script = [call("fetch_url", { url: "https://x.test/big.csv", token: "the big table" }), call("python_exec", { code: "return len(df)", tables: { df: '@tool:"the big table"' } }, "c2")];
+    const tool = (name) => (name === "fetch_url" ? { result: "type: csv", renderOut: PREVIEW } : { result: "300000" });
+    const bg = (await drive(script, tool, { claimValue: () => {} })).got.find((g) => g.name === "python_exec").args.tables.df;
+    assert.equal(bg.value, "v0123456789abcdef", "the loader reads the whole table by this key");
+    assert.equal(bg.delimiter, ";");
+    assert.equal(bg.headerless, true, "…split exactly as the preview was");
+    const page = (await drive(script, tool)).got.find((g) => g.name === "python_exec").args.tables.df;
+    assert.equal(page.value, undefined, "a page-hosted run holds no stored value, so it gets the preview (and its refusal)");
+});
+
 test("python_exec: a pointer to something that is not a table says what it is instead", async () => {
     const { results, got } = await drive(
         [call("exec", { js: "x", token: "the log" }), call("python_exec", { code: "1", tables: { df: '@tool:"the log"' } }, "c2")],

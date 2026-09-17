@@ -4,10 +4,15 @@
 // budget. Reads go through the worker's test-only `__mlValues`: no tool reads a stored value until slice 5.
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 
 test.describe.configure({ mode: "default" });
+
+const HAS_PYODIDE = existsSync(join(dirname(fileURLToPath(import.meta.url)), "../../dist/pyodide/pyodide.mjs"));
 
 /** Past MAX_TABLE_ROWS (200,000) and under the 8 MB read cap: its preview is not the whole table. */
 const ROWS = 250_000;
@@ -34,7 +39,7 @@ test.beforeAll(async () => {
     // Room for ONE body (~3.8 MB) and not two.
     await configureExtension(ext.sw, {
         chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model",
-        modelFilter: "", debugMode: "off", autoApproveReadonly: true, valueStoreBudgetMB: 6,
+        modelFilter: "", debugMode: "off", autoApproveReadonly: true, autoApprovePython: true, valueStoreBudgetMB: 6,
     });
     page = await ext.context.newPage();
     await page.goto(`${fake.url}/api/version`);
@@ -47,19 +52,25 @@ test.afterAll(async () => {
     await data?.stop();
 });
 
-/** One background-hosted run that fetches `url` under a pointer label, every gate approved from the worker. Returns the run's hash and what the tool told the model. */
-async function fetchInRun(url, label) {
+/** One background-hosted run of scripted tool `steps`, every gate approved from the worker. Returns the run's hash and what
+ *  each tool told the model, in order. */
+async function runSteps(steps) {
     const before = fake.calls().length;
-    fake.setScript([{ tool: "fetch_url", args: { url, token: label } }, { content: "done" }]);
-    const run = page.evaluate(() => window.ml.agent("Read the orders.", { env: false, approvalRouting: "both", toolTokens: true }));
-    const deadline = Date.now() + 60_000;
-    while (Date.now() < deadline && fake.calls().length - before < 2) {
+    fake.setScript([...steps, { content: "done" }]);
+    const run = page.evaluate(() => window.ml.agent("Read the orders.", { env: false, approvalRouting: "both", toolTokens: true, extraTools: [window.ml.pythonTool()] }));
+    const deadline = Date.now() + 120_000;
+    while (Date.now() < deadline && fake.calls().length - before < steps.length + 1) {
         for (const g of await ext.sw.evaluate(() => globalThis.__mlApprovals.list())) await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), g.key);
         await new Promise((r) => setTimeout(r, 200));
     }
     const result = await run;
-    const tool = fake.calls().at(-1).messages.filter((m) => m.role === "tool").at(-1);
-    return { hash: result.hash, seen: String(tool?.content ?? "") };
+    const tools = fake.calls().at(-1).messages.filter((m) => m.role === "tool").map((m) => String(m.content ?? ""));
+    return { hash: result.hash, seen: tools.slice(-steps.length) };
+}
+/** A run that only fetches `url` under a pointer label. */
+async function fetchInRun(url, label) {
+    const { hash, seen } = await runSteps([{ tool: "fetch_url", args: { url, token: label } }]);
+    return { hash, seen: seen[0] };
 }
 
 const rows = () => ext.sw.evaluate(() => globalThis.__mlValues.rows());
@@ -85,4 +96,23 @@ test("a table past the parse cap is stored whole and held by its run; the next o
     await expect.poll(async () => (await page.evaluate(() => window.ml.__housekeeping()))
         .filter((e) => e.subsystem === "value-store").map((e) => [e.kind, e.reason, e.bytes]), { timeout: 10_000 })
         .toEqual([["evict", "budget", data.bytes]]);
+});
+
+test("python_exec reads a stored table WHOLE by pointer; once a later fetch evicts it, the same pointer fails with why", async () => {
+    test.skip(!HAS_PYODIDE, "needs the bundled Pyodide (npm run fetch-pyodide)");
+    test.setTimeout(180_000);
+    const py = { mode: "readonly", tables: { df: '@tool:"the orders"' }, code: "return [len(df), round(float(df['revenue'].sum()), 1), str(df.dtypes['order_id'])]" };
+    const { seen } = await runSteps([
+        { tool: "fetch_url", args: { url: `${data.url}/orders.csv?copy=3`, token: "the orders" } },
+        { tool: "python_exec", args: py },
+        { tool: "fetch_url", args: { url: `${data.url}/orders.csv?copy=4`, token: "more orders" } },
+        { tool: "python_exec", args: py },
+    ]);
+    expect(seen[0], "setup: a preview, not the whole table").toMatch(/\[250,000 rows x 3 columns\]/);
+    // Every row, where the preview holds 200,000: the sum over the whole revenue column, computed the same way here.
+    let sum = 0;
+    for (let i = 0; i < ROWS; i++) sum += (i % 97) + 0.5;
+    expect(seen[1]).toContain(`[250000,${sum},"int64"]`);
+    expect(seen[1], "and the note says the size that was loaded, not the preview's").toContain("a 250000×3 DataFrame → `df`");
+    expect(seen[3], "the evicted value fails loudly, never the preview").toMatch(/could not load `df` from @tool:[0-9a-f]{7} \("the orders"\): the stored value v[0-9a-f]{16} \(http[^)]*copy=3\) was evicted to keep the value store within its storage budget/);
 });

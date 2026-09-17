@@ -24,7 +24,7 @@ import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configure
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, recordHousekeeping } from "./sw-housekeeping";
-import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
+import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -1313,6 +1313,22 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             if (message.payload?.benchReset && !ownSurface) {
                 sendResponse({ error: "Refused: the workbench's state is not a page's to reset." });
                 return;
+            }
+            // A STORED table is read only for a run that holds it. The key reaches the page (the loop hands the
+            // table down through the delegated tool), so a page may pass one, but only while a run hosted on its own
+            // tab holds that value: a key from somewhere else reads nothing. A key no longer stored is let through, so
+            // the offscreen read fails with the store's own reason. Our own surfaces are trusted, as for everything here.
+            const stored = (Array.isArray(message.payload?.tables) ? message.payload.tables as { data?: { kind?: string; key?: unknown } }[] : [])
+                .filter((t) => t?.data?.kind === "value");
+            if (stored.length && !ownSurface) {
+                const running = sender.tab?.id != null ? activeRuns.get(sender.tab.id) : undefined;
+                for (const t of stored) {
+                    const holders = await valueHolders(String(t.data?.key));
+                    if (holders && !holders.some((h) => running?.has(h))) {
+                        sendResponse({ error: "Refused: that stored table belongs to a run that is not running on this page." });
+                        return;
+                    }
+                }
             }
             const persist = !!message.payload?.persist && ownSurface;
             const benchReset = !!message.payload?.benchReset;
