@@ -20,6 +20,9 @@ assumption about it.
 - **The server's prefix cache.** Rewriting early messages invalidates the cached prefix, so the next turn pays a
   full prefill. Compaction has a cost the request hints and the resource panel can measure.
 
+The model can do part of this itself: [`AGENT_COMPACTION.md`](AGENT_COMPACTION.md) sketches a `collapse` operation over
+pointers, with the same stub format and a different trigger.
+
 ## Open questions
 
 - When: at a threshold of the context window, on resume, or only when asked?

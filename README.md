@@ -33,6 +33,7 @@ So far this is mostly glue. Few of the ideas have actually been tested; the midd
 | --- | --- | --- |
 | You can see exactly what the model saw on every run, and where the time went | the sidebar, the exports, the server's event stream | everywhere |
 | A tool's output is referred to by a short pointer instead of being copied back into the context | a prompt and a dereference tool; one A/B pilot | post-training |
+| The agent manages its own context: it collapses stale tool outputs to their pointers with a projection it picks, and expands them when it needs them again. Pointers name typed objects (a table, not its text) that JavaScript and Python compute over | typed table pointers both runtimes read; collapse itself not started ([notes](docs/spec/AGENT_COMPACTION.md)) | the agent, then post-training |
 | Arithmetic in a thinking block is worked out exactly and the result spliced into the output | not started | the inference engine's decode loop, then post-training |
 | The server decides where a model goes and how long it stays loaded, learned from how models actually get used, with no knobs for the caller | the Ollama fork | the server |
 | The client tells the server who is waiting on each request and which requests belong together | sent and recorded, as data for the placement and keep-alive predictor | the server |
