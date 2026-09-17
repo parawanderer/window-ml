@@ -132,6 +132,11 @@ export class SessionServer {
         return out;
     }
 
+    /** The runtime's description changed (a capability came or went): tell every connected page. */
+    runtimeChanged(): void {
+        for (const client of this.clients) this.post(client, { type: "runtime", runtime: this.opts.runtime() });
+    }
+
     /** A tab's document went away; send the rows that changed. */
     pageGone(tabId: number, opts: { closed: boolean }): void {
         const rows = this.index.pageGone(tabId, opts);

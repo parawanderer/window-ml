@@ -109,13 +109,89 @@ test("a closed tab or a new document interrupts the page-hosted runs it held", T
     assert.equal(rows().get("bbbb0002").page.tabId, undefined);
 });
 
-test("commands are answered, as unsupported until each one lands", T, async () => {
+test("an unknown command is answered unsupported", T, async () => {
     const bg = loadBackground({ config });
     const port = bg.connect("ml-sessions", PAGE);
-    port.send({ type: "cmd", id: 1, command: { type: "tabs.list", runtime: "local" } });
     port.send({ type: "cmd", id: 2, command: { type: "nonsense" } });
     await flush();
-    // Replies come in completion order, not sending order.
-    const results = port.messages.filter((m) => m.type === "result").sort((a, b) => a.id - b.id);
-    assert.deepEqual(results.map((m) => [m.id, m.result.ok, m.result.error.code]), [[1, false, "unsupported"], [2, false, "unsupported"]]);
+    const [result] = port.messages.filter((m) => m.type === "result");
+    assert.deepEqual([result.id, result.result.ok, result.result.error.code], [2, false, "unsupported"]);
+    assert.deepEqual(port.messages[0].runtime.capabilities, { highlight: true, screenshots: true, sideCalls: false });
+});
+
+test("a live background run, driven from the chat page: steered while its gate is open, then approved through approval.answer", T, async () => {
+    let bg, port, n = 0, secondCall = null;
+    const cmd = (id, command) => port.send({ type: "cmd", id, command });
+    bg = loadBackground({
+        config,
+        onFetch: (call) => {
+            n++;
+            if (n === 1) return jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "click", arguments: JSON.stringify({ selector: "#buy" }) } }] } }] });
+            secondCall = call.body;
+            return jsonResponse({ choices: [{ message: { content: "bought it" } }] });
+        },
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                cmd(1, { type: "session.send", session: { runtime: "local", hash: "run00002" }, text: "use the blue button" });
+                await flush();
+                cmd(2, { type: "approval.answer", session: { runtime: "local", hash: "run00002" }, seq: msg.event.seq, decision: "approve" });
+            }
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && !msg.payload?.renderOnly && !msg.payload?.precheck) return { result: "clicked" };
+            return undefined;
+        },
+    });
+    port = bg.connect("ml-sessions", PAGE);
+    port.send({ type: "sessions" });
+    port.send({ type: "events", sub: 1, hash: "run00002" });
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "run00002", task: "buy it", systemPrompt: "S",
+        tools: [{ name: "click", requiresApproval: true, description: "", parameters: { type: "object", properties: { selector: { type: "string" } } }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, tab(7));
+    await flush();
+    assert.equal(res.data.summary, "bought it");
+    const results = Object.fromEntries(port.messages.filter((m) => m.type === "result").map((m) => [m.id, m.result]));
+    assert.deepEqual(results[1], { ok: true, data: { mode: "steer" } }, "a running loop takes the steer directly");
+    assert.deepEqual(results[2], { ok: true, data: { resolved: true } });
+    assert.ok(JSON.stringify(secondCall.messages).includes("use the blue button"), "the model saw the steer at the next step");
+    const say = port.messages.find((m) => m.type === "stream" && m.message.event?.kind === "agent-say");
+    assert.equal(say?.message.event.text, "use the blue button", "the steer shows in the transcript");
+    const seen = port.messages.find((m) => m.type === "stream" && m.message.event?.kind === "agent-say-seen");
+    assert.equal(seen?.message.event.sayId, say.message.event.sayId, "and is marked seen when drained");
+
+    // Finished: a second answer finds the gate closed; delete forgets it, and the session is gone from the index.
+    cmd(3, { type: "approval.answer", session: { runtime: "local", hash: "run00002" }, seq: 1, decision: "approve" });
+    bg.localStore["ml_session_run00002"] = { messages: [] };
+    cmd(4, { type: "session.delete", session: { runtime: "local", hash: "run00002" } });
+    await flush();
+    const later = Object.fromEntries(port.messages.filter((m) => m.type === "result").map((m) => [m.id, m.result]));
+    assert.deepEqual(later[3], { ok: true, data: { resolved: false } });
+    assert.deepEqual(later[4], { ok: true, data: {} });
+    assert.equal("ml_session_run00002" in bg.localStore, false);
+    assert.ok(port.messages.some((m) => m.type === "stream" && m.message.type === "gone"));
+});
+
+test("session.cancel on a background run blocked at its gate ends it cancelled", T, async () => {
+    let bg, port;
+    bg = loadBackground({
+        config,
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "click", arguments: "{}" } }] } }] }),
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) port.send({ type: "cmd", id: 1, command: { type: "session.cancel", session: { runtime: "local", hash: "run00003" } } });
+            return undefined;
+        },
+    });
+    port = bg.connect("ml-sessions", PAGE);
+    port.send({ type: "sessions" });
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "run00003", task: "x", systemPrompt: "S",
+        tools: [{ name: "click", requiresApproval: true, description: "", parameters: { type: "object", properties: {} }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, tab(7));
+    await flush();
+    assert.equal(res.data.cancelled, true);
+    const [result] = port.messages.filter((m) => m.type === "result");
+    assert.deepEqual(result.result, { ok: true, data: {} });
+    const rows = port.messages.filter((m) => m.type === "index" && m.update.type === "upsert").map((m) => m.update.session.status);
+    assert.equal(rows.at(-1), "cancelled");
 });

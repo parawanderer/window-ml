@@ -23,7 +23,7 @@ import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, she
 import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
-import { ingestSessionEvent, senderPage, serveSessionsPort, sessionServer } from "./sw-sessions";   // the cross-tab session index the chat page reads
+import { configureSessionCommands, ingestSessionEvent, senderPage, serveSessionsPort, sessionServer } from "./sw-sessions";   // the cross-tab session index the chat page reads
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, recordHousekeeping } from "./sw-housekeeping";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns, budgetBytes as valueBudgetBytes } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 
@@ -569,19 +569,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // controller → the loop stops at the next boundary and resolves { cancelled: true }; the model
         // call in flight is aborted too. A page can't forge this (no chrome.runtime path), and even a
         // forged cancel only aborts that page's own run — harmless.
-        const runId = (message.payload as CancelRunPayload)?.runId;
-        const ctl = runControllers.get(runId);
-        if (ctl) ctl.abort();
-        // If the run is BLOCKED on an OPEN approval gate, aborting the controller alone can't unblock it — the
-        // gate promise only resolves via SET_APPROVAL. So resolve any pending gate for this run now with an
-        // explicit CANCELLATION (`{ approved:false, cancelled:true }`), NOT a bare `false`: the loop then exits
-        // as cancelled even when the controller is GONE (an evicted/re-adopted run, where `ctl` above is
-        // undefined so the signal never aborts). A bare `false` there read as a DENY → the loop stepped on
-        // forever ("auto-denied + can't Stop", the reported bug). A later SET_APPROVAL click finds no entry — a
-        // harmless no-op.
-        for (const [key, entry] of [...pendingApprovals]) {
-            if (key.startsWith(`${runId}:`)) { pendingApprovals.delete(key); entry.resolve({ approved: false, cancelled: true }); }
-        }
+        cancelBackgroundRun((message.payload as CancelRunPayload)?.runId);
         return;   // fire-and-forget
     }
     if (message.type === "CANCEL_ALL_RUNS") {
@@ -2053,6 +2041,52 @@ chrome.runtime.onConnect.addListener((port) => {
 
 // The chat page's local host: the cross-tab session index and each session's events (sw-sessions.ts).
 chrome.runtime.onConnect.addListener(serveSessionsPort);
+
+/** Abort a background-hosted run and close its open gates. Returns whether there was anything live to stop. */
+function cancelBackgroundRun(runId: string): boolean {
+    const ctl = runControllers.get(runId);
+    if (ctl) ctl.abort();
+    let gates = 0;
+    // If the run is BLOCKED on an OPEN approval gate, aborting the controller alone can't unblock it — the
+    // gate promise only resolves via SET_APPROVAL. So resolve any pending gate for this run now with an
+    // explicit CANCELLATION (`{ approved:false, cancelled:true }`), NOT a bare `false`: the loop then exits
+    // as cancelled even when the controller is GONE (an evicted/re-adopted run, where `ctl` above is
+    // undefined so the signal never aborts). A bare `false` there read as a DENY → the loop stepped on
+    // forever ("auto-denied + can't Stop", the reported bug). A later SET_APPROVAL click finds no entry — a
+    // harmless no-op.
+    for (const [key, entry] of [...pendingApprovals]) {
+        if (key.startsWith(`${runId}:`)) { pendingApprovals.delete(key); entry.resolve({ approved: false, cancelled: true }); gates++; }
+    }
+    return !!ctl || gates > 0;
+}
+
+// The chat page's commands reach the runs through these; everything else they need is the browser's (sw-sessions.ts).
+let chatSteerSeq = 0;
+configureSessionCommands({
+    // A steer from the chat page goes into the running loop's inbox, the same one a handle's say() reaches through
+    // INJECT_MESSAGE, and is shown the way say() shows it: an `agent-say` bubble the loop marks seen when it drains.
+    steer: (hash, text) => {
+        const inbox = runInboxes.get(hash);
+        if (!inbox) return false;
+        const sayId = `sc_${Date.now().toString(36)}_${++chatSteerSeq}`;
+        inbox.queue.push({ id: sayId, text });
+        const event = { kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text, sayId };
+        chrome.tabs.sendMessage(inbox.tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone */ });
+        relayDebugEvent(inbox.tabId, event);
+        ingestSessionEvent(event, { tabId: inbox.tabId, trusted: true });
+        bufferReplay(inbox.tabId, event);
+        return true;
+    },
+    cancelRun: cancelBackgroundRun,
+    resolveApproval: (key, decision) => resolveApproval(key, decision.approved
+        ? { approved: true, source: "user", ...(decision.persist ? { persist: true } : {}) }
+        : { approved: false, source: "user", ...(decision.feedback ? { feedback: decision.feedback } : {}) }),
+    forgetRun: (hash) => {
+        if (runControllers.has(hash)) return;   // never a live run: the command refuses those first
+        bgRuns.delete(hash); hydratedRuns.delete(hash); releaseSessionTokens(hash);
+        deleteRun(hash);
+    },
+});
 
 chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "ml-devtools") return;
