@@ -10,7 +10,11 @@
   summary covers every row, and the copy control reads `copy all 50,000 rows` (a file past 5,000 rows) whenever the
   table is stored. Otherwise both say they cover the preview.
 
-Not yet: find in table, drag to expand, and SUMMARY in the exports.
+- Find in table (Ctrl/Cmd+F in a focused grid, through the output cell's `useFind`; it searches what is on screen, rows or
+  the summary, and skips the index gutter).
+- Drag to expand (the output cell's `.r-outgrip`).
+
+Not yet: SUMMARY in the exports (an open question below). Find covers the rows the grid draws, not the whole table.
 
 ## The problem
 

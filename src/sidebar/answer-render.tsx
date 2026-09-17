@@ -225,10 +225,12 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
     // step, which is the opposite of what they asked for: they were operating the table in front of them.
     // So the jump is what you get from the INERT parts of the embed; anything interactive keeps its click.
     // Not `closest("button")` — the DataFrame's sort header is a <th> with a handler, so the test is
-    // "does this carry its own behaviour", which is what these roles and the tabindex say.
+    // "does this carry its own behaviour", which is what these roles and the tabindex say. Except a READ surface that is
+    // focusable only so Ctrl+F can be scoped to it (a table's body, an output cell's scroller): clicking in one is still
+    // clicking the render.
     const onEmbedClick = (e: MouseEvent) => {
         const t = e.target as HTMLElement | null;
-        const hit = t?.closest?.('button, a, input, select, textarea, summary, label, [role="button"], [tabindex], th, .r-df-resize');
+        const hit = t?.closest?.('button, a, input, select, textarea, summary, label, [role="button"], [tabindex]:not(.r-df-body):not(.r-outscroll), th, .r-df-resize');
         // …stopping AT the embed itself, which is a role=button with a tabindex of its own — without this the
         // walk finds the wrapper for every click, including the inert ones, and the jump never fires at all.
         if (hit && hit !== e.currentTarget) return;

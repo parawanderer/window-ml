@@ -1632,6 +1632,10 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
    feedback: the find bar is its own confirmation. Keyboard focus still gets a ring, in a colour that says
    "focused" without competing with the output it surrounds. */
 .r-outscroll:focus { outline: none; }
+/* The table grid's focus target (PyDfTable), for the same Ctrl+F scoping and the same muted ring; it anchors the find bar. */
+.r-df-body { position: relative; }
+.r-df-body:focus { outline: none; }
+.r-df-body:focus-visible { outline: 1px solid var(--fg-faint); outline-offset: -1px; }
 .r-outscroll:focus-visible { outline: 1px solid var(--fg-faint); outline-offset: -1px; }
 .r-find { position: absolute; top: 2px; right: 8px; z-index: 3; display: flex; align-items: center; gap: 4px;
           padding: 3px 5px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
