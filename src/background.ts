@@ -23,7 +23,8 @@ import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, she
 import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
-import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, recordHousekeeping } from "./sw-housekeeping";   // what the system decided on its own (docs/dev/housekeeping.md)
+import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, recordHousekeeping } from "./sw-housekeeping";
+import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -157,6 +158,8 @@ async function hydratePersistedRuns(): Promise<void> {
 // respawn doesn't miss the in-flight run (the respawn race).
 // Logs this worker's start, and infers the previous one's eviction from a heartbeat it left in storage.session.
 void housekeeping.start();
+// The value store's idle sweep: now, and on an alarm, since a worker evicted mid-run never releases what its session held.
+startValueSweeps();
 const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && chrome.storage?.local) ? hydratePersistedRuns() : Promise.resolve();
 
 // TEST-ONLY (reachable only from the SW realm via serviceWorker.evaluate, like __mlApprovals — no page can
@@ -398,13 +401,14 @@ const sessionTokens = (runId: string): TokenStore => {
     if (existing) { tokensByRun.delete(runId); tokensByRun.set(runId, existing); return existing; }   // keep it fresh
     const fresh = new TokenStore();
     tokensByRun.set(runId, fresh);
-    while (tokensByRun.size > MAX_TOKEN_SESSIONS) tokensByRun.delete(tokensByRun.keys().next().value as string);
+    while (tokensByRun.size > MAX_TOKEN_SESSIONS) releaseSessionTokens(tokensByRun.keys().next().value as string);
     return fresh;
 };
 
-/** Release a SESSION's pointers — only when the session itself is gone (its bgRuns entry dropped), never at the
- *  end of a turn. Paired with every `bgRuns.delete` so the two lifetimes cannot drift apart again. */
-const releaseSessionTokens = (runId: string): void => { tokensByRun.delete(runId); };
+/** Release a SESSION's pointers — only when the session itself is gone (its bgRuns entry dropped, or its store pushed
+ *  out by newer sessions), never at the end of a turn. Paired with every `bgRuns.delete` so the two lifetimes cannot
+ *  drift apart again. The stored values those pointers named go with them: nothing can address them any more. */
+function releaseSessionTokens(runId: string): void { tokensByRun.delete(runId); releaseSessionValues(runId); }
 // LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
 // The loop delegates tool calls SEQUENTIALLY (one in flight per run), so runId alone correlates a page-posted
 // PAGE_TOOL_STREAM chunk to the right callback. Set in delegateTool while a streaming call runs, deleted after.
@@ -1089,6 +1093,8 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // Keep this run's pointer resolver so a page-side tool's `ml.dereference` (DEREF_TOKEN) can
                 // read the outputs THIS run captured. Dropped in the run's finally, with the other per-run state.
                 tokenSink: (fn) => { derefByRun.set(runId, fn); },
+                // A pointer to a stored table: this session holds it until the session is released.
+                claimValue: (key) => claimValue(key, runId),
                 tryReadonly: p.autoApproveReadonly ? async (name, args) => {
                     if (name !== "exec") return null;
                     const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, readonlyTry: true } })
@@ -1534,7 +1540,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // same-origin one is free); a credentialed render uses the SESSION tab (as-you → always prompts).
                 // A session (non-incognito) render is NEVER free. The `cdp` setting lets it emulate foreground so
                 // a backgrounded tab's gated loads fire.
-                const data = rendered ? await fetchRenderedContent(url, !credentials, !!cfg.cdp) : await fetchUrlContent(url, credentials, format);
+                // A table whose preview is not the whole of it hands back its body; it is stored only once the result is
+                // actually released below.
+                const kept: { body?: import("./sw-fetch").FetchedBody } = {};
+                const data = rendered ? await fetchRenderedContent(url, !credentials, !!cfg.cdp) : await fetchUrlContent(url, credentials, format, (b) => { kept.body = b; });
                 // Redirect guard: a per-URL-consented fetch (NOT a surface/whitelisted/exec one) that ends on a
                 // DIFFERENT, un-consented origin followed a redirect off the approved resource — withhold the body
                 // (a consented public URL could redirect to a private/other target). The GET already happened but
@@ -1546,6 +1555,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         sendResponse({ error: `"${url}" redirected to a different origin (${(() => { try { return new URL(data.url).origin; } catch { return data.url; } })()}), which hasn't been approved. Fetch that URL directly to approve it.` });
                         return;
                     }
+                }
+                if (kept.body) {
+                    const key = await storeFetchedBody(kept.body, data.url);
+                    if (key) data.valueKey = key;
                 }
                 sendResponse({ data });
             }

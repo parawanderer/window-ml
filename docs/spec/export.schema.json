@@ -941,6 +941,9 @@
                 },
                 "headerless": {
                   "type": "boolean"
+                },
+                "value": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -1483,6 +1486,9 @@
                 },
                 "headerless": {
                   "type": "boolean"
+                },
+                "value": {
+                  "type": "string"
                 }
               },
               "required": [

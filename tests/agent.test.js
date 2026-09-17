@@ -4005,3 +4005,20 @@ test("a run with python_exec asks for a Pyodide pre-warm at start; a run without
     await withoutPy.ml.agent("x", { tools: [withoutPy.ml.defineTool({ name: "ping", run: () => "pong" })], vision: false });
     assert.deepEqual(withoutPy.prewarms, []);
 });
+
+test("fetch_url: a preview table passes on the stored value's key in its render; a whole table does not, whatever it is handed", { timeout: 5000 }, async () => {
+    const world = loadDomWorld(`<p>hi</p>`, { url: "https://x.test/" });
+    const table = (n) => ({ columns: ["id", "v"], rows: [[1, 2], [3, 4]], shape: [n, 2], dtypes: { id: "int64", v: "int64" }, ...(n > 2 ? { truncated: true } : {}) });
+    world.window.addEventListener("message", (e) => {
+        if (e.data?.type !== "FETCH_URL_REQUEST") return;
+        const big = e.data.payload.url.includes("big");
+        const result = { url: e.data.payload.url, status: 200, ok: true, type: "parquet", typeByHeader: "parquet", typeByContent: "parquet", typeByExtension: null, contentType: "application/vnd.apache.parquet", text: "(a Parquet file)", table: table(big ? 300_000 : 2), valueKey: "v0123456789abcdef" };
+        world.window.postMessage({ type: "FETCH_URL_RESPONSE", requestId: e.data.requestId, result }, "*");
+    });
+    const big = await world.ml.fetchTool().run({ url: "https://x.test/big.parquet" });
+    assert.equal(big.render.type, "table");
+    assert.equal(big.render.rowCount, 300_000);
+    assert.equal(big.render.value, "v0123456789abcdef", "the render names the whole table, which is how the loop's pointer learns it");
+    const small = await world.ml.fetchTool().run({ url: "https://x.test/small.parquet" });
+    assert.equal(small.render.value, undefined, "a table the preview already holds names no stored value");
+});

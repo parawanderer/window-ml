@@ -44,6 +44,8 @@ export interface TokenValue {
     in?: string;
     /** The structural value when there is one, so the pipe needn't reparse a rendered grid. */
     table?: TableLike;
+    /** The value-store key of the WHOLE table, when `table` is only its preview (a fetched table past the parse cap). */
+    value?: string;
     /** A `data:image/…;base64,…` URL when the step produced an image. */
     image?: string;
     /** A LaTeX rendering when the step produced one (a sympy return sets it). */

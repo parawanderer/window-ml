@@ -253,6 +253,9 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
     /** The pointer store to use. Pass the SESSION's store so `@tool:` references survive across a handle's
      *  turns; omit for a one-shot run and the loop makes its own. */
     tokenStore?: TokenStore;
+    /** Called when a pointer this run keeps names a value in the value store, so the host holds that value for the
+     *  run's session and releases it with the session. A host with no store omits it. */
+    claimValue?: (key: string) => void;
     /** Opt-in LIVE tool-output streaming (same flag as the streamed thinking): when set, each tool call gets a
      *  throttled `ctx.stream(text)` so a tool that supports it (exec's console.log, python_exec's print) streams
      *  its output as it runs. Off → tools return the full result at the end, unchanged. */
@@ -804,6 +807,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // back the same kind of object, which is the whole point of there being one table type.
                 const tbl = df ? tableOf(df.columns, df.rows)
                     : r?.type === "table" ? tableOf(r.columns, r.rows, r.rowCount) : undefined;
+                // The WHOLE table, when the render is a preview of one the store holds: the pointer names it, so the
+                // run holds it.
+                const value = r?.type === "table" ? r.value : undefined;
+                if (value) opts.claimValue?.(value);
                 const looksJson = /^\s*[[{]/.test(result);
                 const kind: TokenKind = tbl ? "table"
                     : (r?.type === "image" || r?.type === "look") ? "image"
@@ -820,7 +827,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 const image = tr?.image
                     ?? (r?.type === "image" ? r.src : r?.type === "look" ? r.image : r?.type === "python-out" ? r.image : undefined);
                 const latex = r?.type === "python-out" && r.latex && r.value != null ? String(r.value) : undefined;
-                tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, ...(full ? { full } : {}), ...(image ? { image } : {}), ...(latex ? { latex } : {}), ...(label ? { label } : {}), in: JSON.stringify(args), t: Date.now(), step, seq: s, ...(tbl ? { table: tbl } : {}) });
+                tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, ...(full ? { full } : {}), ...(image ? { image } : {}), ...(latex ? { latex } : {}), ...(label ? { label } : {}), in: JSON.stringify(args), t: Date.now(), step, seq: s, ...(tbl ? { table: tbl } : {}), ...(value ? { value } : {}) });
             }
             // Not for a minted view: mintView appended its own line explaining what the reduction is, and
             // `dereference`'s `token` PARAMETER is the pointer being READ, so `wantsToken` is true for every

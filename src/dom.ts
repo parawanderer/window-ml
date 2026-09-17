@@ -1174,7 +1174,7 @@ export type ContentKind = "json" | "csv" | "parquet" | "arrow" | "html" | "xml" 
 export function typeFromHeader(contentType: string): ContentKind | null {
     const ct = String(contentType || "").split(";")[0].trim().toLowerCase();
     if (ct === "application/json" || ct.endsWith("+json")) return "json";
-    if (ct === "text/csv" || ct === "application/csv") return "csv";
+    if (ct === "text/csv" || ct === "application/csv" || ct === "text/tab-separated-values") return "csv";
     // Parquet has no agreed type; all three are in the wild. The BODY is what settles it (looksParquet, on
     // bytes) — this only says which responses are worth reading as bytes in the first place.
     if (ct === "application/vnd.apache.parquet" || ct === "application/x-parquet" || ct === "application/parquet") return "parquet";

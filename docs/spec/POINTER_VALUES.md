@@ -262,7 +262,9 @@ Each slice ships and is useful without the next:
    `docs/dev/python-sandbox.md`.
 4. **The value store**: IndexedDB blobs keyed by pointer id with a metadata row each, the layered eviction above
    (global budget on write, session release, idle sweep), and loud failure on a miss.
-   Fetched tables store their bytes; nothing reads them yet except a new, explicit test path.
+   Fetched tables store their bytes; nothing reads them yet except a new, explicit test path. **Built**: the store
+   (`value-store.ts`, #115), and the capture, claim, release, sweep and budget setting (`sw-values.ts`). Bytes are kept
+   in the format they arrived in; conversion to Arrow IPC comes with slice 5, where pyarrow does it.
 5. **`python_exec` reads a pointer**: `tables: { df: "@tool:…" }` opens the stored IPC as a frame. The URL form
    stays as an alias. This is the slice that removes the JSON round trip.
 6. **Python writes pointers back**: a returned DataFrame is stored as IPC and becomes a table pointer.

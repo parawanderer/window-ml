@@ -9,6 +9,7 @@ test("typeFromHeader: specific content-types map; generic ones return null (defe
     assert.equal(typeFromHeader("application/json"), "json");
     assert.equal(typeFromHeader("application/vnd.api+json"), "json");
     assert.equal(typeFromHeader("text/csv; charset=utf-8"), "csv");
+    assert.equal(typeFromHeader("text/tab-separated-values"), "csv", "a TSV by its registered type is a delimited table too");
     assert.equal(typeFromHeader("text/html"), "html");
     assert.equal(typeFromHeader("application/xml"), "xml");
     assert.equal(typeFromHeader("image/svg+xml"), "xml");
