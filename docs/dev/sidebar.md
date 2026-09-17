@@ -49,6 +49,24 @@ land before injected's async `<script>` was listening, stranding the panel un-li
 until a settings toggle. `bus.ts` replays its ring only ONCE per session so the re-handshake
 can't double-emit.
 
+**The services seam (`services.ts`): the session views never call `chrome` or the parent frame themselves.**
+The session views (agent runs, chat turns, output cells, code blocks, approvals, the composer) are shared by the
+overlay, the DevTools panel and the HUD card, and by the chat page and a phone app next (`docs/spec/CHAT_PAGE.md`),
+where there is no `chrome` and no parent frame. So they call `services()`: side calls to the utility model (titles,
+block summaries, explain notes), answering an approval, sending to / cancelling / continuing a session, page
+highlight, the lightbox, host-permission checks, sheet titles, and saving a display pref. Each ENTRY POINT installs an
+implementation before it renders: `app.tsx` installs `services-ext.ts`, the same messaging these calls made inline
+(the background over `chrome.runtime`, the frame's parent over `postMessage`). A test that renders a view directly is
+its own entry point and installs them too (`tests/code-tools.test.mjs`); without that, every call answers "not
+available here" instead of throwing. `tests/portable-session-views.test.mjs` walks the views' imports and fails on a
+direct `chrome.*` call or a parent post, so the seam cannot erode. Extension-only surfaces (the HUD card's own
+controls, Settings, the resource panel, the bench) still call `chrome` directly: they are not reused off the extension.
+
+**A session's key (`Session.hash`).** The bare 8-hex hash for the sidebar's own sessions; `runtime:hash` when a client
+reduces several runtimes' events (`onDebug(ev, runtime)`), because a hash is unique only within its runtime. Every
+session-keyed map (steps, asides, decided gates, summaries) uses it, so runtimes stay apart without those maps knowing.
+Split a key on its LAST `:` (`bareHash`, `splitStepKey`), never `split(":")`.
+
 **Extending the sidebar — will it work in both surfaces?** *View/read features come free:*
 a new debug **event kind** (the transport forwards any `__mlDebug` payload), a new
 `RenderPanel` descriptor, session UI, export, or anything using `chrome.runtime`/

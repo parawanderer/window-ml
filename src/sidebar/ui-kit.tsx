@@ -11,6 +11,7 @@ import type { Status, AgentStep } from "./store";
 import { codeLineNumbers } from "./store";
 import { beautifyJs, highlight, htmlLines, shortStamp, fullStamp, pretty, truncate, mdInline } from "./format";
 import { lineMapBetween } from "../line-map";
+import { services } from "./services";
 import { useTipPlacement } from "./use-tip";
 import { watchTrigger } from "./tooltip-layer";
 import { IconCopy, IconCheck, IconSheet, IconChevron } from "./icons";
@@ -218,21 +219,21 @@ export function ContextMenu() {
 // A debug image that opens full-window on click. The lightbox lives in the shell
 // (parent), not this iframe, so it fills the whole browser rather than the
 // ~sidebar-width frame — post the src up and the shell renders the overlay.
-export const openLightbox = (src: string) => window.parent.postMessage({ __mlLightbox: src }, "*");
+export const openLightbox = (src: string) => services().openLightbox(src);
 
 // Ask the shell to draw / clear a DevTools-style highlight over a page element (on hover of a rendered
 // element reference). The shell owns the page DOM (a content script), so it resolves the selector +
 // rect and outlines it WITHOUT touching the element. Overlay-surface only — a no-op in the devtools
 // panel, whose parent can't reach the page.
-export const highlightEl = (selector: string) => window.parent.postMessage({ __mlHighlight: { selector } }, "*");
+export const highlightEl = (selector: string) => services().highlight({ selector });
 // A canvas @pt/@box token — the shell resolves it (via injected) to a point marker / box outline.
-export const highlightToken = (token: string) => window.parent.postMessage({ __mlHighlight: { token } }, "*");
+export const highlightToken = (token: string) => services().highlight({ token });
 /** Stop outlining anything on the page — the pointer left the thing that was pointing at it. */
-export const clearHighlight = () => window.parent.postMessage({ __mlHighlight: null }, "*");
+export const clearHighlight = () => services().highlight(null);
 // The APPROVAL-card highlight: a pulsing GREEN spotlight (kind "approve"), distinct from the blue hover
 // box, so the pending target is unmistakable. The shell replies with the target's on-page position
 // (e.g. "bottom-left") → highlightPos, which the card shows so you know where to look.
-export const highlightApprove = (ref: { selector?: string; token?: string }) => window.parent.postMessage({ __mlHighlight: { ...ref, kind: "approve" } }, "*");
+export const highlightApprove = (ref: { selector?: string; token?: string }) => services().highlight({ ...ref, kind: "approve" });
 /** Where the currently highlighted element sits on screen ("bottom-left"), so an approval card can say
  *  WHERE the thing it is about is without you hunting for the outline. */
 export const highlightPos = signal<string>("");
@@ -258,7 +259,7 @@ export const tokenHover = (s?: string): { onPointerEnter?: () => void; onPointer
 // SET_APPROVAL. That authentication is the whole point: the decision is made HERE and the page can't
 // spoof it. Keyed by the run hash + the step's seq.
 export const sendApproval = (hash: string, seq: number, decision: boolean, persist = false) =>
-    window.parent.postMessage({ __mlSidebarApp: "approval", hash, seq, decision, persist }, "*");
+    services().answerApproval(hash, seq, decision, persist);
 
 // The "https://host/*" host-permission pattern a step needs granted before it can run: a fetch_url's URL
 // (the background SW fetch needs the host) OR a navigate's destination (a cross-origin nav must RE-INJECT the
@@ -280,9 +281,8 @@ export function grantHostPattern(st: AgentStep): string | null {
 export async function decideGate(st: AgentStep, hash: string, seq: number, ok: boolean, persist: boolean): Promise<void> {
     if (ok) {
         const pat = grantHostPattern(st);
-        if (pat && typeof chrome !== "undefined" && chrome.permissions?.request) {
-            try { await chrome.permissions.request({ origins: [pat] }); } catch { /* older Chrome / user dismissed → fetch returns the actionable error */ }
-        }
+        const access = services().hostAccess;
+        if (pat && access) await access.request(pat);   // dismissed or unsupported → the fetch returns the actionable error
     }
     sendApproval(hash, seq, ok, persist);
 }
@@ -543,13 +543,10 @@ export function SheetChip({ id, label }: { id: string; label?: string }) {
     const [fetched, setFetched] = useState<string | null | undefined>(() => label ? undefined : sheetTitleCache.get(id));
     useEffect(() => {
         if (label || sheetTitleCache.has(id)) return;
-        try {
-            chrome.runtime.sendMessage({ type: "FETCH_SHEET_TITLE", payload: { id } }, (resp: any) => {
-                const name = (resp && resp.data) || null;
-                sheetTitleCache.set(id, name);
-                setFetched(name);
-            });
-        } catch { sheetTitleCache.set(id, null); }
+        void services().sheetTitle(id).then((name) => {
+            sheetTitleCache.set(id, name);
+            setFetched(name);
+        });
     }, [id, label]);
     const name = label || fetched || "Google Sheet";
     return (

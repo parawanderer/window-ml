@@ -6,7 +6,8 @@
 import { sessionMap, rev, config, sidebarOpen, backendError, unreachableIfNothingSaysOtherwise, noteAside } from "./store";
 import type { Session, Status, Turn, AgentStep } from "./store";
 import type { MlDebugEvent } from "../contract";
-import { isBackendUnreachable, hintSession } from "../contract";
+import { isBackendUnreachable } from "../contract";
+import { services } from "./services";
 import { truncate, lastUser, rollupStatus } from "./format";
 
 // The highest (cumulative) step number seen so far — the position a say()/answer arriving NOW belongs at,
@@ -26,25 +27,30 @@ const ORPHAN_CAP = 400;   // per-hash bound so a stray hash spamming events can'
 const steerSeen = new Set<string>();
 const STEER_SEEN_CAP = 2000;
 function markSteerSeen(id: string): void { if (steerSeen.size < STEER_SEEN_CAP) steerSeen.add(id); }
-function queueOrphan(hash: string, ev: MlDebugEvent): void {
-    let q = orphanAgentEvents.get(hash);
-    if (!q) { q = []; orphanAgentEvents.set(hash, q); }
+function queueOrphan(key: string, ev: MlDebugEvent): void {
+    let q = orphanAgentEvents.get(key);
+    if (!q) { q = []; orphanAgentEvents.set(key, q); }
     if (q.length < ORPHAN_CAP) q.push(ev);
 }
-function drainOrphans(hash: string): void {
-    const q = orphanAgentEvents.get(hash);
+function drainOrphans(key: string, runtime?: string): void {
+    const q = orphanAgentEvents.get(key);
     if (!q) return;
-    orphanAgentEvents.delete(hash);   // delete BEFORE replaying so the drained events find the session, not re-queue
-    for (const oev of q) onDebug(oev);
+    orphanAgentEvents.delete(key);   // delete BEFORE replaying so the drained events find the session, not re-queue
+    for (const oev of q) onDebug(oev, runtime);
 }
 
 /** THE REDUCER: one `__mlDebug` event → the session model the whole panel reads. Must CONVERGE whatever
  *  the order — a cross-page run's replay and its live fan arrive interleaved — so it patches by `seq`
  *  rather than appending, and never recreates or re-seals a session it has already seen. */
-export function onDebug(ev: MlDebugEvent): void {
+export function onDebug(ev: MlDebugEvent, runtime?: string): void {
+    // WHICH SESSION. The sidebar reduces one browser's sessions, so a session is its bare hash. A client that
+    // reduces several RUNTIMES' events (the chat page, docs/spec/SESSION_CONTRACT.md) passes the runtime, and the
+    // session's key becomes `runtime:hash`: hashes are unique only within a runtime, and every map keyed by a
+    // session (steps, asides, decided gates, summaries) then keeps two runtimes apart without knowing about them.
+    const key = runtime ? `${runtime}:${ev.session.hash}` : ev.session.hash;
     // --- ml.agent runs (own session kind) ---
     if (ev.kind === "agent") {
-        const prev = sessionMap.get(ev.session.hash);
+        const prev = sessionMap.get(key);
         // A cross-page re-adopt REPLAYS this start event. If the session already exists — from the run's first
         // life, OR because a live agent-step/agent-result raced ahead of the replay onto the fresh document —
         // do NOT recreate it: that would wipe the steps/answer/ended state the live events populated, leaving a
@@ -58,20 +64,20 @@ export function onDebug(ev: MlDebugEvent): void {
             prev.agentConfig = ev.config ?? prev.agentConfig;
             if (ev.resumed) prev.resumed = true;
             prev.lastTs = Math.max(prev.lastTs, ev.ts);
-            drainOrphans(ev.session.hash);
+            drainOrphans(key, runtime);
             rev.value++; return;
         }
-        sessionMap.set(ev.session.hash, {
-            hash: ev.session.hash, model: ev.model, tag: "session", kind: "agent",
+        sessionMap.set(key, {
+            hash: key, ...(runtime ? { runtime } : {}), model: ev.model, tag: "session", kind: "agent",
             createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, taskImages: ev.images, pageUrl: ev.pageUrl, pageTitle: ev.pageTitle, maxSteps: ev.maxSteps, agentConfig: ev.config, resumed: ev.resumed,
             config: { system: null, model: ev.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
         });
-        drainOrphans(ev.session.hash);   // apply any step/result that raced ahead of this start (cross-page replay)
+        drainOrphans(key, runtime);   // apply any step/result that raced ahead of this start (cross-page replay)
         rev.value++; return;
     }
     if (ev.kind === "agent-step") {
-        const s = sessionMap.get(ev.session.hash);
-        if (!s) { queueOrphan(ev.session.hash, ev); return; }   // no start yet → hold it, don't manufacture a phantom
+        const s = sessionMap.get(key);
+        if (!s) { queueOrphan(key, ev); return; }   // no start yet → hold it, don't manufacture a phantom
         // LIVE tool-output delta (ctx.stream): carries ONLY { step, seq, streamOutput } (no tool) — patch it
         // ADDITIVELY onto the pending row (never rebuild the step, which would wipe tool/args). The DONE (with
         // a result + tool) supersedes it below. Ignore a delta whose START hasn't landed yet.
@@ -122,8 +128,8 @@ export function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-result") {
         // On a re-adopted page the result can land BEFORE the replayed `agent` start; queue it (don't drop —
         // that was half of the "completed but stuck running, no answer" bug) and apply it when the start drains.
-        const s = sessionMap.get(ev.session.hash);
-        if (!s) { queueOrphan(ev.session.hash, ev); return; }
+        const s = sessionMap.get(key);
+        if (!s) { queueOrphan(key, ev); return; }
         const status: Status = (ev.error || ev.hitCap || ev.cancelled) ? "err" : "ok";
         // Seal against the run's OWN final step count (ev.steps), not just the steps that have ARRIVED. On a
         // re-adopted page the result can beat the replayed steps here, so maxSessionStep is 0 — sealing at that
@@ -157,15 +163,15 @@ export function onDebug(ev: MlDebugEvent): void {
     }
     // A handle raised the step cap mid-run (a.maxSteps = N) → the "STEP x/N" display re-renders live.
     if (ev.kind === "agent-cap") {
-        const s = sessionMap.get(ev.session.hash);
+        const s = sessionMap.get(key);
         if (s) { s.maxSteps = ev.maxSteps; s.lastTs = ev.ts; rev.value++; }
         return;
     }
     // A user message mid-conversation: a follow-up run()'s task OR a mid-run say(). Both render as "you"
     // bubbles, interleaved with the turns by step position (atStep = the step count when they arrived).
     if (ev.kind === "agent-say") {
-        const s = sessionMap.get(ev.session.hash);
-        if (!s) { queueOrphan(ev.session.hash, ev); return; }   // start not here yet → hold, don't drop the bubble
+        const s = sessionMap.get(key);
+        if (!s) { queueOrphan(key, ev); return; }   // start not here yet → hold, don't drop the bubble
         // A new user message means the agent is (about to be) working → back to pending, so the live footer
         // shows during a follow-up run (harmless for a mid-run steer, which is already pending). `seen` starts
         // from the drained-id set, so a "seen" event that raced ahead of this bubble already counts.
@@ -179,7 +185,7 @@ export function onDebug(ev: MlDebugEvent): void {
     // bubble renders pre-marked when it lands.
     if (ev.kind === "agent-say-seen") {
         markSteerSeen(ev.sayId);
-        const s = sessionMap.get(ev.session.hash);
+        const s = sessionMap.get(key);
         if (s && s.says?.some(x => x.id === ev.sayId && !x.seen)) {
             s.says = s.says.map(x => x.id === ev.sayId ? { ...x, seen: true } : x);
             s.lastTs = Math.max(s.lastTs, ev.ts); rev.value++;
@@ -190,7 +196,7 @@ export function onDebug(ev: MlDebugEvent): void {
     // generates, so a long reasoning phase isn't a frozen token count. Superseded when the step's real
     // events land (agent-step / agent-result clear liveStream). Transient — no start yet → just drop it.
     if (ev.kind === "agent-stream") {
-        const s = sessionMap.get(ev.session.hash);
+        const s = sessionMap.get(key);
         if (!s) return;
         s.liveStream = { step: ev.step, localStep: ev.localStep, reasoning: ev.reasoning, content: ev.content, ...(ev.tokens != null ? { tokens: ev.tokens } : {}), ...(ev.reasoningTokens != null ? { reasoningTokens: ev.reasoningTokens } : {}) };
         s.status = "pending"; s.ended = false; s.lastTs = ev.ts; rev.value++;
@@ -200,7 +206,7 @@ export function onDebug(ev: MlDebugEvent): void {
     // resource panel draw a generation WHILE it happens; without it the first thing any surface hears about a
     // 40-second turn is the finished block, back-dated over memory it already drew.
     if (ev.kind === "agent-turn") {
-        const s = sessionMap.get(ev.session.hash);
+        const s = sessionMap.get(key);
         // Ignore it for a session that has already ENDED. Events can arrive in any order (a cross-page replay
         // interleaves with the live fan), and a turn-start landing after the run's result would otherwise
         // strand a live bar that never clears.
@@ -210,16 +216,16 @@ export function onDebug(ev: MlDebugEvent): void {
         return;
     }
     if (ev.kind === "chat") {
-        let s = sessionMap.get(ev.session.hash);
+        let s = sessionMap.get(key);
         if (!s) {
             s = {
-                hash: ev.session.hash, model: ev.request.model, tag: ev.save ? "saved" : "session",
+                hash: key, ...(runtime ? { runtime } : {}), model: ev.request.model, tag: ev.save ? "saved" : "session",
                 // What this session IS, when it is not an ordinary chat — `ml.embed()` reports through the
                 // chat events but is not a chat, and every surface that names it should say so.
                 ...(ev.sessionKind ? { kind: ev.sessionKind } : {}),
                 createdTs: ev.ts, lastTs: ev.ts, status: "pending", config: ev.config, turns: [],
             };
-            sessionMap.set(ev.session.hash, s);
+            sessionMap.set(key, s);
         }
         if (ev.save) s.tag = "saved";
         // Immutable: new turn object + new array. Preact/@preact/signals skips
@@ -230,7 +236,7 @@ export function onDebug(ev: MlDebugEvent): void {
         s.turns = [...s.turns, turn];
         s.lastTs = ev.ts; s.status = "pending";
     } else {
-        const s = sessionMap.get(ev.session.hash);
+        const s = sessionMap.get(key);
         const i = s ? s.turns.findIndex(x => x.id === ev.id) : -1;
         if (!s || i < 0) return;
         const prev = s.turns[i];
@@ -272,19 +278,17 @@ export function genTitle(hash: string, prompt: string): void {
         { role: "system", content: "You write terse 3-6 word titles for a request. Reply with ONLY the title — no quotes, no trailing punctuation, no preamble." },
         { role: "user", content: `Summarise this request as a short title:\n\n${truncate(prompt, 500)}` },
     ];
-    chrome.runtime.sendMessage(
-        { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 32, think: false, hint: { session: hintSession(hash) } } },   // a side task about this session (RequestHint)
-        (resp: any) => {
-            const s = sessionMap.get(hash);
-            if (!s || chrome.runtime.lastError || !resp || resp.error) return;   // leave unset → retried next open
-            // Drawn on the lane as this session's side task, joined to the server's record of it by request id.
-            // Unrecorded, it was the one bar in the run nothing claimed: the utility model woken mid-run by nobody.
-            noteAside(hash, { t: started, ms: Date.now() - started, label: "titling the session",
-                              model: config.value.utilityModel || undefined, requestId: resp.usage?.requestId });
-            const title = cleanTitle(String(resp.data || ""));
-            if (title) { s.title = title; rev.value++; }
-        },
-    );
+    // A side task about this session: the host tags the request with its id.
+    void services().sideCall({ purpose: "title", session: hash, messages, maxTokens: 32 }).then((r) => {
+        const s = sessionMap.get(hash);
+        if (!s || !r.ok) return;   // leave unset → retried next open
+        // Drawn on the lane as this session's side task, joined to the server's record of it by request id.
+        // Unrecorded, it was the one bar in the run nothing claimed: the utility model woken mid-run by nobody.
+        noteAside(hash, { t: started, ms: Date.now() - started, label: "titling the session",
+                          model: config.value.utilityModel || undefined, requestId: r.requestId });
+        const title = cleanTitle(r.content);
+        if (title) { s.title = title; rev.value++; }
+    });
 }
 
 // ---- Run-block segmentation + lazy per-block summaries (HUD "Show work" ONLY) ----
@@ -306,19 +310,16 @@ export function ensureBlockSummary(hash: string, i: number, prompt: string, resu
         { role: "system", content: "You write a terse one-line summary (≤ 16 words) of one task within an agent session — what the user asked and what the agent did/produced. Reply with ONLY the summary: no quotes, no preamble." },
         { role: "user", content: `Request:\n${truncate(prompt || "(none)", 400)}\n\nResult:\n${truncate(result || "(no result)", 400)}` },
     ];
-    chrome.runtime.sendMessage(
-        { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 48, think: false, hint: { session: hintSession(hash) } } },   // a side task about this session (RequestHint)
-        (resp: { data?: unknown; error?: string } | undefined) => {
-            if (chrome.runtime.lastError || !resp || resp.error) { blockSummaryTried.delete(key); return; }   // retry next open
-            noteAside(hash, { t: started, ms: Date.now() - started, label: "summarising a task",
-                              model: config.value.utilityModel || undefined, requestId: (resp as { usage?: { requestId?: string } }).usage?.requestId });
-            const line = String(resp.data || "").trim().split("\n").map(x => x.trim()).filter(Boolean)[0] || "";
-            // Strip surrounding quotes/marks AND a leading "Summary:"/"Task -" label the model adds despite
-            // the "no preamble" instruction (it was showing literally as "Summary: …" in the block header).
-            const s = truncate(line.replace(/^["'`*]+|["'`*.]+$/g, "").trim().replace(/^(summary|task)\s*[:\-–]\s*/i, "").trim(), 120);
-            if (s) { blockSummaries.set(key, s); rev.value++; }
-        },
-    );
+    void services().sideCall({ purpose: "summary", session: hash, messages, maxTokens: 48 }).then((r) => {
+        if (!r.ok) { blockSummaryTried.delete(key); return; }   // retry next open
+        noteAside(hash, { t: started, ms: Date.now() - started, label: "summarising a task",
+                          model: config.value.utilityModel || undefined, requestId: r.requestId });
+        const line = r.content.trim().split("\n").map(x => x.trim()).filter(Boolean)[0] || "";
+        // Strip surrounding quotes/marks AND a leading "Summary:"/"Task -" label the model adds despite
+        // the "no preamble" instruction (it was showing literally as "Summary: …" in the block header).
+        const s = truncate(line.replace(/^["'`*]+|["'`*.]+$/g, "").trim().replace(/^(summary|task)\s*[:\-–]\s*/i, "").trim(), 120);
+        if (s) { blockSummaries.set(key, s); rev.value++; }
+    });
 }
 export type SayItem = NonNullable<Session["says"]>[number];
 export interface RunTaskBlock { prompt: string; promptImages?: string[]; turns: AgentTurnGroup[]; steers: SayItem[]; answer: NonNullable<Session["answers"]>[number] | null; }

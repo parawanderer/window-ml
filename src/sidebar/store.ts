@@ -5,6 +5,7 @@
 import { signal } from "@preact/signals";
 import type { DebugSessionConfig, DebugAgentConfig, MlConfig, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, TokenUsage, SubcallUsage, AnswerMedia, PersistGrant, ReusedGrant, GenPhase, RemoteTiming } from "../contract";
 import { DEFAULT_CONFIG, backendStateFrom } from "../contract";
+import { services } from "./services";
 
 export const FONT_KEY = "ml_debug_fontscale";   // storage.local: the panel's font scale
 export const BASE_FS = 12, MIN_FS = 0.8, MAX_FS = 1.6;   // font-scale bounds (× BASE_FS px)
@@ -61,7 +62,14 @@ export interface AgentStep { step: number; localStep?: number; seq?: number; too
 // The loop caps `step` at maxSteps, so this is always ≤ maxSteps.
 export const turnsRun = (steps?: AgentStep[]): number => new Set((steps || []).map(s => s.step)).size;
 export interface Session {
-    hash: string; model: string | null; tag: "session" | "saved";
+    /** The session's KEY in this client: the bare 8-hex hash for the sidebar's own sessions, `runtime:hash` when a
+     *  client reduces several runtimes' events (the chat page; see `onDebug`). Every map keyed by a session uses
+     *  it, which is what keeps two runtimes' sessions apart. Take the bare hash with `bareHash` (services.ts)
+     *  where only the hash will do: a request hint, a label. */
+    hash: string;
+    /** The runtime the session belongs to, when the client reduces more than one. Absent in the sidebar. */
+    runtime?: string;
+    model: string | null; tag: "session" | "saved";
     createdTs: number; lastTs: number; status: Status;
     config: DebugSessionConfig; turns: Turn[];
     title?: string;   // AI-summarised title (lazy; see title generation below)
@@ -325,7 +333,7 @@ export const benchEnv = signal<BenchEnvInfo | null>(null);
 /** Record what the sandbox reported, and remember it for next time. */
 export function noteBenchEnv(env: BenchEnvInfo) {
     benchEnv.value = env;
-    try { chrome.storage.local.set({ [BENCH_ENV_KEY]: env }); } catch { /* no chrome in a bare render */ }
+    services().savePref(BENCH_ENV_KEY, env);
 }
 /** WHERE TO GO BACK TO. Settings, the server-tool list and the full-page bench all REPLACE the view, and
  *  `‹` sent you to the sessions list from every one of them — so glancing at a setting mid-run cost you the
@@ -410,7 +418,7 @@ export const openBench = (code?: string): void => {
         return;
     }
     benchOpen.value = true;
-    try { chrome.storage.local.set({ [BENCH_OPEN_KEY]: true }); } catch { /* no chrome in a bare render */ }
+    services().savePref(BENCH_OPEN_KEY, true);
     // Two draggable strips on the same bottom edge is not a layout — opening one puts the other away.
     vramOpen.value = false;
 };

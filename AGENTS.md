@@ -248,7 +248,10 @@ learned by shipping the wrong version first.
   described, never decoded; `toolIds` keeps SSE permanently. A strict backend refusing an optional request key is
   retried once without it — a wire nicety must never cost an answer.
 - **Sidebar.** One app, two surfaces: a new app→parent message must also be handled in `panel.ts`, and anything
-  that acts back on the page needs the reverse channel (panel → background → content shell).
+  that acts back on the page needs the reverse channel (panel → background → content shell). The shared session
+  views call `services()` (`services.ts`), never `chrome.*` or the parent frame, because the chat page and a phone app
+  reuse them; an entry point installs the implementation before rendering. A session's key is `Session.hash`, which is
+  `runtime:hash` in a multi-runtime client: split keys on the LAST `:`.
 - **Exports.** Diff two runs with `run.json` after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`.
 
 ## Showing a run: the log, the exports and tooltips

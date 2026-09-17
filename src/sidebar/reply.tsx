@@ -2,6 +2,7 @@
 // agent run's final answer), the user/assistant turn pair, and the session-list row. Extracted from
 // app.tsx; a leaf view layer over ui-kit + answer-render (no agent-detail / HUD deps, so agent-detail
 // can import ReplyBubble without a cycle).
+import { services, bareHash } from "./services";
 import { useState } from "preact/hooks";
 import type { ExtendProfile } from "../contract";
 import { view } from "./store";
@@ -130,7 +131,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                             no new turn in the transcript and nothing for the user to retype. Always safe to offer,
                             because a call that errored produced nothing — the worst case is failing again. */}
                         {retry
-                            ? <button class="continue-run" onClick={() => window.parent.postMessage({ __mlSidebarApp: "continueRun", hash: retry.hash }, "*")}
+                            ? <button class="continue-run" onClick={() => services().continueSession(retry.hash)}
                                 {...cursorTipOn("Try this turn again, from where the run stopped. Nothing is re-typed and no new message is added — the same request goes out again.")}>
                                 Retry
                               </button>
@@ -150,7 +151,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                 type a follow-up). Resuming re-enters the SAME run by hash from its stored state. */}
             {resumeCap && !collapsed
                 ? <button class="continue-run" title="Resume this run with more steps, continuing from where it stopped"
-                    onClick={() => window.parent.postMessage({ __mlSidebarApp: "continueRun", hash: resumeCap.hash }, "*")}>
+                    onClick={() => services().continueSession(resumeCap.hash)}>
                     Continue <span class="continue-steps">+{resumeCap.steps} steps</span>
                   </button>
                 : null}
@@ -248,7 +249,7 @@ export function SessionRow({ s, profile }: { s: Session; profile: "utility" | "d
             <div class="row-meta">
                 {s.kind === "agent" ? <AgentBadge /> : s.kind === "embed" ? <EmbedBadge /> : <TagBadge tag={s.tag} />}
                 <ProfileBadge profile={profile} />
-                <Hash hash={s.hash} stop />
+                <Hash hash={bareHash(s.hash)} stop />
             </div>
         </button>
     );
