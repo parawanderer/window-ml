@@ -380,6 +380,15 @@ fifteen files are already over the line, so it speaks only when a change makes a
 which is the moment the advice is actionable. `--all` lists every one of them when you do want the survey.
 Tests are exempt: a long test file is a long LIST, which is not the same failure as a long module.
 
+**RULE — move code between files with `node scripts/move-symbols.mjs`, never by copy and paste.**
+`--from <file> --symbols a,b --to <file> --dry-run --diff` plans the move; drop `--dry-run` to write it. The
+compiler resolves what the code depends on, pulls along helpers only it uses, rewrites every import, re-export
+and test `await import("../src/x.ts")`, puts the moved code back byte for byte, and refuses (writing nothing) on
+a new type error, a new import cycle, state assigned across the new boundary, or a script that reads the source
+file as text. A hand move retypes the code and finds the dependencies by eye, and the tests that load a module
+by dynamic import are invisible to a type error: a destructured member just comes back `undefined`. Blocks and
+their fixes: `.claude/skills/move-symbols/SKILL.md`.
+
 **RULE — AGENTS.md holds working rules and traps; implementation notes go to `docs/dev/`.** Everything here is
 loaded into every session, so it is for what you must know to work in the repo at all: the rules, the map, the
 invariants, and one-line traps that break things silently. How a subsystem works and why it is built that way —

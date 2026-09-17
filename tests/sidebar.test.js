@@ -6011,7 +6011,7 @@ test("resource tracks: the hovered band outlines itself, and single-sample runs 
 test("streamed output: a rule separates the timestamp gutter from the text", async () => {
     // The stamps are right-aligned in a fixed column; without an edge, leading whitespace in the output has
     // nothing to be measured against. Same device as a line-number gutter's rule.
-    const css = await import("node:fs").then((fs) => fs.readFileSync("src/sidebar/sidebar.css", "utf8"));
+    const css = sidebarCss();
     // DRAWN BY THE CONTAINER, not by each row: as a per-row border it stopped at the last line, which is
     // right in a transcript and wrong in the bench, where the block fills a pane you sized yourself and the
     // column ended in mid-air. Pinned to both edges, so it is as tall as whatever it is inside.
@@ -6026,17 +6026,25 @@ test("streamed output: a rule separates the timestamp gutter from the text", asy
     assert.match(row, /padding-right/, "spaced by padding so the rule sits inside the row gap");
 });
 
-// Mixed-size GPUs are normal (a 4090 beside a 3060), so an overlay must not assume one shared denominator.
+/** The stylesheet as text. jsdom applies no stylesheet, so a layout rule can only be checked by reading it. */
+const sidebarCss = () => require("node:fs").readFileSync(require("node:path").join(__dirname, "..", "src", "sidebar", "sidebar.css"), "utf8");
+
+/** The body of the rule whose selector is exactly `selector`, ASSERTING that it exists. Slicing from a bare
+ *  `indexOf` returned an empty string for a renamed selector, and every `doesNotMatch` against that passed. */
+function cssRule(selector) {
+    const css = sidebarCss();
+    const at = css.indexOf(selector + " {");
+    assert.ok(at !== -1, `no CSS rule for ${selector}`);
+    return css.slice(at, css.indexOf("}", at));
+}
+
 /** A class that dims must have a RULE behind it. Asserting only the class name let both cross-highlight
  *  directions ship with no styling at all — every test green, nothing visibly dimmed. */
 function assertDims(selector) {
-    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
-    const at = css.indexOf(selector + " {");
-    assert.ok(at !== -1, `no CSS rule for ${selector} — the class would dim nothing`);
-    const body = css.slice(at, css.indexOf("}", at));
-    assert.match(body, /opacity:\s*0?\.\d/, `${selector} must actually reduce opacity`);
+    assert.match(cssRule(selector), /opacity:\s*0?\.\d/, `${selector} must actually reduce opacity`);
 }
 
+// Mixed-size GPUs are normal (a 4090 beside a 3060), so an overlay must not assume one shared denominator.
 const INFO_MIXED = { compute: {
     system_compute: { cpu_cores: 16, total_memory: 68719476736, free_memory: 30 * 1024 ** 3 },
     supported_gpus: [
@@ -6203,8 +6211,19 @@ test("the chart's own settings live in the chart, and the window picker shows a 
         "and it never grows an option describing where the scrub happens to be");
     assert.ok(w.shadow.querySelector('[aria-label="Model colours"]'), "…as does the palette");
 
-    const settings = await import("node:fs").then((fs) => fs.readFileSync("src/sidebar/settings.tsx", "utf8"));
-    assert.doesNotMatch(settings, /Chart window/, "and it is no longer in two places disagreeing");
+    // And it is no longer in two places disagreeing. Checked by RENDERING every Settings tab, not by grepping
+    // settings.tsx: a grep passes vacuously the day the settings UI moves to another file.
+    await openSettings(w);
+    const tabs = [...w.shadow.querySelectorAll(".set-tab")];
+    assert.ok(tabs.length >= 5, "every Settings tab is visited");
+    for (const tab of tabs) {
+        tab.click();
+        await w.tick();
+        const body = w.shadow.querySelector(".set-body");
+        assert.ok(body, `the ${tab.textContent.trim()} tab rendered`);
+        assert.equal(body.querySelector('[aria-label="Chart window"]'), null, `no window picker under ${tab.textContent.trim()}`);
+        assert.doesNotMatch(body.textContent, /Chart window/, `nor a label for one under ${tab.textContent.trim()}`);
+    }
 });
 
 // A RESIZED WINDOW IS A DEPARTURE FROM THE DEFAULT, so it needs the same way back a pinned range has. The
@@ -6530,26 +6549,25 @@ test("layout: a custom layout survives picking a preset, and can be returned to"
 // Dragging the panel taller must grow the CHART, not add empty space under it. jsdom has no layout, so this
 // asserts the flex chain that makes it so — a fixed-height plot inside a resizable panel is the bug.
 test("resource panel: the chart flexes into the dragged height", async () => {
-    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
-    const rule = (sel) => css.slice(css.indexOf(sel + " {"), css.indexOf("}", css.indexOf(sel + " {")));
+    const css = sidebarCss();
     for (const sel of [".rc", ".rc-track", ".rc-plot"]) {
-        assert.match(rule(sel), /flex:\s*1 1/, `${sel} must grow with the panel`);
+        assert.match(cssRule(sel), /flex:\s*1 1/, `${sel} must grow with the panel`);
     }
     // …but they must NOT be allowed to shrink below their content: `min-height: 0` let the chart be squeezed
     // past what fits, and a flex item smaller than its content overflows and renders ON TOP of the rows below.
     // Too little room is the panel's problem to solve by scrolling.
-    assert.ok(!/min-height:\s*0/.test(rule(".rc")), ".rc must not shrink past its content");
-    assert.ok(!/min-height:\s*0/.test(rule(".rc-track")), ".rc-track must not shrink past its content");
+    assert.ok(!/min-height:\s*0/.test(cssRule(".rc")), ".rc must not shrink past its content");
+    assert.ok(!/min-height:\s*0/.test(cssRule(".rc-track")), ".rc-track must not shrink past its content");
     // The plot keeps a floor so it can't collapse to nothing.
-    assert.match(rule(".rc-plot"), /min-height:\s*\d+px/);
+    assert.match(cssRule(".rc-plot"), /min-height:\s*\d+px/);
     assert.match(css, /\.vram\[style\*="height"\] \.rc-plot \{ height: auto/, "a dragged height releases the fixed one");
 });
 
 // A scroll container CLIPS its children, so the panel only scrolls once a height has been dragged — and the
 // badges in the rows open their tooltips UPWARD, since the rows sit at the bottom where the room is above.
 test("resource panel: badge tooltips aren't clipped by the resizable panel", async () => {
-    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
-    const vram = css.slice(css.indexOf(".vram {"), css.indexOf("}", css.indexOf(".vram {")));
+    const css = sidebarCss();
+    const vram = cssRule(".vram");
     assert.ok(!/overflow-y:\s*auto/.test(vram), "no clipping until a height is chosen");
     assert.match(css, /\.vram\[style\*="height"\] \{ overflow-y: auto/, "…and only then");
 
@@ -6568,7 +6586,7 @@ test("resource panel: badge tooltips aren't clipped by the resizable panel", asy
     for (const sel of [".vram-ctx", ".vram-ttl"]) {
         assert.ok(w.shadow.querySelector(`${sel} .tt-pop`), `${sel} still carries its tooltip content`);
     }
-    const ttPop = css.slice(css.indexOf(".tt-pop {"), css.indexOf("}", css.indexOf(".tt-pop {")));
+    const ttPop = cssRule(".tt-pop");
     assert.match(ttPop, /display:\s*none/, "the source is never rendered in the flow, so nothing clips it");
 });
 
@@ -6788,8 +6806,7 @@ test("track editor: expands and collapses instead of snapping in", async () => {
 
     // The animation is height-driven from the content's own size — a hardcoded max-height either clips the
     // editor or eases against empty space.
-    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
-    const rule = css.slice(css.indexOf(".rc-editor-wrap {"), css.indexOf("}", css.indexOf(".rc-editor-wrap {")));
+    const rule = cssRule(".rc-editor-wrap");
     assert.match(rule, /grid-template-rows:\s*0fr/, "collapsed to a zero-height row");
     assert.match(rule, /transition:[^;]*grid-template-rows/, "…and it transitions to the content's real height");
 });
@@ -6819,16 +6836,12 @@ test("capacity: a box that never answers draws no ceiling", async () => {
 // min-height:0 zeroes only the content box, so the editor's own margin/padding/border left a strip of empty
 // panel between the header and the plot.
 test("track editor: collapsed occupies no height at all, chrome included", async () => {
-    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
-    const closed = css.slice(css.indexOf(".rc-editor-wrap:not(.open) > * {"));
-    const rule = closed.slice(0, closed.indexOf("}"));
-    assert.ok(rule, "the collapsed state has a rule of its own");
+    const rule = cssRule(".rc-editor-wrap:not(.open) > *");   // the collapsed state has a rule of its own
     for (const prop of ["margin-block", "padding-block", "border-block-width"]) {
         assert.match(rule, new RegExp(`${prop}:\\s*0`), `${prop} is zeroed while collapsed`);
     }
     // And it eases rather than snapping, on the same curve as the row transition.
-    const item = css.slice(css.indexOf(".rc-editor-wrap > * {"));
-    assert.match(item.slice(0, item.indexOf("}")), /transition:[^;]*padding-block/);
+    assert.match(cssRule(".rc-editor-wrap > *"), /transition:[^;]*padding-block/);
 });
 
 // Every memory figure carries its share of the pool. "18.00 GiB of 95.59 GiB" makes the reader divide; the
@@ -6927,7 +6940,7 @@ test("focus mode: quiets the machinery, keeps what happened, and is fully revers
 // The distinction it encodes: focus mode quiets CHROME — step counters, approval badges, provenance — and
 // never the thing you came to do. Copying the answer is the reason you are reading it.
 test("focus mode hides the raw toggle and the model pill, and KEEPS the copy button on a reply", () => {
-    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
+    const css = sidebarCss();
     const hidden = css.split("\n").filter((l) => l.startsWith("html[data-focus]") && !l.includes("{ display: inline"));
     const named = (sel) => hidden.some((l) => l.includes(sel));
     assert.ok(named(".raw-btn"), "the raw toggle is chrome — hidden");
@@ -7255,7 +7268,7 @@ test("overview lines: the hit target never moves under the pointer", async () =>
     assert.equal(widthOf(w.shadow.querySelector(".rc-hit")), before, "…but the target it sits on does not move");
 
     // And the thickened line can't steal the pointer from the target underneath it.
-    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
+    const css = sidebarCss();
     assert.match(css, /\.rc-line \{[^}]*pointer-events:\s*none/, "the visible line takes no pointer events");
 });
 
@@ -7284,7 +7297,7 @@ test("overview legend: hovering one pool's line dims every other pool's key", as
         `every other key dims (${after.map((k) => k.className).join(" | ")})`);
 
     // The class has to actually reduce the opacity — a class name alone proves nothing.
-    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
+    const css = sidebarCss();
     assert.match(css, /\.rc-key\.away \{[^}]*opacity:\s*0?\.\d/, ".rc-key.away dims the key");
 
     // …and it comes back.
@@ -7729,8 +7742,8 @@ test("event lane: an eviction rules through the plot and names itself", async ()
         "hovering one highlights the same moment everywhere");
     // A dashed rule, not solid: a solid line reads as part of the chart (a ceiling, an axis) rather than as
     // something that happened.
-    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
-    assert.match(css.slice(css.indexOf(".rc-rule::before")), /repeating-linear-gradient/);
+    const css = sidebarCss();
+    assert.match(cssRule(".rc-rule::before"), /repeating-linear-gradient/);
     // A moment inside a BREAK is the more specific target: its rule stacks above the gap mark, or the gap takes the
     // hover and pointing at an eviction says "not measured".
     const z = (sel) => Number((css.match(new RegExp(`\\${sel} \\{[^}]*z-index: (\\d+)`)) || [])[1]);

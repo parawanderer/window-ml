@@ -12,4 +12,8 @@ panel — run **`node scripts/components.mjs`** and grep it by concept (`| grep 
 existing component, hook and documented CSS class with the first sentence of its docstring. See
 `.claude/skills/components/SKILL.md`; the rule and the reasoning are in AGENTS.md.
 
+To move functions, types or constants to another file, run **`node scripts/move-symbols.mjs`** (`--dry-run
+--diff` first) instead of copying code by hand. It updates every import, including tests' `await import()`,
+and refuses on a new type error or import cycle. See `.claude/skills/move-symbols/SKILL.md`.
+
 @AGENTS.md

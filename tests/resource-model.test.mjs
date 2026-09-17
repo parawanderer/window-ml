@@ -1700,8 +1700,9 @@ test("residencyFrom: a LOADING row carries no occupancy — it must not read as 
 // Trimmed by count alone, a few loads evict the whole idle history and the chart is left with minutes of wall
 // time under a window set to thirty.
 test("sample retention: an age horizon, with the count as the memory ceiling", async () => {
-    const V = await import("../src/sidebar/vram.tsx").catch(() => null);
-    if (!V) return;   // the module pulls in preact; the constants are what matter here
+    // No `.catch(() => null)` + early return: a module that stopped importing would have skipped this test
+    // silently, and it imports fine under tsx (preact included).
+    const V = await import("../src/sidebar/vram.tsx");
     assert.ok(V.RESOURCE_RETENTION_MS >= 30 * 60_000,
         "the horizon must outlast the longest window the chart offers, or 'Everything kept' cannot draw it");
     assert.ok(V.RESOURCE_HISTORY >= 900, "the count is a memory ceiling, not the thing deciding what is kept");
