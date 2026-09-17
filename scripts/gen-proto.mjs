@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Generate the protobuf chat-stream decoder from `src/proto/chat.proto`.
+// Generate TypeScript from the schemas in `src/proto/`: the protobuf chat-stream decoder (`chat.proto`) and the
+// `/api/events` frame types (`events.proto`). See TARGETS.
 //
 // The schema is the CONTRACT and it is not ours: it lives beside the Go encoder in the ollama fork, and the
 // copy here is pinned by blob id (`chat.proto.pin.json`). Everything about the wire — field numbers, wire
@@ -21,23 +22,52 @@ import { dirname, join } from "node:path";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PROTO_DIR = join(ROOT, "src", "proto");
-const OUT = join(PROTO_DIR, "chat.gen.ts");
 const PLUGIN = join(ROOT, "node_modules", ".bin", "protoc-gen-ts_proto");
 
-/** ts-proto options, fixed here so the checked-in output is reproducible from one command. */
-const OPTS = [
-    // DECODE ONLY. We never encode one of these — the server does — and the encoders are most of the output.
-    "outputEncodeMethods=decode-only",
-    "outputJsonMethods=false",
-    "outputClientImpl=false",
-    // A 64-bit field as a NUMBER rather than a Long, which would pull in the `long` package for one unix
-    // timestamp. `created` is seconds since the epoch; it is exact in a double until the year 285000000.
-    "forceLong=number",
-    "esModuleInterop=true",
-    "useOptionals=none",
-];
+/**
+ * The schemas we generate from. Each is someone else's contract, pinned by blob id beside it (`<name>.proto.pin.json`),
+ * and each has its own ts-proto options, fixed here so the checked-in output is reproducible from one command.
+ */
+export const TARGETS = {
+    /** The protobuf chat stream: a DECODER, since those bytes are binary. */
+    chat: {
+        proto: "chat.proto", out: "chat.gen.ts", emitted: "chat.ts",
+        opts: [
+            // DECODE ONLY. We never encode one of these — the server does — and the encoders are most of the output.
+            "outputEncodeMethods=decode-only",
+            "outputJsonMethods=false",
+            "outputClientImpl=false",
+            // A 64-bit field as a NUMBER rather than a Long, which would pull in the `long` package for one unix
+            // timestamp. `created` is seconds since the epoch; it is exact in a double until the year 285000000.
+            "forceLong=number",
+            "esModuleInterop=true",
+            "useOptionals=none",
+        ],
+    },
+    /**
+     * The `/api/events` stream: TYPES ONLY. That stream is NDJSON and nothing about it changes; the schema describes
+     * the JSON, and the panel parses it with `JSON.parse`, so it needs interfaces, not codecs. Three options make the
+     * interfaces describe the wire rather than ts-proto's own JSON mapping, and each is checked against real captures
+     * in tests/events-proto.test.mjs:
+     */
+    events: {
+        proto: "events.proto", out: "events.gen.ts", emitted: "events.ts",
+        opts: [
+            "onlyTypes=true",
+            // The property names ARE the wire keys, snake_case and the camelCase few (`serverTime`, `retainedMs`) alike.
+            // ts-proto's default would camelCase every one of them into a key the server never sends.
+            "snakeToCamel=false",
+            // A Timestamp arrives as an RFC 3339 STRING and nothing converts it; `Date` would be a type that lies.
+            "useDate=string",
+            // int64 as number, as the chat stream does: byte counts and millisecond offsets, all exact in a double.
+            "forceLong=number",
+            "esModuleInterop=true",
+            "useOptionals=none",
+        ],
+    },
+};
 
-const PIN = JSON.parse(readFileSync(join(PROTO_DIR, "chat.proto.pin.json"), "utf8"));
+const pinOf = (target) => JSON.parse(readFileSync(join(PROTO_DIR, `${TARGETS[target].proto}.pin.json`), "utf8"));
 
 /**
  * Is the vendored schema BYTE-FOR-BYTE the file at the pinned commit?
@@ -46,10 +76,11 @@ const PIN = JSON.parse(readFileSync(join(PROTO_DIR, "chat.proto.pin.json"), "utf
  * offline, which is the point: a copy of someone else's contract that can only be checked when a private
  * host is reachable is a copy nobody checks. The remote half is a bonus, run only where `gh` is authed.
  */
-export function checkPin({ remote = true } = {}) {
-    const local = execFileSync("git", ["hash-object", join(PROTO_DIR, "chat.proto")], { encoding: "utf8" }).trim();
+export function checkPin({ remote = true, target = "chat" } = {}) {
+    const PIN = pinOf(target), file = TARGETS[target].proto;
+    const local = execFileSync("git", ["hash-object", join(PROTO_DIR, file)], { encoding: "utf8" }).trim();
     if (local !== PIN.blob)
-        throw new Error(`chat.proto is not the pinned file: ${local} != ${PIN.blob}. `
+        throw new Error(`${file} is not the pinned file: ${local} != ${PIN.blob}. `
             + `Replace it from ${PIN.repo}:${PIN.path} and update the pin, or fix the pin if the schema moved on.`);
     if (!remote) return { local, remote: null };
     let sha = null;
@@ -77,31 +108,35 @@ export function protocVersion() {
 }
 
 /** Generate into a directory and hand back the source text, without touching the checked-in file. */
-export function generate(intoDir) {
+export function generate(intoDir, target = "chat") {
     if (!protocVersion()) throw new Error("protoc is not installed");
+    const t = TARGETS[target];
     mkdirSync(intoDir, { recursive: true });
     execFileSync("protoc", [
         `-I${PROTO_DIR}`, `--plugin=protoc-gen-ts_proto=${PLUGIN}`,
-        `--ts_proto_out=${intoDir}`, `--ts_proto_opt=${OPTS.join(",")}`, "chat.proto",
+        `--ts_proto_out=${intoDir}`, `--ts_proto_opt=${t.opts.join(",")}`, t.proto,
     ], { stdio: ["ignore", "ignore", "pipe"] });
-    return readFileSync(join(intoDir, "chat.ts"), "utf8");
+    return readFileSync(join(intoDir, t.emitted), "utf8");
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-    if (process.argv.includes("--check")) {
-        const r = checkPin();
-        console.log(`chat.proto matches ${PIN.repo}@${PIN.commit.slice(0, 7)} (${r.remote ? "verified against GitHub" : "offline check only"})`);
-        if (r.stale)
-            console.log(`NOTE: upstream has moved on — newest commit touching ${PIN.path} is ${r.tip.slice(0, 7)}. `
-                + "Re-vendor and re-pin if you want it.");
-        if (!protocVersion()) { console.log("protoc absent — cannot diff the generated decoder"); process.exit(0); }
+    for (const target of Object.keys(TARGETS)) {
+        const { proto, out } = TARGETS[target], PIN = pinOf(target), OUT = join(PROTO_DIR, out);
+        if (process.argv.includes("--check")) {
+            const r = checkPin({ target });
+            console.log(`${proto} matches ${PIN.repo}@${PIN.commit.slice(0, 7)} (${r.remote ? "verified against GitHub" : "offline check only"})`);
+            if (r.stale)
+                console.log(`NOTE: upstream has moved on — newest commit touching ${PIN.path} is ${r.tip.slice(0, 7)}. `
+                    + "Re-vendor and re-pin if you want it.");
+            if (!protocVersion()) { console.log("protoc absent — cannot diff the generated output"); continue; }
+        }
+        checkPin({ remote: false, target });
+        const tmp = join(ROOT, "node_modules", ".cache", "protogen");
+        rmSync(tmp, { recursive: true, force: true });
+        const src = generate(tmp, target);
+        const before = existsSync(OUT) ? readFileSync(OUT, "utf8") : null;
+        writeFileSync(OUT, src);
+        rmSync(tmp, { recursive: true, force: true });
+        console.log(before === src ? `unchanged ${OUT}` : `generated ${OUT}`);
     }
-    checkPin({ remote: false });
-    const tmp = join(ROOT, "node_modules", ".cache", "protogen");
-    rmSync(tmp, { recursive: true, force: true });
-    const src = generate(tmp);
-    const before = existsSync(OUT) ? readFileSync(OUT, "utf8") : null;
-    writeFileSync(OUT, src);
-    rmSync(tmp, { recursive: true, force: true });
-    console.log(before === src ? `unchanged ${OUT}` : `generated ${OUT}`);
 }

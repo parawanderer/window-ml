@@ -44,7 +44,7 @@ export class LoadRecorder {
     private estimates = new Map<string, unknown>();
     private settling: { rec: Omit<LoadRecord, "trace">; }[] = [];
 
-    push(frame: ResourceFrame & Record<string, unknown>, at: number): LoadRecord[] {
+    push(frame: ResourceFrame, at: number): LoadRecord[] {
         const model = typeof frame.model === "string" ? normModel(frame.model) : undefined;
         switch (frame.kind) {
             case "sample": {
@@ -70,7 +70,8 @@ export class LoadRecorder {
                 const o = model ? this.open.get(model) : undefined;
                 if (!model || !o) return [];
                 this.open.delete(model);
-                const pick = (k: string) => (frame[k] !== undefined ? { [k]: frame[k] } : {});
+                // Verbatim, and only the keys the server SENT: a key it omitted is not recorded as a zero.
+                const pick = (k: keyof LoadRecord["complete"]) => (frame[k] !== undefined ? { [k]: frame[k] } : {});
                 this.settling.push({ rec: {
                     model, start: o.start, end: at, failedAttempts: o.failed,
                     // The LATEST estimate: a retried attempt sends a new one, and it is the one that was placed.

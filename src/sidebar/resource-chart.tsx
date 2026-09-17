@@ -1918,8 +1918,8 @@ function OverlayView({ def, samples, latest, hidden, events = [], onHide }: { de
  *  model's wait, so the colour stays. (A plain model-coloured bar is what the inline colouring made of it,
  *  which is exactly the confusion the stripes exist to prevent.) */
 /** The server's own words for an edge, with the model's name taken off the front — the name is already the
- *  line above, and repeating it costs the width the REASON needs (`evicted (made room)` against
- *  `unloaded (idle)`, which is the whole difference between the two things polling reads as one). */
+ *  line above, and repeating it costs the width the REASON needs (`evicted (oom-retry)` against an `unload`,
+ *  which the server reports without saying whether a keep-alive ran out or another load displaced it). */
 function serverSaid(label: string, model?: string): string {
     const rest = model && label.startsWith(model) ? label.slice(model.length).trim() : label;
     return rest ? `the server reported this — ${rest}` : "reported by the server";
@@ -2936,7 +2936,7 @@ function EventTip({ scope }: { scope: string }) {
             {/* WHAT THIS EDGE IS, said differently depending on where it CAME FROM.
                 An inferred one is read off `/api/ps` by noticing a model was there and then was not, and the
                 note says so. A REPORTED one came from the server's own event stream, which knows things
-                polling cannot — above all whether an eviction MADE ROOM or was an idle expiry — so it says
+                polling cannot — above all an OOM-retry eviction and its reason, told from an ordinary unload — so it says
                 what the server said. Hardcoding the inference note for both claimed "nothing reports an
                 eviction" about an edge the server had just reported, on exactly the setup the stream exists
                 for, and hid the reason it had gone to the trouble of sending. */}

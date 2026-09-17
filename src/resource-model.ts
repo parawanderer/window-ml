@@ -14,6 +14,9 @@
 //      therefore UNKNOWN, never zero, and must render as such.
 //   3. Metal is UNIFIED memory: the device "total" is a recommended working set that OVERLAPS system RAM, so
 //      device and host capacity must never be summed. `runner` is the discriminator.
+import type { Wire, GPUTopology, GPULink, UnavailableGPU, GPUInfo, GPUProcess, ProfileDevice, ProfileFailure, ExpectedDecode as WireExpectedDecode,
+    ModelRoofline, RooflineDevice, LoadEstimate as WireLoadEstimate, MemoryBreakdown as WireMemoryBreakdown, RunnerActivity as WireRunnerActivity,
+    ModelPlacement, ProcessModelResponse, DecodePrediction, GenerationTimings, RequestHint, InfoResponse, BoxProfile as WireBoxProfile } from "./events-wire";
 
 // --- rendering ------------------------------------------------------------------------------------------
 // EVERY memory figure this API returns is raw bytes, and every one of them is BINARY. GPU and system memory
@@ -276,14 +279,14 @@ export interface Topology {
  *  a producer that emitted both directions (KFD's io_links are directed) cannot double-count coverage. */
 export function topologyFrom(raw: unknown): Topology | null {
     if (!raw || typeof raw !== "object") return null;
-    const o = raw as Record<string, unknown>;
+    const o = raw as Wire<GPUTopology>;
     const status = typeof o.status === "string" && o.status ? o.status : null;
     if (!status) return null;
     const gpus = Array.isArray(o.gpus) ? o.gpus.filter((g): g is string => typeof g === "string" && !!g.trim()).map((g) => g.trim()) : [];
     const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
     const seen = new Map<string, TopoLink>();
     for (const x of Array.isArray(o.links) ? o.links : []) {
-        const l = x as Record<string, unknown>;
+        const l = x as Wire<GPULink>;
         const a0 = typeof l.a === "string" ? l.a.trim() : "", b0 = typeof l.b === "string" ? l.b.trim() : "";
         if (!a0 || !b0 || a0 === b0) continue;          // a diagonal is not a link
         const [a, b] = a0 < b0 ? [a0, b0] : [b0, a0];
@@ -293,7 +296,9 @@ export function topologyFrom(raw: unknown): Topology | null {
             a, b, type: typeof l.type === "string" && l.type ? l.type : "unknown",
             ...(typeof l.path === "string" && l.path ? { path: l.path } : {}),
             ...(typeof l.pcie_path === "string" && l.pcie_path ? { pciePath: l.pcie_path } : {}),
-            ...(n(l.nvlink_count) ?? n(l.link_count) ? { linkCount: (n(l.nvlink_count) ?? n(l.link_count))! } : {}),
+            // `link_count` is NOT IN THE SCHEMA (events.proto at aa1536a has `nvlink_count` only): it is the mock AMD xGMI
+            // link in tests/fixtures/boxes.mjs, read as a fallback in case a non-NVLink fabric reports a count that way.
+            ...(n(l.nvlink_count) ?? n((l as { link_count?: unknown }).link_count) ? { linkCount: (n(l.nvlink_count) ?? n((l as { link_count?: unknown }).link_count))! } : {}),
             ...(n(l.nvlink_version) ? { version: n(l.nvlink_version)! } : {}),
             ...(n(l.bandwidth_bytes_per_sec) ? { bandwidthBytesPerSec: n(l.bandwidth_bytes_per_sec)! } : {}),
             ...(typeof l.bandwidth_source === "string" && l.bandwidth_source ? { bandwidthSource: l.bandwidth_source } : {}),
@@ -438,10 +443,10 @@ export function holdCapacity(current: Capacity | null, answered: Capacity | null
 export function unavailableFrom(raw: unknown): UnavailableGpu[] {
     if (!Array.isArray(raw)) return [];
     return raw.flatMap((x) => {
-        const g = x as Record<string, any>;
+        const g = x as Wire<UnavailableGPU>;
         const pciId = String(g.pci_id ?? "").trim();
         if (!pciId) return [];
-        const bus = g.bus && typeof g.bus === "object" ? g.bus as Record<string, any> : null;
+        const bus = g.bus && typeof g.bus === "object" ? g.bus : null;
         const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
         return [{
             pciId,
@@ -466,14 +471,14 @@ export function unavailableFrom(raw: unknown): UnavailableGpu[] {
 /** A card's `processes` and `processes_scope`, or nothing on a server that reports neither. A scope with no
  *  list is an EMPTY list (the server omits an empty array), which is itself a reading; a list with no scope
  *  is kept without claiming completeness. An entry without a pid or a byte count is dropped. */
-function processesOf(g: Record<string, unknown>): Partial<DeviceCapacity> {
+function processesOf(g: Wire<GPUInfo>): Partial<DeviceCapacity> {
     const scope = typeof g.processes_scope === "string" && g.processes_scope ? g.processes_scope : undefined;
     if (!Array.isArray(g.processes) && !scope) return {};
     const processes: DeviceProcess[] = (Array.isArray(g.processes) ? g.processes : []).flatMap((x) => {
-        const p = (x ?? {}) as Record<string, unknown>;
+        const p = (x ?? {}) as Wire<GPUProcess>;
         const pid = Number(p.pid), used = Number(p.used_memory);
         if (!Number.isFinite(pid) || !Number.isFinite(used) || used < 0) return [];
-        const r = p.runner && typeof p.runner === "object" ? p.runner as Record<string, unknown> : null;
+        const r = p.runner && typeof p.runner === "object" ? p.runner : null;
         return [{
             pid, usedBytes: used,
             ...(typeof p.name === "string" && p.name ? { name: p.name } : {}),
@@ -508,12 +513,12 @@ export interface BoxProfile {
 /** Read `compute.profile`: the per-card figures keyed by `pci_id` (to be joined onto the cards) and the state. */
 function profileFrom(raw: unknown): { byPci: Map<string, DecodeProfile>; profile: BoxProfile } | null {
     if (!raw || typeof raw !== "object") return null;
-    const o = raw as Record<string, unknown>;
+    const o = raw as Wire<WireBoxProfile>;
     const pos = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
     const nn = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
     const byPci = new Map<string, DecodeProfile>();
     for (const x of Array.isArray(o.devices) ? o.devices : []) {
-        const d = x as Record<string, unknown>;
+        const d = x as Wire<ProfileDevice>;
         const bw = pos(d.bandwidth_bytes_per_sec);
         if (typeof d.pci_id !== "string" || !bw) continue;
         byPci.set(d.pci_id, { bandwidth: bw,
@@ -523,7 +528,7 @@ function profileFrom(raw: unknown): { byPci: Map<string, DecodeProfile>; profile
     }
     const at = typeof o.measured_at === "string" ? Date.parse(o.measured_at) : NaN;
     const failures = (Array.isArray(o.failures) ? o.failures : []).map((x) => {
-        const f = x as Record<string, unknown>;
+        const f = x as Wire<ProfileFailure>;
         return { what: String(f.what ?? ""), pciIds: Array.isArray(f.pci_ids) ? f.pci_ids.map(String) : [], error: String(f.error ?? "") };
     });
     return { byPci, profile: { state: typeof o.state === "string" ? o.state : "", ...(Number.isFinite(at) ? { measuredAt: at } : {}), failures } };
@@ -531,10 +536,10 @@ function profileFrom(raw: unknown): { byPci: Map<string, DecodeProfile>; profile
 
 /** A card's fixed ceilings and its utilization reading, each kept only when it is a real number — absent is
  *  "could not read", and `0` survives as a reading (idle), never collapsed into absent or vice versa. */
-function ceilingsOf(g: Record<string, unknown>): Partial<DeviceCapacity> {
+function ceilingsOf(g: Wire<GPUInfo>): Partial<DeviceCapacity> {
     const pos = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
     const pct = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= 100 ? v : undefined);
-    const u = g.utilization && typeof g.utilization === "object" ? g.utilization as Record<string, unknown> : null;
+    const u = g.utilization && typeof g.utilization === "object" ? g.utilization : null;
     const util = u ? { ...(pct(u.gpu_percent) != null ? { gpuPercent: pct(u.gpu_percent) } : {}),
                        ...(pct(u.memory_percent) != null ? { memoryPercent: pct(u.memory_percent) } : {}) } : null;
     return {
@@ -548,12 +553,12 @@ function ceilingsOf(g: Record<string, unknown>): Partial<DeviceCapacity> {
 }
 
 export function parseInfo(raw: unknown): Capacity | null {
-    const r = raw as { compute?: { system_compute?: Record<string, number>; supported_gpus?: Record<string, unknown>[]; unavailable_gpus?: unknown } };
+    const r = raw as Wire<InfoResponse> | null;
     const c = r?.compute;
     if (!c || typeof c !== "object") return null;
     const sys = c.system_compute;
     if (!sys || typeof sys.total_memory !== "number") return null;
-    const prof = profileFrom((c as { profile?: unknown }).profile);
+    const prof = profileFrom(c.profile);
     const devices: DeviceCapacity[] = (Array.isArray(c.supported_gpus) ? c.supported_gpus : []).flatMap((g) => {
         const total = Number(g.total_memory), free = Number(g.free_memory);
         const measured = typeof g.pci_id === "string" ? prof?.byPci.get(g.pci_id.trim()) : undefined;
@@ -694,7 +699,7 @@ export type ExpectedDecode =
 /** Parse `/api/ps` `expected_decode`. Null when absent or unshaped. */
 export function expectedDecodeFrom(raw: unknown): ExpectedDecode | null {
     if (!raw || typeof raw !== "object") return null;
-    const o = raw as Record<string, unknown>;
+    const o = raw as Wire<WireExpectedDecode>;
     if (typeof o.unavailable === "string" && o.unavailable) return { unavailable: o.unavailable };
     const pos = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
     const tps = pos(o.tokens_per_sec);
@@ -798,13 +803,13 @@ export type Roofline =
 /** Parse `/api/ps` `roofline`. Null when absent or unshaped — not reported, which draws nothing. */
 export function rooflineFrom(raw: unknown): Roofline | null {
     if (!raw || typeof raw !== "object") return null;
-    const o = raw as Record<string, unknown>;
+    const o = raw as Wire<ModelRoofline>;
     if (typeof o.unavailable === "string" && o.unavailable) return { unavailable: o.unavailable };
     const pos = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
     const bpt = pos(o.bytes_per_token), tps = pos(o.ceiling_tokens_per_sec);
     if (!bpt || !tps) return null;
     const devices = (Array.isArray(o.devices) ? o.devices : []).flatMap((x) => {
-        const d = x as Record<string, unknown>;
+        const d = x as Wire<RooflineDevice>;
         const b = pos(d.bytes_per_token), bw = pos(d.memory_bandwidth_bytes_per_sec);
         if (!b || !bw) return [];
         return [{ ...(d.gpu_id != null ? { gpuId: String(d.gpu_id) } : {}), ...(typeof d.pci_id === "string" ? { pciId: d.pci_id } : {}),
@@ -933,11 +938,11 @@ export interface LoadEstimate {
 
 /** Parse `estimate` off an `estimate` frame, or null when there is no predicted total to compare. */
 export function estimateFrom(raw: unknown): LoadEstimate | null {
-    const e = raw && typeof raw === "object" ? raw as Record<string, unknown> : null;
+    const e = raw && typeof raw === "object" ? raw as Wire<WireLoadEstimate> : null;
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
     const predicted = num(e?.predicted);
     if (!e || predicted == null) return null;
-    const b = e.breakdown && typeof e.breakdown === "object" ? e.breakdown as Record<string, unknown> : {};
+    const b: Wire<WireMemoryBreakdown> = e.breakdown && typeof e.breakdown === "object" ? e.breakdown : {};
     const out: LoadEstimate = { predicted };
     const set = <K extends keyof LoadEstimate>(k: K, v: LoadEstimate[K] | undefined) => { if (v !== undefined) out[k] = v; };
     set("forLoad", num(e.predicted_for_load));
@@ -1022,11 +1027,10 @@ export function loadTrace(samples: ResourceSample[], load: { t: number; until?: 
 
 export function activityFrom(raw: unknown): RunnerActivity | null {
     if (!raw || typeof raw !== "object") return null;
-    const a = raw as Record<string, unknown>;
+    const a = raw as Wire<WireRunnerActivity>;
     const phase = a.phase === "prefill" || a.phase === "decode" || a.phase === "idle" ? a.phase : null;
     if (!phase) return null;   // an unrecognised phase is not a fourth state to invent a rendering for
-    const n = (k: string) => (typeof a[k] === "number" && Number.isFinite(a[k]) && (a[k] as number) >= 0
-        ? Math.floor(a[k] as number) : undefined);
+    const n = (k: keyof WireRunnerActivity) => { const v = a[k]; return typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : undefined; };
     const out: RunnerActivity = {
         phase, slots: n("slots") ?? 1, slotsBusy: n("slots_busy") ?? 0,
     };
@@ -1041,7 +1045,7 @@ export function activityFrom(raw: unknown): RunnerActivity | null {
         if (cached !== undefined) out.promptTokensCached = cached;
         if (dec !== undefined) out.decoded = dec;
     }
-    const pc = a.prompt_cache && typeof a.prompt_cache === "object" ? a.prompt_cache as Record<string, unknown> : null;
+    const pc = a.prompt_cache && typeof a.prompt_cache === "object" ? a.prompt_cache : null;
     const pn = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
     if (pc && pn(pc.entries) != null && pn(pc.bytes) != null) out.promptCache = {
         entries: pn(pc.entries)!, tokens: pn(pc.tokens) ?? 0, bytes: pn(pc.bytes)!,
@@ -1101,9 +1105,9 @@ export interface LayerPlacement {
  *  mismatch as unknown rather than guessing a mapping. Nothing here is reconciled against `gpus[]`. */
 export function placementFrom(raw: unknown): LayerPlacement | null {
     if (!raw || typeof raw !== "object") return null;
-    const p = raw as Record<string, unknown>;
+    const p = raw as Wire<ModelPlacement>;
     const num = Number(p.num_layers) || 0;
-    const list = Array.isArray(p.devices) ? p.devices as Record<string, unknown>[] : [];
+    const list = Array.isArray(p.devices) ? p.devices : [];
     const devices = list.map((d) => ({
         device: String(d.device ?? ""),
         firstLayer: Number(d.first_layer) || 0,
@@ -1132,8 +1136,8 @@ export function layersOnCard(placement: LayerPlacement, card: { id?: string | nu
  *  so a mismatch is a bug to report rather than a remainder to invent. */
 export function memorySplit(raw: unknown, total: number): MemoryBreakdown | null {
     if (!raw || typeof raw !== "object") return null;
-    const m = raw as Record<string, unknown>;
-    const n = (k: string) => Number(m[k]) || 0;   // a key is OMITTED when zero, so missing IS zero here
+    const m = raw as Wire<WireMemoryBreakdown>;
+    const n = (k: keyof WireMemoryBreakdown) => Number(m[k]) || 0;   // a key is OMITTED when zero, so missing IS zero here
     const out: MemoryBreakdown = {
         weights: n("weights"), kvCache: n("kv_cache"), compute: n("compute"),
         recurrentState: n("recurrent_state"), output: n("output"),
@@ -1195,11 +1199,11 @@ export interface ResourceSample {
 /** Raw `/api/ps` entry → residency. `gpus` is ABSENT for a CPU-resident model — that is the contract, and it
  *  is why an empty device map plus a zero `size_vram` reads as "on the CPU" rather than "placement unknown". */
 export function residencyFrom(raw: unknown): ModelResidency {
-    const m = raw as Record<string, unknown>;
+    const m = raw as Wire<ProcessModelResponse>;
     const size = Number(m.size) || 0;
     const vram = Number(m.size_vram) || 0;
     const perDevice: Record<string, number | null> = {};
-    const gpus = Array.isArray(m.gpus) ? m.gpus as Record<string, unknown>[] : [];
+    const gpus = Array.isArray(m.gpus) ? m.gpus : [];
     for (const g of gpus) {
         const bytes = Number(g.size_vram) || 0;
         // The deployed server reports 0 per device for a placement that doesn't start at card 0 while the
@@ -1223,7 +1227,7 @@ export function residencyFrom(raw: unknown): ModelResidency {
                 const one = memorySplit(g.memory, Number(g.size_vram) || 0);
                 if (one) per[String(g.gpu_id ?? "")] = one;
             }
-            const host = memorySplit(m.memory_host, 0);
+            const host = memorySplit((m as { memory_host?: unknown }).memory_host, 0)   // not on an /api/ps row per the schema; see loadedFrom;
             return {
                 ...(whole ? { memory: whole } : {}),
                 ...(Object.keys(per).length ? { perDeviceMemory: per } : {}),
@@ -2921,7 +2925,7 @@ export interface PredictedDecode {
 /** Parse `gen.end.predicted_decode`. Null when absent or unshaped. */
 export function predictedDecodeFrom(raw: unknown): PredictedDecode | null {
     if (!raw || typeof raw !== "object") return null;
-    const o = raw as Record<string, unknown>;
+    const o = raw as Wire<DecodePrediction>;
     const pos = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
     const ms = pos(o.ms_per_token);
     if (!ms) return null;
@@ -2959,7 +2963,7 @@ export function predictionLine(g: GenTimings): string | null {
  *  one without the other is a boundary with only one side. */
 export function genTimingsFrom(raw: unknown): GenTimings | null {
     if (!raw || typeof raw !== "object") return null;
-    const o = raw as Record<string, unknown>;
+    const o = raw as Wire<GenerationTimings>;
     const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
     const promptMs = n(o.prompt_ms), evalMs = n(o.eval_ms);
     if (promptMs == null || evalMs == null) return null;
@@ -2969,7 +2973,7 @@ export function genTimingsFrom(raw: unknown): GenTimings | null {
         ...(n(o.prompt_tokens_cached) != null ? { promptTokensCached: n(o.prompt_tokens_cached) } : {}),
         ...(n(o.decoded) != null ? { decoded: n(o.decoded) } : {}),
         ...((() => {
-            const sw = o.prompt_cache_swap && typeof o.prompt_cache_swap === "object" ? o.prompt_cache_swap as Record<string, unknown> : null;
+            const sw = o.prompt_cache_swap && typeof o.prompt_cache_swap === "object" ? o.prompt_cache_swap : null;
             if (!sw || n(sw.ms) == null || typeof sw.restored !== "boolean") return {};
             return { swap: { ms: n(sw.ms)!, restored: sw.restored,
                 ...(n(sw.saved_tokens) != null ? { savedTokens: n(sw.saved_tokens) } : {}),
@@ -3103,7 +3107,7 @@ export function serverGenNote(h?: ServerHint | null, isShown?: (session: string)
  *  string is dropped rather than coerced, and an empty result is null. */
 export function hintFrom(raw: unknown): ServerHint | null {
     if (!raw || typeof raw !== "object") return null;
-    const o = raw as Record<string, unknown>;
+    const o = raw as Wire<RequestHint>;
     const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
     const h: ServerHint = {
         ...(str(o.use) ? { use: str(o.use) } : {}), ...(str(o.session) ? { session: str(o.session) } : {}),

@@ -10,48 +10,14 @@
 // Wire format is NDJSON (`application/x-ndjson`), one frame per line. Nothing here touches chrome or
 // the network: `sw-events.ts` owns the connection, this owns what a frame MEANS.
 import type { LoadedModel } from "./contract";
+import type { WireFrame, Wire, ProcessModelResponse, ProcessGPU } from "./events-wire";
 
-/** A frame's `kind`. The union is open in practice — an unrecognised kind is IGNORED rather than
- *  treated as an error, so a newer server can add one without breaking an older client. */
-export type FrameKind =
-    | "hello" | "heartbeat" | "sample"
-    | "load.start" | "load.complete" | "load.failed"
-    | "evict" | "unload" | "expires";
-
-/** One line off the stream. `t` is milliseconds from THIS connection's `hello`, and is NEGATIVE for a
- *  backfilled frame — it happened before the connection opened, and saying so beats restamping it as
- *  though it had not. */
-export interface ResourceFrame {
-    v?: number;
-    kind: FrameKind | string;
-    t: number;
-    /** hello: how far back the retained ring actually reaches, capped at the server's window. Ask for more
-     *  than this and the number is telling you your record has a gap. */
-    retainedMs?: number;
-    /** hello: how many frames the replay ACTUALLY delivered. Deliberately present as `0` rather than
-     *  omitted, so a client can read zero as a fact — it is the difference between "the ring was empty"
-     *  and "the query string never arrived", which is a real bug that has happened on this route. */
-    backfilled?: number | null;
-    /** The server's own clock at `hello`, and a stable id for the box. */
-    serverTime?: string;
-    box?: string;
-    /** hello: GPUs the server can see and cannot use (`compute.unavailable_gpus` in the same shape). It rides
-     *  the HELLO rather than an edge event on purpose — a card can fault hours before anything connects, and
-     *  an edge-only signal is silent in exactly that case. Read it on every connect. */
-    unavailable_gpus?: unknown;
-    /** Cumulative frames dropped for THIS subscriber, when it stopped reading fast enough. Non-zero means
-     *  a hole in the record, which is a different thing from a quiet period. */
-    dropped?: number;
-    /** sample: the verbatim `/api/ps` and `/api/info` bodies, so one parser serves both transports. */
-    ps?: { models?: unknown[] } | null;
-    info?: unknown;
-    /** The model an edge frame is about. */
-    model?: string;
-    /** evict: why. Ordinary keep-alive expiry is `unload`; `evict` is the OOM-retry path. */
-    reason?: string;
-    /** expires: the new keep-alive deadline, written when a request FINISHES. */
-    expires_at?: string;
-}
+/** A frame's `kind`, and one frame as sent: both from the fork's schema (events-wire.ts). Re-exported under the names
+ *  the panel already used. `t` is milliseconds from THIS connection's `hello`, NEGATIVE for a backfilled frame — it
+ *  happened before the connection opened, and saying so beats restamping it as though it had not. `dropped` is
+ *  cumulative for this subscriber (see `lostSince`), and `backfilled` is null on every frame but a hello. */
+export type { FrameKind } from "./events-wire";
+export type ResourceFrame = WireFrame;
 
 /** Parse one NDJSON line. Returns null for a blank line, for malformed JSON, and for anything that is not
  *  shaped like a frame — an unreadable line must never abandon the rest of the stream. */
@@ -102,11 +68,11 @@ export function sinceFor(lastFrameAt: number | null, now: number, ringMs = 600_0
 /** An ollama `/api/ps` row → the `LoadedModel` the rest of the extension speaks. Shared by the polled
  *  route and by a `sample` frame's embedded body, which is the whole point of the server embedding it
  *  verbatim: two transports, one parser, and no way for them to disagree about what a model IS. */
-export function loadedFrom(rows: unknown[]): LoadedModel[] {
+export function loadedFrom(rows: readonly unknown[]): LoadedModel[] {
     return (rows || []).map((raw) => {
-        const m = raw as Record<string, any>;
+        const m = raw as Wire<ProcessModelResponse>;
         return {
-            model: m.model || m.name,
+            model: m.model || m.name || "",
             vramGB: m.size_vram ? +(m.size_vram / 1e9).toFixed(1) : null,
             sizeGB: m.size ? +(m.size / 1e9).toFixed(1) : null,
             // EXACT bytes alongside the rounded GB: the resource panel's bands subtract these from exact
@@ -115,7 +81,7 @@ export function loadedFrom(rows: unknown[]): LoadedModel[] {
             sizeBytes: typeof m.size === "number" ? m.size : null,
             // Which devices it occupies. `gpus` is ABSENT for a CPU-resident model — the server's way of
             // saying so — and that absence is preserved here rather than normalised to an empty array.
-            ...(Array.isArray(m.gpus) ? { gpus: m.gpus.map((g: any) => ({
+            ...(Array.isArray(m.gpus) ? { gpus: m.gpus.map((g: Wire<ProcessGPU>) => ({
                 id: String(g.gpu_id ?? ""), runner: String(g.runner ?? ""), vramBytes: Number(g.size_vram) || 0,
                 ...(g.memory ? { memory: g.memory } : {}),
             })) } : {}),
@@ -125,7 +91,9 @@ export function loadedFrom(rows: unknown[]): LoadedModel[] {
             // WHAT the VRAM holds, carried RAW and parsed once downstream (`residencyOf` → `memorySplit`),
             // so the sum invariant is checked in one place rather than by each consumer that reads it.
             ...(m.memory ? { memory: m.memory } : {}),
-            ...(m.memory_host ? { memoryHost: m.memory_host } : {}),
+            // NOT IN THE SCHEMA for an /api/ps row (events.proto at aa1536a has `memory_host` on the event frame only, on
+            // load edges): read in case the row gains it, and absent today.
+            ...((m as { memory_host?: unknown }).memory_host ? { memoryHost: (m as { memory_host?: unknown }).memory_host } : {}),
             ...(typeof m.weights_on_disk === "number" ? { weightsOnDisk: m.weights_on_disk } : {}),
             // WHICH LAYERS WENT WHERE, raw and parsed once downstream like `memory`. Opt-in on the server
             // (`OLLAMA_LAYER_PLACEMENT=1`) and absent by default, so this is another "missing means not

@@ -65,12 +65,15 @@ test("serving: busy.end with no start is dropped, and never strands a live span"
     assert.deepEqual(servingSince.value, {});
 });
 
-test("evict and unload stay DIFFERENT answers", () => {
+test("evict and unload stay DIFFERENT answers, and unload does not claim to know why", () => {
     reset();
-    // Diffing two polls can see that a model went away; it can never say which of these happened. The server
-    // draws the distinction, so the lane keeps it: one made room for something, the other simply expired.
+    // `evict` is the server's OOM-retry path, and carries its reason. `unload` is its one termination path, reached by a
+    // keep-alive running out AND by a model displaced for another load, with no reason: calling it "idle" was a guess
+    // that was wrong every time a load pushed a model out.
     assert.match(machineEventFrom({ kind: "evict", model: "m", reason: "oom-retry" }, 1).label, /evicted \(oom-retry\)/);
-    assert.match(machineEventFrom({ kind: "unload", model: "m" }, 1).label, /unloaded \(idle\)/);
+    const unload = machineEventFrom({ kind: "unload", model: "m" }, 1).label;
+    assert.match(unload, /keep-alive ran out, or another load displaced it/);
+    assert.doesNotMatch(unload, /\(idle\)/);
 });
 
 test("a failed load is an error, and releases the span it would have closed", () => {
@@ -262,7 +265,7 @@ test("an unload that NAMES its model is drawn", () => {
     const ev = machineEventFrom({ kind: "unload", model: "registry.ollama.ai/library/qwen3-vl:30b" }, 5000);
     assert.equal(ev.kind, "evict");
     assert.equal(ev.model, "qwen3-vl:30b", "canonicalised, like every other edge");
-    assert.match(ev.label, /idle/, "…and it says WHY: an idle expiry, not making room for something");
+    assert.match(ev.label, /unloaded/, "…and says it was unloaded, without claiming a reason the server did not send");
 });
 
 test("generations off a REAL capture: split by the engine's durations, keyed by model through an interleave", async () => {

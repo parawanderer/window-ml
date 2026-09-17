@@ -216,10 +216,18 @@ broken:
 - **`GET /api/events`** (the same branch) is an NDJSON stream of the scheduler's own transitions, and it
   is the one thing polling cannot approximate: for most of a load there is no runner object in Ollama at
   all, so `/api/ps` is not coarse during a load, it is EMPTY (measured: `load.start` t=4102,
-  `load.complete` t=48053, every poll across it empty). It also tells `evict` (made room) from `unload`
-  (idle expiry), which diffing polls sees as one disappearance either way. `sw-events.ts` holds ONE
+  `load.complete` t=48053, every poll across it empty). It also tells `evict` from `unload`, which diffing polls
+  sees as one disappearance either way — but NOT as the names suggest: `evict` is only the OOM-retry path
+  (`reason: "oom-retry"`), and `unload` is the one termination path, reached both by a keep-alive running out
+  and by a model displaced to make room for another load, with no reason for either (fork schema report,
+  2026-09-17). The lane says so rather than guessing "idle". `sw-events.ts` holds ONE
   connection per worker while a panel is open, `resource-events.ts` is the pure frame model + NDJSON
-  reader, and `machineEventFrom` (vram.tsx) turns edges into lane spans. Everything falls back to polling
+  reader, and `machineEventFrom` (vram.tsx) turns edges into lane spans. **The frame is TYPED from the fork's own
+  schema**, `api/events.proto`, vendored and pinned at `src/proto/events.proto` (`events.proto.pin.json`) and generated
+  into `src/proto/events.gen.ts` by `npm run gen-proto`; `events-wire.ts` reads it as `Wire<T>` (every key may be absent
+  or null, because frames are kept verbatim), and `tests/events-proto.test.mjs` checks every captured frame against the
+  schema path by path. The schema's PRESENCE rule matters when reading: an `optional` field is sent whenever there is
+  something to say, zero included, so absent means not reported; any other field is omitted at zero. Everything falls back to polling
   when the route answers with HTML. Three protocol details: `t` is ms from THAT CONNECTION'S hello and is
   negative for backfill; `?since=` is a DURATION, not an offset; and **the stream names models
   fully-qualified while `/api/ps` names them short**, which `normModel` reconciles at the
