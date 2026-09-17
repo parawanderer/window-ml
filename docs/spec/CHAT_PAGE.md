@@ -159,9 +159,10 @@ the UI needs from them.
 **Pairing is not part of the chat page.** Its screens are standalone components with no dependency on the chat core's
 layout or store, rendered by whichever surface wants them:
 
-- **Runtime side** (show a pairing offer, confirm a request, the paired-devices list): the extension renders these in
-  its Settings, which the in-page sidebar, the DevTools panel and the chat page all share, and can open them from
-  elsewhere too (the toolbar popup, a notification that a device is asking to pair, a dedicated extension page).
+- **Runtime side** (show a pairing offer, confirm a request, the paired-devices list): rendered in the DevTools panel,
+  the in-page sidebar and the chat page (through the Settings they share, or directly), and in the **Commander HUD**,
+  which is where a person already answers approvals on the page they are looking at, so a device asking to pair can be
+  confirmed there without opening anything else. Also reachable from the toolbar popup.
 - **Device side** (scan an offer, show the comparison code, the runtimes this device is paired with): the phone app,
   and the extension page when this browser pairs itself as a client of another runtime.
 - **The components take their dependencies as props**: the hub client library's pairing API, and the host's
