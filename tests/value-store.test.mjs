@@ -7,7 +7,7 @@ import { IDBFactory } from "fake-indexeddb";
 import { planEviction, ValueStore, ValueMissing, ValueTooLarge, IDLE_MS, TOMBSTONE_MS } from "../src/value-store.ts";
 
 const MIN = 60_000, HOUR = 60 * MIN;
-const row = (key, bytes, lastReadAt, extra = {}) => ({ key, bytes, lastReadAt, createdAt: lastReadAt, session: null, format: "csv", ...extra });
+const row = (key, bytes, lastReadAt, extra = {}) => ({ key, bytes, lastReadAt, createdAt: lastReadAt, sessions: [], format: "csv", ...extra });
 
 /* ---------------- the policy ---------------- */
 
@@ -31,7 +31,7 @@ test("planEviction: over budget, the least recently READ goes first, and only as
 
 test("planEviction: ONE budget across sessions, not one per session", () => {
     const now = 10 * HOUR;
-    const rows = [row("s1", 600, now - 2 * MIN, { session: "a" }), row("s2", 600, now - MIN, { session: "b" })];
+    const rows = [row("s1", 600, now - 2 * MIN, { sessions: ["a"] }), row("s2", 600, now - MIN, { sessions: ["b"] })];
     assert.deepEqual(planEviction(rows, { budgetBytes: 1000, now }).map((e) => e.key), ["s1"], "two sessions under 1000 each still share the pool");
 });
 
@@ -95,19 +95,24 @@ test("store: a value larger than the whole budget is refused, and nothing is evi
     await store.get(kept.key);
 });
 
-test("store: ending a session releases exactly its claimed values", async () => {
+test("store: ending a session releases exactly the values nobody else holds", async () => {
     const { store, evicted } = makeStore({ budget: 10_000 });
     const mine = await store.put(blob(10), { format: "csv" });
     const other = await store.put(blob(10), { format: "csv", session: "other" });
+    const shared = await store.put(blob(10), { format: "csv", session: "other" });
     const loose = await store.put(blob(10), { format: "csv" });
     assert.equal(await store.claim(mine.key, "run1"), true);
-    assert.equal(await store.claim(other.key, "run1"), false, "a value another session claimed keeps its owner");
+    assert.equal(await store.claim(mine.key, "run1"), true, "claiming twice is harmless");
+    assert.equal(await store.claim(shared.key, "run1"), true, "a second session can hold a value another already claimed");
+    assert.equal(await store.claim("v0000000000000000", "run1"), false, "a key that is not stored cannot be claimed");
     const released = await store.releaseSession("run1");
-    assert.deepEqual(released.map((e) => [e.key, e.reason]), [[mine.key, "session-end"]]);
+    assert.deepEqual(released.map((e) => [e.key, e.reason]), [[mine.key, "session-end"]], "the shared value is still held by `other`");
     assert.deepEqual(evicted.map((e) => e.key), [mine.key]);
     await assert.rejects(store.get(mine.key), /when its session ended/);
     await store.get(other.key);
     await store.get(loose.key);
+    assert.deepEqual((await store.get(shared.key)).row.sessions, ["other"]);
+    assert.deepEqual((await store.releaseSession("other")).map((e) => e.key).sort(), [other.key, shared.key].sort(), "…until its last holder ends");
 });
 
 test("store: the sweep takes idle orphans and forgets tombstones after a week", async () => {

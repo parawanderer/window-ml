@@ -4076,3 +4076,56 @@ test("debug ring: streamed deltas are coalesced per step, so a long streamed run
     assert.equal(data.debug[1].reasoning.length, 599, "the newest delta is the one kept");
     assert.equal(data.debug[2].phases.length, 1);
 });
+
+// --- the value store's capture (POINTER_VALUES slice 4): a table past the parse cap keeps its body, once released ---
+
+test("FETCH_URL: a table too large for its preview is stored whole and named by valueKey, and a small one stores nothing", async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const { ValueStore } = await import("../src/value-store.ts");
+    const { MAX_TABLE_ROWS } = await import("../src/table-data.ts");
+    const idb = new IDBFactory();
+    const big = ["id,v", ...Array.from({ length: MAX_TABLE_ROWS + 1 }, (_, i) => `${i},${i}`)].join("\n");
+    const bg = loadBackground({ config: baseConfig(), indexedDB: idb, onFetch: (call) => fetchResponse(call.url.includes("big") ? big : "id,v\n1,2\n", { contentType: "text/csv", url: call.url }) });
+    const from = { tab: { id: 1, url: "https://api.example/" }, url: "https://api.example/" };
+    const r = await bg.send({ type: "FETCH_URL", payload: { url: "https://api.example/big.csv" } }, from);
+    assert.match(r.data.valueKey, /^v[0-9a-f]{16}$/);
+    const small = await bg.send({ type: "FETCH_URL", payload: { url: "https://api.example/small.csv" } }, from);
+    assert.equal(small.data.valueKey, undefined);
+    const rows = await new ValueStore({ idb, budgetBytes: () => 1e12 }).rows();
+    assert.deepEqual(rows.map((x) => [x.key, x.format, x.source, x.bytes, x.sessions]), [[r.data.valueKey, "csv", "https://api.example/big.csv", big.length, []]],
+        "one unclaimed row: the claim is the run's to make");
+});
+
+test("FETCH_URL: a body the redirect guard withholds is never stored", async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const { ValueStore } = await import("../src/value-store.ts");
+    const { MAX_TABLE_ROWS } = await import("../src/table-data.ts");
+    const idb = new IDBFactory();
+    const big = ["id", ...Array.from({ length: MAX_TABLE_ROWS + 1 }, (_, i) => String(i))].join("\n");
+    const bg = loadBackground({ config: baseConfig(), indexedDB: idb, onFetch: () => fetchResponse(big, { contentType: "text/csv", url: "https://elsewhere.example/big.csv" }) });
+    const r = await bg.send({ type: "FETCH_URL", payload: { url: "https://api.example/big.csv" } }, { tab: { id: 1, url: "https://api.example/" }, url: "https://api.example/" });
+    assert.match(r.error, /redirected to a different origin/);
+    assert.deepEqual(await new ValueStore({ idb, budgetBytes: () => 1e12 }).rows(), []);
+});
+
+test("FETCH_URL: the value store's budget is the setting, and each eviction or refusal is in the housekeeping log", async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const { MAX_TABLE_ROWS } = await import("../src/table-data.ts");
+    // ~1.3 MB per body: two fit a 3 MB budget only by evicting the first; nothing fits 1 MB.
+    const body = ["id", ...Array.from({ length: MAX_TABLE_ROWS + 1 }, (_, i) => String(1_000_000 + i))].join("\n");
+    const from = { tab: { id: 1, url: "https://api.example/" }, url: "https://api.example/" };
+    const run = async (mb, urls) => {
+        const bg = loadBackground({ config: { ...baseConfig(), valueStoreBudgetMB: mb }, indexedDB: new IDBFactory(), onFetch: (call) => fetchResponse(body, { contentType: "text/csv", url: call.url }) });
+        const keys = [];
+        for (const u of urls) keys.push((await bg.send({ type: "FETCH_URL", payload: { url: u } }, from)).data.valueKey);
+        await new Promise((r) => setTimeout(r, 1100));   // the log flushes on a short timer
+        const { data } = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: {} }, { url: "chrome-extension://test/sidebar.html" });
+        return { keys, events: data.filter((e) => e.subsystem === "value-store") };
+    };
+    const two = await run(3, ["https://api.example/a.csv", "https://api.example/b.csv"]);
+    assert.ok(two.keys.every(Boolean));
+    assert.deepEqual(two.events.map((e) => [e.kind, e.reason, e.key, e.bytes, e.detail?.source]), [["evict", "budget", two.keys[0], body.length, "https://api.example/a.csv"]]);
+    const none = await run(1, ["https://api.example/c.csv"]);
+    assert.deepEqual(none.keys, [undefined], "a body larger than the whole budget is not stored, and the fetch still answers");
+    assert.deepEqual(none.events.map((e) => [e.kind, e.reason, e.key]), [["refuse", "budget", "https://api.example/c.csv"]]);
+});

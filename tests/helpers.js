@@ -116,7 +116,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
-function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9" }) {
+function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9", indexedDB }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
@@ -147,6 +147,10 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         __ML_NET_RETRY_WAIT_MS: 0,   // network-retry backoff → instant in tests (no 24s of real waits per down-backend test)
         setTimeout, clearTimeout, DOMException,   // rate-limit backoff (abortableWait) uses timers + abort
         Response,          // some paths construct/inspect Response
+        Blob,              // the value store keeps a fetched body as a Blob
+        // The value store's database. Absent by default, as in any realm with no IndexedDB, which leaves the store off;
+        // a test that exercises it passes a `fake-indexeddb` IDBFactory.
+        ...(indexedDB ? { indexedDB } : {}),
         fetch: async (url, opts = {}) => {
             const call = {
                 url: String(url),

@@ -294,3 +294,55 @@ test("a body that CLAIMS to be an Arrow stream but does not decode is described 
     assert.equal(r.type, "binary");
     assert.equal(r.table, undefined);
 });
+
+// THE VALUE STORE's capture (POINTER_VALUES slice 4): a table whose preview is not the whole of it hands its BODY to
+// `keep`, so the service worker can store it for a later read by pointer. A table the preview already holds keeps nothing.
+const { MAX_TABLE_ROWS } = await import("../src/table-data.ts");
+const kept = () => { const got = []; return { got, keep: (b) => got.push(b) }; };
+const csvRows = (n) => ["id,v", ...Array.from({ length: n }, (_, i) => `${i},${i * 2}`)].join("\n") + "\n";
+
+test("value store: a CSV past the parse cap hands over its whole text; one inside it hands over nothing", async () => {
+    const big = csvRows(MAX_TABLE_ROWS + 5), small = csvRows(MAX_TABLE_ROWS);
+    net({ "https://v1.test/big.csv": (u) => res(u, 200, "text/csv", big), "https://v1.test/small.csv": (u) => res(u, 200, "text/csv", small),
+          "https://v1.test/big.tsv": (u) => res(u, 200, "text/tab-separated-values", big.replaceAll(",", "\t")) });
+    const a = kept();
+    const r = await fetchUrlContent("https://v1.test/big.csv", false, "markdown", a.keep);
+    assert.equal(r.type, "csv");
+    assert.deepEqual(a.got.map((b) => b.format), ["csv"]);
+    assert.equal(a.got[0].bytes, big, "the body as it arrived, every row");
+    const b = kept();
+    await fetchUrlContent("https://v1.test/small.csv", false, "markdown", b.keep);
+    assert.deepEqual(b.got, [], `${MAX_TABLE_ROWS} data rows is exactly what the page parses: nothing to store`);
+    const c = kept();
+    await fetchUrlContent("https://v1.test/big.tsv", false, "markdown", c.keep);
+    assert.deepEqual(c.got.map((x) => x.format), ["tsv"]);
+});
+
+test("value store: a CSV cut off at the read cap is NOT kept, since a stored prefix would later read as the whole file", async () => {
+    const huge = csvRows(MAX_TABLE_ROWS + 5).padEnd(8_000_001, "9");
+    net({ "https://v2.test/huge.csv": (u) => res(u, 200, "text/csv", huge) });
+    const a = kept();
+    const r = await fetchUrlContent("https://v2.test/huge.csv", false, "markdown", a.keep);
+    assert.equal(r.truncated, true);
+    assert.deepEqual(a.got, []);
+});
+
+test("value store: an Arrow table past the parse cap hands over its bytes, tagged file or stream; a small one does not", async () => {
+    const n = MAX_TABLE_ROWS + 3;
+    const wide = (format) => tableToIPC(tableFromArrays({ n: vectorFromArray(Array.from({ length: n }, (_, i) => BigInt(i)), new Int64()) }), format);
+    const file = wide("file"), stream = wide("stream");
+    net({ "https://v3.test/big.arrow": bin("application/vnd.apache.arrow.file", file),
+          "https://v3.test/big.arrows": bin("application/vnd.apache.arrow.stream", stream),
+          "https://v3.test/small.arrow": bin("application/vnd.apache.arrow.file", arrowBytes("file")) });
+    const a = kept();
+    const r = await fetchUrlContent("https://v3.test/big.arrow", false, "markdown", a.keep);
+    assert.deepEqual(r.table.shape, [n, 1]);
+    assert.equal(r.table.truncated, true);
+    assert.deepEqual(a.got.map((b) => [b.format, b.bytes.byteLength]), [["arrow-file", file.byteLength]]);
+    const s = kept();
+    await fetchUrlContent("https://v3.test/big.arrows", false, "markdown", s.keep);
+    assert.deepEqual(s.got.map((b) => b.format), ["arrow-stream"]);
+    const small = kept();
+    await fetchUrlContent("https://v3.test/small.arrow", false, "markdown", small.keep);
+    assert.deepEqual(small.got, []);
+});

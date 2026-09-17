@@ -148,6 +148,10 @@ export interface MlConfig {
      *  user-generated PROSE endpoints (issues/pulls/comments/discussions/reviews/releases — a prompt-injection
      *  surface) or a credentialed fetch: those still ask. See self-source.ts. */
     autoApproveSelfSource: boolean;
+    /** The most disk, in MB, the value store may hold: the whole bodies of fetched tables too large for their preview,
+     *  kept so a later step can read every row by pointer. Least recently read goes first past it; the browser's own
+     *  quota caps it further. */
+    valueStoreBudgetMB: number;
     /** Ask for the chat stream as varint-delimited PROTOBUF instead of OpenAI SSE, where the backend serves
      *  it (a patched Ollama). One `Accept` header; a backend that does not speak it answers with the SSE it
      *  always did, so this is a preference rather than a commitment. Measured at 25x fewer bytes for the same
@@ -604,6 +608,7 @@ export interface FetchResult {
      *  {@link Table}: the data plus `col` / `select` / `records` / `head`. */
     table?: Table | TableLike;
     truncated?: boolean;      // the body was clipped to the size cap
+    valueKey?: string;        // value-store key of the WHOLE body when `table` is a preview (past the parse cap); not readable page-side
     redirected?: boolean;     // the request followed ≥1 redirect (`url` above is the FINAL landing URL — the
                               // intermediate chain isn't visible to fetch; a redirect log needs chrome.webRequest)
     /** The Markdown ladder's trace, when negotiation ran (absent for `format: "html"` and for data bodies that
@@ -724,6 +729,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoApprovePython: true,
     autoApproveSameOriginAuth: false,   // Advanced, default off: a same-origin as-you fetch always asks
     autoApproveSelfSource: true,        // default on: an uncredentialed read of the agent's OWN repo source is free
+    valueStoreBudgetMB: 1024,           // capped at half the browser's quota for the extension
     protoStream: "auto",                // ask every time: one header, and a backend that won't serve it answers as it always did
     pierceClosedShadow: true,
     cdp: false,
@@ -1103,7 +1109,8 @@ export type RenderDescriptor = (
     // `dtypes`/`delimiter`/`headerless` let the VIEW say what the model is already told: what each column is,
     // how the body was split (a guess, so a wrong one should be visible rather than inferred from mangled
     // columns), and whether the column names were decided rather than read.
-    | { type: "table"; columns: string[]; rows: (string | number | boolean | null)[][]; rowCount?: number; truncated?: boolean; dtypes?: Record<string, string>; delimiter?: string; headerless?: boolean }
+    // `value` is the value-store key of the WHOLE table when this descriptor's source is only a preview of it.
+    | { type: "table"; columns: string[]; rows: (string | number | boolean | null)[][]; rowCount?: number; truncated?: boolean; dtypes?: Record<string, string>; delimiter?: string; headerless?: boolean; value?: string }
     | { type: "keyval"; pairs: [string, string][] }
     | { type: "elements"; items: { path: string; text?: string; index?: number }[] }
     // `locate`'s debug view as an ordered list of SUBSTEPS — each is one vision

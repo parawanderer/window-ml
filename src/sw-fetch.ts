@@ -8,7 +8,8 @@
 import type { FetchResult, FetchFormat, FetchAttempt } from "./contract";
 import { acceptLanguageFrom } from "./contract";
 import { classifyContent, jsonShape, markdownAlternateHref, resolveMarkdownAlternate, markdownSiblingUrl, isMarkdownResponse, typeFromExtension, typeFromHeader } from "./dom";
-import { looksParquet, tableFromParquet, looksArrowFile, tableFromArrow } from "./table-data";
+import { looksParquet, tableFromParquet, looksArrowFile, tableFromArrow, MAX_TABLE_ROWS } from "./table-data";
+import type { ValueFormat } from "./value-store";
 import { readCapped, decodeCapped, binaryKind } from "./body-read";
 import { ensureDebuggerAttached, releaseDebugger } from "./sw-cdp";
 import { incognitoEnableSteps } from "./util";
@@ -161,6 +162,30 @@ async function rawGet(url: string, credentials: boolean, accept?: string): Promi
     return { res, text: decodeCapped(bytes, truncated), truncated, ms: Date.now() - t0 };
 }
 
+/** A fetched body kept for the value store: the bytes as they arrived (text for a delimited table) and what they are. */
+export interface FetchedBody { bytes: ArrayBuffer | string; format: ValueFormat }
+/** Receives the whole body of a fetched table whose `table` is only a PREVIEW of it (sw-values stores it). */
+export type KeepBody = (body: FetchedBody) => void;
+
+/** Would the page's parse of this delimited text stop short of its last row? Counted by line ends, which over-counts a
+ *  quoted field holding a newline: that errs toward keeping a body whose table turns out whole, which costs disk until the
+ *  idle sweep, never toward losing rows. */
+function pastParseCap(text: string): boolean {
+    let lines = text.length && !text.endsWith("\n") ? 1 : 0;
+    for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) if (++lines > MAX_TABLE_ROWS + 1) return true;
+    return false;
+}
+
+/** Hand a delimited body to `keep` when the page will only parse a prefix of it. A body clipped at the read cap is not
+ *  kept: it is not the whole file either, and a stored prefix would be read later as though it were. */
+function keepDelimited(out: FetchResult, keep: KeepBody | undefined): FetchResult {
+    if (keep && out.type === "csv" && !out.truncated && out.ok && pastParseCap(out.text)) {
+        const tsv = /tab-separated/i.test(out.contentType) || /\.tsv(?:$|[?#])/i.test(out.url);
+        keep({ bytes: out.text, format: tsv ? "tsv" : "csv" });
+    }
+    return out;
+}
+
 /** Assemble the FetchResult from whichever response the ladder settled on. */
 function buildResult(requested: string, r: { res: Response; text: string; truncated: boolean }): FetchResult {
     const contentType = r.res.headers.get("content-type") || "";
@@ -212,7 +237,7 @@ function arrowTooLargeResult(requested: string, res: Response, cap: number): Fet
 /** An Arrow IPC response → a FetchResult carrying the decoded table, exactly as `parquetResult` does it. A body
  *  that CLAIMED to be Arrow (a stream's media type) but does not decode is described as binary instead: the
  *  claim was the only evidence, and the bytes disagree. */
-async function arrowResult(requested: string, r: { res: Response; arrow: ArrayBuffer }): Promise<FetchResult> {
+async function arrowResult(requested: string, r: { res: Response; arrow: ArrayBuffer }, keep?: KeepBody): Promise<FetchResult> {
     const contentType = r.res.headers.get("content-type") || "";
     const out: FetchResult = {
         url: r.res.url || requested, status: r.res.status, ok: r.res.ok, type: "arrow",
@@ -228,6 +253,7 @@ async function arrowResult(requested: string, r: { res: Response; arrow: ArrayBu
         const kind = binaryKind(new Uint8Array(r.arrow)) ?? "data that did not decode as Arrow";
         return binaryResult(requested, { res: r.res, truncated: false, binary: { kind, size: r.arrow.byteLength } });
     }
+    if (keep && out.table?.truncated) keep({ bytes: r.arrow, format: looksArrowFile(r.arrow) ? "arrow-file" : "arrow-stream" });
     return out;
 }
 
@@ -248,7 +274,7 @@ function parquetTooLargeResult(requested: string, res: Response, cap: number): F
  *  than the bytes: every reader of `.text` expects something printable, and a caller that fell through to it
  *  should be told what this is instead of being handed mojibake. A decode failure is reported the same way —
  *  the fetch itself succeeded, so it is not an error, it is a body we could not read. */
-async function parquetResult(requested: string, r: { res: Response; bytes: ArrayBuffer }): Promise<FetchResult> {
+async function parquetResult(requested: string, r: { res: Response; bytes: ArrayBuffer }, keep?: KeepBody): Promise<FetchResult> {
     const out: FetchResult = {
         url: r.res.url || requested, status: r.res.status, ok: r.res.ok, type: "parquet",
         typeByHeader: typeFromHeader(r.res.headers.get("content-type") || ""), typeByContent: "parquet",
@@ -260,6 +286,7 @@ async function parquetResult(requested: string, r: { res: Response; bytes: Array
     };
     try { out.table = await tableFromParquet(r.bytes); }
     catch (e) { out.text = `(a Parquet file, ${r.bytes.byteLength.toLocaleString("en-US")} bytes, which could not be decoded: ${e instanceof Error ? e.message : String(e)})`; }
+    if (keep && out.table?.truncated) keep({ bytes: r.bytes, format: "parquet" });
     return out;
 }
 
@@ -280,8 +307,12 @@ async function parquetResult(requested: string, r: { res: Response; bytes: Array
  *
  *  Rungs 2-4 run only when rung 1 came back HTML: a JSON API answers at rung 1 and the ladder stops there, so
  *  a data fetch pays exactly one request, as before. Throws on a network/permission failure (the handler turns
- *  that into an actionable message). */
-export async function fetchUrlContent(url: string, credentials = false, format: FetchFormat = "markdown"): Promise<FetchResult> {
+ *  that into an actionable message).
+ *
+ *  `keep` receives the whole body of a table the result only PREVIEWS (past the parse cap), for the value store. It is a
+ *  callback rather than a store call because the caller may still withhold the result (a redirect off the approved
+ *  origin), and a body nobody was given must not be stored. */
+export async function fetchUrlContent(url: string, credentials = false, format: FetchFormat = "markdown", keep?: KeepBody): Promise<FetchResult> {
     // A URL whose extension already names a data/code file never negotiates: there is no prose twin, and
     // sending a Markdown-first Accept to an API that honours it could change what comes back.
     const dataShape = ["json", "csv", "parquet", "arrow", "code"].includes(typeFromExtension(url)?.type || "");
@@ -290,12 +321,12 @@ export async function fetchUrlContent(url: string, credentials = false, format: 
     // A BINARY table short-circuits everything: there is no Markdown twin of a Parquet file, and no text body
     // to classify. It is decoded HERE, in the worker, rather than shipped to the page as bytes — the page
     // wants the table, and a TableLike crosses the message channel far more cheaply than the file does.
-    if (first.bytes) return await parquetResult(url, first as { res: Response; bytes: ArrayBuffer });
+    if (first.bytes) return await parquetResult(url, first as { res: Response; bytes: ArrayBuffer }, keep);
     if (first.parquetTooLarge) return parquetTooLargeResult(url, first.res, first.parquetTooLarge);
-    if (first.arrow) return await arrowResult(url, first as typeof first & { arrow: ArrayBuffer });
+    if (first.arrow) return await arrowResult(url, first as typeof first & { arrow: ArrayBuffer }, keep);
     if (first.arrowTooLarge) return arrowTooLargeResult(url, first.res, first.arrowTooLarge);
     if (first.binary) return binaryResult(url, first as typeof first & { binary: { kind: string; size: number } });
-    if (!negotiating) return buildResult(url, first);
+    if (!negotiating) return keepDelimited(buildResult(url, first), keep);
 
     const attempts: FetchAttempt[] = [];
     const record = (a: FetchAttempt): FetchAttempt => { attempts.push(a); return a; };
@@ -324,7 +355,7 @@ export async function fetchUrlContent(url: string, credentials = false, format: 
         record({ strategy: "sibling", url: "", outcome: "skipped", note: "not attempted" });
         record({ strategy: "convert", url: "", outcome: "skipped", note: "not needed" });
         firstResult.negotiation = { wanted: format, attempts, resolvedBy: "accept" };
-        return firstResult;
+        return keepDelimited(firstResult, keep);
     }
     // Every later rung derives from the FINAL url, not the requested one: a redirect is how `…/guide` becomes
     // `…/guide/`, which is exactly what flips the sibling from `.md` to `index.md`.

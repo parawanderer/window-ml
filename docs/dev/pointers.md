@@ -117,13 +117,31 @@ background-hosted paths with no page round-trip and no approval.
   wherever text comes from, and a stage never round-trips through a re-joined string.
 
 **The value store (`value-store.ts`), POINTER_VALUES slice 4.** Where a pointer's value lives when it is larger than its
-preview: an IndexedDB database of its own (`ml-values`), a `Blob` per value plus a metadata ROW (`session`, `bytes`,
+preview: an IndexedDB database of its own (`ml-values`), a `Blob` per value plus a metadata ROW (`sessions`, `bytes`,
 `format`, `source`, `createdAt`, `lastReadAt`), reachable from the service worker and the offscreen document, never the page.
 Every eviction decision is `planEviction` (pure): idle values (unread for `IDLE_MS`) first, then least recently READ until
 ONE global byte budget holds the incoming write, with `protect` for a value being read at that moment. A write the whole
 budget cannot hold is refused (`ValueTooLarge`) rather than evicting everything for nothing. Ending a session evicts what
-it claimed (`releaseSession`); a periodic `sweep` catches orphans, because the service worker is evicted without warning
+it alone held (`releaseSession`; a value two sessions hold stays until both end, since one tab's fetch cache hands the
+same key to both); a periodic `sweep` catches orphans, because the service worker is evicted without warning
 and an in-memory idea of ownership dies with it. Every evicted key leaves a TOMBSTONE (kept `TOMBSTONE_MS`), so a read
 fails with `ValueMissing` saying WHY (budget, idle, session end) and telling the reader to re-run the step, and never
 degrades to the preview. `onEvict` is where the caller reports to the housekeeping log (`subsystem: "value-store"`). The
-store is not wired to anything yet: capture, claim, release and the alarm are the next step.
+service worker's side is `sw-values.ts`:
+
+- **Capture.** `fetchUrlContent` hands the whole body to a `keep` callback when the table it returns is a preview: Parquet
+  or Arrow past `MAX_TABLE_ROWS` (the bytes as fetched, `arrow-file` or `arrow-stream`), or delimited text with more lines
+  than the page will parse (the text, `csv` or `tsv`). A body clipped at the read cap is never kept, since a stored prefix
+  would later read as the whole file. The `FETCH_URL` handler stores it only AFTER the redirect guard has released the
+  result, and names it on `FetchResult.valueKey`. It is stored unclaimed.
+- **Claim.** `fetch_url` copies the key onto its table render as `value`, only when its table is truncated. The loop notes
+  it on the pointer (`TokenValue.value`) and calls `claimValue`, which a background run binds to its runId. A page-hosted
+  run passes no `claimValue`, so its values are left to the idle sweep.
+- **Release.** `releaseSessionTokens` releases the session's values too, both when its `bgRuns` entry is purged and when
+  the token-store LRU drops it: a value no pointer can name is unreachable either way.
+- **Sweep.** On every worker start and on the hourly `value-store-sweep` alarm (the `alarms` permission).
+- **Budget.** `valueStoreBudgetMB` (DevTools Settings → Output pointers, default 1024), capped at half of
+  `navigator.storage.estimate().quota`. Each eviction is `{ subsystem: "value-store", kind: "evict", reason, key, bytes,
+  detail.source }`; a body the whole budget cannot hold is `kind: "refuse"`, and the fetch still answers with its preview.
+
+Nothing READS a stored value yet: `python_exec` opening one is slice 5.

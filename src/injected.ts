@@ -2009,7 +2009,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         // the descriptor's kind), so a later step can `dereference … | keys` for the columns. Capped:
                         // this descriptor rides the debug stream and the JSON export, and a whole CSV does not belong
                         // in either. python_exec gets the FULL table from the fetch cache, by URL.
-                        return { content, render: { type: "table", columns: t.columns, rows: t.rows.slice(0, RENDER_TABLE_ROWS), rowCount: t.shape[0], dtypes: t.dtypes, ...(t.delimiter ? { delimiter: t.delimiter } : {}), ...(t.headerless ? { headerless: true } : {}), ...(t.rows.length > RENDER_TABLE_ROWS ? { truncated: true } : {}) }, renderIn: inRender() };
+                        return { content, render: { type: "table", columns: t.columns, rows: t.rows.slice(0, RENDER_TABLE_ROWS), rowCount: t.shape[0], dtypes: t.dtypes, ...(t.delimiter ? { delimiter: t.delimiter } : {}), ...(t.headerless ? { headerless: true } : {}), ...(t.rows.length > RENDER_TABLE_ROWS ? { truncated: true } : {}), ...(r.valueKey && t.truncated ? { value: r.valueKey } : {}) }, renderIn: inRender() };
                     }
                     const pd = doPipe(bodyText());
                     if (pd.err) return pd.err;

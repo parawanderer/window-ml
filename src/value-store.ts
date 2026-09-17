@@ -19,8 +19,10 @@ export type ValueFormat = "arrow-file" | "arrow-stream" | "parquet" | "csv" | "t
 /** One stored value's metadata, kept beside its Blob. */
 export interface ValueRow {
     key: string;
-    /** The session that claimed it (a run hash), or null while nobody has: an unclaimed value is only ever idle-swept or budget-evicted. */
-    session: string | null;
+    /** The sessions (run hashes) holding a pointer to it. Empty while nobody has claimed it: an unclaimed value is only ever
+     *  idle-swept or budget-evicted. More than one when two sessions fetched the same URL from one tab's fetch cache, which
+     *  hands both the same key, so ending one of them must not delete what the other still points at. */
+    sessions: string[];
     bytes: number;
     format: ValueFormat;
     /** Where it came from, for the housekeeping log and an error message: a URL, a tool name. */
@@ -36,7 +38,7 @@ export type EvictReason = "budget" | "idle" | "session-end";
 export interface Tombstone { key: string; reason: EvictReason; at: number; bytes: number; source?: string }
 
 /** One planned eviction. */
-export interface Eviction { key: string; reason: EvictReason; bytes: number; session: string | null; source?: string }
+export interface Eviction { key: string; reason: EvictReason; bytes: number; sessions: string[]; source?: string }
 
 /** Default for the idle sweep: a value nobody has read for this long is an orphan. */
 export const IDLE_MS = 24 * 60 * 60 * 1000;
@@ -58,7 +60,7 @@ export const TOMBSTONE_MS = 7 * 24 * 60 * 60 * 1000;
 export function planEviction(rows: readonly ValueRow[], o: { budgetBytes: number; now: number; idleMs?: number; incoming?: number; protect?: readonly string[] }): Eviction[] {
     const idleMs = o.idleMs ?? IDLE_MS, incoming = o.incoming ?? 0, protect = new Set(o.protect ?? []);
     const out: Eviction[] = [];
-    const evict = (r: ValueRow, reason: EvictReason) => out.push({ key: r.key, reason, bytes: r.bytes, session: r.session, ...(r.source ? { source: r.source } : {}) });
+    const evict = (r: ValueRow, reason: EvictReason) => out.push({ key: r.key, reason, bytes: r.bytes, sessions: r.sessions, ...(r.source ? { source: r.source } : {}) });
     const kept: ValueRow[] = [];
     for (const r of rows) {
         if (!protect.has(r.key) && o.now - r.lastReadAt >= idleMs) evict(r, "idle");
@@ -143,7 +145,7 @@ export class ValueStore {
             const req = this.idb.open(this.dbName, 1);
             req.onupgradeneeded = () => {
                 const db = req.result;
-                db.createObjectStore(ROWS, { keyPath: "key" }).createIndex("session", "session");
+                db.createObjectStore(ROWS, { keyPath: "key" }).createIndex("session", "sessions", { multiEntry: true });
                 db.createObjectStore(BLOBS);
                 db.createObjectStore(TOMBS, { keyPath: "key" });
             };
@@ -178,13 +180,13 @@ export class ValueStore {
      * Store a value and return its row. Makes room first (idle values, then least recently read), and refuses a value the
      * budget cannot hold at all, rather than evicting everything for a write that still would not fit.
      */
-    async put(blob: Blob, meta: { format: ValueFormat; source?: string; session?: string | null; protect?: readonly string[] }): Promise<ValueRow> {
+    async put(blob: Blob, meta: { format: ValueFormat; source?: string; session?: string; protect?: readonly string[] }): Promise<ValueRow> {
         const budget = await this.budgetBytes();
         if (blob.size > budget) throw new ValueTooLarge(blob.size, budget);
         const plan = planEviction(await this.rows(), { budgetBytes: budget, now: this.now(), idleMs: this.idleMs, incoming: blob.size, protect: meta.protect });
         await this.apply(plan);
         const now = this.now();
-        const row: ValueRow = { key: mintKey(), session: meta.session ?? null, bytes: blob.size, format: meta.format, ...(meta.source ? { source: meta.source } : {}), createdAt: now, lastReadAt: now };
+        const row: ValueRow = { key: mintKey(), sessions: meta.session ? [meta.session] : [], bytes: blob.size, format: meta.format, ...(meta.source ? { source: meta.source } : {}), createdAt: now, lastReadAt: now };
         const db = await this.open();
         const tx = db.transaction([ROWS, BLOBS], "readwrite");
         tx.objectStore(BLOBS).put(blob, row.key);
@@ -210,22 +212,28 @@ export class ValueStore {
         return { row: touched, blob };
     }
 
-    /** Give an unclaimed value to a session, so ending that session releases it. A value already claimed keeps its owner. */
+    /** Add a session to the value's holders, so the value lives until every holder has ended. False when the key is not stored. */
     async claim(key: string, session: string): Promise<boolean> {
         const db = await this.open();
         const tx = db.transaction(ROWS, "readwrite");
         const row = await done(tx.objectStore(ROWS).get(key)) as ValueRow | undefined;
-        if (!row || (row.session && row.session !== session)) { await committed(tx); return false; }
-        tx.objectStore(ROWS).put({ ...row, session });
+        if (row && !row.sessions.includes(session)) tx.objectStore(ROWS).put({ ...row, sessions: [...row.sessions, session] });
         await committed(tx);
-        return true;
+        return !!row;
     }
 
-    /** A session ended: evict every value it claimed. */
+    /** A session ended: drop it from every value it held, and evict the values nobody else holds. */
     async releaseSession(session: string): Promise<Eviction[]> {
         const db = await this.open();
         const rows = await done(db.transaction(ROWS).objectStore(ROWS).index("session").getAll(session)) as ValueRow[];
-        const plan = rows.map((r): Eviction => ({ key: r.key, reason: "session-end", bytes: r.bytes, session: r.session, ...(r.source ? { source: r.source } : {}) }));
+        const shared = rows.filter((r) => r.sessions.length > 1);
+        if (shared.length) {
+            const tx = db.transaction(ROWS, "readwrite");
+            for (const r of shared) tx.objectStore(ROWS).put({ ...r, sessions: r.sessions.filter((s) => s !== session) });
+            await committed(tx);
+        }
+        const plan = rows.filter((r) => r.sessions.length === 1)
+            .map((r): Eviction => ({ key: r.key, reason: "session-end", bytes: r.bytes, sessions: r.sessions, ...(r.source ? { source: r.source } : {}) }));
         await this.apply(plan);
         return plan;
     }

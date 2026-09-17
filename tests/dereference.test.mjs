@@ -407,6 +407,20 @@ test("python_exec: a table pointer in `tables` is resolved to the table, in the 
     assert.deepEqual(singleCall.args.tables.rows, df.rows, "the single-source string form resolves the same way");
 });
 
+test("a table pointer whose render names a STORED value keeps the key and claims it for the run, once per pointer", async () => {
+    const claimed = [], store = new TokenStore();
+    const PREVIEW = { ...STOCK, rowCount: 300_000, value: "v0123456789abcdef" };
+    await drive(
+        [call("fetch_url", { url: "https://x.test/big.csv", token: "the big table" }), call("fetch_url", { url: "https://x.test/small.csv" }, "c2")],
+        (name, args) => ({ result: "type: csv", renderOut: args.url.includes("big") ? PREVIEW : STOCK }),
+        { tokenStore: store, claimValue: (key) => claimed.push(key) });
+    const [big, small] = store.all();
+    assert.equal(big.value, "v0123456789abcdef", "the pointer names the whole table, not just its preview");
+    assert.deepEqual(big.table.shape, [300_000, 2]);
+    assert.equal(small.value, undefined, "a table whose preview is the whole of it stores nothing");
+    assert.deepEqual(claimed, ["v0123456789abcdef"]);
+});
+
 test("python_exec: a pointer to something that is not a table says what it is instead", async () => {
     const { results, got } = await drive(
         [call("exec", { js: "x", token: "the log" }), call("python_exec", { code: "1", tables: { df: '@tool:"the log"' } }, "c2")],
