@@ -62,4 +62,11 @@ export const extensionServices: SidebarServices = {
         catch { resolve(null); }
     }),
     savePref: (key, value) => { try { chrome.storage.local.set({ [key]: value }); } catch { /* no chrome in a bare render */ } },
+    // Every extension frame is extension-origin, so it opens the same value store the service worker writes, and decodes
+    // the bytes with the parsers the preview came from. Reads only: the budget never applies.
+    storedTable: typeof indexedDB === "undefined" ? null : async (key, opts) => {
+        const [{ ValueStore }, { storedColumns }] = await Promise.all([import("../value-store"), import("../table-data")]);
+        const { row, blob } = await new ValueStore({ budgetBytes: () => Number.POSITIVE_INFINITY }).get(key);
+        return storedColumns(await blob.arrayBuffer(), row.format, opts.columns, { delimiter: opts.delimiter, headerless: opts.headerless });
+    },
 };

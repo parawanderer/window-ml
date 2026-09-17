@@ -278,7 +278,9 @@ Each slice ships and is useful without the next:
    for the fetch path) rather than the offscreen document through pyarrow. That removes the need to convert to Arrow
    IPC at all, so stored bytes stay in their arrival format. The acceptance tests are all unmarked.
 8. **The features that were waiting on this**: copy-all and save-as-file (`docs/spec/TABLE_VIEW.md`), and a
-   column summary over the whole table rather than its first 200 rows.
+   column summary over the whole table rather than its first 200 rows. **Built**: an extension frame reads the store
+   directly (`services().storedTable`; every frame is extension-origin), decoding with `storedColumns`. A host with no
+   store (the chat page) passes `null`, and the view works over the preview and says so.
 
 The shippable step before all of it, and worth doing now: `python_exec` accepts `@tool:<id>` when the pointer's
 table is complete (`!truncated`), and refuses a prefix with an error naming the URL form. It gives the idiom

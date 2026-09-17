@@ -55,7 +55,14 @@ export interface SidebarServices {
     sheetTitle(id: string): Promise<string | null>;
     /** persist a display preference (the bench's state, and the like) */
     savePref(key: string, value: unknown): void;
+    /** Every row of a STORED table (a render's `value` key; docs/spec/POINTER_VALUES.md), as column arrays, for the table
+     *  view's whole-table summary and copy. Rejects with the store's reason when the value is gone. `null` where this host
+     *  cannot reach a value store: the view then works over its preview and says so. */
+    storedTable: ((key: string, opts: StoredTableRead) => Promise<{ rowCount: number; columns: Record<string, (string | number | boolean | null)[]> }>) | null;
 }
+
+/** How to read a stored table: its column names, and the split decisions its preview made (for a delimited body). */
+export interface StoredTableRead { columns: string[]; delimiter?: string; headerless?: boolean }
 
 /** The session's bare hash from its key: the part after the last `:`, or the key itself when it has none. */
 export const bareHash = (key: string): string => key.slice(key.lastIndexOf(":") + 1);
@@ -82,6 +89,7 @@ const UNAVAILABLE: SidebarServices = {
     hostAccess: null,
     sheetTitle: async () => null,
     savePref() {},
+    storedTable: null,
 };
 
 let current: SidebarServices = UNAVAILABLE;

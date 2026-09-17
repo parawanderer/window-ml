@@ -1,8 +1,16 @@
 # The table view: two modes, and column statistics
 
-**Status: draft, not started.** Written 2026-09-16, after `fetch_url` began returning parsed tables
-(`docs/dev/wire-and-fetch.md`). Nothing here is built. It formalises a set of related ideas so they can be
-argued with as one design rather than added one affordance at a time.
+**Status: mostly built.** Written 2026-09-16, after `fetch_url` began returning parsed tables
+(`docs/dev/wire-and-fetch.md`). Built:
+
+- The header tooltip, the provenance line, headerless detection, and the honest copy label.
+- The two modes (`PyDfTable` in render-panel.tsx, `summarizeColumns` in table-summary.ts). SUMMARY is the default
+  above 200 rows.
+- The whole-table answers, through the value store (`services().storedTable`, POINTER_VALUES slices 4 to 7). The
+  summary covers every row, and the copy control reads `copy all 50,000 rows` (a file past 5,000 rows) whenever the
+  table is stored. Otherwise both say they cover the preview.
+
+Not yet: find in table, drag to expand, and SUMMARY in the exports.
 
 ## The problem
 

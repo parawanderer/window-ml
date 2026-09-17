@@ -195,7 +195,7 @@ function tokenRender(d: RenderDescriptor | undefined, rawText: string, ctx?: Cod
             // Use the SAME rich DataFrame renderer the python step shows (index gutter / sort / resize /
             // copy-CSV / hide), not the bare RenderTable — a cited/auto-appended df should read identically
             // to its step's Out, so the bottom-of-answer table keeps its affordances.
-            if (d.df) return { node: <PyDfTable columns={d.df.columns} rows={d.df.rows} rowCount={d.df.rowCount} />, block: true };
+            if (d.df) return { node: <PyDfTable columns={d.df.columns} rows={d.df.rows} rowCount={d.df.rowCount} value={d.df.value} />, block: true };
             if (d.image) return { node: <ClickableImg src={d.image} alt="output" />, block: true };
             rawText = d.value ?? d.stdout ?? rawText; break;
     }

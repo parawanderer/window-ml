@@ -1324,6 +1324,19 @@ details.io[open] > summary .io-preview { display: none; }
   padding: 1px 8px; font-size: 0.78em; cursor: pointer; }
 .r-df-btn:hover { background: var(--panel-2-hover); color: var(--fg); }
 .r-df-scroll { max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+/* The table view's SUMMARY mode (TableSummary): one row per column. `.r-df-basis` says what it was computed over (all
+   rows, or only the preview), because a prefix summary must never pass for the table's. */
+.r-df-basis { padding: 4px 8px; font-size: 0.8em; border-bottom: 1px solid var(--border); position: sticky; left: 0; }
+/* The summary grid itself: the same table styles, one line per column. */
+.r-df-sum td { white-space: nowrap; }
+/* A column's values at a glance: a histogram sparkline (numbers) or a share bar (booleans, top values), then the text. */
+.r-df-sumval { display: inline-flex; align-items: center; gap: 6px; }
+/* The histogram: HIST_BINS bars in a fixed small box, heights set inline as a share of the tallest bucket. */
+.r-df-spark { display: inline-flex; align-items: flex-end; gap: 1px; width: 48px; height: 14px; }
+.r-df-spark i { flex: 1; background: var(--accent); opacity: 0.7; border-radius: 1px 1px 0 0; }
+/* A share bar: the filled part is the true values, or the share the named top values cover. */
+.r-df-split { display: inline-block; width: 36px; height: 6px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--border); overflow: hidden; }
+.r-df-split i { display: block; height: 100%; background: var(--accent); opacity: 0.7; }
 .r-df-table { border-collapse: separate; border-spacing: 0; font-size: 0.86em; width: max-content; min-width: 100%; }
 /* vertical rules (the alignment cue) + horizontal separators */
 .r-df-table th, .r-df-table td { padding: 3px 9px; white-space: nowrap; border-bottom: 1px solid var(--border);
