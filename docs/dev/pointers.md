@@ -144,4 +144,7 @@ service worker's side is `sw-values.ts`:
   `navigator.storage.estimate().quota`. Each eviction is `{ subsystem: "value-store", kind: "evict", reason, key, bytes,
   detail.source }`; a body the whole budget cannot hold is `kind: "refuse"`, and the fetch still answers with its preview.
 
-Nothing READS a stored value yet: `python_exec` opening one is slice 5.
+Nothing READS a stored value yet: `python_exec` opening one is slice 5. Until then the one reader is the worker's TEST-ONLY
+`globalThis.__mlValues` (`rows()`, `read(key)`, reachable only through `serviceWorker.evaluate`), which
+`tests/e2e/value-store.spec.mjs` uses to check a real fetch is stored and claimed, evicted by the next one under a small
+budget, and that reading it then fails with the reason.
