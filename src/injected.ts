@@ -26,12 +26,11 @@ import type {
     ToolFeedback,
     ToolRenderInput,
     StoredSession,
-    LoadedModel,
     TokenUsage,
     MlHistory,
     TableSource, TableValue,
     TablePreview,
-    ServerToolResult, DerefValue, ShotBox, ServerTool, OllamaInfo, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer, RequestHint, RequestUse
+    DerefValue, ShotBox, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer, RequestHint, RequestUse
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated, hintSession } from "./contract";
 import { evalReadonly } from "./readonly-exec";
@@ -58,7 +57,6 @@ import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
 import { makeDomTools, buildDereferenceTool } from "./tools";
 import { pipeStages, TokenStore, type DerefRead } from "./token-pipe";
-import { Embedding } from "./embedding";
 import { toolNameError } from "./token-id";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
@@ -76,20 +74,11 @@ import { installToolDelegation, registerRun, endRun, runAnswer } from "./run-del
 import { descriptorFor } from "./render-descriptor";
 import { AgentHandle, sameOriginNav, sameOriginFetch, DerefText, columnsViaBackground } from "./ml-agent";   // run-control object (createAgent/agent) + page-loop same-origin auto-approve predicates
 import type { AgentControl } from "./ml-agent";
+import { models, serverTools, execServerTool, info, capabilities, getModel, embed, config, setModel, ps, unload } from "./ml-server";
 
 /** Histories `ml.chat` made for a single call. They have no conversation behind them, so their requests carry no
  *  hint session — a new session per call is the "per message" case, from which the server learns nothing. */
 const oneShotChats = new WeakSet<object>();
-
-/** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
- *  builds a DataFrame from (rows or read_html html). Internal to injected.ts. */
-/** ONE session for every `ml.embed()` on this page, created lazily. Embedding is usually done in a loop, so
- *  a session per call would flood the list with one-turn entries; a single accumulating session keeps the
- *  spans on the lane without burying everything else. */
-let _embedHash: string | null = null;
-let _embedTurn = 0;
-const embedSession = () => ({ hash: (_embedHash ||= `embed${Math.random().toString(16).slice(2, 8)}`), turn: _embedTurn });
-const embedTurn = () => ++_embedTurn;
 
 /** Is this a table handed over BY VALUE (see {@link TableValue})? The `Table` facade throws on keys it does not have, so
  *  it is recognised by its brand before anything probes it. */
@@ -99,6 +88,11 @@ const isTableValue = (v: unknown): v is TableValue =>
 // `value`: the whole table is in the value store under `key`, and the sandbox reads it there; only its preview rows (for the
 // render) stay page-side, and they never travel with the run.
 type LoadedTable = { name: string; source: TableSource; preview?: (string | number | boolean | null)[][]; rowCount?: number; data: { kind: "rows"; columns: string[]; rows: (string | number | boolean | null)[][] } | { kind: "html"; html: string } | { kind: "value"; key: string; label: string; columns: string[]; delimiter?: string; headerless?: boolean } };
+
+// ---- the SERVER surface of window.ml ----------------------------------------------------------------
+// Lifted out of the object literal so it can be moved to a module of its own: these eleven ask the background
+// about the SERVER (models, capabilities, residency, server-side tools) and touch none of the IIFE's state, so
+// column scope costs them nothing and makes them movable by scripts/move-symbols.mjs rather than by hand.
 
 (function() {
 
@@ -2572,27 +2566,8 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
                 { "url": url }
             );
         },
-        /**
-         * Get available model ids on the server.
-         *
-         * @returns {Promise<string[]>} Array of model ids.
-         */
-        models: async function(): Promise<string[]> {
-            return makeBackgroundTaskPromise("LIST_MODELS_REQUEST", "LIST_MODELS_RESPONSE", {});
-        },
-        /**
-         * List the OpenWebUI server-side tools the configured API key may use — the
-         * valid ids for `ml.chat`'s `toolIds`, each with the function specs the model
-         * would be shown. Discovery, so a script doesn't have to hardcode ids copied
-         * out of the OpenWebUI URL bar.
-         *
-         * A bare-Ollama (or non-OpenWebUI) endpoint has no such concept and returns [].
-         *
-         * @returns {Promise<ServerTool[]>} The available server-side tools.
-         */
-        serverTools: async function(): Promise<ServerTool[]> {
-            return makeBackgroundTaskPromise("LIST_SERVER_TOOLS_REQUEST", "LIST_SERVER_TOOLS_RESPONSE", {});
-        },
+        models: models,
+        serverTools: serverTools,
         /**
          * The server-side tools, as a callable NAMESPACE: `ml.dynamicTools.<bundle>.<fn>(args)`.
          *
@@ -2614,85 +2589,10 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
         get dynamicTools(): DynamicToolNamespace {
             return (this._dynamicTools ||= makeDynamicTools(this as unknown as MlApi, undefined, currentServerAllow));
         },
-        /**
-         * Run ONE server-side tool ourselves, in our own loop, with the arguments we chose — as opposed to
-         * `ml.chat`'s `toolIds`, which hands the whole loop to the model and gets back a finished answer.
-         *
-         * PRIVILEGED, and gated accordingly: the fetch spends the user's API key and the tool is
-         * caller-chosen, so from an untrusted page this only runs a call an agent run already approved.
-         * Needs the patched OpenWebUI (see docs/FORKED-BACKENDS.md); a stock one has no such endpoint.
-         *
-         * The two failure kinds are kept apart, because only one is something a model can act on. A tool
-         * that THREW resolves with `ok: true` and an `error` on its result — a normal outcome to read and
-         * react to. A stream that could not be read at all resolves with `ok: false` and a
-         * `transportError`, which must never be reported to a model as a tool that returned nothing.
-         *
-         * @param {string} toolId The tool BUNDLE's id, as `ml.serverTools()` lists it.
-         * @param {string} name The function within that bundle.
-         * @param {object} [args] The function's arguments.
-         * @param {object} [options]
-         * @param {(text: string, ts?: number) => void} [options.onOutput] Live output as it is produced —
-         *   `ts` is when the EXECUTOR produced it, not when we saw it.
-         * @param {AbortSignal} [options.signal] Cancels the call; the executor sees the connection close.
-         * @returns {Promise<ServerToolResult>} What the tool produced, and how long it took.
-         */
-        execServerTool: async function(
-            toolId: string,
-            name: string,
-            args: Record<string, unknown> = {},
-            options: { onOutput?: (text: string, ts?: number) => void; signal?: AbortSignal } = {},
-        ): Promise<ServerToolResult> {
-            const { onOutput, signal } = options;
-            return makeBackgroundTaskPromise("SERVER_TOOL_REQUEST", "SERVER_TOOL_RESPONSE",
-                { toolId, name, args, stream: !!onOutput }, undefined, signal,
-                onOutput ? {
-                    type: "SERVER_TOOL_STREAM",
-                    onProgress: (d) => {
-                        const f = (d as { frame?: { type?: string; text?: string } }).frame;
-                        // Only OUTPUT frames are text. An `event` frame is structural — feeding it here is
-                        // how UI plumbing ends up in something a model reads.
-                        if (f?.type === "output") onOutput(String(f.text ?? ""), (d as { at?: number }).at);
-                    },
-                } : undefined) as Promise<ServerToolResult>;
-        },
-        /**
-         * The machine's memory CAPACITY — per-device VRAM totals/free and system RAM, from Ollama's
-         * `/api/info`. `ml.ps()` says what is RESIDENT; this says what there is room for, so together they
-         * answer "will this model fit" and "what is using my box".
-         *
-         * Every figure is raw BYTES and BINARY (a card sold as 96GB reports 94.97 GiB) — render through
-         * `formatBytes`, never a hand-rolled `/1e9`.
-         *
-         * Returns **null** when the route isn't available: only a patched Ollama behind an OpenWebUI with the
-         * passthrough serves it, and everything else answers with the SPA's HTML. Treat null as "capacity
-         * unknown", never as zero.
-         *
-         * @returns {Promise<OllamaInfo|null>} The machine's capacity, or null when undeterminable.
-         */
-        info: async function(): Promise<OllamaInfo | null> {
-            return makeBackgroundTaskPromise("INFO_REQUEST", "INFO_RESPONSE", {});
-        },
-        /**
-         * Get capability list for a model, read from Ollama's /api/show.
-         * Returns e.g. ["completion", "tools", "vision", "thinking"]. Handy for feature
-         * gating (e.g. only offer server-side tools on a tool-capable model).
-         * Returns null when it can't be determined (cloud/non-Ollama model, old
-         * Ollama, unreachable) — treat null as "unknown", never as "no".
-         *
-         * @param {string} [model=null] The model id (omitted = saved default).
-         * @returns {Promise<string[]|null>} Array of capabilities, or null if undeterminable.
-         */
-        capabilities: async function(model: string | null = null): Promise<string[] | null> {
-            return makeBackgroundTaskPromise("CAPS_REQUEST", "CAPS_RESPONSE", { "model": model });
-        },
-        /**
-         * Get the saved default model.
-         *
-         * @returns {Promise<string|null>} The model id.
-         */
-        getModel: async function(): Promise<string | null> {
-            return makeBackgroundTaskPromise("GET_MODEL_REQUEST", "GET_MODEL_RESPONSE", {});
-        },
+        execServerTool: execServerTool,
+        info: info,
+        capabilities: capabilities,
+        getModel: getModel,
         /**
          * A bounded integer range, like Python's `range()` — the terminating counter loop for `exec`
          * (no `for`/`while` needed): `ml.range(8).map(i => …)`. Forms: `range(stop)`, `range(start, stop)`,
@@ -2706,65 +2606,7 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
          */
         range: mlRange,
         pipe: mlPipe,
-        /**
-         * Embed text with the configured embedding model — for comparing MEANING rather than spelling.
-         *
-         * Returns an {@link Embedding}: a UNIT vector, so `.dot(other)` is cosine similarity by construction
-         * rather than by assumption. Pass an array to embed in ONE round trip (the modern Ollama endpoint
-         * batches; the legacy one is a per-input fallback).
-         *
-         * ```js
-         *   const [q, ...docs] = await ml.embed(["sales figures", "the Q3 table", "a screenshot"]);
-         *   q.rank(docs.map((embedding, key) => ({ key, embedding })));   // most similar first
-         * ```
-         *
-         * @param {string|string[]} input Text, or several strings embedded together.
-         * @param {{model?: string}} [opts] Override the configured model. Vectors from DIFFERENT models are
-         *        different geometries, so comparing across them throws rather than returning a meaningless number.
-         * @returns {Promise<Embedding|Embedding[]>} One per input, in order.
-         */
-        embed: async function<T extends string | string[]>(input: T, opts?: { model?: string }): Promise<T extends string[] ? Embedding[] : Embedding> {
-            const many = Array.isArray(input);
-            const inputs = (many ? input as string[] : [input as string]).map(String);
-            // An embed is a real model call: it occupies VRAM and takes time, and it emitted NOTHING — so an
-            // embedding model's footprint moved on the memory trace with no event beside it to explain why.
-            // Reported through the ordinary chat machinery so it needs no new event kind, and into ONE
-            // session for the page rather than a session per call: embedding is usually done in a loop, and
-            // a hundred one-turn sessions is a flood, not a record.
-            const t0 = Date.now();
-            const session = embedSession();
-            const turn = embedTurn();
-            emitDebug({ kind: "chat", id: session.hash, ts: t0, save: false, session, streaming: false, sessionKind: "embed",
-                        // A real config, not null: an embed has no chat options to speak of, but every
-                        // consumer of a session expects the shape.
-                        config: { model: opts?.model || null, system: null, think: null, schema: false,
-                                  toolIds: null, maxTokens: null, save: false } as never,
-                        request: {
-                model: opts?.model || null, extend: null,
-                messages: [{ role: "user", content: `embed ${inputs.length} input${inputs.length === 1 ? "" : "s"}` }],
-                images: null, toolIds: null, schema: false, think: null, maxTokens: null,
-            } });
-            const r = await makeBackgroundTaskPromise<{ model: string; vectors: number[][] }>(
-                "EMBED_REQUEST", "EMBED_RESPONSE", { inputs, ...(opts?.model ? { model: opts.model } : {}) })
-                .catch((e) => {
-                    emitDebug({ kind: "chat-result", id: session.hash, ts: Date.now(), save: false, session,
-                                content: `embed failed: ${String((e as Error)?.message || e)}`, model: opts?.model || null,
-                                sources: null, structured: false, extend: null, reasoning: null, usage: null });
-                    throw e;
-                });
-            // Wall clock only — the endpoint reports no eval timings and no token counts, so the span says
-            // how long it took and claims nothing about how much it read.
-            emitDebug({ kind: "chat-result", id: session.hash, ts: Date.now(), save: false, session,
-                        content: `${r.vectors.length} vector${r.vectors.length === 1 ? "" : "s"} · ${r.vectors[0]?.length ?? 0} dimensions`,
-                        // Token counts are UNKNOWN here — the endpoint reports none — so they are zero rather than invented,
-                        // and `genBasis` says the rate is wall clock.
-                        model: r.model || opts?.model || null, sources: null, structured: false, extend: null, reasoning: null,
-                        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0, genMs: Date.now() - t0 } });
-            void turn;
-            const out = r.vectors.map(v => Embedding.from(v));
-            // The one cast a conditional return type always needs; the SHAPE is checked by the branch above.
-            return (many ? out : out[0]) as T extends string[] ? Embedding[] : Embedding;
-        },
+        embed: embed,
         /**
          * GET a URL's content via the background worker — bypasses CORS (host permissions), and by DEFAULT sends
          * no cookies (uncredentialed; `credentials`/`rendered` opt in — see below). Use it to READ a page/file
@@ -2879,35 +2721,9 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
             if (mode?.rendered || mode?.credentials || mode?.format === "html") return undefined;
             return mlFetchCache.get(String(url));
         },
-        /**
-         * Get the non-secret saved config the page is allowed to read:
-         * { model, ocrModel, apiFormat }. The server URL and API key are never
-         * exposed to the page (see the security invariants in CLAUDE.md).
-         * ml.agent uses this to auto-wire a vision tool from the OCR model.
-         *
-         * @returns {Promise<{model: string, ocrModel: string, apiFormat: string}>} The config object.
-         */
-        config: async function(): Promise<MlPublicConfig> {
-            return makeBackgroundTaskPromise("CONFIG_REQUEST", "CONFIG_RESPONSE", {});
-        },
-        /**
-         * Persistently switch the default model (validated against the server;
-         * the settings popup picks it up automatically).
-         *
-         * @param {string} model The model id to set.
-         * @returns {Promise<string>} The newly set model id.
-         */
-        setModel: async function(model: string): Promise<string> {
-            return makeBackgroundTaskPromise("SET_MODEL_REQUEST", "SET_MODEL_RESPONSE", { "model": model });
-        },
-        /**
-         * Get models currently loaded in VRAM.
-         *
-         * @returns {Promise<Array<{model: string, vramGB: number, expiresAt: number}>>} Array of loaded models.
-         */
-        ps: async function(): Promise<LoadedModel[]> {
-            return makeBackgroundTaskPromise("PS_REQUEST", "PS_RESPONSE", {});
-        },
+        config: config,
+        setModel: setModel,
+        ps: ps,
         /**
          * DEBUG DUMP — everything the resource panel derives its timeline from, in one object. For reporting a
          * lane that draws something that makes no sense: the drawn events are DERIVED (`eventsFrom` +
@@ -2984,16 +2800,7 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
             }
             return records;
         },
-        /**
-         * Evict a model from VRAM (keep_alive: 0).
-         * No argument = evict all. Returns the list of models that were told to unload.
-         *
-         * @param {string} [model] The model id to evict; omitted = evict all.
-         * @returns {Promise<string[]>} The unloaded models.
-         */
-        unload: async function(model: string | null = null): Promise<string[]> {
-            return makeBackgroundTaskPromise("UNLOAD_REQUEST", "UNLOAD_RESPONSE", { "model": model });
-        },
+        unload: unload,
     };
 
     // ---- Default agent tool registry (ml.domTools) ----
