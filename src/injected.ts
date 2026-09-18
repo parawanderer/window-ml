@@ -1363,13 +1363,6 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
                 return remembered[key];
             };
         },
-        /**
-         * One-shot chat with a "short and concise" modifier.
-         *
-         * @param {string} prompt The user prompt.
-         * @param {Object} [options] Chat options.
-         * @returns {Promise<string>} The model's concise reply.
-         */
         // OCR: transcribe baked-in text from an image to a plain string, using
         // the dedicated OCR (vision) model — so the reasoning model never sees
         // image tokens. Composes with chat:

@@ -417,6 +417,17 @@ A TRAILING `//` counts as the docstring for a one-line export, which is the hous
 scanner to read those fixed thirty of them with no churn, rather than having me move thirty comments above
 their declarations to satisfy an indexer. Playbook: `.claude/skills/code-index/SKILL.md`.
 
+**RULE — JSDoc that CONTRADICTS the code is a defect; JSDoc that is INCOMPLETE is not.** In a `.ts` file the
+compiler treats JSDoc as prose — `@param` names and types are never checked — and this repo lifts contract.ts's
+JSDoc verbatim into what the MODEL reads, so drift there ships a wrong API reference. `node
+scripts/check-jsdoc.mjs` reports three things: a doc block immediately followed by another doc block (it
+documents nothing), a `@param` naming something the declaration does not have, and a `@param {string}` on an
+`x: number` — the last only when both are concrete primitives that disagree, because `{Object}` for a `Record`
+is JSDoc's own vaguer spelling rather than drift. A MISSING `@param` is never reported. Ratcheted against the
+diff in the pre-commit hook and CI's `tools` job. It found ten real cases the day it was written, the clearest
+being a doc block that had drifted one member up, so one function had no documentation and the next advertised
+an option it does not take.
+
 **A file that has grown past ~800 lines gets a REMINDER** (`node scripts/check-file-size.mjs`) — in the
 pre-commit hook and in CI's `tools` job suggesting it be split into logical modules, with per-module tests where that follows. It never
 fails a build — size is a judgement, and `contract.ts` is long because it is one contract. It is RATCHETED:

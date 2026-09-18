@@ -160,6 +160,13 @@ jobs:
         run: node scripts/index.mjs --check-speed
       # A RATCHET, not a rule: 178 existing exports and 300+ existing CSS classes have no docstring, and a
       # check that ships red is one people learn to scroll past. Only what a PR ADDS is asked about.
+      # JSDoc is PROSE to the TypeScript compiler in a .ts file — @param names and types are never checked. This
+      # repo cares more than most, because contract.ts's JSDoc is lifted verbatim into what the MODEL reads.
+      - name: The documentation this PR touches matches the code
+        run: |
+          base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")
+          if [ -z "$base" ]; then echo "no merge base — skipping"; exit 0; fi
+          node scripts/check-jsdoc.mjs --new "$base"
       - name: Everything this PR adds is documented
         run: |
           # No extra fetch: `fetch-depth: 0` above already has every ref, and a `--depth=1` fetch here would

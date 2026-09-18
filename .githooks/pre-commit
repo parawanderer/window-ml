@@ -101,6 +101,14 @@ if echo "$staged" | grep -qE '^src/.*\.(ts|tsx|css)$'; then
         echo "            (A CSS member of a documented block is fine — .r-diff-head inherits .r-diff.)"
         exit 1
     fi
+    # JSDoc that CONTRADICTS the code it sits on. TypeScript ignores @param names and types in a .ts file, and
+    # contract.ts's JSDoc is lifted verbatim into what the model reads — so a wrong one ships a wrong API doc.
+    if [ -n "$base" ] && ! node scripts/check-jsdoc.mjs --new "$base" --staged; then
+        echo ""
+        echo "pre-commit: documentation that describes something the code does not have."
+        echo "            A MISSING @param is fine; a WRONG one is not."
+        exit 1
+    fi
     # A source file with no HEADER is invisible at the level that costs most: someone rebuilds the module.
     if ! node scripts/index.mjs --headerless >/dev/null; then
         echo ""
