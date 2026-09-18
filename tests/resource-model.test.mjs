@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 const M = await import("../src/resource-model.ts");
 // The band arithmetic moved to its own module; the members below are read from there.
 const B = await import("../src/resource-bands.ts");
+const L = await import("../src/resource-lane.ts");
 // The machine shapes, shared with resource-demo.mjs — one copy, so a guard and a demo cannot disagree
 // about what a box looks like.
 import { BOXES, TOPOLOGIES, pci } from "./fixtures/boxes.mjs";
@@ -641,7 +642,7 @@ test("placeEvents: by time alone on a linear axis — nothing is dropped for fal
     // The chart's axis is the window, linear in clock time, gaps included (see Axis).
     const axis = { from: 0, to: 10_000 };
     const at = (label, t, until) => ({ t, until, kind: "note", label });
-    const got = M.placeEvents(axis, [
+    const got = L.placeEvents(axis, [
         at("start", 0),
         at("in what used to be a collapsed gap", 5000),
         at("span", 2500, 7500),
@@ -688,7 +689,7 @@ test("residencyEvents: an eviction is a diff; a load already told as a span isn'
 
 test("laneRows: overlapping spans never share a line", () => {
     const p = (run, from, to) => ({ event: { t: from, kind: "gen", label: `${run}:${from}` }, run, from, to, clipped: false });
-    const rows = M.laneRows([p(0, 0, 0.5), p(0, 0.2, 0.7), p(0, 0.8, 0.9), p(0, 0.85, 1)]);
+    const rows = L.laneRows([p(0, 0, 0.5), p(0, 0.2, 0.7), p(0, 0.8, 0.9), p(0, 0.85, 1)]);
     assert.equal(rows.length, 2, "two overlapping pairs need two rows");
     // Two bars on one line read as a single longer one — a false statement about what happened.
     for (const row of rows) {
@@ -699,7 +700,7 @@ test("laneRows: overlapping spans never share a line", () => {
     // Past the row budget, events crowd the last row rather than vanishing: a dropped event is a lie by
     // omission, an overlapping one is merely ugly.
     const many = Array.from({ length: 12 }, (_, i) => p(0, 0, 1));
-    const capped = M.laneRows(many, 3);
+    const capped = L.laneRows(many, 3);
     assert.equal(capped.length, 3);
     assert.equal(capped.flat().length, 12, "every event is still drawn");
 });
@@ -708,7 +709,7 @@ test("laneRows: overlapping spans never share a line", () => {
 // have a background embedding call beside it, and each nests under the one that contains it.
 test("laneRows: nested and overlapping events stack under the one that contains them", () => {
     const p = (label, from, to) => ({ event: { t: from, until: to, kind: "gen", label }, run: 0, from, to, clipped: false });
-    const rows = M.laneRows([
+    const rows = L.laneRows([
         p("run", 0, 1),          // the driver, spanning everything
         p("generation", 0.1, 0.35),
         p("embed", 0.15, 0.3),   // a background embedding, INSIDE the generation
@@ -732,15 +733,15 @@ test("lineageOf: an event, what spawned it, and what it spawned", () => {
         { id: "run:b", kind: "run", label: "other run", t: 4 },
     ];
     // From the sub-call UP: the step that spawned it and the run that contains it.
-    assert.deepEqual([...M.lineageOf(evs, "step:a:1:sub0")].sort(), ["run:a", "step:a:1", "step:a:1:sub0"]);
+    assert.deepEqual([...L.lineageOf(evs, "step:a:1:sub0")].sort(), ["run:a", "step:a:1", "step:a:1:sub0"]);
     // From the step: itself, its run, and what IT spawned — the same relationship read the other way.
-    assert.deepEqual([...M.lineageOf(evs, "step:a:1")].sort(), ["run:a", "step:a:1", "step:a:1:sub0"]);
+    assert.deepEqual([...L.lineageOf(evs, "step:a:1")].sort(), ["run:a", "step:a:1", "step:a:1:sub0"]);
     // From the run: everything under it, but never a sibling run.
-    const fromRun = M.lineageOf(evs, "run:a");
+    const fromRun = L.lineageOf(evs, "run:a");
     assert.ok(fromRun.has("step:a:2") && fromRun.has("step:a:1:sub0"));
     assert.ok(!fromRun.has("run:b"), "another run is not part of this lineage");
     // Nothing hovered → nothing lit, which is what leaves the lane undimmed at rest.
-    assert.equal(M.lineageOf(evs, undefined).size, 0);
+    assert.equal(L.lineageOf(evs, undefined).size, 0);
 });
 
 // Turning a drag into a time range is the INVERSE of placing an event: the plot is segments weighted by
@@ -751,7 +752,7 @@ test("timeAtFraction: the inverse of placeEvents on the linear axis", () => {
     assert.equal(M.timeAtFraction(axis, 0), 1000);
     assert.equal(M.timeAtFraction(axis, 1), 11_000);
     assert.equal(M.timeAtFraction(axis, 0.35), 4500, "linear in time: no weighting by what was sampled where");
-    const [p] = M.placeEvents(axis, [{ t: 2500, kind: "note", label: "x" }]);
+    const [p] = L.placeEvents(axis, [{ t: 2500, kind: "note", label: "x" }]);
     assert.equal(M.timeAtFraction(axis, p.from), 2500, "round-trips with placeEvents");
     // Out of range clamps rather than extrapolating into time that was never on screen.
     assert.equal(M.timeAtFraction(axis, -3), 1000);
@@ -764,10 +765,10 @@ test("timeAtFraction: the inverse of placeEvents on the linear axis", () => {
 test("laneRows: packs at the DRAWN width, not the true one", () => {
     const p = (label, from, to) => ({ event: { t: from, until: to, kind: "embed", label }, run: 0, from, to, clipped: false });
     // Two instants a hair apart: true extents don't overlap, drawn ones do.
-    const rows = M.laneRows([p("a", 0.30, 0.3005), p("b", 0.302, 0.3025)]);
+    const rows = L.laneRows([p("a", 0.30, 0.3005), p("b", 0.302, 0.3025)]);
     assert.equal(rows.length, 2, "they need separate rows because they are DRAWN overlapping");
     // Far enough apart to share a row.
-    assert.equal(M.laneRows([p("a", 0.1, 0.11), p("b", 0.5, 0.51)]).length, 1);
+    assert.equal(L.laneRows([p("a", 0.1, 0.11), p("b", 0.5, 0.51)]).length, 1);
 });
 
 // Two bars on separate rows is the lane's only claim that they OVERLAP. Spending a row to buy a hair of
@@ -783,7 +784,7 @@ test("laneRows: concurrent runs get their own BANDS, so neither tree is interlea
     });
     // The sketch: run A spans the first two thirds with four steps and some sub-calls; run B starts halfway
     // and overlaps it.
-    const rows = M.laneRows([
+    const rows = L.laneRows([
         ev("a", "run", 0.00, 0.62),
         ev("a", "tool", 0.02, 0.16, 1), ev("a", "tool", 0.17, 0.31, 2),
         ev("a", "tool", 0.32, 0.46, 3), ev("a", "tool", 0.47, 0.61, 4),
@@ -818,7 +819,7 @@ test("laneRows: a child is never drawn above its own container, even when the co
         ev("run", 0.40, 1.00, "run:2"), ev("tool", 0.45, 0.60, "step:3", "run:2"), ev("tool", 0.62, 0.95, "step:4", "run:2"),
         ev("embed", 0.50, 0.55, "step:3:sub0", "step:3"),
     ];
-    const rows = M.laneRows(placed, 8, M.MIN_EV_SPAN, M.MAX_LANE_ROWS);
+    const rows = L.laneRows(placed, 8, L.MIN_EV_SPAN, L.MAX_LANE_ROWS);
     const rowOf = new Map();
     rows.forEach((row, i) => row.forEach((p) => rowOf.set(p.event.id, i)));
     for (const p of placed) {
@@ -845,11 +846,11 @@ test("laneRows: a run's back-to-back steps share ONE row, milliseconds apart on 
     ];
     const run = { event: { t: 20_210, until: 316_690, kind: "run", ref: { hash: "fa3503e7" }, id: "run:fa3503e7:1" }, run: 0, from: 20_210 / axisMs, to: 316_690 / axisMs, clipped: false };
     // Packed the way the chart packs: the minimum drawn width is three pixels.
-    const rows = M.laneRows([run, ...steps], 4, Math.max(M.MIN_EV_SPAN, 3 * px));
+    const rows = L.laneRows([run, ...steps], 4, Math.max(L.MIN_EV_SPAN, 3 * px));
     assert.equal(rows.length, 2, `the container, then every step on one row: ${JSON.stringify(rows.map((r) => r.map((p) => p.event.id)))}`);
     assert.deepEqual(rows[1].map((p) => p.event.id), steps.map((p) => p.event.id), "in the order they ran");
     // Still refused when two steps really do overlap.
-    const overlap = M.laneRows([run, ev("gen", 60_000, 65_000, "a"), ev("tool", 64_000, 70_000, "b")], 4, 3 * px);
+    const overlap = L.laneRows([run, ev("gen", 60_000, 65_000, "a"), ev("tool", 64_000, 70_000, "b")], 4, 3 * px);
     assert.equal(overlap.length, 3, "overlapping steps keep separate rows");
 });
 
@@ -858,7 +859,7 @@ test("laneRows: the SAME model running twice at once is still two bands — grou
         event: { t: from, until: to, kind, model: "qwen3.8:27b", ref: { hash } },
         run: 0, from, to, clipped: false,
     });
-    const rows = M.laneRows([
+    const rows = L.laneRows([
         ev("r1", "run", 0, 0.8), ev("r1", "tool", 0.1, 0.4), ev("r1", "tool", 0.45, 0.75),
         ev("r2", "run", 0.2, 1.0), ev("r2", "tool", 0.25, 0.6), ev("r2", "tool", 0.65, 0.95),
     ], 8);
@@ -897,7 +898,7 @@ test("laneRows: SEQUENTIAL runs share the same rows; overlapping ones still get 
         event: { t: from, until: to, kind, ref: { hash } }, run: 0, from, to, clipped: false,
     });
     // A finishes at 0.45, B starts at 0.55 — no overlap at all.
-    const sequential = M.laneRows([
+    const sequential = L.laneRows([
         ev("a", "run", 0.00, 0.45), ev("a", "tool", 0.02, 0.20), ev("a", "tool", 0.22, 0.44),
         ev("b", "run", 0.55, 1.00), ev("b", "tool", 0.57, 0.75), ev("b", "tool", 0.77, 0.99),
     ]);
@@ -907,7 +908,7 @@ test("laneRows: SEQUENTIAL runs share the same rows; overlapping ones still get 
     assert.deepEqual([...new Set(sequential[0].map((p) => p.event.ref.hash))].sort(), ["a", "b"]);
 
     // The overlapping case is unchanged: B starts while A is still going, so it gets its own band.
-    const overlapping = M.laneRows([
+    const overlapping = L.laneRows([
         ev("a", "run", 0.00, 0.70), ev("a", "tool", 0.02, 0.30), ev("a", "tool", 0.32, 0.68),
         ev("b", "run", 0.40, 1.00), ev("b", "tool", 0.42, 0.70), ev("b", "tool", 0.72, 0.99),
     ]);
@@ -928,8 +929,8 @@ test("laneRows: many concurrent runs are capped in TOTAL, and nothing is dropped
             placed.push({ event: { t: from, until: to, kind: "tool", ref: { hash } }, run: 0, from, to, clipped: false });
         }
     }
-    const rows = M.laneRows(placed);
-    assert.ok(rows.length <= M.MAX_LANE_ROWS, `capped at ${M.MAX_LANE_ROWS}, got ${rows.length}`);
+    const rows = L.laneRows(placed);
+    assert.ok(rows.length <= L.MAX_LANE_ROWS, `capped at ${L.MAX_LANE_ROWS}, got ${rows.length}`);
     assert.equal(rows.flat().length, placed.length, "every event is still drawn somewhere");
 });
 
@@ -938,7 +939,7 @@ test("laneRows: machine events are packed last, in a band of their own", () => {
         event: { t: from, until: to, kind, ...(hash ? { ref: { hash } } : {}) },
         run: 0, from, to, clipped: false,
     });
-    const rows = M.laneRows([
+    const rows = L.laneRows([
         ev(null, "load", 0.3, 0.45),
         ev("a", "run", 0.0, 0.9), ev("a", "tool", 0.1, 0.8),
     ], 8);
@@ -948,28 +949,28 @@ test("laneRows: machine events are packed last, in a band of their own", () => {
 
 test("laneRows: a bar that merely ABUTS another shares its row rather than claiming an overlap", () => {
     const p = (kind, from, to) => ({ event: { t: from, until: to, kind }, run: 0, from, to, clipped: false });
-    const rows = M.laneRows([p("load", 0.20, 0.30), p("tool", 0.30, 0.45)]);
+    const rows = L.laneRows([p("load", 0.20, 0.30), p("tool", 0.30, 0.45)]);
     assert.equal(rows.length, 1, "they touch, they do not overlap");
 
     // The separation is still taken where it costs nothing — a third bar with room after the second sits on
     // the same row, and a bar that genuinely overlaps still gets its own.
-    assert.equal(M.laneRows([p("load", 0.2, 0.3), p("tool", 0.3, 0.45), p("tool", 0.6, 0.7)]).length, 1);
-    assert.equal(M.laneRows([p("tool", 0.2, 0.5), p("embed", 0.3, 0.4)]).length, 2, "a real overlap still stacks");
+    assert.equal(L.laneRows([p("load", 0.2, 0.3), p("tool", 0.3, 0.45), p("tool", 0.6, 0.7)]).length, 1);
+    assert.equal(L.laneRows([p("tool", 0.2, 0.5), p("embed", 0.3, 0.4)]).length, 2, "a real overlap still stacks");
 });
 
 test("scopeToSpan: a block's own extent, widened only when it is too short to frame", () => {
     // A long block is scoped to exactly itself — nothing invented around it.
-    assert.deepEqual(M.scopeToSpan(1000, 21_000, 99_000), { from: 1000, to: 21_000 });
+    assert.deepEqual(L.scopeToSpan(1000, 21_000, 99_000), { from: 1000, to: 21_000 });
 
     // A 40ms tool call is a real event worth pointing at, but a 40ms window contains no samples and draws as
     // an empty plot — so it is widened around its own CENTRE, which stays put.
-    const tiny = M.scopeToSpan(10_000, 10_040, 99_000);
+    const tiny = L.scopeToSpan(10_000, 10_040, 99_000);
     assert.equal(tiny.to - tiny.from, M.MIN_SCOPE_MS);
     assert.equal((tiny.from + tiny.to) / 2, 10_020, "centred on the block, not shifted to one side");
 
     // Work still IN FLIGHT has no end, so `now` stands in for one — scoping to it while it runs is exactly
     // when this is most useful and least able to know where it stops.
-    assert.deepEqual(M.scopeToSpan(50_000, null, 99_000), { from: 50_000, to: 99_000 });
+    assert.deepEqual(L.scopeToSpan(50_000, null, 99_000), { from: 50_000, to: 99_000 });
 });
 
 // A card can stop being reported mid-session: a driver crash, a GPU reset, a container losing its device.
@@ -1081,22 +1082,22 @@ test("filterEvents: scope answers whose, kinds answer which — and machine even
         { t: 5, kind: "evict", label: "m evicted", model: "m" },
     ];
     // Everything, by default.
-    assert.equal(M.filterEvents(evs, M.EMPTY_LANE_FILTER).length, 5);
+    assert.equal(L.filterEvents(evs, L.EMPTY_LANE_FILTER).length, 5);
 
     // Scoped to one run: the other run goes, and the machine's own event STAYS — it is what the memory trace
     // is doing, and hiding it for having no owner would remove the events the chart exists for.
-    const scoped = M.filterEvents(evs, { hash: "a", scope: "session", hidden: [] });
+    const scoped = L.filterEvents(evs, { hash: "a", scope: "session", hidden: [] });
     assert.deepEqual(scoped.map((e) => e.label), ["run a", "exec", "reader", "m evicted"]);
 
     // Kinds are an EXCLUSION list, so a kind added later shows up by default instead of being filtered out by
     // a stored preference that predates it.
-    assert.deepEqual(M.filterEvents(evs, { hash: null, scope: "all", hidden: ["embed"] }).map((e) => e.label),
+    assert.deepEqual(L.filterEvents(evs, { hash: null, scope: "all", hidden: ["embed"] }).map((e) => e.label),
         ["run a", "exec", "run b", "m evicted"]);
-    assert.deepEqual(M.filterEvents(evs, { hash: "a", hidden: ["embed", "run"] }).map((e) => e.label),
+    assert.deepEqual(L.filterEvents(evs, { hash: "a", hidden: ["embed", "run"] }).map((e) => e.label),
         ["exec", "m evicted"]);
 
     // And the control can say what it would hide rather than making you toggle blindly.
-    assert.deepEqual(M.countByKind(evs), { run: 2, tool: 1, embed: 1, evict: 1 });
+    assert.deepEqual(L.countByKind(evs), { run: 2, tool: 1, embed: 1, evict: 1 });
 });
 
 // Scoping the lane and the model list but not the AXIS left the two disagreeing about what "this session"
@@ -1121,17 +1122,17 @@ test("sessionWindow: a live session FILLS its window and then SCROLLS, and never
     const run = (until) => [{ t: T, until, kind: "run", label: "r", ref: { hash: "a" } }];
     const W = 120_000;
     // Twenty seconds in: the window is W wide, anchored just before the start; the run fills it from the left.
-    const early = M.sessionWindow(run(T + 20_000), "a", T + 20_000, { followMs: W });
+    const early = L.sessionWindow(run(T + 20_000), "a", T + 20_000, { followMs: W });
     assert.equal(early.to - early.from, W, "the width on screen, from the first sample on");
     assert.ok(early.from < T && T - early.from < 10_000, "the session starts at the left edge");
     // Forty seconds in: the SAME window. Nothing moved, nothing narrowed — the run just reached further right.
-    assert.deepEqual(M.sessionWindow(run(T + 40_000), "a", T + 40_000, { followMs: W }), early);
+    assert.deepEqual(L.sessionWindow(run(T + 40_000), "a", T + 40_000, { followMs: W }), early);
     // Past the width: it follows the clock at that width.
-    const later = M.sessionWindow(run(T + 300_000), "a", T + 300_000, { followMs: W });
+    const later = L.sessionWindow(run(T + 300_000), "a", T + 300_000, { followMs: W });
     assert.deepEqual([later.from, later.to], [T + 300_000 - W, T + 300_000]);
     assert.equal(later.live, true, "a window the chart may slide along between samples");
     // A finished session fits itself, and is not live: it does not slide.
-    const done = M.sessionWindow(run(T + 20_000), "a", T + 900_000, { followMs: W });
+    const done = L.sessionWindow(run(T + 20_000), "a", T + 900_000, { followMs: W });
     assert.ok(done.to < T + 100_000 && !done.live);
 });
 
@@ -1145,26 +1146,26 @@ test("sessionWindow: frames the session, follows a live one, and floors a short 
         { t: T + 900_000, kind: "evict", label: "m evicted", model: "m" },
     ];
     // Long finished: the window is the session's own extent plus a little padding, and nothing else's.
-    const w = M.sessionWindow(evs, "a", T + 600_000);
+    const w = L.sessionWindow(evs, "a", T + 600_000);
     assert.ok(w.from > T - 10_000 && w.from < T, "starts just before the run");
     assert.ok(w.to > T + 60_000 && w.to < T + 80_000, "…and ends just after it, not at `now`");
 
     // STILL GOING: the right edge follows the clock, or the window sits behind the memory trace it is
     // meant to be read against.
-    const live = M.sessionWindow(evs, "a", T + 70_000);
+    const live = L.sessionWindow(evs, "a", T + 70_000);
     assert.ok(live.to >= T + 70_000, "a live session's window reaches the present");
 
     // A three-second session is a slit: a window narrower than a couple of samples contains no measurements
     // and draws as an empty plot, which reads as the panel breaking rather than as a short run.
-    const brief = M.sessionWindow([{ t: T, until: T + 3000, kind: "run", label: "r", ref: { hash: "c" } }], "c", T + 500_000);
+    const brief = L.sessionWindow([{ t: T, until: T + 3000, kind: "run", label: "r", ref: { hash: "c" } }], "c", T + 500_000);
     assert.ok(brief.to - brief.from >= 30_000, "floored");
     // …and it is CENTRED in it, rather than pinned against an edge.
     const mid = (brief.from + brief.to) / 2;
     assert.ok(Math.abs(mid - (T + 1500)) < 2000, "the run sits in the middle of its window");
 
     // Nothing to frame is not a window: inventing one would be a claim about when the session happened.
-    assert.equal(M.sessionWindow(evs, "zz", T), null);
-    assert.equal(M.sessionWindow(evs, null, T), null);
+    assert.equal(L.sessionWindow(evs, "zz", T), null);
+    assert.equal(L.sessionWindow(evs, null, T), null);
 });
 
 // DEPTH IN THE LANE MEANS CONTAINMENT, so the order of the rows is a claim and not a tidiness preference: a
@@ -1191,7 +1192,7 @@ test("laneRows: the container is above its children, and the machine is below bo
         at(0.52, 0.90, "run", { ref: { hash: "a" } }),
         at(0.55, 0.75, "serve", { model: "qwen:32b" }),
     ];
-    const rows = M.laneRows(placed);
+    const rows = L.laneRows(placed);
     const rowOf = (kind, n = 0) => rows.findIndex((r) => r.filter((p) => p.event.kind === kind).length > n);
 
     assert.equal(rowOf("run"), 0, "the container is the top row — it holds everything else");
@@ -1216,7 +1217,7 @@ test("laneRows: a load sits directly under the step that waited for it, even whe
         ev("load", 0.16, 0.25, "load:gemma", "aside:1", "gemma"),     // the aside's own load
         ev("load", 0.25, 0.45, "load:qwen", "step:1", "qwen"),        // the load the step waited for
     ];
-    const rows = M.laneRows(placed, 8);
+    const rows = L.laneRows(placed, 8);
     const rowOf = (id) => rows.findIndex((r) => r.some((p) => p.event.id === id));
     const map = JSON.stringify(rows.map((r) => r.map((p) => p.event.id)));
     assert.equal(rowOf("load:qwen"), rowOf("step:1") + 1, `the step's load is directly below it: ${map}`);
@@ -1229,21 +1230,21 @@ test("laneRows: a child packed before its parent in time still lands below it", 
         run: 0, from, to, clipped: false,
     });
     // A load that begins before the aside it is claimed by (loads precede the work they are for).
-    const rows = M.laneRows([ev("aside", 0.30, 0.60, "aside:1"), ev("load", 0.20, 0.30, "load:1", "aside:1")], 8);
+    const rows = L.laneRows([ev("aside", 0.30, 0.60, "aside:1"), ev("load", 0.20, 0.30, "load:1", "aside:1")], 8);
     const rowOf = (id) => rows.findIndex((r) => r.some((p) => p.event.id === id));
     assert.ok(rowOf("load:1") > rowOf("aside:1"), JSON.stringify(rows.map((r) => r.map((p) => p.event.id))));
 });
 
 test("laneTier: the three depths, and everything unknown is machine", () => {
     // A tier is only a preference between things drawn at the same time — within one, packing is unchanged.
-    assert.equal(M.laneTier("run"), M.laneTier("session"));
-    assert.ok(M.laneTier("run") < M.laneTier("tool"));
-    assert.equal(M.laneTier("gen"), M.laneTier("tool"));
-    assert.equal(M.laneTier("embed"), M.laneTier("tool"));
-    assert.ok(M.laneTier("tool") < M.laneTier("load"));
-    assert.equal(M.laneTier("serve"), M.laneTier("evict"));
+    assert.equal(L.laneTier("run"), L.laneTier("session"));
+    assert.ok(L.laneTier("run") < L.laneTier("tool"));
+    assert.equal(L.laneTier("gen"), L.laneTier("tool"));
+    assert.equal(L.laneTier("embed"), L.laneTier("tool"));
+    assert.ok(L.laneTier("tool") < L.laneTier("load"));
+    assert.equal(L.laneTier("serve"), L.laneTier("evict"));
     // A kind added later lands with the machine rather than above a run it has nothing to do with.
-    assert.equal(M.laneTier("something-new"), M.laneTier("evict"));
+    assert.equal(L.laneTier("something-new"), L.laneTier("evict"));
 });
 
 test("laneRows: a tier is a preference between OVERLAPPING bars, and costs no rows otherwise", () => {
@@ -1257,9 +1258,9 @@ test("laneRows: a tier is a preference between OVERLAPPING bars, and costs no ro
     });
     // Machine kinds only, so it is one band: three bars, none overlapping, one row — even though `load` and
     // `serve` are processed in tier order rather than in time order.
-    assert.equal(M.laneRows([at(0.5, 0.6, "serve"), at(0.0, 0.1, "load"), at(0.2, 0.3, "serve")]).length, 1);
+    assert.equal(L.laneRows([at(0.5, 0.6, "serve"), at(0.0, 0.1, "load"), at(0.2, 0.3, "serve")]).length, 1);
     // And the row reads left to right in the order the things happened, whatever order they were packed in.
-    const row = M.laneRows([at(0.5, 0.6, "serve"), at(0.0, 0.1, "load"), at(0.2, 0.3, "serve")])[0];
+    const row = L.laneRows([at(0.5, 0.6, "serve"), at(0.0, 0.1, "load"), at(0.2, 0.3, "serve")])[0];
     assert.deepEqual(row.map((p) => p.from), [0.0, 0.2, 0.5]);
 });
 
@@ -1276,18 +1277,18 @@ test("filterEvents: a scoped lane keeps the machine events about ITS models", ()
         // The server emits bare unloads with no model at all.
         { t: 6, kind: "evict", label: "something left memory" },
     ];
-    const scoped = M.filterEvents(evs, { hash: "a", scope: "session", hidden: [], models: ["qwen:7b"] });
+    const scoped = L.filterEvents(evs, { hash: "a", scope: "session", hidden: [], models: ["qwen:7b"] });
     // Its own model's load and eviction EXPLAIN the session — an eviction mid-run is why the next turn paid
     // a load. The other tenant's do not.
     assert.deepEqual(scoped.map((e) => e.label), ["run a", "loading qwen:7b", "qwen:7b evicted"]);
 
     // Unattributable is not the same as unrelated — but a lane asked for one session should not answer with
     // something it cannot place. Kept in full, where there is nothing to be outside of.
-    assert.deepEqual(M.filterEvents(evs, { hash: "a", scope: "all", hidden: [], models: ["qwen:7b"] }).length, 6);
+    assert.deepEqual(L.filterEvents(evs, { hash: "a", scope: "all", hidden: [], models: ["qwen:7b"] }).length, 6);
 
     // NOT KNOWN must not collapse into NONE: one hides nothing, the other hides the lot.
-    assert.equal(M.filterEvents(evs, { hash: "a", scope: "session", hidden: [] }).length, 6);
-    assert.equal(M.filterEvents(evs, { hash: "a", scope: "session", hidden: [], models: [] }).length, 1);
+    assert.equal(L.filterEvents(evs, { hash: "a", scope: "session", hidden: [] }).length, 6);
+    assert.equal(L.filterEvents(evs, { hash: "a", scope: "session", hidden: [], models: [] }).length, 1);
 });
 
 // Where you GRAB decides what the drag does. Recentring on the cursor wherever it lands is what made the
@@ -1303,10 +1304,10 @@ test("lineageOf: an id that is no longer drawn focuses NOTHING, rather than ever
         { id: "a", kind: "tool" },
         { id: "b", kind: "embed", parent: "a" },
     ];
-    assert.deepEqual([...M.lineageOf(events, "a")].sort(), ["a", "b"], "a live id still lights its lineage");
-    assert.equal(M.lineageOf(events, "gone").size, 0, "a stale id lights nothing");
-    assert.equal(M.lineageOf(events, undefined).size, 0);
-    assert.equal(M.lineageOf([], "a").size, 0, "…including when everything was filtered away");
+    assert.deepEqual([...L.lineageOf(events, "a")].sort(), ["a", "b"], "a live id still lights its lineage");
+    assert.equal(L.lineageOf(events, "gone").size, 0, "a stale id lights nothing");
+    assert.equal(L.lineageOf(events, undefined).size, 0);
+    assert.equal(L.lineageOf([], "a").size, 0, "…including when everything was filtered away");
 });
 
 test("scopeAround: widens until the window actually contains samples to draw", () => {
@@ -1314,22 +1315,22 @@ test("scopeAround: widens until the window actually contains samples to draw", (
     const inWindow = (w) => every2s.filter((s) => s.t >= w.from && s.t <= w.to).length;
 
     // A 400ms tool call on a box polled every 2s: the raw span, and even the 2.5s floor, can hold one sample.
-    const tight = M.scopeToSpan(140_000, 140_400, 200_000);
+    const tight = L.scopeToSpan(140_000, 140_400, 200_000);
     assert.ok(inWindow(tight) < 3, "the plain floor is not enough — this is the bug");
 
-    const safe = M.scopeAround(every2s, 140_000, 140_400, 200_000);
+    const safe = L.scopeAround(every2s, 140_000, 140_400, 200_000);
     assert.ok(inWindow(safe) >= 3, `widened until it covers samples (got ${inWindow(safe)})`);
     // Still CENTRED on the step: widening must not slide the window off the thing you double-clicked.
     assert.ok(safe.from <= 140_000 && safe.to >= 140_400, "the step is still inside it");
 
     // A span that already covers plenty is left alone.
-    const long = M.scopeAround(every2s, 120_000, 150_000, 200_000);
+    const long = L.scopeAround(every2s, 120_000, 150_000, 200_000);
     assert.equal(long.from, 120_000);
     assert.equal(long.to, 150_000);
 
     // A session too short to satisfy the floor gives back the whole session rather than an empty window.
     const two = [{ t: 5000 }, { t: 7000 }];
-    assert.deepEqual(M.scopeAround(two, 5500, 5600, 9000), { from: 5000, to: 7000 });
+    assert.deepEqual(L.scopeAround(two, 5500, 5600, 9000), { from: 5000, to: 7000 });
 });
 
 test("scrubZone: the edges resize, the middle pans, and outside is neither", () => {
@@ -1580,7 +1581,7 @@ describe("windowSamples", () => {
 
 // …and the event that window sits inside must still be DRAWN, cropped to what is on screen.
 describe("placeEvents: an event wider than the window", () => {
-    const { placeEvents } = M;
+    const { placeEvents } = L;
     test("an event spanning the whole window is placed across it, not dropped", () => {
         const [p] = placeEvents({ from: 1000, to: 3000 }, [{ kind: "run", t: 0, until: 9000, model: "m" }], 3000);
         assert.ok(p, "the event is placed even though it starts before and ends after the window");
@@ -2194,11 +2195,11 @@ test("sameMachineEvent: a generation is identified by its end and the engine's f
     // The same edge replayed without its gen.start, landing a few ms off (each connection anchors on its own
     // hello): its START moved, and it is still the same generation.
     const replay = M.genSpan({ model: "g", endAt: 15_140, timings });
-    assert.ok(M.sameMachineEvent(a, replay), "a replay that lost its start is still one generation");
-    assert.equal(M.addMachineEvent([a], replay, 100).length, 1, "and is not added twice");
+    assert.ok(L.sameMachineEvent(a, replay), "a replay that lost its start is still one generation");
+    assert.equal(L.addMachineEvent([a], replay, 100).length, 1, "and is not added twice");
     // Two short generations of one model ending 40 ms apart (3-token calls take ~35 ms) are TWO.
     const next = M.genSpan({ model: "g", startAt: 15_125, endAt: 15_161, timings: { promptMs: 12.1, evalMs: 18.2, decoded: 3 } });
-    assert.ok(!M.sameMachineEvent(a, next), "different figures, different generation");
+    assert.ok(!L.sameMachineEvent(a, next), "different figures, different generation");
 });
 
 test("joinGens: our own call is joined to its server generation, not drawn twice; other traffic stays", () => {
@@ -2536,7 +2537,7 @@ test("the axis is LINEAR IN TIME on an adaptive cadence: an event, a sample and 
     // still resident. Linear in time, 8 s into a 15.75 s run is 8/15.75 of the way, wherever the samples fall.
     const run = [{ t: 0 }, { t: 250 }, { t: 500 }, { t: 750 }, { t: 15_750 }];
     const axis = { from: 0, to: 15_750 };
-    const [p] = M.placeEvents(axis, [{ t: 8000, kind: "evict", label: "unloaded" }]);
+    const [p] = L.placeEvents(axis, [{ t: 8000, kind: "evict", label: "unloaded" }]);
     assert.ok(Math.abs(p.from - 8000 / 15_750) < 1e-12, `placed at ${p.from}`);
     // A sample's position is its time's position — the same mapping the bands are drawn with (`runFrac`).
     assert.equal(M.runFrac(run, 750), 750 / 15_750);

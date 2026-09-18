@@ -183,7 +183,7 @@ test("a bare unload — no model — is dropped rather than drawn anonymously", 
 // worker is fresh — which an MV3 respawn guarantees — so every span in that window arrived a second time,
 // and `pushMachine` appended it.
 import { REAL_EDGES } from "./fixtures/real-edges.mjs";
-import { addMachineEvent, sameMachineEvent } from "../src/resource-model.ts";
+import { addMachineEvent, sameMachineEvent } from "../src/resource-lane.js";
 
 /** Feed a sequence of server edges through the real converter into a real (deduping) list. */
 const drain = (edges, into = []) => {
