@@ -13,13 +13,16 @@ import { Fragment } from "preact";
 import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/hooks";
 import {
     ceilingsFor, formatBytes, formatShare, percentOf, isCpuResident,
-    boxAxis, eventsIn,
+    eventsIn,
 
     type ResourceEvent, type EventPlacement,
     MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, loadEdges, loadTrace, ribbonSpans, type RibbonSpan, layersOnCard,
-    type ResourceSample, type Capacity, type TrackDef, type DeviceCapacity,
+    loadEdges, loadTrace, layersOnCard,
+    type ResourceSample, type Capacity, type DeviceCapacity,
 } from "../resource-model";
+import { kvFill, ribbonSpans, type RibbonSpan } from "../resource-gens";
+import { boxAxis, presetsFor, type TrackDef } from "../resource-presets";
+import { bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge } from "../resource-topology";
 import {
     segments, chartWindow, axisFrac, axisGaps, axisOf, timeAtFraction, sampleAtFraction, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
     scrubZone, scrubResize, scrubIntent, windowSamples, scrubNudge, wheelScrubFraction, runWeight, runFrac, gridStep, gridTimes, runGap, type RunGap
