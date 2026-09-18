@@ -236,3 +236,12 @@ html, body, #root { height: 100%; }
         .chat.calm .composer-foot, .chat.calm .chat-row .time, .chat.calm .block { transition: none; }
     }
 }
+
+/* THE TAB A RUN IS DRIVING, in a list row and in the session header. The host only: it is what tells two of
+   someone's tabs apart, and the title and the whole URL are in the tip, where length costs nothing. `help` is the
+   cursor because there is something more to read and nothing to click — the chip deliberately does not navigate
+   (see `PageChip`). */
+.chat-page { color: var(--fg-faint); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
+.chat-head-sub .chat-page { display: inline; max-width: none; }
+.chat-peek { flex: 0 0 auto; }
+.chat-peek:disabled { opacity: .5; cursor: progress; }

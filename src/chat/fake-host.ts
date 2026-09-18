@@ -37,6 +37,22 @@ const DEMO_TABS = [
     { tabId: 13, url: "https://mail.example/inbox", title: "Inbox (3)", active: false, windowId: 2 },
 ];
 
+/** What the demo world hands back for a screenshot: an SVG of a page rather than a real capture, because the point
+ *  of the demo is the button, the round trip and the viewer, and none of those can tell. */
+const DEMO_SHOT = "data:image/svg+xml;utf8," + encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="560" viewBox="0 0 900 560">
+        <rect width="900" height="560" fill="#f6f7f9"/>
+        <rect width="900" height="52" fill="#ffffff"/>
+        <circle cx="26" cy="26" r="6" fill="#d9dce1"/><circle cx="46" cy="26" r="6" fill="#d9dce1"/>
+        <rect x="70" y="16" width="300" height="20" rx="10" fill="#eceef1"/>
+        <text x="84" y="31" font-family="system-ui" font-size="12" fill="#6b7280">flights.example/search</text>
+        <text x="40" y="106" font-family="system-ui" font-size="22" fill="#111827">Amsterdam → Lisbon</text>
+        ${[0, 1, 2].map((i) => `<rect x="40" y="${140 + i * 92}" width="820" height="76" rx="10" fill="#ffffff" stroke="#e5e7eb"/>
+        <text x="64" y="${172 + i * 92}" font-family="system-ui" font-size="15" fill="#111827">${["TP 675", "HV 5183", "KL 1691"][i]}</text>
+        <text x="64" y="${194 + i * 92}" font-family="system-ui" font-size="12" fill="#6b7280">07:${["05", "40", "15"][i]} — 09:${["35", "10", "45"][i]}</text>
+        <text x="800" y="${182 + i * 92}" font-family="system-ui" font-size="18" fill="#111827">€${[118, 96, 131][i]}</text>`).join("")}
+    </svg>`.replace(/\s+/g, " "));
+
 /** A tab id for one the demo world just opened, past the ids `DEMO_TABS` already uses. */
 let nextFakeTabId = 90;
 
@@ -245,6 +261,17 @@ export class FakeHost implements SessionHost {
                 return caps.highlight ? ok({}) : fail("unsupported", "no page to highlight on");
             case "tabs.list":
                 return caps.tabs ? ok({ tabs: DEMO_TABS }) : fail("unsupported", "this runtime has no tabs");
+            // The real runtime can only capture the tab its window is SHOWING (src/session-commands.ts), so a run
+            // working in a background tab is refused rather than captured behind the scenes. The demo world keeps
+            // that rule, since a peek that always works would teach the UI the wrong lesson about when it does.
+            case "tab.screenshot": {
+                if (!caps.screenshots) return fail("unsupported", "this runtime cannot capture a tab");
+                const tabId = "tabId" in c.target ? c.target.tabId : this.held.get(sessionKey(c.target.session))?.summary.page?.tabId;
+                if (tabId == null) return fail("not-found", "that session is not on a tab");
+                const tab = DEMO_TABS.find((t) => t.tabId === tabId);
+                if (tab && !tab.active) return fail("conflict", "that tab is not in front in its window, so it cannot be captured");
+                return ok({ image: DEMO_SHOT, width: 900, height: 560, ts: Date.now() });
+            }
             case "runtime.info":
                 return ok({ kind: rt.kind, contractVersion: rt.contractVersion, capabilities: caps, nowMs: Date.now() });
             // Starting a session: the demo world mints one and answers the first turn, so the new-session form is

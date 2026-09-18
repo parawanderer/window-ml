@@ -126,7 +126,9 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
         sessions: [
             { summary: summary(DEMO.waiting, { kind: "agent", status: "waiting", pendingApprovals: 1, createdTs: now - 6 * min, lastTs: now - 4 * min, task: "Find the cheapest flight on this page and summarise its fare rules", title: "Cheapest AMS → LIS fare", model: "qwen3:32b", page: { url: "https://flights.example/search?from=AMS&to=LIS", title: "Flights AMS → LIS", tabId: 41 } }), events: waiting },
             { summary: summary(DEMO.chat, { kind: "chat", status: "done", createdTs: now - 40 * min, lastTs: now - 39 * min, title: "KV cache size at 32k", model: "qwen3:32b" }), events: chat },
-            { summary: summary(DEMO.capped, { kind: "agent", status: "capped", createdTs: now - 180 * min, lastTs: now - 178 * min, title: "Plot the fare prices", model: "qwen3:32b" }), events: capped },
+            // A page with no `tabId`: the tab it worked in has since closed, which is what makes it resumable and what the
+            // header's page chip then reports — which page the run WAS on, rather than nothing at all.
+            { summary: summary(DEMO.capped, { kind: "agent", status: "capped", createdTs: now - 180 * min, lastTs: now - 178 * min, title: "Plot the fare prices", model: "qwen3:32b", page: { url: "https://flights.example/search?from=AMS&to=LIS", title: "Flights AMS → LIS" } }), events: capped },
             { summary: summary(DEMO.watched, { kind: "agent", status: "running", createdTs: now - 2 * min, lastTs: now - min, title: "Nightly benchmark", model: "qwen3:32b" }), events: watched },
             { summary: summary(DEMO.offline, { kind: "chat", status: "done", createdTs: now - 26 * 60 * min, lastTs: now - 26 * 60 * min + 5000, title: "Invoice reminder" }), events: offline },
         ],

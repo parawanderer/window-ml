@@ -392,6 +392,28 @@ The request reaches the worker from a page, so the pending set is bounded: a pag
 arrives. What it costs to claim one is a session row, which the store's budget already bounds — the same standing
 a page's own `{ save: true }` chat has always had.
 
+## Which tab a run is driving
+
+`SessionSummary.page` has carried the URL, title and `tabId` since the index existed, and nothing rendered it: the
+header read `Work laptop · qwen3:32b`, which names the machine and the model and not the document being acted on.
+On a page whose whole point is that an agent owns several tabs at once, that is the missing half of a session's
+identity. The host now sits in the list row and in the header's sub-line, with the title and the full URL in the
+tip, because a URL is long and both places ellipsize.
+
+It is deliberately NOT a link. Opening the URL would make a second tab showing the same document, which is exactly
+not the tab the run holds, and the contract has no command for bringing an existing one to the front.
+
+**The peek** (`PagePeek`) sends `tab.screenshot` for the session and opens the result in the same full-size view an
+image in a transcript opens in. Three conditions, and each one is a real case rather than defensive coding:
+
+- `page.tabId` absent means the tab it worked in has closed — the same tell `resumableHere` reads — so there is
+  nothing to capture and nothing is offered.
+- The runtime must report `capabilities.screenshots` and this client must hold the `screen` scope.
+- The browser can only capture the tab its window is SHOWING. A run working in a background tab is refused with
+  `conflict`, and the store puts the runtime's own sentence on screen. Capturing it anyway would mean attaching the
+  debugger, which puts a banner on someone's display for a remote look; `src/session-commands.ts` refuses on
+  purpose, and the demo world keeps the rule so the UI is developed against it.
+
 ## Calm view, and the list pane
 
 Two device preferences, both in `view-mode.tsx`, both stored through `ClientPlatform.prefs` and seeded by the entry

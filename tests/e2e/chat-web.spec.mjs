@@ -201,6 +201,40 @@ test("desktop: an agent run picks a tab, or a new one, and is started on the run
     await page.close();
 });
 
+test("desktop: a run says which tab it is driving, and peeks at it", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
+    // The header names the page, not only the machine and the model.
+    await expect(page.locator(".chat-head-sub .chat-page")).toHaveText("flights.example");
+    await expect(row(page, WAITING).locator(".chat-page")).toHaveText("flights.example");
+    // A plain chat is on no page at all, and says nothing rather than something empty.
+    await expect(row(page, CHAT).locator(".chat-page")).toHaveCount(0);
+
+    await page.locator(".chat-head .chat-peek").click();
+    await expect.poll(() => commands(page)).toContainEqual({
+        type: "tab.screenshot", runtime: "laptop", target: { session: { runtime: "laptop", hash: "3f9a0c21" } },
+    });
+    await expect(page.locator(".chat-lightbox img")).toBeVisible();
+    await page.locator(".chat-lightbox").click();
+
+    // The browser can only capture the tab its window is showing, so a refusal is a sentence rather than nothing.
+    await page.evaluate(() => {
+        globalThis.__chatFake.handlers["tab.screenshot"] = () => ({ ok: false, error: { code: "conflict", message: "that tab is not in front in its window, so it cannot be captured" } });
+    });
+    await page.locator(".chat-head .chat-peek").click();
+    await expect(page.locator(".chat-notice")).toContainText("not in front in its window");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("desktop: a run whose tab has closed still says which page it was on", async () => {
+    const { page } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`);
+    await expect(page.locator(".chat-head-sub .chat-page")).toHaveText("flights.example");
+    // No tab to capture, so nothing offers to look at one.
+    await expect(page.locator(".chat-head .chat-peek")).toHaveCount(0);
+    await expect(page.locator(".chat-resume")).toBeVisible();
+    await page.close();
+});
+
 test("desktop: a run whose page has gone offers a resume instead of a composer, and picks where", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`);
 

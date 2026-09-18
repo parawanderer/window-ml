@@ -6,12 +6,14 @@
 // Rendered by capability and grant, never by "it is local": a runtime this device may only watch gets no composer, an
 // offline one says when it was last seen, and one speaking an unknown contract version is listed but not opened.
 import { useEffect, useRef, useState } from "preact/hooks";
-import type { RuntimeInfo, SessionKey, SessionStatus, SessionSummary } from "../session-host";
+import type { RuntimeInfo, SessionId, SessionKey, SessionStatus, SessionSummary } from "../session-host";
 import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { AgentBadge } from "../sidebar/reply";
-import { ContextMenu, CursorTipLayer, Dot, Hash, Stamp } from "../sidebar/ui-kit";
+import { IconCamera } from "../sidebar/icons";
+import { services } from "../sidebar/services";
+import { ContextMenu, CursorTipLayer, Dot, Hash, Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import { rev, sessionMap, view, type Status } from "../sidebar/store";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
@@ -78,6 +80,60 @@ function useHashRoute(): void {
 /** Open a session: the one navigation the page has. */
 const openSession = (key: SessionKey) => { view.value = { name: "detail", hash: key }; };
 
+/** A page's host, which is what tells two of someone's tabs apart in one line. Falls back to the whole string,
+ *  because a runtime's `page.url` is untrusted input and may not parse. */
+function hostOf(url: string): string {
+    try { return new URL(url).host || url; } catch { return url; }
+}
+
+/**
+ * THE TAB A RUN IS DRIVING, said wherever that run is listed or opened.
+ *
+ * A session on this page can be one of several the agent owns at once, and until now nothing said which: the header
+ * read `Work laptop · qwen3:32b`, which names the machine and the model and not the document being acted on. The
+ * host is the part that identifies it; the title and the full URL ride the tip, because a URL is long and this sits
+ * in a row that already ellipsizes.
+ *
+ * It is NOT a link. Opening the URL would make a second tab showing the same document, which is precisely not the
+ * tab the run holds, and there is no command in the contract for putting an existing one in front.
+ */
+function PageChip({ page }: { page: NonNullable<SessionSummary["page"]> }) {
+    return (
+        <span class="chat-page" {...cursorTipOn(<span><b>{page.title || "the page this run is on"}</b><br />{page.url}</span>)}>
+            {hostOf(page.url)}
+        </span>
+    );
+}
+
+/**
+ * What the tab looks like RIGHT NOW, into the same full-size view an image in a transcript opens in.
+ *
+ * Offered only where there is still a TAB to capture — `page.tabId` absent is the tell that the one the run worked
+ * in has closed, the same tell `resumableHere` reads — and where the runtime says it can capture and this client
+ * holds the scope for it. The browser can only
+ * capture the tab its window is SHOWING, so a run working in a background tab answers `conflict` and the store puts
+ * the runtime's own sentence on screen — which is the rule stated once, where it is met, rather than a button that
+ * quietly does nothing.
+ */
+function PagePeek({ store, id, rt, sessionKey, summary }: { store: ChatStore; id: SessionId; rt: RuntimeInfo; sessionKey: SessionKey; summary?: SessionSummary }) {
+    const [busy, setBusy] = useState(false);
+    if (summary?.page?.tabId == null) return null;
+    if (!rt.online || !rt.capabilities.screenshots || !mayCommand(rt, "tab.screenshot", { key: sessionKey, summary }, store.host.self)) return null;
+    const peek = async (): Promise<void> => {
+        setBusy(true);
+        try {
+            const r = await store.send({ type: "tab.screenshot", runtime: rt.id, target: { session: id } });
+            if (r.ok) services().openLightbox(r.data.image);
+        } finally { setBusy(false); }
+    };
+    return (
+        <button class="tt hbtn chat-peek" aria-label="Look at the page" disabled={busy} onClick={() => void peek()}>
+            <IconCamera />
+            <span class="tt-pop left" role="tooltip">Look at the page this run is on, as it is now</span>
+        </button>
+    );
+}
+
 /** A runtime's heading in the list: its name, whether it is reachable, and what this device may do there. */
 function RuntimeHead({ rt }: { rt: RuntimeInfo }) {
     const watchOnly = !mayCommand(rt, "session.send");
@@ -103,6 +159,7 @@ function IndexRow({ s, rt, active }: { s: SessionSummary; rt: RuntimeInfo; activ
                 <b class="row-title">{truncate(title, 90)}</b>
                 <span class="chat-row-meta">
                     {s.kind === "agent" ? <AgentBadge /> : null}
+                    {s.page ? <PageChip page={s.page} /> : null}
                     {STATUS_LABEL[s.status] ? <span class={`chat-status st-${s.status}`}>{STATUS_LABEL[s.status]}</span> : null}
                     {s.pendingApprovals > 0 ? <span class="chat-appr-badge">{s.pendingApprovals} approval{s.pendingApprovals === 1 ? "" : "s"}</span> : null}
                 </span>
@@ -186,9 +243,13 @@ function SessionPane({ store, sessionKey, narrow }: { store: ChatStore; sessionK
                 {!narrow && !listOpen.value ? <ListToggle narrow={narrow} /> : null}
                 <span class="chat-head-title">
                     <b>{truncate(title, 120)}</b>
-                    <span class="chat-head-sub">{rt?.name ?? id?.runtime}{summary?.model ? ` · ${summary.model}` : ""}</span>
+                    <span class="chat-head-sub">
+                        {rt?.name ?? id?.runtime}{summary?.model ? ` · ${summary.model}` : ""}
+                        {summary?.page ? <> · <PageChip page={summary.page} /></> : null}
+                    </span>
                 </span>
                 <span class="sp" />
+                {id && rt && summary?.page ? <PagePeek store={store} id={id} rt={rt} sessionKey={sessionKey} summary={summary} /> : null}
                 <ViewToggle />
                 {id ? <Hash hash={id.hash} /> : null}
             </div>
