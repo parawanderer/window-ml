@@ -6,6 +6,8 @@ import { test, describe } from "node:test";
 import assert from "node:assert";
 import { readFile } from "node:fs/promises";
 const P = await import("../src/token-pipe.ts");
+// editDistance lives beside the lexical matching that uses it; the cycle it made is why it moved.
+const LM = await import("../src/label-match.ts");
 const { PIPE_SYNTAX, PIPE_REF } = await import("../src/text-pipe.ts");
 const { PIPE_CLAUSE } = await import("../src/prompts.ts");
 
@@ -111,9 +113,9 @@ test("nearest() names the closest real pointers for a hallucinated id", () => {
 });
 
 test("editDistance underpins the ranking", () => {
-    assert.equal(P.editDistance("abc", "abc"), 0);
-    assert.equal(P.editDistance("a1b2c3f", "a1b2c9f"), 1);
-    assert.equal(P.editDistance("", "abc"), 3);
+    assert.equal(LM.editDistance("abc", "abc"), 0);
+    assert.equal(LM.editDistance("a1b2c3f", "a1b2c9f"), 1);
+    assert.equal(LM.editDistance("", "abc"), 3);
 });
 
 // A pointer that doesn't resolve is usually a HALLUCINATED token-shaped id. The message is modelled on a memory

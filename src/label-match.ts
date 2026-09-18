@@ -1,5 +1,5 @@
-// Lexical similarity between a reference a model wrote and a label it wrote earlier. Pure: no DOM, no
-// config, no I/O — the metric is chosen by the caller so it can be A/B'd.
+// label-match.ts — lexical similarity between a reference a model wrote and a label it wrote earlier. Pure: no
+// DOM, no config, no I/O — the metric is chosen by the caller so it can be A/B'd.
 //
 // Levenshtein alone is a poor fit for this particular problem. The strings being compared are short natural
 // phrases the model authored itself, and the way it misremembers them is by REWORDING — dropping an article,
@@ -8,8 +8,21 @@
 // though a human would call them the same thing.
 //
 // All three return a SIMILARITY in 0..1 (1 = identical), so they are directly comparable and a threshold
-// means the same thing whichever is selected.
-import { editDistance } from "./token-pipe";
+// means the same thing whichever is selected. `editDistance` lives here rather than in token-pipe.ts because
+// the two modules imported each other for it.
+
+/** Levenshtein distance — tiny inputs (a 6-hex id or a tool name), so the simple row form is fine. */
+export function editDistance(a: string, b: string): number {
+    if (a === b) return 0;
+    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) {
+        const row = [i];
+        for (let j = 1; j <= b.length; j++)
+            row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        prev = row;
+    }
+    return prev[b.length];
+}
 
 // The metric NAMES live in contract.ts with the other shared config types; the implementations live here.
 // Keeping them apart also breaks a cycle: contract needs the type for MlConfig, and this module needs

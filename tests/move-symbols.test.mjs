@@ -86,6 +86,54 @@ test("moves a function to a new file, keeps its JSDoc, and rewrites the importer
     assert.match(b, /import \{ load \} from "\.\/loader";/);
 });
 
+test("a module header survives the removal of the import it was sitting on", (t) => {
+    // The real case (label-match.ts, 2026-09-18): the header touches its ONE import, and moving editDistance
+    // INTO the file makes that import redundant. TypeScript removes the statement WITH its leading trivia, which
+    // is the header, and the arriving declaration lands where it was — so `--headerless` still passes and the
+    // loss is silent. The re-export below matters: it is what makes the refactor insert at the TOP rather than
+    // append, which is the shape that loses the header.
+    const f = fixture({
+        "src/kinds.ts": 'export type Metric = "a" | "b";\nexport const METRICS = ["a", "b"];\n',
+        "src/pipe.ts": [
+            "// pipe.ts — the pipe dialect.",
+            "",
+            'import { similarity } from "./match";',
+            "",
+            "export function editDistance(a: string, b: string): number {",
+            "    return a === b ? 0 : Math.abs(a.length - b.length);",
+            "}",
+            "",
+            "export function rank(a: string, b: string): number {",
+            "    return similarity(a, b);",
+            "}",
+            "",
+        ].join("\n"),
+        // NO blank line between the header and the import: that adjacency is the whole bug.
+        "src/match.ts": [
+            "// match.ts — lexical similarity, and why edit distance alone is a poor fit for it.",
+            "// A second line, so this is plainly a block and not one stray comment.",
+            'import { editDistance } from "./pipe";',
+            "",
+            'export { METRICS, type Metric } from "./kinds";',
+            'import type { Metric } from "./kinds";',
+            "",
+            'const pick: Metric = "a";',
+            "",
+            "export function similarity(a: string, b: string): number {",
+            '    return pick === "a" ? 1 / (1 + editDistance(a, b)) : 0;',
+            "}",
+            "",
+        ].join("\n"),
+    });
+    t.after(f.cleanup);
+    const { report, text } = f.move({ from: "src/pipe.ts", symbols: ["editDistance"], to: "src/match.ts" });
+    assert.deepEqual(kinds(report), []);
+    const match = text("src/match.ts");
+    assert.match(match, /^\/\/ match\.ts — lexical similarity/, "match.ts keeps its own header, first");
+    assert.match(match, /A second line/, "the whole header block survives, not just its first line");
+    assert.match(text("src/pipe.ts"), /^\/\/ pipe\.ts — the pipe dialect\./, "the source keeps its header too");
+});
+
 test("pulls along a helper only the moved code uses, and leaves a shared one", (t) => {
     const f = fixture({
         "src/a.ts": [

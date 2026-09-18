@@ -470,7 +470,7 @@ half the total while being 15% of the lines, and `dom.ts`, fourth by length, is 
 limit deliberately, because cost has no threshold and the size gate cannot see a 430-line file edited 42 times.
 Read the script's header before treating it as a verdict: commits are WRITES, so a heavily imported type module
 is read far more than it is edited (`contract.ts`: 327 lines, 85 importers), which is why fan-in is printed
-beside the score rather than folded into it. Watch the `recent` vs `all` columns — while they stay close, the
+beside the score rather than folded into it. Playbook: `.claude/skills/file-size/SKILL.md`. Watch the `recent` vs `all` columns — while they stay close, the
 decay is inert and the ranking is plain churn; a file whose ratio falls below about half is one whose work has
 stopped. **Decay can never hide bloat**: every file over 800 lines that does not make the ranking is listed
 underneath it anyway, with its commit count, because big-and-quiet is exactly what a decayed score buries.
@@ -483,6 +483,15 @@ uses), so it tells a TYPE-only edge from a value one, which is what decides whet
 the inline `import("./contract").X` query that no grep for an import statement will match. Reach for it BEFORE
 planning a split, because what blocks a split is a file's edges, not its size: three attempts on `vram.tsx` died
 on cycles that this answers in one command. Skill: `.claude/skills/imports/SKILL.md`.
+
+**To cut up a body rather than move a declaration, use `node scripts/extract-function.mjs`** — `--file <f>
+--lines <a-b> --name <fn>`, 1-based inclusive, `--dry-run --diff` first. move-symbols moves whole top-level
+declarations BETWEEN files and cannot touch what is inside one, which leaves the operation a long component
+actually needs as hand editing. TypeScript's own `Extract Symbol` does the closure analysis (which locals become
+parameters, what has to come back), this picks module scope, gives the result your name instead of
+`newFunction`, and refuses on a new type error. Extract first, then move-symbols the result if it belongs in
+another file — the extracted function is a top-level declaration, which is exactly what that takes. Skill:
+`.claude/skills/extract-function/SKILL.md`.
 
 **RULE — move code between files with `node scripts/move-symbols.mjs`, never by copy and paste.**
 `--from <file> --symbols a,b --to <file> --dry-run --diff` plans the move; drop `--dry-run` to write it. The

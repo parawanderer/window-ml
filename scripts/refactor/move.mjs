@@ -171,6 +171,10 @@ export function moveSymbols(project, { from, symbols, to, pull = true }) {
         return report;
     }
     if (!edits?.edits.length) { block("refactor", "TypeScript's move refactor produced no edits"); return report; }
+    // Captured BEFORE the edits: removing an import that the move made redundant takes that statement's LEADING
+    // TRIVIA with it, and when the import is the file's first statement the trivia is its module header. That is
+    // silent documentation loss, and `--headerless` does not see it because whatever lands next reads as a header.
+    const headers = headersOf(project, edits.edits.filter((e) => !e.isNewFile).map((e) => e.fileName));
     project.apply(edits.edits);
     const touched = new Set(edits.edits.map((e) => path.resolve(e.fileName)));
     touched.add(toAbs);
@@ -193,6 +197,7 @@ export function moveSymbols(project, { from, symbols, to, pull = true }) {
     for (const r of [...dyn.rewritten, ...reexports]) touched.add(project.abs(r.file));
     removeEmptyDestructuring(project, touched);
     for (const f of touched) mergeDuplicateImports(project, f);
+    restoreHeaders(project, headers);
 
     const checkSet = new Set([...neighbours, ...touched]);
     const after = project.diagnostics(checkSet);
@@ -250,6 +255,38 @@ function mergeDuplicateImports(project, file) {
         changes.push({ span: { start: last.getEnd(), length: 0 }, newText: `, ${extra.join(", ")}` });
     }
     if (changes.length) project.apply([{ fileName: sf.fileName, textChanges: changes, isNewFile: false }]);
+}
+
+/** Each file's leading comment block, by absolute path — its module header, as it stands before the refactor.
+ *  @param {import("./project.mjs").Project} project @param {string[]} files @returns {Map<string, string>} */
+function headersOf(project, files) {
+    const out = new Map();
+    for (const f of files) {
+        const abs = path.resolve(f);
+        if (out.has(abs)) continue;
+        const text = project.read(abs);
+        if (text == null) continue;
+        let sf;
+        try { sf = project.sourceFile(abs); } catch { continue; }
+        const first = sf.statements[0];
+        if (!first) continue;
+        const head = text.slice(0, first.getStart(sf));
+        if (/^\s*(\/\/|\/\*)/.test(head)) out.set(abs, head);
+    }
+    return out;
+}
+
+/** Put back a module header the refactor deleted along with the import it was sitting on. A header that merely
+ *  moved, or whose trailing blank lines changed, is left alone: only a header that is GONE is restored.
+ *  @param {import("./project.mjs").Project} project @param {Map<string, string>} headers */
+function restoreHeaders(project, headers) {
+    for (const [f, head] of headers) {
+        const text = project.read(f);
+        if (text == null) continue;
+        const body = head.replace(/\s+$/, "");
+        if (!body || text.includes(body)) continue;
+        project.write(f, head + text.replace(/^\s+/, ""));
+    }
 }
 
 /** Remove the comments above a new file's leading imports (copied trivia, not documentation of the new file). @param {import("./project.mjs").Project} project @param {string} file */

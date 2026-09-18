@@ -76,6 +76,12 @@ failure cannot be overridden.
   reads as that declaration's documentation to anything that parses comments by adjacency — `gen-api-docs`
   printed two such headers straight into the model-facing API reference, prose about storage keys and worker
   lifetimes included. `tests/api-docs.test.mjs` now fails on it, but only for files the doc reaches.
+- **A module header is preserved when the import it sat on is removed.** Removing a now-redundant import
+  takes its leading trivia with it, and when that import is the file's first statement the trivia IS the
+  header. `moveSymbols` captures every touched file's header before the refactor and puts back any that went
+  missing. Fixed after `label-match.ts` lost its whole header block, and covered by a test that fails without
+  the restore — `--headerless` never caught it, because the arriving declaration's own doc block reads as a
+  header.
 - **Comments are attached by adjacency.** JSDoc and comment lines directly above a declaration move with it;
   a comment separated by a blank line (a section banner, a file header) stays. A stale comment that sat above
   the wrong function moves with that function, exactly as it was.

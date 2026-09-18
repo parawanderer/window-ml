@@ -5,7 +5,7 @@
 import type { ComponentChildren } from "preact";
 import { GLYPH, RESOLVED_LABEL, rungLabel, rungMeta } from "./fetch-ladder";
 import { IconChevron, IconEye, IconEyeOff } from "./icons";
-import { scrollToStepSeq } from "./answer-render";
+import { scrollToStepSeq } from "./step-scroll";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, CodeRevision } from "../contract-render";
