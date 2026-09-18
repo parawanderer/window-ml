@@ -17,9 +17,10 @@ import {
 
     type ResourceEvent, type EventPlacement,
     MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    kvFill, loadEdges, loadTrace, ribbonSpans, type RibbonSpan, layersOnCard,
+    loadEdges, loadTrace, layersOnCard,
     type ResourceSample, type Capacity, type DeviceCapacity,
 } from "../resource-model";
+import { kvFill, ribbonSpans, type RibbonSpan } from "../resource-gens";
 import { boxAxis, presetsFor, type TrackDef } from "../resource-presets";
 import { bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge } from "../resource-topology";
 import {

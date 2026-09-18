@@ -23,7 +23,8 @@ import { fmtAge, hhmmss } from "./timestamps";
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
 import { eventsFrom, laneEvents, type UsageSource } from "./model-stats";
-import { parseInfo, holdCapacity, memorySplit, estimateFrom, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, type MemoryBreakdown, formatBytes, boxSignature, sameBoxOnly, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type Capacity, type ResourceSample, type ModelResidency, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, rooflineFrom, expectedDecodeFrom, predictedDecodeFrom } from "../resource-model";
+import { parseInfo, holdCapacity, memorySplit, estimateFrom, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, type MemoryBreakdown, formatBytes, boxSignature, sameBoxOnly, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type Capacity, type ResourceSample, type ModelResidency, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, rooflineFrom, expectedDecodeFrom } from "../resource-model";
+import { genSpan, genTimingsFrom, hintFrom, predictedDecodeFrom } from "../resource-gens";
 import { presetsFor, seriesCatalog, stackRefusal, type TrackDef, kindRefusal } from "../resource-presets";
 import { chartWindow, windowSamples } from "../resource-axis";
 import { sessionWindow, addMachineEvent } from "../resource-lane";
