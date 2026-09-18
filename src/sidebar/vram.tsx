@@ -28,7 +28,6 @@ import { usageByModel, eventsFrom, laneEvents, type UsageSource } from "./model-
 import { parseInfo, holdCapacity, memorySplit, estimateFrom, quantPlain, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, type MemoryBreakdown, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, rooflineFrom, expectedDecodeFrom, expectedPhrase, predictedDecodeFrom, kindRefusal } from "../resource-model";
 import { chartWindow, windowSamples } from "../resource-axis";
 import { sessionWindow, addMachineEvent } from "../resource-lane";
-import { type Band } from "../resource-bands";
 import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay, LANE_KINDS, toggleLaneKind } from "./resource-chart";
 import type { LoadedModel } from "../contract-server";
 
@@ -73,7 +72,7 @@ export function residencyOf(m: LoadedModel): ModelResidency {
 import { RenderPanel } from "./render-panel";
 import { hoverModel, kbFocus, stepFocus, stepDepth, noteFocusOrder } from "./vram-focus";
 import { poolHover } from "./chart-interaction";
-import { VRAM_PALETTES, capacity, resourceHistory, layout, streamLive, colorFor, frameFocused, vramPalette, VRAM_HISTORY, sessionModels } from "./panel-state";
+import { VRAM_PALETTES, capacity, resourceHistory, layout, streamLive, colorFor, frameFocused, vramPalette, VRAM_HISTORY, sessionModels, poolFacts } from "./panel-state";
 
 // Fetch the server's model list via the background worker (privileged fetch);
 // degrade silently if unreachable. Populates the datalists.
@@ -1148,18 +1147,6 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
             ) : null}
         </>
     );
-}
-
-/** What a hovered pool holds RIGHT NOW: total in use, and each consumer that has any of it. */
-export function poolFacts(bands: Band[]): { used: number; consumers: { label: string; bytes: number; model?: string }[] } {
-    return {
-        used: bands.filter((b) => b.kind !== "free").reduce((n, b) => n + b.bytes, 0),
-        // Including the residual, which is most of what a nearly-idle card holds and is the thing a reader
-        // would otherwise go looking for a process to explain. `model` rides along so the tip can carry each
-        // consumer's own colour — the residual has none, because it is not a model.
-        consumers: bands.filter((b) => b.kind !== "free" && b.bytes > 0)
-            .map((b) => ({ label: b.label, bytes: b.bytes, ...(b.model ? { model: b.model } : {}) })),
-    };
 }
 
 // The smallest the panel may be dragged is LEARNED, not computed. Summing the parts is a guess about which

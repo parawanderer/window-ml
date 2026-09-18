@@ -15,6 +15,7 @@ import type { LaneFilter } from "../resource-lane";
 import { type ResourceSample, type Capacity, normModel, type TrackDef } from "../resource-model";
 import { usageByModel, type UsageSource } from "./model-stats";
 import { scopedHash, laneScoped, laneHidden, sessionMap } from "./store";
+import type { Band } from "../resource-bands";
 
 // --- VRAM monitor ---
 /**
@@ -133,3 +134,15 @@ export const keyRelay = signal(false);
 export const keysReach = (): boolean => keyRelay.value || frameFocused.value;
 
 export const layout = signal<TrackDef[] | null>(null);   // which tracks are drawn, in what mode, at what height (null = use the preset)
+
+/** What a hovered pool holds RIGHT NOW: total in use, and each consumer that has any of it. */
+export function poolFacts(bands: Band[]): { used: number; consumers: { label: string; bytes: number; model?: string }[] } {
+    return {
+        used: bands.filter((b) => b.kind !== "free").reduce((n, b) => n + b.bytes, 0),
+        // Including the residual, which is most of what a nearly-idle card holds and is the thing a reader
+        // would otherwise go looking for a process to explain. `model` rides along so the tip can carry each
+        // consumer's own colour — the residual has none, because it is not a model.
+        consumers: bands.filter((b) => b.kind !== "free" && b.bytes > 0)
+            .map((b) => ({ label: b.label, bytes: b.bytes, ...(b.model ? { model: b.model } : {}) })),
+    };
+}
