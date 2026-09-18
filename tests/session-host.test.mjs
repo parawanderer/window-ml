@@ -49,3 +49,16 @@ test("every command names a scope, so a new one cannot arrive unguarded", async 
     assert.ok(declared.length >= 15, `found ${declared.length} commands in the union`);
     for (const t of new Set(declared)) assert.ok(SCOPES[t], `${t} has no scope`);
 });
+
+test("a principal id compares case-insensitively, though the contract says lowercase", async () => {
+    const { samePrincipal } = await import("../src/session-host.ts");
+    assert.equal(samePrincipal("0a3f9c", "0a3f9c"), true);
+    // A runtime that ignores the rule costs nothing: the alternative is a list with no "this device" row and no
+    // logout warning, and nothing wrong to see in either value.
+    assert.equal(samePrincipal("0A3F9C", "0a3f9c"), true);
+    assert.equal(samePrincipal("0a3f9c", "0a3f9d"), false);
+    // Absent is never equal to absent: two devices that failed to report an id are not the same device.
+    for (const [a, b] of [[undefined, undefined], ["0a3f9c", undefined], [undefined, "0a3f9c"], ["", ""]]) {
+        assert.equal(samePrincipal(a, b), false, `${a} vs ${b}`);
+    }
+});

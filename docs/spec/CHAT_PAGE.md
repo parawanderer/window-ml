@@ -224,6 +224,9 @@ of its rules are about what a row must be able to say rather than about what it 
   lapsed device cannot authenticate to ask for a renewal.
 - **"Revoked; this runtime's keys rotate when it is next online"** while `rotation` says something is still owed. A
   revocation that left the stream readable and said nothing would be the one lie the page tells.
+- **"Can pair other devices"** on a row whose `mayPair` is set. It is not one of its scopes and cannot be read off
+  them: such a device can issue a certificate for a new one by itself, without `admin` and without asking the
+  runtime, which is a different and larger thing than driving a run.
 
 `lastSeenMs` is rendered prominently rather than as metadata: a runtime renews the devices on its allowlist itself,
 so a forgotten device does not expire on its own, and this is the only thing that surfaces one. Times come from the

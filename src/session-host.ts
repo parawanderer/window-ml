@@ -304,8 +304,11 @@ export type Command =
     /** Unpair a device: it stops being answered at once, and the stream keys it held are rotated. Revoking the
      *  device this client IS logs this client out, which a UI says before it happens. */
     | { type: "device.revoke"; runtime: RuntimeId; principal: PrincipalId; idempotencyKey?: IdempotencyKey }
-    /** Narrow or widen what a device may do. Never beyond what this client holds, and never `approve`, `control` or
-     *  `admin`, which are granted at the runtime alone. */
+    /** Narrow or widen what a device may do, never beyond what this client holds.
+     *
+     *  `approve`, `control` and `admin` are granted at the runtime alone, so a command carrying one is refused with
+     *  `forbidden` — the client asked for something it may not ask for — rather than being silently dropped from the
+     *  list. Scopes are an open enumeration, and these are the members that must never be settable over the wire. */
     | { type: "device.scopes"; runtime: RuntimeId; principal: PrincipalId; scopes: Scope[] }
     /** A screenshot on demand, never streamed. `maxBytes` is a ceiling the runtime may lower. */
     | { type: "tab.screenshot"; runtime: RuntimeId; target: { tabId: number } | { session: SessionId }; maxBytes?: number }
@@ -342,11 +345,20 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "side.call": "drive",
 };
 
-/** A principal's id: SHA-256 of its identity public key, hex. Stable across renewal, because a renewed certificate
- *  is a new certificate over the SAME key — so a client tells its own row from the others by comparing this with the
- *  id it computes from its own key, and a row that vanishes and reappears is a device that regenerated its key
- *  rather than a rename the list failed to notice. */
+/** A principal's id: SHA-256 of its identity public key, as LOWERCASE hex. Stable across renewal, because a renewed
+ *  certificate is a new certificate over the SAME key — so a client tells its own row from the others by comparing
+ *  this with the id it computes from its own key, and a row that vanishes and reappears is a device that regenerated
+ *  its key rather than a rename the list failed to notice.
+ *
+ *  The case is part of the contract because that comparison is `===`: a runtime sending `0A3F…` to a client holding
+ *  `0a3f…` shows no "this device" row and no logout warning, with nothing wrong to see in either value. */
 export type PrincipalId = string;
+
+/** Is this the same principal? The contract says lowercase hex, and this compares as though it might not be: the one
+ *  place the answer matters is "is this row the device I am using", where being wrong hides a logout warning and
+ *  shows nothing wrong in either value. Strict in what a runtime sends, forgiving in what a client believes. */
+export const samePrincipal = (a: PrincipalId | undefined, b: PrincipalId | undefined): boolean =>
+    !!a && !!b && a.toLowerCase() === b.toLowerCase();
 
 /** What a device still owes, for a list that has to be honest about a revocation that has not finished.
  *
@@ -372,6 +384,11 @@ export interface DeviceInfo {
     role: "client" | "runtime" | "box-connector";
     kind: "browser" | "phone" | "desktop" | "headless";
     scopes: Scope[];
+    /** May this device issue certificates of its own — pair another device, by itself, without `admin` and without
+     *  asking the runtime? It is a field of the certificate rather than a scope, so `scopes` cannot carry it, and it
+     *  is the distinction a person revoking a device most needs: a phone that can pair another phone is not the same
+     *  thing as a phone that can drive a run. Absent means no. */
+    mayPair?: boolean;
     /** epoch ms, the runtime's clock. A device past this cannot renew itself and pairs again. */
     notAfterMs: number;
     /** epoch ms, the runtime's clock. The only thing that makes a forgotten device visible, since a runtime renews

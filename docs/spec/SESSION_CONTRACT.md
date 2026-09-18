@@ -164,7 +164,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `device.list` | admin | `devices` | nothing |
 | `device.renew`: a fresh certificate for a device that still holds a valid one | admin | `devices` | nothing |
 | `device.revoke`: unpair, and rotate the stream keys it held | admin | `devices` | nothing |
-| `device.scopes`: narrow or widen what a device may do | admin | `devices` | nothing |
+| `device.scopes`: narrow or widen what a device may do; `approve`, `control` and `admin` are refused with `forbidden` | admin | `devices` | nothing |
 
 Sessions started by a command are **saved unless `ephemeral: true`**, per the chat page's persistence decision.
 
@@ -193,7 +193,18 @@ each of them is a sentence a list has to be able to say.
 
 **`admin` is its own scope, granted at the runtime and never passed on.** A phone that may `approve` a click should
 not thereby be able to pair another phone, so `admin` is not implied by `approve` and, like `approve` and `control`,
-a delegate cannot delegate it (the hub enforces this as `NEVER_DELEGABLE`).
+a delegate cannot delegate it (the hub enforces this as `NEVER_DELEGABLE`). For the same reason a `device.scopes`
+carrying any of the three is answered `forbidden` rather than quietly ignored: scopes are an open enumeration, and
+these are the members that must never be settable over the wire.
+
+**`mayPair` is not a scope, and the list has to show it anyway.** It is a field of the device's certificate, so
+`scopes` cannot carry it, and a device that holds it can issue a certificate for a new device by itself — without
+`admin`, and without asking the runtime. A phone that can pair another phone is not the same thing as a phone that
+can drive a run, and that is the distinction a person revoking a device most needs to see.
+
+**A principal id is lowercase hex.** The list's one comparison is `principal === myPrincipal`, so a runtime sending
+`0A3F…` to a client holding `0a3f…` shows no "this device" row and no logout warning, with nothing wrong to see in
+either value. Both implementations already emit lowercase; this says so.
 
 **Whether this client may administer is not on the wire.** It is `COMMAND_SCOPE` against the grants the runtime
 already reported, the same table the runtime enforces from. A second answer to the same question disagrees with the
