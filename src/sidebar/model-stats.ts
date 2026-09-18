@@ -141,21 +141,6 @@ export function loadFirst(phases: NonNullable<ResourceEvent["phases"]>, from: nu
     return [{ kind: "load", until: end }, ...phases.filter((p) => p.until > end)];
 }
 
-/**
- * The machine's timeline, from what the sessions already recorded. Nothing new is collected:
- *  - a GENERATION span per model call that reported timing — hover it for what it cost;
- *  - a LOAD span for the part of a call that was spent loading the model, when that was a real load;
- *  - a RUN span per agent run, first step to last;
- *  - and, when a `now` is given, the work still IN FLIGHT.
- * Every event carries a `ref` back to the session and step that caused it, because these are CROSS-SESSION:
- * a model load belongs to the box, but you still want to know which chat provoked it.
- *
- * @param sessions the sessions to derive from
- * @param now when the caller is drawing. Given, IN-FLIGHT work is included as OPEN spans reaching `now` — a
- *   generation being generated, a tool running, a human at an approval gate. Omitted (the default), only
- *   FINISHED work is returned, which is what anything durable wants: an export must not contain a span whose
- *   right edge is "when the file was written".
- */
 /** A session's RUNS. A run is a set of turns terminating in an ANSWER — not the whole session, which is what
  *  this drew for a long time: one container bar spanning every turn of a conversation, so the widest thing on
  *  screen (and the one every hover, double-click and scope-to-span reads off) meant "this browsing session"
@@ -191,10 +176,22 @@ export function runBlocksOf(s: UsageSource): { from: number; until: number; step
     return blocks;
 }
 
-/** THE EVENT TIMELINE — what happened, when, derived from what sessions already record. Spans run
- *  BACKWARDS from a finish stamp (the timestamp we hold is the end), a tool step is ONE event with
+/** THE EVENT TIMELINE — what happened, when, derived from what sessions already record. Nothing new is
+ *  collected: a GENERATION span per model call that reported timing, a LOAD span for the part of a call spent
+ *  loading the model when that was a real load, a RUN span per agent run from first step to last, and — only
+ *  when `now` is given — the work still IN FLIGHT.
+ *
+ *  Spans run BACKWARDS from a finish stamp (the timestamp we hold is the end), a tool step is ONE event with
  *  PHASES rather than three, and a model load is its own event because "slow" and "not there yet" are
- *  different answers. Pass `now` for in-flight work; omit it for a durable document. */
+ *  different answers.
+ *
+ *  Every event carries a `ref` back to the session and step that caused it, because these are CROSS-SESSION:
+ *  a model load belongs to the box, but you still want to know which chat provoked it.
+ *
+ *  `now` is what the caller is drawing at. Given, in-flight work is included as OPEN spans reaching it — a
+ *  generation being generated, a tool running, a human at an approval gate. Omitted (the default), only
+ *  FINISHED work is returned, which is what anything durable wants: an export must not contain a span whose
+ *  right edge is "when the file was written". */
 export function eventsFrom(sessions: readonly UsageSource[], now?: number): ResourceEvent[] {
     const out: ResourceEvent[] = [];
     // A reader's own model calls. Emitted with NO cost and NO parent: they are not part of any step's

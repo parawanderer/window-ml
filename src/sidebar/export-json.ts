@@ -312,13 +312,6 @@ function buildOf(p?: ExportProvenance): ExportBuild | undefined {
     });
 }
 
-/**
- * Serialize a session to the published export shape.
- *
- * @param {Session} s The session to export, as the sidebar holds it.
- * @param {ExportProvenance|string} [prov] Build provenance; a bare string is read as the version.
- * @returns {ExportDocument} The document; stringify it to produce the `.json` file.
- */
 /** The page a run started on, when the run recorded one. */
 function pageOf(s: Session): ExportPage | undefined {
     const url = s.pageUrl;
@@ -331,7 +324,9 @@ function pageOf(s: Session): ExportPage | undefined {
 /** A session as the PUBLISHED machine-readable document — the one to DIFF two runs with, and the one a
  *  Python or Go consumer generates models from (docs/spec/export.schema.json is normative). Carries
  *  `session.events`: the resource panel's whole timeline, derived by the same `eventsFrom` the panel
- *  uses, so a consumer never redoes arithmetic that is wrong in the same three places every time. */
+ *  uses, so a consumer never redoes arithmetic that is wrong in the same three places every time.
+ *
+ *  `prov` is build provenance, and a bare STRING is read as the version — the short form most callers pass. */
 export function sessionToJson(s: Session, prov?: ExportProvenance | string): ExportDocument {
     const p: ExportProvenance = typeof prov === "string" ? { version: prov } : (prov || {});
     const isAgent = s.kind === "agent";

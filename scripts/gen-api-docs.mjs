@@ -372,7 +372,16 @@ export function generateApiParts() {
     // ShotBox via pythonExec's return) is still reached from that other use. Detected structurally: a member
     // line whose return type is `MlTool`.
     const returnsMlTool = l => /\):\s*MlTool\b/.test(l) || /:\s*MlTool;\s*$/.test(l);
-    const seedLines = apiLines.filter(l => !returnsMlTool(l));
+    // …but the OPTIONS are seeded, which is the correction. The rule above is about the RETURN: the model
+    // passes an MlTool to a run and never inspects it, so expanding it would drag in its whole implementation
+    // subtree. It does CONSTRUCT the argument, though, and dropping a tool-initialiser's line entirely took the
+    // option types with it — `ml.lookTool({ memory })` named `VisionMemory` and the model had no way to reach
+    // its definition, because a type absent from the corpus cannot be queried either.
+    //
+    // Cheap now for a reason that was not true when the rule was written: this reference is served through
+    // api-docs-query.ts, which returns a default view and expands on demand under GRAPH_BUDGET. Completeness
+    // costs a query, not every run. Measured: one new section, +2.3 KB.
+    const seedLines = apiLines.map(l => (returnsMlTool(l) ? l.replace(/\):\s*MlTool\b.*$/, ")") : l));
 
     // BFS the types MlApi's public members mention, then the types THOSE mention. `MlTool` is seeded as OPAQUE.
     const seen = new Set(["MlApi", "MlTool", ...SKIP_TYPES]);

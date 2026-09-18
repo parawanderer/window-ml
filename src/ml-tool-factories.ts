@@ -59,9 +59,9 @@ export const defineTool = function({ name, description = "", summary, parameters
  *   ml.agent(task, { extraTools: [ml.lookTool({ model: "qwen2.5vl" })] })
  *```
  *
- * @param {Object} [options] Options object.
- * @param {string} [options.model=null] Vision model for the description (null = the saved default).
- * @param {number} [options.maxTokens=512] Hard cap on the description length.
+ * @param {Object} [opts] Options object.
+ * @param {string} [opts.model=null] Vision model for the description (null = the saved default).
+ * @param {number} [opts.maxTokens=512] Hard cap on the description length.
  * @returns {MlTool} A tool with `name: "look"` and `capabilities: ["vision"]`.
  */
 export const lookTool = function(this: MlApi, opts: { model?: string | null; maxTokens?: number; memory?: VisionMemory } = {}): MlTool {
