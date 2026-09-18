@@ -77,6 +77,7 @@ look at all:
 | `sw-tools.ts` | running ONE OpenWebUI-configured tool ourselves, in our own loop, with arguments we chose |
 | `sw-housekeeping.ts` | the one housekeeping log and its two messages |
 | `sw-debug.ts` | the DevTools panel's copy of the page's debug stream: one ring buffer per inspected tab, fanned to every panel on it |
+| `sw-run-host.ts` | HOSTING one background run: the design-A loop, every tool delegated back to the page that built the toolset, approval gated through the sidebar |
 
 A privileged handler CONSULTS `sw-consent.ts` and MUTATES `sw-runs.ts`, which is
 why neither belongs in the router.
