@@ -91,7 +91,8 @@ npm run mobile:ios        # the same for ios/
 
 What needs the tooling is COMPILING what those produce. If you want to run the app on a device or a simulator:
 
-- **Android.** A JDK (17 works) and the Android SDK, which Android Studio installs; then
+- **Android.** A JDK (21 — Capacitor's own Android library targets source release 21, and a 17 toolchain fails
+  with "invalid source release: 21") and the Android SDK, which Android Studio installs; then
   `cd android && ./gradlew assembleDebug` for an APK, or open `android/` in Android Studio and press run.
 - **iOS.** Xcode, on a Mac; then open `ios/App` and press run. A simulator build needs no signing certificate; a
   device build needs one, which this repo deliberately does not hold.

@@ -316,10 +316,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      # 21, not 17: Capacitor 8's own Android library targets source release 21, so a 17 toolchain dies in
+      # `:capacitor-android:compileDebugJavaWithJavac` with "invalid source release: 21" after a minute of gradle.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
       # `packages: ""` because the action's DEFAULT list still names `tools`, which Google removed — the job dies on
       # "Failed to find package 'tools'" before it has built anything. The runner image already ships an Android SDK;
       # all this step has to do is point the environment at it, and gradle resolves the rest from the project.
