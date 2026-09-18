@@ -18,7 +18,7 @@ import type { TokenKind } from "./contract-render";
 import type { TableLike } from "./table-data";
 export type { DerefRead, DerefMeta };
 import { isTokenShape } from "./token-id";
-import { lexicalSimilarity, type LexicalMetric } from "./label-match";
+import { editDistance, lexicalSimilarity, type LexicalMetric } from "./label-match";
 
 /** The tool name, shared by the loop (which answers it) and the toolset builder (which advertises it). */
 export const DEREF_TOOL = "dereference";
@@ -402,17 +402,4 @@ function parseRef(ref: string): { label?: string; id: string } {
     const bare = normRef(ref);
     const q = QUOTED.exec(bare);
     return q ? { label: unescapeLabel(q[1]), id: "" } : { id: bare };
-}
-
-/** Levenshtein distance — tiny inputs (a 6-hex id or a tool name), so the simple row form is fine. */
-export function editDistance(a: string, b: string): number {
-    if (a === b) return 0;
-    let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-    for (let i = 1; i <= a.length; i++) {
-        const row = [i];
-        for (let j = 1; j <= b.length; j++)
-            row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-        prev = row;
-    }
-    return prev[b.length];
 }
