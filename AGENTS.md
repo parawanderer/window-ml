@@ -484,6 +484,15 @@ the inline `import("./contract").X` query that no grep for an import statement w
 planning a split, because what blocks a split is a file's edges, not its size: three attempts on `vram.tsx` died
 on cycles that this answers in one command. Skill: `.claude/skills/imports/SKILL.md`.
 
+**To cut up a body rather than move a declaration, use `node scripts/extract-function.mjs`** — `--file <f>
+--lines <a-b> --name <fn>`, 1-based inclusive, `--dry-run --diff` first. move-symbols moves whole top-level
+declarations BETWEEN files and cannot touch what is inside one, which leaves the operation a long component
+actually needs as hand editing. TypeScript's own `Extract Symbol` does the closure analysis (which locals become
+parameters, what has to come back), this picks module scope, gives the result your name instead of
+`newFunction`, and refuses on a new type error. Extract first, then move-symbols the result if it belongs in
+another file — the extracted function is a top-level declaration, which is exactly what that takes. Skill:
+`.claude/skills/extract-function/SKILL.md`.
+
 **RULE — move code between files with `node scripts/move-symbols.mjs`, never by copy and paste.**
 `--from <file> --symbols a,b --to <file> --dry-run --diff` plans the move; drop `--dry-run` to write it. The
 compiler resolves what the code depends on, pulls along helpers only it uses, rewrites every import, re-export
