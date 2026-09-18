@@ -6,7 +6,7 @@
 // Only extension pages may connect (the background checks the port's sender URL before `attach`): a content script
 // never reaches this, because a page's main world is hostile and the index spans every tab.
 import type { MlDebugEvent } from "./contract";
-import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type SessionId, type SessionIndexUpdate, type SessionStreamMessage, type StreamPosition } from "./session-host";
+import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type SessionId, type SessionIndexUpdate, type SessionStreamMessage, type SessionSummary, type StreamPosition } from "./session-host";
 import type { IngestOutcome, IngestSource, SessionIndex } from "./session-index";
 
 /** The port name the chat page connects on. */
@@ -39,11 +39,18 @@ export type SessionsServerMessage =
 /** Runs one command. Throwing is reported as `failed`. */
 export type CommandHandler = (command: Command) => Promise<CommandResult<CommandType>>;
 
+/** One subscription. While `loading` is set, the saved events are being read and live ones wait in it, so a client
+ *  never sees an event before the backfill it belongs after. */
+interface Sub {
+    hash: string;
+    loading: SessionStreamMessage[] | null;
+}
+
 interface Client {
     port: PortLike;
     index: boolean;
-    /** sub id → session hash */
-    subs: Map<number, string>;
+    /** sub id → subscription */
+    subs: Map<number, Sub>;
 }
 
 const KNOWN_COMMANDS: ReadonlySet<string> = new Set<CommandType>(["session.send", "session.cancel", "session.continue", "session.delete", "approval.answer", "chat.start", "agent.start", "tabs.list", "tab.screenshot", "page.highlight", "side.call"]);
@@ -54,7 +61,12 @@ export class SessionServer {
 
     constructor(
         readonly index: SessionIndex,
-        private readonly opts: { runtime: () => RuntimeInfo; command: CommandHandler },
+        private readonly opts: {
+            runtime: () => RuntimeInfo;
+            command: CommandHandler;
+            /** every event a saved session holds, oldest first; absent when nothing is saved (session-store.ts) */
+            stored?: (hash: string) => Promise<MlDebugEvent[]>;
+        },
     ) {}
 
     /** How many pages are connected. */
@@ -84,8 +96,14 @@ export class SessionServer {
                 return;
             case "events": {
                 if (typeof msg.sub !== "number" || typeof msg.hash !== "string") return;
-                client.subs.set(msg.sub, msg.hash);
                 const since = msg.since && typeof msg.since.epoch === "string" && typeof msg.since.cursor === "number" ? msg.since : undefined;
+                if (this.opts.stored && this.index.needsStored(msg.hash, since)) {
+                    const sub: Sub = { hash: msg.hash, loading: [] };
+                    client.subs.set(msg.sub, sub);
+                    void this.fromDisk(client, msg.sub, sub);
+                    return;
+                }
+                client.subs.set(msg.sub, { hash: msg.hash, loading: null });
                 for (const message of this.index.backfill(msg.hash, since)) this.post(client, { type: "stream", sub: msg.sub, message });
                 return;
             }
@@ -96,6 +114,42 @@ export class SessionServer {
                 if (typeof msg.id !== "number") return;
                 void this.run(msg.command).then((result) => this.post(client, { type: "result", id: msg.id, result }));
                 return;
+        }
+    }
+
+    /**
+     * Serve a subscription whose events are on disk: the saved ones, then whatever arrived while they were read.
+     *
+     * The stored events ARE the session from cursor 1, so they are sent as one `reset` and a run of events, and the
+     * ring's own events are spliced on after the ones the disk already covered — in a worker that has both, they
+     * overlap, and sending an event twice would show a turn twice.
+     */
+    private async fromDisk(client: Client, sub: number, held: Sub): Promise<void> {
+        const hash = held.hash;
+        const session: SessionId = { runtime: this.index.list().find((s) => s.id.hash === hash)?.id.runtime ?? this.opts.runtime().id, hash };
+        const epoch = this.index.epochOf(hash);
+        let events: MlDebugEvent[] = [];
+        try { events = (await this.opts.stored?.(hash)) ?? []; } catch { events = []; }
+        // Dropped, deleted or unsubscribed while the disk was read: there is nothing to send it to.
+        if (!client.subs.has(sub) || !this.clients.has(client)) return;
+        const messages: SessionStreamMessage[] = [{ type: "reset", session, epoch }];
+        events.forEach((event, i) => messages.push({ type: "event", v: SESSION_CONTRACT_VERSION, session, epoch, cursor: i + 1, event }));
+        // What the ring holds beyond what disk covered. A restored session has no ring and this is empty.
+        for (const message of this.index.backfill(hash)) {
+            if (message.type === "event" && message.cursor > events.length) messages.push(message);
+            if (message.type === "backfilled") messages.push({ ...message, cursor: Math.max(message.cursor, events.length), truncated: message.truncated && !events.length });
+        }
+        for (const message of messages) this.post(client, { type: "stream", sub, message });
+        // Then whatever arrived while we read — except what the backfill has just covered. An event ingested during
+        // the read is in the ring by now, so it went out with the backfill above AND is sitting in this queue, and
+        // sending it twice would show the same step twice.
+        let sent = 0;
+        for (const message of messages) if (message.type === "event") sent = Math.max(sent, message.cursor);
+        const waiting = held.loading ?? [];
+        held.loading = null;
+        for (const message of waiting) {
+            if (message.type === "event" && message.cursor <= sent) continue;
+            this.post(client, { type: "stream", sub, message });
         }
     }
 
@@ -120,13 +174,15 @@ export class SessionServer {
                 for (const id of out.evicted) this.post(client, { type: "index", update: { type: "remove", id } });
                 if (out.summary) this.post(client, { type: "index", update: { type: "upsert", session: out.summary } });
             }
-            for (const [sub, h] of client.subs) {
-                if (h !== hash) continue;
-                if (out.reset) {
-                    for (const message of this.index.backfill(hash)) this.post(client, { type: "stream", sub, message });
-                } else {
-                    this.post(client, { type: "stream", sub, message: { type: "event", v: SESSION_CONTRACT_VERSION, session: out.session, epoch: out.epoch, cursor: out.cursor, event: out.event } });
-                }
+            for (const [sub, s] of client.subs) {
+                if (s.hash !== hash) continue;
+                const messages: SessionStreamMessage[] = out.reset
+                    ? this.index.backfill(hash)
+                    : [{ type: "event", v: SESSION_CONTRACT_VERSION, session: out.session, epoch: out.epoch, cursor: out.cursor, event: out.event }];
+                // Still reading this session from disk: hold it, or the client would see an event before the
+                // backfill it comes after, and its reducer trusts that order.
+                if (s.loading) s.loading.push(...messages);
+                else for (const message of messages) this.post(client, { type: "stream", sub, message });
             }
         }
         return out;
@@ -143,14 +199,36 @@ export class SessionServer {
         for (const session of rows) this.broadcastIndex({ type: "upsert", session });
     }
 
+    /** A session the client asked to keep (`ephemeral` absent on the command that started it). Returns the events it
+     *  had already emitted before it could be marked, which the caller saves; nothing when it was already marked. */
+    markSaved(hash: string): MlDebugEvent[] {
+        const marked = this.index.markSaved(hash);
+        if (!marked) return [];
+        this.broadcastIndex({ type: "upsert", session: marked.summary });
+        return marked.events;
+    }
+
+    /** Every session a connected page is subscribed to: what someone is looking at right now, which the saved-session
+     *  store never evicts from under them. */
+    subscribed(): string[] {
+        const out = new Set<string>();
+        for (const client of this.clients) for (const sub of client.subs.values()) out.add(sub.hash);
+        return [...out];
+    }
+
+    /** Rows that appeared without an event of their own: what a previous worker saved, restored at startup. */
+    restored(rows: readonly SessionSummary[]): void {
+        for (const session of rows) this.broadcastIndex({ type: "upsert", session });
+    }
+
     /** Forget a session: removed from every page's index, and every subscription to it ends with `gone`. */
     remove(id: SessionId): boolean {
         if (!this.index.remove(id.hash)) return false;
         // `gone` before the index row goes: a page looking at the session learns it was deleted, rather than seeing it
         // vanish from the list and its subscription close before the reason arrives.
         for (const client of this.clients) {
-            for (const [sub, h] of client.subs) {
-                if (h !== id.hash) continue;
+            for (const [sub, held] of client.subs) {
+                if (held.hash !== id.hash) continue;
                 this.post(client, { type: "stream", sub, message: { type: "gone", session: id } });
                 client.subs.delete(sub);
             }

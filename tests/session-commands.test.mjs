@@ -37,6 +37,7 @@ function world(over = {}) {
         sendChat: rec("sendChat", async () => "turn"),
         cancelChat: rec("cancelChat", true),
         hostsChat: rec("hostsChat", false),
+        keepSession: rec("keepSession"),
         startAgent: rec("startAgent", async () => ({ outcome: "started", hash: "ab120001" })),
         openTab: rec("openTab", async () => 99),
         startPage: () => "https://start.example/",
@@ -302,4 +303,22 @@ test("agent.start refuses an empty task, a bad step budget, a missing target and
     for (const c of bad) assert.equal(code(await w.run(c)), "invalid", JSON.stringify(c.target));
     assert.equal(code(await w.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: TAB }, lineage: { parent: sid("aaaa0001") } })), "unsupported");
     assert.equal(w.named("startAgent").length, 0);
+});
+
+test("a session started from a command is kept, unless it asked to be ephemeral", async () => {
+    const w = world();
+    await w.run({ type: "chat.start", runtime: "local", text: "hello" });
+    assert.deepEqual(w.named("keepSession")[0], ["keepSession", "beef0001"], "a chat is kept");
+
+    await w.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: TAB } });
+    assert.deepEqual(w.named("keepSession")[1], ["keepSession", "ab120001"], "and so is a run");
+
+    await w.run({ type: "chat.start", runtime: "local", text: "hello", ephemeral: true });
+    await w.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: TAB }, ephemeral: true });
+    assert.equal(w.named("keepSession").length, 2, "nothing was kept for the ephemeral ones");
+
+    // A start that failed has no session to keep.
+    const refused = world({ startAgent: async () => ({ outcome: "none" }) });
+    await refused.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: TAB } });
+    assert.equal(refused.named("keepSession").length, 0);
 });

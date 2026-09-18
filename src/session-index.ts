@@ -391,6 +391,81 @@ export class SessionIndex {
         return [{ type: "reset", session, epoch }, ...s.ring.map(event), { type: "backfilled", session, epoch, cursor: s.lastCursor, truncated: s.lostThrough >= 0 }];
     }
 
+    /**
+     * Seed the index from what a previous worker saved (session-store.ts), so an evicted service worker comes back
+     * with its list rather than with nothing.
+     *
+     * A restored session holds NO events in memory: its ring is empty and everything it has is on disk, which is what
+     * `lostThrough` says. Live cursors continue after the stored ones, so a client that reconnects with an old
+     * position is told the truth about what it has missed rather than being handed cursor 1 twice.
+     *
+     * A session that was RUNNING when the worker died is restored as `interrupted`: the loop died with the worker,
+     * and a list that still showed it as running would be waiting for an event that cannot arrive.
+     */
+    restore(entries: readonly { summary: SessionSummary; count: number }[]): SessionSummary[] {
+        const out: SessionSummary[] = [];
+        for (const { summary, count } of entries) {
+            const hash = summary.id?.hash;
+            if (typeof hash !== "string" || !HASH_RE.test(hash) || this.sessions.has(hash)) continue;
+            const status: SessionStatus = summary.status === "running" || summary.status === "waiting" ? "interrupted" : summary.status;
+            const restored: SessionSummary = { ...summary, id: { runtime: this.runtime, hash }, status, saved: true };
+            const s: Indexed = {
+                id: restored.id, kind: restored.kind, gen: 0, ring: [], bytes: 0,
+                lostThrough: count, lastCursor: count,
+                owner: undefined, hostedBy: "background", hasStart: true,
+                ended: true, endedStep: -1, endStatus: status === "interrupted" ? "error" : "done",
+                gates: new Set(), openTurns: new Set(), lastResultKey: null, seenSays: new Set(),
+                interrupted: status === "interrupted",
+                summary: restored, summaryJson: "", reportedTs: restored.lastTs,
+            };
+            this.gens.set(hash, 0);
+            this.sessions.set(hash, s);
+            // The cursor is ONE counter across every session, not a count per session, so a restored session whose
+            // saved events occupy 1..count must push it past them. Without this the next live event on that session
+            // is handed cursor 1 — below events the client has already been sent, which breaks the one thing a
+            // cursor promises.
+            this.cursor = Math.max(this.cursor, count);
+            out.push(restored);
+        }
+        return out;
+    }
+
+    /**
+     * Mark a session as one to keep, which is what `ephemeral: false` means on the command that started it.
+     *
+     * Returns the events already in the ring when nothing had marked it before, and nothing at all otherwise: a
+     * session is marked a moment AFTER its first events have been ingested (the hash does not exist until the run
+     * mints it), so the caller writes those to the store itself rather than losing the start of every session it
+     * was asked to keep. Marking twice writes nothing twice.
+     */
+    markSaved(hash: string): { summary: SessionSummary; events: MlDebugEvent[] } | null {
+        const s = this.sessions.get(hash);
+        if (!s || s.summary.saved) return null;
+        s.summary.saved = true;
+        // `refreshSummary` answers null when the row has not changed enough to be worth reporting; `saved` flipping
+        // always is, so the row itself is what goes back.
+        this.refreshSummary(s);
+        return { summary: s.summary, events: s.ring.map((e) => e.event) };
+    }
+
+    /**
+     * Would `backfill` have to read the saved events to answer this subscription? True when what the client needs is
+     * older than anything the ring still holds — after a restart, that is every subscription.
+     *
+     * The server asks before subscribing, because reading from disk is asynchronous and the stream's order is not:
+     * a live event that arrived during the read has to wait for the backfill it belongs after.
+     */
+    needsStored(hash: string, since?: StreamPosition): boolean {
+        const s = this.sessions.get(hash);
+        if (!s || s.lostThrough <= 0) return false;
+        return !(since && since.epoch === this.epochOf(hash) && since.cursor >= s.lostThrough);
+    }
+
+    /** What a restored or evicted session has on disk but not in memory, so a caller can splice the two together. */
+    storedThrough(hash: string): number {
+        return Math.max(0, this.sessions.get(hash)?.lostThrough ?? 0);
+    }
+
     /** Forget a session. Returns false when it was not held. */
     remove(hash: string): boolean {
         const s = this.sessions.get(hash);
