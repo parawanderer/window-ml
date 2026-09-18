@@ -18,6 +18,9 @@ const png = (w, h, pad = 0) => "data:image/png;base64," + b64([0x89, 0x50, 0x4e,
 /** A JPEG with an APP0 segment before its frame header. */
 const jpeg = (w, h) => "data:image/jpeg;base64," + b64([0xff, 0xd8, 0xff, 0xe0, 0, 16, ...new Array(14).fill(0), 0xff, 0xc0, 0, 17, 8, h >> 8, h & 255, w >> 8, w & 255, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
 
+/** A saved session's whole history, as the store holds it: oldest first. */
+const STORED = Array.from({ length: 95 }, (_, i) => ev("aaaa0001", "agent-step", { step: i + 1, seq: i + 1, tool: "exec", result: String(i) }));
+
 /** What a saved run would be continued from: its messages and the payload it was started with. */
 const AGENT_HISTORY = {
     kind: "agent",
@@ -49,6 +52,7 @@ function world(over = {}) {
         keepSession: rec("keepSession"),
         startAgent: rec("startAgent", async () => ({ outcome: "started", hash: "ab120001" })),
         history: rec("history", async () => AGENT_HISTORY),
+        storedEvents: rec("storedEvents", async () => STORED),
         adoptSession: rec("adoptSession", async () => "adopted"),
         noteResumed: rec("noteResumed"),
         openTab: rec("openTab", async () => 99),
@@ -492,4 +496,76 @@ test("a runtime keeps answering to the id it had before it was paired", async ()
     // And not to anything else.
     assert.equal((await w.run({ type: "runtime.info", runtime: "phone" })).error.code, "not-found");
     assert.equal((await w.run({ type: "session.send", session: { runtime: "phone", hash: "aaaa0001" }, text: "hi" })).error.code, "not-found");
+});
+
+
+// --- paging a session's history, for a client whose subscription came back truncated ---
+
+test("session.backfill pages a saved session's history upwards, newest page first", async () => {
+    const w = world();
+    w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    w.index.markSaved("aaaa0001");
+
+    // No `before` is "from the end": the newest page.
+    const last = await w.run({ type: "session.backfill", session: sid("aaaa0001") });
+    assert.equal(last.ok, true);
+    assert.equal(last.data.events.length, 40);
+    assert.equal(last.data.from, 55, "a page ENDING at the last event");
+    assert.equal(last.data.events[0].step, 56, "oldest-first within the page, so a client applies them in order");
+    assert.equal(last.data.events.at(-1).step, 95);
+    assert.equal(last.data.more, true);
+    assert.equal(last.data.truncated, false);
+
+    // A client pages by handing back the `from` it was given.
+    const mid = await w.run({ type: "session.backfill", session: sid("aaaa0001"), before: last.data.from });
+    assert.equal(mid.data.from, 15);
+    assert.equal(mid.data.events[0].step, 16);
+    assert.equal(mid.data.more, true);
+
+    // The last page is short, and says there is nothing below it.
+    const first = await w.run({ type: "session.backfill", session: sid("aaaa0001"), before: mid.data.from });
+    assert.equal(first.data.events.length, 15);
+    assert.equal(first.data.from, 0);
+    assert.equal(first.data.events[0].step, 1);
+    assert.equal(first.data.more, false);
+    assert.equal(first.data.truncated, false, "the runtime has the whole history; nothing is missing");
+});
+
+test("a session this runtime does not KEEP says its history is gone, rather than answering with nothing", async () => {
+    // The only copy was the ring, which the subscription already served. A client given an empty page with no
+    // `truncated` would wait for a page that is never coming.
+    const w = world();
+    w.index.ingest(start("aaaa0002"), { tabId: TAB, trusted: true });
+
+    const r = await w.run({ type: "session.backfill", session: sid("aaaa0002") });
+    assert.deepEqual(r.data.events, []);
+    assert.equal(r.data.truncated, true);
+    assert.equal(r.data.more, false);
+    assert.equal(w.named("storedEvents").length, 0, "and it did not go to disk for a session it does not keep");
+});
+
+test("session.backfill caps the page whatever is asked, and refuses a position that is not one", async () => {
+    const w = world();
+    w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    w.index.markSaved("aaaa0001");
+
+    // A page holds screenshots, so the cap is a size decision wearing a count.
+    assert.equal((await w.run({ type: "session.backfill", session: sid("aaaa0001"), limit: 5000 })).data.events.length, 40);
+    assert.equal((await w.run({ type: "session.backfill", session: sid("aaaa0001"), limit: 3 })).data.events.length, 3);
+    assert.equal((await w.run({ type: "session.backfill", session: sid("aaaa0001"), limit: 0 })).data.events.length, 1);
+
+    // Past the end is not an error: a client that asked before the runtime wrote its newest events was early, not wrong.
+    const past = await w.run({ type: "session.backfill", session: sid("aaaa0001"), before: 10_000 });
+    assert.equal(past.data.events.at(-1).step, 95);
+
+    assert.equal((await w.run({ type: "session.backfill", session: sid("aaaa0001"), before: -1 })).error.code, "invalid");
+    assert.equal((await w.run({ type: "session.backfill", session: sid("aaaa0001"), before: 1.5 })).error.code, "invalid");
+    assert.equal((await w.run({ type: "session.backfill", session: sid("ffff0000") })).error.code, "not-found");
+});
+
+test("a runtime that keeps no history at all says unsupported, not empty", async () => {
+    const w = world({ storedEvents: undefined });
+    w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    w.index.markSaved("aaaa0001");
+    assert.equal((await w.run({ type: "session.backfill", session: sid("aaaa0001") })).error.code, "unsupported");
 });

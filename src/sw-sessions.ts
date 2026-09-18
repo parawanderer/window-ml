@@ -132,6 +132,7 @@ export function configureSessionCommands(run: RunDeps): void {
             return { outcome: reply?.outcome ?? "no-answer", ...(reply?.hash ? { hash: reply.hash } : {}) };
         },
         history: async (hash) => (sessionStore ? await sessionStore.history(hash) : null),
+        ...(sessionStore ? { storedEvents: (hash: string) => sessionStore.read(hash) } : {}),
         adoptSession: async (tabId, hash, history) => {
             if (history.kind !== "agent" || !history.payload) return "none";
             // Put the run back where a resume looks for it. `RESUME_RUN` reads `bgRuns` and nothing else, and it is

@@ -317,6 +317,22 @@ export type Command =
      * A client asks once when a runtime appears and again when it reconnects, because a runtime that restarted may
      * have been upgraded under it.
      */
+    /**
+     * A page of one session's events, from the runtime itself.
+     *
+     * A subscription resumes from a position, and a relay's ring is short: a client that subscribes to a session
+     * from last Tuesday is answered `truncated` and has nowhere to read the rest. Locally the index serves that
+     * in-process, which is why the contract has never needed it; across a relay there is no in-process.
+     *
+     * It reads the page of events ENDING just before `before`, so a transcript fills upwards the way a person
+     * scrolls back. Paged, because one session's events include screenshots and a whole run does not belong in one
+     * answer.
+     *
+     * `before` is a position in the SESSION'S OWN HISTORY — 0 is its first event ever — and is deliberately NOT the
+     * stream cursor: a cursor counts across every session on a runtime and is not kept for an event once it is on
+     * disk. Absent means "from the end". A client pages by passing back the `from` it was given.
+     */
+    | { type: "session.backfill"; session: SessionId; before?: number; limit?: number }
     | { type: "runtime.info"; runtime: RuntimeId }
     | { type: "tabs.list"; runtime: RuntimeId }
     /** The devices paired with this runtime's account, as a person manages them. Needs `admin`, which is granted at
@@ -360,6 +376,7 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "chat.start": "drive",
     "agent.start": "drive",
     "session.resume": "drive",
+    "session.backfill": "view",
     "runtime.info": "view",
     "tabs.list": "drive",
     "device.list": "admin",
@@ -379,6 +396,40 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
  *  The case is part of the contract because that comparison is `===`: a runtime sending `0A3F…` to a client holding
  *  `0a3f…` shows no "this device" row and no logout warning, with nothing wrong to see in either value. */
 export type PrincipalId = string;
+
+/**
+ * Is this runtime id ABSOLUTE — one that denotes the same machine wherever it is read?
+ *
+ * A principal id is SHA-256 of an identity key, so it does. `local` does not: it is the one RELATIVE name in this
+ * namespace, and it means whoever is holding it. That is harmless while it stays on one machine and is a name
+ * collision the moment it does not — two browsers each holding `local:a1b2c3d4` are two different sessions with one
+ * name, and the runtime id is the thing that was supposed to prevent exactly that (a hash is 8 hex and unique only
+ * within its runtime).
+ */
+export const isAbsoluteRuntimeId = (id: unknown): boolean => typeof id === "string" && /^[0-9a-f]{64}$/.test(id);
+
+/**
+ * May this session key LEAVE the machine that minted it — into a signed grant, a lineage another runtime walks, or a
+ * link somebody opens elsewhere?
+ *
+ * Aliases are RECOGNISED, never emitted. A runtime answers to every name it has had, because a page open across a
+ * pairing and a key kept on disk still use the old one; but what it writes down is always the absolute id. Without
+ * that rule the alias stops being a migration that drains and becomes a second name that accumulates users.
+ *
+ * The three places this protects, none of which is built yet, which is why the rule is written now:
+ * - `Grant.sessions`: a session list inside a SIGNED certificate, read by a different device and un-editable for up
+ *   to the certificate's life. A relative name in a capability means one session to the granter and something else
+ *   to the holder.
+ * - `Lineage.parent`, which the contract says may be on another runtime, and which the runtime WALKS to decide
+ *   whether a `started` grant covers a session. A stale `local:` fails that walk on a runtime now called something
+ *   else — access denied where it should be granted, which is the safe direction and still a bug — while a matching
+ *   one grants access across a name collision, which is not the safe direction.
+ * - Anything meant to be opened elsewhere: `#s=local:<hash>` on a phone names the phone.
+ */
+export const isPortableSessionKey = (key: string): boolean => {
+    const id = parseSessionKey(key);
+    return !!id && isAbsoluteRuntimeId(id.runtime) && !!id.hash;
+};
 
 /** Is this the same principal? The contract says lowercase hex, and this compares as though it might not be: the one
  *  place the answer matters is "is this row the device I am using", where being wrong hides a logout warning and
@@ -461,6 +512,16 @@ export interface CommandResultData {
     "agent.start": { session: SessionId };
     /** the same session, because resuming is not starting a new one */
     "session.resume": { session: SessionId };
+    /**
+     * Older events, OLDEST-FIRST within the page so a client applies them in stream order, from a page that ends
+     * just before `before`.
+     *
+     * `from` is this page's first event's position, which is what a client passes back as the next `before`.
+     * `epoch` is the runtime's, and a client holding a different one throws away what it has rather than stitching
+     * two histories together. `more` says another page exists BELOW this one; `truncated` says it does not exist
+     * anywhere any more, which is a different sentence and the one a reader has to be told.
+     */
+    "session.backfill": { session: SessionId; epoch: string; events: MlDebugEvent[]; from: number; more: boolean; truncated: boolean };
     /** What a transport cannot know about a runtime, from the runtime. `nowMs` is its OWN clock at the moment it
      *  answered, which is how `clockOffsetMs` is estimated: the round trip bounds the error. */
     "runtime.info": { kind: RuntimeInfo["kind"]; contractVersion: number; capabilities: RuntimeCapabilities; nowMs: number };

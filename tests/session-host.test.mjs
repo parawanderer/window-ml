@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
-import { sessionKey, parseSessionKey, COMMAND_SCOPE } from "../src/session-host.ts";
+import { sessionKey, parseSessionKey, isAbsoluteRuntimeId, isPortableSessionKey, COMMAND_SCOPE } from "../src/session-host.ts";
 
 test("a session key round-trips", () => {
     const id = { runtime: "rt_7f3a9c", hash: "0a1b2c3d" };
@@ -61,4 +61,39 @@ test("a principal id compares case-insensitively, though the contract says lower
     for (const [a, b] of [[undefined, undefined], ["0a3f9c", undefined], [undefined, "0a3f9c"], ["", ""]]) {
         assert.equal(samePrincipal(a, b), false, `${a} vs ${b}`);
     }
+});
+
+// --- aliases are RECOGNISED, never emitted (the hub session's note on `local`) ---
+
+test("an absolute runtime id denotes one machine; `local` denotes whoever is holding it", () => {
+    const principal = "a".repeat(64);
+    assert.equal(isAbsoluteRuntimeId(principal), true);
+    assert.equal(isAbsoluteRuntimeId("local"), false);
+    // The case is part of the contract, because the comparison that matters is `===`.
+    assert.equal(isAbsoluteRuntimeId("A".repeat(64)), false);
+    // Not a hash of anything: the wrong length is not an id.
+    assert.equal(isAbsoluteRuntimeId("a".repeat(63)), false);
+    assert.equal(isAbsoluteRuntimeId("a".repeat(65)), false);
+    assert.equal(isAbsoluteRuntimeId(""), false);
+    assert.equal(isAbsoluteRuntimeId(undefined), false);
+});
+
+test("a session key may leave the machine only when its runtime segment is absolute", () => {
+    const principal = "b".repeat(64);
+    assert.equal(isPortableSessionKey(`${principal}:a1b2c3d4`), true);
+
+    // The one that would really hurt: a relative name inside a signed capability means one session to the granter
+    // and something else to the device holding it, and a certificate cannot be edited afterwards.
+    assert.equal(isPortableSessionKey("local:a1b2c3d4"), false);
+    // Two browsers each holding this are two different sessions with one name — a hash is unique only within its
+    // runtime, and the runtime id is what was supposed to prevent the collision.
+    assert.equal(isPortableSessionKey("laptop:a1b2c3d4"), false);
+
+    // Still a key, still malformed.
+    assert.equal(isPortableSessionKey(`${principal}:`), false);
+    assert.equal(isPortableSessionKey(principal), false);
+    assert.equal(isPortableSessionKey(""), false);
+
+    // A runtime id contains no colon, so the LAST one splits the key and an absolute id survives the round trip.
+    assert.deepEqual(parseSessionKey(`${principal}:a1b2c3d4`), { runtime: principal, hash: "a1b2c3d4" });
 });
