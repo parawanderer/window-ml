@@ -108,15 +108,6 @@ export const emitDebug = (event: MlDebugEvent): void => {
 /** Short unique id from timestamp + random bits — labels individual chat requests. */
 export const debugId = (): string => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
-/** Stable short hex id per session (crypto.getRandomValues, Math.random fallback).
- *  Shown in the sidebar and used to resume a conversation. */
-export const shortHash = (): string => {
-    try {
-        const b = new Uint8Array(4); crypto.getRandomValues(b);
-        return [...b].map(x => x.toString(16).padStart(2, "0")).join("");
-    } catch { return Math.random().toString(16).slice(2, 10); }
-};
-
 // Live registry of this tab's chat sessions (by hash) so ml.resumeChat can continue
 // one without a reload. Cross-reload/tab resume goes through storage ({ save:true }
 // only). In-memory → cleared on reload.

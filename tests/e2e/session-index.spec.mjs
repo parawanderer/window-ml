@@ -129,3 +129,30 @@ test("page.highlight draws on the session's tab even with the debug panel off", 
         await expect(page.locator("#ml-sb-root-hl")).toHaveCount(1);
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });
+
+test("chat.start: a chat with no tab behind it runs in the worker, and answers a second message", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        fake.setScript([{ content: "the first answer" }, { content: "the second answer" }]);
+        const rows = await indexReader(ext);
+
+        const started = await rows.cmd({ type: "chat.start", runtime: "local", text: "what is a service worker?" });
+        expect(started.ok, JSON.stringify(started)).toBe(true);
+        const hash = started.data.session.hash;
+
+        // It is a session of this browser like any other, and it belongs to no tab: nothing was open for it.
+        await expect.poll(async () => strip(await rows())).toEqual([
+            { kind: "chat", status: "done", task: "what is a service worker?", url: undefined },
+        ]);
+
+        const sent = await rows.cmd({ type: "session.send", session: { runtime: "local", hash }, text: "and a shared worker?" });
+        expect(sent).toEqual({ ok: true, data: { mode: "turn" } });
+        await expect.poll(() => fake.calls().length).toBe(2);
+        // The second turn carries the first one's answer, so the worker is holding the conversation, not just relaying.
+        const second = fake.calls()[1];
+        expect(second.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
+        expect(second.messages[1].content).toBe("the first answer");
+    } finally { await ext.context.close(); await fake.stop(); }
+});
