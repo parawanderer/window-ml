@@ -476,6 +476,14 @@ stopped. **Decay can never hide bloat**: every file over 800 lines that does not
 underneath it anyway, with its commit count, because big-and-quiet is exactly what a decayed score buries.
 Tests are exempt: a long test file is a long LIST, which is not the same failure as a long module.
 
+**To see what actually connects two files, ask `node scripts/imports.mjs`** — `<file>` for its in- and
+out-edges with the names on each, `<a> <b>` for exactly which names cross in each direction, `--cycles` for every
+import cycle in the project. It resolves through the compiler (the same `scripts/refactor/graph.mjs` move-symbols
+uses), so it tells a TYPE-only edge from a value one, which is what decides whether a cycle is real; it also sees
+the inline `import("./contract").X` query that no grep for an import statement will match. Reach for it BEFORE
+planning a split, because what blocks a split is a file's edges, not its size: three attempts on `vram.tsx` died
+on cycles that this answers in one command. Skill: `.claude/skills/imports/SKILL.md`.
+
 **RULE — move code between files with `node scripts/move-symbols.mjs`, never by copy and paste.**
 `--from <file> --symbols a,b --to <file> --dry-run --diff` plans the move; drop `--dry-run` to write it. The
 compiler resolves what the code depends on, pulls along helpers only it uses, rewrites every import, re-export
