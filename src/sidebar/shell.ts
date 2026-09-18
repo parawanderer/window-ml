@@ -14,7 +14,7 @@
 // can't leave it un-live.
 import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD } from "../ids";
 import { cleanImages } from "../contract-run";
-import { onSessionDone, relaySessionToPage, relayStartAgent } from "./shell-session-relay";
+import { keepStartedSession, onSessionDone, relaySessionToPage, relayStartAgent } from "./shell-session-relay";
 import { resolveContextContainer, domToContext } from "../dom";   // right-click "ask about this" (content script sees the page DOM)
 import type { ElementContext } from "../contract-run";
 import type { DebugMode } from "../contract-config";
@@ -331,6 +331,7 @@ function onWinDragEnd(): void { finalizeCardDrag(); }
 let materializeTimer = 0;          // clears the one-shot .ml-materialize (frost-in) class after the reveal
 let cardCorner = "bottom-right";   // config.cardCorner (set from storage) → which corner the card anchors to
 let agentHud = "progress";         // config.agentHud → "progress" shows the working pill, "quiet" hides it
+let persistUiRuns = true;          // config.persistUiRuns → keep the sessions this browser's own UI starts
 let agentHudInDevtools = false;    // config → also show the corner card/pill alongside the DevTools panel
 let listPageSessions = false;      // config → off mode still wakes the page bus, to report its sessions to the chat page's index
 /** Is injected's debug bus live? Always with a debug surface; in off mode only when the page's sessions are being listed. */
@@ -710,6 +711,8 @@ function onWindowMessage(e: MessageEvent): void {
     if (d.__mlSidebar === "hello" && e.source === window) { if (busLive()) handshake(); return; }
     // The page's answer to a session action the chat page asked for (shell-session-relay.ts).
     if (d.__mlSessionDone && e.source === window) { onSessionDone(d.__mlSessionDone); return; }
+    // A run this browser's own UI started, reporting its session so the worker can keep it.
+    if (d.__mlSessionKeep && e.source === window) { keepStartedSession(d.__mlSessionKeep); return; }
     // injected.js asks us to hide the overlay for a screenshot (so the sidebar
     // isn't captured into the agent's `look`). Hide, then ack after two frames so
     // the hidden state has painted before the capture fires.
@@ -831,6 +834,9 @@ function onWindowMessage(e: MessageEvent): void {
             images: cleanImages(d.images),
             elementContext: (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined,
             hud: agentHud,
+            // A run the person started here is kept unless they turned that off. A run started from CODE is not:
+            // `ml.agent()` stays as long as the page, which is the rule `ml.createChat({ save: true })` follows.
+            keep: persistUiRuns,
         } }, "*");
         return;
     }
@@ -1284,8 +1290,9 @@ window.addEventListener("resize", () => { if (cardWrap) layoutCard(); });
 let startupQueue: MessageEvent[] | null = [];
 const captureStartup = (e: MessageEvent): void => { if (startupQueue) startupQueue.push(e); };
 window.addEventListener("message", captureStartup);
-chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right", agentHud: "progress", agentHudInDevtools: false, listPageSessions: false }, (cfg) => {
+chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right", agentHud: "progress", agentHudInDevtools: false, listPageSessions: false, persistUiRuns: true }, (cfg) => {
     listPageSessions = !!cfg.listPageSessions;
+    persistUiRuns = cfg.persistUiRuns !== false;
     rawTheme = (cfg.theme as string) || "auto";
     cardCorner = (cfg.cardCorner as string) || "bottom-right";
     agentHud = (cfg.agentHud as string) || "progress";
@@ -1300,6 +1307,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (changes.theme) { rawTheme = (changes.theme.newValue as string) || "auto"; applyCardTheme(); }
     if (changes.cardCorner) { cardCorner = (changes.cardCorner.newValue as string) || "bottom-right"; applyCardCorner(); }
     if (changes.agentHud) agentHud = (changes.agentHud.newValue as string) || "progress";
+    if (changes.persistUiRuns) persistUiRuns = changes.persistUiRuns.newValue !== false;
     if (changes.agentHudInDevtools) {
         agentHudInDevtools = !!changes.agentHudInDevtools.newValue;
         // Turned OFF while a devtools card is up → drop it (turning ON takes effect on the next run).

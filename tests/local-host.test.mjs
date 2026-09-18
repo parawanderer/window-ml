@@ -45,12 +45,28 @@ function portPair() {
 
 const RUNTIME = { id: "local", name: "This browser", kind: "browser", online: true, contractVersion: SESSION_CONTRACT_VERSION, capabilities: {}, grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }] };
 
-/** One background worker's life: its index and server. */
-function worker(spawn) {
+/** One background worker's life: its index and server, and optionally the sessions a previous one saved. */
+function worker(spawn, saved) {
     const index = new SessionIndex({ runtime: "local", spawn });
     const commands = [];
-    const server = new SessionServer(index, { runtime: () => RUNTIME, command: async (c) => { commands.push(c); return { ok: false, error: { code: "unsupported", message: "not yet" } }; } });
+    const server = new SessionServer(index, {
+        runtime: () => RUNTIME,
+        command: async (c) => { commands.push(c); return { ok: false, error: { code: "unsupported", message: "not yet" } }; },
+        ...(saved ? { stored: async (hash) => saved.read(hash) } : {}),
+    });
+    if (saved) server.restored(index.restore(saved.rows()));
     return { index, server, commands };
+}
+
+/** Saved sessions, as a previous worker left them: rows for the list, events for a transcript. */
+function savedSessions(entries) {
+    return {
+        rows: () => entries.map((e) => ({ summary: e.summary, count: e.events.length })),
+        read: async (hash) => {
+            if (savedSessions.hold) await savedSessions.hold;
+            return entries.find((e) => e.summary.id.hash === hash)?.events ?? [];
+        },
+    };
 }
 
 /** Manually fired timers, so a reconnect happens when the test says. */
@@ -208,4 +224,43 @@ test("a second index listener starts from what is held; a listener for another r
     await flush();
     assert.deepEqual([first.length, second.length, other.length], [2, 2, 0]);
     host.dispose();
+});
+
+test("a worker that restarted serves a saved session from disk, and holds live events until it has", T, async () => {
+    const hash = "5aved001";
+    const summary = { id: { runtime: "local", hash }, kind: "agent", status: "done", createdTs: 900, lastTs: 1000, pendingApprovals: 0, saved: true, task: "find the price" };
+    const saved = savedSessions([{ summary, events: [start(hash), step(hash, 1), step(hash, 2)] }]);
+    const { world, host } = setup(worker("w2", saved));
+    await flush();
+
+    // The list is there before anything is opened: an evicted worker comes back with what it saved.
+    const updates = [];
+    host.sessions((u) => updates.push(u));
+    await flush();
+    assert.deepEqual(updates.map((u) => [u.type, u.sessions?.map((s) => s.id.hash) ?? u.session?.id.hash]), [["snapshot", [hash]]]);
+
+    // Reading the disk is slow, and an event arrives while it is in flight.
+    let release;
+    savedSessions.hold = new Promise((r) => { release = r; });
+    host.events({ runtime: "local", hash }, () => {});
+    await flush();
+    assert.deepEqual(world.streamed, [], "nothing until the saved events are read");
+    world.current.server.ingest(step(hash, 3), { tabId: TAB, trusted: true });
+    await flush();
+    assert.deepEqual(world.streamed, [], "and the live event waits for them, rather than arriving first");
+
+    release();
+    savedSessions.hold = null;
+    await flush(12);
+
+    // The contract's order survives the disk: one `reset`, the session's events in cursor order, then `backfilled`.
+    // The event that arrived mid-read is INSIDE the backfill rather than after it, because by the time the backfill
+    // was built it was already in the ring — the queue exists for what cannot be, not for everything that waited.
+    assert.deepEqual(world.streamed.map((m) => m.type), ["reset", "event", "event", "event", "event", "backfilled"]);
+    const cursors = world.streamed.filter((m) => m.type === "event").map((m) => m.cursor);
+    assert.deepEqual(cursors.slice(0, 3), [1, 2, 3], "the saved events are the session from its first cursor");
+    assert.ok(cursors[3] > 3, `the live event continues after them (got ${cursors[3]})`);
+    assert.deepEqual(cursors, [...cursors].sort((a, b) => a - b), "in order");
+    assert.equal(new Set(cursors).size, cursors.length, "and each exactly once: the ring and the disk overlap");
+    assert.equal(world.streamed.find((m) => m.type === "backfilled").truncated, false, "nothing was lost: it was all on disk");
 });

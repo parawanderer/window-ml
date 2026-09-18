@@ -9,6 +9,7 @@ import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, i
 import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type TabInfo } from "./session-host";
 import { SessionIndex, type IngestSource } from "./session-index";
 import { SESSIONS_PORT, SessionServer } from "./session-server";
+import { SessionStore, indexedDbBackend } from "./session-store";
 import { fetchLLM } from "./sw-llm";
 
 /** This browser's runtime id until the extension has a key to derive one from (docs/spec/SESSION_CONTRACT.md). */
@@ -32,7 +33,7 @@ const TAB_READY_MS = 15_000, TAB_POLL_MS = 250;
 function localRuntime(): RuntimeInfo {
     return {
         id: LOCAL_RUNTIME, name: "This browser", kind: "browser", online: true, contractVersion: SESSION_CONTRACT_VERSION,
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet },
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -88,8 +89,10 @@ export function configureSessionCommands(run: RunDeps): void {
         forgetStored: async (hash) => {
             run.forgetRun(hash);
             forgetBackgroundChat(hash);
+            await sessionStore?.forget([hash]);
             try { await chrome.storage.local.remove(`ml_session_${hash}`); } catch { /* storage unavailable */ }
         },
+        keepSession,
         startChat: (opts) => startBackgroundChat(opts),
         startAgent: async (tabId, opts) => {
             const reqId = Math.random().toString(36).slice(2, 12);
@@ -142,8 +145,27 @@ export function configureSessionCommands(run: RunDeps): void {
     });
 }
 
+/** Saved sessions, which outlive this worker. A worker with no IndexedDB (a test harness) simply saves nothing.
+ *  What a page is subscribed to is what someone is looking at, so that is what an eviction may never take. */
+export const sessionStore = (() => {
+    try { return new SessionStore(indexedDbBackend(), { protect: () => sessionServer.subscribed() }); }
+    catch { return null; }
+})();
+
 /** The index and its server, for this worker's life. */
-export const sessionServer = new SessionServer(new SessionIndex({ runtime: LOCAL_RUNTIME, spawn }), { runtime: localRuntime, command: runCommand });
+export const sessionServer = new SessionServer(new SessionIndex({ runtime: LOCAL_RUNTIME, spawn }), {
+    runtime: localRuntime,
+    command: runCommand,
+    ...(sessionStore ? { stored: (hash: string) => sessionStore.read(hash) } : {}),
+});
+
+// What a previous worker saved, so an evicted service worker comes back with its list rather than with nothing. The
+// events stay on disk until something subscribes to that session.
+if (sessionStore) {
+    void sessionStore.open().then((rows) => {
+        sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count }))));
+    }).catch(() => { /* no storage: the list is whatever this worker sees from now on */ });
+}
 
 // Kept current from storage: `side.call` needs a utility model, and the runtime's capabilities say whether it has one.
 // After `sessionServer` exists, since a storage callback may run synchronously.
@@ -162,10 +184,46 @@ try {
     });
 } catch { /* no storage (a test harness) */ }
 
-/** Fold one debug event into the index. Never throws: a malformed event must not break the relay it rides beside. */
-export function ingestSessionEvent(event: unknown, source: IngestSource): void {
-    try { sessionServer.ingest(event as MlDebugEvent, source); } catch { /* refused */ }
+/** Sessions asked for before the index had heard of them. A run mints its hash just BEFORE its first event, so a
+ *  request to keep it can arrive first; a hash is held here until an event for it turns up. Bounded, because the
+ *  request reaches the worker from a page and a page can name a hash that never arrives. */
+const pendingKeep = new Set<string>();
+const MAX_PENDING_KEEP = 32;
+
+/**
+ * Keep this session past the worker's life: what `ephemeral` absent means on `chat.start` and `agent.start`, and
+ * what `config.persistUiRuns` means for a run the HUD started.
+ *
+ * Whatever the session has already emitted is written too, because a session cannot be marked until its hash
+ * exists and by then its first events may have been ingested. And a hash the index has never seen is REMEMBERED
+ * rather than dropped: the hash is minted a moment before the first event, so arriving early is the common case,
+ * not the exception.
+ */
+export function keepSession(hash: string): void {
+    const summary = sessionServer.index.get(hash);
+    if (!summary) {
+        if (pendingKeep.size >= MAX_PENDING_KEEP) pendingKeep.delete(pendingKeep.values().next().value as string);
+        pendingKeep.add(hash);
+        return;
+    }
+    pendingKeep.delete(hash);
+    const already = sessionServer.markSaved(hash);
+    if (!sessionStore) return;
+    for (const event of already) sessionStore.put({ ...summary, saved: true }, event);
 }
+
+/** Fold one debug event into the index, and save it when the session is one we keep. Never throws: a malformed event
+ *  must not break the relay it rides beside, and a full disk must not stop a run. */
+export function ingestSessionEvent(event: unknown, source: IngestSource): void {
+    try {
+        const out = sessionServer.ingest(event as MlDebugEvent, source);
+        if (!out.accepted) return;
+        // A request to keep this session that arrived before the session did.
+        if (pendingKeep.has(out.session.hash)) keepSession(out.session.hash);
+        if (out.summary?.saved && sessionStore) sessionStore.put(out.summary, out.event);
+    } catch { /* refused */ }
+}
+
 
 /** The sender tab's URL and title, as the browser reports them. */
 export function senderPage(tab: chrome.tabs.Tab | undefined): IngestSource["page"] {

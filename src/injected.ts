@@ -665,8 +665,14 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
         // the user had already typed. The loop already reads the config in its own async setup.
         opts.commanderTools = true;
         // The hash is minted inside the loop, so the run itself reports it (`_onSession`) rather than the caller
-        // polling the handle for one that is not there yet.
-        opts._onSession = (hash: string) => answer("started", hash);
+        // polling the handle for one that is not there yet. Two listeners want it and they are not the same: a
+        // command that is waiting for its answer, and — when this browser's own UI started the run and is keeping
+        // its sessions — the worker, which is what holds them (sidebar/shell-session-relay.ts).
+        const keep = e.data.__mlStartAgent.keep === true;
+        opts._onSession = (hash: string) => {
+            answer("started", hash);
+            if (keep) window.postMessage({ __mlSessionKeep: { hash } }, "*");
+        };
         try { void ml.createAgent(opts).run(task, images); }
         catch (err) { console.error("ml: UI-started run failed:", err); answer("none"); }
     });

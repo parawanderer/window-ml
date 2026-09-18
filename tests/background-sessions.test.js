@@ -116,7 +116,9 @@ test("an unknown command is answered unsupported", T, async () => {
     await flush();
     const [result] = port.messages.filter((m) => m.type === "result");
     assert.deepEqual([result.id, result.result.ok, result.result.error.code], [2, false, "unsupported"]);
-    assert.deepEqual(port.messages[0].runtime.capabilities, { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: false });
+    // `persistence: false` because this harness has no IndexedDB: the runtime reports what it can actually do rather
+    // than what the code hopes for, which is the whole point of a client rendering by capability.
+    assert.deepEqual(port.messages[0].runtime.capabilities, { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: false, persistence: false });
 });
 
 test("a live background run, driven from the chat page: steered while its gate is open, then approved through approval.answer", T, async () => {

@@ -204,3 +204,62 @@ test("a tab's document going away interrupts the runs it hosted, not the backgro
     assert.equal(ix.get("aaaa0001").status, "running");
     assert.equal(ix.ingest(step("bbbb0002", 1), page(TAB_B)).accepted, false);
 });
+
+test("a restored session is listed, is not running any more, and its events are known to be on disk", () => {
+    const ix = index();
+    const saved = { id: { runtime: "local", hash: "aaaa0001" }, kind: "agent", status: "running", createdTs: 500, lastTs: 900, pendingApprovals: 0, saved: true, task: "find the price" };
+    const rows = ix.restore([{ summary: saved, count: 12 }]);
+
+    // A run that was going when the worker died did not survive it: a list still showing it as running would be
+    // waiting for an event that cannot arrive.
+    assert.equal(rows[0].status, "interrupted");
+    assert.equal(ix.get("aaaa0001").task, "find the price");
+    assert.equal(ix.list().length, 1);
+
+    // Nothing is in memory, and the index says so: every subscription to it has to read the disk.
+    assert.equal(ix.needsStored("aaaa0001"), true);
+    assert.equal(ix.storedThrough("aaaa0001"), 12);
+    // Live cursors continue AFTER the stored ones, so a reconnecting client is not handed cursor 1 twice.
+    ix.ingest(step("aaaa0001", 13), bg());
+    assert.equal(ix.backfill("aaaa0001").at(-1).cursor, 13);
+});
+
+test("restore never overwrites a session this worker already holds, or an unparseable one", () => {
+    const ix = index();
+    ix.ingest(start("aaaa0001"), bg());
+    const live = ix.get("aaaa0001").status;
+    ix.restore([
+        { summary: { id: { runtime: "local", hash: "aaaa0001" }, kind: "chat", status: "done", createdTs: 1, lastTs: 2, pendingApprovals: 0, saved: true }, count: 3 },
+        { summary: { id: { runtime: "local", hash: "not a hash!" }, kind: "chat", status: "done", createdTs: 1, lastTs: 2, pendingApprovals: 0, saved: true }, count: 1 },
+    ]);
+    assert.equal(ix.get("aaaa0001").status, live, "the live record won");
+    assert.equal(ix.get("aaaa0001").kind, "agent");
+    assert.equal(ix.list().length, 1, "and the malformed row was refused");
+});
+
+test("needsStored is false when the ring still covers what the client asks for", () => {
+    const ix = index();
+    ix.ingest(start("aaaa0001"), bg());
+    ix.ingest(step("aaaa0001", 1), bg());
+    const epoch = ix.epochOf("aaaa0001");
+    // Nothing has been lost from this session, so no read is needed whatever the client asks for.
+    assert.equal(ix.needsStored("aaaa0001"), false);
+    assert.equal(ix.needsStored("aaaa0001", { epoch, cursor: 1 }), false);
+    assert.equal(ix.needsStored("nosuch01"), false, "a session nobody holds needs no disk either");
+});
+
+test("marking a session saved hands back what it had already emitted, and only the first time", () => {
+    const ix = index();
+    ix.ingest(start("aaaa0001"), bg());
+    ix.ingest(step("aaaa0001", 1), bg());
+    assert.equal(ix.get("aaaa0001").saved, false);
+
+    // A session is marked a moment after its first events: the hash does not exist until the run mints it, so the
+    // caller needs those events back or every kept session loses its own beginning.
+    const first = ix.markSaved("aaaa0001");
+    assert.equal(first.summary.saved, true);
+    assert.deepEqual(first.events.map((e) => e.kind), ["agent", "agent-step"]);
+
+    assert.equal(ix.markSaved("aaaa0001"), null, "marking twice writes nothing twice");
+    assert.equal(ix.markSaved("nosuch01"), null, "and a session nobody holds cannot be kept");
+});

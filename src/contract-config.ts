@@ -105,6 +105,10 @@ export interface MlConfig {
     /** With the debug panel off, still report every page's own sessions (console calls, page scripts) to the chat
      *  page's session index. Off by default: it wakes each page's debug bus, which is otherwise dormant and free. */
     listPageSessions: boolean;
+    /** Keep the sessions this browser's own UI starts (the Commander HUD), so they survive the worker being evicted
+     *  and can be read tomorrow. A session started from CODE is unaffected: `ml.agent()` and `ml.chat()` stay
+     *  ephemeral unless they ask to be saved, which is the rule `ml.createChat({ save: true })` already follows. */
+    persistUiRuns: boolean;
     /** The page a run started "on a blank tab" opens, when the client names no URL of its own. Empty: the client
      *  must name one, since the extension cannot run on the browser's own new-tab page. */
     agentStartPage: string;
@@ -245,6 +249,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     agentHud: "progress",
     agentHudInDevtools: false,
     listPageSessions: false,
+    persistUiRuns: true,
     agentStartPage: "",
     utilityModel: "",
     utilityNumCtx: 4096,

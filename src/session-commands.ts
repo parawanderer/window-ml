@@ -42,6 +42,8 @@ export interface CommandDeps {
     cancelChat(hash: string): boolean;
     /** does this worker host this chat itself, rather than a tab? */
     hostsChat(hash: string): boolean;
+    /** keep this session past the worker's life: what an absent `ephemeral` means on the command that started it */
+    keepSession(hash: string): void;
     /** start a run on a tab, through that page's own start path; resolves with what the page reported */
     startAgent(tabId: number, opts: { task: string; images?: string[]; model?: string; maxSteps?: number; vision?: true; stream?: true }): Promise<{ outcome: PageOutcome | "started"; hash?: string }>;
     /** open a new tab at a URL and wait until the extension can talk to it; rejects when it never answers */
@@ -147,7 +149,10 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
                 ...(c.vision === true ? { vision: true as const } : {}),
                 ...(c.stream === true ? { stream: true as const } : {}),
             });
-            if (r.outcome === "started" && r.hash) return ok({ session: { runtime: deps.runtime, hash: r.hash } });
+            if (r.outcome === "started" && r.hash) {
+                if (!c.ephemeral) deps.keepSession(r.hash);
+                return ok({ session: { runtime: deps.runtime, hash: r.hash } });
+            }
             // The page answered that it started nothing, or never answered at all. A run that started anyway would
             // still appear in the index, so this says what is known rather than inventing a session id.
             if (r.outcome === "none") return fail("failed", "the page did not start a run");
@@ -173,6 +178,8 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
                     ...(c.think != null ? { think: c.think } : {}),
                     ...(c.ephemeral ? { ephemeral: true } : {}),
                 });
+                // "Sessions started by a command are saved unless `ephemeral`" (SESSION_CONTRACT.md §Commands).
+                if (!c.ephemeral) deps.keepSession(hash);
                 return ok({ session: { runtime: deps.runtime, hash } });
             } catch (err) {
                 return fail("failed", (err as Error)?.message || String(err));

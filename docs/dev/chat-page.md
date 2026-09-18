@@ -268,6 +268,58 @@ The fake host starts sessions too, so the form is exercised at phone width in th
 exercised against a browser: `chat.start` mints a session and answers the first turn, `agent.start` mints a
 running one, and `tabs.list` returns three demo tabs so the picker has something real in it.
 
+## Saved sessions
+
+`src/session-store.ts` keeps a session's DEBUG EVENTS in IndexedDB, and `capabilities.persistence` says whether this
+browser can (a worker with no IndexedDB reports `false` rather than hoping).
+
+**Why the events and not a transcript rebuilt from them.** They are what the sidebar, the chat page and both
+exports already render, so a saved run reads exactly like a live one and there is no second rendering path to keep
+in step. The cost is size, which is handled where it belongs: a byte budget and a session count, evicting oldest
+activity first, never a running session and never one a page is subscribed to.
+
+Two object stores, so appending an event does not rewrite the session, and writes are batched (a streaming run
+emits one every ~100 ms, and a transaction each would spend more time in the database than in the model).
+
+**What a restarted worker does.** At startup it reads the rows and calls `SessionIndex.restore`, which puts the
+sessions back in the list with no events in memory: their ring is empty and `lostThrough` says everything is on
+disk. A session that was RUNNING when the worker died comes back `interrupted`, because the loop died with it and
+a list still showing it as running would be waiting for an event that cannot arrive.
+
+**The cursor is one counter across every session, not a count per session.** So `restore` advances it past the
+saved events; without that, the next live event on a restored session is handed cursor 1, below events the client
+has already been sent, which breaks the one thing a cursor promises. This is easy to get wrong because the symptom
+is a transcript that repeats its beginning, which reads like a rendering bug.
+
+**Serving a transcript from disk.** `SessionIndex.needsStored` says whether a subscription can be answered from the
+ring. When it cannot, the server reads the saved events and, while it reads, holds live events for that
+subscription rather than posting them: the client's reducer trusts the contract's order (`reset`, the backfill,
+`backfilled`, then live) and a disk read is the one thing slow enough to break it. An event that arrives during the
+read is in the ring by the time the backfill is built, so it goes out as part of the backfill and is skipped when
+the queue drains — the ring and the disk overlap, and sending an event twice would show the same step twice.
+
+## Which sessions are kept
+
+Three routes to the same flag, and they are not the same question:
+
+- **A command that started the session** (`chat.start`, `agent.start`) keeps it unless it said `ephemeral`. The
+  worker decides, from its own command handler.
+- **A run this browser's own UI started** (the Commander HUD) is kept when `config.persistUiRuns` is on. The shell
+  passes `keep` into `__mlStartAgent`, the run reports its session through the same `_onSession` the chat page's
+  commands use, and `sidebar/shell-session-relay.ts` hands the hash to the worker. The run's events do NOT carry a
+  `save` flag of their own: that would be fourteen emit sites to keep right instead of one message, in a file that
+  is split often.
+- **Code** keeps nothing unless it asks: `ml.createChat({ save: true })` as before, and `ml.agent()` not at all.
+
+**A keep request can arrive before the session does.** The hash is minted just BEFORE the run's first event, so the
+worker holds a request for a hash it has not seen and applies it when the session appears. Assuming the other order
+is easy — `markSaved`'s own docstring assumed it, correctly for the command path and wrongly for this one — and it
+fails silently, as a run that simply is not saved.
+
+The request reaches the worker from a page, so the pending set is bounded: a page can name a hash that never
+arrives. What it costs to claim one is a session row, which the store's budget already bounds — the same standing
+a page's own `{ save: true }` chat has always had.
+
 ## Not yet
 
 - The extension entry (`chat.html` over `LocalHost`) is slice 3, and its `ClientPlatform` adapter comes with it.
