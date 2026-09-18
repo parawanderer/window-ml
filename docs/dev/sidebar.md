@@ -26,7 +26,7 @@ registers a "window.ml" panel; `panel.html`/`panel.ts` host the *same* `sidebar.
 iframe and play the same parent-relay role the shell does). `src/sidebar/app.tsx` is
 untouched between them — the panel is byte-for-byte the overlay's app. Debug events reach
 the panel by an **event-agnostic ONE-WAY stream**: `injected.js` → shell (forwards
-`ML_DEBUG_EVENT`) → `background.ts` keeps a per-tab ring buffer (`DEBUG_BUFFER_CAP`) + fans
+`ML_DEBUG_EVENT`) → `sw-debug.ts` keeps a per-tab ring buffer (`DEBUG_BUFFER_CAP`) + fans
 out to any connected `ml-devtools` port → `panel.ts` relays into the iframe (queuing until
 the app handshakes `ready`). The buffer **replays on connect** (a panel opened mid-run
 catches up); a fresh shell mount sends `ML_DEBUG_RESET` so stale events don't replay after
