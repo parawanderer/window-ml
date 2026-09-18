@@ -82,7 +82,10 @@ the other two schemas.
   `mayPair`. `issueCertificate` refuses a spec without a window, so a caller learns at issuance rather than at
   somebody else's verifier.
 - **A box connector may neither pair nor approve**, enforced rather than documented: the rule is about the role, so
-  the same scopes on a client are fine.
+  the same scopes on a client are fine. `issueCertificate` refuses it too — an issuer that mints what every verifier
+  rejects is a bug that surfaces on somebody else's machine.
+- **`approve`, `control` and `admin` are the root's to grant** (`NEVER_DELEGABLE`): a phone that may approve a click
+  should not thereby be able to pair another phone, so a delegate cannot pass them on even when it holds them.
 - **A grant's `fromCounter` is a permission, not a note.** A reader refuses a frame below it, so a device paired this
   morning cannot read last night out of a ring the hub still holds. Each key keeps the counter its own grant covers,
   so a rotation grants from where it begins while the old key keeps covering what it always did.
