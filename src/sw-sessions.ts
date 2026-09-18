@@ -184,12 +184,31 @@ try {
     });
 } catch { /* no storage (a test harness) */ }
 
-/** Keep this session: what `ephemeral` absent means on `chat.start` and `agent.start`. Called once the runtime has
- *  minted the hash, which is a moment after its first events, so whatever it already emitted is written too. */
+/** Sessions asked for before the index had heard of them. A run mints its hash just BEFORE its first event, so a
+ *  request to keep it can arrive first; a hash is held here until an event for it turns up. Bounded, because the
+ *  request reaches the worker from a page and a page can name a hash that never arrives. */
+const pendingKeep = new Set<string>();
+const MAX_PENDING_KEEP = 32;
+
+/**
+ * Keep this session past the worker's life: what `ephemeral` absent means on `chat.start` and `agent.start`, and
+ * what `config.persistUiRuns` means for a run the HUD started.
+ *
+ * Whatever the session has already emitted is written too, because a session cannot be marked until its hash
+ * exists and by then its first events may have been ingested. And a hash the index has never seen is REMEMBERED
+ * rather than dropped: the hash is minted a moment before the first event, so arriving early is the common case,
+ * not the exception.
+ */
 export function keepSession(hash: string): void {
     const summary = sessionServer.index.get(hash);
+    if (!summary) {
+        if (pendingKeep.size >= MAX_PENDING_KEEP) pendingKeep.delete(pendingKeep.values().next().value as string);
+        pendingKeep.add(hash);
+        return;
+    }
+    pendingKeep.delete(hash);
     const already = sessionServer.markSaved(hash);
-    if (!summary || !sessionStore) return;
+    if (!sessionStore) return;
     for (const event of already) sessionStore.put({ ...summary, saved: true }, event);
 }
 
@@ -198,7 +217,10 @@ export function keepSession(hash: string): void {
 export function ingestSessionEvent(event: unknown, source: IngestSource): void {
     try {
         const out = sessionServer.ingest(event as MlDebugEvent, source);
-        if (out.accepted && out.summary?.saved && sessionStore) sessionStore.put(out.summary, out.event);
+        if (!out.accepted) return;
+        // A request to keep this session that arrived before the session did.
+        if (pendingKeep.has(out.session.hash)) keepSession(out.session.hash);
+        if (out.summary?.saved && sessionStore) sessionStore.put(out.summary, out.event);
     } catch { /* refused */ }
 }
 

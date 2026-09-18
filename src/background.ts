@@ -26,7 +26,7 @@ import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, she
 import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
-import { configureSessionCommands, ingestSessionEvent, senderPage, serveSessionsPort, sessionServer } from "./sw-sessions";   // the cross-tab session index the chat page reads
+import { configureSessionCommands, ingestSessionEvent, keepSession, senderPage, serveSessionsPort, sessionServer } from "./sw-sessions";   // the cross-tab session index the chat page reads
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, recordHousekeeping } from "./sw-housekeeping";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns, budgetBytes as valueBudgetBytes } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, grantsFor, serverToolKey, pendingGrants, grantCredFetch, consentFetch, persistGrants, takeCredFetch } from "./sw-consent";
@@ -174,6 +174,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // refuses a page writing into a session another tab owns.
     if (message.type === "ML_SESSION_EVENT") {
         if (sender.tab?.id != null) ingestSessionEvent(message.event, { tabId: sender.tab.id, trusted: false, page: senderPage(sender.tab) });
+        return;
+    }
+    // A run this browser's own UI started, reporting its session so the worker keeps it past its own life
+    // (`config.persistUiRuns`). The worker decides what it keeps; the page only says which session it made, and a
+    // hash nobody holds is ignored. A page could claim any hash, which costs it a session row already bounded by
+    // the store's budget — the same standing a page's own `{ save: true }` chat has had all along.
+    if (message.type === "ML_KEEP_SESSION") {
+        if (typeof message.hash === "string") keepSession(message.hash);
         return;
     }
     // Await the startup rehydrate before deciding whether to wipe: right after an SW respawn (e.g. a site-access

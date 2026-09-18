@@ -1141,6 +1141,12 @@ export function Settings() {
                     <span>List console and page-script sessions in the chat page when the debug panel is off</span>
                 </label>
                 <div class="set-hint">Agents the extension runs are always listed. With the panel off, a page's own <code>ml.chat</code> and <code>ml.agent</code> calls are not, because reporting them costs every page a little work.</div>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.persistUiRuns}
+                        onChange={(e: any) => setField("persistUiRuns", e.target.checked)} />
+                    <span>Keep runs started from this browser's own UI</span>
+                </label>
+                <div class="set-hint">A run you start from the Commander HUD is kept, so it is still here after the browser has been idle and can be read tomorrow. Runs and chats started from <code>code</code> are unaffected: they last as long as the page unless they ask to be saved.</div>
                 <label class="set-field"><span>Blank-tab start page</span>
                     <input type="url" placeholder="https://example.com" value={c.agentStartPage}
                         onChange={(e: any) => setField("agentStartPage", e.target.value.trim())} />

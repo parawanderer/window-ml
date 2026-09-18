@@ -32,9 +32,13 @@ async function indexReader(ext) {
     });
     const rows = () => page.evaluate(() => [...globalThis.__rows.values()].map((s) => ({ hash: s.id.hash, kind: s.kind, status: s.status, task: s.task, url: s.page?.url })));
     rows.cmd = (command) => page.evaluate((c) => globalThis.__cmd(c), command);
+    rows.page = page;
     return rows;
 }
 const strip = (list) => list.map(({ hash, ...rest }) => rest);
+/** Whether the row for `task` says it is saved. Read separately, so the shared reader keeps the shape the other
+ *  tests compare whole. */
+const savedOf = (page, task) => page.evaluate((t) => [...globalThis.__rows.values()].find((s) => s.task === t)?.saved ?? null, task);
 
 test("overlay mode: a page's own chat is listed, with the tab's URL", async () => {
     const fake = await startFakeLlm({ model: "fake-model" });
@@ -191,5 +195,29 @@ test("agent.start: a run on a chosen tab, and one on a blank tab the browser ope
         // The browser's own pages cannot host a run, and the extension says so rather than starting one there.
         const refused = await rows.cmd({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: 0 } });
         expect(refused.ok).toBe(false);
+    } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
+});
+
+test("a run the browser's own UI starts is kept; one started from code is not", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "overlay", persistUiRuns: true });
+        fake.setScript([{ content: "done from the HUD" }, { content: "done from the console" }]);
+        const rows = await indexReader(ext);
+        const page = await ext.context.newPage();
+        await page.goto(site.url + "/");
+        await waitForMl(page);
+
+        // What the SHELL posts into the page for a UI-started run, `keep` being the setting it read. Driving the HUD
+        // composer itself would add the composer's own plumbing to a test about what happens after it: the shell's
+        // one line (`keep: persistUiRuns`) is the only step below this that a person's click adds.
+        await page.evaluate(() => window.postMessage({ __mlStartAgent: { task: "read the page", keep: true, maxSteps: 1 } }, "*"));
+        await expect.poll(() => savedOf(rows.page, "read the page")).toBe(true);
+
+        // A console call is not the UI: it lasts as long as the page unless it asks to be saved.
+        await page.evaluate(() => window.ml.agent("count the links", { maxSteps: 1 }));
+        await expect.poll(() => savedOf(rows.page, "count the links")).toBe(false);
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });

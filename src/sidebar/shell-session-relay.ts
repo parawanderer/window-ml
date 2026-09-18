@@ -22,6 +22,25 @@ const SESSION_DONE_MS = 3000;
  *  setup (the config read, the toolset, a capability probe), and none of that is waiting on this shell. */
 const START_DONE_MS = 10_000;
 
+/**
+ * A run started from this browser's own UI says which session it became, so the worker can KEEP it
+ * (`config.persistUiRuns`). A `__mlSessionKeep` window message, carrying only the hash.
+ *
+ * It is a second signal rather than part of the acknowledgement above because the two answer different questions:
+ * `__mlSessionDone` tells a waiting COMMAND what happened, and a HUD run has no command waiting on it. Taking the
+ * hash here is also why a run's events do not carry a `save` flag of their own — that would be fourteen emit sites
+ * to keep right instead of one message, and the worker is what holds the saved sessions either way.
+ *
+ * @returns whether this was such a message.
+ */
+export function keepStartedSession(data: unknown): boolean {
+    const hash = (data as { hash?: unknown } | null)?.hash;
+    if (typeof hash !== "string") return false;
+    try { void chrome.runtime.sendMessage({ type: "ML_KEEP_SESSION", hash }).catch(() => { /* worker asleep */ }); }
+    catch { /* extension context gone */ }
+    return true;
+}
+
 /** Relay the page's answer to one session action back to the background, or `no-answer` when the page never replies (a
  *  page whose `window.ml` has not loaded, or one that swallowed the message). What the page reports is its own claim
  *  about its own session, so it decides nothing: the transcript still changes only through the session's events. */

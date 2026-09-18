@@ -298,6 +298,28 @@ subscription rather than posting them: the client's reducer trusts the contract'
 read is in the ring by the time the backfill is built, so it goes out as part of the backfill and is skipped when
 the queue drains — the ring and the disk overlap, and sending an event twice would show the same step twice.
 
+## Which sessions are kept
+
+Three routes to the same flag, and they are not the same question:
+
+- **A command that started the session** (`chat.start`, `agent.start`) keeps it unless it said `ephemeral`. The
+  worker decides, from its own command handler.
+- **A run this browser's own UI started** (the Commander HUD) is kept when `config.persistUiRuns` is on. The shell
+  passes `keep` into `__mlStartAgent`, the run reports its session through the same `_onSession` the chat page's
+  commands use, and `sidebar/shell-session-relay.ts` hands the hash to the worker. The run's events do NOT carry a
+  `save` flag of their own: that would be fourteen emit sites to keep right instead of one message, in a file that
+  is split often.
+- **Code** keeps nothing unless it asks: `ml.createChat({ save: true })` as before, and `ml.agent()` not at all.
+
+**A keep request can arrive before the session does.** The hash is minted just BEFORE the run's first event, so the
+worker holds a request for a hash it has not seen and applies it when the session appears. Assuming the other order
+is easy — `markSaved`'s own docstring assumed it, correctly for the command path and wrongly for this one — and it
+fails silently, as a run that simply is not saved.
+
+The request reaches the worker from a page, so the pending set is bounded: a page can name a hash that never
+arrives. What it costs to claim one is a session row, which the store's budget already bounds — the same standing
+a page's own `{ save: true }` chat has always had.
+
 ## Not yet
 
 - The extension entry (`chat.html` over `LocalHost`) is slice 3, and its `ClientPlatform` adapter comes with it.
