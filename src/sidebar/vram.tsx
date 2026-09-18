@@ -3,7 +3,8 @@
 // self-contained surface from the run views. Extracted from app.tsx.
 import type { WireFrame } from "../events-wire";
 import { useState, useEffect, useRef, useMemo } from "preact/hooks";
-import type { RenderDescriptor, RunStats } from "../contract";
+import type { RunStats } from "../contract";
+import type { RenderDescriptor } from "../contract-render";
 import { fmtCtx } from "../contract";
 import { isBackendUnreachable } from "../contract-server";
 import { signal, effect } from "@preact/signals";

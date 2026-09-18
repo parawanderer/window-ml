@@ -3,7 +3,8 @@
 // read-only-exec result envelope. Extracted from injected.ts — these close over
 // only imported dom/security helpers, no bus/ml state.
 
-import type { ApprovalRequest, ApprovalDecision, RenderDescriptor } from "./contract";
+import type { ApprovalRequest, ApprovalDecision } from "./contract";
+import type { RenderDescriptor } from "./contract-render";
 import { UI_OUT_CAP } from "./contract";
 import { NotInDialect, Denied } from "./readonly-exec";
 import { clipOut, clipValue, elPath } from "./dom";

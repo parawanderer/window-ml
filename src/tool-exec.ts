@@ -3,7 +3,8 @@
 // today, and design A's RUN_TOOL_IN_PAGE handler (the background delegating page-context execution to
 // the page) will call the SAME function — so the two paths can't drift. Page-side (a tool's run()
 // touches the DOM and may return real Nodes); the delegation layer reduces `elements` to a count.
-import type { MlTool, ToolResult, RenderDescriptor, ToolContext, ToolFeedback, DocsMemory } from "./contract";
+import type { MlTool, ToolResult, ToolContext, DocsMemory } from "./contract";
+import type { RenderDescriptor, ToolFeedback } from "./contract-render";
 import type { DerefRead } from "./token-pipe";
 import { AnswerSet } from "./answer-set";
 import { validateArgs } from "./validate";

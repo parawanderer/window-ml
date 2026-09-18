@@ -37,9 +37,10 @@
  */
 
 import type {
-    RenderDescriptor, TokenUsage, ToolFeedback,
+    TokenUsage,
     PersistGrant, ReusedGrant,
 } from "./contract";
+import type { RenderDescriptor, ToolFeedback } from "./contract-render";
 import type { SubcallUsage, DebugAgentConfig, DebugSessionConfig } from "./contract-debug";
 
 /** Bumped only on a BREAKING change. Adding an optional field is not breaking. */

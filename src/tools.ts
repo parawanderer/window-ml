@@ -4,7 +4,8 @@
 // `ml`/bus state), so the whole set lifts out cleanly. `makeDomTools` takes the
 // (detached, `this`-free) `defineTool` and returns the array.
 
-import type { MlTool, ToolResult, ToolContext, AnswerMedia, MlPublicConfig } from "./contract";
+import type { MlTool, ToolResult, ToolContext, MlPublicConfig } from "./contract";
+import type { AnswerMedia } from "./contract-render";
 import type { VerifyArea } from "./builtin-tools";
 /** Serialize a screenshot-crop of each designated `answer` element for the HUD completion card. ml-backed
  *  (built in injected.ts), so the pure domTools stay pure — the answer tool just calls it when present. */

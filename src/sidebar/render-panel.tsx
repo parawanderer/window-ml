@@ -8,7 +8,7 @@ import { IconChevron, IconEye, IconEyeOff } from "./icons";
 import { scrollToStepSeq } from "./answer-render";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { RenderDescriptor, LocateSubstep, CodeRevision } from "../contract";
+import type { RenderDescriptor, LocateSubstep, CodeRevision } from "../contract-render";
 import type { TableSource } from "../contract-fetch";
 import { codeDiff, diffStat } from "../diff";
 import { downloadBlob } from "./download";   // a table too large for the clipboard is saved as a file

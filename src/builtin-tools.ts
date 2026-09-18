@@ -4,9 +4,10 @@
 // window.ml keeps thin delegating method wrappers. Not in the default read-only
 // domTools; opt in via extraTools, gated by the approval flow.
 
-import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext, JsonSchema } from "./contract";
+import type { MlApi, MlTool, ToolResult, ToolContext, JsonSchema } from "./contract";
+import type { LocateSubstep, RenderDescriptor, VisionMemory } from "./contract-render";
 import type { ServerTool } from "./contract-server";
-import { DEFAULT_GROUNDING_RANGE } from "./contract";
+import { DEFAULT_GROUNDING_RANGE } from "./contract-render";
 import { truncate, errText, elLine, queryAll, selectorError, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed, clickSelector } from "./dom";
 import { accessibleName } from "./a11y";
 import { regionLegend, formatLegend, type Box as LegendBox } from "./legend";

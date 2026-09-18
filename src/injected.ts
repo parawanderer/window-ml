@@ -14,14 +14,16 @@ import type {
     ExtendProfile,
     JsonSchema,
     ToolCall,
-    RenderDescriptor,
-    ToolFeedback,
-    ToolRenderInput,
     TokenUsage,
     MlHistory,
 
-    DerefValue, ShotBox, VisionMemory, AnswerMedia, MlAnswer, RequestHint, RequestUse
+    DerefValue, MlAnswer, RequestHint, RequestUse
 } from "./contract";
+import type {
+    RenderDescriptor,
+    ToolFeedback,
+    ToolRenderInput, ShotBox, VisionMemory, AnswerMedia
+} from "./contract-render";
 import type {
     TableSource, TableValue,
     TablePreview
@@ -34,7 +36,8 @@ import type {
     DebugChatError,
     DebugSessionConfig
 } from "./contract-debug";
-import { DEFAULT_GROUNDING_RANGE, outputCapEscalated, hintSession, shortHash } from "./contract";
+import { outputCapEscalated, hintSession, shortHash } from "./contract";
+import { DEFAULT_GROUNDING_RANGE } from "./contract-render";
 import { detectGroundingModel } from "./contract-server";
 import { evalReadonly } from "./readonly-exec";
 import { expandPointers } from "./pointer-macro";   // `@tool:` → a real dereference call, before the dialect sees it

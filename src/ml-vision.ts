@@ -14,7 +14,8 @@
 
 import { makeBackgroundTaskPromise, hideSidebarForShot } from "./bridge";
 import { VIEWS_PARAM, targetRender, lookViews, BOX_OVER_TEXT_TIP, legendFor } from "./builtin-tools";
-import type { MlApi, ShotBox, MlPublicConfig, VisionMemory, MlTool, ToolResult } from "./contract";
+import type { MlApi, MlPublicConfig, MlTool, ToolResult } from "./contract";
+import type { ShotBox, VisionMemory } from "./contract-render";
 import { queryAll, isElement, viewportRect, classifyOverlay, errText } from "./dom";
 import { pickAccentColorForTarget, annotate } from "./locate";
 import { POINT_RE, resolvePoint, PT_LOOK_RADIUS, cropDataUrl, BOX_RE, resolveBox, MIN_SHOT_PX, markSeen } from "./util";
