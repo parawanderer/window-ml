@@ -178,6 +178,24 @@ export interface ExportSession {
     steps?: ExportStep[];
     /** The session's TIMELINE — what ran, when, and for how long. Derived; see {@link ExportEvent}. */
     events?: ExportEvent[];
+    /** Every time the session was picked up again on a DIFFERENT page, oldest first. Absent when it never
+     *  was, which is the ordinary case. A differ should read these before concluding two runs diverged:
+     *  everything before a resume describes a page that was no longer there, and the model was told so. */
+    resumes?: ExportResume[];
+}
+
+/** One resume: where the session went, where it had been, how long it sat, and what did not come with it. */
+export interface ExportResume {
+    /** The page it resumed ON. */
+    url: string;
+    /** The page it last ran on, when that was known. */
+    fromUrl?: string;
+    at: IsoTimestamp;
+    /** How long it had been idle, in milliseconds. `at` minus the previous activity. */
+    afterMs: number;
+    /** What did not survive, in the runtime's own words: live element references, the page's state object,
+     *  cached fetches, tools a page script defined, approval grants. Never empty. */
+    dropped: string[];
 }
 
 export interface ExportPage {

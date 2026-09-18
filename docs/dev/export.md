@@ -94,6 +94,19 @@ ended up, since an in-process tool can reach a VM/container over IPC unobservabl
 it must report its own measured eval time, or the span is the tool plus the network as one number — the trap
 `promptEvalMs` was added to close for model calls.
 
+**A resume is in every surface, and it is not a step.** A session picked up again on a different page
+(`session.resume`) shows as a divider in the log, a `---` + `**→ resumed on …**` in `run.md`, and
+`session.resumes[]` in `run.json`. It is a fact about the SESSION rather than something in a turn, so it is
+none of a step, a message or an answer, and it is positioned by the newest step that had already happened when
+it did — `+0.6` in the panel, so it lands past that turn's answer at `+0.5` rather than between a turn and its
+own reply. The Markdown export computes the same position through the same `inter` list the answers and says
+use, because two orderings of one seam is how the log and the export come to disagree.
+
+The list of what did NOT survive is in the panel's cursor tooltip and written out in full in `run.md`: a static
+export cannot hover, and "earlier references no longer hold" is the whole reason the seam is drawn. A differ
+should read `resumes` before concluding two runs diverged — everything before one describes a page that was no
+longer there, and the model was told so in its own transcript.
+
 **Three durations, three diagnoses (`TokenUsage`).** Ollama-native reports `load_duration`, `prompt_eval_duration`
 and `eval_duration`; we also stamp our own `genMs` wall clock on every route. `prompt_eval_duration` (→
 `promptEvalMs`) was being dropped, which made `genMs - evalMs` — rendered as "+Nms network" — charge the BOX

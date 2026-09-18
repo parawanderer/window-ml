@@ -1243,6 +1243,48 @@ test("agent run: a successful navigate step renders a page-transition divider in
     assert.match(div.querySelector(".nav-url").textContent, /example\.com\/page/);
 });
 
+test("agent run: a session picked up on another page renders a RESUME divider, and says what it lost", async () => {
+    const w = await loadSidebarWorld();
+    const t0 = Date.now();
+    await w.dispatch({ ...agentStart("res1", "read the headline"), ts: t0 });
+    await w.dispatch({ ...agentStep("res1", 1, { seq: 1, tool: "findByText", arguments: { text: "hi" }, result: "found" }), ts: t0 + 1 });
+    await w.dispatch({ ...agentResult("res1", "Done.", 1), ts: t0 + 2 });
+    await w.dispatch({
+        kind: "session-resumed", id: "res1-r1", ts: t0 + 172_800_000, save: false, session: { hash: "res1", turn: 0 },
+        url: "https://new.example/page", fromUrl: "https://old.example/", afterMs: 172_800_000,
+        dropped: ["the page's state object", "approval grants (consent is per page, and is asked again)"],
+    });
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const div = w.shadow.querySelector(".resume-divider");
+    assert.ok(div, "a resume divider renders");
+    assert.match(div.textContent, /resumed on/);
+    assert.match(div.querySelector(".nav-url").textContent, /new\.example\/page/);
+    // The gap is the point: two days is "2d", not the arithmetic.
+    assert.match(div.textContent, /after 2d/);
+    // And it is told apart from a NAVIGATION, which is a different fact about a run.
+    assert.doesNotMatch(div.textContent, /navigated to/);
+});
+
+test("agent run: two resumes are two dividers, and a repeat of one is not", async () => {
+    const w = await loadSidebarWorld();
+    const t0 = Date.now();
+    await w.dispatch({ ...agentStart("res2", "t"), ts: t0 });
+    await w.dispatch({ ...agentResult("res2", "Done.", 1), ts: t0 + 2 });
+    const note = (id, url, ts) => ({ kind: "session-resumed", id, ts, save: false, session: { hash: "res2", turn: 0 }, url, afterMs: 60_000, dropped: ["approval grants"] });
+    await w.dispatch(note("res2-r1", "https://a.example/", t0 + 60_000));
+    await w.dispatch(note("res2-r2", "https://b.example/", t0 + 120_000));
+    await w.dispatch(note("res2-r1", "https://a.example/", t0 + 60_000));   // a reconnect replays the ring
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const urls = [...w.shadow.querySelectorAll(".resume-divider .nav-url")].map((e) => e.textContent);
+    assert.equal(urls.length, 2, "one divider per resume, and a repeated note is the same resume");
+    assert.match(urls[0], /a\.example/);
+    assert.match(urls[1], /b\.example/);
+});
+
 test("agent run: a DENIED navigate does NOT render a transition divider (the page didn't change)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("nav2", "try to leave"));

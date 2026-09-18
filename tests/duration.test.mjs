@@ -20,6 +20,11 @@ test("fmtDur: the unit follows the magnitude", () => {
     // …and past an hour, the same again.
     assert.equal(fmtDur(3_600_000), "1h");
     assert.equal(fmtDur(4_500_000), "1h 15m");
+    // …and past a day. A session resumed after the weekend is "2d", never "50h": the unit has to keep following
+    // the magnitude, or the top of the scale becomes arithmetic again.
+    assert.equal(fmtDur(86_400_000), "1d");
+    assert.equal(fmtDur(180_000_000), "2d 2h");
+    assert.equal(fmtDur(172_800_000), "2d");
     // A negative extent is a clock disagreement, not a negative duration.
     assert.equal(fmtDur(-5), "0ms");
 });

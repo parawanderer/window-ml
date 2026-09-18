@@ -13,7 +13,7 @@ import type { Session, Turn, AgentStep } from "./store";
 import { turnsRun } from "./store";
 import type { TokenUsage } from "../contract-chat";
 import type {
-    ExportDocument, ExportSession, ExportBuild, ExportPage, ExportStep, ExportMessage,
+    ExportDocument, ExportSession, ExportBuild, ExportPage, ExportResume, ExportStep, ExportMessage,
     ExportOutcome, ExportTotals, ExportModelUsage, ExportStatus, IsoTimestamp,
     ExportEvent, ExportEventCost,
 } from "../export-schema";
@@ -355,6 +355,14 @@ export function sessionToJson(s: Session, prov?: ExportProvenance | string): Exp
         messages,
         steps: isAgent ? steps : undefined,
         events: timeline(s, p.includeInFlight),
+        // A resume is not a step and not a message: it is a fact about the session, and a differ that does not
+        // know the session moved page reads the divergence that follows as the model behaving differently.
+        resumes: s.resumes?.length
+            ? s.resumes.map((r) => compact<ExportResume>({
+                url: r.url, fromUrl: r.fromUrl || undefined,
+                at: iso(r.ts) || new Date(0).toISOString(), afterMs: r.afterMs, dropped: [...r.dropped],
+            }))
+            : undefined,
     });
 
     const build = buildOf(p);
