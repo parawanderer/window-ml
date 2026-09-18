@@ -46,7 +46,9 @@ message CertificateBody {
   repeated string scopes = 10;
   // May issue certificates in turn (a second device that can pair new ones). Chains are at most two long.
   bool may_pair = 6;
-  // validity, epoch milliseconds; `not_after_ms` 0 means no expiry, and a child never outlives its issuer
+  // Validity, epoch milliseconds. BOTH are required and a certificate may not be valid for longer than 90 days
+  // (`MAX_CERTIFICATE_MS`): expiry is the one revocation that needs no list, no hub and nobody online, so a device
+  // that stops being renewed stops having access. A child never outlives its issuer.
   uint64 not_before_ms = 7;
   uint64 not_after_ms = 8;
   // a name its owner chose ("phone"); display text, never proof of anything
@@ -61,4 +63,46 @@ message Challenge {
   // cannot pass along another hub's challenge and log in there as the client.
   string hub = 2;
   uint64 server_time_ms = 3;
+}
+
+// ------------------------------ pairing (docs/design/pairing.md) ------------------------------
+// A new principal has keys and nothing else: it cannot log in, because logging in needs a certificate. These carry
+// two blobs between it and a device that can issue one. The hub holds them for ten minutes, reads neither, and never
+// learns the pairing code — only SHA-256 of it, so leaked slots leak nothing usable.
+
+// A principal asking to be paired, posted by the new principal itself. The hub stores it verbatim.
+message PairingOffer {
+  // the keys the person is about to confirm the fingerprint of
+  bytes identity_key = 1;
+  bytes agreement_key = 2;
+  // what it is asking to be (a runtime, a client, a box connector)
+  Role role = 3;
+  // what to call it in the pairing UI, chosen by whoever is pairing it
+  string label = 4;
+  // when it made the offer, so a UI can say how old it is
+  uint64 offered_at_ms = 5;
+}
+
+// What a device that can issue certificates puts back: a certificate for the offered keys, sealed to the agreement
+// key the offer carried, so only the principal that made the offer can read it.
+message PairingAnswer {
+  // An HPKE seal to the agreement key the offer carried, of a `PairedWith`. Sealed because it carries the account's
+  // channel key, which is a secret: a hub that could read a slot would otherwise learn the names of every channel the
+  // account uses. The certificate inside is public, but there is no reason to send it in the clear alongside a key
+  // that is not.
+  bytes sealed = 1;
+}
+
+// What a device is given when it is paired, inside the seal: everything it needs to be a member of the account and
+// nothing about any other member.
+message PairedWith {
+  // The chain for the keys the offer carried, leaf first, up to but not including the account root: one certificate
+  // when the root issued it, two when a device holding `may_pair` did. A device that could only be sent one could
+  // only be paired by the root, which is the case losing a phone is supposed to survive.
+  repeated Certificate chain = 1;
+  // the account root to expect, so the new principal can verify the chain it was just given
+  bytes account_root = 2;
+  // The account's channel key. Channel names are an HMAC under it, so a device cannot subscribe to or publish on the
+  // account's streams without it, and the hub never sees it.
+  bytes channel_key = 3;
 }

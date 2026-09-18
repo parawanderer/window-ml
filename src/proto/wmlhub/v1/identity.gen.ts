@@ -53,7 +53,11 @@ export interface CertificateBody {
   scopes: string[];
   /** May issue certificates in turn (a second device that can pair new ones). Chains are at most two long. */
   mayPair: boolean;
-  /** validity, epoch milliseconds; `not_after_ms` 0 means no expiry, and a child never outlives its issuer */
+  /**
+   * Validity, epoch milliseconds. BOTH are required and a certificate may not be valid for longer than 90 days
+   * (`MAX_CERTIFICATE_MS`): expiry is the one revocation that needs no list, no hub and nobody online, so a device
+   * that stops being renewed stops having access. A child never outlives its issuer.
+   */
   notBeforeMs: number;
   notAfterMs: number;
   /** a name its owner chose ("phone"); display text, never proof of anything */
@@ -70,6 +74,53 @@ export interface Challenge {
    */
   hub: string;
   serverTimeMs: number;
+}
+
+/** A principal asking to be paired, posted by the new principal itself. The hub stores it verbatim. */
+export interface PairingOffer {
+  /** the keys the person is about to confirm the fingerprint of */
+  identityKey: Uint8Array;
+  agreementKey: Uint8Array;
+  /** what it is asking to be (a runtime, a client, a box connector) */
+  role: Role;
+  /** what to call it in the pairing UI, chosen by whoever is pairing it */
+  label: string;
+  /** when it made the offer, so a UI can say how old it is */
+  offeredAtMs: number;
+}
+
+/**
+ * What a device that can issue certificates puts back: a certificate for the offered keys, sealed to the agreement
+ * key the offer carried, so only the principal that made the offer can read it.
+ */
+export interface PairingAnswer {
+  /**
+   * An HPKE seal to the agreement key the offer carried, of a `PairedWith`. Sealed because it carries the account's
+   * channel key, which is a secret: a hub that could read a slot would otherwise learn the names of every channel the
+   * account uses. The certificate inside is public, but there is no reason to send it in the clear alongside a key
+   * that is not.
+   */
+  sealed: Uint8Array;
+}
+
+/**
+ * What a device is given when it is paired, inside the seal: everything it needs to be a member of the account and
+ * nothing about any other member.
+ */
+export interface PairedWith {
+  /**
+   * The chain for the keys the offer carried, leaf first, up to but not including the account root: one certificate
+   * when the root issued it, two when a device holding `may_pair` did. A device that could only be sent one could
+   * only be paired by the root, which is the case losing a phone is supposed to survive.
+   */
+  chain: Certificate[];
+  /** the account root to expect, so the new principal can verify the chain it was just given */
+  accountRoot: Uint8Array;
+  /**
+   * The account's channel key. Channel names are an HMAC under it, so a device cannot subscribe to or publish on the
+   * account's streams without it, and the hub never sees it.
+   */
+  channelKey: Uint8Array;
 }
 
 function createBaseCertificate(): Certificate {
@@ -375,6 +426,243 @@ export const Challenge: MessageFns<Challenge> = {
     message.nonce = object.nonce ?? new Uint8Array(0);
     message.hub = object.hub ?? "";
     message.serverTimeMs = object.serverTimeMs ?? 0;
+    return message;
+  },
+};
+
+function createBasePairingOffer(): PairingOffer {
+  return { identityKey: new Uint8Array(0), agreementKey: new Uint8Array(0), role: 0, label: "", offeredAtMs: 0 };
+}
+
+export const PairingOffer: MessageFns<PairingOffer> = {
+  encode(message: PairingOffer, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.identityKey.length !== 0) {
+      writer.uint32(10).bytes(message.identityKey);
+    }
+    if (message.agreementKey.length !== 0) {
+      writer.uint32(18).bytes(message.agreementKey);
+    }
+    if (message.role !== 0) {
+      writer.uint32(24).int32(message.role);
+    }
+    if (message.label !== "") {
+      writer.uint32(34).string(message.label);
+    }
+    if (message.offeredAtMs !== 0) {
+      writer.uint32(40).uint64(message.offeredAtMs);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): PairingOffer {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBasePairingOffer();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.identityKey = reader.bytes();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.agreementKey = reader.bytes();
+            continue;
+          }
+          case 3: {
+            if (tag !== 24) {
+              break;
+            }
+
+            message.role = reader.int32() as any;
+            continue;
+          }
+          case 4: {
+            if (tag !== 34) {
+              break;
+            }
+
+            message.label = reader.string();
+            continue;
+          }
+          case 5: {
+            if (tag !== 40) {
+              break;
+            }
+
+            message.offeredAtMs = longToNumber(reader.uint64());
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  create<I extends Exact<DeepPartial<PairingOffer>, I>>(base?: I): PairingOffer {
+    return PairingOffer.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<PairingOffer>, I>>(object: I): PairingOffer {
+    const message = createBasePairingOffer();
+    message.identityKey = object.identityKey ?? new Uint8Array(0);
+    message.agreementKey = object.agreementKey ?? new Uint8Array(0);
+    message.role = object.role ?? 0;
+    message.label = object.label ?? "";
+    message.offeredAtMs = object.offeredAtMs ?? 0;
+    return message;
+  },
+};
+
+function createBasePairingAnswer(): PairingAnswer {
+  return { sealed: new Uint8Array(0) };
+}
+
+export const PairingAnswer: MessageFns<PairingAnswer> = {
+  encode(message: PairingAnswer, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.sealed.length !== 0) {
+      writer.uint32(10).bytes(message.sealed);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): PairingAnswer {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBasePairingAnswer();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.sealed = reader.bytes();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  create<I extends Exact<DeepPartial<PairingAnswer>, I>>(base?: I): PairingAnswer {
+    return PairingAnswer.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<PairingAnswer>, I>>(object: I): PairingAnswer {
+    const message = createBasePairingAnswer();
+    message.sealed = object.sealed ?? new Uint8Array(0);
+    return message;
+  },
+};
+
+function createBasePairedWith(): PairedWith {
+  return { chain: [], accountRoot: new Uint8Array(0), channelKey: new Uint8Array(0) };
+}
+
+export const PairedWith: MessageFns<PairedWith> = {
+  encode(message: PairedWith, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    for (const v of message.chain) {
+      Certificate.encode(v!, writer.uint32(10).fork()).join();
+    }
+    if (message.accountRoot.length !== 0) {
+      writer.uint32(18).bytes(message.accountRoot);
+    }
+    if (message.channelKey.length !== 0) {
+      writer.uint32(26).bytes(message.channelKey);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): PairedWith {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBasePairedWith();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.chain.push(Certificate.decode(reader, reader.uint32()));
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.accountRoot = reader.bytes();
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.channelKey = reader.bytes();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  create<I extends Exact<DeepPartial<PairedWith>, I>>(base?: I): PairedWith {
+    return PairedWith.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<PairedWith>, I>>(object: I): PairedWith {
+    const message = createBasePairedWith();
+    message.chain = object.chain?.map((e) => Certificate.fromPartial(e)) || [];
+    message.accountRoot = object.accountRoot ?? new Uint8Array(0);
+    message.channelKey = object.channelKey ?? new Uint8Array(0);
     return message;
   },
 };

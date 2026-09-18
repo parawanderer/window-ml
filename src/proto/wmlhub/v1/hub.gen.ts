@@ -45,7 +45,49 @@ export interface Frame {
     | Error
     | undefined;
   /** defined in identity.proto */
-  challenge?: Challenge | undefined;
+  challenge?:
+    | Challenge
+    | undefined;
+  /** pairing (docs/design/pairing.md): the only frames a peer may send before it has a certificate */
+  pairOffer?: PairOffer | undefined;
+  pairFetch?: PairFetch | undefined;
+  pairAnswer?: PairAnswer | undefined;
+  paired?: Paired | undefined;
+}
+
+/**
+ * A principal with no certificate yet -> hub, its first frame instead of a Hello. The hub answers `Paired` with
+ * nothing in it (the offer is held), or `Error`.
+ */
+export interface PairOffer {
+  /** SHA-256 of the pairing code the person is carrying; the hub never sees the code */
+  codeHash: Uint8Array;
+  /** an encoded PairingOffer, which the hub stores and does not read */
+  offer: Uint8Array;
+}
+
+/**
+ * A principal that HAS a certificate -> hub: the offer waiting under this code, so the person can be shown its
+ * fingerprint. Answered with `Paired` carrying the offer, or `Error{UNAVAILABLE}` when there is no such slot.
+ */
+export interface PairFetch {
+  codeHash: Uint8Array;
+}
+
+/**
+ * A principal that has a certificate -> hub: the answer for that slot, once the person has confirmed. Only the first
+ * is taken.
+ */
+export interface PairAnswer {
+  codeHash: Uint8Array;
+  /** an encoded PairingAnswer, sealed to the offered agreement key; the hub stores it and does not read it */
+  answer: Uint8Array;
+}
+
+/** hub -> peer: whichever of the two blobs this peer asked for. Both empty means "held, nothing yet". */
+export interface Paired {
+  offer: Uint8Array;
+  answer: Uint8Array;
 }
 
 /** principal -> hub, the first frame a principal sends, answering the hub's Challenge. */
@@ -183,6 +225,15 @@ export interface Presence {
   principal: Uint8Array;
   role: Role;
   online: boolean;
+  /**
+   * The chain this principal presented, leaf first, on a presence that says it came ONLINE; empty when it went away.
+   *
+   * Certificates are public — they are what the hub verifies with public keys only — and a publisher needs the leaf's
+   * agreement key to wrap a stream key to a device. Without this, a runtime would know a phone is online and have no
+   * way to seal anything to it. A subscriber verifies the chain itself against the account root it already holds;
+   * the hub passing it along is a convenience, not a claim.
+   */
+  chain: Certificate[];
 }
 
 export interface Ping {
@@ -238,6 +289,10 @@ function createBaseFrame(): Frame {
     pong: undefined,
     error: undefined,
     challenge: undefined,
+    pairOffer: undefined,
+    pairFetch: undefined,
+    pairAnswer: undefined,
+    paired: undefined,
   };
 }
 
@@ -278,6 +333,18 @@ export const Frame: MessageFns<Frame> = {
     }
     if (message.challenge !== undefined) {
       Challenge.encode(message.challenge, writer.uint32(98).fork()).join();
+    }
+    if (message.pairOffer !== undefined) {
+      PairOffer.encode(message.pairOffer, writer.uint32(106).fork()).join();
+    }
+    if (message.pairFetch !== undefined) {
+      PairFetch.encode(message.pairFetch, writer.uint32(114).fork()).join();
+    }
+    if (message.pairAnswer !== undefined) {
+      PairAnswer.encode(message.pairAnswer, writer.uint32(122).fork()).join();
+    }
+    if (message.paired !== undefined) {
+      Paired.encode(message.paired, writer.uint32(130).fork()).join();
     }
     return writer;
   },
@@ -391,6 +458,38 @@ export const Frame: MessageFns<Frame> = {
             message.challenge = Challenge.decode(reader, reader.uint32());
             continue;
           }
+          case 13: {
+            if (tag !== 106) {
+              break;
+            }
+
+            message.pairOffer = PairOffer.decode(reader, reader.uint32());
+            continue;
+          }
+          case 14: {
+            if (tag !== 114) {
+              break;
+            }
+
+            message.pairFetch = PairFetch.decode(reader, reader.uint32());
+            continue;
+          }
+          case 15: {
+            if (tag !== 122) {
+              break;
+            }
+
+            message.pairAnswer = PairAnswer.decode(reader, reader.uint32());
+            continue;
+          }
+          case 16: {
+            if (tag !== 130) {
+              break;
+            }
+
+            message.paired = Paired.decode(reader, reader.uint32());
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -434,6 +533,274 @@ export const Frame: MessageFns<Frame> = {
     message.challenge = (object.challenge !== undefined && object.challenge !== null)
       ? Challenge.fromPartial(object.challenge)
       : undefined;
+    message.pairOffer = (object.pairOffer !== undefined && object.pairOffer !== null)
+      ? PairOffer.fromPartial(object.pairOffer)
+      : undefined;
+    message.pairFetch = (object.pairFetch !== undefined && object.pairFetch !== null)
+      ? PairFetch.fromPartial(object.pairFetch)
+      : undefined;
+    message.pairAnswer = (object.pairAnswer !== undefined && object.pairAnswer !== null)
+      ? PairAnswer.fromPartial(object.pairAnswer)
+      : undefined;
+    message.paired = (object.paired !== undefined && object.paired !== null)
+      ? Paired.fromPartial(object.paired)
+      : undefined;
+    return message;
+  },
+};
+
+function createBasePairOffer(): PairOffer {
+  return { codeHash: new Uint8Array(0), offer: new Uint8Array(0) };
+}
+
+export const PairOffer: MessageFns<PairOffer> = {
+  encode(message: PairOffer, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.codeHash.length !== 0) {
+      writer.uint32(10).bytes(message.codeHash);
+    }
+    if (message.offer.length !== 0) {
+      writer.uint32(18).bytes(message.offer);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): PairOffer {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBasePairOffer();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.codeHash = reader.bytes();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.offer = reader.bytes();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  create<I extends Exact<DeepPartial<PairOffer>, I>>(base?: I): PairOffer {
+    return PairOffer.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<PairOffer>, I>>(object: I): PairOffer {
+    const message = createBasePairOffer();
+    message.codeHash = object.codeHash ?? new Uint8Array(0);
+    message.offer = object.offer ?? new Uint8Array(0);
+    return message;
+  },
+};
+
+function createBasePairFetch(): PairFetch {
+  return { codeHash: new Uint8Array(0) };
+}
+
+export const PairFetch: MessageFns<PairFetch> = {
+  encode(message: PairFetch, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.codeHash.length !== 0) {
+      writer.uint32(10).bytes(message.codeHash);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): PairFetch {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBasePairFetch();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.codeHash = reader.bytes();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  create<I extends Exact<DeepPartial<PairFetch>, I>>(base?: I): PairFetch {
+    return PairFetch.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<PairFetch>, I>>(object: I): PairFetch {
+    const message = createBasePairFetch();
+    message.codeHash = object.codeHash ?? new Uint8Array(0);
+    return message;
+  },
+};
+
+function createBasePairAnswer(): PairAnswer {
+  return { codeHash: new Uint8Array(0), answer: new Uint8Array(0) };
+}
+
+export const PairAnswer: MessageFns<PairAnswer> = {
+  encode(message: PairAnswer, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.codeHash.length !== 0) {
+      writer.uint32(10).bytes(message.codeHash);
+    }
+    if (message.answer.length !== 0) {
+      writer.uint32(18).bytes(message.answer);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): PairAnswer {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBasePairAnswer();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.codeHash = reader.bytes();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.answer = reader.bytes();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  create<I extends Exact<DeepPartial<PairAnswer>, I>>(base?: I): PairAnswer {
+    return PairAnswer.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<PairAnswer>, I>>(object: I): PairAnswer {
+    const message = createBasePairAnswer();
+    message.codeHash = object.codeHash ?? new Uint8Array(0);
+    message.answer = object.answer ?? new Uint8Array(0);
+    return message;
+  },
+};
+
+function createBasePaired(): Paired {
+  return { offer: new Uint8Array(0), answer: new Uint8Array(0) };
+}
+
+export const Paired: MessageFns<Paired> = {
+  encode(message: Paired, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.offer.length !== 0) {
+      writer.uint32(10).bytes(message.offer);
+    }
+    if (message.answer.length !== 0) {
+      writer.uint32(18).bytes(message.answer);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): Paired {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBasePaired();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.offer = reader.bytes();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.answer = reader.bytes();
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  create<I extends Exact<DeepPartial<Paired>, I>>(base?: I): Paired {
+    return Paired.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<Paired>, I>>(object: I): Paired {
+    const message = createBasePaired();
+    message.offer = object.offer ?? new Uint8Array(0);
+    message.answer = object.answer ?? new Uint8Array(0);
     return message;
   },
 };
@@ -1399,7 +1766,7 @@ export const Gap: MessageFns<Gap> = {
 };
 
 function createBasePresence(): Presence {
-  return { principal: new Uint8Array(0), role: 0, online: false };
+  return { principal: new Uint8Array(0), role: 0, online: false, chain: [] };
 }
 
 export const Presence: MessageFns<Presence> = {
@@ -1412,6 +1779,9 @@ export const Presence: MessageFns<Presence> = {
     }
     if (message.online !== false) {
       writer.uint32(24).bool(message.online);
+    }
+    for (const v of message.chain) {
+      Certificate.encode(v!, writer.uint32(34).fork()).join();
     }
     return writer;
   },
@@ -1453,6 +1823,14 @@ export const Presence: MessageFns<Presence> = {
             message.online = reader.bool();
             continue;
           }
+          case 4: {
+            if (tag !== 34) {
+              break;
+            }
+
+            message.chain.push(Certificate.decode(reader, reader.uint32()));
+            continue;
+          }
         }
         if ((tag & 7) === 4 || tag === 0) {
           break;
@@ -1473,6 +1851,7 @@ export const Presence: MessageFns<Presence> = {
     message.principal = object.principal ?? new Uint8Array(0);
     message.role = object.role ?? 0;
     message.online = object.online ?? false;
+    message.chain = object.chain?.map((e) => Certificate.fromPartial(e)) || [];
     return message;
   },
 };

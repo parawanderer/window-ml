@@ -24,7 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const { generateAgreementKey } = await import("../src/hub/hpke.ts");
-const { generateIdentity, issueCertificate, principalId, SCOPE } = await import("../src/hub/keys.ts");
+const { generateIdentity, issueCertificate, principalId, verifyChain, SCOPE } = await import("../src/hub/keys.ts");
 const { StreamKey, StreamReader, ChannelKey, wrapKey, sealFrame } = await import("../src/hub/seal.ts");
 const { HubClient, ConnectError } = await import("../src/hub/client.ts");
 const { Kind, Role } = await import("../src/hub/wire.ts");
@@ -272,4 +272,38 @@ test("a consumer that stops reading is told what it dropped", async () => {
     assert.equal(first.count, 5);
     assert.equal((await client.next()).kind, "presence");
     assert.equal((await client.next()).kind, "presence", "and the rest are still there");
+});
+
+test("presence carries the chain, which is the only way a peer can seal anything back", { skip: !HAVE_HUB && NO_HUB, timeout: 30_000 }, async () => {
+    // The protocol carries it for one reason, written into the schema: without it a peer knows another is there and
+    // has no way to reach it — the leaf's agreement key is what a command is sealed to and what a stream key is
+    // wrapped to. The client used to drop the field, so a runtime could see a phone arrive and not answer it.
+    const hub = await startHub();
+    try {
+        const root = await generateIdentity();
+        const runtime = await device(root, Role.ROLE_RUNTIME, []);
+        const phone = await device(root, Role.ROLE_CLIENT, [SCOPE.view, SCOPE.drive]);
+        const common = { url: hub.url, hubName: HUB, accountRoot: root.publicKey };
+        const rt = await HubClient.connect({ ...common, ...runtime, role: Role.ROLE_RUNTIME });
+        const ph = await HubClient.connect({ ...common, ...phone, role: Role.ROLE_CLIENT });
+
+        const seen = await until(rt, "the phone's presence", (e) =>
+            e.kind === "presence" && e.online && [...e.principal].join() === [...phone.principal].join() ? e : null,
+        );
+        assert.ok(seen.chain.length > 0, "a principal coming ONLINE presents its chain");
+
+        // What the chain is FOR: the leaf's agreement key, which is what the runtime seals to. The hub passing it
+        // along is a convenience and not a claim, so it is verified against the account root this side already holds.
+        const verified = await verifyChain(root.publicKey, seen.chain, Date.now());
+        assert.deepEqual([...verified.leaf.agreementKey], [...phone.agreement.publicKey]);
+        assert.deepEqual([...verified.leaf.subject], [...phone.identity.publicKey]);
+
+        // And the label, which is where a hub-fronted runtime's display name comes from.
+        assert.equal(typeof verified.leaf.label, "string");
+
+        rt.close();
+        ph.close();
+    } finally {
+        hub.stop();
+    }
 });
