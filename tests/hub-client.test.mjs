@@ -5,11 +5,16 @@
 // implementations disagree about — the transcript, the frame layout, a limit — fails here rather than in a browser.
 //
 // It SELF-SKIPS when the binary is absent, the way the CPython tests skip without their wheels: CI here has no Rust
-// toolchain, and a test that cannot run should say so rather than fail. Build it with:
+// toolchain, and a test that cannot run should say so rather than fail.
 //
-//   cd ../window-ml-hub && cargo build --release -p wmlhub
+// The hub is PINNED to a tag (`HUB_TAG`), and the binary is built from YOUR OWN clone of it:
 //
-// or point WMLHUB_BIN at one.
+//   git clone --branch v0.1.0 git@github.com:parawanderer/window-ml-hub.git ../window-ml-hub-v0.1.0
+//   cd ../window-ml-hub-v0.1.0 && cargo build --release -p wmlhub
+//
+// or point WMLHUB_BIN at one. The default deliberately does NOT look in a plain `../window-ml-hub`: that is somebody's
+// WORKING TREE, on whatever branch they are on this hour, so a test here could pass or fail because of what they are
+// in the middle of — and the failure would read as ours. A tag is the artifact; there is no published binary.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -25,12 +30,17 @@ const { HubClient, ConnectError } = await import("../src/hub/client.ts");
 const { Kind, Role } = await import("../src/hub/wire.ts");
 
 const HUB = "hub.test";
+/** The hub release this client is checked against. Both changes coming to the hub are additive, so a client pinned
+ *  here keeps working against a later one; move this when a later tag is needed, not when one exists. */
+const HUB_TAG = "v0.1.0";
 const BIN =
     process.env.WMLHUB_BIN ??
-    ["../../window-ml-hub/target/release/wmlhub", "../../window-ml-hub/target/debug/wmlhub"]
+    [`../../window-ml-hub-${HUB_TAG}/target/release/wmlhub`, `../../window-ml-hub-${HUB_TAG}/target/debug/wmlhub`]
         .map((p) => new URL(p, import.meta.url).pathname)
         .find((p) => existsSync(p));
 const HAVE_HUB = !!BIN && existsSync(BIN);
+// A skip that does not say what is missing is a test nobody ever turns on.
+const NO_HUB = `no wmlhub ${HUB_TAG} binary: clone the tag and \`cargo build --release -p wmlhub\`, or set WMLHUB_BIN`;
 
 /** A port nothing is listening on. Racy in principle; the hub is started immediately after. */
 const freePort = () =>
@@ -124,7 +134,7 @@ async function until(client, what, pick) {
     assert.fail(`waiting for ${what}: thirty events went by without it`);
 }
 
-test("the client drives a real hub: a command, its result, and an encrypted stream", { skip: !HAVE_HUB && "wmlhub binary not built", timeout: 30_000 }, async () => {
+test("the client drives a real hub: a command, its result, and an encrypted stream", { skip: !HAVE_HUB && NO_HUB, timeout: 30_000 }, async () => {
     const hub = await startHub();
     try {
         const root = await generateIdentity();
@@ -191,7 +201,7 @@ test("the client drives a real hub: a command, its result, and an encrypted stre
     }
 });
 
-test("a hub that names itself something else is refused before anything is signed", { skip: !HAVE_HUB && "wmlhub binary not built", timeout: 30_000 }, async () => {
+test("a hub that names itself something else is refused before anything is signed", { skip: !HAVE_HUB && NO_HUB, timeout: 30_000 }, async () => {
     const hub = await startHub();
     try {
         const root = await generateIdentity();
@@ -205,7 +215,7 @@ test("a hub that names itself something else is refused before anything is signe
     }
 });
 
-test("a certificate from another root is refused by the hub", { skip: !HAVE_HUB && "wmlhub binary not built", timeout: 30_000 }, async () => {
+test("a certificate from another root is refused by the hub", { skip: !HAVE_HUB && NO_HUB, timeout: 30_000 }, async () => {
     const hub = await startHub();
     try {
         const [root, other] = [await generateIdentity(), await generateIdentity()];
@@ -219,7 +229,7 @@ test("a certificate from another root is refused by the hub", { skip: !HAVE_HUB 
     }
 });
 
-test("every next() after the socket closes resolves with the close, not never", { skip: !HAVE_HUB && "wmlhub binary not built", timeout: 30_000 }, async () => {
+test("every next() after the socket closes resolves with the close, not never", { skip: !HAVE_HUB && NO_HUB, timeout: 30_000 }, async () => {
     // A promise that never settles is how a reconnect loop hangs, and a hang there reads like a service worker
     // eviction for an hour before it reads like this.
     const hub = await startHub();

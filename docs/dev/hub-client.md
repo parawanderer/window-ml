@@ -78,8 +78,16 @@ point the UI offers to pair, the same way every other capability in this codebas
    so build it first, or point `WMLHUB_BIN` at one:
 
    ```bash
-   cd ../window-ml-hub && cargo build --release -p wmlhub
+   git clone --branch v0.1.0 git@github.com:parawanderer/window-ml-hub.git ../window-ml-hub-v0.1.0
+   cd ../window-ml-hub-v0.1.0 && cargo build --release -p wmlhub
    ```
+
+   **The tag is the artifact, and the clone is your own.** `HUB_TAG` in that file pins which hub release this client
+   is checked against. The default path deliberately does not look in a plain `../window-ml-hub`: that is somebody's
+   WORKING TREE, on whatever branch they are on this hour, so a test here could pass or fail because of what another
+   session is in the middle of, and the failure would read as ours. There is no published binary or image. Both
+   changes coming to the hub are additive, so a client pinned to a tag keeps working against a later hub; move
+   `HUB_TAG` when a later one is NEEDED, not when one exists.
 
 4. `scripts/gen-hub-vectors.mjs` writes the vectors for the other direction, which the Rust side opens. Regenerate
    them whenever the format changes:

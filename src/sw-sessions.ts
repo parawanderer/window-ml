@@ -14,8 +14,34 @@ import { SessionStore, indexedDbBackend, type SessionHistory } from "./session-s
 import { bgRuns, trackRun, untrackRun } from "./sw-runs";
 import { fetchLLM } from "./sw-llm";
 
-/** This browser's runtime id until the extension has a key to derive one from (docs/spec/SESSION_CONTRACT.md). */
+/**
+ * What this browser is called before it has a key to derive an id from (docs/spec/SESSION_CONTRACT.md), and the
+ * ALIAS it answers to afterwards.
+ *
+ * It stops being this browser's id the moment the browser is paired: over a hub the same browser is its principal,
+ * a SHA-256 of its identity key, and a client that saw `"local"` from one host and a hash from the other would list
+ * one browser twice — dedupe is by id, so two ids never collide and no priority rule ever fires.
+ *
+ * So the id is READ, never assumed (`localRuntimeId`), and this constant remains something the runtime answers to.
+ * A page open across a pairing, a bookmarked `#s=local:<hash>`, and a session key kept on disk all keep working;
+ * without the alias they would each become a session on a runtime that no longer exists.
+ */
 export const LOCAL_RUNTIME = "local";
+
+/**
+ * This browser's runtime id: its principal once it is paired, and {@link LOCAL_RUNTIME} until then.
+ *
+ * A function rather than a constant so that nothing in the codebase can hold the assumption that this browser is
+ * called `"local"` — the assumption is invisible once it is spread, and the hub connector is where it would bite.
+ */
+export function localRuntimeId(): string {
+    return LOCAL_RUNTIME;
+}
+
+/** Is `id` this browser, by either name? `"local"` stays an alias for whatever this browser's id currently is. */
+export function isLocalRuntime(id: unknown): boolean {
+    return id === localRuntimeId() || id === LOCAL_RUNTIME;
+}
 
 /** A new value per worker life, so a stream position from an evicted worker never resumes. */
 const spawn = (() => {
@@ -34,7 +60,7 @@ const TAB_READY_MS = 15_000, TAB_POLL_MS = 250;
 /** The local runtime as the chat page sees it. Capabilities are added as each command lands. */
 function localRuntime(): RuntimeInfo {
     return {
-        id: LOCAL_RUNTIME, name: "This browser", kind: "browser", online: true, contractVersion: SESSION_CONTRACT_VERSION,
+        id: localRuntimeId(), name: "This browser", kind: "browser", online: true, contractVersion: SESSION_CONTRACT_VERSION,
         capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
@@ -74,7 +100,11 @@ export function configureSessionCommands(run: RunDeps): void {
         now: () => Date.now(),
     });
     handler = createCommandHandler({
-        runtime: LOCAL_RUNTIME,
+        runtime: localRuntimeId(),
+        ownsRuntime: isLocalRuntime,
+        // ONE description, shared with the runtime list, so a client that asks cannot be told something the list
+        // does not already say.
+        describe: () => { const { kind, contractVersion, capabilities } = localRuntime(); return { kind, contractVersion, capabilities }; },
         index: sessionServer.index,
         removeFromIndex: (id) => { sessionServer.remove(id); },
         listTabs: async () => (await chrome.tabs.query({})).filter((t) => /^https?:/.test(t.url || "")).map(tabInfo).filter((t): t is TabInfo => !!t),
@@ -176,7 +206,7 @@ export const sessionStore = (() => {
 })();
 
 /** The index and its server, for this worker's life. */
-export const sessionServer = new SessionServer(new SessionIndex({ runtime: LOCAL_RUNTIME, spawn }), {
+export const sessionServer = new SessionServer(new SessionIndex({ runtime: localRuntimeId(), spawn }), {
     runtime: localRuntime,
     command: runCommand,
     ...(sessionStore ? { stored: (hash: string) => sessionStore.read(hash) } : {}),

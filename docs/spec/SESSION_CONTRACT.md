@@ -23,7 +23,11 @@ run the same code. The hub encodes the same shapes as its `Command`, `SessionEve
   within its runtime. A client keys everything by the pair, never by a bare hash.
 - **A runtime id is derived from the runtime's public key**, so it is unique across every account and every hub. A
   client that merges several hosts, or several accounts, cannot collide two runtimes. The local host reports the
-  extension's key-derived id once it has one, and `local` until then.
+  extension's key-derived id once it has one, and `local` until then — and it goes on ANSWERING to `local`
+  afterwards. Two hosts reporting the same browser under two ids would not conflict, they would simply list it
+  twice, because dedupe is by id and two ids never collide; and a page open across the change, a bookmarked
+  `local:<hash>` and a key kept on disk would each become a session on a runtime that never existed. A runtime
+  answers to the ids it has had; it reports the one it has now.
 - **A principal is a key** with a `kind`: `local` (this browser's own surfaces), `device` (a person's paired device),
   `agent` (an agent acting as a client), `runtime`. Its `name` is a label, never proof. A session records who
   started it (`startedBy`, absent when unknown, such as a console call).
@@ -158,6 +162,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `chat.start` | drive | `chat` | nothing background-hosted |
 | `agent.start`: on a tab, a blank tab, or (reserved) headless | drive | `agent`, `tabs`, `headless` | `startRun` → the page → `START_RUN` |
 | `session.resume`: pick a saved session up on another page, by target | drive | `persistence`, `tabs`, and `agent` or `chat` by the session's kind | nothing |
+| `runtime.info`: what this runtime IS — its kind, contract version, capabilities and its own clock | view | | nothing |
 | `tabs.list` | drive | `tabs` | nothing |
 | `tab.screenshot`: on demand, size-capped | screen | `screenshots` | `CAPTURE_TAB` |
 | `page.highlight`: a selector, a canvas token, or clear | drive | `highlight` | `__mlHighlight` → `ML_HL_REMOTE` |
@@ -166,6 +171,14 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `device.renew`: a fresh certificate for a device that still holds a valid one | admin | `devices` | nothing |
 | `device.revoke`: unpair, and rotate the stream keys it held | admin | `devices` | nothing |
 | `device.scopes`: narrow or widen what a device may do; `approve`, `control` and `admin` are refused with `forbidden` | admin | `devices` | nothing |
+
+**`runtime.info` exists because a TRANSPORT cannot answer it.** A hub carries a runtime's identity and liveness and
+deliberately nothing else: the moment it holds a claim about what a runtime can do, a client is trusting it for
+something other than routing. So `RuntimeInfo.kind`, `contractVersion` and `capabilities` come from the runtime, over
+the same authenticated channel as every other command, and a client asks when a runtime appears and again when it
+reconnects — a runtime that restarted may have been upgraded under it. `nowMs` is the runtime's own clock at the
+moment it answered, which is where `clockOffsetMs` comes from and why the round trip bounds its error. A hub's own
+`server_time_ms` is the offset from the HUB, which is a different quantity and not the one a session timestamp needs.
 
 Sessions started by a command are **saved unless `ephemeral: true`**, per the chat page's persistence decision.
 

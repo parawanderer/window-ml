@@ -245,6 +245,8 @@ export class FakeHost implements SessionHost {
                 return caps.highlight ? ok({}) : fail("unsupported", "no page to highlight on");
             case "tabs.list":
                 return caps.tabs ? ok({ tabs: DEMO_TABS }) : fail("unsupported", "this runtime has no tabs");
+            case "runtime.info":
+                return ok({ kind: rt.kind, contractVersion: rt.contractVersion, capabilities: caps, nowMs: Date.now() });
             // Starting a session: the demo world mints one and answers the first turn, so the new-session form is
             // exercised here at phone width before it is exercised against a browser.
             case "chat.start": {

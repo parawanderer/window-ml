@@ -307,6 +307,17 @@ export type Command =
      * says which in the `session-resumed` event that opens the new turn.
      */
     | { type: "session.resume"; session: SessionId; target: AgentTarget; idempotencyKey?: IdempotencyKey }
+    /**
+     * What a runtime IS, asked of the runtime itself.
+     *
+     * A transport cannot answer this. A hub carries identity and liveness and deliberately nothing else — the moment
+     * it holds a claim about what a runtime can do, a client is trusting it for something other than routing — so the
+     * four fields here have to come from the runtime, over the same authenticated channel as every other command.
+     *
+     * A client asks once when a runtime appears and again when it reconnects, because a runtime that restarted may
+     * have been upgraded under it.
+     */
+    | { type: "runtime.info"; runtime: RuntimeId }
     | { type: "tabs.list"; runtime: RuntimeId }
     /** The devices paired with this runtime's account, as a person manages them. Needs `admin`, which is granted at
      *  the runtime and never passed on. */
@@ -349,6 +360,7 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "chat.start": "drive",
     "agent.start": "drive",
     "session.resume": "drive",
+    "runtime.info": "view",
     "tabs.list": "drive",
     "device.list": "admin",
     "device.renew": "admin",
@@ -449,6 +461,9 @@ export interface CommandResultData {
     "agent.start": { session: SessionId };
     /** the same session, because resuming is not starting a new one */
     "session.resume": { session: SessionId };
+    /** What a transport cannot know about a runtime, from the runtime. `nowMs` is its OWN clock at the moment it
+     *  answered, which is how `clockOffsetMs` is estimated: the round trip bounds the error. */
+    "runtime.info": { kind: RuntimeInfo["kind"]; contractVersion: number; capabilities: RuntimeCapabilities; nowMs: number };
     "tabs.list": { tabs: TabInfo[] };
     "device.list": { devices: DeviceInfo[] };
     /** the new window, so a list can say when it next needs attention without asking again */
