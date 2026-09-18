@@ -100,6 +100,42 @@ export async function identityFromSeed(seed: Bytes, publicKey: Bytes): Promise<I
     return identity;
 }
 
+/** What a certificate says about the principal it names. */
+export interface CertSpec {
+    /** the subject's Ed25519 identity public key */
+    subject: Bytes;
+    /** the subject's X25519 agreement public key, bound to it by this certificate's signature */
+    agreementKey: Bytes;
+    role: Role;
+    scopes: string[];
+    /** may this subject issue certificates of its own (never more than it holds)? */
+    mayPair?: boolean;
+    notBeforeMs?: number;
+    /** 0 means no expiry; a child may never outlive its issuer */
+    notAfterMs?: number;
+    /** what a person calls this device */
+    label?: string;
+}
+
+/**
+ * Issue a certificate: the account root, or a delegate the root allowed to pair, saying who a principal is and what
+ * it may do. This is the browser half of pairing; the hub verifies it with public keys only and holds no secret.
+ */
+export async function issueCertificate(issuer: Identity, spec: CertSpec): Promise<Certificate> {
+    const body = CertificateBody.encode({
+        subject: spec.subject,
+        agreementKey: spec.agreementKey,
+        issuer: issuer.publicKey,
+        role: spec.role,
+        scopes: spec.scopes,
+        mayPair: spec.mayPair ?? false,
+        notBeforeMs: spec.notBeforeMs ?? 0,
+        notAfterMs: spec.notAfterMs ?? 0,
+        label: spec.label ?? "",
+    }).finish();
+    return { body, signature: await sign(issuer, LABEL.certificate, bytes(body)) };
+}
+
 /** Sign `bytes` under `label`. */
 export async function sign(identity: Identity, label: string, bytes: Bytes): Promise<Bytes> {
     const signed = concat(text.encode(label), bytes);
