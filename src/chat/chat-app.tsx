@@ -12,17 +12,18 @@ import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { AgentBadge } from "../sidebar/reply";
-import { IconBench, IconCamera, IconChevron, IconSearch, IconVram } from "../sidebar/icons";
+import { IconBench, IconCamera, IconChevron, IconClose, IconSave, IconSearch, IconVram } from "../sidebar/icons";
 import { services } from "../sidebar/services";
 import { ContextMenu, CursorTipLayer, Dot, Hash, Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view, type Status } from "../sidebar/store";
 import { truncate } from "../sidebar/format";
+import { STEP_JUMP_EVENT } from "../sidebar/step-scroll";
 import type { ChatStore } from "./chat-store";
 import { mayCommand, speaksOurContract } from "./grants";
 import { NewSession, ResumeSession, StartMenu, resumableHere, type StartKind } from "./new-session";
 import { ListToggle, ViewToggle, calm, foldedRuntimes, listOpen, pane, setPane, toggleRuntime } from "./view-mode";
 import type { ChatExtras } from "./extras";
-import { lightboxSrc } from "./platform";
+import { lightboxSrc, type ClientPlatform } from "./platform";
 
 /** Below this width the page shows one pane at a time. */
 export const NARROW_PX = 760;
@@ -306,6 +307,13 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
         const el = scroller.current;
         if (el) stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     };
+    // A citation sending the reader UP the transcript stops it following the bottom, or the step it opens grows
+    // the content, the observer above pins back down, and the jump is overwritten before it lands.
+    useEffect(() => {
+        const off = () => { stuck.current = false; };
+        document.addEventListener(STEP_JUMP_EVENT, off);
+        return () => document.removeEventListener(STEP_JUMP_EVENT, off);
+    }, []);
 
     const [resuming, setResuming] = useState(false);
     const canDrive = !!rt && rt.online && mayCommand(rt, "session.send", { key: sessionKey, summary }, store.host.self);
@@ -367,7 +375,7 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
                     : <button class="chat-resume" onClick={() => setResuming(true)}>
                         The page this run was on is gone<span class="chat-resume-go">Resume it somewhere ›</span>
                     </button>
-            ) : s && canDrive ? <Composer s={s} />
+            ) : s && canDrive ? <Composer s={s} multiline />
                 : s && rt ? <div class="chat-readonly">{!rt.online ? `${rt.name} is offline. You can read this session, and send to it once it is back.` : `This device may watch sessions on ${rt.name}, not drive them.`}</div>
                     : null}
         </main>
@@ -426,8 +434,20 @@ function Notices({ store }: { store: ChatStore }) {
     );
 }
 
-/** The web adapter's full-size image view. */
-function Lightbox() {
+/** A `data:` / `blob:` image as a Blob, for saving it. Null when it is neither, or the encoding is broken. */
+async function imageBlob(src: string): Promise<Blob | null> {
+    try { return await (await fetch(src)).blob(); } catch { return null; }
+}
+
+/**
+ * The web adapter's full-size image view — and the one place a screenshot or a plot can be KEPT.
+ *
+ * A picture a run produced is the sort of thing you want out of the page (into a message, a ticket, a notebook),
+ * and until now the only ways were the whole-run export or a right-click, which on a `blob:` URL a page minted
+ * gives a file named after nothing. Saving goes through the platform, because what a save IS differs by device:
+ * a download on a desktop, the share sheet on a phone.
+ */
+function Lightbox({ platform }: { platform: ClientPlatform }) {
     const src = lightboxSrc.value;
     useEffect(() => {
         if (!src) return;
@@ -436,15 +456,29 @@ function Lightbox() {
         return () => removeEventListener("keydown", onKey);
     }, [src]);
     if (!src) return null;
+    const save = async (): Promise<void> => {
+        const blob = await imageBlob(src);
+        if (!blob) return;
+        const ext = (/^data:image\/([a-z0-9.+-]+)/i.exec(src)?.[1] || blob.type.split("/")[1] || "png").replace("svg+xml", "svg");
+        platform.saveFile(`window-ml-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.${ext}`, blob);
+    };
     return (
         <div class="chat-lightbox" role="dialog" aria-label="Image" onClick={() => (lightboxSrc.value = null)}>
+            <div class="chat-lightbox-bar" onClick={(e) => e.stopPropagation()}>
+                <button class="tt hbtn" aria-label="Save this image" onClick={() => void save()}>
+                    <IconSave /><span class="tt-pop left" role="tooltip">Save this image</span>
+                </button>
+                <button class="tt hbtn" aria-label="Close" onClick={() => (lightboxSrc.value = null)}>
+                    <IconClose /><span class="tt-pop left" role="tooltip">Close (Esc)</span>
+                </button>
+            </div>
             <img src={src} alt="" />
         </div>
     );
 }
 
 /** The chat page. */
-export function ChatApp({ store, extras }: { store: ChatStore; extras?: ChatExtras }) {
+export function ChatApp({ store, platform, extras }: { store: ChatStore; platform: ClientPlatform; extras?: ChatExtras }) {
     const narrow = useNarrow();
     useHashRoute();
     const v = view.value;
@@ -487,7 +521,7 @@ export function ChatApp({ store, extras }: { store: ChatStore; extras?: ChatExtr
             {aside ? <aside class="chat-pane" aria-label="The box">{aside}</aside> : null}
             {bench ? <div class="chat-bench">{bench}</div> : null}
             <Notices store={store} />
-            <Lightbox />
+            <Lightbox platform={platform} />
         </div>
     );
 }

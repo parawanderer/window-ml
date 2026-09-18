@@ -78,4 +78,4 @@ applyCodePrefs();
 installViewPrefs(extensionPlatform.prefs);
 try { installTooltipLayer(document); } catch { /* no DOM */ }
 store.start();
-render(<ChatApp store={store} extras={extras} />, document.getElementById("root") || document.body);
+render(<ChatApp store={store} platform={extensionPlatform} extras={extras} />, document.getElementById("root") || document.body);

@@ -4,7 +4,7 @@
 // Extracted from app.tsx; leans on the shared primitives in ./ui-kit.
 import type { ComponentChildren } from "preact";
 import { GLYPH, RESOLVED_LABEL, rungLabel, rungMeta } from "./fetch-ladder";
-import { IconChevron, IconEye, IconEyeOff } from "./icons";
+import { IconCheck, IconChevron, IconCopy, IconEye, IconEyeOff, IconRows, IconSummary } from "./icons";
 import { scrollToStepSeq } from "./step-scroll";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
@@ -26,7 +26,7 @@ import { JsonNode, JT_CUT, JT_SEEN } from "./json-tree";
 import { parseLooseJson } from "../json-repair";
 import { notesByLine } from "./annotate";
 import {
-    openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText, stepKey, displaySource, cursorTipOn, PointerChip, TipText,
+    openCtxMenu, copyText, ClickableImg, Code, CopyBtn, SheetChip, inlineText, stepKey, displaySource, cursorTipOn, PointerChip, TipText,
     highlightToken, highlightEl, clearHighlight, tokenHover, pickedHover,
 } from "./ui-kit";
 
@@ -418,11 +418,18 @@ export function PyDfTable({ columns, rows, noCollapse, rowCount, dtypes, delimit
                 scrolled out of reach exactly when the table is big enough to want it. So the action moves to
                 where an action on a read surface belongs, the RIGHT-CLICK, through the panel's own menu
                 (`openCtxMenu`) — an iframe cannot put items in the browser's one. */}
+            {/* ICONS, with what the word said moved into the tip. Three labelled buttons is a sentence of chrome
+                over every table — and the copy's label is the longest of them precisely because it carries the
+                useful part ("copy all 300 rows"), which a tooltip holds just as well and a row above the grid does
+                not. The accessible NAME keeps every word: that is what a screen reader and a keyboard user get,
+                and what the tests assert against. */}
             {noCollapse ? null : (
                 <div class="r-df-bar">
-                    <button class="r-df-btn" onClick={() => setCollapsed(v => !v)}>{collapsed ? "▸ show table" : "▾ hide table"}</button>
-                    {!collapsed ? <button class="r-df-btn" onClick={() => { void copyCsv(); }} {...cursorTipOn(copyTip)}>{copyLabel}</button> : null}
-                    {!collapsed ? <button class="r-df-btn" onClick={() => setMode((m) => (m === "summary" ? "rows" : "summary"))} {...cursorTipOn(modeTip)}>{mode === "summary" ? "rows" : "summary"}</button> : null}
+                    <button class="tt r-df-btn" aria-label={collapsed ? "Show the table" : "Hide the table"} onClick={() => setCollapsed(v => !v)}>
+                        {collapsed ? <IconEyeOff /> : <IconEye />}<span class="tt-pop left" role="tooltip">{collapsed ? "Show the table" : "Hide the table"}</span>
+                    </button>
+                    {!collapsed ? <button class="tt r-df-btn" aria-label={copyLabel} onClick={() => { void copyCsv(); }} {...cursorTipOn(`${copyLabel} — ${copyTip}`)}>{copied ? <IconCheck /> : <IconCopy />}</button> : null}
+                    {!collapsed ? <button class="tt r-df-btn" aria-label={mode === "summary" ? "rows" : "summary"} onClick={() => setMode((m) => (m === "summary" ? "rows" : "summary"))} {...cursorTipOn(modeTip)}>{mode === "summary" ? <IconRows /> : <IconSummary />}</button> : null}
                     {/* HOW IT WAS READ, which the model is told and the reader was not: the shape, the
                         delimiter we GUESSED (a wrong guess shows as mangled columns, so it should be legible
                         rather than inferred), and whether the column names were decided rather than read. */}
@@ -558,8 +565,12 @@ function CodeTools({ ctx, lang, src }: { ctx: CodeCtx; lang: string; src: string
                     <span>▶ bench</span>
                     <span class="tt-pop wrap left" role="tooltip">Open this script in the Python bench, where you can edit it and run it against the same sandbox. Replaces whatever is in the bench now.</span>
                 </button>
-                : <button class="tt code-tool" onClick={() => { void copyText(src); say("copied"); }}>
-                    <span>copy</span>
+                /* The ICON rather than the word: it sits beside `explain`, which is a verb you have to read, and
+                   two words in a row over a code block read as a menu. The tooltip says the same sentence it
+                   always did, and it is the same glyph the raw view's copy uses — one copy affordance, one
+                   shape, wherever it turns up. */
+                : <button class="tt code-tool" aria-label="Copy this code" onClick={() => { void copyText(src); say("copied"); }}>
+                    <IconCopy />
                     <span class="tt-pop wrap left" role="tooltip">Copy the source exactly as shown here — reflowed for reading, with the same tokens that ran.</span>
                 </button>}
         </div>
@@ -1609,7 +1620,12 @@ export function ValueOut({ text, fill, seen }: { text: string; fill?: boolean; /
     const cut = `… cut here${dropped != null ? `: ${dropped.toLocaleString("en-US")} more characters were not kept` : ""}`;
     const tip = asTree ? "Show the value as text"
         : `Show the value as a collapsible JSON tree${loose.repaired ? ". The text was cut off, so the tree ends at the last value that arrived whole." : ""}`;
-    const corner = <button class={`code-tool${asTree ? " on" : ""}`} aria-pressed={asTree} {...cursorTipOn(tip)} onClick={() => setAsTree(v => !v)}>{asTree ? "text" : "tree"}</button>;
+    // COPY sits beside the view toggle, because a value you are looking at is a value you may want out — and it
+    // copies the TEXT whichever view is showing, since a tree is a way of reading the same thing.
+    const corner = <>
+        <CopyBtn text={text} tip="copy the value" />
+        <button class={`code-tool${asTree ? " on" : ""}`} aria-pressed={asTree} {...cursorTipOn(tip)} onClick={() => setAsTree(v => !v)}>{asTree ? "text" : "tree"}</button>
+    </>;
     return (
         <OutputCell fill={fill} corner={corner}>
             {tree ? <div class="jt-value"><JsonNode v={tree.value} defaultOpen cut={cut} unsent={tree.unsent} /></div> : asText}

@@ -23,4 +23,4 @@ applyCodePrefs();
 installViewPrefs(webPlatform.prefs);
 try { installTooltipLayer(document); } catch { /* no DOM */ }
 store.start();
-render(<ChatApp store={store} />, document.getElementById("root") || document.body);
+render(<ChatApp store={store} platform={webPlatform} />, document.getElementById("root") || document.body);

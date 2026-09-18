@@ -220,6 +220,23 @@ test("an answer that cites its own steps renders the tool's output, not a retypi
     await page.close();
 });
 
+test("a citation takes you to the step on the FIRST click, not the second", async () => {
+    const { page, errors } = await open(DESKTOP, "#s=laptop%3A5e6f7a80");
+    const scroller = page.locator(".chat-transcript");
+    await expect(page.locator(".tok-link")).toBeVisible();
+    // The transcript follows its newest event, so it opens at the bottom, which is the case this regressed in:
+    // clicking a citation opened the step, the step's growth fired the resize handler, and the pin to the bottom
+    // overwrote the scroll that was already under way. The second click found the step open, nothing grew, and it
+    // worked — which is what made it look like a flaky animation rather than a fight between two behaviours.
+    const bottom = await scroller.evaluate((el) => el.scrollTop);
+    expect(bottom).toBeGreaterThan(50);
+    await page.locator(".tok-link").click();
+    await expect.poll(() => scroller.evaluate((el) => el.scrollTop)).toBeLessThan(bottom - 40);
+    await expect(page.locator('[data-astep-seq="1"]')).toHaveClass(/open/);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("desktop: the list filters, folds a runtime away, and marks what moved while you were elsewhere", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
     const rows = page.locator(".chat-row");

@@ -10,7 +10,7 @@ import type { AnswerSegment } from "../answer-tokens";
 import type { Session, AgentStep } from "./store";
 import { pretty, markdown, inlineMarkdown } from "./format";
 import { IconChevron, IconEye, IconCheck } from "./icons";
-import { ClickableImg, Code, SheetChip } from "./ui-kit";
+import { ClickableImg, Code, SheetChip, cursorTipOn } from "./ui-kit";
 import { RenderPanel, PyDfTable, CodeRender } from "./render-panel";
 import type { CodeCtx } from "./render-panel";
 import { scrollToStepSeq } from "./step-scroll";
@@ -124,12 +124,19 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
     // "does this carry its own behaviour", which is what these roles and the tabindex say. Except a READ surface that is
     // focusable only so Ctrl+F can be scoped to it (a table's body, an output cell's scroller): clicking in one is still
     // clicking the render.
+    // The PATH the event took, not `closest` from its target: a control inside the embed may have re-rendered by
+    // the time this bubbles — Preact's re-render lands in a microtask, and the event loop drains microtasks between
+    // one listener and the next — and a DETACHED target has no ancestors left to walk. `closest` then finds
+    // nothing, the click reads as inert, and pressing `hide table` yanked the reader up to the source step.
+    // `composedPath()` is captured at dispatch, so it still holds the button that was pressed.
     const onEmbedClick = (e: MouseEvent) => {
-        const t = e.target as HTMLElement | null;
-        const hit = t?.closest?.('button, a, input, select, textarea, summary, label, [role="button"], [tabindex]:not(.r-df-body):not(.r-outscroll), th, .r-df-resize');
-        // …stopping AT the embed itself, which is a role=button with a tabindex of its own — without this the
-        // walk finds the wrapper for every click, including the inert ones, and the jump never fires at all.
-        if (hit && hit !== e.currentTarget) return;
+        for (const n of e.composedPath()) {
+            // …stopping AT the embed itself, which is a role=button with a tabindex of its own — past that, every
+            // click would find the wrapper and the jump would never fire at all.
+            if (n === e.currentTarget) break;
+            const el = n as Element;
+            if (typeof el?.matches === "function" && el.matches('button, a, input, select, textarea, summary, label, [role="button"], [tabindex]:not(.r-df-body):not(.r-outscroll), th, .r-df-resize')) return;
+        }
         jump();
     };
     const provenance = `Click to see the exact operation that produced this — step ${step.localStep ?? step.step} · ${step.tool || "tool"}`;
@@ -137,7 +144,10 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
     // (that's the `![…]` embed form below). `label` is the link text.
     if (!seg.embed) {
         const linkLabel = seg.label && seg.label.trim() ? seg.label.trim() : `@tool:${seg.id}`;
-        return <a class="tok-link" role="button" tabIndex={0} title={provenance}
+        // The PANEL's tooltip, not the browser's: a native `title` waits about a second before it says anything,
+        // which on something you are hovering to decide whether to CLICK is long enough to have given up on
+        // (AGENTS.md §the panel's tooltip). The embed form beside it has used ours all along.
+        return <a class="tok-link" role="button" tabIndex={0} {...cursorTipOn(provenance)}
             onClick={(e) => { e.preventDefault(); jump(); }} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>{linkLabel}</a>;
     }
     const d = seg.slot === "in" ? step.renderIn : step.renderOut;

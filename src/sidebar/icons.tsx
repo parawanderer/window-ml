@@ -100,6 +100,24 @@ export const IconMenu = () => (
         <path d="M4 6h16M4 12h16M4 18h16" />
     </svg>
 );
+/** Three bars of unequal length — a column-by-column SUMMARY of a table, as against its rows. */
+export const IconSummary = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <path d="M5 7h14M5 12h9M5 17h5" />
+    </svg>
+);
+/** A grid — a table's ROWS, as against a summary of them. */
+export const IconRows = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3.5" y="5" width="17" height="14" rx="2" /><path d="M3.5 10h17M3.5 14.5h17M10 10v9" />
+    </svg>
+);
+/** A tray with an arrow into it — keep this file. */
+export const IconSave = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 4v10m0 0 4-4m-4 4-4-4" /><path d="M5 17v1.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V17" />
+    </svg>
+);
 /** A magnifier — find one thing in a list long enough that scanning it has stopped working. */
 export const IconSearch = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
@@ -109,8 +127,8 @@ export const IconSearch = () => (
 /** A camera — capture what a tab looks like RIGHT NOW (the chat page's peek at the page a run is driving). */
 export const IconCamera = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2.2l1-1.8h6.6l1 1.8h2.2A1.5 1.5 0 0 1 19 8.5v8A1.5 1.5 0 0 1 17.5 18h-11A1.5 1.5 0 0 1 5 16.5v-8" />
-        <circle cx="12" cy="12.3" r="3.1" />
+        <path d="M2.5 8.6A2.1 2.1 0 0 1 4.6 6.5h2.6l1.2-2.3h7.2l1.2 2.3h2.6a2.1 2.1 0 0 1 2.1 2.1v9.2a2.1 2.1 0 0 1-2.1 2.1H4.6a2.1 2.1 0 0 1-2.1-2.1z" />
+        <circle cx="12" cy="13.1" r="3.9" />
     </svg>
 );
 /** Vision OFF — the composer's per-call native-vision toggle, struck through. */

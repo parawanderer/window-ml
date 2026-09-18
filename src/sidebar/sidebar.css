@@ -872,6 +872,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .composer-row { display: flex; align-items: center; gap: 6px; }
 .cinput { flex: 1; min-width: 0; background: var(--panel); color: var(--fg); border: 1px solid var(--border);
   border-radius: 6px; padding: 6px 9px; font: inherit; font-size: 0.9em; }
+/* The composer's MULTILINE form (the chat page passes `multiline`): it sizes itself from its content, so no
+   dragging, and it scrolls once it hits the cap the component enforces. */
+textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inherit; }
 .cinput::placeholder { color: var(--fg-faint); }
 .cinput:disabled { cursor: not-allowed; }
 /* Both composer buttons (attach + send) are the same outlined icon button. */
@@ -1879,7 +1882,9 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 /* The reply's own markdown body gets breathing room (the header sits tight to the
    edge; the prose shouldn't). Scoped to the direct child so thinking / agent-thought
    / tool-output markdown elsewhere is unaffected. */
-.msg.asst > .md { padding: 3px 4px 2px; }
+/* The reply's body wrapper (see `asst-body` in reply.tsx) sits between the message and its prose, so this reaches
+   through it. */
+.msg.asst > .asst-body > .md { padding: 3px 4px 2px; }
 .md p { margin: 0 0 6px; }
 .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 8px 0 4px; line-height: 1.25; }
 /* em (relative to --fs) so content scales with the font-size setting */

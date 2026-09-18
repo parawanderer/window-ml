@@ -491,6 +491,16 @@ Three rules it follows:
   hide the timestamps, the copy button, the counters and the hash with no gesture that brings any of them back, so
   a phone gets them dimmed and a mouse gets them on demand.
 
+**What calm does one level in**, all of it CSS over the same document:
+
+| | |
+| --- | --- |
+| a tool step | no chevron (the row is the button and its cursor says so), no `In:` / `Out:` labels, no `rendered \| raw` switch, no `Out` at all while it waits on a person, no rail while it is collapsed, room between what ran and what came back, and the pointer and the clock on one line |
+| a step opening | animates from `height: 0` to `auto` (needs `interpolate-size`), so a long body does not shove the page down in one frame. The close is not animated: the component unmounts the body, and keeping every step's body mounted for a whole run to animate its removal is an expensive way to buy a fifth of a second |
+| a dataframe | its controls appear when the pointer is on the table, bottom right — the top left is where the column names are |
+| a citation | the tip belongs to the CAPTION, not the whole embed: an embed is something you read, and a tip that fires anywhere over it explains the frame on top of the contents. The link form drops the accent colour for the citation green under ordinary text |
+| a reply | copy and the timestamp move UNDER it (they are what you want after reading, not on the first line), the status dot goes unless it is saying something other than "this worked", and the collapse control moves into the gutter |
+
 **The list pane hides** (Gemini's move): the pane stays mounted and slides, so its scroll position survives, the
 grid column animates rather than the body jumping a column's width, and `visibility: hidden` takes it out of the
 tab order while it is off screen. Only on a wide layout — a phone shows one pane at a time either way, so there the

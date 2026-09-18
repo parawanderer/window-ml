@@ -168,9 +168,9 @@ html, body, #root { height: 100%; }
    Every rule here is presentational. Nothing is removed from the document, every disclosure still opens, and the
    toggle brings all of it back, which is the standing rule about a run's raw view being quiet but never gone. */
 .chat.calm { --fs: 15px; --read: 42rem; }
-.chat.calm .chat-transcript { padding: 18px 18px 2px; line-height: 1.65; }
+.chat.calm .chat-transcript { padding: 18px 18px 2px; line-height: 1.7; }
 .chat.calm:not(.narrow) .chat-transcript > div { max-width: var(--read); }
-.chat.calm .md p { margin: 0 0 .85em; }
+.chat.calm .md p { margin: 0 0 1.05em; }
 .chat.calm .md h1, .chat.calm .md h2, .chat.calm .md h3 { margin: 1.1em 0 .4em; }
 .chat.calm .md li { margin: .2em 0; }
 
@@ -193,7 +193,7 @@ html, body, #root { height: 100%; }
    affordance that only a mouse can summon is one a phone does not have at all. */
 .chat.calm .msg.asst > .mrow { opacity: .55; margin-bottom: 1px; }
 .chat.calm .msg.asst { padding: 0; margin-bottom: 18px; }
-.chat.calm .msg.asst > .md { padding: 0; }
+.chat.calm .msg.asst .asst-body > .md { padding: 0; }
 
 /* An agent turn's box: the border earns its keep in a 360px panel, where a turn and its steps need telling apart at
    a glance. At page width the left rail on the steps already says it, and eight bordered cards down a column do
@@ -206,8 +206,11 @@ html, body, #root { height: 100%; }
 .chat.calm .block { background: transparent; border: none; margin-bottom: 4px; opacity: .6; }
 .chat.calm .block:has(.tbody) .block-head { border-bottom: none; }
 
-/* The header: a session's identity is its title, and the hash is how a DEVELOPER names it. */
-.chat.calm .chat-head .hash { opacity: .5; }
+/* The header: a session's identity is its title, and the hash is how a DEVELOPER names it — so here it is simply
+   not drawn. Fading it left its box holding a gap in the header for something nobody could see, which is worse
+   than either showing it or not: the eye reads the space as a missing control. It is in the URL, in the panel and
+   in every export. */
+.chat.calm .chat-head .hash { display: none; }
 
 /* The composer as a page's composer rather than a panel's: one rounded field on the canvas, aligned to the same
    measure as the prose above it, with the token counters kept for whoever hovers it. */
@@ -241,7 +244,6 @@ html, body, #root { height: 100%; }
 @media (hover: hover) and (pointer: fine) {
     .chat.calm .msg.user .mrow,
     .chat.calm .msg.asst > .mrow,
-    .chat.calm .chat-head .hash,
     .chat.calm .composer-foot,
     .chat.calm .chat-row .time,
     .chat.calm .block { opacity: 0; transition: opacity .15s ease; }
@@ -251,12 +253,11 @@ html, body, #root { height: 100%; }
     .chat.calm .msg.asst.streaming > .mrow,
     .chat.calm .msg.asst.err > .mrow,
     .chat.calm .msg.asst.capped > .mrow { opacity: 1; }
-    .chat.calm .chat-head:hover .hash, .chat.calm .chat-head:focus-within .hash { opacity: .8; }
     .chat.calm .composer:hover .composer-foot, .chat.calm .composer:focus-within .composer-foot { opacity: .8; }
     .chat.calm .chat-row:hover .time, .chat.calm .chat-row.active .time { opacity: .8; }
     .chat.calm .block:hover, .chat.calm .block:focus-within { opacity: 1; }
     @media (prefers-reduced-motion: reduce) {
-        .chat.calm .msg.user .mrow, .chat.calm .msg.asst > .mrow, .chat.calm .chat-head .hash,
+        .chat.calm .msg.user .mrow, .chat.calm .msg.asst > .mrow,
         .chat.calm .composer-foot, .chat.calm .chat-row .time, .chat.calm .block { transition: none; }
     }
 }
@@ -394,4 +395,153 @@ html, body, #root { height: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
     .chat:not(.list-hidden) .chat-list .chat-row, .chat:not(.list-hidden) .chat-list .chat-rt { animation: none; }
+}
+
+/* ===================== WHAT IS LEFT INSIDE A STEP, AND AROUND AN ANSWER =====================
+   The same question as the rest of calm, asked one level in: of the controls drawn on every step, every table
+   and every reply, which does a person reading actually need in front of them? */
+
+/* THE CHEVRON GOES. The row is a button whose whole width is the target and whose cursor already says so, and a
+   step that is open says it by having a body. A disclosure triangle beside a tool's name is a third statement of
+   the same thing. */
+.chat.calm .astep-head > .tri { display: none; }
+
+/* ROOM BETWEEN WHAT RAN AND WHAT CAME BACK. Two `details` stacked with no gap put a result hard against the
+   code that produced it, which reads as one block with a rule through it rather than as a question and answer. */
+.chat.calm .astep-body .io + .io { margin-top: 12px; }
+
+/* THE POINTER AND THE CLOCK SHARE A LINE. `ran in 1.6s` and `@tool:a1b2c3d` are both the step's own footnotes,
+   and stacked they cost two rows and an awkward gap between them for one short sentence's worth of fact. */
+.chat.calm .astep-body .r-ranfor { display: inline-block; }
+.chat.calm .astep-token { display: inline-flex; float: right; margin-top: -1.6em; }
+
+/* A TABLE'S CONTROLS BELONG TO THE TABLE, so they appear when the pointer is on it instead of holding a row above
+   it at all times. UNDER the grid, right-aligned: over it they cover the last row, and the top left is where the
+   column names are — a control there is a control over the thing you are trying to read. The strip they sit in is
+   RESERVED whether or not they are showing, so a table does not change height under the pointer. */
+.chat.calm .r-df { position: relative; }
+.chat.calm .r-df > .r-df-bar {
+    position: absolute; top: 100%; right: 4px; z-index: 2; margin: 0; padding: 3px;
+    border-radius: 9px; background: color-mix(in srgb, var(--panel) 86%, transparent);
+    backdrop-filter: blur(6px); box-shadow: 0 2px 12px rgb(0 0 0 / .35);
+}
+@media (hover: hover) and (pointer: fine) {
+    .chat.calm .r-df > .r-df-bar { opacity: 0; transition: opacity .15s ease; }
+    .chat.calm .r-df:hover > .r-df-bar, .chat.calm .r-df:focus-within > .r-df-bar { opacity: 1; }
+    @media (prefers-reduced-motion: reduce) { .chat.calm .r-df > .r-df-bar { transition: none; } }
+}
+
+/* A CITATION'S TOOLTIP BELONGS TO ITS CAPTION. An embed is something you READ — a table, a plot — and a tip that
+   fires anywhere over it is an explanation of the frame appearing on top of the contents. The caption is the
+   frame's own text, so that is what carries the explanation; the block itself stays clickable. */
+.chat.calm .tok-block:hover > .tok-tip { opacity: 0; }
+.chat.calm .tok-anno { cursor: help; }
+.chat.calm .tok-anno:hover ~ .tok-tip, .chat.calm .tok-block:focus-visible > .tok-tip { opacity: 1; }
+/* …and it appears AT the caption, not at the top of the embed. The tip is anchored rather than cursor-following
+   (the shared component draws it, and the panel's own tests pin that), so the least confusing thing it can do is
+   sit against the one element that raises it — a tip that opens half a screen from the pointer reads as belonging
+   to something else. */
+.chat.calm .tok-block > .tok-tip { bottom: auto; top: calc(100% + 4px); left: 8px; }
+/* The green wash over the whole embed goes with the tip, for the same reason: it fires while you are reading a
+   table, and the rail already says where the transclusion starts and stops. It moves to the caption, which is the
+   part that is now behaving like a control. */
+.chat.calm .answer-rendered .tok-block:hover { background: none; }
+.chat.calm .tok-anno:hover { background: color-mix(in srgb, var(--ok) 12%, transparent); border-radius: 3px; }
+
+/* THE LINK FORM in accent-blue on a near-black ground is the loudest thing in a paragraph, for the quietest of
+   the citation forms — the one that shows you nothing and takes you somewhere. It reads as text with the
+   citation colour under it instead, which is what the other two forms already say. */
+.chat.calm .tok-link { color: var(--fg); text-decoration: underline dotted var(--ok); text-underline-offset: 3px; }
+.chat.calm .tok-link:hover { text-decoration-style: solid; }
+
+/* THE REPLY'S PROVENANCE MOVES UNDER IT. Copying an answer and knowing when it landed are things you want AFTER
+   reading it, and they were sitting on the line your eye lands on first. The status dot goes entirely unless it
+   is saying something other than "this worked", which is what the answer itself says. The collapse control stays,
+   to the LEFT of the reply where it does not cost a row. */
+.chat.calm .msg.asst { display: flex; flex-direction: column; position: relative; }
+.chat.calm .msg.asst > .mrow { order: 2; margin: 6px 0 0; }
+/* The dot rides inside its own tooltip wrapper, so hiding the dot alone would leave the shell holding a gap —
+   the same shape the panel's focus mode has to handle for the model pill. */
+.chat.calm .msg.asst:not(.err):not(.capped):not(.streaming) > .mrow > .tt:has(> .dot) { display: none; }
+/* Out in the GUTTER, which only a wide layout has: at a phone's width there is no margin to put it in, so it
+   stays in the row it moved to. */
+.chat.calm:not(.narrow) .msg.asst > .mrow > .who-toggle { position: absolute; top: 1px; left: -20px; margin: 0; }
+
+/* A STEP OPENS RATHER THAN APPEARING. A tool body arriving at full height in one frame shoves everything under it
+   down the page, and on a long step that is most of the screen moving at once.
+   `height: 0 → auto` needs `interpolate-size`, because `auto` is a keyword and keywords do not interpolate
+   without it. `overflow` is set INSIDE the keyframes so it applies for the animation and reverts after — a
+   permanently clipped body would cut off the tooltips its own controls raise.
+   The CLOSE is not animated: the body is unmounted by the component the instant it closes, and keeping every
+   step's body mounted for the whole of a run — tables, highlighted source, screenshots — to animate its removal
+   would be an expensive way to buy a fifth of a second. */
+.chat.calm { interpolate-size: allow-keywords; }
+@keyframes chat-step-open {
+    from { height: 0; opacity: .3; overflow: hidden; }
+    to { height: auto; opacity: 1; overflow: hidden; }
+}
+@keyframes chat-step-close {
+    from { height: auto; opacity: 1; overflow: hidden; }
+    to { height: 0; opacity: .3; overflow: hidden; }
+}
+/* `--astep-close-ms` is how this surface tells the component how long to keep the body mounted on the way out —
+   the component reads it and waits, and a surface that sets nothing closes in the same tick it always has. */
+.chat.calm .astep-body { animation: chat-step-open .22s cubic-bezier(.4, 0, .2, 1); --astep-close-ms: 200; }
+.chat.calm .astep-body.closing { animation: chat-step-close .2s cubic-bezier(.4, 0, .2, 1) forwards; }
+@media (prefers-reduced-motion: reduce) {
+    .chat.calm .astep-body { animation: none; --astep-close-ms: 0; }
+    .chat.calm .astep-body.closing { animation: none; }
+}
+
+/* The full-size image's own controls, top right of the overlay and out of the picture's way. Icon buttons with
+   the panel's tooltips: the overlay is a viewer, and two words of chrome across its corner is a caption nobody
+   asked for. */
+.chat-lightbox-bar {
+    position: fixed; top: calc(10px + env(safe-area-inset-top)); right: 12px; z-index: 61;
+    display: flex; align-items: center; gap: 4px; padding: 4px;
+    background: color-mix(in srgb, var(--panel) 80%, transparent); border-radius: 10px; backdrop-filter: blur(6px);
+}
+.chat-lightbox-bar .hbtn { color: var(--fg); min-width: 34px; min-height: 34px; }
+
+/* ROOM. Everything above is about what is on the page; this is about how tightly it is packed. A transcript read
+   at arm's length wants more air between one thing and the next than a panel docked beside a page does, and the
+   step rows were the worst of it — a run read as a dense block rather than as a sequence of things that happened. */
+.chat.calm .aturn { margin-bottom: 26px; }
+/* COLLAPSED steps are a LIST — one line each, and a list is read as a group, so they sit close together. An OPEN
+   one is a thing you are reading, and it gets the room that goes with that. */
+.chat.calm .astep.tool { margin: 3px 0; }
+.chat.calm .astep.tool.open { margin: 16px 0; padding-bottom: 4px; }
+.chat.calm .astep-body { padding: 6px 0 10px 4px; }
+.chat.calm .aturn-prose { margin: 6px 0 14px; }
+.chat.calm .msg.user { margin-bottom: 22px; }
+/* …and room ABOVE it: a reply starting immediately under your own bubble reads as one block of text
+   with a shape in the middle, rather than as an answer to something. */
+.chat.calm .msg.asst { margin-bottom: 26px; margin-top: 14px; }
+
+/* Code is set a shade smaller than the prose here. The panel's `.code` is 0.92em of a 12px base — proportionate
+   beside 12px text and heavy beside 15px, where a monospace face of nearly the same size as the prose stops
+   reading as an inset and starts competing with it. */
+.chat.calm .code, .chat.calm .md pre.code, .chat.calm .jt-value { font-size: .84em; }
+
+/* The same rule for a CODE block's own tools (explain, copy, bench): they belong to the block, so they arrive when
+   the pointer is in it. They are positioned over its top-right corner already, so nothing moves when they do. */
+@media (hover: hover) and (pointer: fine) {
+    .chat.calm .code-tools { opacity: 0; transition: opacity .15s ease; }
+    .chat.calm .r-code:hover .code-tools, .chat.calm .io-body:hover .code-tools,
+    .chat.calm .code-tools:focus-within { opacity: 1; }
+    @media (prefers-reduced-motion: reduce) { .chat.calm .code-tools { transition: none; } }
+}
+
+/* THE REPLY COLLAPSES AND COMES BACK, rather than snapping between a screenful and a line. The wrapper shrinks
+   with the prose still in it, the swap happens at zero height where nothing can be seen to jump, and it grows
+   again around whichever side arrived. `--asst-close-ms` is how this surface tells the component how long to hold
+   each half; the panel sets none and swaps in one frame, as it always has. */
+.chat.calm .asst-body { --asst-close-ms: 170; }
+@keyframes chat-asst-out { from { height: auto; opacity: 1; } to { height: 0; opacity: 0; } }
+@keyframes chat-asst-in { from { height: 0; opacity: 0; } to { height: auto; opacity: 1; } }
+.chat.calm .asst-body.closing { animation: chat-asst-out .17s cubic-bezier(.4, 0, 1, 1) both; overflow: hidden; }
+.chat.calm .asst-body.opening { animation: chat-asst-in .17s cubic-bezier(0, 0, .2, 1) both; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) {
+    .chat.calm .asst-body { --asst-close-ms: 0; }
+    .chat.calm .asst-body.closing, .chat.calm .asst-body.opening { animation: none; }
 }

@@ -3,7 +3,7 @@
 // app.tsx; a leaf view layer over ui-kit + answer-render (no agent-detail / HUD deps, so agent-detail
 // can import ReplyBubble without a cycle).
 import { services, bareHash } from "./services";
-import { useState } from "preact/hooks";
+import { useRef, useState } from "preact/hooks";
 import type { ExtendProfile } from "../contract-chat";
 import { view } from "./store";
 import type { Session, Turn, Status, AgentStep } from "./store";
@@ -76,6 +76,30 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
 }) {
     const [showRaw, setShowRaw] = useState(!!initialRaw);
     const [collapsed, setCollapsed] = useState(false);
+    // COLLAPSING, on a surface that animates it. The two halves of the swap never exist at once, so the wrapper
+    // below is what shrinks, swaps and grows: `closing` runs it down, the state flips, `opening` runs it back up.
+    // How long each half lasts is the SURFACE's business and it says so in CSS (`--asst-close-ms`); a surface that
+    // sets nothing gets the instant swap it always had, with no timer and no extra frame.
+    const bodyRef = useRef<HTMLDivElement>(null);
+    const [closing, setClosing] = useState(false);
+    const [opening, setOpening] = useState(false);
+    const swapMs = (): number => {
+        const el = bodyRef.current;
+        if (!el || typeof getComputedStyle !== "function") return 0;
+        const ms = parseFloat(getComputedStyle(el).getPropertyValue("--asst-close-ms"));
+        return Number.isFinite(ms) && ms > 0 ? ms : 0;
+    };
+    const toggleCollapsed = (): void => {
+        const ms = swapMs();
+        if (!ms) { setCollapsed((v) => !v); return; }
+        setClosing(true);
+        setTimeout(() => {
+            setClosing(false);
+            setCollapsed((v) => !v);
+            setOpening(true);
+            setTimeout(() => setOpening(false), ms);
+        }, ms);
+    };
     // "There's a reply to show" — true for an OK turn AND a step-capped agent answer
     // (status "err" but it still produced a summary). A real error has `error` set. A streaming reply
     // also has content to show (it's filling in), so it renders the body too.
@@ -93,7 +117,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                     pulse swaps in FOR the status dot (same slot, so the model chip / text don't shift on settle);
                     copy/raw/stamp are the only things that appear when it settles (on the right, no left shift). */}
                 {hasReply
-                    ? <button class="who-toggle" title={collapsed ? "expand" : "collapse"} onClick={() => setCollapsed(v => !v)}>
+                    ? <button class="who-toggle" title={collapsed ? "expand" : "collapse"} onClick={toggleCollapsed}>
                         <span class={`tri${collapsed ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
                       </button>
                     : null}
@@ -117,6 +141,12 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
             {hasReply && !collapsed && reasoning
                 ? <details class="thinking"><summary>thinking</summary><div class="md" dangerouslySetInnerHTML={{ __html: markdown(reasoning, { math: true }) }} /></details>
                 : null}
+            {/* The body lives in a wrapper of its own so a surface can ANIMATE the swap between the prose and its
+                collapsed one-liner. Without one there is nothing that survives the change to animate: each side
+                is unmounted as the other arrives, and the reply snaps from a screenful to a line. The wrapper is
+                stable, so it can shrink, swap, and grow. Surfaces that set no `--asst-close-ms` swap in one frame,
+                exactly as they always have. */}
+            <div class={`asst-body${closing ? " closing" : ""}${opening ? " opening" : ""}`} ref={bodyRef}>
             {status === "pending"
                 ? <div class="pending-note">…thinking</div>
                 : error
@@ -138,12 +168,13 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                             : null}
                       </>
                     : collapsed
-                        ? <div class="asst-collapsed" onClick={() => setCollapsed(false)}>{preview!.text}{preview!.more ? <span class="more"> …</span> : null}</div>
+                        ? <div class="asst-collapsed" onClick={toggleCollapsed}>{preview!.text}{preview!.more ? <span class="more"> …</span> : null}</div>
                         : showRaw
                             ? <Code text={content} lang="markdown" />
                             : tokenRun && hasTokens(content, aliasOf(tokenRun))
                                 ? <AnswerBody text={content} run={tokenRun} cls="asst-answer" scope={tokenScope} />
                                 : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />}
+            </div>
             {/* Bottom-of-answer tool outputs — SAME ResultBlock the HUD card renders (parity). Only on the
                 run's latest answer (s.answer is single-valued) and only in the normal, expanded view. */}
             {hasReply && !collapsed && !showRaw && latest && tokenRun ? <ResultBlock run={tokenRun} shownIn={content} /> : null}

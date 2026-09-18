@@ -8,7 +8,15 @@
 // `visibleAnchor` came with it because only this uses it: a citation can name a SLOT rather than a step, and
 // the thing worth scrolling to is then the cell the slot is about, not the top of the step containing it.
 
-import { cardShowWorkHash, revealSeq } from "./store";
+import { atBottom, cardShowWorkHash, revealSeq } from "./store";
+
+/** Fired on `document` when a citation sends the reader to a step. A transcript that FOLLOWS its newest event
+ *  has to stop following when it does: opening the step grows the content, the surface's own resize handler
+ *  pins back to the bottom, and the scroll that was already under way is overwritten — so the first click
+ *  appeared to open the step and go nowhere, and only a second one (with the step already open, so no resize)
+ *  seemed to work. Each surface keeps its own follow state, so this says what happened rather than reaching
+ *  into any of them. */
+export const STEP_JUMP_EVENT = "ml-step-jump";
 
 /** The anchor for a slot, chosen by what is actually ON SCREEN. Both the rendered and the raw view of a step
  *  are in the DOM at once (the rendered⇄raw toggle switches which is shown), and a collapsed disclosure keeps
@@ -40,6 +48,9 @@ export function visibleAnchor(root: Element, slot: "in" | "out"): Element | null
  *  descriptor that declares none falls back to the step, which is where this always landed. */
 export function scrollToStepSeq(seq?: number, hash?: string, slot?: "in" | "out"): void {
     if (seq == null) return;
+    // Stop the transcript following its own tail BEFORE anything grows: see STEP_JUMP_EVENT.
+    atBottom.v = false;
+    try { document.dispatchEvent(new CustomEvent(STEP_JUMP_EVENT, { detail: { seq } })); } catch { /* no DOM */ }
     if (hash) cardShowWorkHash.value = hash;   // open the HUD "Show work" so the step exists to scroll to
     revealSeq.value = seq;                      // force-open the per-task block that holds this step (if collapsed)
     // Opening the step is done by pressing its OWN opener, once, rather than through a signal the row reads:
@@ -70,28 +81,44 @@ export function scrollToStepSeq(seq?: number, hash?: string, slot?: "in" | "out"
         const row = document.querySelector(`[data-astep-seq="${seq}"]`) ?? found;
         // The slot's own cell if the renderer declared one, else the step — the fallback is not a failure,
         // it is what a descriptor with a single cell (an image, an action) correctly wants.
-        const cell = slot ? visibleAnchor(row, slot) : null;
-        const el = cell ?? row;
-        el.scrollIntoView({ block: "center", behavior: "smooth" });
-        // A COLLAPSED step has no visible cells YET — the open we just triggered re-renders in a microtask —
-        // so the lookup above finds nothing and lands on the row. That is the whole reason a slot citation
-        // felt like it ignored the slot: it worked on an already-open step and never on a closed one, which
-        // is the case you are usually in. Re-query on a macrotask, after that render, and go to the cell.
-        // …and it may take MORE than one macrotask. A single setTimeout(0) was enough when a step was a code
-        // block and a result; it is not once the block carries a toolbar, a diff and syntax highlighting, and
-        // the failure is silent — you land on the row and it looks like the slot was ignored. So WAIT FOR THE
-        // ANCHOR rather than guessing how long the render takes: retry on animation frames, stop at the first
-        // one that finds it, and give up after a bound so a slot that genuinely has no cell (an image, an
-        // action) simply keeps the row it already scrolled to.
-        if (collapsed && slot) {
-            let tries = 0;
-            const seek = (): void => {
+        //
+        // AN ALREADY-OPEN STEP is scrolled to at once. A COLLAPSED one is not: it has no visible cells yet (the
+        // open we just triggered renders in a microtask), and the position it is at right now is not the one it
+        // will be at. Everything it grows is above the viewport, and the browser's scroll anchoring holds the
+        // visual position by adding that growth to `scrollTop` — so a scroll issued now is undone before it
+        // lands, which is exactly the "it only works the second time" report: the second click finds the step
+        // open, nothing grows, nothing is anchored, and the same code works.
+        //
+        // So WAIT FOR IT TO SETTLE and then scroll ONCE, smoothly. Settled = the row's height was the same on two
+        // consecutive frames, which is also what stops a step that is still streaming from being chased forever
+        // (the frame bound ends it either way). One smooth scroll rather than a correction per frame: a smooth
+        // scroll restarted sixteen times a second animates nowhere, and the animation is the part that tells a
+        // reader they were moved rather than teleported.
+        // …where there ARE frames. A world without `requestAnimationFrame` (the jsdom sandboxes the panel's tests
+        // run in) has nothing to settle for and nothing to wait on, so it gets the scroll it always got.
+        const frames = typeof requestAnimationFrame === "function";
+        if (!collapsed || !frames) {
+            const cell = slot ? visibleAnchor(row, slot) : null;
+            (cell ?? row).scrollIntoView({ block: "center", behavior: "smooth" });
+        } else {
+            let tries = 0, lastH = -1;
+            const settle = (): void => {
                 const again = document.querySelector(`[data-astep-seq="${seq}"]`);
-                const now = again ? visibleAnchor(again, slot) : null;
-                if (now) { now.scrollIntoView({ block: "center", behavior: "smooth" }); return; }
-                if (++tries < 20) requestAnimationFrame(seek);
+                const h = again ? Math.round(again.getBoundingClientRect().height) : -1;
+                // Height alone is not enough where the surface ANIMATES the step open: the body spends its first
+                // frames at nothing, and two frames of the same nothing look exactly like a step that has
+                // finished arriving. So a running animation anywhere inside it counts as not settled.
+                const moving = !!again && typeof again.getAnimations === "function" && again.getAnimations({ subtree: true }).length > 0;
+                const stable = !!again && !moving && h === lastH;
+                lastH = h;
+                if (stable || ++tries >= 24) {
+                    const target = (again && slot ? visibleAnchor(again, slot) : null) ?? again ?? row;
+                    target.scrollIntoView({ block: "center", behavior: "smooth" });
+                    return;
+                }
+                requestAnimationFrame(settle);
             };
-            requestAnimationFrame(seek);
+            requestAnimationFrame(settle);
         }
         // The PULSE stays on the step, whatever we scrolled to: it is the thing being identified, and a
         // flashing sub-cell inside an unmarked row reads as a glitch rather than as "this one".
