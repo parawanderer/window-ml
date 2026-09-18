@@ -76,6 +76,12 @@ failure cannot be overridden.
 - **Comments are attached by adjacency.** JSDoc and comment lines directly above a declaration move with it;
   a comment separated by a blank line (a section banner, a file header) stays. A stale comment that sat above
   the wrong function moves with that function, exactly as it was.
+
+  **So a move is a good moment to find doc drift.** `node scripts/check-jsdoc.mjs --new <base>` asks only
+  about files a change TOUCHES, so a comment that has been quietly wrong for months becomes visible the run
+  after it lands somewhere new. Real case: `lookTool`'s `@param {Object} [options]` (the parameter is `opts`)
+  had been wrong since the original `src/` move and was caught only when it arrived in `ml-tool-factories.ts`.
+  Run the check after a move rather than assuming the docs are as right as the code, which IS verbatim.
 - **The in-memory check runs TypeScript 6** (bundled by `@ts-morph/common`, because 7.x is the Go port and has
   no JS API or move refactor yet) over the files around the move. The whole-project `tsc` after writing is
   the repo's own 7.x, and it has the last word.

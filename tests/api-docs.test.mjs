@@ -123,11 +123,18 @@ test("the always-paid MlApi block carries PROSE, not @param/@returns tags", () =
         `@param/@returns in MlApi's JSDoc costs context on EVERY run. Write it as prose above the member instead.`);
 });
 
-test("tool-initialiser / opaque types are named but NOT expanded (the model only passes them)", () => {
+test("an MlTool is opaque, but the OPTIONS you build one with are not", () => {
+    // The line between them is what the model DOES with each. It passes an `MlTool` to a run and never
+    // inspects it, so expanding it would drag in its whole implementation subtree for nothing. It CONSTRUCTS
+    // the argument, though — and until 2026-09-18 a tool-initialiser's whole line was dropped from the seed,
+    // which took its option types with it: `ml.lookTool({ memory })` named `VisionMemory` and nothing in the
+    // corpus defined it, so the model could not even query for it.
     assert.match(docs, /MlTool/, "MlTool should still be referenced by name in signatures");
-    for (const t of ["MlTool", "ToolResult", "ToolContext", "ApprovalRequest", "VisionMemory"]) {
+    for (const t of ["MlTool", "ToolResult", "ToolContext", "ApprovalRequest"]) {
         assert.doesNotMatch(docs, new RegExp(`### ${t}\\b`), `${t} should be opaque (not expanded) — it's a pass-around detail`);
     }
+    assert.match(docs, /### VisionMemory\b/,
+        "the `memory` option of lookTool/locateTool is something the model builds, so it must be reachable");
 });
 
 test("the doc names the console entry points the agent gets asked about", () => {
