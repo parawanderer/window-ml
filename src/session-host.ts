@@ -392,6 +392,17 @@ export interface DeviceInfo {
      *  is the distinction a person revoking a device most needs: a phone that can pair another phone is not the same
      *  thing as a phone that can drive a run. Absent means no. */
     mayPair?: boolean;
+    /**
+     * May this device SIGN revocations for the account? Held by exactly one principal at a time, granted at the
+     * root, and never delegable.
+     *
+     * A list shows it because revoking this row removes the account's ability to revoke ANYTHING until the root
+     * grants the power again — so it is not "this device has a power", it is "do not revoke this one casually, and
+     * fetch the root device first if you mean to". It is not a flag that is always true of the same row either: the
+     * reason for holding it here rather than holding the root is that a lost laptop is survivable, and surviving
+     * one means the root moves this to another runtime.
+     */
+    mayRevoke?: boolean;
     /** epoch ms, the runtime's clock. A device past this cannot renew itself and pairs again. */
     notAfterMs: number;
     /** epoch ms, the runtime's clock. The only thing that makes a forgotten device visible, since a runtime renews

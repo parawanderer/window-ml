@@ -250,10 +250,26 @@ of its rules are about what a row must be able to say rather than about what it 
 - **"Can pair other devices"** on a row whose `mayPair` is set. It is not one of its scopes and cannot be read off
   them: such a device can issue a certificate for a new one by itself, without `admin` and without asking the
   runtime, which is a different and larger thing than driving a run.
+- **"Signs revocations for this account"** on the row whose `mayRevoke` is set, which is one row at a time. Two
+  rules follow, and they are the list's and not the runtime's:
+  - **Revoking it is refused without saying what it costs**, in words: revoking this device removes the account's
+    ability to revoke anything until the root device grants the power again. Not a warning banner beside a button
+    that still works the same way — the action is refused until the person has been told what they are about to
+    lose and says so again.
+  - **A device holding it may not revoke ITSELF.** Refused outright rather than warned: there is no state in which
+    that is what somebody meant, and the person doing it is the one who then cannot undo it.
+  It moves over an account's life — that is the point of holding it here rather than holding the root, since a lost
+  laptop is survivable and surviving one means the root moves this elsewhere — so a list that cannot show where it
+  currently sits cannot tell a recovered account from a half-recovered one.
 
 `lastSeenMs` is rendered prominently rather than as metadata: a runtime renews the devices on its allowlist itself,
 so a forgotten device does not expire on its own, and this is the only thing that surfaces one. Times come from the
 runtime's clock, so the list renders the time and not the arithmetic.
+
+**The list must never imply that a device will go away on its own.** Once a runtime renews everything on its
+allowlist, letting a device lapse stops being a way to remove it: a device leaves by being revoked, and nothing
+else. "It expires in 40 days" is true of the certificate and false as a plan, so an expiry is shown as what it is
+(when this needs renewing) and never as an answer to "how do I get rid of this".
 
 **While it is in use**, the runtime's own sidebar says who is watching or controlling it, with a way to stop them.
 
