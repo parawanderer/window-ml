@@ -107,6 +107,22 @@ test("a type that MOVES out of contract.ts is still found, through the import th
     assert.ok(!r.has("ThisTypeDoesNotExistAnywhere"), "and an unknown name stays unknown");
 });
 
+test("the always-paid MlApi block carries PROSE, not @param/@returns tags", () => {
+    // The default `agent_api_docs` view always includes this block, so every run pays for it whatever it asks.
+    // contract.ts's house style is prose — it has ZERO @param/@returns in the whole file today, and the tags
+    // live in the IMPLEMENTATION (injected.ts), which the generator never reads.
+    //
+    // This is a guard on that staying true, not a stripper. Stripping would silently discard a sentence someone
+    // deliberately wrote; failing here says "that explanation costs every run — put it in the prose above the
+    // member, or accept the cost knowingly." If a future view expands types lazily, tags there are pay-per-query
+    // and fine; it is the ALWAYS-PAID block this is about.
+    const block = /## `ml` — the object on `window`\n\n```ts\n([\s\S]*?)\n```/.exec(docs);
+    assert.ok(block, "the MlApi block is what every call pays for — it must be findable");
+    const tags = block[1].split("\n").filter(l => /^\s*\*?\s*@(param|returns|throws|example)\b/.test(l));
+    assert.deepEqual(tags, [],
+        `@param/@returns in MlApi's JSDoc costs context on EVERY run. Write it as prose above the member instead.`);
+});
+
 test("tool-initialiser / opaque types are named but NOT expanded (the model only passes them)", () => {
     assert.match(docs, /MlTool/, "MlTool should still be referenced by name in signatures");
     for (const t of ["MlTool", "ToolResult", "ToolContext", "ApprovalRequest", "VisionMemory"]) {
