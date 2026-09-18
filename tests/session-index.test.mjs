@@ -263,3 +263,19 @@ test("marking a session saved hands back what it had already emitted, and only t
     assert.equal(ix.markSaved("aaaa0001"), null, "marking twice writes nothing twice");
     assert.equal(ix.markSaved("nosuch01"), null, "and a session nobody holds cannot be kept");
 });
+
+test("a resume note belongs to a session that exists, and never makes one", () => {
+    const ix = index();
+    const note = (hash, over = {}) => base(hash, "session-resumed", { url: "https://new.example/", fromUrl: "https://old.example/", afterMs: 90_000, dropped: ["the page's state object"], ...over });
+
+    // A note about a session this index does not hold is not a session: accepting it would put a row in the list
+    // with a divider in it and nothing else, and the kind-from-prefix rule would have to guess what it was.
+    assert.deepEqual(ix.ingest(note("ffff0001"), bg()), { accepted: false, reason: "invalid" });
+    assert.equal(ix.list().length, 0);
+
+    ix.ingest(start("aaaa0001"), bg());
+    const out = ix.ingest(note("aaaa0001"), bg());
+    assert.equal(out.accepted, true);
+    assert.equal(ix.get("aaaa0001").kind, "agent", "and it did not change what the session is");
+    assert.equal(kinds(ix.backfill("aaaa0001")).at(-2), "session-resumed", "it is in the stream like any other event");
+});

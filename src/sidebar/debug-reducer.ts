@@ -215,6 +215,19 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
         s.status = "pending"; s.lastTs = Math.max(s.lastTs, ev.ts); rev.value++;
         return;
     }
+    // Picked up again on a different page. A session-level fact, so it belongs to the session rather than to a turn,
+    // and it is kept in arrival order: a session resumed twice has two of them. It never CREATES a session — a note
+    // about a session this client does not hold is not a session, and inventing one would put an empty row in the
+    // list with a divider and nothing else in it.
+    if (ev.kind === "session-resumed") {
+        const s = sessionMap.get(key);
+        if (!s) return;
+        s.resumes = [...(s.resumes ?? []), { ts: ev.ts, url: ev.url, ...(ev.fromUrl ? { fromUrl: ev.fromUrl } : {}), afterMs: ev.afterMs, dropped: ev.dropped }];
+        s.lastTs = Math.max(s.lastTs, ev.ts);
+        if (ev.url) s.pageUrl = ev.url;
+        rev.value++;
+        return;
+    }
     if (ev.kind === "chat") {
         let s = sessionMap.get(key);
         if (!s) {
