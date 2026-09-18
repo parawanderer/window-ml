@@ -31,7 +31,8 @@ import type {
     DebugChatError,
     DebugSessionConfig
 } from "./contract-debug";
-import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated, hintSession, shortHash } from "./contract";
+import { DEFAULT_GROUNDING_RANGE, outputCapEscalated, hintSession, shortHash } from "./contract";
+import { detectGroundingModel } from "./contract-server";
 import { evalReadonly } from "./readonly-exec";
 import { expandPointers } from "./pointer-macro";   // `@tool:` → a real dereference call, before the dialect sees it
 import { htmlToMarkdown } from "./html-to-md";

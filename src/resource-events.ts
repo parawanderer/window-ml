@@ -9,7 +9,7 @@
 //
 // Wire format is NDJSON (`application/x-ndjson`), one frame per line. Nothing here touches chrome or
 // the network: `sw-events.ts` owns the connection, this owns what a frame MEANS.
-import type { LoadedModel } from "./contract";
+import type { LoadedModel } from "./contract-server";
 import type { WireFrame, Wire, ProcessModelResponse, ProcessGPU } from "./events-wire";
 
 /** A frame's `kind`, and one frame as sent: both from the fork's schema (events-wire.ts). Re-exported under the names

@@ -6,7 +6,8 @@
 // — the core primitive stays dependency-free.
 import { render } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
-import type { MlConfig, ElementContext, InvocationInfo } from "../contract";
+import type { MlConfig, ElementContext } from "../contract";
+import type { InvocationInfo } from "../contract-server";
 import type { MlDebugEvent } from "../contract-debug";
 import { DEFAULT_CONFIG } from "../contract";
 import {

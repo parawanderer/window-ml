@@ -4,7 +4,7 @@
 // `ml`/bus state), so the whole set lifts out cleanly. `makeDomTools` takes the
 // (detached, `this`-free) `defineTool` and returns the array.
 
-import type { MlTool, ToolResult, ToolContext, AnswerMedia } from "./contract";
+import type { MlTool, ToolResult, ToolContext, AnswerMedia, MlPublicConfig } from "./contract";
 import type { VerifyArea } from "./builtin-tools";
 /** Serialize a screenshot-crop of each designated `answer` element for the HUD completion card. ml-backed
  *  (built in injected.ts), so the pure domTools stay pure — the answer tool just calls it when present. */
@@ -24,7 +24,7 @@ import { DerefText } from "./ml-agent";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";
-import type { InvocationInfo, MlPublicConfig } from "./contract";
+import type { InvocationInfo } from "./contract-server";
 import { ML_READONLY_METHODS } from "./readonly-exec";
 // Generated from contract.ts at build time (scripts/gen-api-docs.mjs) — the public MlApi
 // surface, so the doc the model reads can never drift from the interface it describes.

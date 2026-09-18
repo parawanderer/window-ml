@@ -6,7 +6,7 @@
 // the top of the view tree (imports the run/composer/summary layers; nothing imports it but app).
 import { useState, useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
-import { isBackendUnreachable } from "../contract";
+import { isBackendUnreachable } from "../contract-server";
 import { sessionMap, rev, view, config, backendError, cardShowWorkHash, surface } from "./store";
 import type { Session, AgentStep } from "./store";
 import { truncate, markdown } from "./format";

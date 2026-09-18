@@ -14,7 +14,8 @@
 
 import { makeBackgroundTaskPromise } from "./bridge";
 import { emitDebug } from "./bus";
-import type { ServerTool, ServerToolResult, OllamaInfo, MlPublicConfig, LoadedModel } from "./contract";
+import type { MlPublicConfig } from "./contract";
+import type { ServerTool, ServerToolResult, OllamaInfo, LoadedModel } from "./contract-server";
 import { Embedding } from "./embedding";
 
 /** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox

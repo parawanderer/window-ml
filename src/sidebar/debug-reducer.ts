@@ -6,7 +6,7 @@
 import { sessionMap, rev, config, sidebarOpen, backendError, unreachableIfNothingSaysOtherwise, noteAside } from "./store";
 import type { Session, Status, Turn, AgentStep } from "./store";
 import type { MlDebugEvent } from "../contract-debug";
-import { isBackendUnreachable } from "../contract";
+import { isBackendUnreachable } from "../contract-server";
 import { services } from "./services";
 import { truncate, lastUser, rollupStatus } from "./format";
 

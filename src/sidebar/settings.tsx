@@ -6,8 +6,10 @@
 import { signal } from "@preact/signals";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LoadedModel, VisionSupport, LexicalMetric, ServerTool, ProtoMode } from "../contract";
-import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows, generatesText, producesEmbeddings, protoMode } from "../contract";
+import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, VisionSupport, LexicalMetric, ProtoMode } from "../contract";
+import type { LoadedModel, ServerTool } from "../contract-server";
+import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, modelFilterAllows, protoMode } from "../contract";
+import { detectGroundingModel, generatesText, producesEmbeddings } from "../contract-server";
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,

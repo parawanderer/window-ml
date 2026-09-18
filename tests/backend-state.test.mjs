@@ -7,7 +7,7 @@
 // go and check their Server URL.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { backendStateFrom, isBackendUnreachable } from "../src/contract.ts";
+import { backendStateFrom, isBackendUnreachable } from "../src/contract-server.js";
 
 const FAIL = "Couldn't reach the server at http://gpubox:3000/api/chat/completions (Failed to fetch).";
 
