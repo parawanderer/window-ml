@@ -148,20 +148,25 @@ jobs:
         with:
           fetch-depth: 0
       - run: python3 -m unittest discover -s openwebui/tests -v
-      # The component index has to be able to FIND what a change adds, or the next person rebuilds it —
-      # this repo has grown a duplicate pointer chip, a fourth drag grip and a second view-return signal
-      # exactly that way. No node_modules needed: it is plain node reading files.
-      - name: Every sidebar export is documented
-        run: node scripts/components.mjs --undocumented
-      # CSS is a RATCHET, not a rule: 300+ existing classes have no comment and a check that ships red is
-      # one people learn to scroll past. Only classes a PR adds under a new family are asked about.
-      - name: Every new CSS family is documented
+      # The code index has to be able to FIND what a change adds, or the next person rebuilds it — this repo
+      # has grown a duplicate pointer chip, a fourth drag grip and a second view-return signal exactly that
+      # way, and the same happens to whole modules. No node_modules needed: it is plain node reading files.
+      - name: Every source file says what it is for
+        run: node scripts/index.mjs --headerless
+      # The index is only useful while it is cheap enough to run without thinking about it. This measures a COLD
+      # build (CI never has the cache) against a budget the tool owns, warns on the diff well before the hard cap,
+      # and fails only on a change in KIND — see SPEED_WARN_MS in scripts/index.mjs for the measurement behind both.
+      - name: The code index is still fast
+        run: node scripts/index.mjs --check-speed
+      # A RATCHET, not a rule: 176 existing exports and 300+ existing CSS classes have no docstring, and a
+      # check that ships red is one people learn to scroll past. Only what a PR ADDS is asked about.
+      - name: Everything this PR adds is documented
         run: |
           # No extra fetch: `fetch-depth: 0` above already has every ref, and a `--depth=1` fetch here would
           # SHALLOW the base ref and break the merge-base it exists to find.
           base=$(git merge-base HEAD "origin/${GITHUB_BASE_REF:-main}" 2>/dev/null || echo "")
-          if [ -z "$base" ]; then echo "no merge base — skipping the CSS ratchet"; exit 0; fi
-          node scripts/components.mjs --new-css "$base"
+          if [ -z "$base" ]; then echo "no merge base — skipping the ratchet"; exit 0; fi
+          node scripts/index.mjs --new "$base"
       # A REMINDER, never a gate — it exits 0 whatever it finds, and lands as ::warning annotations on the
       # diff rather than as a line in a log. Ratcheted for the same reason as the CSS check above: fifteen
       # files are already over the limit, so listing them every run would train people to ignore it. It

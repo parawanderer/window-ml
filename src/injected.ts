@@ -74,7 +74,7 @@ import { runAgentLoop, shotTurnMessage, CITABLE_TOOLS } from "./agent-loop";
 import type { AgentLoopDeps } from "./agent-loop";
 import { installToolDelegation, registerRun, endRun, runAnswer } from "./run-delegation";
 import { descriptorFor } from "./render-descriptor";
-import { AgentHandle, sameOriginNav, sameOriginFetch, DerefText } from "./ml-agent";   // run-control object (createAgent/agent) + page-loop same-origin auto-approve predicates
+import { AgentHandle, sameOriginNav, sameOriginFetch, DerefText, columnsViaBackground } from "./ml-agent";   // run-control object (createAgent/agent) + page-loop same-origin auto-approve predicates
 import type { AgentControl } from "./ml-agent";
 
 /** Histories `ml.chat` made for a single call. They have no conversation behind them, so their requests carry no
@@ -1103,7 +1103,15 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
             let pageDeref: ((ref: string, pipe?: string | string[]) => DerefRead) | null = null;
             toolCtx.deref = async (ref, pipe) => {
                 if (!pageDeref) throw new Error("This run has no captured outputs yet.");
-                return pageDeref(ref, pipe);
+                const read = pageDeref(ref, pipe);
+                // The store lives page-side for this run, but a STORED table's bytes never do — they are in the
+                // worker's value store, so its columns are read there, the same round trip a background-hosted run
+                // makes (derefViaBackground binds the identical reader). The worker answers on the TAB's entitlement,
+                // so the run hash below only labels the request.
+                const key = read.meta?.table ? read.meta.value : undefined;
+                const table = read.meta?.table;
+                if (!key || !table) return read;
+                return { ...read, readColumns: (names: string[]) => columnsViaBackground(runHash, key, names, { ...(table.delimiter ? { delimiter: table.delimiter } : {}), ...(table.headerless ? { headerless: true } : {}) }) };
             };
             // The run's curated answer set (created per run on the ToolContext). The `answer` tool mutates it
             // directly — no per-call accumulation here — and the loop reads it at assembly.
@@ -2185,9 +2193,9 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
                 const what = pointer ?? "this table";
                 const total = src.shape?.[0];
                 const preview = src.truncated || (typeof total === "number" && total > src.rows.length);
-                // A preview whose whole table is STORED: the sandbox reads the stored bytes (the background checks this
-                // run holds them). The columns and split decisions go along, so pandas names and parses it as the
-                // preview did.
+                // A preview whose whole table is STORED: the sandbox reads the stored bytes (the background checks the
+                // caller is entitled to them — a run it hosts, or the tab it gave the key to). The columns and split
+                // decisions go along, so pandas names and parses it as the preview did.
                 if (preview && !facade && src.value)
                     return { name, source: { kind: "pointer", label: pointer ?? "a table value" }, preview: src.rows as (string | number | boolean | null)[][], ...(typeof total === "number" ? { rowCount: total } : {}),
                         data: { kind: "value", key: src.value, label: what, columns: [...src.columns], ...(src.delimiter ? { delimiter: src.delimiter } : {}), ...(src.headerless ? { headerless: true } : {}) } };

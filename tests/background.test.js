@@ -4116,8 +4116,8 @@ test("FETCH_URL: a table too large for its preview is stored whole and named by 
     const small = await bg.send({ type: "FETCH_URL", payload: { url: "https://api.example/small.csv" } }, from);
     assert.equal(small.data.valueKey, undefined);
     const rows = await new ValueStore({ idb, budgetBytes: () => 1e12 }).rows();
-    assert.deepEqual(rows.map((x) => [x.key, x.format, x.source, x.bytes, x.sessions]), [[r.data.valueKey, "csv", "https://api.example/big.csv", big.length, []]],
-        "one unclaimed row: the claim is the run's to make");
+    assert.deepEqual(rows.map((x) => [x.key, x.format, x.source, x.bytes, x.sessions]), [[r.data.valueKey, "csv", "https://api.example/big.csv", big.length, ["page:1"]]],
+        "one row, held for the TAB the key was handed to: disclosing a key is what entitles that tab to read it back");
 });
 
 test("FETCH_URL: a body the redirect guard withholds is never stored", async () => {
@@ -4187,7 +4187,34 @@ test("SECURITY (VALUE_COLUMNS): a stored table's columns are read only for a bac
     const page = { tab: { id: 9 }, url: "https://evil.example/attack" };
     for (const runId of ["run-1", "", "no-such-run"]) {
         const r = await bg.send({ type: "VALUE_COLUMNS", runId, key: held.key, names: ["a"] }, page);
-        assert.match(r.error, /^No active background run ".*" on this page to read a stored table for\./, `runId ${JSON.stringify(runId)}: knowing a key and a run's id is not enough`);
+        assert.match(r.error, /^No run on this page holds a stored table to read\b/, `runId ${JSON.stringify(runId)}: knowing a key and a run's id is not enough`);
         assert.equal(r.columns, undefined);
     }
+});
+
+test("SECURITY (page-hosted values): a tab reads a stored value the worker disclosed TO IT, and nothing else", async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const { ValueStore } = await import("../src/value-store.ts");
+    const idb = new IDBFactory();
+    const seed = new ValueStore({ idb, budgetBytes: () => 1e9 });
+    // Held for tab 9's page-hosted runs (what a disclosure records), and held for ANOTHER tab's.
+    const mine = await seed.put(new Blob(["a\n1\n2\n"]), { format: "csv", session: "page:9" });
+    const theirs = await seed.put(new Blob(["a\n7\n"]), { format: "csv", session: "page:11" });
+    const bg = loadBackground({ config: baseConfig(), indexedDB: idb });
+    const page = { tab: { id: 9 }, url: "https://shop.example/report" };
+
+    // VALUE_COLUMNS: the run id is decorative on this path — the entitlement is the tab's.
+    const ok = await bg.send({ type: "VALUE_COLUMNS", runId: "page-run-whatever", key: mine.key, names: ["a"] }, page);
+    assert.equal(ok.error, undefined, "a value disclosed to this tab reads back");
+    assert.deepEqual(ok.columns.a, [1, 2]);
+    const no = await bg.send({ type: "VALUE_COLUMNS", runId: "page-run-whatever", key: theirs.key, names: ["a"] }, page);
+    assert.match(no.error, /^No run on this page holds a stored table to read\b/, "another tab's value is not this tab's to read");
+    assert.equal(no.columns, undefined);
+
+    // PYTHON_EXEC takes the same entitlement.
+    const table = (key) => ({ code: "return len(df)", tables: [{ name: "df", data: { kind: "value", key, label: "@tool:abc1234", columns: ["a"] } }] });
+    const bad = await bg.send({ type: "PYTHON_EXEC", payload: table(theirs.key) }, page);
+    assert.match(bad.error, /^Refused: that stored table belongs to a run that is not running on this page\./);
+    await bg.send({ type: "PYTHON_EXEC", payload: table(mine.key) }, page);
+    assert.deepEqual(bg.pyRuns.filter((m) => m.type === "PY_RUN").map((m) => m.tables[0].data.key), [mine.key], "only the disclosed one reached the sandbox");
 });

@@ -41,9 +41,24 @@ git config core.hooksPath .githooks
 ```
 
 **Do not skip the second line.** Git hooks are local configuration and do not come with a clone, so
-without it the pre-commit checks (formatting, and regenerating `docs/spec/export.schema.json` to catch a
-stale one) silently never run. Nothing appears to be wrong — commits keep succeeding — and you find out in
-review.
+without it the pre-commit checks silently never run: formatting, regenerating `docs/spec/export.schema.json`
+to catch a stale one, and asking whether what your commit ADDS can be found by anyone else (see below).
+Nothing appears to be wrong — commits keep succeeding — and you find out in review.
+
+### Before you write something, check whether it is already there
+
+```bash
+node scripts/index.mjs 'pill|chip|badge'     # a regex over every module, export and CSS class, by what it is FOR
+node scripts/index.mjs table --kind file     # which modules are about tables
+```
+
+This repo has grown a duplicate pointer chip, a fourth drag handle and a second view-return signal, each of
+them one search away. The index is searched by CONCEPT rather than by name, because nobody greps `tok-chip`
+while about to write a pill. It is tab-separated, so it pipes into `grep`, `cut` and `awk`.
+
+The other side of that bargain is what the pre-commit hook asks for: anything your change ADDS — an exported
+symbol, a new CSS family, a new file — needs one sentence saying what it is for, in words someone would
+search. It only ever asks about what you are adding, never about the backlog.
 
 Use `npm ci` rather than `npm install`: it installs exactly what the lockfile says.
 

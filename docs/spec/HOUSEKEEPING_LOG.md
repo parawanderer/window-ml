@@ -93,7 +93,7 @@ session hash. And a page cannot clear it.
 
 - **A DevTools panel toggle**, beside the resource panel and the Python bench: a newest-first list with filter
   chips per subsystem, each row showing kind, reason, key and freed bytes, with page-reported rows visibly
-  marked. Built from existing components — run `node scripts/components.mjs` for chips, disclosures and
+  marked. Built from existing components — run `node scripts/index.mjs` for chips, disclosures and
   tables before adding anything. A cleared log and an empty one read differently ("nothing recorded since …").
 - **`ml.__housekeeping()`**, beside `ml.__events()`: the raw events as JSON, with the same `{ download: true }`
   option. Underscored because it is a debugging aid, not API. This is what probes, `observe` runs and e2e tests

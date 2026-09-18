@@ -363,27 +363,39 @@ nine pools, and a unified Mac) — and it is SHARED with `resource-demo.mjs`, be
 disagreeing about what a box looks like is the same drift in another costume. Anything that routes on box
 shape gets run against all of them.
 
-**RULE — before you build a UI primitive, check whether it exists: `node scripts/components.mjs`.** One
-grep-able line per sidebar component, hook and documented CSS class — `NAME kind file:line — first sentence
-of its docstring` — so you search by CONCEPT (`grep -i pill`), which is the only way this works: nobody
-greps `tok-chip` while about to write a pill. The failure it addresses is not "I searched and could not find
-it", it is "I did not think to look": one session produced a CSS copy of the pointer chip, a FOURTH drag
-handle, and a second view-return signal, and each was one grep away. Two of those three were CSS, not JSX,
-which is why the index covers the stylesheet too.
+**RULE — before you build ANYTHING reusable, search for it by concept: `node scripts/index.mjs '<regex>'`.**
+A module, an exported helper, a component, a hook, a CSS class. One TAB-separated line each — `KIND NAME
+file:line [signature] first sentence of its docstring` — and the regex runs over the SENTENCE as well as the
+name, which is the only way this works: nobody greps `tok-chip` while about to write a pill, or
+`sw-values.ts` while about to write a value store. The failure it addresses is not "I searched and could not
+find it", it is "I did not think to look": one session produced a CSS copy of the pointer chip, a FOURTH drag
+handle, and a second view-return signal, and each was one search away. Two of those three were CSS, not JSX,
+which is why it covers the stylesheet; the same thing happens to whole MODULES, which is why a file is a row.
+Output is never column-padded, so it pipes into `grep`, `cut -f3` and `awk -F'\t'`. It replaced
+`scripts/components.mjs` (sidebar components + CSS only). Filters: `--kind file,component,hook,function,
+class,type,const,css`, `--exported`/`--local`, `--sig`.
+
+**It indexes bindings, never their innards** — module-scope declarations only, since JavaScript nests
+forever and that depth would bury the rows that mean something. One exception, one level deep and never
+recursive: an object literal lists its own top-level keys (`API_FORMATS … keys: openai, ollama`), and a class
+lists its method names, because that is the API surface in several files here.
 
 The **docstrings are the index** (nothing is duplicated into a manifest that would go stale), so the cost is
-that an undocumented export is INVISIBLE and gets rebuilt — `--undocumented` makes that loud and exits
-non-zero. **Both halves are ENFORCED**, in the pre-commit hook and in CI's `tools` job: every exported
-sidebar thing needs a docstring, and every CSS class a change ADDS under a new family needs a comment. CSS is
-a ratchet rather than a rule because 323 of the stylesheet's 557 classes have none, and a check that ships
-red is one people learn to scroll past — so it reads the diff against the merge base and asks only about what
-you are adding. A member of a documented block passes on its ancestor (`.r-diff-head` inherits `.r-diff`),
-because the failure being prevented is a NEW family under a name nobody would grep — a second pointer chip
-called something else — not a paragraph per modifier. What you owe it: a new shared thing gets a first sentence saying what it is FOR in words someone
-would search, and an EXTRACTION says what it replaced, because that sentence is what stops the third copy.
+that an undocumented thing is INVISIBLE and gets rebuilt. Three checks run in the pre-commit hook and CI's
+`tools` job: **`--new <base> [--staged]`** is the RATCHET — every exported symbol and every new CSS family a
+change ADDS needs a sentence; **`--headerless`** is a hard gate, because every source file already opens with
+a header saying what the module is for and it must stay that way; **`--check-speed`** holds the tool to its
+own time budget (a cold build is ~70 ms; it warns at 750 ms and fails at 3 s, with what to do about it in the
+message), because an index that stops being cheap stops being run. The first is a ratchet rather than a rule
+because 176 exports and 323 of the stylesheet's 557 classes have none, and a check that ships red is one
+people learn to scroll past — so it reads the diff against the merge base and asks only about what you are
+adding. A CSS member of a documented block passes on its ancestor (`.r-diff-head` inherits `.r-diff`), because
+the failure being prevented is a NEW family under a name nobody would grep, not a paragraph per modifier.
+What you owe it: a new shared thing gets a first sentence saying what it is FOR in words someone would
+search, an EXTRACTION says what it replaced, and a new FILE opens with `// <name>.ts — <what it is for>.`
 A TRAILING `//` counts as the docstring for a one-line export, which is the house style here — teaching the
 scanner to read those fixed thirty of them with no churn, rather than having me move thirty comments above
-their declarations to satisfy an indexer. Playbook: `.claude/skills/components/SKILL.md`.
+their declarations to satisfy an indexer. Playbook: `.claude/skills/code-index/SKILL.md`.
 
 **A file that has grown past ~800 lines gets a REMINDER** (`node scripts/check-file-size.mjs`) — in the
 pre-commit hook and in CI's `tools` job suggesting it be split into logical modules, with per-module tests where that follows. It never
