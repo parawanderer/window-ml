@@ -26,6 +26,59 @@ gets the *server* ready; [SETUP.md](SETUP.md) points the *extension* at it.
 > (steps 1, 3–6 below) — skip Ollama and the model pulls, and add a provider
 > connection per [CLOUD-MODELS.md](CLOUD-MODELS.md) instead of step 2.
 
+## The layers, and which you actually need
+
+Only three of the pieces below are required. Solid arrows are the path a normal setup takes; dashed ones
+are optional, and the one marked "not built yet" is a real gap rather than a configuration you are
+missing.
+
+```mermaid
+flowchart TB
+    subgraph browser["Your browser"]
+        page["a web page<br/>calls window.ml"]
+        ext["the extension<br/>agent loop, tools, approvals, keys"]
+    end
+
+    subgraph server["Your box, from step 1 (Docker)"]
+        owui["OpenWebUI<br/>the API the extension talks to"]
+        ollama["Ollama<br/>schedules models, owns the VRAM"]
+        engine["llama.cpp + ggml<br/>the decode loop itself<br/>built from a pinned source"]
+        searx["SearXNG<br/>web search"]
+    end
+
+    subgraph elsewhere["Driving it from somewhere else (optional)"]
+        hub["window-ml-hub<br/>relays sealed traffic, reads none of it"]
+        wmlbox["wmlbox<br/>box connector"]
+        phone["your phone"]
+    end
+
+    page --- ext
+    ext -->|chatUrl| owui
+    owui --> ollama
+    ollama --> engine
+    owui -.-> searx
+    ollama -.->|"/api/events"| wmlbox
+    wmlbox -.-> hub
+    phone -.-> hub
+    ext -.->|"not built yet"| hub
+```
+
+Every arrow into the hub is an outward dial. The hub never connects to anything, which is the property its
+security argument rests on.
+
+| Layer | What it gives you | Need it? |
+| --- | --- | --- |
+| **Ollama** | decides which model is loaded, where it goes and how long it stays, and owns the VRAM | Required |
+| **llama.cpp + ggml** | the decode loop that actually runs the model. Ollama builds it from a pinned source (`LLAMA_CPP_VERSION`), so you never install it yourself | Comes with Ollama |
+| **OpenWebUI** | what `chatUrl` points at: the model list, chat completions, server-side tools | Required |
+| **The extension** | `window.ml` on the page, and everything that matters: the agent loop, the tools, the approvals, the keys | Required |
+| **SearXNG** | web search for OpenWebUI's own tools (step 4) | Optional |
+| **The [Ollama fork](FORKED-BACKENDS.md)** | capacity, per-GPU attribution, activity and the `/api/events` stream, which is what the resource panel draws | Optional. A stock Ollama says "not reported" and the rest still works |
+| **The [llama.cpp fork](https://github.com/parawanderer/llama.cpp)** (`slop`) | what the placement work is fit against: per-layer expert routing recorded from real traffic (`LLAMA_ROUTING_STATS`, read back over `GET /routing`) and the offline `bench/placement` harness, because nothing in a GGUF says how skewed a mixture of experts routes. Also model architectures ahead of upstream: glm5next, its vision tower, and the pieces they need | Required for the placement engine. Otherwise only if you want those models. Point a build at a checkout with `OLLAMA_LLAMA_CPP_SOURCE`; the default fetches upstream at the pin |
+| **The [OpenWebUI fork](FORKED-BACKENDS.md)** | `POST /api/v1/tools/id/{id}/execute`, which runs one configured tool on its own. This is what `ml.dynamicTools` calls, so the agent can run a server tool with arguments it chose instead of handing the whole loop to a model | Needed for `ml.dynamicTools`. Everything else works without it |
+| **[window-ml-hub](https://github.com/parawanderer/window-ml-hub)** | watching or driving a runtime from another device | Optional, step 7 |
+| **`wmlbox`** | republishes a box's telemetry through a hub | Optional, needs the Ollama fork and a hub |
+
 ## Prerequisites
 
 - A machine with **Docker + Docker Compose** ([install](https://docs.docker.com/engine/install/)).
@@ -194,6 +247,30 @@ await ml.read(document.images[0]);                 // OCR an image on the page
 - **Feed curation, agents, structured extraction:** see the
   [API reference](API.md) (the `schema`, `ml.step`, and `toolIds`
   sections).
+
+## 7. Optional: a hub, to watch it from elsewhere
+
+Read this part as a status report rather than a step. [window-ml-hub](https://github.com/parawanderer/window-ml-hub)
+is a relay that lets a phone or another machine watch and drive a runtime, and it is built to be trusted with
+nothing: runtimes dial out and never listen, every principal is a key, traffic is sealed end to end, and the hub
+sees ciphertext and routing metadata only.
+
+What works today is the telemetry direction. `wmlbox` pairs with a patched Ollama box and republishes its
+`/api/events` stream through a hub, sealed and unchanged, and a client can subscribe to it. **What does not exist
+yet is the extension's own connector**, so no agent in your browser is reachable through a hub, and nothing in
+step 5 changes if you run one. Skip this section unless you want the telemetry path or want to read the design.
+
+```bash
+git clone https://github.com/parawanderer/window-ml-hub && cd window-ml-hub
+cp .env.example .env && $EDITOR .env      # set WMLHUB_HUB_NAME
+docker compose up -d
+docker compose exec hub wmlhub invite create
+```
+
+That publishes on `127.0.0.1:8787` only, deliberately: put TLS in front of it before anything reaches it from
+another device. Tailscale and Caddy are both written up, along with registration modes, backups and every setting,
+in [the hub's SELF_HOSTING.md](https://github.com/parawanderer/window-ml-hub/blob/main/docs/SELF_HOSTING.md). The
+design and its security argument are in [docs/spec/RUNTIME_HUB.md](spec/RUNTIME_HUB.md).
 
 ## Troubleshooting
 
