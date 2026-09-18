@@ -170,10 +170,10 @@ function PagePeek({ store, id, rt, sessionKey, summary }: { store: ChatStore; id
 }
 
 /** A runtime's heading in the list: its name, whether it is reachable, and what this device may do there. */
-function RuntimeHead({ rt, folded, count, i }: { rt: RuntimeInfo; folded: boolean; count: number; i: number }) {
+function RuntimeHead({ rt, folded, count }: { rt: RuntimeInfo; folded: boolean; count: number }) {
     const watchOnly = !mayCommand(rt, "session.send");
     return (
-        <button class={`chat-rt${rt.online ? "" : " off"}${folded ? " folded" : ""}`} style={{ "--i": i }} data-runtime={rt.id}
+        <button class={`chat-rt${rt.online ? "" : " off"}${folded ? " folded" : ""}`} data-runtime={rt.id}
             aria-expanded={!folded} onClick={() => toggleRuntime(rt.id)}>
             <span class={`tri${folded ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
             <span class={`chat-rt-dot${rt.online ? " on" : ""}`} aria-hidden="true" />
@@ -186,12 +186,12 @@ function RuntimeHead({ rt, folded, count, i }: { rt: RuntimeInfo; folded: boolea
 }
 
 /** One session in the list, from its index row (the transcript is fetched only when it is opened). */
-function IndexRow({ s, rt, active, moved, i }: { s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean; i: number }) {
+function IndexRow({ s, rt, active, moved }: { s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean }) {
     const key = `${s.id.runtime}:${s.id.hash}`;
     const title = s.title || s.task || "(untitled)";
     const offset = rt.clockOffsetMs ?? 0;
     return (
-        <button class={`row chat-row${active ? " active" : ""}`} style={{ "--i": i }} data-session={key} onClick={() => openSession(key)}>
+        <button class={`row chat-row${active ? " active" : ""}`} data-session={key} onClick={() => openSession(key)}>
             <Dot status={DOT[s.status] ?? "pending"} />
             <span class="chat-row-body">
                 <b class="row-title">{truncate(title, 90)}</b>
@@ -230,7 +230,6 @@ function SessionList({ store, activeKey, narrow, onStart }: { store: ChatStore; 
     // match because its runtime happens to be folded would be the list refusing to answer the question asked.
     const shown = (rt: RuntimeInfo) => sessions.filter((s) => s.id.runtime === rt.id && matches(s, rt, q));
     const groups = runtimes.map((rt) => ({ rt, mine: shown(rt) })).filter(({ mine }) => !q || mine.length);
-    let row = 0;
     return (
         <aside class="chat-list" aria-label="Sessions">
             <div class="head">
@@ -257,21 +256,17 @@ function SessionList({ store, activeKey, narrow, onStart }: { store: ChatStore; 
             <div class="view chat-list-scroll">
                 {runtimes.length === 0 && status.state === "online" ? <div class="empty">No runtimes yet. Pair one to see its sessions here.</div> : null}
                 {q && !groups.length ? <div class="empty">Nothing matches “{truncate(query.trim(), 40)}”.</div> : null}
-                {/* `row` counts DOWN THE WHOLE LIST, across the groups, because the entrance runs top to bottom
-                    over what you see and not per section — restarting the stagger at each runtime would read as
-                    three lists arriving rather than one. */}
-                {(() => { row = 0; return null; })()}
                 {groups.map(({ rt, mine }) => {
                     const shut = folded.has(rt.id) && !q;
                     return (
                         <section class={`chat-group${shut ? " folded" : ""}`} key={rt.id}>
-                            <RuntimeHead rt={rt} folded={shut} count={mine.length} i={row++} />
+                            <RuntimeHead rt={rt} folded={shut} count={mine.length} />
                             {shut ? null : !speaksOurContract(rt)
                                 ? <div class="chat-rt-empty">This runtime speaks version {rt.contractVersion} of the session contract, which this app does not. Its sessions open once both sides agree.</div>
                                 : mine.length
                                     ? mine.map((s) => {
                                         const key = `${s.id.runtime}:${s.id.hash}`;
-                                        return <IndexRow key={key} s={s} rt={rt} active={activeKey === key} moved={moved.has(key)} i={row++} />;
+                                        return <IndexRow key={key} s={s} rt={rt} active={activeKey === key} moved={moved.has(key)} />;
                                     })
                                     : <div class="chat-rt-empty">No sessions.</div>}
                         </section>

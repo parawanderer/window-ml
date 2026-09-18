@@ -382,14 +382,15 @@ html, body, #root { height: 100%; }
     to { opacity: 1; transform: none; }
 }
 /* Driven by the animation NAME changing from `none`, which is what makes it play again each time the pane opens
-   without any JavaScript: a closed list has none, an open one has this. */
+   without any JavaScript: a closed list has none, an open one has this.
+   ONE delay for all of them, not a stagger down the list. A stagger makes the arrival itself the thing you watch,
+   and the list is navigation — you are looking for a row, not at the animation. The order that matters is still
+   there: the pane opens, and then its contents are in it. */
 .chat.list-hidden .chat-list .chat-row, .chat.list-hidden .chat-list .chat-rt { animation: none; }
 .chat:not(.list-hidden) .chat-list .chat-row,
 .chat:not(.list-hidden) .chat-list .chat-rt {
-    animation: chat-row-in .34s cubic-bezier(.2, .7, .3, 1) both;
-    /* After the pane itself (.24s), then one row every 26ms — capped, so a long list does not turn its tail into
-       a queue you watch. */
-    animation-delay: calc(140ms + min(var(--i, 0) * 26ms, 260ms));
+    animation: chat-row-in .28s cubic-bezier(.2, .7, .3, 1) both;
+    animation-delay: 150ms;   /* after the pane's own .24s is most of the way through */
 }
 @media (prefers-reduced-motion: reduce) {
     .chat:not(.list-hidden) .chat-list .chat-row, .chat:not(.list-hidden) .chat-list .chat-rt { animation: none; }
