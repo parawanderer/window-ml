@@ -253,6 +253,8 @@ coordinates, and offers live viewing only when the runtime has the capability.
    what survives an evicted worker, is slice 4.
 3. **`LocalHost`**: `chat.html` over slice 2, with the extension's `ClientPlatform`. (`LocalHost` itself, `side.call`,
    `page.highlight` and screenshots landed with slice 2.) The local host then works end to end.
+   **Done**: the extension entry and its adapter, the popup's way in, and starting a chat or an agent run from the
+   list header (`docs/dev/chat-page.md` §The extension entry, §Starting a session from the page).
 4. **Persistence**: saved agent sessions (IndexedDB), the Commander persist toggle and its Settings default, delete.
 5. **Resume on a new page.**
 6. **The phone app**: the Capacitor projects and their `ClientPlatform` adapter (never served by the hub), then
