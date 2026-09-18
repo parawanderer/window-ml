@@ -464,13 +464,16 @@ which is the moment the advice is actionable. `--all` lists every one of them wh
 
 **To decide WHERE to spend a refactor, use `--cost`, not `--all`.** `--all` sorts by length, which answers "what
 is big" — the wrong question, because a long file nobody opens costs nothing while a shorter one edited weekly
-costs a lot. `--cost` ranks by lines x commits-that-touched-it, roughly what a reader pays, since a file is only
-read when someone works on it. On this repo that reordering is not cosmetic: the three resource-panel files are
+costs a lot. `--cost` ranks by lines x commits-that-touched-it, each commit DECAYED by a 30-day half-life
+(`--half-life`), so a subsystem that was finished two months ago stops outranking one being built this week. On this repo that reordering is not cosmetic: the three resource-panel files are
 half the total while being 15% of the lines, and `dom.ts`, fourth by length, is under 2%. It ignores the 800-line
 limit deliberately, because cost has no threshold and the size gate cannot see a 430-line file edited 42 times.
 Read the script's header before treating it as a verdict: commits are WRITES, so a heavily imported type module
 is read far more than it is edited (`contract.ts`: 327 lines, 85 importers), which is why fan-in is printed
-beside the score rather than folded into it.
+beside the score rather than folded into it. Watch the `recent` vs `all` columns — while they stay close, the
+decay is inert and the ranking is plain churn; a file whose ratio falls below about half is one whose work has
+stopped. **Decay can never hide bloat**: every file over 800 lines that does not make the ranking is listed
+underneath it anyway, with its commit count, because big-and-quiet is exactly what a decayed score buries.
 Tests are exempt: a long test file is a long LIST, which is not the same failure as a long module.
 
 **RULE — move code between files with `node scripts/move-symbols.mjs`, never by copy and paste.**

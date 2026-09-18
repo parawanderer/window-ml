@@ -100,17 +100,27 @@ function report(items) {
     else if (!process.env.GITHUB_ACTIONS) console.log(`\n  (A reminder, not a gate — this never fails a build.)`);
 }
 
-/** How many commits in the window touched each file — the proxy for how often anyone has to open it. */
-function churn(since) {
-    const counts = new Map();
+/** How often anyone has to open each file, as a DECAYED commit count: a commit `halfLife` days old counts half
+ *  as much as one made today, and so on down. Raw counts rank a subsystem that was finished two months ago
+ *  alongside one being built this week, which is the single way this survey most easily lies. Returns both the
+ *  decayed weight and the raw count, because the GAP between them is the signal that work has stopped. */
+function churn(since, halfLife) {
+    const out_ = new Map();
     let out;
-    try { out = git(["log", `--since=${since}`, "--format=", "--name-only", "--", "src"]); }
-    catch { return counts; }
+    try { out = git(["log", `--since=${since}`, "--format=@%ct", "--name-only", "--", "src"]); }
+    catch { return out_; }
+    const now = Date.now() / 1000, decayPerSec = Math.LN2 / (halfLife * 86400);
+    let w = 0;
     for (const line of out.split("\n")) {
         const p = line.trim();
-        if (p && inScope(p)) counts.set(p, (counts.get(p) ?? 0) + 1);
+        if (!p) continue;
+        // `@<unix seconds>` starts each commit; the paths it touched follow until the next one.
+        if (p[0] === "@") { w = Math.exp(-decayPerSec * (now - Number(p.slice(1)))); continue; }
+        if (!inScope(p)) continue;
+        const prev = out_.get(p) ?? { weight: 0, raw: 0 };
+        out_.set(p, { weight: prev.weight + w, raw: prev.raw + 1 });
     }
-    return counts;
+    return out_;
 }
 
 /** How many other source files import each one. Printed, never scored — see the header. Both spellings count:
@@ -138,26 +148,41 @@ const flagValue = (name, fallback) => {
 };
 
 if (args.includes("--cost")) {
-    // Six months by default: long enough that one busy fortnight does not decide the ranking, short enough to
-    // still describe what people are working on now.
-    const since = flagValue("--since", "6 months ago");
+    // Twelve months of history, halved every 30 days. The window is only a cutoff for how far back to read:
+    // with decay, anything older than a few half-lives contributes almost nothing anyway, so the HALF-LIFE is
+    // the knob that matters and the window is there to keep the git log cheap.
+    const since = flagValue("--since", "12 months ago");
+    const halfLife = Number(flagValue("--half-life", "30"));
     const top = Number(flagValue("--top", "20"));
     const files = allFiles();
-    const edits = churn(since), fan = fanIn(files);
+    const edits = churn(since, halfLife), fan = fanIn(files);
     const rows = files.map((p) => {
-        const n = lines(p), c = edits.get(p) ?? 0;
-        return { path: p, now: n, edits: c, fan: fan.get(p) ?? 0, cost: n * c };
-    }).filter((r) => r.cost > 0).sort((a, b) => b.cost - a.cost);
+        const n = lines(p), c = edits.get(p) ?? { weight: 0, raw: 0 };
+        return { path: p, now: n, weight: c.weight, raw: c.raw, fan: fan.get(p) ?? 0, cost: n * c.weight };
+    }).sort((a, b) => b.cost - a.cost);
     const total = rows.reduce((t, r) => t + r.cost, 0) || 1;
-    console.log(`file cost: lines x commits since "${since}", across ${rows.length} touched file(s).`);
-    console.log(`  ${"cost".padStart(9)} ${"lines".padStart(6)} ${"edits".padStart(6)} ${"in".padStart(4)}  share  file`);
-    for (const r of rows.slice(0, top)) {
-        console.log(`  ${String(r.cost).padStart(9)} ${String(r.now).padStart(6)} ${String(r.edits).padStart(6)}`
-            + ` ${String(r.fan).padStart(4)}  ${(100 * r.cost / total).toFixed(1).padStart(4)}%  ${r.path}`);
+    console.log(`file cost: lines x commits since "${since}", each commit halved every ${halfLife} days.`);
+    console.log(`  ${"cost".padStart(8)} ${"lines".padStart(6)} ${"recent".padStart(6)} ${"all".padStart(4)} ${"in".padStart(4)}  share  file`);
+    const shown = rows.slice(0, top).filter((r) => r.cost > 0);
+    for (const r of shown) {
+        console.log(`  ${String(Math.round(r.cost)).padStart(8)} ${String(r.now).padStart(6)} ${r.weight.toFixed(1).padStart(6)}`
+            + ` ${String(r.raw).padStart(4)} ${String(r.fan).padStart(4)}  ${(100 * r.cost / total).toFixed(1).padStart(4)}%  ${r.path}`);
     }
-    const shown = rows.slice(0, top).reduce((t, r) => t + r.cost, 0);
-    console.log(`\n  top ${Math.min(top, rows.length)} are ${(100 * shown / total).toFixed(0)}% of the total.`);
-    console.log(`  'in' is how many source files import this one — read the header before treating cost as a verdict.`);
+    console.log(`\n  top ${shown.length} are ${(100 * shown.reduce((t, r) => t + r.cost, 0) / total).toFixed(0)}% of the total.`);
+    console.log(`  'recent' is the decayed commit weight, 'all' the raw count: a big gap means the work STOPPED.`);
+    console.log(`  'in' is how many files import this one — reads, which commits do not count. See the header.`);
+
+    // DECAY MUST NOT HIDE BLOAT. A file can be enormous and quiet, and that is exactly the case a decayed
+    // ranking buries — so every oversized file that did not make the list above is named here regardless of
+    // its score. The ranking says where the work is; this says what is big anyway.
+    const listed = new Set(shown.map((r) => r.path));
+    const quiet = rows.filter((r) => r.now > LIMIT && !listed.has(r.path));
+    if (quiet.length) {
+        console.log(`\n  over ${LIMIT} lines but NOT ranked above — big and quiet, which decay hides by design:`);
+        for (const r of quiet.sort((a, b) => b.now - a.now)) {
+            console.log(`  ${String(r.now).padStart(8)} lines, ${r.raw} commit(s) in the window  ${r.path}`);
+        }
+    }
 } else if (args.includes("--all")) {
     const over = allFiles().map((p) => ({ path: p, before: 0, now: lines(p) })).filter((f) => f.now > LIMIT)
         .sort((a, b) => b.now - a.now);
