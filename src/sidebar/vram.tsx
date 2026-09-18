@@ -26,7 +26,8 @@ import { eventsFrom, laneEvents, type UsageSource } from "./model-stats";
 import { parseInfo, holdCapacity, memorySplit, estimateFrom, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, type MemoryBreakdown, formatBytes, boxSignature, sameBoxOnly, presetsFor, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, rooflineFrom, expectedDecodeFrom, predictedDecodeFrom, kindRefusal } from "../resource-model";
 import { chartWindow, windowSamples } from "../resource-axis";
 import { sessionWindow, addMachineEvent } from "../resource-lane";
-import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay, LANE_KINDS, toggleLaneKind } from "./resource-chart";
+import { ResourceTracks, muteTip, stepPool, readingIsOverlay } from "./resource-chart";
+import { ScopeSwitch, LANE_KINDS, toggleLaneKind } from "./resource-lane-ui";
 import type { LoadedModel } from "../contract-server";
 
 /** Is this model resident right now? `undefined` when we have no `/api/ps` answer yet — the caller must not
