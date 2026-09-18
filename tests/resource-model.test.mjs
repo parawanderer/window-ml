@@ -8,6 +8,8 @@ import { readFileSync } from "node:fs";
 const M = await import("../src/resource-model.ts");
 // The band arithmetic moved to its own module; the members below are read from there.
 const B = await import("../src/resource-bands.ts");
+// The same for the GPU link graph: the topology parse and the bridge/link readings of it.
+const T = await import("../src/resource-topology.ts");
 const L = await import("../src/resource-lane.ts");
 const X = await import("../src/resource-axis.ts");
 // The machine shapes, shared with resource-demo.mjs — one copy, so a guard and a demo cannot disagree
@@ -2288,35 +2290,35 @@ test("kvFill: what a generation left in the cache, as shares of its token capaci
 // are unverified against real NVLink hardware by agreement — see the note there. ----
 
 test("topologyFrom: a pair list, normalised, with coverage checked against the server's promise", () => {
-    const t = M.topologyFrom(TOPOLOGIES.rigAdjacent);
+    const t = T.topologyFrom(TOPOLOGIES.rigAdjacent);
     assert.equal(t.status, "measured");
     assert.equal(t.links.length, 6, "4 cards → 6 unordered pairs");
     assert.deepEqual(t.missing, [], "every pair present");
-    const nv = M.linkBetween(t, pci(1), pci(0));
+    const nv = T.linkBetween(t, pci(1), pci(0));
     assert.equal(nv.type, "nvlink", "looked up in either direction");
     assert.equal(nv.linkCount, 4);
     assert.equal(nv.pciePath, "PHB", "the PCIe route under the bridge is kept");
     // A producer that emitted a pair from BOTH ends (KFD's io_links are directed) cannot double-count coverage.
     const [ga, gb] = TOPOLOGIES.pcie2.gpus;
-    const doubled = M.topologyFrom({ ...TOPOLOGIES.pcie2, links: [...TOPOLOGIES.pcie2.links,
+    const doubled = T.topologyFrom({ ...TOPOLOGIES.pcie2, links: [...TOPOLOGIES.pcie2.links,
         { a: gb, b: ga, type: "pcie", path: "PHB" }, { a: ga, b: ga, type: "nvlink" }] });
     assert.equal(doubled.links.length, 1, "one pair, and no diagonal");
     // A pair the server simply OMITTED from a "measured" list is its bug — named, never read as PCIe.
-    const gap = M.topologyFrom(TOPOLOGIES.missing);
+    const gap = T.topologyFrom(TOPOLOGIES.missing);
     assert.deepEqual(gap.missing, [[pci(0), pci(2)], [pci(1), pci(2)]]);
-    assert.equal(M.linkBetween(gap, pci(0), pci(2)), null);
+    assert.equal(T.linkBetween(gap, pci(0), pci(2)), null);
     // Absent or unshaped is "not measured", which is null — never an empty topology that reads as "no NVLink".
-    assert.equal(M.topologyFrom(undefined), null);
-    assert.equal(M.topologyFrom({ links: [] }), null, "no status, no claim");
+    assert.equal(T.topologyFrom(undefined), null);
+    assert.equal(T.topologyFrom({ links: [] }), null, "no status, no claim");
     // REAL (the server with NVML made unloadable): coverage STILL holds — the pair is there, `unknown`, with
     // the driver's words — which is what keeps "could not look" from reading as "no link".
-    const un = M.topologyFrom(TOPOLOGIES.unavailable);
+    const un = T.topologyFrom(TOPOLOGIES.unavailable);
     assert.equal(un.status, "unavailable");
     assert.match(un.detail, /^NVML is not available: dlopen libnvidia-ml\.so\.1/, "the driver's own words");
     assert.deepEqual(un.missing, []);
     assert.equal(un.links[0].type, "unknown");
     // REAL: one visible GPU — measured, and there are no pairs to have.
-    const one = M.topologyFrom(TOPOLOGIES.oneGpu);
+    const one = T.topologyFrom(TOPOLOGIES.oneGpu);
     assert.equal(one.status, "measured");
     assert.deepEqual([one.links, one.missing], [[], []]);
 });
@@ -2333,10 +2335,10 @@ test("the REAL /api/info capture: ceilings, pci_id and the PCIe pair, as gpubox 
     // x8, not the card's own x16: the narrower of card and slot, on a board that splits its lanes.
     assert.deepEqual([c0.pcieMaxGeneration, c0.pcieMaxWidth], [5, 8]);
     assert.equal(c0.utilization, undefined, "this capture predates utilization — absent, never 0");
-    const l = M.linkBetween(cap.topology, c0.pciId, c1.pciId);
+    const l = T.linkBetween(cap.topology, c0.pciId, c1.pciId);
     assert.equal(l.bandwidthSource, "derived_from_pcie_link");
     // A DERIVED rate is a peak (measured peer-to-peer: 27.7 GB/s against 31.5 derived), and says so.
-    assert.equal(M.linkPhrase(l), "PCIe, through the CPU's host bridge (PHB) · 31.5 GB/s peak");
+    assert.equal(T.linkPhrase(l), "PCIe, through the CPU's host bridge (PHB) · 31.5 GB/s peak");
     // Utilization, when present: each figure independent, 0 kept as idle, out-of-range dropped.
     const u = M.parseInfo({ ...info, compute: { ...info.compute, supported_gpus: [
         { ...info.compute.supported_gpus[0], utilization: { gpu_percent: 99, memory_percent: 90 } },
@@ -2375,53 +2377,53 @@ test("parseInfo: pci_id joins a drawn card to its links, and topology rides /api
         topology: { status: "measured", gpus: [pci(0), pci(1)], links: [{ a: pci(0), b: pci(1), type: "pcie", path: "PHB" }] } } };
     const cap = M.parseInfo(info);
     assert.deepEqual(cap.devices.map((d) => d.pciId), [pci(0), pci(1)]);
-    assert.equal(M.linkBetween(cap.topology, cap.devices[0].pciId, cap.devices[1].pciId).type, "pcie");
+    assert.equal(T.linkBetween(cap.topology, cap.devices[0].pciId, cap.devices[1].pciId).type, "pcie");
     assert.equal(M.parseInfo({ compute: { system_compute: { total_memory: 1 }, supported_gpus: [] } }).topology, null);
 });
 
 test("bridgeOrder: directly-linked cards sit side by side, and only a measured topology reorders", () => {
     const cards = [0, 1, 2, 3].map((i) => ({ name: `CUDA${i}`, pciId: pci(i) }));
-    const names = (t) => M.bridgeOrder(cards, M.topologyFrom(t)).map((c) => c.name);
+    const names = (t) => T.bridgeOrder(cards, T.topologyFrom(t)).map((c) => c.name);
     assert.deepEqual(names(TOPOLOGIES.rigAdjacent), ["CUDA0", "CUDA1", "CUDA2", "CUDA3"], "already adjacent");
     assert.deepEqual(names(TOPOLOGIES.rigCrossed), ["CUDA0", "CUDA2", "CUDA1", "CUDA3"], "reordered so each bridge has a wall");
     // Every wall of the reordered crossed rig: bridge, PCIe, bridge — the two pairs, and the line between them.
-    const t = M.topologyFrom(TOPOLOGIES.rigCrossed);
-    const order = M.bridgeOrder(cards, t);
-    assert.deepEqual(order.slice(1).map((c, i) => M.isBridge(M.linkBetween(t, order[i].pciId, c.pciId))), [true, false, true]);
+    const t = T.topologyFrom(TOPOLOGIES.rigCrossed);
+    const order = T.bridgeOrder(cards, t);
+    assert.deepEqual(order.slice(1).map((c, i) => T.isBridge(T.linkBetween(t, order[i].pciId, c.pciId))), [true, false, true]);
     // An all-to-all switch keeps the server's order, and every adjacent pair is a bridge.
     const eight = [0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ name: `CUDA${i}`, pciId: pci(i) }));
-    const sw = M.topologyFrom(TOPOLOGIES.nvswitch8);
-    const swOrder = M.bridgeOrder(eight, sw);
+    const sw = T.topologyFrom(TOPOLOGIES.nvswitch8);
+    const swOrder = T.bridgeOrder(eight, sw);
     assert.deepEqual(swOrder.map((c) => c.name), eight.map((c) => c.name));
-    assert.ok(swOrder.slice(1).every((c, i) => M.isBridge(M.linkBetween(sw, swOrder[i].pciId, c.pciId))));
+    assert.ok(swOrder.slice(1).every((c, i) => T.isBridge(T.linkBetween(sw, swOrder[i].pciId, c.pciId))));
     // A PARTIAL MESH (DGX-1): the ordering finds a chain in which every ADJACENT pair is linked (0-1-2-3-7-4-5-6),
     // so every wall is a bridge — true wall by wall, and drawn alone it would look exactly like the NVSwitch box.
     // `bridgeWalls` checks the run as a whole: the switch is a FULL mesh, the cube-mesh is PARTIAL, with the
     // pairs that are not linked named.
-    const mesh = M.topologyFrom(TOPOLOGIES.dgx1);
-    const meshWalls = M.bridgeWalls(M.bridgeOrder(eight, mesh), mesh);
+    const mesh = T.topologyFrom(TOPOLOGIES.dgx1);
+    const meshWalls = T.bridgeWalls(T.bridgeOrder(eight, mesh), mesh);
     assert.ok(meshWalls.every((w) => w.bridge), "every adjacent pair of the chosen chain IS linked");
     assert.ok(meshWalls.every((w) => w.mesh === "partial"), "…and the run is marked partial, not a group of eight");
     assert.equal(meshWalls[0].unlinked.length, 28 - 16, "the 12 pairs of 28 with no direct link are named");
-    const swWalls = M.bridgeWalls(swOrder, sw);
+    const swWalls = T.bridgeWalls(swOrder, sw);
     assert.ok(swWalls.every((w) => w.bridge && w.mesh === "full" && !w.unlinked.length), "the switch is a full mesh");
     // Two bridged PAIRS are two full runs of two, with a solid wall between them.
-    const rigWalls = M.bridgeWalls(order, t);
+    const rigWalls = T.bridgeWalls(order, t);
     assert.deepEqual(rigWalls.map((w) => w.mesh), ["full", null, "full"]);
     // Not measured → no bridges anywhere, whatever the links say.
-    assert.ok(M.bridgeWalls(cards, M.topologyFrom(TOPOLOGIES.unavailable)).every((w) => !w.bridge && w.mesh === null));
+    assert.ok(T.bridgeWalls(cards, T.topologyFrom(TOPOLOGIES.unavailable)).every((w) => !w.bridge && w.mesh === null));
     // Nothing measured → the server's order, untouched.
     assert.deepEqual(names(TOPOLOGIES.unavailable), cards.map((c) => c.name));
-    assert.deepEqual(M.bridgeOrder(cards, null), cards);
+    assert.deepEqual(T.bridgeOrder(cards, null), cards);
 });
 
 test("linkPhrase: a link said plainly, in the vendor's own vocabulary", () => {
-    const t = M.topologyFrom(TOPOLOGIES.rigAdjacent);
-    assert.equal(M.linkPhrase(M.linkBetween(t, pci(0), pci(1))), "NVLink ×4 (NV4) · 112.5 GB/s");
-    assert.equal(M.linkPhrase(M.linkBetween(t, pci(0), pci(2))), "PCIe, through the CPU's host bridge (PHB)");
-    const p = M.topologyFrom(TOPOLOGIES.partial);
-    assert.equal(M.linkPhrase(M.linkBetween(p, pci(1), pci(2))), "not classified: NVML did not report a path for this pair");
-    assert.equal(M.linkPhrase({ a: "x", b: "y", type: "xgmi" }), "xGMI", "an xGMI pair has no count to say");
+    const t = T.topologyFrom(TOPOLOGIES.rigAdjacent);
+    assert.equal(T.linkPhrase(T.linkBetween(t, pci(0), pci(1))), "NVLink ×4 (NV4) · 112.5 GB/s");
+    assert.equal(T.linkPhrase(T.linkBetween(t, pci(0), pci(2))), "PCIe, through the CPU's host bridge (PHB)");
+    const p = T.topologyFrom(TOPOLOGIES.partial);
+    assert.equal(T.linkPhrase(T.linkBetween(p, pci(1), pci(2))), "not classified: NVML did not report a path for this pair");
+    assert.equal(T.linkPhrase({ a: "x", b: "y", type: "xgmi" }), "xGMI", "an xGMI pair has no count to say");
 });
 
 test("utilization: its own series, its own preset where a card reports it, and never mixed with memory", () => {
@@ -2768,16 +2770,16 @@ test("ribbonSpans: a card's timed generation phases, on every card the model is 
 
 test("AMD's fabric (xGMI) is a bridge like NVLink: a pair, a full mesh, and said in AMD's own words", () => {
     // MOCKS (tests/fixtures/boxes.mjs): no AMD topology has been captured yet.
-    const pair = M.topologyFrom(TOPOLOGIES.amdBridged);
-    const link = M.linkBetween(pair, pci(0), pci(1));
-    assert.equal(M.isBridge(link), true);
-    assert.equal(M.linkPhrase(link), "xGMI (XGMI) · 64.0 GB/s", "the AMD driver's rate is not a PCIe peak, so it is not marked as one");
+    const pair = T.topologyFrom(TOPOLOGIES.amdBridged);
+    const link = T.linkBetween(pair, pci(0), pci(1));
+    assert.equal(T.isBridge(link), true);
+    assert.equal(T.linkPhrase(link), "xGMI (XGMI) · 64.0 GB/s", "the AMD driver's rate is not a PCIe peak, so it is not marked as one");
     assert.equal(link.linkCount, undefined, "and no link count is invented for a fabric that reports none");
-    assert.equal(M.topologyFrom({ status: "ok", links: [{ a: "p0", b: "p1", type: "xgmi", link_count: 3 }] }).links[0].linkCount, undefined,
+    assert.equal(T.topologyFrom({ status: "ok", links: [{ a: "p0", b: "p1", type: "xgmi", link_count: 3 }] }).links[0].linkCount, undefined,
         "a `link_count` key, which no server sends, is not read");
     // Eight MI300X, every pair linked with no switch: one fully bridged group, every wall a bridge.
-    const mesh = M.topologyFrom(TOPOLOGIES.xgmi8);
-    const walls = M.bridgeWalls([0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ pciId: pci(i) })), mesh);
+    const mesh = T.topologyFrom(TOPOLOGIES.xgmi8);
+    const walls = T.bridgeWalls([0, 1, 2, 3, 4, 5, 6, 7].map((i) => ({ pciId: pci(i) })), mesh);
     assert.ok(walls.every((w) => w.bridge && w.mesh !== "partial"), JSON.stringify(walls));
 });
 

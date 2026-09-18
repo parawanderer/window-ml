@@ -17,9 +17,10 @@ import {
 
     type ResourceEvent, type EventPlacement,
     MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, loadEdges, loadTrace, ribbonSpans, type RibbonSpan, layersOnCard,
+    presetsFor, kvFill, loadEdges, loadTrace, ribbonSpans, type RibbonSpan, layersOnCard,
     type ResourceSample, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
+import { bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge } from "../resource-topology";
 import {
     segments, chartWindow, axisFrac, axisGaps, axisOf, timeAtFraction, sampleAtFraction, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
     scrubZone, scrubResize, scrubIntent, windowSamples, scrubNudge, wheelScrubFraction, runWeight, runFrac, gridStep, gridTimes, runGap, type RunGap
