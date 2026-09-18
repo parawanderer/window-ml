@@ -19,7 +19,7 @@
 //
 //   node scripts/gen-api-docs.mjs
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -30,7 +30,7 @@ const OUT = join(ROOT, "src", "api-docs.gen.ts");
 // Types reachable from MlApi that a console caller never types out: the sidebar's
 // render descriptors (a big discriminated union that would triple the doc for zero
 // caller value) and the debug-event payloads. Referenced by name, never expanded.
-const SKIP_TYPES = new Set([
+export const SKIP_TYPES = new Set([
     "RenderDescriptor", "LocateSubstep", "ToolRenderInput", "TableSource", "TablePreview",
     "MlConfig",   // MlPublicConfig (a Pick of it) is what the page may actually read
     "MlTool",     // tool-initialisers return one; the model only PASSES it to `tools`, never inspects it
@@ -139,14 +139,14 @@ export function parseDecls(text) {
     const lines = text.split("\n");
     const decls = new Map();
     for (let i = 0; i < lines.length; i++) {
-        const m = /^export (interface|type) (\w+)\b/.exec(lines[i]);
+        const m = /^export (?:abstract )?(interface|type|class) (\w+)\b/.exec(lines[i]);
         if (!m) continue;
         const [, kind, name] = m;
         let end = i, depth = depthDelta(lines[i]);
         // An interface ends when its braces close; a type alias when a `;` lands at depth 0.
-        const done = () => kind === "interface"
-            ? depth === 0 && /[};]\s*$/.test(stripLineComment(lines[end]).trim())
-            : depth === 0 && stripLineComment(lines[end]).trim().endsWith(";");
+        const done = () => kind === "type"
+            ? depth === 0 && stripLineComment(lines[end]).trim().endsWith(";")
+            : depth === 0 && /[};]\s*$/.test(stripLineComment(lines[end]).trim());
         while (!done()) {
             if (++end >= lines.length) throw new Error(`gen-api-docs: unterminated ${kind} ${name}`);
             depth += depthDelta(lines[end]);
@@ -154,6 +154,36 @@ export function parseDecls(text) {
         decls.set(name, { kind, doc: docAbove(lines, i), body: lines.slice(i, end + 1) });
     }
     return decls;
+}
+
+/**
+ * A CLASS as its declaration surface: member signatures, their JSDoc, no bodies.
+ *
+ * Classes are indexed because a model can be handed one and expected to CALL it — `ml.embed` returns an
+ * `Embedding`, whose whole point is `.dot(other)`, and before this the doc named that type and never defined
+ * it. What a caller needs is the signatures; the implementation is noise in a document that costs context on
+ * every run, so bodies are dropped by walking the class at depth 1 and skipping anything deeper.
+ */
+export function classSurface(body) {
+    const out = [body[0]];
+    let depth = depthDelta(body[0]);
+    let pending = [];   // comment lines held until we know whether the member below them is kept
+    for (let i = 1; i < body.length - 1; i++) {
+        const line = body[i], before = depth;
+        depth += depthDelta(line);
+        if (before !== 1) continue;                       // inside a member body
+        const t = stripLineComment(line).trim();
+        if (!t) continue;
+        if (/^[/*]/.test(line.trim())) { pending.push(line); continue; }
+        // `private`/`protected` members are not callable by the reader this document is for, and dropping the
+        // member without its JSDoc would leave the comment explaining it attached to the NEXT one.
+        if (/^\s*(private|protected)\b/.test(line)) { pending = []; continue; }
+        out.push(...pending); pending = [];
+        const cut = line.indexOf("{");
+        out.push(cut >= 0 ? `${line.slice(0, cut).trimEnd()};` : line);
+    }
+    out.push(body[body.length - 1]);
+    return out;
 }
 
 /**
@@ -214,14 +244,101 @@ const deAlign = line => line
     .replace(/^ {5,}(\/\/)/, "    $1")
     .replace(/^ +/, sp => "\t".repeat(Math.floor(sp.length / 4)) + " ".repeat(sp.length % 4));
 
-/** Named types mentioned in these lines that contract.ts actually declares. */
+/** Named types mentioned in these lines that `known(name)` can resolve to a declaration. */
 const referencedTypes = (lines, known) => {
     const names = new Set();
     for (const name of lines.join("\n").match(/\b[A-Z][A-Za-z0-9_]*\b/g) || []) {
-        if (known.has(name)) names.add(name);
+        if (known(name)) names.add(name);
     }
     return names;
 };
+
+/* --------------------- resolving a type that is not in contract.ts --------------------- */
+// contract.ts is one contract, but it does not have to be one FILE, and a type that moves to a themed module
+// must not silently vanish from what the agent reads. It did: moving `FetchResult` out — leaving a re-export
+// behind — cut this doc by 10.7% and dropped its `### FetchResult` section, because the generator read exactly
+// one file and expanded only what that file declared.
+//
+// So a name that contract.ts does not declare is resolved through the IMPORT THAT BINDS IT, recursively.
+// Through the import, not by searching the tree for the name: two modules may declare the same name, and a
+// generator that picked a winner by scan order would put the wrong definition in front of the model.
+//
+// DEMAND-DRIVEN, and that is the whole safety argument. Only a name something already REFERENCES is ever
+// looked up, so this can add nothing that was not already named in the doc — where walking every import
+// eagerly would pull unrelated declarations into `known`, and `referencedTypes` matches any capitalised word.
+// The doc is model-facing context that is re-sent on every run; growing it by accident is a real cost.
+const MAX_MODULES = 64;   // a cycle is already handled by `visited`; this bounds a pathological import graph
+
+/** Resolve `spec` (a relative import path) against `from`, as TypeScript would. */
+const moduleFile = (from, spec) => {
+    const base = join(dirname(from), spec);
+    for (const c of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) if (existsSync(c)) return c;
+    return null;
+};
+
+/** The bindings a module re-exports or imports BY NAME, plus the modules it re-exports wholesale. */
+const moduleLinks = (file, text) => {
+    const byName = new Map();   // exported/imported name → the file that should declare it
+    const wildcard = [];        // `export * from "./x"` — searched only after a named binding misses
+    const rel = /["'](\.[^"']+)["']/;
+    for (const m of text.matchAll(/(?:import|export)\s+(?:type\s+)?\{([^}]*)\}\s*from\s*["'](\.[^"']+)["']/g)) {
+        const target = moduleFile(file, m[2]);
+        if (!target) continue;
+        for (const part of m[1].split(",")) {
+            // `A as B` binds B here but is declared as A there; the doc names what the caller sees.
+            const [orig, alias] = part.replace(/\btype\s+/, "").split(/\s+as\s+/).map(x => x.trim());
+            if (orig) byName.set((alias || orig), { file: target, as: orig });
+        }
+    }
+    for (const m of text.matchAll(/export\s+\*\s+from\s*["'](\.[^"']+)["']/g)) {
+        const t = moduleFile(file, m[1]);
+        if (t) wildcard.push(t);
+    }
+    // `import("./x").Name` — the inline form, which this codebase uses heavily in contract.ts itself.
+    for (const m of text.matchAll(/import\((["'])(\.[^"']+)\1\)\.(\w+)/g)) {
+        const t = moduleFile(file, m[2]);
+        if (t && !byName.has(m[3])) byName.set(m[3], { file: t, as: m[3] });
+    }
+    return { byName, wildcard, rel };
+};
+
+/** A declaration index over contract.ts that follows its imports on demand. */
+export function makeResolver(entry) {
+    const mods = new Map();   // file → { decls, links }
+    const load = (file) => {
+        let m = mods.get(file);
+        if (!m) {
+            if (mods.size >= MAX_MODULES) return null;
+            const text = readFileSync(file, "utf8");
+            m = { decls: parseDecls(text), links: moduleLinks(file, text) };
+            mods.set(file, m);
+        }
+        return m;
+    };
+    const memo = new Map();
+    const find = (name, file, visited) => {
+        if (!file || visited.has(file)) return null;
+        visited.add(file);
+        const m = load(file);
+        if (!m) return null;
+        if (m.decls.has(name)) return m.decls.get(name);
+        const link = m.links.byName.get(name);
+        if (link) {
+            const hit = find(link.as, link.file, visited);
+            if (hit) return hit;
+        }
+        for (const w of m.links.wildcard) {
+            const hit = find(name, w, visited);
+            if (hit) return hit;
+        }
+        return null;
+    };
+    const get = (name) => {
+        if (!memo.has(name)) memo.set(name, find(name, entry, new Set()));
+        return memo.get(name);
+    };
+    return { get, has: (name) => !!get(name), modules: () => mods.size };
+}
 
 /* ------------------------------- generation -------------------------------- */
 
@@ -239,6 +356,7 @@ const referencedTypes = (lines, known) => {
 export function generateApiParts() {
     const text = readFileSync(SOURCE, "utf8");
     const decls = parseDecls(text);
+    const resolve = makeResolver(SOURCE);
     const api = decls.get("MlApi");
     if (!api) throw new Error("gen-api-docs: no `export interface MlApi` in contract.ts");
 
@@ -260,17 +378,18 @@ export function generateApiParts() {
     const seen = new Set(["MlApi", "MlTool", ...SKIP_TYPES]);
     const queue = [];
     const enqueue = names => {
-        for (const n of names) if (decls.has(n) && !seen.has(n)) { seen.add(n); queue.push(n); }
+        for (const n of names) if (resolve.has(n) && !seen.has(n)) { seen.add(n); queue.push(n); }
     };
-    enqueue(referencedTypes(seedLines, decls));   // seed from non-tool-initialiser signatures only
+    enqueue(referencedTypes(seedLines, resolve.has));   // seed from non-tool-initialiser signatures only
 
     const found = [];
     while (queue.length) {
         const name = queue.shift();
-        const decl = decls.get(name);
-        const body = decl.kind === "interface" ? stripPrivateMembers(decl.body) : decl.body;
+        const decl = resolve.get(name);
+        const body = decl.kind === "interface" ? stripPrivateMembers(decl.body)
+            : decl.kind === "class" ? classSurface(decl.body) : decl.body;
         found.push([name, `### ${name}\n\n\`\`\`ts\n${[...decl.doc, ...body].map(deAlign).join("\n")}\n\`\`\`\n`]);
-        enqueue(referencedTypes(body, decls));
+        enqueue(referencedTypes(body, resolve.has));
     }
     // Alphabetical, so the output doesn't churn when contract.ts is reordered.
     found.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
