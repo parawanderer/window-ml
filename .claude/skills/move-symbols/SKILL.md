@@ -76,6 +76,12 @@ failure cannot be overridden.
   reads as that declaration's documentation to anything that parses comments by adjacency — `gen-api-docs`
   printed two such headers straight into the model-facing API reference, prose about storage keys and worker
   lifetimes included. `tests/api-docs.test.mjs` now fails on it, but only for files the doc reaches.
+- **Removing an import can DELETE the file's header.** When the move makes an import unnecessary it deletes
+  that statement, and a comment block sitting directly above it with no blank line goes too. That is how
+  `label-match.ts` lost its entire module header: the header touched its one `import` line. `--headerless` did
+  NOT catch it, because the first doc block of the code that just arrived reads as a header — the check tests
+  for a comment being present, not for it being about the file. **After any move, check `head -3` of BOTH
+  files.** Same rule as the one below, running the other way.
 - **Comments are attached by adjacency.** JSDoc and comment lines directly above a declaration move with it;
   a comment separated by a blank line (a section banner, a file header) stays. A stale comment that sat above
   the wrong function moves with that function, exactly as it was.

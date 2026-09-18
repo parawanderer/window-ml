@@ -31,7 +31,8 @@ import { hoverModel, kbFocus, kbPool, focusDepth, releaseFocus } from "./vram-fo
 import { sessionMap, models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot, predictView, timeGrid } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
-import { scrollToStepSeq, scrollToAnswer } from "./answer-render";
+import { scrollToAnswer } from "./answer-render";
+import { scrollToStepSeq } from "./step-scroll";
 import { useTipPlacement } from "./use-tip";
 import { signal } from "@preact/signals";
 

@@ -470,7 +470,7 @@ half the total while being 15% of the lines, and `dom.ts`, fourth by length, is 
 limit deliberately, because cost has no threshold and the size gate cannot see a 430-line file edited 42 times.
 Read the script's header before treating it as a verdict: commits are WRITES, so a heavily imported type module
 is read far more than it is edited (`contract.ts`: 327 lines, 85 importers), which is why fan-in is printed
-beside the score rather than folded into it. Watch the `recent` vs `all` columns — while they stay close, the
+beside the score rather than folded into it. Playbook: `.claude/skills/file-size/SKILL.md`. Watch the `recent` vs `all` columns — while they stay close, the
 decay is inert and the ranking is plain churn; a file whose ratio falls below about half is one whose work has
 stopped. **Decay can never hide bloat**: every file over 800 lines that does not make the ranking is listed
 underneath it anyway, with its commit count, because big-and-quiet is exactly what a decayed score buries.
