@@ -120,9 +120,11 @@ offers — the page builds both — and nothing records what the session origina
 - Worse, a tool that kept its NAME and changed its ARGUMENTS: nothing fails at the boundary, `validateArgs` rejects
   a call the history taught the model to make, and the model has no way to learn why.
 
-The fix in the shape the repo already uses: a small provenance stamp per session — build id (`build-info.gen.ts`
-exists), model, a hash of the system prompt, and tool name → schema hash — DIFFED at resume, with the difference
-written as a divider beside the page-change one. "3 tools are gone: … · `fetch_url` takes different arguments · the
+The fix is smaller than it reads, because the provenance is already stored: a saved run's history carries its whole
+`StartRunPayload`, `systemPrompt` and tool descriptors included. So it is a DIFF of two things that exist — the stored
+payload against the one the new page builds — at resume, with the difference reported INSIDE the existing
+`session-resumed` note rather than as a second event kind, since that note is already telling the reader what the
+resume cost. Build id (`build-info.gen.ts`) is the one field worth adding to the payload. "3 tools are gone: … · `fetch_url` takes different arguments · the
 system prompt changed." The existing rule is that everything a resume LOSES is said before it happens; this extends
 it to everything a resume CHANGES. The same stamp is what the state inspector shows for "what is this session
 running under right now".
@@ -384,9 +386,11 @@ say that alone, and it is the most useful thing on the screen once pointers are 
 
 Four things it has to get right:
 
-1. **Its own contract call, not a new rendering of the event stream** — something like `context.get(session)` returning
-   the blocks with a REVISION, plus an event when that revision moves. A pane derived from the log would silently go
-   stale, which is the one failure that makes an inspector worse than nothing.
+1. **Its own contract call, not a new rendering of the event stream** — a `session.context` command, paged and shaped
+   as a sibling of `session.backfill` (positions in the session's own history, `more` and `truncated` as different
+   sentences), returning the blocks with a REVISION, plus an event when that revision moves. A command rather than a
+   signal because it crosses a relay for a phone and it is a page of something large. A pane derived from the log
+   would silently go stale, which is the one failure that makes an inspector worse than nothing.
 2. **It says when it was taken.** A register view that does not distinguish "live" from "as of 40 seconds ago" teaches
    the reader to distrust it.
 3. **Side by side, not a tab.** The value is the correspondence — this turn in the transcript is that block in the
@@ -397,9 +401,11 @@ Four things it has to get right:
 What exists already, and what does not: `ValueStore.rows()` (`src/value-store.ts`) already returns the whole pointer
 heap, live, in the worker — key, bytes, format, source, holders, last touched — and nothing exposes it to any client,
 so the heap half is a command away rather than a design problem. The housekeeping log records every eviction, which
-gives the heap's HISTORY and not its contents. The message array itself has no reader at all: it lives in the run
-loop's memory, and the transcript is rebuilt from debug events rather than from what was sent. Exposing that array is
-the real work.
+gives the heap's HISTORY and not its contents. The message array itself has no reader at all. It has two sources with
+different lifetimes: `bgRuns` (`sw-runs.ts`) while the run is live, and the saved session's history (`SessionHistory`,
+`session-store.ts`) once it settles. `session.context` reads whichever holds the run; **the UI never reads `bgRuns`
+directly**, because it is worker memory that an MV3 eviction empties. Exposing that array is the real work; the heap
+is the half to expose first.
 
 **Where it is offered** follows the rule the rest of the page follows: by capability, never by "it is local". A phone
 talking to a remote runtime over the hub gets it only if that runtime offers it, exactly as it gets the Python bench

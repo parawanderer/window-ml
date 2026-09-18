@@ -412,6 +412,11 @@ so a `HubHost` runtime arriving later gets nothing without a line changing here.
 A phone reaching the same runtime over the hub reports the same capabilities and draws neither, not because it is a
 phone but because it holds no implementation — and nothing in the page asks which it is.
 
+`pythonBench` is MEASURED, not declared: `pythonBundlePresent` (`sw-python.ts`) opens the bundle's own Pyodide core and
+the wheel of every start-up package, once per worker life, and the capability is false until it has. The wheels are
+gitignored and the build only warns without them, so a declared `true` would offer a bench on a fresh checkout that
+then fails with `ModuleNotFoundError: No module named 'numpy'`.
+
 Where they go: the panel is the first tenant of the PANE ON THE RIGHT, which is the shape the state inspector wants
 (§The state inspector in the spec), and the bench is a full-width drawer in the grid's second row, as it is in the
 sidebar — it is a workspace, not a sidecar of whatever is beside it. The panel's dragged height does not follow it

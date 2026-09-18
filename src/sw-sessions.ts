@@ -13,6 +13,7 @@ import { SESSIONS_PORT, SessionServer } from "./session-server";
 import { SessionStore, indexedDbBackend, type SessionHistory } from "./session-store";
 import { bgRuns, trackRun, untrackRun } from "./sw-runs";
 import { fetchLLM } from "./sw-llm";
+import { pythonBundlePresent } from "./sw-python";
 
 /**
  * What this browser is called before it has a key to derive an id from (docs/spec/SESSION_CONTRACT.md), and the
@@ -51,6 +52,9 @@ const spawn = (() => {
 
 /** Whether a utility model is set (see the storage listener below). */
 let utilityModelSet = false;
+/** Whether this build can run Python (`pythonBundlePresent`): false until the bundle has been looked at, so a client
+ *  never offers a bench on a guess. */
+let pythonBundled = false;
 /** The page a blank agent target opens when the command names none (see the storage listener below). */
 let agentStartPage = "";
 
@@ -64,8 +68,10 @@ function localRuntime(): RuntimeInfo {
         // `resourcePanel` and `pythonBench` are not commands: they say the box behind this runtime can be drawn and
         // its sandbox can be driven, which a client offers only where it ALSO holds an implementation (the chat
         // page's `ChatExtras`). A phone reaching this same runtime over the hub reports the capability and draws
-        // nothing, because it has nothing to draw with.
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: true },
+        // nothing, because it has nothing to draw with. `resourcePanel` is true by construction (a browser with a
+        // backend behind it); `pythonBench` is MEASURED, because a checkout without the wheels builds a bundle whose
+        // bench would fail at run time.
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: pythonBundled },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -224,6 +230,9 @@ if (sessionStore) {
         sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count }))));
     }).catch(() => { /* no storage: the list is whatever this worker sees from now on */ });
 }
+
+// The bundle is looked at once; a client already connected hears the answer as a runtime update.
+void pythonBundlePresent().then((ok) => { if (ok !== pythonBundled) { pythonBundled = ok; sessionServer.runtimeChanged(); } });
 
 // Kept current from storage: `side.call` needs a utility model, and the runtime's capabilities say whether it has one.
 // After `sessionServer` exists, since a storage callback may run synchronously.

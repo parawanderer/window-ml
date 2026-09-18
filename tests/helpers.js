@@ -153,6 +153,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         // a test that exercises it passes a `fake-indexeddb` IDBFactory.
         ...(indexedDB ? { indexedDB } : {}),
         fetch: async (url, opts = {}) => {
+            // The extension's own files: this harness has no bundle, and Chrome REJECTS a missing extension resource
+            // rather than answering 404. Not a call to the backend, so never recorded or handed to `onFetch`.
+            if (String(url).startsWith("chrome-extension://")) throw new TypeError("Failed to fetch");
             const call = {
                 url: String(url),
                 opts,
