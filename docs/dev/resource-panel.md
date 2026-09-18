@@ -1,6 +1,6 @@
 # The resource panel and event lane
 
-Implementation notes for the VRAM/RAM panel (`resource-model.ts`, `resource-chart.tsx`, `vram.tsx`) and its event lane. The spec with ASCII mocks is docs/spec/RESOURCE_PANEL.md, moved out of AGENTS.md on 2026-09-12 so they are read when that code is being
+Implementation notes for the VRAM/RAM panel (`resource-model.ts`, `resource-bands.ts`, `resource-chart.tsx`, `vram.tsx`) and its event lane. The spec with ASCII mocks is docs/spec/RESOURCE_PANEL.md, moved out of AGENTS.md on 2026-09-12 so they are read when that code is being
 changed rather than loaded into every session. AGENTS.md keeps the repository's working rules and the traps that
 bite; this file keeps how the subsystem works and why it is built that way. Paths name files by their bare name,
 as in AGENTS.md — they are all under `src/`.
@@ -12,7 +12,7 @@ HTML — which must read as "capacity unknown", never as zero. `LoadedModel` als
 `vramBytes`/`sizeBytes` beside the rounded GB, and `gpus[]` for per-device placement; a CPU-resident model has
 **no `gpus` key at all**, and that absence is the server's signal, preserved rather than normalised to `[]`.
 
-**Resource panel (VRAM/RAM).** `resource-model.ts` is the pure, unit-tested layer (parsing, bands, ceilings,
+**Resource panel (VRAM/RAM).** `resource-model.ts` is the pure, unit-tested layer (parsing, ceilings,
 series/tracks/presets, history segmentation); `src/sidebar/resource-chart.tsx` only draws. Spec + ASCII mocks +
 live captures from both a CUDA box and a Metal Mac: `docs/spec/RESOURCE_PANEL.md`. **Read it before touching
 this** — several of the numbers are counter-intuitive and getting one wrong produces a confidently wrong
@@ -687,7 +687,7 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
 - **A ruled moment stacks ABOVE a gap mark** (z-index 4 vs 3), and `GapTip` yields while an event is hovered: at equal
   z the later-rendered gap took the pointer, so pointing at an eviction inside a break said "not measured".
 - **A model loading in the window stacks LAST among the models, its `load:`/`runner:` band directly on top**
-  (`bandOrder`, resource-model.ts). The load used to sit above every model while the band it becomes sat in
+  (`bandOrder`, resource-bands.ts). The load used to sit above every model while the band it becomes sat in
   alphabetical order, so the allocation jumped across the stack when the server assigned it. The MODEL moves, not the
   load: a load is a curve, and stepping stops at the first band that is not one (`stepBands`).
 - **Instants rule through the plot** (dashed — a solid line reads as part of the chart), and one eviction is

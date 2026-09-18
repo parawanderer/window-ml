@@ -12,15 +12,20 @@
 import { Fragment } from "preact";
 import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/hooks";
 import {
-    deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    boxAxis, chartWindow, placeEvents, axisFrac, axisGaps, axisOf, type Axis, laneRows, eventsIn, lineageOf, timeAtFraction, sampleAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
-    scopeToSpan, scopeAround, scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
-    filterEvents, countByKind, sessionWindow, type ResourceEvent, type EventPlacement, type PhaseKind,
-    OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, pendingAllocation, loadTrace, gridStep, gridTimes, ribbonSpans, type RibbonSpan, stepBands, bandEdge, runGap, type RunGap, serverGenNote, layersOnCard, predictionLine,
-    type ResourceSample, type Band, type Capacity, type TrackDef, type DeviceCapacity,
-    bandOrder,
+    ceilingsFor, formatBytes, formatShare, percentOf, isCpuResident,
+    boxAxis, eventsIn,
+
+    type ResourceEvent, type EventPlacement, type PhaseKind,
+    MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, loadTrace, ribbonSpans, type RibbonSpan, serverGenNote, layersOnCard, predictionLine,
+    type ResourceSample, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
+import {
+    segments, chartWindow, axisFrac, axisGaps, axisOf, type Axis, timeAtFraction, sampleAtFraction, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
+    scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction, runWeight, runFrac, gridStep, gridTimes, runGap, type RunGap
+} from "../resource-axis";
+import { placeEvents, laneRows, lineageOf, MIN_EV_SPAN, scopeToSpan, scopeAround, filterEvents, countByKind, sessionWindow } from "../resource-lane";
+import { deviceBands, hostBands, OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, pendingAllocation, stepBands, bandEdge, type Band, bandOrder } from "../resource-bands";
 import { keysReach, resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";
 import { sessionMap, models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot, predictView, timeGrid } from "./store";
 import { Disclosure } from "./ui-kit";

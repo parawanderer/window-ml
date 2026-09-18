@@ -6,6 +6,10 @@ import { test, describe } from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 const M = await import("../src/resource-model.ts");
+// The band arithmetic moved to its own module; the members below are read from there.
+const B = await import("../src/resource-bands.ts");
+const L = await import("../src/resource-lane.ts");
+const X = await import("../src/resource-axis.ts");
 // The machine shapes, shared with resource-demo.mjs — one copy, so a guard and a demo cannot disagree
 // about what a box looks like.
 import { BOXES, TOPOLOGIES, pci } from "./fixtures/boxes.mjs";
@@ -118,7 +122,7 @@ test("deviceBands: attributed / other / free — the middle band is the point", 
     const busy = { compute: { ...CUDA_INFO.compute,
         supported_gpus: [{ ...CUDA_INFO.compute.supported_gpus[0], free_memory: 18196987904 }, CUDA_INFO.compute.supported_gpus[1]] } };
     const sample = { t: 1, models: [], capacity: M.parseInfo(busy) };
-    const bands = M.deviceBands(sample, "0");
+    const bands = B.deviceBands(sample, "0");
     const by = Object.fromEntries(bands.map((b) => [b.key, b.bytes]));
     assert.equal(by["m:anything"], undefined, "no models of ours are resident");
     assert.ok(by.other > 83 * GB, "83 GB in use that no model of ours accounts for — shown as NOT ours");
@@ -135,7 +139,7 @@ test("deviceBands: one band per model, plus an explicit unknown for an unattribu
         M.residencyFrom({ name: "qwen3.5:32b", size: 22 * GB, size_vram: 22 * GB, gpus: [{ gpu_id: "0", size_vram: 22 * GB }] }),
         M.residencyFrom({ name: "mystery", size: 1 * GB, size_vram: 1 * GB, gpus: [{ gpu_id: "0", size_vram: 0 }] }),
     ] };
-    const bands = M.deviceBands(sample, "0");
+    const bands = B.deviceBands(sample, "0");
     const models = bands.filter((b) => b.kind === "model").map((b) => b.model);
     assert.deepEqual(models, ["gemma4:31b", "qwen3.5:32b"], "one band per attributable model, carrying its name");
     const unknown = bands.find((b) => b.kind === "unknown");
@@ -150,7 +154,7 @@ test("deviceBands: a single DISCRETE device needs no attribution — the total I
     const sample = { t: 1, capacity: cap, models: [
         M.residencyFrom({ name: "solo", size: 5 * GB, size_vram: 5 * GB }),   // no gpus[] reported at all
     ] };
-    const band = M.deviceBands(sample, "0").find((b) => b.kind === "model");
+    const band = B.deviceBands(sample, "0").find((b) => b.kind === "model");
     assert.equal(band.bytes, 5 * GB, "with one card there is nowhere else it could be");
 });
 
@@ -158,7 +162,7 @@ test("deviceBands: a single DISCRETE device needs no attribution — the total I
 // was 13.5 GB deep in the very same memory — so occupancy read off the device would show a nearly-empty box.
 test("unified memory: occupancy comes from the HOST, and the model is attributed in FULL", () => {
     const sample = { t: 1, capacity: M.parseInfo(METAL_INFO), models: [M.residencyFrom(METAL_PS_GPU)] };
-    const bands = M.deviceBands(sample, "0");
+    const bands = B.deviceBands(sample, "0");
     const model = bands.find((b) => b.kind === "model");
     // size == size_vram on Metal, so ramBytes is 0; attributing only the spill would show NOTHING resident.
     assert.equal(model.bytes, 1039086387, "the whole footprint occupies the one pool, GPU-resident or not");
@@ -187,7 +191,7 @@ test("hostBands: a model's CPU spill is attributed, the rest is not ours", () =>
     const sample = { t: 1, capacity: M.parseInfo(CUDA_INFO), models: [
         M.residencyFrom({ name: "spilled", size: 10 * GB, size_vram: 6 * GB, gpus: [{ gpu_id: "0", size_vram: 6 * GB }] }),
     ] };
-    const bands = M.hostBands(sample);
+    const bands = B.hostBands(sample);
     assert.equal(bands.find((b) => b.kind === "model").bytes, 4 * GB, "size - size_vram is the RAM half");
     assert.ok(bands.find((b) => b.kind === "other").bytes > 100 * GB, "the OS and everything else");
 });
@@ -264,13 +268,13 @@ test("presetsFor: the default layout follows the hardware", () => {
 
 test("segments: history breaks at a hole instead of drawing across it", () => {
     const s = (t) => ({ t, models: [], capacity: null });
-    const runs = M.segments([s(0), s(2000), s(4000), s(600000), s(602000)], M.MAX_SAMPLE_GAP_MS);
+    const runs = X.segments([s(0), s(2000), s(4000), s(600000), s(602000)], X.MAX_SAMPLE_GAP_MS);
     assert.equal(runs.length, 2, "the ten-minute gap (panel closed) splits the line");
     assert.deepEqual(runs.map((r) => r.length), [3, 2]);
-    assert.equal(M.segments([]).length, 0);
-    assert.equal(M.segments([s(0)]).length, 1, "a lone sample is its own segment — a point, not a line");
+    assert.equal(X.segments([]).length, 0);
+    assert.equal(X.segments([s(0)]).length, 1, "a lone sample is its own segment — a point, not a line");
     // A normal cadence is never split.
-    assert.equal(M.segments([s(0), s(2000), s(4000)]).length, 1);
+    assert.equal(X.segments([s(0), s(2000), s(4000)]).length, 1);
 });
 
 test("segments: a REPORTED hole breaks the line even when no time passed", () => {
@@ -279,29 +283,29 @@ test("segments: a REPORTED hole breaks the line even when no time passed", () =>
     // is a hole nothing in the timestamps can see. Two seconds apart is an ordinary cadence, so this run is
     // split by the flag alone; without it the line is drawn straight across the interval the server has just
     // said it cannot account for, and drops happen when memory is moving fastest.
-    const runs = M.segments([s(0), s(2000), { ...s(4000), gapBefore: true }, s(6000)], M.MAX_SAMPLE_GAP_MS);
+    const runs = X.segments([s(0), s(2000), { ...s(4000), gapBefore: true }, s(6000)], X.MAX_SAMPLE_GAP_MS);
     assert.equal(runs.length, 2, "the flag splits a run the interval would have kept whole");
     assert.deepEqual(runs.map((r) => r.length), [2, 2]);
     assert.deepEqual(runs[1].map((x) => x.t), [4000, 6000], "the marked sample STARTS the new run");
     // The mark on the very first sample is about a hole before anything we hold, so there is nothing to break.
-    assert.equal(M.segments([{ ...s(0), gapBefore: true }, s(2000)]).length, 1);
+    assert.equal(X.segments([{ ...s(0), gapBefore: true }, s(2000)]).length, 1);
 });
 
 test("runGap: what a break stands for — how long, and whether the server said so", () => {
     const s = (t, extra = {}) => ({ t, models: [], capacity: null, ...extra });
     // A minute with nothing sampled: the panel was closed, or the box did not answer.
     const all = [s(0), s(2000), s(64000), s(66000)];
-    const [a, b] = M.segments(all, M.MAX_SAMPLE_GAP_MS);
-    assert.deepEqual(M.runGap(a, b, all), { from: 2000, to: 64000, reported: false, isolated: 0 });
+    const [a, b] = X.segments(all, X.MAX_SAMPLE_GAP_MS);
+    assert.deepEqual(X.runGap(a, b, all), { from: 2000, to: 64000, reported: false, isolated: 0 });
     // A REPORTED drop, on the first reading after it: the stream lost frames, a different cause to name.
     const dropped = [s(0), s(2000), s(4000, { gapBefore: true }), s(6000)];
-    const [c, d] = M.segments(dropped, M.MAX_SAMPLE_GAP_MS);
-    assert.equal(M.runGap(c, d, dropped).reported, true);
+    const [c, d] = X.segments(dropped, X.MAX_SAMPLE_GAP_MS);
+    assert.equal(X.runGap(c, d, dropped).reported, true);
     // A lone reading inside the hole is too few to draw, but it WAS measured, so it is counted rather than the
     // stretch being called empty — and a drop reported on it still counts as reported.
     const lone = [s(0), s(2000), s(40000, { gapBefore: true }), s(90000), s(92000)];
-    const runs = M.segments(lone, M.MAX_SAMPLE_GAP_MS).filter((r) => r.length > 1);
-    assert.deepEqual(M.runGap(runs[0], runs[1], lone), { from: 2000, to: 90000, reported: true, isolated: 1 });
+    const runs = X.segments(lone, X.MAX_SAMPLE_GAP_MS).filter((r) => r.length > 1);
+    assert.deepEqual(X.runGap(runs[0], runs[1], lone), { from: 2000, to: 90000, reported: true, isolated: 1 });
 });
 
 test("eventsIn: only the window, in time order", () => {
@@ -353,19 +357,19 @@ test("the residual band is named by MAGNITUDE, so an idle card shows no phantom 
         const cap = M.parseInfo(CUDA_INFO);
         cap.devices[0].freeBytes = cap.devices[0].totalBytes - usedBytes;
         const models = modelBytes ? [M.residencyFrom({ name: "m", size: modelBytes, size_vram: modelBytes, gpus: [{ gpu_id: "0", size_vram: modelBytes }] })] : [];
-        return M.deviceBands({ t: 1, capacity: cap, models }, "0").find((b) => b.kind === "other");
+        return B.deviceBands({ t: 1, capacity: cap, models }, "0").find((b) => b.kind === "other");
     };
     // An IDLE card is the case the naive formula gets wrong: ~0.55 GiB is ollama's discovery context, held on
     // every visible card whether or not anything is loaded. Calling that "other processes" invents a process.
     const idle = mk(0.55 * GB, 0);
     assert.equal(idle.label, "driver overhead");
-    assert.equal(idle.label, M.DRIVER_BAND_LABEL);
+    assert.equal(idle.label, B.DRIVER_BAND_LABEL);
     // A loaded model adds its CUDA context on top — size_vram is llama-server's buffer accounting and the
     // driver reports 0.7-1.8 GiB more, so this residual is still OURS, not a third party.
     assert.equal(mk(21 * GB, 20 * GB).label, "driver overhead", "a model's context stays under the floor");
     // Clear the floor and there really is something else on the card worth naming.
     const foreign = mk(30 * GB, 20 * GB);
-    assert.equal(foreign.label, M.OTHER_BAND_LABEL);
+    assert.equal(foreign.label, B.OTHER_BAND_LABEL);
     assert.equal(foreign.label, "unattributed");
     assert.ok(!/other process/i.test(foreign.label), "still never claims to be a process we can point at");
     assert.match(foreign.note, /CUDA context/, "on a CUDA card, the context is named as a CUDA one (and only there — see the per-backend test)");
@@ -639,7 +643,7 @@ test("placeEvents: by time alone on a linear axis — nothing is dropped for fal
     // The chart's axis is the window, linear in clock time, gaps included (see Axis).
     const axis = { from: 0, to: 10_000 };
     const at = (label, t, until) => ({ t, until, kind: "note", label });
-    const got = M.placeEvents(axis, [
+    const got = L.placeEvents(axis, [
         at("start", 0),
         at("in what used to be a collapsed gap", 5000),
         at("span", 2500, 7500),
@@ -661,7 +665,7 @@ test("placeEvents: by time alone on a linear axis — nothing is dropped for fal
 
 test("axisGaps: a break between runs is drawn at its TRUE width", () => {
     const runs = [[{ t: 1000 }, { t: 2000 }], [{ t: 8000 }, { t: 9000 }]];
-    const [g] = M.axisGaps(runs, [...runs[0], ...runs[1]], { from: 0, to: 10_000 });
+    const [g] = X.axisGaps(runs, [...runs[0], ...runs[1]], { from: 0, to: 10_000 });
     assert.deepEqual([g.from, g.to], [0.2, 0.8], "six seconds of a ten-second axis is sixty percent of it, not 3 px");
     assert.deepEqual([g.gap.from, g.gap.to], [2000, 8000]);
 });
@@ -686,7 +690,7 @@ test("residencyEvents: an eviction is a diff; a load already told as a span isn'
 
 test("laneRows: overlapping spans never share a line", () => {
     const p = (run, from, to) => ({ event: { t: from, kind: "gen", label: `${run}:${from}` }, run, from, to, clipped: false });
-    const rows = M.laneRows([p(0, 0, 0.5), p(0, 0.2, 0.7), p(0, 0.8, 0.9), p(0, 0.85, 1)]);
+    const rows = L.laneRows([p(0, 0, 0.5), p(0, 0.2, 0.7), p(0, 0.8, 0.9), p(0, 0.85, 1)]);
     assert.equal(rows.length, 2, "two overlapping pairs need two rows");
     // Two bars on one line read as a single longer one — a false statement about what happened.
     for (const row of rows) {
@@ -697,7 +701,7 @@ test("laneRows: overlapping spans never share a line", () => {
     // Past the row budget, events crowd the last row rather than vanishing: a dropped event is a lie by
     // omission, an overlapping one is merely ugly.
     const many = Array.from({ length: 12 }, (_, i) => p(0, 0, 1));
-    const capped = M.laneRows(many, 3);
+    const capped = L.laneRows(many, 3);
     assert.equal(capped.length, 3);
     assert.equal(capped.flat().length, 12, "every event is still drawn");
 });
@@ -706,7 +710,7 @@ test("laneRows: overlapping spans never share a line", () => {
 // have a background embedding call beside it, and each nests under the one that contains it.
 test("laneRows: nested and overlapping events stack under the one that contains them", () => {
     const p = (label, from, to) => ({ event: { t: from, until: to, kind: "gen", label }, run: 0, from, to, clipped: false });
-    const rows = M.laneRows([
+    const rows = L.laneRows([
         p("run", 0, 1),          // the driver, spanning everything
         p("generation", 0.1, 0.35),
         p("embed", 0.15, 0.3),   // a background embedding, INSIDE the generation
@@ -730,15 +734,15 @@ test("lineageOf: an event, what spawned it, and what it spawned", () => {
         { id: "run:b", kind: "run", label: "other run", t: 4 },
     ];
     // From the sub-call UP: the step that spawned it and the run that contains it.
-    assert.deepEqual([...M.lineageOf(evs, "step:a:1:sub0")].sort(), ["run:a", "step:a:1", "step:a:1:sub0"]);
+    assert.deepEqual([...L.lineageOf(evs, "step:a:1:sub0")].sort(), ["run:a", "step:a:1", "step:a:1:sub0"]);
     // From the step: itself, its run, and what IT spawned — the same relationship read the other way.
-    assert.deepEqual([...M.lineageOf(evs, "step:a:1")].sort(), ["run:a", "step:a:1", "step:a:1:sub0"]);
+    assert.deepEqual([...L.lineageOf(evs, "step:a:1")].sort(), ["run:a", "step:a:1", "step:a:1:sub0"]);
     // From the run: everything under it, but never a sibling run.
-    const fromRun = M.lineageOf(evs, "run:a");
+    const fromRun = L.lineageOf(evs, "run:a");
     assert.ok(fromRun.has("step:a:2") && fromRun.has("step:a:1:sub0"));
     assert.ok(!fromRun.has("run:b"), "another run is not part of this lineage");
     // Nothing hovered → nothing lit, which is what leaves the lane undimmed at rest.
-    assert.equal(M.lineageOf(evs, undefined).size, 0);
+    assert.equal(L.lineageOf(evs, undefined).size, 0);
 });
 
 // Turning a drag into a time range is the INVERSE of placing an event: the plot is segments weighted by
@@ -746,15 +750,15 @@ test("lineageOf: an event, what spawned it, and what it spawned", () => {
 // lands in. Getting this wrong makes a zoom select a different stretch than the one you dragged over.
 test("timeAtFraction: the inverse of placeEvents on the linear axis", () => {
     const axis = { from: 1000, to: 11_000 };
-    assert.equal(M.timeAtFraction(axis, 0), 1000);
-    assert.equal(M.timeAtFraction(axis, 1), 11_000);
-    assert.equal(M.timeAtFraction(axis, 0.35), 4500, "linear in time: no weighting by what was sampled where");
-    const [p] = M.placeEvents(axis, [{ t: 2500, kind: "note", label: "x" }]);
-    assert.equal(M.timeAtFraction(axis, p.from), 2500, "round-trips with placeEvents");
+    assert.equal(X.timeAtFraction(axis, 0), 1000);
+    assert.equal(X.timeAtFraction(axis, 1), 11_000);
+    assert.equal(X.timeAtFraction(axis, 0.35), 4500, "linear in time: no weighting by what was sampled where");
+    const [p] = L.placeEvents(axis, [{ t: 2500, kind: "note", label: "x" }]);
+    assert.equal(X.timeAtFraction(axis, p.from), 2500, "round-trips with placeEvents");
     // Out of range clamps rather than extrapolating into time that was never on screen.
-    assert.equal(M.timeAtFraction(axis, -3), 1000);
-    assert.equal(M.timeAtFraction(axis, 9), 11_000);
-    assert.equal(M.timeAtFraction(null, 0.5), null, "no axis → no answer, not a guess");
+    assert.equal(X.timeAtFraction(axis, -3), 1000);
+    assert.equal(X.timeAtFraction(axis, 9), 11_000);
+    assert.equal(X.timeAtFraction(null, 0.5), null, "no axis → no answer, not a guess");
 });
 
 // A very short event is WIDENED so it stays visible, so packing has to reserve the same width — otherwise
@@ -762,10 +766,10 @@ test("timeAtFraction: the inverse of placeEvents on the linear axis", () => {
 test("laneRows: packs at the DRAWN width, not the true one", () => {
     const p = (label, from, to) => ({ event: { t: from, until: to, kind: "embed", label }, run: 0, from, to, clipped: false });
     // Two instants a hair apart: true extents don't overlap, drawn ones do.
-    const rows = M.laneRows([p("a", 0.30, 0.3005), p("b", 0.302, 0.3025)]);
+    const rows = L.laneRows([p("a", 0.30, 0.3005), p("b", 0.302, 0.3025)]);
     assert.equal(rows.length, 2, "they need separate rows because they are DRAWN overlapping");
     // Far enough apart to share a row.
-    assert.equal(M.laneRows([p("a", 0.1, 0.11), p("b", 0.5, 0.51)]).length, 1);
+    assert.equal(L.laneRows([p("a", 0.1, 0.11), p("b", 0.5, 0.51)]).length, 1);
 });
 
 // Two bars on separate rows is the lane's only claim that they OVERLAP. Spending a row to buy a hair of
@@ -781,7 +785,7 @@ test("laneRows: concurrent runs get their own BANDS, so neither tree is interlea
     });
     // The sketch: run A spans the first two thirds with four steps and some sub-calls; run B starts halfway
     // and overlaps it.
-    const rows = M.laneRows([
+    const rows = L.laneRows([
         ev("a", "run", 0.00, 0.62),
         ev("a", "tool", 0.02, 0.16, 1), ev("a", "tool", 0.17, 0.31, 2),
         ev("a", "tool", 0.32, 0.46, 3), ev("a", "tool", 0.47, 0.61, 4),
@@ -816,7 +820,7 @@ test("laneRows: a child is never drawn above its own container, even when the co
         ev("run", 0.40, 1.00, "run:2"), ev("tool", 0.45, 0.60, "step:3", "run:2"), ev("tool", 0.62, 0.95, "step:4", "run:2"),
         ev("embed", 0.50, 0.55, "step:3:sub0", "step:3"),
     ];
-    const rows = M.laneRows(placed, 8, M.MIN_EV_SPAN, M.MAX_LANE_ROWS);
+    const rows = L.laneRows(placed, 8, L.MIN_EV_SPAN, L.MAX_LANE_ROWS);
     const rowOf = new Map();
     rows.forEach((row, i) => row.forEach((p) => rowOf.set(p.event.id, i)));
     for (const p of placed) {
@@ -843,11 +847,11 @@ test("laneRows: a run's back-to-back steps share ONE row, milliseconds apart on 
     ];
     const run = { event: { t: 20_210, until: 316_690, kind: "run", ref: { hash: "fa3503e7" }, id: "run:fa3503e7:1" }, run: 0, from: 20_210 / axisMs, to: 316_690 / axisMs, clipped: false };
     // Packed the way the chart packs: the minimum drawn width is three pixels.
-    const rows = M.laneRows([run, ...steps], 4, Math.max(M.MIN_EV_SPAN, 3 * px));
+    const rows = L.laneRows([run, ...steps], 4, Math.max(L.MIN_EV_SPAN, 3 * px));
     assert.equal(rows.length, 2, `the container, then every step on one row: ${JSON.stringify(rows.map((r) => r.map((p) => p.event.id)))}`);
     assert.deepEqual(rows[1].map((p) => p.event.id), steps.map((p) => p.event.id), "in the order they ran");
     // Still refused when two steps really do overlap.
-    const overlap = M.laneRows([run, ev("gen", 60_000, 65_000, "a"), ev("tool", 64_000, 70_000, "b")], 4, 3 * px);
+    const overlap = L.laneRows([run, ev("gen", 60_000, 65_000, "a"), ev("tool", 64_000, 70_000, "b")], 4, 3 * px);
     assert.equal(overlap.length, 3, "overlapping steps keep separate rows");
 });
 
@@ -856,7 +860,7 @@ test("laneRows: the SAME model running twice at once is still two bands — grou
         event: { t: from, until: to, kind, model: "qwen3.8:27b", ref: { hash } },
         run: 0, from, to, clipped: false,
     });
-    const rows = M.laneRows([
+    const rows = L.laneRows([
         ev("r1", "run", 0, 0.8), ev("r1", "tool", 0.1, 0.4), ev("r1", "tool", 0.45, 0.75),
         ev("r2", "run", 0.2, 1.0), ev("r2", "tool", 0.25, 0.6), ev("r2", "tool", 0.65, 0.95),
     ], 8);
@@ -883,7 +887,7 @@ test("bands: a model resident before the free bytes catch up does not collapse t
     };
     // The skewed sample: ps says 18 GiB is resident, info still says almost everything is free.
     const sample = { t: 1, capacity: cap, models: [{ model: "m", vramBytes: 18 * GB, ramBytes: 0, perDevice: { 0: 18 * GB }, contextLength: null, expiresAt: null }] };
-    const bands = M.deviceBands(sample, "0");
+    const bands = B.deviceBands(sample, "0");
     const total = bands.filter((b) => b.kind !== "free").reduce((a, b) => a + b.bytes, 0);
     assert.ok(total >= 18 * GB, `what is resident is in use whatever the other sample says yet (got ${total})`);
     const model = bands.find((b) => b.kind === "model");
@@ -895,7 +899,7 @@ test("laneRows: SEQUENTIAL runs share the same rows; overlapping ones still get 
         event: { t: from, until: to, kind, ref: { hash } }, run: 0, from, to, clipped: false,
     });
     // A finishes at 0.45, B starts at 0.55 — no overlap at all.
-    const sequential = M.laneRows([
+    const sequential = L.laneRows([
         ev("a", "run", 0.00, 0.45), ev("a", "tool", 0.02, 0.20), ev("a", "tool", 0.22, 0.44),
         ev("b", "run", 0.55, 1.00), ev("b", "tool", 0.57, 0.75), ev("b", "tool", 0.77, 0.99),
     ]);
@@ -905,7 +909,7 @@ test("laneRows: SEQUENTIAL runs share the same rows; overlapping ones still get 
     assert.deepEqual([...new Set(sequential[0].map((p) => p.event.ref.hash))].sort(), ["a", "b"]);
 
     // The overlapping case is unchanged: B starts while A is still going, so it gets its own band.
-    const overlapping = M.laneRows([
+    const overlapping = L.laneRows([
         ev("a", "run", 0.00, 0.70), ev("a", "tool", 0.02, 0.30), ev("a", "tool", 0.32, 0.68),
         ev("b", "run", 0.40, 1.00), ev("b", "tool", 0.42, 0.70), ev("b", "tool", 0.72, 0.99),
     ]);
@@ -926,8 +930,8 @@ test("laneRows: many concurrent runs are capped in TOTAL, and nothing is dropped
             placed.push({ event: { t: from, until: to, kind: "tool", ref: { hash } }, run: 0, from, to, clipped: false });
         }
     }
-    const rows = M.laneRows(placed);
-    assert.ok(rows.length <= M.MAX_LANE_ROWS, `capped at ${M.MAX_LANE_ROWS}, got ${rows.length}`);
+    const rows = L.laneRows(placed);
+    assert.ok(rows.length <= L.MAX_LANE_ROWS, `capped at ${L.MAX_LANE_ROWS}, got ${rows.length}`);
     assert.equal(rows.flat().length, placed.length, "every event is still drawn somewhere");
 });
 
@@ -936,7 +940,7 @@ test("laneRows: machine events are packed last, in a band of their own", () => {
         event: { t: from, until: to, kind, ...(hash ? { ref: { hash } } : {}) },
         run: 0, from, to, clipped: false,
     });
-    const rows = M.laneRows([
+    const rows = L.laneRows([
         ev(null, "load", 0.3, 0.45),
         ev("a", "run", 0.0, 0.9), ev("a", "tool", 0.1, 0.8),
     ], 8);
@@ -946,28 +950,28 @@ test("laneRows: machine events are packed last, in a band of their own", () => {
 
 test("laneRows: a bar that merely ABUTS another shares its row rather than claiming an overlap", () => {
     const p = (kind, from, to) => ({ event: { t: from, until: to, kind }, run: 0, from, to, clipped: false });
-    const rows = M.laneRows([p("load", 0.20, 0.30), p("tool", 0.30, 0.45)]);
+    const rows = L.laneRows([p("load", 0.20, 0.30), p("tool", 0.30, 0.45)]);
     assert.equal(rows.length, 1, "they touch, they do not overlap");
 
     // The separation is still taken where it costs nothing — a third bar with room after the second sits on
     // the same row, and a bar that genuinely overlaps still gets its own.
-    assert.equal(M.laneRows([p("load", 0.2, 0.3), p("tool", 0.3, 0.45), p("tool", 0.6, 0.7)]).length, 1);
-    assert.equal(M.laneRows([p("tool", 0.2, 0.5), p("embed", 0.3, 0.4)]).length, 2, "a real overlap still stacks");
+    assert.equal(L.laneRows([p("load", 0.2, 0.3), p("tool", 0.3, 0.45), p("tool", 0.6, 0.7)]).length, 1);
+    assert.equal(L.laneRows([p("tool", 0.2, 0.5), p("embed", 0.3, 0.4)]).length, 2, "a real overlap still stacks");
 });
 
 test("scopeToSpan: a block's own extent, widened only when it is too short to frame", () => {
     // A long block is scoped to exactly itself — nothing invented around it.
-    assert.deepEqual(M.scopeToSpan(1000, 21_000, 99_000), { from: 1000, to: 21_000 });
+    assert.deepEqual(L.scopeToSpan(1000, 21_000, 99_000), { from: 1000, to: 21_000 });
 
     // A 40ms tool call is a real event worth pointing at, but a 40ms window contains no samples and draws as
     // an empty plot — so it is widened around its own CENTRE, which stays put.
-    const tiny = M.scopeToSpan(10_000, 10_040, 99_000);
-    assert.equal(tiny.to - tiny.from, M.MIN_SCOPE_MS);
+    const tiny = L.scopeToSpan(10_000, 10_040, 99_000);
+    assert.equal(tiny.to - tiny.from, X.MIN_SCOPE_MS);
     assert.equal((tiny.from + tiny.to) / 2, 10_020, "centred on the block, not shifted to one side");
 
     // Work still IN FLIGHT has no end, so `now` stands in for one — scoping to it while it runs is exactly
     // when this is most useful and least able to know where it stops.
-    assert.deepEqual(M.scopeToSpan(50_000, null, 99_000), { from: 50_000, to: 99_000 });
+    assert.deepEqual(L.scopeToSpan(50_000, null, 99_000), { from: 50_000, to: 99_000 });
 });
 
 // A card can stop being reported mid-session: a driver crash, a GPU reset, a container losing its device.
@@ -1020,7 +1024,7 @@ test("placementOf: a model on a card that stopped being reported says so", () =>
 test("scrubExtent: where the window sits, and when there is nothing to scrub", () => {
     const samples = Array.from({ length: 10 }, (_, i) => ({ t: 1000 + i * 1000 }));   // 1s..10s
     // A window over the last three seconds sits at the right-hand end, and counts as AT THE TAIL.
-    const tail = M.scrubExtent(samples, { from: 7000, to: 10_000 });
+    const tail = X.scrubExtent(samples, { from: 7000, to: 10_000 });
     assert.equal(tail.from, 1000);
     assert.equal(tail.to, 10_000);
     assert.ok(Math.abs(tail.windowFrom - 6 / 9) < 1e-9);
@@ -1028,44 +1032,44 @@ test("scrubExtent: where the window sits, and when there is nothing to scrub", (
     assert.equal(tail.atTail, true);
 
     // Dragged back: the same width, earlier, and no longer following live.
-    const back = M.scrubExtent(samples, { from: 3000, to: 6000 });
+    const back = X.scrubExtent(samples, { from: 3000, to: 6000 });
     assert.ok(Math.abs(back.windowFrom - 2 / 9) < 1e-9);
     assert.equal(back.atTail, false);
 
     // A window pinned to live is always a poll behind the newest sample — calling that "scrolled back" would
     // unpin the view for nobody.
-    assert.equal(M.scrubExtent(samples, { from: 7000, to: 8500 }).atTail, true, "within the slack");
-    assert.equal(M.scrubExtent(samples, { from: 5000, to: 6500 }).atTail, false, "…but not this far back");
+    assert.equal(X.scrubExtent(samples, { from: 7000, to: 8500 }).atTail, true, "within the slack");
+    assert.equal(X.scrubExtent(samples, { from: 5000, to: 6500 }).atTail, false, "…but not this far back");
 
     // A WINDOW WIDER THAN THE SESSION still has a strip, at full width. This is the state a live view is in
     // for the first minutes of every session — the rolling window reaches back before the first sample — and
     // it is also where a stretch-while-following lands, since that width is remembered. Returning null here
     // made the control delete itself and reappear minutes later when the session outgrew the window, taking
     // the wheel-scrub with it, so there was no way back at all.
-    const wide = M.scrubExtent(samples, { from: 0, to: 99_999 });
+    const wide = X.scrubExtent(samples, { from: 0, to: 99_999 });
     assert.equal(wide.windowFrom, 0, "clamped to the session's own start");
     assert.equal(wide.windowTo, 1);
     assert.equal(wide.atTail, true, "…and following, so the live button reads as on");
 
     // Nothing to scrub: no viewport at all, or no session to be a viewport onto.
-    assert.equal(M.scrubExtent(samples, null), null, "no window means the whole session is shown");
-    assert.equal(M.scrubExtent([{ t: 1 }], { from: 0, to: 2 }), null, "one sample is not a session");
-    assert.equal(M.scrubExtent([], null), null);
+    assert.equal(X.scrubExtent(samples, null), null, "no window means the whole session is shown");
+    assert.equal(X.scrubExtent([{ t: 1 }], { from: 0, to: 2 }), null, "one sample is not a session");
+    assert.equal(X.scrubExtent([], null), null);
 });
 
 test("scrubTo: dragging the box scrolls time, and never past the ends", () => {
     const extent = { from: 0, to: 10_000 };
     const win = { from: 7000, to: 10_000 };   // 3s wide
     // Centred where you dropped it, same width — the box scrolls, it does not zoom.
-    const mid = M.scrubTo(extent, win, 0.5);
+    const mid = X.scrubTo(extent, win, 0.5);
     assert.deepEqual(mid, { from: 3500, to: 6500 });
     assert.equal(mid.to - mid.from, 3000, "the duration is preserved");
     // Past either end it parks against it rather than scrolling into time nothing was measured in.
-    assert.deepEqual(M.scrubTo(extent, win, 0), { from: 0, to: 3000 });
-    assert.deepEqual(M.scrubTo(extent, win, 1), { from: 7000, to: 10_000 });
-    assert.deepEqual(M.scrubTo(extent, win, 5), { from: 7000, to: 10_000 }, "clamped, not extrapolated");
+    assert.deepEqual(X.scrubTo(extent, win, 0), { from: 0, to: 3000 });
+    assert.deepEqual(X.scrubTo(extent, win, 1), { from: 7000, to: 10_000 });
+    assert.deepEqual(X.scrubTo(extent, win, 5), { from: 7000, to: 10_000 }, "clamped, not extrapolated");
     // A window wider than the session sits over all of it rather than being squeezed into it.
-    assert.deepEqual(M.scrubTo(extent, { from: -5000, to: 30_000 }, 0.2), { from: 0, to: 10_000 });
+    assert.deepEqual(X.scrubTo(extent, { from: -5000, to: 30_000 }, 0.2), { from: 0, to: 10_000 });
 });
 
 // The lane shows every session's events, which is right until a browsing session has a dozen runs in it.
@@ -1079,22 +1083,22 @@ test("filterEvents: scope answers whose, kinds answer which — and machine even
         { t: 5, kind: "evict", label: "m evicted", model: "m" },
     ];
     // Everything, by default.
-    assert.equal(M.filterEvents(evs, M.EMPTY_LANE_FILTER).length, 5);
+    assert.equal(L.filterEvents(evs, L.EMPTY_LANE_FILTER).length, 5);
 
     // Scoped to one run: the other run goes, and the machine's own event STAYS — it is what the memory trace
     // is doing, and hiding it for having no owner would remove the events the chart exists for.
-    const scoped = M.filterEvents(evs, { hash: "a", scope: "session", hidden: [] });
+    const scoped = L.filterEvents(evs, { hash: "a", scope: "session", hidden: [] });
     assert.deepEqual(scoped.map((e) => e.label), ["run a", "exec", "reader", "m evicted"]);
 
     // Kinds are an EXCLUSION list, so a kind added later shows up by default instead of being filtered out by
     // a stored preference that predates it.
-    assert.deepEqual(M.filterEvents(evs, { hash: null, scope: "all", hidden: ["embed"] }).map((e) => e.label),
+    assert.deepEqual(L.filterEvents(evs, { hash: null, scope: "all", hidden: ["embed"] }).map((e) => e.label),
         ["run a", "exec", "run b", "m evicted"]);
-    assert.deepEqual(M.filterEvents(evs, { hash: "a", hidden: ["embed", "run"] }).map((e) => e.label),
+    assert.deepEqual(L.filterEvents(evs, { hash: "a", hidden: ["embed", "run"] }).map((e) => e.label),
         ["exec", "m evicted"]);
 
     // And the control can say what it would hide rather than making you toggle blindly.
-    assert.deepEqual(M.countByKind(evs), { run: 2, tool: 1, embed: 1, evict: 1 });
+    assert.deepEqual(L.countByKind(evs), { run: 2, tool: 1, embed: 1, evict: 1 });
 });
 
 // Scoping the lane and the model list but not the AXIS left the two disagreeing about what "this session"
@@ -1102,16 +1106,16 @@ test("filterEvents: scope answers whose, kinds answer which — and machine even
 test("chartWindow: the rolling window fills from the first reading, then scrolls, and never rescales", () => {
     const W = 300;   // seconds, the default
     // Thirty seconds of history in a five-minute window: it starts at the first reading and the data fills rightward.
-    const fresh = M.chartWindow(null, null, W, 1_030_000, 1_000_000);
+    const fresh = X.chartWindow(null, null, W, 1_030_000, 1_000_000);
     assert.deepEqual([fresh.from, fresh.to], [1_000_000, 1_300_000]);
     assert.equal(fresh.live, true);
     // A minute later: the SAME window. Nothing rescaled.
-    assert.deepEqual(M.chartWindow(null, null, W, 1_090_000, 1_000_000), fresh);
+    assert.deepEqual(X.chartWindow(null, null, W, 1_090_000, 1_000_000), fresh);
     // Past the width: it follows the clock at that width.
-    const later = M.chartWindow(null, null, W, 1_500_000, 1_000_000);
+    const later = X.chartWindow(null, null, W, 1_500_000, 1_000_000);
     assert.deepEqual([later.from, later.to], [1_200_000, 1_500_000]);
     // A zoom and a scoped window are taken as given.
-    assert.deepEqual(M.chartWindow({ from: 1, to: 2 }, null, W, 1_500_000, 1_000_000), { from: 1, to: 2 });
+    assert.deepEqual(X.chartWindow({ from: 1, to: 2 }, null, W, 1_500_000, 1_000_000), { from: 1, to: 2 });
 });
 
 test("sessionWindow: a live session FILLS its window and then SCROLLS, and never rescales", () => {
@@ -1119,17 +1123,17 @@ test("sessionWindow: a live session FILLS its window and then SCROLLS, and never
     const run = (until) => [{ t: T, until, kind: "run", label: "r", ref: { hash: "a" } }];
     const W = 120_000;
     // Twenty seconds in: the window is W wide, anchored just before the start; the run fills it from the left.
-    const early = M.sessionWindow(run(T + 20_000), "a", T + 20_000, { followMs: W });
+    const early = L.sessionWindow(run(T + 20_000), "a", T + 20_000, { followMs: W });
     assert.equal(early.to - early.from, W, "the width on screen, from the first sample on");
     assert.ok(early.from < T && T - early.from < 10_000, "the session starts at the left edge");
     // Forty seconds in: the SAME window. Nothing moved, nothing narrowed — the run just reached further right.
-    assert.deepEqual(M.sessionWindow(run(T + 40_000), "a", T + 40_000, { followMs: W }), early);
+    assert.deepEqual(L.sessionWindow(run(T + 40_000), "a", T + 40_000, { followMs: W }), early);
     // Past the width: it follows the clock at that width.
-    const later = M.sessionWindow(run(T + 300_000), "a", T + 300_000, { followMs: W });
+    const later = L.sessionWindow(run(T + 300_000), "a", T + 300_000, { followMs: W });
     assert.deepEqual([later.from, later.to], [T + 300_000 - W, T + 300_000]);
     assert.equal(later.live, true, "a window the chart may slide along between samples");
     // A finished session fits itself, and is not live: it does not slide.
-    const done = M.sessionWindow(run(T + 20_000), "a", T + 900_000, { followMs: W });
+    const done = L.sessionWindow(run(T + 20_000), "a", T + 900_000, { followMs: W });
     assert.ok(done.to < T + 100_000 && !done.live);
 });
 
@@ -1143,26 +1147,26 @@ test("sessionWindow: frames the session, follows a live one, and floors a short 
         { t: T + 900_000, kind: "evict", label: "m evicted", model: "m" },
     ];
     // Long finished: the window is the session's own extent plus a little padding, and nothing else's.
-    const w = M.sessionWindow(evs, "a", T + 600_000);
+    const w = L.sessionWindow(evs, "a", T + 600_000);
     assert.ok(w.from > T - 10_000 && w.from < T, "starts just before the run");
     assert.ok(w.to > T + 60_000 && w.to < T + 80_000, "…and ends just after it, not at `now`");
 
     // STILL GOING: the right edge follows the clock, or the window sits behind the memory trace it is
     // meant to be read against.
-    const live = M.sessionWindow(evs, "a", T + 70_000);
+    const live = L.sessionWindow(evs, "a", T + 70_000);
     assert.ok(live.to >= T + 70_000, "a live session's window reaches the present");
 
     // A three-second session is a slit: a window narrower than a couple of samples contains no measurements
     // and draws as an empty plot, which reads as the panel breaking rather than as a short run.
-    const brief = M.sessionWindow([{ t: T, until: T + 3000, kind: "run", label: "r", ref: { hash: "c" } }], "c", T + 500_000);
+    const brief = L.sessionWindow([{ t: T, until: T + 3000, kind: "run", label: "r", ref: { hash: "c" } }], "c", T + 500_000);
     assert.ok(brief.to - brief.from >= 30_000, "floored");
     // …and it is CENTRED in it, rather than pinned against an edge.
     const mid = (brief.from + brief.to) / 2;
     assert.ok(Math.abs(mid - (T + 1500)) < 2000, "the run sits in the middle of its window");
 
     // Nothing to frame is not a window: inventing one would be a claim about when the session happened.
-    assert.equal(M.sessionWindow(evs, "zz", T), null);
-    assert.equal(M.sessionWindow(evs, null, T), null);
+    assert.equal(L.sessionWindow(evs, "zz", T), null);
+    assert.equal(L.sessionWindow(evs, null, T), null);
 });
 
 // DEPTH IN THE LANE MEANS CONTAINMENT, so the order of the rows is a claim and not a tidiness preference: a
@@ -1189,7 +1193,7 @@ test("laneRows: the container is above its children, and the machine is below bo
         at(0.52, 0.90, "run", { ref: { hash: "a" } }),
         at(0.55, 0.75, "serve", { model: "qwen:32b" }),
     ];
-    const rows = M.laneRows(placed);
+    const rows = L.laneRows(placed);
     const rowOf = (kind, n = 0) => rows.findIndex((r) => r.filter((p) => p.event.kind === kind).length > n);
 
     assert.equal(rowOf("run"), 0, "the container is the top row — it holds everything else");
@@ -1214,7 +1218,7 @@ test("laneRows: a load sits directly under the step that waited for it, even whe
         ev("load", 0.16, 0.25, "load:gemma", "aside:1", "gemma"),     // the aside's own load
         ev("load", 0.25, 0.45, "load:qwen", "step:1", "qwen"),        // the load the step waited for
     ];
-    const rows = M.laneRows(placed, 8);
+    const rows = L.laneRows(placed, 8);
     const rowOf = (id) => rows.findIndex((r) => r.some((p) => p.event.id === id));
     const map = JSON.stringify(rows.map((r) => r.map((p) => p.event.id)));
     assert.equal(rowOf("load:qwen"), rowOf("step:1") + 1, `the step's load is directly below it: ${map}`);
@@ -1227,21 +1231,21 @@ test("laneRows: a child packed before its parent in time still lands below it", 
         run: 0, from, to, clipped: false,
     });
     // A load that begins before the aside it is claimed by (loads precede the work they are for).
-    const rows = M.laneRows([ev("aside", 0.30, 0.60, "aside:1"), ev("load", 0.20, 0.30, "load:1", "aside:1")], 8);
+    const rows = L.laneRows([ev("aside", 0.30, 0.60, "aside:1"), ev("load", 0.20, 0.30, "load:1", "aside:1")], 8);
     const rowOf = (id) => rows.findIndex((r) => r.some((p) => p.event.id === id));
     assert.ok(rowOf("load:1") > rowOf("aside:1"), JSON.stringify(rows.map((r) => r.map((p) => p.event.id))));
 });
 
 test("laneTier: the three depths, and everything unknown is machine", () => {
     // A tier is only a preference between things drawn at the same time — within one, packing is unchanged.
-    assert.equal(M.laneTier("run"), M.laneTier("session"));
-    assert.ok(M.laneTier("run") < M.laneTier("tool"));
-    assert.equal(M.laneTier("gen"), M.laneTier("tool"));
-    assert.equal(M.laneTier("embed"), M.laneTier("tool"));
-    assert.ok(M.laneTier("tool") < M.laneTier("load"));
-    assert.equal(M.laneTier("serve"), M.laneTier("evict"));
+    assert.equal(L.laneTier("run"), L.laneTier("session"));
+    assert.ok(L.laneTier("run") < L.laneTier("tool"));
+    assert.equal(L.laneTier("gen"), L.laneTier("tool"));
+    assert.equal(L.laneTier("embed"), L.laneTier("tool"));
+    assert.ok(L.laneTier("tool") < L.laneTier("load"));
+    assert.equal(L.laneTier("serve"), L.laneTier("evict"));
     // A kind added later lands with the machine rather than above a run it has nothing to do with.
-    assert.equal(M.laneTier("something-new"), M.laneTier("evict"));
+    assert.equal(L.laneTier("something-new"), L.laneTier("evict"));
 });
 
 test("laneRows: a tier is a preference between OVERLAPPING bars, and costs no rows otherwise", () => {
@@ -1255,9 +1259,9 @@ test("laneRows: a tier is a preference between OVERLAPPING bars, and costs no ro
     });
     // Machine kinds only, so it is one band: three bars, none overlapping, one row — even though `load` and
     // `serve` are processed in tier order rather than in time order.
-    assert.equal(M.laneRows([at(0.5, 0.6, "serve"), at(0.0, 0.1, "load"), at(0.2, 0.3, "serve")]).length, 1);
+    assert.equal(L.laneRows([at(0.5, 0.6, "serve"), at(0.0, 0.1, "load"), at(0.2, 0.3, "serve")]).length, 1);
     // And the row reads left to right in the order the things happened, whatever order they were packed in.
-    const row = M.laneRows([at(0.5, 0.6, "serve"), at(0.0, 0.1, "load"), at(0.2, 0.3, "serve")])[0];
+    const row = L.laneRows([at(0.5, 0.6, "serve"), at(0.0, 0.1, "load"), at(0.2, 0.3, "serve")])[0];
     assert.deepEqual(row.map((p) => p.from), [0.0, 0.2, 0.5]);
 });
 
@@ -1274,18 +1278,18 @@ test("filterEvents: a scoped lane keeps the machine events about ITS models", ()
         // The server emits bare unloads with no model at all.
         { t: 6, kind: "evict", label: "something left memory" },
     ];
-    const scoped = M.filterEvents(evs, { hash: "a", scope: "session", hidden: [], models: ["qwen:7b"] });
+    const scoped = L.filterEvents(evs, { hash: "a", scope: "session", hidden: [], models: ["qwen:7b"] });
     // Its own model's load and eviction EXPLAIN the session — an eviction mid-run is why the next turn paid
     // a load. The other tenant's do not.
     assert.deepEqual(scoped.map((e) => e.label), ["run a", "loading qwen:7b", "qwen:7b evicted"]);
 
     // Unattributable is not the same as unrelated — but a lane asked for one session should not answer with
     // something it cannot place. Kept in full, where there is nothing to be outside of.
-    assert.deepEqual(M.filterEvents(evs, { hash: "a", scope: "all", hidden: [], models: ["qwen:7b"] }).length, 6);
+    assert.deepEqual(L.filterEvents(evs, { hash: "a", scope: "all", hidden: [], models: ["qwen:7b"] }).length, 6);
 
     // NOT KNOWN must not collapse into NONE: one hides nothing, the other hides the lot.
-    assert.equal(M.filterEvents(evs, { hash: "a", scope: "session", hidden: [] }).length, 6);
-    assert.equal(M.filterEvents(evs, { hash: "a", scope: "session", hidden: [], models: [] }).length, 1);
+    assert.equal(L.filterEvents(evs, { hash: "a", scope: "session", hidden: [] }).length, 6);
+    assert.equal(L.filterEvents(evs, { hash: "a", scope: "session", hidden: [], models: [] }).length, 1);
 });
 
 // Where you GRAB decides what the drag does. Recentring on the cursor wherever it lands is what made the
@@ -1301,10 +1305,10 @@ test("lineageOf: an id that is no longer drawn focuses NOTHING, rather than ever
         { id: "a", kind: "tool" },
         { id: "b", kind: "embed", parent: "a" },
     ];
-    assert.deepEqual([...M.lineageOf(events, "a")].sort(), ["a", "b"], "a live id still lights its lineage");
-    assert.equal(M.lineageOf(events, "gone").size, 0, "a stale id lights nothing");
-    assert.equal(M.lineageOf(events, undefined).size, 0);
-    assert.equal(M.lineageOf([], "a").size, 0, "…including when everything was filtered away");
+    assert.deepEqual([...L.lineageOf(events, "a")].sort(), ["a", "b"], "a live id still lights its lineage");
+    assert.equal(L.lineageOf(events, "gone").size, 0, "a stale id lights nothing");
+    assert.equal(L.lineageOf(events, undefined).size, 0);
+    assert.equal(L.lineageOf([], "a").size, 0, "…including when everything was filtered away");
 });
 
 test("scopeAround: widens until the window actually contains samples to draw", () => {
@@ -1312,39 +1316,39 @@ test("scopeAround: widens until the window actually contains samples to draw", (
     const inWindow = (w) => every2s.filter((s) => s.t >= w.from && s.t <= w.to).length;
 
     // A 400ms tool call on a box polled every 2s: the raw span, and even the 2.5s floor, can hold one sample.
-    const tight = M.scopeToSpan(140_000, 140_400, 200_000);
+    const tight = L.scopeToSpan(140_000, 140_400, 200_000);
     assert.ok(inWindow(tight) < 3, "the plain floor is not enough — this is the bug");
 
-    const safe = M.scopeAround(every2s, 140_000, 140_400, 200_000);
+    const safe = L.scopeAround(every2s, 140_000, 140_400, 200_000);
     assert.ok(inWindow(safe) >= 3, `widened until it covers samples (got ${inWindow(safe)})`);
     // Still CENTRED on the step: widening must not slide the window off the thing you double-clicked.
     assert.ok(safe.from <= 140_000 && safe.to >= 140_400, "the step is still inside it");
 
     // A span that already covers plenty is left alone.
-    const long = M.scopeAround(every2s, 120_000, 150_000, 200_000);
+    const long = L.scopeAround(every2s, 120_000, 150_000, 200_000);
     assert.equal(long.from, 120_000);
     assert.equal(long.to, 150_000);
 
     // A session too short to satisfy the floor gives back the whole session rather than an empty window.
     const two = [{ t: 5000 }, { t: 7000 }];
-    assert.deepEqual(M.scopeAround(two, 5500, 5600, 9000), { from: 5000, to: 7000 });
+    assert.deepEqual(L.scopeAround(two, 5500, 5600, 9000), { from: 5000, to: 7000 });
 });
 
 test("scrubZone: the edges resize, the middle pans, and outside is neither", () => {
     const ex = { windowFrom: 0.30, windowTo: 0.70 };
     const W = 400;   // 7px of handle ≈ 0.0175 of the track
-    assert.equal(M.scrubZone(ex, 0.50, W), "pan");
-    assert.equal(M.scrubZone(ex, 0.30, W), "from");
-    assert.equal(M.scrubZone(ex, 0.70, W), "to");
-    assert.equal(M.scrubZone(ex, 0.10, W), "outside");
-    assert.equal(M.scrubZone(ex, 0.95, W), "outside");
+    assert.equal(X.scrubZone(ex, 0.50, W), "pan");
+    assert.equal(X.scrubZone(ex, 0.30, W), "from");
+    assert.equal(X.scrubZone(ex, 0.70, W), "to");
+    assert.equal(X.scrubZone(ex, 0.10, W), "outside");
+    assert.equal(X.scrubZone(ex, 0.95, W), "outside");
     // Just OUTSIDE the box but within a handle's reach still grabs the handle — a 7px target you have to hit
     // from exactly one side is not a 7px target.
-    assert.equal(M.scrubZone(ex, 0.29, W), "from");
+    assert.equal(X.scrubZone(ex, 0.29, W), "from");
 
     // Still comfortably wide enough for a middle: 0.30 of a 400px track is 120px against 7px handles.
     const roomy = { windowFrom: 0.50, windowTo: 0.80 };
-    assert.equal(M.scrubZone(roomy, 0.65, W), "pan");
+    assert.equal(X.scrubZone(roomy, 0.65, W), "pan");
 });
 
 // A HAIRLINE WINDOW CAN ALWAYS BE WIDENED. The handle is capped at a third of the window so a narrow one
@@ -1356,56 +1360,56 @@ test("scrubZone: the handle's reach OUTSIDE the window is never capped by the wi
     const W = 400;   // 7px of handle ≈ 0.0175 of the track
     // 0.006 of the track = 2.4px: narrower than a single handle.
     const hair = { windowFrom: 0.500, windowTo: 0.506 };
-    assert.equal(M.scrubZone(hair, 0.49, W), "from", "reaching in from the left grabs the left edge");
-    assert.equal(M.scrubZone(hair, 0.515, W), "to", "…and from the right, the right one");
-    assert.equal(M.scrubZone(hair, 0.40, W), "outside", "…but the reach is a handle's width, not the track");
+    assert.equal(X.scrubZone(hair, 0.49, W), "from", "reaching in from the left grabs the left edge");
+    assert.equal(X.scrubZone(hair, 0.515, W), "to", "…and from the right, the right one");
+    assert.equal(X.scrubZone(hair, 0.40, W), "outside", "…but the reach is a handle's width, not the track");
 
     // NOTHING IS GIVEN UP FOR IT. The middle still pans, at every width — a narrow window you can no longer
     // move is a different way to be stuck, and the two gestures both have to survive.
-    assert.equal(M.scrubZone(hair, 0.503, W), "pan");
-    assert.equal(M.scrubZone({ windowFrom: 0.50, windowTo: 0.80 }, 0.65, W), "pan");
+    assert.equal(X.scrubZone(hair, 0.503, W), "pan");
+    assert.equal(X.scrubZone({ windowFrom: 0.50, windowTo: 0.80 }, 0.65, W), "pan");
 
     // The reach is a constant number of PIXELS, so it shrinks as a fraction on a wider track.
-    assert.equal(M.scrubZone(hair, 0.49, 4000), "outside", "10px of a 4000px track is far outside");
+    assert.equal(X.scrubZone(hair, 0.49, 4000), "outside", "10px of a 4000px track is far outside");
 });
 
 test("scrubResize: one edge moves, the other stays exactly put", () => {
     const ex = { from: 0, to: 100_000 };
     const win = { from: 40_000, to: 60_000 };
 
-    const wider = M.scrubResize(ex, win, "from", 0.10);
+    const wider = X.scrubResize(ex, win, "from", 0.10);
     assert.equal(wider.to, 60_000, "the far edge did not drift");
     assert.equal(wider.from, 10_000);
 
-    const narrower = M.scrubResize(ex, win, "to", 0.50);
+    const narrower = X.scrubResize(ex, win, "to", 0.50);
     assert.equal(narrower.from, 40_000, "…in either direction");
     assert.equal(narrower.to, 50_000);
 
     // Dragging an edge PAST the other parks against a minimum rather than inverting the range into a
     // negative duration every consumer would then have to defend against.
-    const crossed = M.scrubResize(ex, win, "from", 0.90);
+    const crossed = X.scrubResize(ex, win, "from", 0.90);
     assert.ok(crossed.from < crossed.to, "still a forward range");
-    assert.equal(crossed.to - crossed.from, M.MIN_SCOPE_MS);
+    assert.equal(crossed.to - crossed.from, X.MIN_SCOPE_MS);
 
     // And it cannot be dragged outside the session.
-    assert.equal(M.scrubResize(ex, win, "from", -1).from, 0);
-    assert.equal(M.scrubResize(ex, win, "to", 2).to, 100_000);
+    assert.equal(X.scrubResize(ex, win, "from", -1).from, 0);
+    assert.equal(X.scrubResize(ex, win, "to", 2).to, 100_000);
 });
 
 test("scrubNudge: one notch moves the same VISIBLE distance at any zoom", () => {
     const ex = { from: 0, to: 600_000 };
-    const tight = M.scrubNudge(ex, { from: 300_000, to: 310_000 }, 0.25);
-    const loose = M.scrubNudge(ex, { from: 200_000, to: 400_000 }, 0.25);
+    const tight = X.scrubNudge(ex, { from: 300_000, to: 310_000 }, 0.25);
+    const loose = X.scrubNudge(ex, { from: 200_000, to: 400_000 }, 0.25);
     assert.equal(tight.from - 300_000, 2_500, "a quarter of a 10s window");
     assert.equal(loose.from - 200_000, 50_000, "…and a quarter of a 200s one");
     // Widths are preserved: this scrolls, it does not zoom.
     assert.equal(tight.to - tight.from, 10_000);
     assert.equal(loose.to - loose.from, 200_000);
     // Parks against the end rather than scrolling into time nobody sampled.
-    const end = M.scrubNudge(ex, { from: 590_000, to: 600_000 }, 0.25);
+    const end = X.scrubNudge(ex, { from: 590_000, to: 600_000 }, 0.25);
     assert.equal(end.to, 600_000);
     // A window already covering everything has nowhere to go.
-    assert.deepEqual(M.scrubNudge(ex, { from: 0, to: 600_000 }, 0.25), { from: 0, to: 600_000 });
+    assert.deepEqual(X.scrubNudge(ex, { from: 0, to: 600_000 }, 0.25), { from: 0, to: 600_000 });
 });
 
 test("scrubNudge: four small notches land exactly where one big one does", () => {
@@ -1418,15 +1422,15 @@ test("scrubNudge: four small notches land exactly where one big one does", () =>
     const ex = { from: 0, to: 22_000 };
     const win = { from: 9_000, to: 13_000 };
     const plotPx = 400;
-    const one = M.scrubNudge(ex, win, M.wheelScrubFraction(0, 120, 0, plotPx));
+    const one = X.scrubNudge(ex, win, X.wheelScrubFraction(0, 120, 0, plotPx));
     let four = win;
-    for (let i = 0; i < 4; i++) four = M.scrubNudge(ex, four, M.wheelScrubFraction(0, 30, 0, plotPx));
+    for (let i = 0; i < 4; i++) four = X.scrubNudge(ex, four, X.wheelScrubFraction(0, 30, 0, plotPx));
     assert.ok(Math.abs(four.from - one.from) < 1e-6, `4x30 landed at ${four.from}, 1x120 at ${one.from}`);
     assert.ok(Math.abs(four.to - one.to) < 1e-6);
     assert.equal(one.from - win.from, 1_200, "and it is the distance the fraction actually names");
     // The same composition holds for a HORIZONTAL gesture, which reaches the same arithmetic by the other
     // axis — `wheelScrubFraction` takes the larger of the two, so the axes cannot drift apart.
-    assert.equal(M.wheelScrubFraction(120, 0, 0, plotPx), M.wheelScrubFraction(0, 120, 0, plotPx));
+    assert.equal(X.wheelScrubFraction(120, 0, 0, plotPx), X.wheelScrubFraction(0, 120, 0, plotPx));
 });
 
 // The chart scrubbing erratically under a trackpad was two bugs wearing one symptom: only `deltaY` was read,
@@ -1435,32 +1439,32 @@ test("wheelScrubFraction: proportional to the gesture, and reads whichever axis 
     const W = 400;
 
     // 1:1 with the plot — swipe across half of it and the window moves half its own width.
-    assert.equal(M.wheelScrubFraction(0, 200, 0, W), 0.5);
-    assert.equal(M.wheelScrubFraction(200, 0, 0, W), 0.5, "a HORIZONTAL swipe scrubs too — it was ignored");
+    assert.equal(X.wheelScrubFraction(0, 200, 0, W), 0.5);
+    assert.equal(X.wheelScrubFraction(200, 0, 0, W), 0.5, "a HORIZONTAL swipe scrubs too — it was ignored");
 
     // Proportional, so a trackpad's stream of small events accumulates to the same distance as one big one.
     // A fixed step per event is what made the same physical swipe travel wildly different distances
     // depending on how the hardware quantised it.
-    const oneBig = M.wheelScrubFraction(0, 120, 0, W);
-    const manySmall = Array.from({ length: 12 }, () => M.wheelScrubFraction(0, 10, 0, W)).reduce((a, b) => a + b, 0);
+    const oneBig = X.wheelScrubFraction(0, 120, 0, W);
+    const manySmall = Array.from({ length: 12 }, () => X.wheelScrubFraction(0, 10, 0, W)).reduce((a, b) => a + b, 0);
     assert.ok(Math.abs(oneBig - manySmall) < 1e-9, "twelve notches of 10 equal one of 120");
 
     // Direction follows the gesture: down and right both move forward in time.
-    assert.ok(M.wheelScrubFraction(0, -200, 0, W) < 0);
-    assert.ok(M.wheelScrubFraction(-200, 0, 0, W) < 0);
+    assert.ok(X.wheelScrubFraction(0, -200, 0, W) < 0);
+    assert.ok(X.wheelScrubFraction(-200, 0, 0, W) < 0);
 
     // A diagonal is counted ONCE, on the dominant axis — not summed, which would make an off-axis swipe
     // travel further than a clean one.
-    assert.equal(M.wheelScrubFraction(200, 40, 0, W), 0.5);
-    assert.equal(M.wheelScrubFraction(40, 200, 0, W), 0.5);
+    assert.equal(X.wheelScrubFraction(200, 40, 0, W), 0.5);
+    assert.equal(X.wheelScrubFraction(40, 200, 0, W), 0.5);
 
     // deltaMode: a mouse reports LINES and a page gesture reports PAGES.
-    assert.equal(M.wheelScrubFraction(0, 1, 1, W), 16 / W, "one line, not one pixel");
-    assert.equal(M.wheelScrubFraction(0, 1, 2, W), 1, "one page = one window width");
+    assert.equal(X.wheelScrubFraction(0, 1, 1, W), 16 / W, "one line, not one pixel");
+    assert.equal(X.wheelScrubFraction(0, 1, 2, W), 1, "one page = one window width");
 
     // Degenerate inputs do nothing rather than dividing by zero.
-    assert.equal(M.wheelScrubFraction(0, 200, 0, 0), 0);
-    assert.equal(M.wheelScrubFraction(0, 0, 0, W), 0);
+    assert.equal(X.wheelScrubFraction(0, 200, 0, 0), 0);
+    assert.equal(X.wheelScrubFraction(0, 0, 0, W), 0);
 });
 
 // WHAT A SCRUB DRAG MEANT. The old rule — "the window ends at the tail → rejoin live" — could not tell a
@@ -1468,7 +1472,7 @@ test("wheelScrubFraction: proportional to the gesture, and reads whichever axis 
 // window while following was read as "rejoin live", the new width was discarded, and the strip snapped back:
 // you could narrow the window and never widen it again.
 describe("scrubIntent", () => {
-    const { scrubIntent } = M;
+    const { scrubIntent } = X;
     const ex = { from: 0, to: 300_000 };          // a five-minute session
     const SLACK = 2000;
 
@@ -1523,7 +1527,7 @@ describe("scrubIntent", () => {
 // tracks — which reads as the panel having broken rather than as a window between polls, while the thing
 // you zoomed in on is still perfectly well defined.
 describe("windowSamples", () => {
-    const { windowSamples } = M;
+    const { windowSamples } = X;
     const at = (...ts) => ts.map((t) => ({ t }));
 
     test("a window with plenty of samples uses exactly those", () => {
@@ -1578,7 +1582,7 @@ describe("windowSamples", () => {
 
 // …and the event that window sits inside must still be DRAWN, cropped to what is on screen.
 describe("placeEvents: an event wider than the window", () => {
-    const { placeEvents } = M;
+    const { placeEvents } = L;
     test("an event spanning the whole window is placed across it, not dropped", () => {
         const [p] = placeEvents({ from: 1000, to: 3000 }, [{ kind: "run", t: 0, until: 9000, model: "m" }], 3000);
         assert.ok(p, "the event is placed even though it starts before and ends after the window");
@@ -1593,7 +1597,7 @@ describe("placeEvents: an event wider than the window", () => {
 // no samples, draws as an empty plot, and reads as the panel breaking rather than as a selection that was
 // too narrow. `scopeToSpan` already widens a too-short block for the same reason.
 describe("clampWindow", () => {
-    const { clampWindow, MIN_SCOPE_MS } = M;
+    const { clampWindow, MIN_SCOPE_MS } = X;
 
     test("a window wider than the minimum is returned untouched", () => {
         const w = { from: 1000, to: 1000 + MIN_SCOPE_MS * 3 };
@@ -1646,25 +1650,25 @@ test("deviceBands: a residual a LOAD explains is named as the load, not as unatt
     ] } };
     const cap = M.parseInfo(mid);
 
-    const blind = M.deviceBands({ t: 1, models: [], capacity: cap }, "0");
-    assert.equal(blind.find((b) => b.key === "other").label, M.OTHER_BAND_LABEL,
+    const blind = B.deviceBands({ t: 1, models: [], capacity: cap }, "0");
+    assert.equal(blind.find((b) => b.key === "other").label, B.OTHER_BAND_LABEL,
         "with nothing loading, a big residual really is unattributed");
 
-    const knowing = M.deviceBands({ t: 1, models: [], capacity: cap, loading: ["qwen3.8-flash-next:vision"] }, "0");
+    const knowing = B.deviceBands({ t: 1, models: [], capacity: cap, loading: ["qwen3.8-flash-next:vision"] }, "0");
     const other = knowing.find((b) => b.key === "other");
     assert.equal(other.label, "loading qwen3.8-flash-next:vision");
     assert.ok(other.bytes > 87 * GB, "…and it is the whole allocation, not a sliver");
 
     // Several at once are counted rather than listed — a band label is one line in a legend.
     assert.equal(
-        M.deviceBands({ t: 1, models: [], capacity: cap, loading: ["a", "b"] }, "0").find((b) => b.key === "other").label,
+        B.deviceBands({ t: 1, models: [], capacity: cap, loading: ["a", "b"] }, "0").find((b) => b.key === "other").label,
         "loading 2 models");
 
     // The FLOOR still wins. An idle card holds ~0.55 GiB of ollama's own discovery context, and a load
     // starting elsewhere must not relabel that as this card loading something.
     const idle = M.parseInfo(CUDA_INFO);
-    const quiet = M.deviceBands({ t: 1, models: [], capacity: idle, loading: ["something"] }, "0");
-    assert.equal(quiet.find((b) => b.key === "other").label, M.DRIVER_BAND_LABEL,
+    const quiet = B.deviceBands({ t: 1, models: [], capacity: idle, loading: ["something"] }, "0");
+    assert.equal(quiet.find((b) => b.key === "other").label, B.DRIVER_BAND_LABEL,
         "a sub-GiB residual is the driver's context whatever is loading");
 });
 
@@ -1719,42 +1723,42 @@ test("scrubPinch: narrows and widens around the pointer, symmetrically", () => {
     const win = { from: 40_000, to: 60_000 };
 
     // Pinching OUT is a negative delta and means closer, so the window narrows.
-    const inward = M.scrubPinch(ex, win, -20, 0.5);
+    const inward = X.scrubPinch(ex, win, -20, 0.5);
     assert.ok(inward.to - inward.from < win.to - win.from, "pinching out zooms IN");
-    const outward = M.scrubPinch(ex, win, 20, 0.5);
+    const outward = X.scrubPinch(ex, win, 20, 0.5);
     assert.ok(outward.to - outward.from > win.to - win.from, "and pinching in zooms OUT");
 
     // SYMMETRIC: the same amount each way returns to where it started. A linear step accumulates drift, which
     // is what makes a zoom feel like it is sliding away from you.
-    const there = M.scrubPinch(ex, win, -20, 0.5);
-    const back = M.scrubPinch(ex, there, 20, 0.5);
+    const there = X.scrubPinch(ex, win, -20, 0.5);
+    const back = X.scrubPinch(ex, there, 20, 0.5);
     assert.ok(Math.abs((back.to - back.from) - (win.to - win.from)) < 1, "out then in is where you began");
 
     // ANCHORED: the instant under the pointer stays at the same fraction of the window.
-    const atStart = M.scrubPinch(ex, win, -20, 0);
+    const atStart = X.scrubPinch(ex, win, -20, 0);
     assert.equal(atStart.from, win.from, "pinching on the left edge holds the left edge");
-    const atEnd = M.scrubPinch(ex, win, -20, 1);
+    const atEnd = X.scrubPinch(ex, win, -20, 1);
     assert.ok(Math.abs(atEnd.to - win.to) < 1, "…and on the right edge, the right one");
     // The middle keeps the middle.
-    const mid = M.scrubPinch(ex, win, -20, 0.5);
+    const mid = X.scrubPinch(ex, win, -20, 0.5);
     assert.ok(Math.abs((mid.from + mid.to) / 2 - (win.from + win.to) / 2) < 1, "the centre is where it was");
 
     // BOUNDED both ways: never past the session, never below the minimum a window may be — a zoom that can
     // reach zero width is a zoom you cannot come back from.
-    const huge = M.scrubPinch(ex, win, 10_000, 0.5);
+    const huge = X.scrubPinch(ex, win, 10_000, 0.5);
     assert.ok(huge.to - huge.from <= ex.to - ex.from, "cannot be widened past the session");
     assert.ok(huge.from >= ex.from && huge.to <= ex.to, "and stays inside it");
     let tiny = win;
-    for (let i = 0; i < 200; i++) tiny = M.scrubPinch(ex, tiny, -50, 0.5);
-    assert.ok(tiny.to - tiny.from >= Math.min(M.MIN_SCOPE_MS, ex.to - ex.from), "never collapses to nothing");
+    for (let i = 0; i < 200; i++) tiny = X.scrubPinch(ex, tiny, -50, 0.5);
+    assert.ok(tiny.to - tiny.from >= Math.min(X.MIN_SCOPE_MS, ex.to - ex.from), "never collapses to nothing");
 
     // A single flick cannot cross the whole range: a trackpad can deliver a very large delta in one frame.
-    const flick = M.scrubPinch(ex, win, -100_000, 0.5);
+    const flick = X.scrubPinch(ex, win, -100_000, 0.5);
     assert.ok(flick.to - flick.from > (win.to - win.from) * 0.5, "one event is capped");
 
     // Degenerate inputs are returned untouched rather than producing a NaN window.
-    assert.deepEqual(M.scrubPinch({ from: 5, to: 5 }, win, -20, 0.5), win);
-    assert.deepEqual(M.scrubPinch(ex, { from: 10, to: 10 }, -20, 0.5), { from: 10, to: 10 });
+    assert.deepEqual(X.scrubPinch({ from: 5, to: 5 }, win, -20, 0.5), win);
+    assert.deepEqual(X.scrubPinch(ex, { from: 10, to: 10 }, -20, 0.5), { from: 10, to: 10 });
 });
 
 // WHAT a model's VRAM is holding, not just how much of it there is. `size_vram` alone cannot tell a BIG
@@ -1830,19 +1834,19 @@ test("snapFraction: lands where sampleAtFraction reads, on the linear axis, and 
     const axis = { from: 0, to: 20_000 };
     const runs = [run(5, 0), run(3, 12_000)];   // 0–4 s, then a gap, then 12–14 s
     for (const f of [0, 0.06, 0.1, 0.19, 0.6, 0.65, 0.7]) {
-        const snap = M.snapFraction(runs, f, axis);
+        const snap = X.snapFraction(runs, f, axis);
         assert.ok(snap, `f=${f} is inside a run`);
-        assert.equal(runs[snap.run][snap.index], M.sampleAtFraction(runs, f, axis), `f=${f}: the mark and the reading are one sample`);
+        assert.equal(runs[snap.run][snap.index], X.sampleAtFraction(runs, f, axis), `f=${f}: the mark and the reading are one sample`);
         assert.equal(snap.frac, runs[snap.run][snap.index].t / 20_000, `f=${f}: it sits where that sample is drawn`);
     }
-    assert.equal(M.snapFraction(runs, 0.4, axis), null, "in the gap: nothing was measured, so nothing is read");
+    assert.equal(X.snapFraction(runs, 0.4, axis), null, "in the gap: nothing was measured, so nothing is read");
     // Just past a run's last sample — the right edge of a live chart — it still reads that sample, within reach.
-    assert.equal(M.snapFraction(runs, 0.73, axis, 1000)?.index, 2, "14.6 s, past the last sample, still reads it (14 s)");
-    assert.equal(M.snapFraction(runs, 0.8, axis, 1000), null, "…but not a reading two seconds stale");
+    assert.equal(X.snapFraction(runs, 0.73, axis, 1000)?.index, 2, "14.6 s, past the last sample, still reads it (14 s)");
+    assert.equal(X.snapFraction(runs, 0.8, axis, 1000), null, "…but not a reading two seconds stale");
     // It names the ORIGINAL run, so a caller mapping over `runs` can ask "is it in THIS one?".
-    assert.equal(M.snapFraction([[], ...runs], 0.62, axis).run, 2);
-    assert.equal(M.snapFraction([], 0.5, axis), null);
-    assert.equal(M.snapFraction(runs, 0.5, null), null);
+    assert.equal(X.snapFraction([[], ...runs], 0.62, axis).run, 2);
+    assert.equal(X.snapFraction([], 0.5, axis), null);
+    assert.equal(X.snapFraction(runs, 0.5, null), null);
 });
 
 // A GENUINELY SPLIT MODEL, captured from the box rather than constructed here: `qwen3:235b` (142 GB) across
@@ -1870,7 +1874,7 @@ test("a split model decomposes PER CARD, and the sum holds on each one", () => {
     // And the bands the chart actually draws carry that card's parts, never the model's total.
     const cap = { devices: [{ id: "0", totalBytes: 103e9, freeBytes: 30e9 }, { id: "1", totalBytes: 103e9, freeBytes: 32e9 }], host: null };
     const sample = { t: 1, models: [r], capacity: cap };
-    const b0 = M.deviceBands(sample, "0").find((b) => b.model === "qwen3:235b");
+    const b0 = B.deviceBands(sample, "0").find((b) => b.model === "qwen3:235b");
     assert.equal(b0.parts.weights, 72044941148, "card 0 is decomposed by card 0's own figures");
     assert.equal(sum(b0.parts), b0.bytes, "…and they fill exactly the band they are inside");
 });
@@ -1895,7 +1899,7 @@ test("compute is FLAT per device — the reason nothing is ever pro-rated", () =
     const noPerCard = M.residencyFrom({ ...SPLIT_PS, gpus: SPLIT_PS.gpus.map(({ memory, ...g }) => g) });
     assert.equal(noPerCard.perDeviceMemory, undefined);
     const cap = { devices: [{ id: "0", totalBytes: 103e9, freeBytes: 30e9 }, { id: "1", totalBytes: 103e9, freeBytes: 32e9 }], host: null };
-    const band = M.deviceBands({ t: 1, models: [noPerCard], capacity: cap }, "0").find((b) => b.model);
+    const band = B.deviceBands({ t: 1, models: [noPerCard], capacity: cap }, "0").find((b) => b.model);
     assert.equal(band.parts, undefined, "no split beats a pro-rated one");
     assert.equal(band.bytes, SPLIT_PS.gpus[0].size_vram, "…while the card's own TOTAL is still exact");
 });
@@ -1938,8 +1942,8 @@ test("an UNEQUAL split decomposes by each card's own figures, not by its share o
 
     const cap = { devices: [{ id: "0", totalBytes: 8e9, freeBytes: 6e9 }, { id: "1", totalBytes: 8e9, freeBytes: 7e9 }], host: null };
     const sample = { t: 1, models: [r], capacity: cap };
-    const b0 = M.deviceBands(sample, "0").find((b) => b.model);
-    const b1 = M.deviceBands(sample, "1").find((b) => b.model);
+    const b0 = B.deviceBands(sample, "0").find((b) => b.model);
+    const b1 = B.deviceBands(sample, "1").find((b) => b.model);
 
     // Each band is that card's own total, and its parts fill exactly it — on BOTH cards, at 2.2:1.
     assert.equal(b0.bytes, LOPSIDED.gpus[0].size_vram);
@@ -2192,11 +2196,11 @@ test("sameMachineEvent: a generation is identified by its end and the engine's f
     // The same edge replayed without its gen.start, landing a few ms off (each connection anchors on its own
     // hello): its START moved, and it is still the same generation.
     const replay = M.genSpan({ model: "g", endAt: 15_140, timings });
-    assert.ok(M.sameMachineEvent(a, replay), "a replay that lost its start is still one generation");
-    assert.equal(M.addMachineEvent([a], replay, 100).length, 1, "and is not added twice");
+    assert.ok(L.sameMachineEvent(a, replay), "a replay that lost its start is still one generation");
+    assert.equal(L.addMachineEvent([a], replay, 100).length, 1, "and is not added twice");
     // Two short generations of one model ending 40 ms apart (3-token calls take ~35 ms) are TWO.
     const next = M.genSpan({ model: "g", startAt: 15_125, endAt: 15_161, timings: { promptMs: 12.1, evalMs: 18.2, decoded: 3 } });
-    assert.ok(!M.sameMachineEvent(a, next), "different figures, different generation");
+    assert.ok(!L.sameMachineEvent(a, next), "different figures, different generation");
 });
 
 test("joinGens: our own call is joined to its server generation, not drawn twice; other traffic stays", () => {
@@ -2534,19 +2538,19 @@ test("the axis is LINEAR IN TIME on an adaptive cadence: an event, a sample and 
     // still resident. Linear in time, 8 s into a 15.75 s run is 8/15.75 of the way, wherever the samples fall.
     const run = [{ t: 0 }, { t: 250 }, { t: 500 }, { t: 750 }, { t: 15_750 }];
     const axis = { from: 0, to: 15_750 };
-    const [p] = M.placeEvents(axis, [{ t: 8000, kind: "evict", label: "unloaded" }]);
+    const [p] = L.placeEvents(axis, [{ t: 8000, kind: "evict", label: "unloaded" }]);
     assert.ok(Math.abs(p.from - 8000 / 15_750) < 1e-12, `placed at ${p.from}`);
     // A sample's position is its time's position — the same mapping the bands are drawn with (`runFrac`).
-    assert.equal(M.runFrac(run, 750), 750 / 15_750);
+    assert.equal(X.runFrac(run, 750), 750 / 15_750);
     // The crosshair's time and the placement round-trip exactly.
-    assert.ok(Math.abs(M.timeAtFraction(axis, p.from) - 8000) < 1e-9);
+    assert.ok(Math.abs(X.timeAtFraction(axis, p.from) - 8000) < 1e-9);
     // The DATAPOINT under a position is the one nearest in TIME — at 8 s, sample 750 (7.25 s away) rather than
     // 15 750 (7.75 s away) — and snapping lands exactly on where that sample is drawn.
-    assert.equal(M.sampleAtFraction([run], p.from, axis).t, 750);
-    const snap = M.snapFraction([run], p.from, axis);
+    assert.equal(X.sampleAtFraction([run], p.from, axis).t, 750);
+    const snap = X.snapFraction([run], p.from, axis);
     assert.deepEqual([snap.index, snap.frac], [3, 750 / 15_750]);
     // A run is as wide as it is LONG: a 1 s run beside a 3 s one takes a quarter of the width.
-    assert.deepEqual([M.runWeight([{ t: 0 }, { t: 1000 }]), M.runWeight([{ t: 0 }, { t: 3000 }]), M.runWeight([{ t: 5 }])], [1000, 3000, 1]);
+    assert.deepEqual([X.runWeight([{ t: 0 }, { t: 1000 }]), X.runWeight([{ t: 0 }, { t: 3000 }]), X.runWeight([{ t: 5 }])], [1000, 3000, 1]);
 });
 
 test("pendingAllocation: a loading model's memory is its own before the runner exists to say so", () => {
@@ -2557,11 +2561,11 @@ test("pendingAllocation: a loading model's memory is its own before the runner e
     // the runner exists and the model's band takes it over.
     const times = [0, 1000, 2000, 3000, 3500, 4000];
     const frames = [[other(0.6 * GiB)], [other(0.6 * GiB)], [other(4 * GiB)], [other(10 * GiB)], [other(12.6 * GiB)], [other(0.6 * GiB), model(12 * GiB)]];
-    const got = M.pendingAllocation(frames, times, "m", [{ t: 1000, until: 3500 }]);
+    const got = B.pendingAllocation(frames, times, "m", [{ t: 1000, until: 3500 }]);
     assert.deepEqual(got.map((b) => b / GiB).map((x) => Math.round(x * 10) / 10), [0, 0, 3.4, 9.4, 12, 0],
         "the growth above the pre-load residual, until the model's own band appears — never both");
     // No load of this model (the caller passes that model's loads only): nothing is attributed to it.
-    assert.deepEqual(M.pendingAllocation(frames, times, "m", []), [0, 0, 0, 0, 0, 0]);
+    assert.deepEqual(B.pendingAllocation(frames, times, "m", []), [0, 0, 0, 0, 0, 0]);
 });
 
 // RUNNER PIDS, against real captures off the box (`ollama-slop:runnerpids2`). The driver's list of processes
@@ -2587,7 +2591,7 @@ test("parseInfo: a card's processes, and the scope that says what the list CAN c
 test("deviceBands: a runner's overhead is measured per runner, and is not a constant", () => {
     const { ps, info } = hwJson("runner-pids-context-band-2026-09-11.json");
     const sample = { t: 1, capacity: M.parseInfo(info), models: ps.models.map(M.residencyFrom) };
-    const ctx = (id, model) => M.deviceBands(sample, id).find((b) => b.key === `ctx:${model}`);
+    const ctx = (id, model) => B.deviceBands(sample, id).find((b) => b.key === `ctx:${model}`);
     // used_memory minus the model's size_vram on that card, both from the same instant.
     assert.equal(ctx("0", "qwen3.5:0.8b").bytes, 6348079104 - 5883004189);
     assert.equal(Math.round(ctx("0", "qwen3.5:0.8b").bytes / MiB), 444);
@@ -2595,31 +2599,31 @@ test("deviceBands: a runner's overhead is measured per runner, and is not a cons
     assert.equal(ctx("1", "granite4.1:3b").of, "granite4.1:3b", "tinted with its model, never the model's identity");
     assert.equal(ctx("1", "granite4.1:3b").model, undefined);
     // Every byte in use is accounted for exactly once: the model, its runner's overhead, and what nothing lists.
-    const b0 = M.deviceBands(sample, "0");
+    const b0 = B.deviceBands(sample, "0");
     const used = info.compute.supported_gpus[0].total_memory - info.compute.supported_gpus[0].free_memory;
     assert.equal(b0.filter((b) => b.kind !== "free").reduce((n, b) => n + b.bytes, 0), used);
     const rest = b0.find((b) => b.key === "other");
-    assert.equal(rest.label, M.OUTSIDE_VIEW_LABEL, "in a container, the unlisted remainder is not called overhead");
+    assert.equal(rest.label, B.OUTSIDE_VIEW_LABEL, "in a container, the unlisted remainder is not called overhead");
     assert.equal(rest.bytes, used - 6348079104);
 });
 
 test("deviceBands: a process ollama cannot see is named as unseen, and one it can see as a tenant", () => {
     const raw = hwJson("runner-pids-other-processes-2026-09-11.json");
     const sample = { t: 1, capacity: M.parseInfo(raw), models: [] };
-    const bands = M.deviceBands(sample, "1");
+    const bands = B.deviceBands(sample, "1");
     const g = raw.compute.supported_gpus[1];
     const tenant = bands.find((b) => b.key === "proc:417");
     assert.deepEqual([tenant.label, tenant.bytes], ["llama-server (pid 417)", 3164602368]);
     // The other container's torch process is NOT listed; the gap between the listed memory and what is in use
     // is exactly it (~2.6 GB, measured on the host with nvidia-smi).
     const unseen = bands.find((b) => b.key === "other");
-    assert.equal(unseen.label, M.OUTSIDE_VIEW_LABEL);
+    assert.equal(unseen.label, B.OUTSIDE_VIEW_LABEL);
     assert.equal(unseen.bytes, g.total_memory - g.free_memory - 3164602368);
     assert.ok(unseen.bytes > 2.5 * 1024 ** 3);
     // With every process listed (`all`), what is left owns no process: the driver's own.
     const all = structuredClone(raw);
     for (const d of all.compute.supported_gpus) d.processes_scope = "all";
-    assert.equal(M.deviceBands({ t: 1, capacity: M.parseInfo(all), models: [] }, "1").find((b) => b.key === "other").label, M.DRIVER_BAND_LABEL);
+    assert.equal(B.deviceBands({ t: 1, capacity: M.parseInfo(all), models: [] }, "1").find((b) => b.key === "other").label, B.DRIVER_BAND_LABEL);
 });
 
 test("deviceBands: through a load, helpers are not tenants and the loading runner IS the allocation", () => {
@@ -2628,7 +2632,7 @@ test("deviceBands: through a load, helpers are not tenants and the loading runne
     const TOTAL = 101972967424;
     const at = (p) => ({ t: 1, models: [], capacity: M.parseInfo({ compute: { system_compute: { total_memory: 8e9 },
         supported_gpus: [{ gpu_id: "0", runner: "CUDA", total_memory: TOTAL, free_memory: TOTAL - p.used_memory, processes_scope: "pid_namespace", processes: [p] }] } }) });
-    const kinds = lines.map((p) => M.deviceBands(at(p), "0").find((b) => b.kind === "other" && b.bytes > 0).key);
+    const kinds = lines.map((p) => B.deviceBands(at(p), "0").find((b) => b.kind === "other" && b.bytes > 0).key);
     // The fit probe (`llama-server`) and device discovery (`ollama`) are ollama's own, and never read as a stranger.
     assert.ok(!kinds.some((k) => k.startsWith("proc:")), `no helper drawn as a tenant: ${kinds}`);
     assert.equal(kinds.filter((k) => k === "helper").length, lines.filter((p) => p.ollama_helper).length);
@@ -2636,15 +2640,15 @@ test("deviceBands: through a load, helpers are not tenants and the loading runne
     const loading = lines.filter((p) => p.runner?.loading);
     assert.ok(loading.length >= 5);
     for (const p of loading) {
-        const b = M.deviceBands(at(p), "0").find((x) => x.key === "load:qwen3.5:0.8b");
+        const b = B.deviceBands(at(p), "0").find((x) => x.key === "load:qwen3.5:0.8b");
         assert.equal(b.bytes, p.used_memory);
     }
     // …and pendingAllocation reads it directly: the process's memory, not the residual's growth.
-    const frames = loading.map((p) => M.deviceBands(at(p), "0"));
-    assert.deepEqual(M.pendingAllocation(frames, frames.map((_, i) => i), "qwen3.5:0.8b", []), loading.map((p) => p.used_memory));
+    const frames = loading.map((p) => B.deviceBands(at(p), "0"));
+    assert.deepEqual(B.pendingAllocation(frames, frames.map((_, i) => i), "qwen3.5:0.8b", []), loading.map((p) => p.used_memory));
     // Once it is resident but /api/ps has not caught up, it is the model's runner — not gigabytes of "overhead".
     const done = lines.at(-1);
-    assert.equal(M.deviceBands(at(done), "0").find((b) => b.kind === "other" && b.bytes > 0).key, "runner:qwen3.5:0.8b");
+    assert.equal(B.deviceBands(at(done), "0").find((b) => b.kind === "other" && b.bytes > 0).key, "runner:qwen3.5:0.8b");
 });
 
 test("deviceBands: a process list with no scope is an EARLIER build's, and names nothing", () => {
@@ -2653,9 +2657,9 @@ test("deviceBands: a process list with no scope is an EARLIER build's, and names
     const frames = JSON.parse(readFileSync(new URL("./e2e/fixtures/events-load-lifecycle.json", import.meta.url), "utf8"));
     const f = frames.filter((x) => x.kind === "sample" && x.info).at(-1);
     const sample = { t: 1, capacity: M.parseInfo(f.info), models: (f.ps?.models || []).map(M.residencyFrom) };
-    const bands = M.deviceBands(sample, "0");
+    const bands = B.deviceBands(sample, "0");
     assert.ok(!bands.some((b) => b.key.startsWith("proc:")), `no tenant invented: ${bands.map((b) => b.key)}`);
-    assert.notEqual(bands.find((b) => b.key === "other").label, M.OUTSIDE_VIEW_LABEL, "and the size rule still names the residual");
+    assert.notEqual(bands.find((b) => b.key === "other").label, B.OUTSIDE_VIEW_LABEL, "and the size rule still names the residual");
 });
 
 test("estimateFrom: the predictor's figures off a real estimate frame, and nothing without a total", () => {
@@ -2723,20 +2727,20 @@ test("loadTrace: with no runner to read, the cards' growth — peak above where 
 });
 
 test("gridStep: the smallest round interval that keeps the lines apart at a track's width", () => {
-    assert.equal(M.gridStep(30_000), 5_000, "30 s across 300 px: a line every 5 s is 50 px apart");
-    assert.equal(M.gridStep(300_000), 60_000, "five minutes: one a minute");
-    assert.equal(M.gridStep(300_000, 1200), 15_000, "a wider track affords a finer grid");
-    assert.equal(M.gridStep(1e12), M.GRID_STEPS_MS.at(-1), "past the last step, the last step");
+    assert.equal(X.gridStep(30_000), 5_000, "30 s across 300 px: a line every 5 s is 50 px apart");
+    assert.equal(X.gridStep(300_000), 60_000, "five minutes: one a minute");
+    assert.equal(X.gridStep(300_000, 1200), 15_000, "a wider track affords a finer grid");
+    assert.equal(X.gridStep(1e12), X.GRID_STEPS_MS.at(-1), "past the last step, the last step");
 });
 
 test("gridTimes: on the LOCAL clock's round multiples, and only inside the run it is given", () => {
     const start = new Date(2026, 8, 12, 10, 4, 7, 300).getTime();   // 10:04:07.300 local
     const run = [{ t: start }, { t: start + 95_000 }];
-    const times = M.gridTimes(run, 30_000);
+    const times = X.gridTimes(run, 30_000);
     assert.deepEqual(times.map((t) => { const d = new Date(t); return `${d.getMinutes()}:${d.getSeconds()}.${d.getMilliseconds()}`; }),
         ["4:30.0", "5:0.0", "5:30.0"], "on the half-minute, by the clock on the wall");
     assert.ok(times.every((t) => t >= run[0].t && t <= run[1].t));
-    assert.deepEqual(M.gridTimes([{ t: start }], 30_000), [], "one sample is not a stretch of time");
+    assert.deepEqual(X.gridTimes([{ t: start }], 30_000), [], "one sample is not a stretch of time");
 });
 
 test("ribbonSpans: a card's timed generation phases, on every card the model is on and no other", () => {
@@ -2803,17 +2807,17 @@ test("a residual is explained in ITS backend's terms — CUDA on NVIDIA, HIP on 
             system_compute: { total_memory: shape.hostTotal, free_memory: Math.round(shape.hostTotal * 0.6) },
             supported_gpus: shape.devices.map((d, i) => ({ ...d, free_memory: d.total_memory - (i === 0 ? 3 * GB : 0.2 * GB) })) } });
         const sample = { t: 1, capacity: cap, models: [] };
-        const notes = [...(cap.unified ? [] : M.deviceBands(sample, d0.gpu_id)), ...M.hostBands(sample)]
+        const notes = [...(cap.unified ? [] : B.deviceBands(sample, d0.gpu_id)), ...B.hostBands(sample)]
             .filter((b) => b.kind === "other").map((b) => b.note);
-        const card = cap.unified ? null : M.deviceBands(sample, d0.gpu_id).find((b) => b.key === "other").note;
-        const host = M.hostBands(sample).find((b) => b.key === "other").note;
+        const card = cap.unified ? null : B.deviceBands(sample, d0.gpu_id).find((b) => b.key === "other").note;
+        const host = B.hostBands(sample).find((b) => b.key === "other").note;
         if (card) {
             if (shape.runner === "CUDA") assert.match(card, /CUDA context/, key);
             else assert.doesNotMatch(card, /CUDA/, `${key}: a ${shape.runner} card is not described in CUDA's terms`);
             if (shape.runner === "ROCm") assert.match(card, /HIP \(ROCm\) context/, key);
         }
         assert.doesNotMatch(host, /CUDA|HIP|card/, `${key}: RAM holds the OS and other programs, not a GPU context`);
-        assert.equal(host, cap.unified ? M.UNIFIED_NOTE : M.HOST_RAM_NOTE, key);
+        assert.equal(host, cap.unified ? B.UNIFIED_NOTE : B.HOST_RAM_NOTE, key);
         assert.ok(notes.every(Boolean), `${key}: every residual carries its own note, so the legend never falls back`);
     }
 });
@@ -2822,12 +2826,12 @@ test("stepBands: models and what belongs to them step — but only from the bott
     const identity = { "m:a": "a", "m:b": "b" };
     const tint = { "ctx:a": "a", "load:c": "c", "runner:d": "d" };
     // A model, its overhead, a second model: all piecewise-constant, all at the bottom — they step.
-    assert.deepEqual([...M.stepBands(["m:a", "ctx:a", "m:b", "other", "free"], identity, tint)], ["m:a", "ctx:a", "m:b"]);
+    assert.deepEqual([...B.stepBands(["m:a", "ctx:a", "m:b", "other", "free"], identity, tint)], ["m:a", "ctx:a", "m:b"]);
     // A LOADING runner climbs, so it is a line — and a runner stacked on it must not step, or its held top sits
     // below its rising floor and the inverted polygon fills as a wedge.
-    assert.deepEqual([...M.stepBands(["m:a", "ctx:a", "load:c", "runner:d", "other", "free"], identity, tint)], ["m:a", "ctx:a"]);
+    assert.deepEqual([...B.stepBands(["m:a", "ctx:a", "load:c", "runner:d", "other", "free"], identity, tint)], ["m:a", "ctx:a"]);
     // A plain residual at the bottom (no model on the card) stops the run at once.
-    assert.deepEqual([...M.stepBands(["other", "free"], identity, tint)], []);
+    assert.deepEqual([...B.stepBands(["other", "free"], identity, tint)], []);
 });
 
 test("bandEdge: a line band on stepped ones turns their corners — a constant residual is the model's step, shifted up", () => {
@@ -2835,13 +2839,13 @@ test("bandEdge: a line band on stepped ones turns their corners — a constant r
     const model = [4, 4, 10, 10], residual = model.map((v) => v + 1);
     // The SHAPE, compared with repeated vertices dropped: a stepped edge emits a corner at every sample, even a flat one.
     const shape = (e) => e.filter((q, k) => k === 0 || q[0] !== e[k - 1][0] || q[1] !== e[k - 1][1]);
-    const floor = shape(M.bandEdge(model, true));
-    const top = shape(M.bandEdge(residual, false, model));
+    const floor = shape(B.bandEdge(model, true));
+    const top = shape(B.bandEdge(residual, false, model));
     assert.deepEqual(top, floor.map(([i, v]) => [i, v + 1]), "exactly the stepped floor plus the residual's own thickness");
     // Interpolating the cumulative value instead is what drew the wedge: no corner, a diagonal from 5 to 11.
-    assert.deepEqual(M.bandEdge(residual, false), [[0, 5], [1, 5], [2, 11], [3, 11]]);
+    assert.deepEqual(B.bandEdge(residual, false), [[0, 5], [1, 5], [2, 11], [3, 11]]);
     // A line with no stepped base below is just a line — the device's own progressive growth stays one.
-    assert.deepEqual(M.bandEdge([1, 2, 3], false, null), [[0, 1], [1, 2], [2, 3]]);
+    assert.deepEqual(B.bandEdge([1, 2, 3], false, null), [[0, 1], [1, 2], [2, 3]]);
 });
 
 // Reported from a real load (ml.__events, 2026-09-16, gemma4:31b): the loading runner's memory (`load:`, a line) climbed
@@ -2853,14 +2857,14 @@ test("bandEdge: a load handing its bytes to its model holds its thickness to the
     // Cumulative tops: the model (stepped base) arrives at sample 2; the load on top of it held 43.3 until then.
     const model = [0, 0, 43.3 * G, 43.3 * G];
     const loadTop = [20 * G, 43.3 * G, 43.3 * G, 43.3 * G];
-    const top = M.bandEdge(loadTop, false, model);
+    const top = B.bandEdge(loadTop, false, model);
     assert.deepEqual(top, [[0, 20 * G], [1, 43.3 * G], [2, 43.3 * G], [2, 43.3 * G], [3, 43.3 * G]], "the stack's top stays flat through the hand-off");
     assert.ok(top.every(([, v]) => v >= 43.3 * G || v === 20 * G), "never below what is on the card");
     // The reverse hand-off (a model's figures dropping back to an unattributed runner) holds the same way.
-    const back = M.bandEdge([43.3 * G, 43.3 * G, 43.3 * G], false, [43.3 * G, 0, 0]);
+    const back = B.bandEdge([43.3 * G, 43.3 * G, 43.3 * G], false, [43.3 * G, 0, 0]);
     assert.deepEqual(back, [[0, 43.3 * G], [1, 43.3 * G], [1, 43.3 * G], [2, 43.3 * G]]);
     // Not a hand-off (both grow): the thickness still varies smoothly above the corner, as before.
-    assert.deepEqual(M.bandEdge([5, 12], false, [4, 10]), [[0, 5], [1, 6], [1, 12]]);
+    assert.deepEqual(B.bandEdge([5, 12], false, [4, 10]), [[0, 5], [1, 6], [1, 12]]);
 });
 
 test("the REAL capture with one card faulted: the healthy card's product name, and a fault with no remembered label", () => {
@@ -3022,12 +3026,12 @@ test("bandOrder: a model loading in the window stacks last among the models, its
         f({ key: "m:zeta", model: "zeta", bytes: 10, kind: "model" }, { key: "runner:aaa", bytes: 6, kind: "other", of: "aaa" }),
         f({ key: "m:aaa", model: "aaa", bytes: 8, kind: "model" }, { key: "ctx:aaa", bytes: 1, kind: "other", of: "aaa" }, { key: "helper", bytes: 1, kind: "other" }),
     ];
-    const order = M.bandOrder(frames);
+    const order = B.bandOrder(frames);
     assert.deepEqual(order, ["m:zeta", "m:aaa", "ctx:aaa", "runner:aaa", "load:aaa", "helper", "other", "free"]);
     // The models BELOW still step; the load is a curve, and stepping stops there — above every model, not among them.
     const identity = { "m:zeta": "zeta", "m:aaa": "aaa" };
     const tint = { "ctx:aaa": "aaa", "runner:aaa": "aaa", "load:aaa": "aaa" };
-    assert.deepEqual([...M.stepBands(order, identity, tint)], ["m:zeta", "m:aaa", "ctx:aaa", "runner:aaa"]);
+    assert.deepEqual([...B.stepBands(order, identity, tint)], ["m:zeta", "m:aaa", "ctx:aaa", "runner:aaa"]);
     // With no load in the window, plain alphabetical order.
-    assert.deepEqual(M.bandOrder([frames[2], [{ key: "m:zeta", model: "zeta", bytes: 10, kind: "model" }]]).slice(0, 3), ["m:aaa", "ctx:aaa", "m:zeta"]);
+    assert.deepEqual(B.bandOrder([frames[2], [{ key: "m:zeta", model: "zeta", bytes: 10, kind: "model" }]]).slice(0, 3), ["m:aaa", "ctx:aaa", "m:zeta"]);
 });
