@@ -94,6 +94,21 @@ test("EVERY type the doc names is either expanded or deliberately skipped", () =
         + ` binding), or it belongs in SKIP_TYPES with a reason.`);
 });
 
+test("a MODULE HEADER never leaks into the doc the model reads", () => {
+    // parseDecls takes the comment run directly above a declaration as its documentation. When contract.ts was
+    // split by theme, two of the new modules had their file header sitting directly above their first
+    // declaration with no blank line and no import between — so the header, which is written for whoever edits
+    // the module, was attached to that declaration and printed into the model's API reference. It cost 10 lines
+    // of prose about storage keys and worker lifetimes, and it named a type (RequestHint) that then had no
+    // section, which is the failure the dangling check catches one step later.
+    //
+    // A blank line after the header is the fix. This asserts the outcome instead, because the next module
+    // written without one should fail here rather than ship.
+    const headers = [...docs.matchAll(/^\/\/ ([\w-]+\.tsx?) —.*$/gm)].map(m => m[1]);
+    assert.deepEqual(headers, [], `a module's file header reached the model: ${headers.join(", ")}.`
+        + ` Put a blank line between the header and the first declaration in that file.`);
+});
+
 test("a type that MOVES out of contract.ts is still found, through the import that binds it", () => {
     // contract.ts is one contract; it does not have to be one FILE. Splitting it used to cut this doc by 10.7%
     // in silence. The generator now resolves an unknown name through the import/re-export that binds it, so

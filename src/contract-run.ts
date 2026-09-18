@@ -8,6 +8,7 @@
 //
 // pushReplay and bgRunResumable are about a background run outliving the worker that started it, which is
 // why STALE_BGRUN_MS is here and not a magic number at a call site.
+
 /** WHO WAITS FOR THE OUTPUT of a request, which is the rule the server's hints are built on: a person reading it
  *  (`interactive`), a program that cannot continue without it (`agent`), nothing urgent (`utility`), throughput
  *  with nobody waiting (`batch`). */

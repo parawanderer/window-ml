@@ -6,6 +6,7 @@
 // caller is handed. They belong together because a table is usually the interesting thing a fetch RETURNED,
 // and the two were written against each other. No imports: this module is a leaf, which is why it is the one
 // place a parser can be pointed at without dragging the rest of the contract in.
+
 /** Build an `Accept-Language` header value from the browser's language list (navigator.languages), the way a
  *  real browser sends it: the first language at q=1.0, each later one at a descending q-weight (floored at
  *  0.1). ["en-US","en","fr"] → "en-US,en;q=0.9,fr;q=0.8". Dedupes, trims, drops empties. Pure (unit-tested);
