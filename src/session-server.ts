@@ -5,7 +5,7 @@
 //
 // Only extension pages may connect (the background checks the port's sender URL before `attach`): a content script
 // never reaches this, because a page's main world is hostile and the index spans every tab.
-import type { MlDebugEvent } from "./contract";
+import type { MlDebugEvent } from "./contract-debug";
 import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type SessionId, type SessionIndexUpdate, type SessionStreamMessage, type StreamPosition } from "./session-host";
 import type { IngestOutcome, IngestSource, SessionIndex } from "./session-index";
 

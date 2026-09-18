@@ -4,8 +4,13 @@
 // shared contract types.
 import { LOAD_RECORDS_KEY } from "./load-records";
 import { parseInfo } from "./resource-model";   // chat_metadata: the machine's devices and memory
-import type { NeutralMessage, ToolCall, TokenUsage, RequestHint, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, InjectMessagePayload, ApprovalDecision } from "./contract";
-import { modelFilterAllows, UI_OUT_CAP, hintSession } from "./contract";   // single source of truth (see contract.ts)
+import type { RequestHint } from "./contract-run";
+import type { NeutralMessage, ToolCall, TokenUsage } from "./contract-chat";
+import type { ApprovalDecision } from "./contract-agent";
+import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, InjectMessagePayload } from "./contract-messages";
+import { hintSession } from "./contract-run";
+import { modelFilterAllows } from "./contract-config";
+import { UI_OUT_CAP } from "./contract-chat";
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
 import { externalSheetIds, googleSheetId, clipOut, isCurrentPage } from "./dom";

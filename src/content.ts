@@ -1,7 +1,7 @@
 // Content script (isolated world): injects injected.js into the page's main world
 // and relays messages between it and the background worker (window.postMessage ⇄
 // chrome.runtime), bridging CORS. Streaming rides a long-lived Port instead.
-import type { PageRequestType, BackgroundMessageType } from "./contract";
+import type { PageRequestType, BackgroundMessageType } from "./contract-messages";
 
 // 1. Inject injected.js into the main world.
 // If the page's Content-Security-Policy refuses the main-world script — e.g. raw.githubusercontent.com serves

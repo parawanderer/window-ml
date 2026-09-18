@@ -3,13 +3,15 @@
 // self-contained surface from the run views. Extracted from app.tsx.
 import type { WireFrame } from "../events-wire";
 import { useState, useEffect, useRef, useMemo } from "preact/hooks";
-import type { RenderDescriptor } from "../contract";
-import { fmtCtx, isBackendUnreachable } from "../contract";
+import type { RunStats } from "../contract-chat";
+import type { RenderDescriptor } from "../contract-render";
+import { fmtCtx } from "../contract-config";
+import { isBackendUnreachable } from "../contract-server";
 import { signal, effect } from "@preact/signals";
 import type { ComponentChildren } from "preact";
 import {
     config, models, ollamaIds, modelKinds, loadedModels, psError, vramOpen, backendError, rev, sessionMap,
-    sidebarOpen, view, crosshair, backendAliveAt, backendLoading, unreachableIfNothingSaysOtherwise,
+    sidebarOpen, view, crosshair, backendAliveAt, backendLoading, unreachableIfNothingSaysOtherwise, VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, benchKept, benchLost, noteBenchKept, codeLineNumbers, type BenchRun,
 } from "./store";
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
@@ -22,15 +24,13 @@ import { useTipPlacement } from "./use-tip";
 import { CodeEditor } from "./code-editor";
 import type { CodeEditorHandle, RemoteCompletion } from "./code-editor-api";
 import { fmtAge, hhmmss } from "./timestamps";
-import { VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, lsGet, lsSet, BENCH_CODE_KEY, asides, benchOpen, benchDock, benchH, benchSplit, viewReturn, BENCH_OPEN_KEY, BENCH_DOCK_KEY, BENCH_H_KEY, BENCH_SPLIT_KEY, benchEnv, noteBenchEnv, benchCode, benchMode, benchRunning, benchResult, benchLive, benchTimeout, benchKept, benchLost, noteBenchKept, codeLineNumbers, type BenchRun } from "./store";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, laneEvents, type UsageSource } from "./model-stats";
-import type { RunStats } from "../contract";
 import { parseInfo, holdCapacity, memorySplit, estimateFrom, quantPlain, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, chartWindow, windowSamples, sessionWindow, type MemoryBreakdown, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, addMachineEvent, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, rooflineFrom, expectedDecodeFrom, expectedPhrase, predictedDecodeFrom, kindRefusal } from "../resource-model";
 import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay, LANE_KINDS, toggleLaneKind } from "./resource-chart";
-import type { LoadedModel } from "../contract";
+import type { LoadedModel } from "../contract-server";
 
 /** Is this model resident right now? `undefined` when we have no `/api/ps` answer yet — the caller must not
  *  read that as "not loaded", since the difference between "loading" and "we don't know" matters to what the

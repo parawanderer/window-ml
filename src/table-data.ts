@@ -15,7 +15,7 @@ import { brandTable, brandStored } from "./table-brand";
 // The TABLE TYPES live in contract.ts, not here: they cross the message channel (a fetch result, a pointer
 // read, an agent output) and `agent_api_docs` is generated from that file, so a type defined here would be
 // invisible to the model that has to use it. This module owns the PARSERS; contract.ts owns the shape.
-import type { TableLike, TableCell, TableDtype, Table } from "./contract";
+import type { TableLike, TableCell, TableDtype, Table } from "./contract-fetch";
 export type { TableLike, TableCell, TableDtype, Table };
 
 /** The most LINES a parse keeps, header included — so a table with a header carries one row fewer. A bound

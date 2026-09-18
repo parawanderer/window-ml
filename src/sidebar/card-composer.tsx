@@ -3,7 +3,7 @@
 // composer signals from ./card-state and the shared attach/thumb bits from ./composer.
 import { useState, useEffect, useRef } from "preact/hooks";
 import { models, modelKinds, config, ollamaIds, rev, sessionMap, backendError } from "./store";
-import { generatesText, producesEmbeddings } from "../contract";
+import { generatesText, producesEmbeddings } from "../contract-server";
 import { IconChevron, IconEye, IconEyeOff } from "./icons";
 import { useImageAttach, ThumbStrip, ElementPill } from "./composer";
 import {

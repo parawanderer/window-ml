@@ -15,7 +15,7 @@
 // the surfaces keep free of doubles, but off mode with `listPageSessions` wakes the page's bus while the background
 // also fans the run's start and result. So the index de-duplicates by meaning (a second start, a repeated result, a
 // repeated "seen", a chat turn's id), which holds whichever copy arrives first.
-import type { MlDebugEvent } from "./contract";
+import type { MlDebugEvent } from "./contract-debug";
 import { SESSION_CONTRACT_VERSION, type RuntimeId, type SessionId, type SessionKind, type SessionStatus, type SessionStreamMessage, type SessionSummary, type StreamPosition } from "./session-host";
 
 /** Where one event came from. */

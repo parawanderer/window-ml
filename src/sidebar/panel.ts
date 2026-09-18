@@ -4,7 +4,7 @@
 // iframe (sidebar.html) is byte-for-byte the overlay's — it just sees a parent relaying
 // __mlDebug, exactly as under the shell — so the app needs no changes. (`chrome` is the
 // @types/chrome global — a local `declare` would poison the type across the project.)
-import { cleanImages } from "../contract";
+import { cleanImages } from "../contract-run";
 const frame = document.getElementById("app") as HTMLIFrameElement;
 
 // This panel only streams when it's the ACTIVE debug surface (debugMode === "devtools").

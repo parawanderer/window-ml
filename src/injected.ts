@@ -1,24 +1,19 @@
 // This runs in the "Main World" (same as the page JS)
 
-import type {
-    MlTool,
-    MlAgentHandle,
-    MlApi,
-    AgentTranscriptEntry,
-    DebugChatStart,
-    DebugChatResult,
-    DebugChatError,
-    MlHistory,
-
-    DerefValue, RebuildConfig, AnswerMedia, MlAnswer} from "./contract";
+import type { MlApi } from "./contract";
+import type { DerefValue } from "./contract-pointers";
+import type { MlHistory } from "./contract-chat";
+import type { MlTool, MlAgentHandle, MlAnswer } from "./contract-agent";
+import type { AnswerMedia } from "./contract-render";
+import type { RebuildConfig } from "./contract-messages";
 import { htmlToMarkdown } from "./html-to-md";
-import { mlPipe, PIPE_SYNTAX } from "./text-pipe";
+import { mlPipe } from "./text-pipe";
 import { truncate, elPath, describeSkeleton, queryAll, selectorError, viewportRect, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom";
 import { tableFromDelimited, tableShape, asTable } from "./table-data";
 import { isTable } from "./table-brand";
 import { makeAnswerFacade } from "./answer-set";
 import { accessibleName, roleOf, ariaState } from "./a11y";
-import { HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, UNATTENDED_REFUSAL, askAboutTask } from "./prompts";
+import { HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, askAboutTask } from "./prompts";
 import { pageContext, resolvePoint, resolveBox, agentState, mlRange } from "./util";
 import { suspiciousChars } from "./security";
 import { emitDebug, sessionRegistry, agentRegistry, handleRegistry } from "./bus";
@@ -41,27 +36,10 @@ import { createChat, resumeChat, chat, step } from "./ml-chat";
 import { agent } from "./ml-agent-run";
 import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } from "./ml-agent-handle";
 
-// ---- the SERVER surface of window.ml ----------------------------------------------------------------
-// Lifted out of the object literal so it can be moved to a module of its own: these eleven ask the background
-// about the SERVER (models, capabilities, residency, server-side tools) and touch none of the IIFE's state, so
-// column scope costs them nothing and makes them movable by scripts/move-symbols.mjs rather than by hand.
-
-// ---- the TOOL FACTORIES of window.ml ---------------------------------------------------------------
-// Each `ml.xxxTool()` builds one MlTool the caller passes to `ml.agent({ extraTools })` — lifted out of the object
-// literal so they can move to a module of their own (scripts/move-symbols.mjs takes top-level declarations only).
-
-// ---- the VISION surface of window.ml --------------------------------------------------------------
-// Pixels and what reads them: capturing a region or a whole page, turning an <img>/blob/URL into a data URL a
-// model can be sent, deciding WHICH model can see, and the native-vision look tool. Lifted out of the object
-// literal so they can move to a module of their own (move-symbols takes top-level declarations only).
-
-// ---- lifted from the window.ml literal ----
-
-// ---- lifted from the window.ml literal ----
-
-// ---- lifted from the window.ml literal ----
-
-// ---- lifted from the window.ml literal ----
+// Every family that used to live in the window.ml literal now has a module above; what is left here is the
+// object that binds them together, the small `_`-prefixed introspection helpers, and the page's own window
+// message handlers. The literal is the API SURFACE — a member is either declared inline because it is a few
+// lines of plumbing, or an alias to the module that owns it.
 
 (function() {
 
