@@ -14,6 +14,7 @@
 // can't leave it un-live.
 import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD } from "../ids";
 import { cleanImages } from "../contract";
+import { onSessionDone, relaySessionToPage, relayStartAgent } from "./shell-session-relay";
 import { resolveContextContainer, domToContext } from "../dom";   // right-click "ask about this" (content script sees the page DOM)
 import type { DebugMode, ElementContext } from "../contract";
 
@@ -700,39 +701,14 @@ function showHighlight(ref: { selector?: string; index?: number; token?: string;
 // hide→show window: snapshot the position and snap back on any scroll until we restore.
 let scrollPin: { x: number; y: number; onScroll: () => void } | null = null;
 
-/** Chat-page session actions waiting for the page to say what it did, by request id. */
-const sessionDoneWaiters = new Map<string, (outcome: string, hash?: string) => void>();
-/** How long a page gets to answer before the action is reported as unanswered. */
-const SESSION_DONE_MS = 3000;
-/** Starting a run gets longer: the page answers only once the loop has minted the hash, which is after its own
- *  setup (the config read, the toolset, a capability probe), and none of that is waiting on this shell. */
-const START_DONE_MS = 10_000;
-/** Relay the page's answer to one session action back to the background, or `no-answer` when the page never replies (a
- *  page whose `window.ml` has not loaded, or one that swallowed the message). What the page reports is its own claim
- *  about its own session, so it decides nothing: the transcript still changes only through the session's events. */
-function awaitSessionDone(reqId: string, sendResponse: (r: unknown) => void, withinMs = SESSION_DONE_MS): void {
-    const timer = setTimeout(() => finish("no-answer"), withinMs);
-    const finish = (outcome: string, hash?: string): void => {
-        if (!sessionDoneWaiters.delete(reqId)) return;
-        clearTimeout(timer);
-        try { sendResponse({ outcome, ...(hash ? { hash } : {}) }); } catch { /* the background stopped waiting */ }
-    };
-    sessionDoneWaiters.set(reqId, finish);
-}
-
 function onWindowMessage(e: MessageEvent): void {
     const d = e.data;
     if (!d) return;
     // injected.js just loaded and is listening (a page-load race: it may have missed the
     // handshake we posted before its <script> ran). Re-send it, if the bus is meant to be live.
     if (d.__mlSidebar === "hello" && e.source === window) { if (busLive()) handshake(); return; }
-    // The page's answer to a session action the chat page asked for (see awaitSessionDone).
-    if (d.__mlSessionDone && e.source === window) {
-        const { reqId, outcome, hash } = d.__mlSessionDone as { reqId?: unknown; outcome?: unknown; hash?: unknown };
-        const reply = typeof reqId === "string" ? sessionDoneWaiters.get(reqId) : undefined;
-        if (reply) reply(typeof outcome === "string" ? outcome : "none", typeof hash === "string" ? hash : undefined);
-        return;
-    }
+    // The page's answer to a session action the chat page asked for (shell-session-relay.ts).
+    if (d.__mlSessionDone && e.source === window) { onSessionDone(d.__mlSessionDone); return; }
     // injected.js asks us to hide the overlay for a screenshot (so the sidebar
     // isn't captured into the agent's `look`). Hide, then ack after two frames so
     // the hidden state has painted before the capture fires.
@@ -1378,33 +1354,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         if (cardReady && frame) { frame.contentWindow?.postMessage({ __mlAddToCurrentRun: { ctx } }, "*"); try { frame.focus(); } catch { /* ignore */ } }
         else { addToRunPending = ctx; }   // flushed on the app's ready
     }
-    // DevTools session composer (panel → background → here): relay to the PAGE, which drives the handle
-    // by hash (steer/run/cancel). Any mode — the page's handle registry is what acts, not this shell.
-    else if (msg?.type === "ML_SESSION_TO_PAGE") {
-        // A `reqId` (the chat page's commands) asks for what the page did; the DevTools composer sends none.
-        const reqId = typeof msg.reqId === "string" ? msg.reqId : undefined;
-        const ec = msg.elementContext && typeof msg.elementContext.selector === "string" ? msg.elementContext : undefined;
-        if (msg.action === "send") window.postMessage({ __mlSessionSend: { hash: msg.hash, text: msg.text, images: cleanImages(msg.images), ...(ec ? { elementContext: ec } : {}), reqId } }, "*");
-        else if (msg.action === "cancel") window.postMessage({ __mlCancelSession: { hash: msg.hash, reqId } }, "*");
-        else if (msg.action === "continue") window.postMessage({ __mlContinueRun: { hash: msg.hash, reqId } }, "*");
-        else return;
-        if (reqId) { awaitSessionDone(reqId, sendResponse); return true; }   // async: the page answers by window message
-    }
-    // The chat page's `agent.start`: run it through the SAME page path the HUD composer uses, so a run started
-    // from an extension page is a genuine session of this tab (hash, resumable, appendable) built by the page's
-    // own toolset, rather than a second way of starting a run that would drift from it.
-    else if (msg?.type === "ML_START_AGENT" && typeof msg.reqId === "string") {
-        window.postMessage({ __mlStartAgent: {
-            task: msg.task,
-            reqId: msg.reqId,
-            maxSteps: typeof msg.maxSteps === "number" ? msg.maxSteps : undefined,
-            model: typeof msg.model === "string" && msg.model.trim() ? msg.model.trim() : undefined,
-            vision: msg.vision === true ? true : undefined,
-            stream: msg.stream === true ? true : undefined,
-            images: cleanImages(msg.images),
-            hud: agentHud,
-        } }, "*");
-        awaitSessionDone(msg.reqId, sendResponse, START_DONE_MS);
-        return true;
-    }
+    // A session command from the worker that has to end at THIS page, and the page's answer to it — both in
+    // shell-session-relay.ts, which owns the waiter map that joins the two. `true` keeps the reply channel open.
+    else if (msg?.type === "ML_SESSION_TO_PAGE") { if (relaySessionToPage(msg, sendResponse)) return true; }
+    else if (msg?.type === "ML_START_AGENT" && typeof msg.reqId === "string") return relayStartAgent(msg, sendResponse, agentHud);
 });

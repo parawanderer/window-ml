@@ -506,13 +506,6 @@ export const describeSkeleton = (el: Element, depth: number, indent = "", canLoc
 // trailing nth as the 1-based nth match of the base set. Correct native uses (non-empty) are never touched.
 const TRAILING_NTH_NATIVE = /^([\s\S]*):nth-(?:of-type|child)\(\s*(\d+)\s*\)\s*$/i;
 
-/**
- * Query the document with the jQuery-tolerant selector dialect described above
- * (`:contains`/`:has-text`/`:eq`, plus the dead-`:nth-of-type` reinterpretation).
- *
- * @param {string} selector The (possibly predicate-carrying) selector.
- * @returns {Element[]} Matching elements, after peeling + applying predicates.
- */
 /** querySelectorAll that PIERCES open shadow roots. Chrome's native querySelectorAll stops at shadow
  *  boundaries, so web-component content (Gemini's editor, many design systems) is invisible to a selector.
  *  Collects matches at `root` + recursively inside every OPEN shadowRoot (closed roots are unreachable by
@@ -853,7 +846,8 @@ const evalExtHop = (seg: string, scopes: ParentNode[], deepFirst: boolean): Elem
     return current;
 };
 
-/** Public entry: resolve a selector (with `>>>` hops + extended pseudos), EXCLUDING the extension's own injected
+/** Public entry: resolve a selector in the jQuery-tolerant dialect above (`>>>` shadow hops, `:contains`
+ *  /`:has-text`/`:eq`, and the dead-`:nth-of-type` reinterpretation), EXCLUDING the extension's own injected
  *  UI by default — pass `includeExtensionUi: true` to reach it (e.g. to inspect the HUD itself). One post-filter
  *  point over the raw engine catches every path (the multi-hop raw querySelectorAll, evalExtHop, deepQueryAll). */
 export const queryAll = (selector: string, includeExtensionUi = false): Element[] => {
@@ -1387,19 +1381,6 @@ export function jsonShape(value: unknown, opts: ShapeOpts = {}): string {
 }
 
 /**
- * The one type that describes EVERY value in a list — each is a separate document, so this is not
- * `jsonShape(values)` (which would describe the list itself as `T[]`).
- *
- * Instances of the same thing collapse into one object whose sometimes-present keys are optional; genuinely
- * different things stay a union, since merging them would invent an object that never existed. Use it to
- * join several responses (three pages of an API, or the same endpoint across accounts) into the type you
- * would actually write against them.
- *
- * @param {unknown[]} values The documents to join.
- * @param {ShapeOpts} [opts] Same caps as {@link jsonShape}; `sample` bounds nested arrays, not this list.
- * @returns {string} The joined TS-like shape; `"unknown"` for an empty list.
- */
-/**
  * Coerce one `ml.schema` argument into a parsed JSON value.
  *
  * Accepts what a caller actually has to hand: an already-parsed value, a fetch result (its `.json` when the
@@ -1446,6 +1427,19 @@ export function jsonValue(source: unknown, where: string): unknown {
     catch (e) { throw new Error(`ml.schema: ${where} looks like JSON but doesn't parse (${(e as Error).message}).`); }
 }
 
+/**
+ * The one type that describes EVERY value in a list — each is a separate document, so this is not
+ * `jsonShape(values)` (which would describe the list itself as `T[]`).
+ *
+ * Instances of the same thing collapse into one object whose sometimes-present keys are optional; genuinely
+ * different things stay a union, since merging them would invent an object that never existed. Use it to
+ * join several responses (three pages of an API, or the same endpoint across accounts) into the type you
+ * would actually write against them.
+ *
+ * @param {unknown[]} values The documents to join.
+ * @param {ShapeOpts} [opts] Same caps as {@link jsonShape}; `sample` bounds nested arrays, not this list.
+ * @returns {string} The joined TS-like shape; `"unknown"` for an empty list.
+ */
 export function joinShapes(values: unknown[], opts: ShapeOpts = {}): string {
     if (!values.length) return "unknown";
     const o = shapeOpts(opts);
