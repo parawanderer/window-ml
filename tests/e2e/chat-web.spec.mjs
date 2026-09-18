@@ -130,3 +130,44 @@ test("a reload keeps the open session", async () => {
     expect(await page.locator(".katex-display").first().evaluate((el) => getComputedStyle(el).overflowX)).toBe("auto");
     await page.close();
 });
+
+test("phone: starting a chat from the list, and the form says what it cannot do", async () => {
+    const { page, errors } = await open(PHONE);
+    // `+` is one button per kind when more than one runtime kind can start something, so it opens a menu here.
+    await page.locator(".chat-start .hbtn").click();
+    await page.locator(".menu-item", { hasText: "New chat" }).click();
+
+    // One runtime can hold a chat here — the lab box has `agent` and no `chat`, the old Mac is offline — so there is
+    // nothing to choose between and the form does not ask.
+    await expect(page.locator('[data-field="runtime"]')).toHaveCount(0);
+
+    await page.locator('[data-field="text"] textarea').fill("what is a shared worker?");
+    await page.locator(".chat-new-foot .btn").click();
+
+    // The page opens the session the runtime answered with, and the transcript is the runtime's, not the form's.
+    await expect(page).toHaveURL(/#s=laptop%3A/);
+    await expect(page.locator(".chat-main")).toContainText("You said: what is a shared worker?");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("desktop: an agent run picks a tab, or a new one, and is started on the runtime that has tabs", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await page.locator(".chat-start .hbtn").click();
+    await page.locator(".menu-item", { hasText: "New agent run" }).click();
+
+    // The tab picker is filled from the runtime's own `tabs.list`, so the titles are the runtime's.
+    await expect(page.locator('[data-field="tab"] option').first()).toHaveText("The front page");
+
+    // Choosing a new tab swaps the picker for a URL, because a tab that does not exist has no title to choose.
+    await page.locator('[data-field="where"] select').selectOption("blank");
+    await expect(page.locator('[data-field="tab"]')).toHaveCount(0);
+    await expect(page.locator('[data-field="page"] input')).toBeVisible();
+
+    await page.locator('[data-field="text"] textarea').fill("summarise the front page");
+    await page.locator(".chat-new-foot .btn").click();
+    await expect(page).toHaveURL(/#s=laptop%3A/);
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", task: "summarise the front page", target: { kind: "blank" } });
+    expect(errors).toEqual([]);
+    await page.close();
+});

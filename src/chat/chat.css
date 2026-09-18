@@ -65,6 +65,21 @@ html, body, #root { height: 100%; }
 .chat-lightbox { position: fixed; inset: 0; background: rgb(0 0 0 / .85); display: flex; align-items: center; justify-content: center; z-index: 60; cursor: zoom-out; }
 .chat-lightbox img { max-width: 96vw; max-height: 96vh; object-fit: contain; }
 
+/* STARTING A SESSION: the list header's `+` and the form behind it (src/chat/new-session.tsx). The form takes the
+   main pane on a wide screen and the whole width on a phone, so it is the same component either way. */
+.chat-start .hbtn { font-size: 1.25em; line-height: 1; min-width: 30px; min-height: 30px; }
+.chat-new-body { display: flex; flex-direction: column; gap: 12px; padding: 14px; overflow: auto; }
+/* One labelled control per row: the label above its field, so a long tab title has the full width to itself. */
+.chat-new-field { display: flex; flex-direction: column; gap: 4px; font-size: .92em; color: var(--fg-dim); }
+.chat-new-field > select,
+.chat-new-field > input,
+.chat-new-field > textarea { font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 8px; min-height: 36px; }
+.chat-new-field.tall > textarea { min-height: 96px; resize: vertical; }
+/* The hint and the start button share a row, the hint taking what is left: it explains what the run may do, which is
+   worth reading before pressing the thing next to it. */
+.chat-new-foot { display: flex; align-items: center; gap: 12px; }
+.chat-new-hint { flex: 1; min-width: 0; font-size: .88em; color: var(--fg-dim); }
+
 /* PHONE WIDTH: one pane, bigger touch targets, and the composer clear of the home indicator. */
 .chat.narrow { --fs: 15px; }
 .chat.narrow .head { padding: 8px 10px; min-height: 52px; }
@@ -77,3 +92,6 @@ html, body, #root { height: 100%; }
 .chat.narrow .composer { padding-bottom: calc(8px + env(safe-area-inset-bottom)); }
 .chat.narrow .cbtn { min-width: 40px; min-height: 40px; }
 .chat.narrow .appr-btn { min-height: 40px; }
+.chat.narrow .chat-start .hbtn { min-width: 40px; min-height: 40px; }
+.chat.narrow .chat-new-field > select,
+.chat.narrow .chat-new-field > input { min-height: 44px; }

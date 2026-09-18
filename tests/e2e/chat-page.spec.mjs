@@ -76,3 +76,26 @@ test("the popup opens the chat page, and opening it again focuses the one that i
         expect(ext.context.pages().filter((p) => p.url() === url).length).toBe(1);
     } finally { await ext.context.close(); }
 });
+
+test("starting a chat from the page: the worker hosts it, with no tab behind it", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        fake.setScript([{ content: "a service worker is a background script" }]);
+        const { page: chat, errors } = await openChatPage(ext);
+
+        // This browser can start both kinds, so `+` is a menu.
+        await chat.locator(".chat-start .hbtn").click();
+        await chat.locator(".menu-item", { hasText: "New chat" }).click();
+        await chat.locator('[data-field="text"] textarea').fill("what is a service worker?");
+        await chat.locator(".chat-new-foot .btn").click();
+
+        // The page opens the session the worker answered with, and the answer arrives through the stream.
+        await expect(chat).toHaveURL(/#s=local%3A/);
+        await expect(chat.locator(".chat-main")).toContainText("a service worker is a background script");
+        // No tab was opened for it: the chat page and the popup-less context are all there is.
+        expect(ext.context.pages().filter((p) => p.url().startsWith("http")).length).toBe(0);
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await fake.stop(); }
+});

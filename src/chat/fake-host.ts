@@ -30,6 +30,17 @@ const SIDE_REPLIES = { title: "A scripted title", summary: "Did the scripted thi
 let epochSeq = 0;
 const newEpoch = () => `e${++epochSeq}`;
 
+/** The tabs a demo runtime says it has, so the new-session form's picker has something real to show. */
+const DEMO_TABS = [
+    { tabId: 11, url: "https://news.example/front", title: "The front page", active: true, windowId: 1 },
+    { tabId: 12, url: "https://docs.example/api/tables", title: "Tables — API reference", active: false, windowId: 1 },
+    { tabId: 13, url: "https://mail.example/inbox", title: "Inbox (3)", active: false, windowId: 2 },
+];
+
+/** A session hash for something the demo world just started: the same 8 hex characters a runtime mints. */
+let hashSeq = 0;
+const newHash = () => (0xd0000000 + ++hashSeq).toString(16);
+
 /** The scripted host. Construct it with runtimes and sessions, then drive it from a test or the page's console
  *  (`window.__chatFake` in the web build). */
 export class FakeHost implements SessionHost {
@@ -230,7 +241,33 @@ export class FakeHost implements SessionHost {
             case "page.highlight":
                 return caps.highlight ? ok({}) : fail("unsupported", "no page to highlight on");
             case "tabs.list":
-                return caps.tabs ? ok({ tabs: [] }) : fail("unsupported", "this runtime has no tabs");
+                return caps.tabs ? ok({ tabs: DEMO_TABS }) : fail("unsupported", "this runtime has no tabs");
+            // Starting a session: the demo world mints one and answers the first turn, so the new-session form is
+            // exercised here at phone width before it is exercised against a browser.
+            case "chat.start": {
+                if (!caps.chat) return fail("unsupported", "this runtime holds no chats");
+                const hash = newHash();
+                const key = sessionKey({ runtime: rt.id, hash });
+                this.addSession({ id: { runtime: rt.id, hash }, kind: "chat", status: "done", createdTs: Date.now(), lastTs: Date.now(), pendingApprovals: 0, saved: !c.ephemeral, task: c.text });
+                const t = { id: `${hash}-0`, ts: Date.now(), save: !c.ephemeral, session: { hash, turn: 0 } };
+                this.emit(key, {
+                    ...t, kind: "chat", streaming: false,
+                    request: { model: "fake", extend: null, messages: [{ role: "user", content: c.text }], images: c.images ?? null, toolIds: null, schema: false, think: null, maxTokens: null },
+                    config: { system: c.system ?? null, model: c.model ?? "fake", think: c.think ?? null, schema: false, toolIds: null, maxTokens: null, save: !c.ephemeral },
+                } as MlDebugEvent);
+                this.emit(key, { ...t, ts: Date.now() + 1, kind: "chat-result", content: `You said: ${c.text}`, sources: null, structured: false, model: "fake", extend: null, reasoning: null, usage: null });
+                return ok({ session: { runtime: rt.id, hash } });
+            }
+            case "agent.start": {
+                if (!caps.agent) return fail("unsupported", "this runtime runs no agents");
+                if (c.target.kind === "headless" && !caps.headless) return fail("unsupported", "this runtime has no headless target");
+                if (c.target.kind === "tab" && !caps.tabs) return fail("unsupported", "this runtime has no tabs");
+                const hash = newHash();
+                const key = sessionKey({ runtime: rt.id, hash });
+                this.addSession({ id: { runtime: rt.id, hash }, kind: "agent", status: "running", createdTs: Date.now(), lastTs: Date.now(), pendingApprovals: 0, saved: !c.ephemeral, task: c.task });
+                this.emit(key, { id: hash, ts: Date.now(), save: !c.ephemeral, session: { hash, turn: 0 }, kind: "agent", task: c.task, model: c.model ?? "fake", maxSteps: c.maxSteps ?? 10, config: undefined as never } as MlDebugEvent);
+                return ok({ session: { runtime: rt.id, hash } });
+            }
         }
         if (!("session" in c) || !h || !key) return key ? fail("not-found", "no such session") : fail("unsupported", `the fake host does not do ${c.type}`);
         const now = Date.now();

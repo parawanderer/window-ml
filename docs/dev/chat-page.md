@@ -245,6 +245,29 @@ preferences are shared with other extension pages rather than with a site), the 
 clipboard. `kind` still earns its place, because a surface may offer something only where it can be done, and the
 core asks the platform rather than inferring it from the runtime.
 
+## Starting a session from the page
+
+The list header's `+` (`src/chat/new-session.tsx`). Until it, every session in the list had been started somewhere
+else — a console call, a page script, the HUD — and the page could only answer what already existed.
+
+It is rendered by capability like everything else here: a runtime offers "new chat" only where
+`capabilities.chat` says it can, "new agent run" only where `capabilities.agent` does, and the tab picker only
+where `capabilities.tabs` does, with `mayCommand` deciding whether this client may ask at all. A phone talking to
+a headless box gets a chat form and no tabs, and this file does not know what a box is. When only one runtime can
+hold the kind being started, the form does not ask which; when only one KIND can be started, `+` is that kind
+rather than a menu of one.
+
+**The form is deliberately not in the URL**, unlike the open session. It holds what someone is part way through
+typing, and a link to a half-written message is not a thing to share or to reload into.
+
+**A refusal leaves the form standing, with the text still in it.** The store already raises the failure as a
+notice, so the person changes the target or the wording and presses start again, rather than retyping a task
+because a tab had closed.
+
+The fake host starts sessions too, so the form is exercised at phone width in the web build before it is
+exercised against a browser: `chat.start` mints a session and answers the first turn, `agent.start` mints a
+running one, and `tabs.list` returns three demo tabs so the picker has something real in it.
+
 ## Not yet
 
 - The extension entry (`chat.html` over `LocalHost`) is slice 3, and its `ClientPlatform` adapter comes with it.

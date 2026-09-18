@@ -16,6 +16,7 @@ import { rev, sessionMap, view, type Status } from "../sidebar/store";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import { mayCommand, speaksOurContract } from "./grants";
+import { NewSession, StartMenu, type StartKind } from "./new-session";
 import { lightboxSrc } from "./platform";
 
 /** Below this width the page shows one pane at a time. */
@@ -111,13 +112,13 @@ function IndexRow({ s, rt, active }: { s: SessionSummary; rt: RuntimeInfo; activ
 }
 
 /** The session list, grouped by runtime. */
-function SessionList({ store, activeKey }: { store: ChatStore; activeKey: SessionKey | null }) {
+function SessionList({ store, activeKey, onStart }: { store: ChatStore; activeKey: SessionKey | null; onStart: (kind: StartKind) => void }) {
     const runtimes = store.runtimes.value;
     const sessions = store.listed();
     const status = store.status.value;
     return (
         <aside class="chat-list" aria-label="Sessions">
-            <div class="head"><b>Sessions</b><span class="sp" />{status.state !== "online" ? <span class="chat-chip warn">{status.state === "connecting" ? "connecting…" : "offline"}</span> : null}</div>
+            <div class="head"><b>Sessions</b><span class="sp" />{status.state !== "online" ? <span class="chat-chip warn">{status.state === "connecting" ? "connecting…" : "offline"}</span> : null}<StartMenu store={store} onPick={onStart} /></div>
             <div class="view chat-list-scroll">
                 {runtimes.length === 0 && status.state === "online" ? <div class="empty">No runtimes yet. Pair one to see its sessions here.</div> : null}
                 {runtimes.map((rt) => {
@@ -245,14 +246,20 @@ export function ChatApp({ store }: { store: ChatStore }) {
     useHashRoute();
     const v = view.value;
     const key = v.name === "detail" ? v.hash : null;
+    // The new-session form is deliberately NOT in the URL, unlike the open session: it holds what someone is part
+    // way through typing, and a link to a half-written message is not a thing anyone wants to share or reload into.
+    const [starting, setStarting] = useState<StartKind | null>(null);
     useEffect(() => { if (key) store.open(key); else store.close(); }, [key]);
+    useEffect(() => { if (key) setStarting(null); }, [key]);   // opening a session puts the form away
     return (
         <div class={`chat${narrow ? " narrow" : ""}`}>
             <ContextMenu />
             <CursorTipLayer />
-            {!narrow || !key ? <SessionList store={store} activeKey={key} /> : null}
-            {key ? <SessionPane store={store} sessionKey={key} narrow={narrow} />
-                : !narrow ? <main class="chat-main"><div class="empty chat-pick">Pick a session.</div></main> : null}
+            {(!narrow || (!key && !starting)) ? <SessionList store={store} activeKey={key} onStart={setStarting} /> : null}
+            {starting ? <NewSession store={store} kind={starting} onCancel={() => setStarting(null)}
+                onStarted={(k) => { setStarting(null); openSession(k); }} />
+                : key ? <SessionPane store={store} sessionKey={key} narrow={narrow} />
+                    : !narrow ? <main class="chat-main"><div class="empty chat-pick">Pick a session.</div></main> : null}
             <Notices store={store} />
             <Lightbox />
         </div>
