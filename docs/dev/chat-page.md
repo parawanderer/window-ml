@@ -446,6 +446,29 @@ the next tab gets somewhere — and not "what is unread", which would mark every
 the page is opened and teach everyone to ignore the mark. A session seen for the first time is never marked, and
 reading one IS catching up with it.
 
+**Recent, pinned and older** (`SessionList`, `row-menu.tsx`). The list's default view is the last `RECENT_DAYS` (30)
+of each runtime, under a **Pinned** group that spans runtimes, and ends in an "Older sessions" row with a count. That
+opens a second view on the same track, which slides in from the right with a back arrow: older sessions by month,
+drawn `OLDER_PAGE` (40) at a time as the end scrolls into view. Two rules keep it honest:
+
+- A session that is RUNNING or WAITING is recent however long ago it started. The list never files away something
+  that wants you.
+- A search covers both views from either one. Searching from the recent list and finding nothing would read as "that
+  session is gone" when it is only old.
+
+**A pin is this device's** (`pinned`, `view.pinned`), like the other view prefs. It does NOT protect a session from
+the runtime's index cap (`maxSessions`, 300, oldest finished dropped first), so a pinned key whose session is gone draws
+nothing and stays stored, in case the session comes back with its runtime. Protecting pins needs the runtime's help.
+
+**A row's `⋮`** (Pin / Delete…) arrives with the pointer in the corner the timestamp used, shows on keyboard focus, and
+is always shown on a touch screen. Row and `⋮` are SIBLINGS in `.chat-row-wrap`, because a button cannot hold a button.
+The menu is `position: fixed` from the button's rect, because the list scrolls and clips. In calm view a row draws no
+timestamp at all: with the menu taking that corner on hover, a hover-revealed time would never be seen, while its
+invisible width cut every title short. **Delete** is offered only where `session.delete` may be sent, and goes through
+one modal confirmation (`DeleteConfirm`, focus on Cancel). The row leaves when the runtime says the session is gone,
+not when the button is pressed. **Rename is absent on purpose**: a title is the runtime's, and a rename kept on one
+device gives a session two names on two screens. It arrives with a `session.rename` command.
+
 ## Which tab a run is driving
 
 `SessionSummary.page` has carried the URL, title and `tabId` since the index existed, and nothing rendered it: the

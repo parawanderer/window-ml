@@ -241,7 +241,8 @@ test("a citation takes you to the step on the FIRST click, not the second", asyn
 
 test("desktop: the list filters, folds a runtime away, and marks what moved while you were elsewhere", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
-    const rows = page.locator(".chat-row");
+    // The RECENT view's rows: the older view is in the DOM too, one slide over (its own test is below).
+    const rows = page.locator(".chat-list-recent .chat-row");
     await expect(rows).toHaveCount(6);
 
     // The box is not there until it is asked for, and it takes no room until it is.
@@ -354,6 +355,67 @@ test("desktop: a run whose tab is still open gets its composer, not a resume", a
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
     await expect(page.locator(".composer")).toBeVisible();
     await expect(page.locator(".chat-resume")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("desktop: a row's menu pins a session to the top, and deletes one only after asking", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const menuOf = (key) => page.locator(`.chat-row-wrap:has(.chat-row[data-session="${key}"]) .chat-row-more`);
+    // Pin: the session moves out of its runtime's group into Pinned, and a reload keeps it there (a device pref).
+    await menuOf(CHAT).click();
+    await page.getByRole("menuitem", { name: "Pin to the top" }).click();
+    await expect(page.locator(".chat-pinned").locator(`.chat-row[data-session="${CHAT}"]`)).toBeVisible();
+    await expect(page.locator(".chat-group:not(.chat-pinned)").locator(`.chat-row[data-session="${CHAT}"]`)).toHaveCount(0);
+    await page.reload();
+    await expect(page.locator(".chat-pinned").locator(`.chat-row[data-session="${CHAT}"]`)).toBeVisible();
+
+    // A runtime this device may only watch offers no delete.
+    await menuOf(WATCHED).click();
+    await expect(page.getByRole("menuitem", { name: "Delete…" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    // Delete asks first; Cancel sends nothing.
+    await menuOf(CAPPED).click();
+    await page.getByRole("menuitem", { name: "Delete…" }).click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toContainText("Plot the fare prices");
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    await expect(dialog).toHaveCount(0);
+    expect((await commands(page)).filter((c) => c.type === "session.delete")).toEqual([]);
+    // Confirmed, the RUNTIME deletes it and the row goes because the runtime said so.
+    await menuOf(CAPPED).click();
+    await page.getByRole("menuitem", { name: "Delete…" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Delete" }).click();
+    await expect(row(page, CAPPED)).toHaveCount(0);
+    expect((await commands(page)).filter((c) => c.type === "session.delete").map((c) => c.session.hash)).toEqual(["c0ffee12"]);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("desktop: the list shows the last month, older sessions are one view over, and a search reaches both", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const recent = page.locator(".chat-list-recent"), older = page.locator(".chat-list-older");
+    await expect(recent.locator(".chat-row", { hasText: "Tokyo in four days" })).toHaveCount(0);
+    const go = page.locator(".chat-older-go");
+    await expect(go.locator(".chat-older-n")).toHaveText("48");
+    await expect(older).toHaveAttribute("aria-hidden", "true");
+
+    await go.click();
+    await expect(older).toHaveAttribute("aria-hidden", "false");
+    await expect(older.locator(".chat-group-label").first()).toHaveText(/2026/);
+    // Drawn a page at a time: forty first, the rest when the end scrolls into view.
+    await expect(older.locator(".chat-row")).toHaveCount(40);
+    await older.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await expect(older.locator(".chat-row")).toHaveCount(48);
+
+    await older.getByRole("button", { name: "Back to recent sessions" }).click();
+    await expect(recent).toHaveAttribute("aria-hidden", "false");
+    // A search from the recent list finds an old session: filed away is not gone.
+    await page.getByRole("button", { name: "Find a session" }).click();
+    await page.locator(".chat-filter-in").fill("tokyo");
+    await expect(recent.locator(".chat-row", { hasText: "Tokyo in four days" })).toHaveCount(4);
     expect(errors).toEqual([]);
     await page.close();
 });

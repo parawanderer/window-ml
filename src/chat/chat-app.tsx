@@ -12,7 +12,7 @@ import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { AgentBadge } from "../sidebar/reply";
-import { IconBench, IconCamera, IconChevron, IconClose, IconMore, IconSave, IconSearch, IconVram } from "../sidebar/icons";
+import { IconBack, IconBench, IconCamera, IconChevron, IconClose, IconHistory, IconMore, IconPin, IconSave, IconSearch, IconVram } from "../sidebar/icons";
 import { services } from "../sidebar/services";
 import { ContextMenu, CursorTipLayer, Dot, Hash, Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view, type Status } from "../sidebar/store";
@@ -21,7 +21,8 @@ import { STEP_JUMP_EVENT } from "../sidebar/step-scroll";
 import type { ChatStore } from "./chat-store";
 import { mayCommand, speaksOurContract } from "./grants";
 import { NewSession, ResumeSession, StartMenu, resumableHere, type StartKind } from "./new-session";
-import { ListToggle, ViewToggle, calm, foldedRuntimes, listOpen, pane, setPane, toggleRuntime } from "./view-mode";
+import { ListToggle, ViewToggle, calm, foldedRuntimes, listOpen, pane, pinned, setPane, toggleRuntime } from "./view-mode";
+import { DeleteConfirm, RowMenu } from "./row-menu";
 import type { ChatExtras } from "./extras";
 import { lightboxSrc, type ClientPlatform } from "./platform";
 
@@ -187,26 +188,31 @@ function RuntimeHead({ rt, folded, count }: { rt: RuntimeInfo; folded: boolean; 
     );
 }
 
-/** One session in the list, from its index row (the transcript is fetched only when it is opened). */
-function IndexRow({ s, rt, active, moved }: { s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean }) {
+/** One session in the list, from its index row (the transcript is fetched only when it is opened). The row and its
+ *  `⋮` are siblings in a wrapper rather than one inside the other, because a button cannot hold a button. */
+function IndexRow({ s, rt, active, moved, showRuntime }: { s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean; showRuntime?: boolean }) {
     const key = `${s.id.runtime}:${s.id.hash}`;
     const title = s.title || s.task || "(untitled)";
     const offset = rt.clockOffsetMs ?? 0;
     return (
-        <button class={`row chat-row${active ? " active" : ""}`} data-session={key} onClick={() => openSession(key)}>
-            <Dot status={DOT[s.status] ?? "pending"} />
-            <span class="chat-row-body">
-                <b class="row-title">{truncate(title, 90)}</b>
-                <span class="chat-row-meta">
-                    {s.kind === "agent" ? <AgentBadge /> : null}
-                    {s.page ? <PageChip page={s.page} /> : null}
-                    {STATUS_LABEL[s.status] ? <span class={`chat-status st-${s.status}`}>{STATUS_LABEL[s.status]}</span> : null}
-                    {s.pendingApprovals > 0 ? <span class="chat-appr-badge">{s.pendingApprovals} approval{s.pendingApprovals === 1 ? "" : "s"}</span> : null}
+        <div class={`chat-row-wrap${active ? " active" : ""}`}>
+            <button class={`row chat-row${active ? " active" : ""}`} data-session={key} onClick={() => openSession(key)}>
+                <Dot status={DOT[s.status] ?? "pending"} />
+                <span class="chat-row-body">
+                    <b class="row-title">{truncate(title, 90)}</b>
+                    <span class="chat-row-meta">
+                        {showRuntime ? <span class="chat-row-rt">{rt.name}</span> : null}
+                        {s.kind === "agent" ? <AgentBadge /> : null}
+                        {s.page ? <PageChip page={s.page} /> : null}
+                        {STATUS_LABEL[s.status] ? <span class={`chat-status st-${s.status}`}>{STATUS_LABEL[s.status]}</span> : null}
+                        {s.pendingApprovals > 0 ? <span class="chat-appr-badge">{s.pendingApprovals} approval{s.pendingApprovals === 1 ? "" : "s"}</span> : null}
+                    </span>
                 </span>
-            </span>
-            {moved ? <span class="chat-moved" {...cursorTipOn("Something happened here while you were reading something else")} aria-label="new activity" /> : null}
-            <Stamp ts={s.lastTs - offset} snap="right" />
-        </button>
+                {moved ? <span class="chat-moved" {...cursorTipOn("Something happened here while you were reading something else")} aria-label="new activity" /> : null}
+                <Stamp ts={s.lastTs - offset} snap="right" />
+            </button>
+            <RowMenu s={s} rt={rt} title={title} />
+        </div>
     );
 }
 
@@ -217,21 +223,74 @@ function matches(s: SessionSummary, rt: RuntimeInfo, q: string): boolean {
     return [s.title, s.task, s.page?.url, s.page?.title, rt.name].some((v) => !!v && v.toLowerCase().includes(q));
 }
 
-/** The session list, grouped by runtime. */
+/** How far back the list's default view reaches. Older sessions are one click away, in their own view. */
+const RECENT_DAYS = 30;
+/** How many older sessions are drawn at a time; scrolling to the end of them draws the next page. */
+const OLDER_PAGE = 40;
+
+/** A session's last activity on THIS device's clock (the runtime's clock may be off; `clockOffsetMs` says by how much). */
+const localTs = (s: SessionSummary, rt: RuntimeInfo | undefined) => s.lastTs - (rt?.clockOffsetMs ?? 0);
+
+/** "September 2026": the heading an older session is filed under. */
+const monthOf = (ts: number) => new Date(ts).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+
+/**
+ * The session list: what is pinned, then each runtime's RECENT sessions, then a way into the rest.
+ *
+ * Two views on one track, which slides: the recent list, and "Older sessions" (by month, drawn a page at a time as it
+ * is scrolled). A session that is still running or waiting on you is recent however long ago it started — the list
+ * never files away something that wants you. A search looks across BOTH, from either view: searching from the recent
+ * list and finding nothing would read as "that session is gone" when it is only old.
+ */
 function SessionList({ store, activeKey, narrow, onStart }: { store: ChatStore; activeKey: SessionKey | null; narrow: boolean; onStart: (kind: StartKind) => void }) {
     const runtimes = store.runtimes.value;
     const sessions = store.listed();
     const status = store.status.value;
     const moved = movedSince.value;
     const folded = foldedRuntimes.value;
+    const pins = pinned.value;
     const [query, setQuery] = useState("");
     const [searching, setSearching] = useState(false);
+    const [older, setOlder] = useState(false);
+    const [olderShown, setOlderShown] = useState(OLDER_PAGE);
     const box = useRef<HTMLInputElement>(null);
+    const sentinel = useRef<HTMLDivElement>(null);
     const q = searching ? query.trim().toLowerCase() : "";
+    const rtOf = new Map(runtimes.map((rt) => [rt.id, rt]));
+    const keyOf = (s: SessionSummary) => `${s.id.runtime}:${s.id.hash}`;
+    const cutoff = Date.now() - RECENT_DAYS * 86_400_000;
+    const live = (s: SessionSummary) => s.status === "running" || s.status === "waiting";
+    const isRecent = (s: SessionSummary) => live(s) || localTs(s, rtOf.get(s.id.runtime)) >= cutoff;
+    const pinnedRows = sessions.filter((s) => pins.has(keyOf(s)) && rtOf.has(s.id.runtime));
+    const olderRows = sessions.filter((s) => !pins.has(keyOf(s)) && !isRecent(s) && rtOf.has(s.id.runtime));
     // A filter is a way of FINDING one session, so it looks past a folded group rather than through it: hiding a
     // match because its runtime happens to be folded would be the list refusing to answer the question asked.
-    const shown = (rt: RuntimeInfo) => sessions.filter((s) => s.id.runtime === rt.id && matches(s, rt, q));
+    const shown = (rt: RuntimeInfo) => sessions.filter((s) => s.id.runtime === rt.id && (q ? matches(s, rt, q) : !pins.has(keyOf(s)) && isRecent(s)));
     const groups = runtimes.map((rt) => ({ rt, mine: shown(rt) })).filter(({ mine }) => !q || mine.length);
+    const inOlder = older && !q;
+
+    // Draw the next page of older sessions when the end of the drawn ones scrolls into view.
+    useEffect(() => {
+        const el = sentinel.current;
+        if (!inOlder || !el || typeof IntersectionObserver !== "function") return;
+        const io = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) setOlderShown((n) => n + OLDER_PAGE); });
+        io.observe(el);
+        return () => io.disconnect();
+    }, [inOlder, olderShown, olderRows.length]);
+
+    const row = (s: SessionSummary, showRuntime = false) => {
+        const key = keyOf(s);
+        return <IndexRow key={key} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} moved={moved.has(key)} showRuntime={showRuntime} />;
+    };
+    // A row outside its runtime's group names its runtime — but only where there is more than one to tell apart.
+    const spans = (rows: SessionSummary[]) => new Set(rows.map((s) => s.id.runtime)).size > 1;
+    const pinnedMulti = runtimes.length > 1, olderMulti = spans(olderRows);
+    const months: { month: string; rows: SessionSummary[] }[] = [];
+    for (const s of olderRows.slice(0, olderShown)) {
+        const m = monthOf(localTs(s, rtOf.get(s.id.runtime)));
+        if (months.at(-1)?.month !== m) months.push({ month: m, rows: [] });
+        months.at(-1)!.rows.push(s);
+    }
     return (
         <aside class="chat-list" aria-label="Sessions">
             <div class="head">
@@ -250,30 +309,55 @@ function SessionList({ store, activeKey, narrow, onStart }: { store: ChatStore; 
             <div class={`chat-filter${searching ? " open" : ""}`} aria-hidden={!searching}>
                 <div class="chat-filter-row">
                     <input ref={box} type="search" class="chat-filter-in" value={query} tabIndex={searching ? 0 : -1}
-                        aria-label="Filter sessions" placeholder="Filter by title, page or runtime…"
+                        aria-label="Filter sessions" placeholder="Search every session, older ones too…"
                         onInput={(e: any) => setQuery(e.target.value)}
                         onKeyDown={(e: KeyboardEvent) => { if (e.key === "Escape") { setQuery(""); setSearching(false); } }} />
                 </div>
             </div>
-            <div class="view chat-list-scroll">
-                {runtimes.length === 0 && status.state === "online" ? <div class="empty">No runtimes yet. Pair one to see its sessions here.</div> : null}
-                {q && !groups.length ? <div class="empty">Nothing matches “{truncate(query.trim(), 40)}”.</div> : null}
-                {groups.map(({ rt, mine }) => {
-                    const shut = folded.has(rt.id) && !q;
-                    return (
-                        <section class={`chat-group${shut ? " folded" : ""}`} key={rt.id}>
-                            <RuntimeHead rt={rt} folded={shut} count={mine.length} />
-                            {shut ? null : !speaksOurContract(rt)
-                                ? <div class="chat-rt-empty">This runtime speaks version {rt.contractVersion} of the session contract, which this app does not. Its sessions open once both sides agree.</div>
-                                : mine.length
-                                    ? mine.map((s) => {
-                                        const key = `${s.id.runtime}:${s.id.hash}`;
-                                        return <IndexRow key={key} s={s} rt={rt} active={activeKey === key} moved={moved.has(key)} />;
-                                    })
-                                    : <div class="chat-rt-empty">No sessions.</div>}
+            <div class={`chat-list-track${inOlder ? " older" : ""}`}>
+                <div class="view chat-list-scroll chat-list-recent" aria-hidden={inOlder} inert={inOlder}>
+                    {runtimes.length === 0 && status.state === "online" ? <div class="empty">No runtimes yet. Pair one to see its sessions here.</div> : null}
+                    {q && !groups.length ? <div class="empty">Nothing matches “{truncate(query.trim(), 40)}”.</div> : null}
+                    {!q && pinnedRows.length ? (
+                        <section class="chat-group chat-pinned" aria-label="Pinned">
+                            <div class="chat-group-label"><IconPin />Pinned</div>
+                            {pinnedRows.map((s) => row(s, pinnedMulti))}
                         </section>
-                    );
-                })}
+                    ) : null}
+                    {groups.map(({ rt, mine }) => {
+                        const shut = folded.has(rt.id) && !q;
+                        return (
+                            <section class={`chat-group${shut ? " folded" : ""}`} key={rt.id}>
+                                <RuntimeHead rt={rt} folded={shut} count={mine.length} />
+                                {shut ? null : !speaksOurContract(rt)
+                                    ? <div class="chat-rt-empty">This runtime speaks version {rt.contractVersion} of the session contract, which this app does not. Its sessions open once both sides agree.</div>
+                                    : mine.length
+                                        ? mine.map((s) => row(s))
+                                        : <div class="chat-rt-empty">{q ? "No sessions." : "Nothing in the last " + RECENT_DAYS + " days."}</div>}
+                            </section>
+                        );
+                    })}
+                    {!q && olderRows.length ? (
+                        <button class="chat-older-go" onClick={() => { setOlderShown(OLDER_PAGE); setOlder(true); }}>
+                            <IconHistory /><span>Older sessions</span><span class="chat-older-n">{olderRows.length}</span>
+                        </button>
+                    ) : null}
+                </div>
+                <div class="view chat-list-scroll chat-list-older" aria-hidden={!inOlder} inert={!inOlder} aria-label="Older sessions">
+                    <div class="chat-older-head">
+                        <button class="tt hbtn" aria-label="Back to recent sessions" onClick={() => setOlder(false)}>
+                            <IconBack /><span class="tt-pop" role="tooltip">Back to recent sessions</span>
+                        </button>
+                        <b>Older sessions</b>
+                    </div>
+                    {months.map(({ month, rows }) => (
+                        <section class="chat-group" key={month}>
+                            <div class="chat-group-label">{month}</div>
+                            {rows.map((s) => row(s, olderMulti))}
+                        </section>
+                    ))}
+                    {olderShown < olderRows.length ? <div ref={sentinel} class="chat-older-more" aria-hidden="true" /> : null}
+                </div>
             </div>
         </aside>
     );
@@ -587,6 +671,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
             {bench ? <div class="chat-bench">{bench}</div> : null}
             <Notices store={store} />
             <Lightbox platform={platform} />
+            <DeleteConfirm store={store} />
         </div>
     );
 }

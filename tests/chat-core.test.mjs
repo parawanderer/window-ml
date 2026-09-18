@@ -10,7 +10,7 @@ import { FakeHost } from "../src/chat/fake-host.ts";
 import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/new-session.tsx";
-import { CALM_KEY, LIST_KEY, calm, installViewPrefs, listOpen, setCalm, setListOpen } from "../src/chat/view-mode.tsx";
+import { CALM_KEY, LIST_KEY, PINNED_KEY, calm, dropPin, installViewPrefs, listOpen, pinned, setCalm, setListOpen, togglePin } from "../src/chat/view-mode.tsx";
 import { sessionMap, view } from "../src/sidebar/store.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";
 
@@ -372,4 +372,21 @@ test("view prefs: calm is the default, a stored answer wins, and both toggles wr
     // A stored value of the wrong shape is ignored rather than coerced: `undefined` means "never asked".
     installViewPrefs(fakePrefs({ [CALM_KEY]: "yes" }));
     assert.equal(calm.value, true);
+});
+
+test("view prefs: a pin is this device's, survives a reload, and a delete from here takes it away", () => {
+    const prefs = fakePrefs();
+    installViewPrefs(prefs);
+    assert.deepEqual([...pinned.value], []);
+    togglePin("laptop:aaaa0001");
+    togglePin("laptop:bbbb0002");
+    assert.deepEqual(prefs.all.get(PINNED_KEY), ["laptop:aaaa0001", "laptop:bbbb0002"]);
+    togglePin("laptop:aaaa0001");   // pressed again: unpinned
+    assert.deepEqual([...pinned.value], ["laptop:bbbb0002"]);
+
+    installViewPrefs(fakePrefs({ [PINNED_KEY]: ["laptop:bbbb0002", 7] }));   // a junk entry is dropped, not coerced
+    assert.deepEqual([...pinned.value], ["laptop:bbbb0002"]);
+    dropPin("laptop:bbbb0002");
+    dropPin("laptop:never");   // not pinned: nothing happens
+    assert.deepEqual([...pinned.value], []);
 });

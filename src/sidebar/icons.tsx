@@ -231,3 +231,27 @@ export const IconPlay = () => (
         <path d="M8.5 5.6 18 12l-9.5 6.4V5.6Z" />
     </svg>
 );
+/** A pushpin — keep a session at the top of the list. */
+export const IconPin = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M9 3.5h6l-1 5.5 3.5 3.5v1.5h-11V12.5L10 9z" /><path d="M12 14v6.5" />
+    </svg>
+);
+/** A bin — delete something for good (always behind a confirmation). */
+export const IconTrash = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4.5 7h15M9.5 7V4.8h5V7" /><path d="M6.5 7l.9 12.2a1.5 1.5 0 0 0 1.5 1.3h6.2a1.5 1.5 0 0 0 1.5-1.3L17.5 7" /><path d="M10 11v6M14 11v6" />
+    </svg>
+);
+/** A left chevron — go back to where this view was opened from. */
+export const IconBack = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14.5 5.5 8 12l6.5 6.5" />
+    </svg>
+);
+/** A clock with an arrow running back round it — older things, history. */
+export const IconHistory = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 12a8 8 0 1 0 2.4-5.7" /><path d="M4 4.5v3.8h3.8" /><path d="M12 8v4.3l2.8 1.8" />
+    </svg>
+);

@@ -192,10 +192,38 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
         },
     ];
 
+    // A HISTORY: brainstorming chats from the last half year, so the list has something past its recent window and the
+    // "Older sessions" view has more than a screenful to scroll. Deterministic from `now`, like everything here.
+    const OLD_TOPICS = [
+        ["Name ideas for the offline map app", "A few directions: something about paths (Trailhead, Waymark), something about paper (Foldout, Quire), or plain and descriptive (Offline Atlas)."],
+        ["Why does my sourdough collapse?", "Most often over-proofing: the gluten has given up holding the gas by the time it hits the oven. Try a shorter bulk and a colder final proof."],
+        ["Compare SQLite WAL vs rollback journal", "WAL lets readers proceed during a write and is usually faster; rollback is simpler and safer on network filesystems."],
+        ["Talk outline: local models in the browser", "1. Why local. 2. The CORS wall and the extension that walks around it. 3. What a page can ask for. 4. Demo. 5. What it cannot do yet."],
+        ["Gift ideas for a climber", "A chalk bag with a brush holder, a good belay glasses pair, or a guidebook for somewhere they have not been yet."],
+        ["Explain Raft leader election", "Followers time out, become candidates, and ask for votes; a majority makes a leader, and randomised timeouts keep two from splitting the vote forever."],
+        ["Rewrite this paragraph shorter", "The migration finished early; two tables still need their indexes rebuilt."],
+        ["Tokyo in four days", "Day 1 Asakusa and Ueno, day 2 Shibuya and Harajuku, day 3 a day trip to Kamakura, day 4 Shimokitazawa and whatever you missed."],
+        ["Is 16GB VRAM enough for a 14B model?", "At 4-bit, yes, with room for a moderate context. At 8-bit it will spill."],
+        ["Cold email to a design studio", "Hi — I run a small open-source browser extension and would love a second pair of eyes on its reading view. Would a short paid review interest you?"],
+        ["Difference between p-values and confidence intervals", "A p-value answers one yes/no question about a null; an interval says which effect sizes the data are compatible with."],
+        ["Budget spreadsheet structure", "One sheet of raw transactions, one of categories, and a summary pivot. Never type into the summary."],
+    ] as const;
+    const history = Array.from({ length: 48 }, (_, i) => {
+        const [title, answer] = OLD_TOPICS[i % OLD_TOPICS.length];
+        const hash = `0ld${(0x10000 + i * 7919).toString(16).slice(-5)}`;
+        const ts = now - (34 + Math.round(i * 3.4)) * 24 * 60 * min;
+        const events: MlDebugEvent[] = [
+            { ...chatStart(0, ts, title), id: `${hash}-0`, session: { hash, turn: 0 } } as MlDebugEvent,
+            { ...base(hash, ts + 4000, 0), kind: "chat-result", model: "qwen3:32b", extend: null, reasoning: null, sources: null, structured: false, usage: null, content: answer } as MlDebugEvent,
+        ];
+        return { summary: summary(`laptop:${hash}`, { kind: "chat", status: "done", createdTs: ts, lastTs: ts + 4000, title, model: "qwen3:32b" }), events };
+    });
+
     return new FakeHost({
         runtimes,
         latencyMs: opts.latencyMs,
         sessions: [
+            ...history,
             { summary: summary(DEMO.waiting, { kind: "agent", status: "waiting", pendingApprovals: 1, createdTs: now - 6 * min, lastTs: now - 4 * min, task: "Find the cheapest flight on this page and summarise its fare rules", title: "Cheapest AMS → LIS fare", model: "qwen3:32b", page: { url: "https://flights.example/search?from=AMS&to=LIS", title: "Flights AMS → LIS", tabId: 41 } }), events: waiting },
             { summary: summary(DEMO.chat, { kind: "chat", status: "done", createdTs: now - 40 * min, lastTs: now - 39 * min, title: "KV cache size at 32k", model: "qwen3:32b" }), events: chat },
             // A page with no `tabId`: the tab it worked in has since closed, which is what makes it resumable and what the

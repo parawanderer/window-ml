@@ -17,7 +17,7 @@ import { IconBrain, IconMenu } from "../sidebar/icons";
 import type { PlatformPrefs } from "./platform";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
@@ -37,6 +37,16 @@ export const pane = signal<"resource" | null>(null);
 /** Runtimes whose group in the list is folded away. By id, so a runtime that goes offline and comes back stays as
  *  it was left, and one this device has never seen starts open. */
 export const foldedRuntimes = signal<ReadonlySet<string>>(new Set());
+
+/**
+ * Sessions pinned to the top of the list, by session key (`runtime:hash`).
+ *
+ * THIS DEVICE'S, like the rest of this file: a pin says which conversations someone keeps coming back to on this
+ * screen, and the phone is allowed a different answer. What a pin cannot do from here is stop the runtime forgetting
+ * the session — its index keeps a bounded number and drops the oldest finished ones — so a pinned key whose session
+ * is gone simply draws nothing, and stays stored in case the session comes back (an offline runtime reconnecting).
+ */
+export const pinned = signal<ReadonlySet<string>>(new Set());
 
 let store: PlatformPrefs | null = null;
 
@@ -59,6 +69,8 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     pane.value = pn === "resource" ? pn : null;
     const f = prefs.get<string[]>(FOLDED_KEY);
     foldedRuntimes.value = new Set(Array.isArray(f) ? f.filter((x) => typeof x === "string") : []);
+    const p = prefs.get<string[]>(PINNED_KEY);
+    pinned.value = new Set(Array.isArray(p) ? p.filter((x) => typeof x === "string") : []);
     applyCalm();
 }
 
@@ -87,6 +99,23 @@ export function toggleRuntime(id: string): void {
     if (!next.delete(id)) next.add(id);
     foldedRuntimes.value = next;
     store?.set(FOLDED_KEY, [...next]);
+}
+
+/** Pin a session to the top of the list, or unpin it. */
+export function togglePin(key: string): void {
+    const next = new Set(pinned.value);
+    if (!next.delete(key)) next.add(key);
+    pinned.value = next;
+    store?.set(PINNED_KEY, [...next]);
+}
+
+/** Forget a pin whose session was deleted HERE: the person asked for it gone, so nothing should hold its key. */
+export function dropPin(key: string): void {
+    if (!pinned.value.has(key)) return;
+    const next = new Set(pinned.value);
+    next.delete(key);
+    pinned.value = next;
+    store?.set(PINNED_KEY, [...next]);
 }
 
 /** The page's own reading toggle, the twin of the DevTools panel's focus button (same glyph, because it is the
