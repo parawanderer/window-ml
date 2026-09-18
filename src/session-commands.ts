@@ -98,7 +98,11 @@ export const RESUME_DROPS = [
     "the page's state object",
     "cached fetches",
     "tools a page script defined (functions cannot be stored)",
-    "approval grants (consent is per page, and is asked again)",
+    // Per TAB, not per page: the ledger (`fetchConsent`, sw-consent.ts) is keyed by tab id and survives navigation
+    // within it, and is dropped only when the tab closes. A resume is only offered once its tab HAS closed, so this
+    // is true of every resume — but the sentence says what the code does, because "per page" would be wrong the day
+    // somebody offers a resume onto the same tab.
+    "approval grants (consent belongs to the tab it was given in, and is asked again)",
 ] as const;
 
 /** How many events one backfill page carries, whatever a client asks for. A page holds screenshots, so this is a

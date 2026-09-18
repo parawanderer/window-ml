@@ -506,3 +506,30 @@ test("the ROOT may renew its own grant, which is the only way `may_revoke` gets 
     const widened = await issueCertificate(root, { ...spec, scopes: [SCOPE.approve, SCOPE.drive], notBeforeMs: 5_000_000, notAfterMs: 6_000_000, renews: lapsed });
     await assert.rejects(() => verifyChain(root.publicKey, [widened], 5_500_000), /changed something other than/);
 });
+
+test("`install` is root-only: a delegate that may pair still cannot hand it out", async () => {
+    // It is more persistent than `approve`, and REVOCATION CANNOT UNDO IT — revoking a phone stops it commanding but
+    // leaves what it caused to be installed. So a delegate minting `install` would create effects that outlive both
+    // the delegation and its own revocation.
+    const { NEVER_DELEGABLE, issueCertificate, generateIdentity } = await import("../src/hub/keys.ts");
+    assert.ok(NEVER_DELEGABLE.includes("install"));
+
+    const { root } = await cast();
+    const laptop = await generateIdentity();
+    const phone = await generateIdentity();
+    const agree = (await agreementKeyFromSeed(hex(V.principals.phone.agreement_seed))).publicKey;
+    const window = { notBeforeMs: 1_000_000, notAfterMs: 2_000_000 };
+
+    // The root makes the laptop a delegate that may pair, and gives it `install` for itself.
+    const delegate = await issueCertificate(root, { subject: laptop.publicKey, agreementKey: agree, role: Role.ROLE_CLIENT, scopes: [SCOPE.view, SCOPE.install], mayPair: true, ...window });
+    // The laptop then tries to pass `install` on.
+    const minted = await issueCertificate(laptop, { subject: phone.publicKey, agreementKey: agree, role: Role.ROLE_CLIENT, scopes: [SCOPE.install], ...window });
+
+    await assert.rejects(
+        () => verifyChain(root.publicKey, [minted, delegate], 1_500_000),
+        /a delegate issued a scope only the root may grant/,
+    );
+    // The root granting it directly is fine: that is the person deciding, at the root.
+    const direct = await issueCertificate(root, { subject: phone.publicKey, agreementKey: agree, role: Role.ROLE_CLIENT, scopes: [SCOPE.install], ...window });
+    assert.ok((await verifyChain(root.publicKey, [direct], 1_500_000)).leaf.scopes.includes("install"));
+});

@@ -44,8 +44,19 @@ export const BOX_CONNECTOR_FORBIDS = ["approve", "control"] as const;
  * Scopes only the account root may grant. Answering a run's gates, driving a machine, and administering the account's
  * devices are things a person decides at the root, not powers a paired device passes on: a phone that may approve a
  * click should not thereby be able to pair another phone.
+ *
+ * `install` is here because it is MORE persistent than `approve`, which already is. `approve` answers one gate and
+ * is over; an install changes every later run on that runtime indefinitely — and REVOCATION CANNOT UNDO IT: revoking
+ * a phone rotates keys and stops it commanding, but a package it caused to be installed stays. So a lost phone
+ * holding `may_pair` could otherwise mint a device that puts arbitrary code from PyPI into a laptop's sandbox
+ * permanently, and outlive both the delegation and its own revocation doing it.
+ *
+ * This list is NOT in any `.proto`, so it has to change on both sides together: a name here that the hub lacks (or
+ * the other way round) means one side refuses a chain the other accepts, and the device simply fails to connect with
+ * no failing test on either side. It landed here while no certificate carried `install`, which is the one moment the
+ * two sides cannot disagree about anyone.
  */
-export const NEVER_DELEGABLE = ["approve", "control", "admin"] as const;
+export const NEVER_DELEGABLE = ["approve", "control", "admin", "install"] as const;
 /** Bounds a hello is checked against before anything in it is compared, because it arrives unauthenticated. */
 export const MAX_CERT_BYTES = 1024;
 export const MAX_SCOPES = 16;
@@ -60,6 +71,8 @@ export const SCOPE = {
     approve: "approve",
     screen: "screen",
     desktop: "desktop",
+    /** grant a runtime a capability that outlives the session: see `NEVER_DELEGABLE` for why only the root may */
+    install: "install",
 } as const;
 
 /** The DER prefix of a PKCS#8 Ed25519 private key, so a seed can be imported as a `CryptoKey`. */
