@@ -65,7 +65,7 @@ page. So it reuses the cross-page machinery rather than inventing a second one.
   script defined (functions cannot be stored; the model is told which are gone), and approval grants (consent is per
   page and is asked again).
 - **The same session hash**, so it stays one conversation on every surface.
-- **The picker is shared** with a new chat: choose a tab or a blank one.
+- **The picker is shared** with a new chat: choose a tab or a blank one. (`useTargetPick`, one component both forms use.)
 - **Later**: a long session may not fit the model's context on resume; that needs compaction.
 
 **What slice 4 did NOT give this, and it was the whole of the work.** Saved sessions store their debug EVENTS, which

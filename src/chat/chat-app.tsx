@@ -16,7 +16,7 @@ import { rev, sessionMap, view, type Status } from "../sidebar/store";
 import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import { mayCommand, speaksOurContract } from "./grants";
-import { NewSession, StartMenu, type StartKind } from "./new-session";
+import { NewSession, ResumeSession, StartMenu, resumableHere, type StartKind } from "./new-session";
 import { lightboxSrc } from "./platform";
 
 /** Below this width the page shows one pane at a time. */
@@ -169,7 +169,11 @@ function SessionPane({ store, sessionKey, narrow }: { store: ChatStore; sessionK
         if (el) stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     };
 
+    const [resuming, setResuming] = useState(false);
     const canDrive = !!rt && rt.online && mayCommand(rt, "session.send", { key: sessionKey, summary }, store.host.self);
+    const canResume = resumableHere(rt, sessionKey, summary, store.host.self);
+    // A session whose page went away, opened while the form was up: the form is about THIS session, so it closes.
+    useEffect(() => setResuming(false), [sessionKey]);
     const title = summary?.title || s?.title || summary?.task || s?.task || "Session";
     const waiting = (summary?.pendingApprovals ?? 0) > 0 && !!rt && mayCommand(rt, "approval.answer", { key: sessionKey, summary }, store.host.self);
     const jumpToApproval = () => (scroller.current?.querySelector(".astep-approve") as HTMLElement | null)?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -194,7 +198,17 @@ function SessionPane({ store, sessionKey, narrow }: { store: ChatStore; sessionK
                             : <div class="empty">Loading…</div>}
                 </div>
             </div>
-            {s && canDrive ? <Composer s={s} />
+            {/* A run whose page is gone cannot be sent to, so the composer is replaced by the one thing that WOULD
+                work: picking it up somewhere else. `canResume` is false while its tab is still open, so the two
+                never both offer to continue the same run. */}
+            {canResume && id && rt ? (
+                resuming
+                    ? <ResumeSession store={store} rt={rt} session={{ runtime: id.runtime, hash: id.hash }}
+                        onResumed={() => setResuming(false)} onCancel={() => setResuming(false)} />
+                    : <button class="chat-resume" onClick={() => setResuming(true)}>
+                        The page this run was on is gone<span class="chat-resume-go">Resume it somewhere ›</span>
+                    </button>
+            ) : s && canDrive ? <Composer s={s} />
                 : s && rt ? <div class="chat-readonly">{!rt.online ? `${rt.name} is offline. You can read this session, and send to it once it is back.` : `This device may watch sessions on ${rt.name}, not drive them.`}</div>
                     : null}
         </main>

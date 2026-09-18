@@ -13,7 +13,7 @@ const ROOT = path.resolve(process.env.E2E_DIST_WEB || "dist-web");
 
 const PHONE = { width: 390, height: 844 };
 const DESKTOP = { width: 1280, height: 800 };
-const WAITING = "laptop:3f9a0c21", CHAT = "laptop:7b21d4e8", WATCHED = "lab-box:1d2e3f40";
+const WAITING = "laptop:3f9a0c21", CHAT = "laptop:7b21d4e8", WATCHED = "lab-box:1d2e3f40", CAPPED = "laptop:c0ffee12";
 
 let server, browser;
 test.beforeAll(async () => {
@@ -168,6 +168,48 @@ test("desktop: an agent run picks a tab, or a new one, and is started on the run
     await page.locator(".chat-new-foot .btn").click();
     await expect(page).toHaveURL(/#s=laptop%3A/);
     await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({ type: "agent.start", task: "summarise the front page", target: { kind: "blank" } });
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("desktop: a run whose page has gone offers a resume instead of a composer, and picks where", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`);
+
+    // The capped run has no open tab, so sending to it would end at a tab that is closed. The page offers the one
+    // thing that would work instead, and not both.
+    await expect(page.locator(".chat-resume")).toContainText("The page this run was on is gone");
+    await expect(page.locator(".composer")).toHaveCount(0);
+
+    await page.locator(".chat-resume").click();
+    // The SAME where-picker a fresh run uses, and no message box: resuming takes no turn.
+    await expect(page.locator('[data-field="tab"] option').first()).toHaveText("The front page");
+    await expect(page.locator('[data-field="text"]')).toHaveCount(0);
+    // What it will lose is said BEFORE it happens, not reported in the transcript after.
+    await expect(page.locator('[data-field="lost"]')).toContainText("approval grants");
+
+    await page.locator('[data-field="where"] select').selectOption("blank");
+    await page.locator('[data-field="page"] input').fill("https://plots.example/");
+    await page.locator(".chat-new-foot .btn").click();
+
+    await expect.poll(async () => (await commands(page)).at(-1)).toMatchObject({
+        type: "session.resume",
+        session: { runtime: "laptop", hash: "c0ffee12" },
+        target: { kind: "blank", url: "https://plots.example/" },
+    });
+    // The runtime answered, so the form closes and the transcript gains the seam — and the composer is back, because
+    // the run has a page again.
+    await expect(page.locator(".resume-divider")).toContainText("resumed on plots.example");
+    await expect(page.locator(".chat-resume")).toHaveCount(0);
+    await expect(page.locator(".composer")).toBeVisible();
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("desktop: a run whose tab is still open gets its composer, not a resume", async () => {
+    // The distinction is the tab, not the status: two ways to continue one run is one too many.
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
+    await expect(page.locator(".composer")).toBeVisible();
+    await expect(page.locator(".chat-resume")).toHaveCount(0);
     expect(errors).toEqual([]);
     await page.close();
 });
