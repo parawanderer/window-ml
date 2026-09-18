@@ -201,6 +201,41 @@ test("desktop: an agent run picks a tab, or a new one, and is started on the run
     await page.close();
 });
 
+test("desktop: the list filters, folds a runtime away, and marks what moved while you were elsewhere", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    const rows = page.locator(".chat-row");
+    await expect(rows).toHaveCount(5);
+
+    // Filtering matches the PAGE a run is on, not only its title, and a runtime with no match goes with its rows.
+    await page.locator(".chat-filter-in").fill("flights");
+    await expect(rows).toHaveCount(2);
+    await expect(page.locator(".chat-rt", { hasText: "Lab box" })).toHaveCount(0);
+    await page.locator(".chat-filter-in").press("Escape");
+    await expect(rows).toHaveCount(5);
+
+    // Folding a runtime says what it is holding, so folding is not the same as forgetting.
+    await page.locator(".chat-rt[data-runtime='laptop']").click();
+    await expect(rows).toHaveCount(2);
+    await expect(page.locator(".chat-rt[data-runtime='laptop']")).toContainText("3 sessions");
+    // …and it is this device's choice, so it survives a reload.
+    await page.reload();
+    await expect(rows).toHaveCount(2);
+    await page.locator(".chat-rt[data-runtime='laptop']").click();
+    await expect(rows).toHaveCount(5);
+
+    // A session that moves while another one is open is marked; reading it is catching up with it.
+    await expect(row(page, WAITING).locator(".chat-moved")).toHaveCount(0);
+    await page.evaluate((k) => globalThis.__chatFake.emit(k, {
+        kind: "agent-step", id: `${k}-9`, ts: Date.now(), save: true, session: { hash: k.split(":")[1], turn: 9 },
+        step: 3, seq: 9, tool: "exec", arguments: { js: "1" }, result: "1",
+    }), WAITING);
+    await expect(row(page, WAITING).locator(".chat-moved")).toBeVisible();
+    await row(page, WAITING).click();
+    await expect(row(page, WAITING).locator(".chat-moved")).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("desktop: a run says which tab it is driving, and peeks at it", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
     // The header names the page, not only the machine and the model.

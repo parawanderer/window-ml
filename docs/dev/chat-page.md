@@ -392,6 +392,25 @@ The request reaches the worker from a page, so the pending set is bounded: a pag
 arrives. What it costs to claim one is a session row, which the store's budget already bounds — the same standing
 a page's own `{ save: true }` chat has always had.
 
+## Finding one session among many
+
+Three affordances in the list, all of them only worth having once an agent owns several tabs at once.
+
+**The filter** appears once there are more than four sessions, and stays while something is typed so it never
+vanishes under the cursor mid-search. It matches everything a person would use to name a session out loud: the
+title, the task it was given, the page it is on, and the runtime it is running on. It looks PAST a folded group —
+hiding a match because its runtime happens to be folded would be the list refusing the question it was asked — and
+a runtime with no match disappears with its rows rather than leaving a row of empty headings.
+
+**A runtime's group folds**, by id, stored per device. A folded head says how many sessions it is holding, because
+folding one should not be the same as forgetting it.
+
+**What moved while you were elsewhere** is marked with a dot (`movedSince`). Deliberately NOT stored: it answers
+"what happened while I was here", which is the brainstorming case — you are talking in one session and the run in
+the next tab gets somewhere — and not "what is unread", which would mark every session on the device the first time
+the page is opened and teach everyone to ignore the mark. A session seen for the first time is never marked, and
+reading one IS catching up with it.
+
 ## Which tab a run is driving
 
 `SessionSummary.page` has carried the URL, title and `tabId` since the index existed, and nothing rendered it: the

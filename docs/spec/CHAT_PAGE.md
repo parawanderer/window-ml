@@ -101,6 +101,32 @@ Two more things it needed, both additive to the contract and therefore agreed wi
 - **A way to say it in the transcript.** The note is not prose the model invented; it is a fact about the session,
   so it is an event the log renders as a divider rather than a message someone could mistake for the model's.
 
+### What a resume does not say yet: the environment changed (proposal)
+
+**Status: raised 2026-09-18 (Shane), unbuilt.** Three questions, which are one question:
+
+- What happens to the tools list when a session is resumed on a build whose tools differ?
+- What happens when it is resumed onto a new page?
+- What happens when the agent's system prompt has changed?
+
+The middle one is answered: `RESUME_DROPS` (`src/session-commands.ts`) is written into the transcript where a reader
+and the model both see it, and it already names the tools a page script defined, because functions cannot be stored.
+
+The other two are SILENT. A resume rebuilds the toolset and the system prompt from whatever the current build
+offers — the page builds both — and nothing records what the session originally ran under. Two concrete failures:
+
+- A tool that is GONE still appears in the history as a `tool_call`. The model imitates it, and a strict provider
+  returns a hard 400 on a name that is not in `request.tools` (AGENTS.md records exactly this from the Groq job).
+- Worse, a tool that kept its NAME and changed its ARGUMENTS: nothing fails at the boundary, `validateArgs` rejects
+  a call the history taught the model to make, and the model has no way to learn why.
+
+The fix in the shape the repo already uses: a small provenance stamp per session — build id (`build-info.gen.ts`
+exists), model, a hash of the system prompt, and tool name → schema hash — DIFFED at resume, with the difference
+written as a divider beside the page-change one. "3 tools are gone: … · `fetch_url` takes different arguments · the
+system prompt changed." The existing rule is that everything a resume LOSES is said before it happens; this extends
+it to everything a resume CHANGES. The same stamp is what the state inspector shows for "what is this session
+running under right now".
+
 ## Architecture: one core, two sources, two places (proposal)
 
 The page is one UI that runs in two places and reads from two kinds of source. Each difference is behind an interface
@@ -342,6 +368,19 @@ Why it is not a debugging luxury: once the agent can edit its own context by poi
 rewrite it, the transcript CANNOT show that. The transcript is what was said; the change is to what is remembered.
 Without this pane, compaction is invisible and unauditable, which makes the inspector a precondition for shipping
 compaction rather than a follow-up to it.
+
+**Two panels in one pane** (Shane, 2026-09-18), in browser mode:
+
+- **Kernel state** — the variable list, Jupyter's pane: which pointers exist, their size, format, source, holders and
+  age. Offered only where the pointer feature is on.
+- **Message history state** — the array itself, which nothing anywhere renders today. Role boundaries, each block's
+  token cost against the window size (the register analogy wants an address space, and "what is this block costing
+  me" is the reason to look), and a GHOST row for what a compaction removed — without that, compaction is invisible
+  even in the pane built to show it.
+
+The JOIN between the two is what makes the pane worth more than either half: which pointers are still REFERENCED by
+the current context versus alive but no longer mentioned, which is garbage waiting for the sweep. Neither panel can
+say that alone, and it is the most useful thing on the screen once pointers are load-bearing.
 
 Four things it has to get right:
 

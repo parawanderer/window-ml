@@ -17,13 +17,17 @@ import { IconBrain, IconMenu } from "../sidebar/icons";
 import type { PlatformPrefs } from "./platform";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
 
 /** Is the session list pane open? Only a wide layout asks: a phone shows one pane at a time either way. */
 export const listOpen = signal(true);
+
+/** Runtimes whose group in the list is folded away. By id, so a runtime that goes offline and comes back stays as
+ *  it was left, and one this device has never seen starts open. */
+export const foldedRuntimes = signal<ReadonlySet<string>>(new Set());
 
 let store: PlatformPrefs | null = null;
 
@@ -42,6 +46,8 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     const l = prefs.get<boolean>(LIST_KEY);
     calm.value = typeof c === "boolean" ? c : true;
     listOpen.value = typeof l === "boolean" ? l : true;
+    const f = prefs.get<string[]>(FOLDED_KEY);
+    foldedRuntimes.value = new Set(Array.isArray(f) ? f.filter((x) => typeof x === "string") : []);
     applyCalm();
 }
 
@@ -56,6 +62,14 @@ export function setCalm(on: boolean): void {
 export function setListOpen(on: boolean): void {
     listOpen.value = on;
     store?.set(LIST_KEY, on);
+}
+
+/** Fold a runtime's group away, or bring it back. */
+export function toggleRuntime(id: string): void {
+    const next = new Set(foldedRuntimes.value);
+    if (!next.delete(id)) next.add(id);
+    foldedRuntimes.value = next;
+    store?.set(FOLDED_KEY, [...next]);
 }
 
 /** The page's own reading toggle, the twin of the DevTools panel's focus button (same glyph, because it is the

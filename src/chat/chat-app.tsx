@@ -5,13 +5,14 @@
 //
 // Rendered by capability and grant, never by "it is local": a runtime this device may only watch gets no composer, an
 // offline one says when it was last seen, and one speaking an unknown contract version is listed but not opened.
+import { signal } from "@preact/signals";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { RuntimeInfo, SessionId, SessionKey, SessionStatus, SessionSummary } from "../session-host";
 import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { AgentBadge } from "../sidebar/reply";
-import { IconCamera } from "../sidebar/icons";
+import { IconCamera, IconChevron } from "../sidebar/icons";
 import { services } from "../sidebar/services";
 import { ContextMenu, CursorTipLayer, Dot, Hash, Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import { rev, sessionMap, view, type Status } from "../sidebar/store";
@@ -19,7 +20,7 @@ import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import { mayCommand, speaksOurContract } from "./grants";
 import { NewSession, ResumeSession, StartMenu, resumableHere, type StartKind } from "./new-session";
-import { ListToggle, ViewToggle, calm, listOpen } from "./view-mode";
+import { ListToggle, ViewToggle, calm, foldedRuntimes, listOpen, toggleRuntime } from "./view-mode";
 import { lightboxSrc } from "./platform";
 
 /** Below this width the page shows one pane at a time. */
@@ -80,6 +81,39 @@ function useHashRoute(): void {
 /** Open a session: the one navigation the page has. */
 const openSession = (key: SessionKey) => { view.value = { name: "detail", hash: key }; };
 
+/**
+ * Sessions whose newest event landed while you were reading something else.
+ *
+ * Deliberately not stored: it answers "what moved while I was here", which is the brainstorming case — you are
+ * talking in one session and the run in the next tab gets somewhere — and not "what is unread", which would mark
+ * every session on this device the first time the page is opened and teach everyone to ignore the mark.
+ */
+const movedSince = signal<ReadonlySet<SessionKey>>(new Set());
+
+/** Follow the index, marking a session whose `lastTs` advances while it is not the one open. */
+function useMovedSince(store: ChatStore, openKey: SessionKey | null): void {
+    const seen = useRef(new Map<SessionKey, number>());
+    const index = store.index.value;
+    useEffect(() => {
+        let next: Set<SessionKey> | null = null;
+        for (const [key, s] of index) {
+            const before = seen.current.get(key);
+            seen.current.set(key, s.lastTs);
+            // A session seen for the FIRST time is not "moved": on a first render that would be all of them.
+            if (before === undefined || key === openKey || s.lastTs <= before) continue;
+            (next ??= new Set(movedSince.value)).add(key);
+        }
+        if (next) movedSince.value = next;
+    }, [index, openKey]);
+    // Reading it IS catching up with it.
+    useEffect(() => {
+        if (!openKey || !movedSince.value.has(openKey)) return;
+        const next = new Set(movedSince.value);
+        next.delete(openKey);
+        movedSince.value = next;
+    }, [openKey, index]);
+}
+
 /** A page's host, which is what tells two of someone's tabs apart in one line. Falls back to the whole string,
  *  because a runtime's `page.url` is untrusted input and may not parse. */
 function hostOf(url: string): string {
@@ -135,20 +169,23 @@ function PagePeek({ store, id, rt, sessionKey, summary }: { store: ChatStore; id
 }
 
 /** A runtime's heading in the list: its name, whether it is reachable, and what this device may do there. */
-function RuntimeHead({ rt }: { rt: RuntimeInfo }) {
+function RuntimeHead({ rt, folded, count }: { rt: RuntimeInfo; folded: boolean; count: number }) {
     const watchOnly = !mayCommand(rt, "session.send");
     return (
-        <div class={`chat-rt${rt.online ? "" : " off"}`} data-runtime={rt.id}>
+        <button class={`chat-rt${rt.online ? "" : " off"}${folded ? " folded" : ""}`} data-runtime={rt.id}
+            aria-expanded={!folded} onClick={() => toggleRuntime(rt.id)}>
+            <span class={`tri${folded ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
             <span class={`chat-rt-dot${rt.online ? " on" : ""}`} aria-hidden="true" />
             <b class="chat-rt-name">{rt.name}</b>
             {!rt.online ? <span class="chat-rt-note">offline{rt.lastSeen ? <> · seen <Stamp ts={rt.lastSeen} /></> : null}</span> : null}
             {rt.online && watchOnly ? <span class="chat-chip">view only</span> : null}
-        </div>
+            {folded ? <span class="chat-rt-note chat-rt-count">{count} session{count === 1 ? "" : "s"}</span> : null}
+        </button>
     );
 }
 
 /** One session in the list, from its index row (the transcript is fetched only when it is opened). */
-function IndexRow({ s, rt, active }: { s: SessionSummary; rt: RuntimeInfo; active: boolean }) {
+function IndexRow({ s, rt, active, moved }: { s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean }) {
     const key = `${s.id.runtime}:${s.id.hash}`;
     const title = s.title || s.task || "(untitled)";
     const offset = rt.clockOffsetMs ?? 0;
@@ -164,9 +201,17 @@ function IndexRow({ s, rt, active }: { s: SessionSummary; rt: RuntimeInfo; activ
                     {s.pendingApprovals > 0 ? <span class="chat-appr-badge">{s.pendingApprovals} approval{s.pendingApprovals === 1 ? "" : "s"}</span> : null}
                 </span>
             </span>
+            {moved ? <span class="chat-moved" {...cursorTipOn("Something happened here while you were reading something else")} aria-label="new activity" /> : null}
             <Stamp ts={s.lastTs - offset} snap="right" />
         </button>
     );
+}
+
+/** Does a session answer to what was typed in the filter? Matched against everything a person would use to name
+ *  one out loud: its title, the task it was given, the page it is on, and the runtime it is running on. */
+function matches(s: SessionSummary, rt: RuntimeInfo, q: string): boolean {
+    if (!q) return true;
+    return [s.title, s.task, s.page?.url, s.page?.title, rt.name].some((v) => !!v && v.toLowerCase().includes(q));
 }
 
 /** The session list, grouped by runtime. */
@@ -174,20 +219,39 @@ function SessionList({ store, activeKey, narrow, onStart }: { store: ChatStore; 
     const runtimes = store.runtimes.value;
     const sessions = store.listed();
     const status = store.status.value;
+    const moved = movedSince.value;
+    const folded = foldedRuntimes.value;
+    const [query, setQuery] = useState("");
+    const q = query.trim().toLowerCase();
+    // A filter is a way of FINDING one session, so it looks past a folded group rather than through it: hiding a
+    // match because its runtime happens to be folded would be the list refusing to answer the question asked.
+    const shown = (rt: RuntimeInfo) => sessions.filter((s) => s.id.runtime === rt.id && matches(s, rt, q));
+    const groups = runtimes.map((rt) => ({ rt, mine: shown(rt) })).filter(({ mine }) => !q || mine.length);
     return (
         <aside class="chat-list" aria-label="Sessions">
             <div class="head"><ListToggle narrow={narrow} /><b>Sessions</b><span class="sp" />{status.state !== "online" ? <span class="chat-chip warn">{status.state === "connecting" ? "connecting…" : "offline"}</span> : null}<StartMenu store={store} onPick={onStart} />{narrow ? <ViewToggle /> : null}</div>
+            {sessions.length > 4 || q ? (
+                <div class="chat-filter">
+                    <input type="search" class="chat-filter-in" value={query} aria-label="Filter sessions" placeholder="Filter by title, page or runtime…"
+                        onInput={(e: any) => setQuery(e.target.value)}
+                        onKeyDown={(e: KeyboardEvent) => { if (e.key === "Escape") setQuery(""); }} />
+                </div>
+            ) : null}
             <div class="view chat-list-scroll">
                 {runtimes.length === 0 && status.state === "online" ? <div class="empty">No runtimes yet. Pair one to see its sessions here.</div> : null}
-                {runtimes.map((rt) => {
-                    const mine = sessions.filter((s) => s.id.runtime === rt.id);
+                {q && !groups.length ? <div class="empty">Nothing matches “{truncate(query.trim(), 40)}”.</div> : null}
+                {groups.map(({ rt, mine }) => {
+                    const shut = folded.has(rt.id) && !q;
                     return (
-                        <section class="chat-group" key={rt.id}>
-                            <RuntimeHead rt={rt} />
-                            {!speaksOurContract(rt)
+                        <section class={`chat-group${shut ? " folded" : ""}`} key={rt.id}>
+                            <RuntimeHead rt={rt} folded={shut} count={mine.length} />
+                            {shut ? null : !speaksOurContract(rt)
                                 ? <div class="chat-rt-empty">This runtime speaks version {rt.contractVersion} of the session contract, which this app does not. Its sessions open once both sides agree.</div>
                                 : mine.length
-                                    ? mine.map((s) => <IndexRow key={`${s.id.runtime}:${s.id.hash}`} s={s} rt={rt} active={activeKey === `${s.id.runtime}:${s.id.hash}`} />)
+                                    ? mine.map((s) => {
+                                        const key = `${s.id.runtime}:${s.id.hash}`;
+                                        return <IndexRow key={key} s={s} rt={rt} active={activeKey === key} moved={moved.has(key)} />;
+                                    })
                                     : <div class="chat-rt-empty">No sessions.</div>}
                         </section>
                     );
@@ -327,6 +391,7 @@ export function ChatApp({ store }: { store: ChatStore }) {
     // The new-session form is deliberately NOT in the URL, unlike the open session: it holds what someone is part
     // way through typing, and a link to a half-written message is not a thing anyone wants to share or reload into.
     const [starting, setStarting] = useState<StartKind | null>(null);
+    useMovedSince(store, key);
     useEffect(() => { if (key) store.open(key); else store.close(); }, [key]);
     useEffect(() => { if (key) setStarting(null); }, [key]);   // opening a session puts the form away
     return (

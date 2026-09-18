@@ -15,7 +15,16 @@ html, body, #root { height: 100%; }
 
 /* A runtime's heading in the list: a dot for reachable, its name, and what this device may do there. */
 .chat-group { margin-bottom: 14px; }
-.chat-rt { display: flex; align-items: center; gap: 7px; padding: 4px 2px 6px; color: var(--fg-dim); font-size: .92em; }
+.chat-rt {
+    display: flex; align-items: center; gap: 7px; padding: 4px 2px 6px; color: var(--fg-dim); font: inherit;
+    font-size: .92em; width: 100%; text-align: left; background: none; border: none; cursor: pointer;
+}
+.chat-rt:hover .chat-rt-name { color: var(--accent); }
+.chat-rt .tri { color: var(--fg-faint); flex: 0 0 auto; display: inline-flex; transition: transform .15s ease; }
+.chat-rt .tri.open { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .chat-rt .tri { transition: none; } }
+/* What a folded group is holding, so folding one is not the same as forgetting it. */
+.chat-rt-count { margin-left: auto; }
 .chat-rt-name { color: var(--fg); font-weight: 600; }
 .chat-rt-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-faint); flex: 0 0 auto; }
 .chat-rt-dot.on { background: var(--ok); }
@@ -245,3 +254,23 @@ html, body, #root { height: 100%; }
 .chat-head-sub .chat-page { display: inline; max-width: none; }
 .chat-peek { flex: 0 0 auto; }
 .chat-peek:disabled { opacity: .5; cursor: progress; }
+
+/* FINDING ONE SESSION AMONG MANY. The box appears once there are enough of them to need it, and stays while
+   something is typed, so it never vanishes under the cursor mid-search. It matches everything a person would use to
+   name a session out loud — its title, the task, the page it is on, the runtime — and it looks PAST a folded group,
+   because hiding a match because its runtime happens to be folded is the list refusing the question it was asked. */
+.chat-filter { padding: 0 8px 6px; flex: 0 0 auto; }
+.chat-filter-in {
+    width: 100%; font: inherit; color: var(--fg); background: var(--panel); border: 1px solid transparent;
+    border-radius: 999px; padding: 6px 12px; min-height: 32px;
+}
+.chat-filter-in::placeholder { color: var(--fg-faint); }
+.chat-filter-in:focus { outline: none; border-color: var(--panel-2-hover); }
+.chat.narrow .chat-filter-in { min-height: 40px; }
+
+/* Something happened in a session while you were reading another one. A dot, in the accent, where the unread mark
+   goes in every list that has one — and NOT a count, because the number of events a run emits is not a number
+   anybody wants read to them. */
+.chat-moved {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; align-self: center;
+}
