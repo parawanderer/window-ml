@@ -26,7 +26,8 @@ import {
 } from "../resource-axis";
 import { placeEvents, laneRows, lineageOf, MIN_EV_SPAN, scopeToSpan, scopeAround, filterEvents, countByKind, sessionWindow } from "../resource-lane";
 import { deviceBands, hostBands, OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, pendingAllocation, stepBands, bandEdge, type Band, bandOrder } from "../resource-bands";
-import { ModelFacts, CostFacts, editLayout } from "./vram";
+import { editLayout } from "./vram";
+import { ModelFacts, CostFacts } from "./panel-facts";
 import { poolFacts, keysReach, resourceHistory, capacity, colorFor, poolColor, hiddenPools, togglePool, VRAM_POLL_MS, laneFilter, streamLive, sampleGapMs, sampleGraceMs, layout } from "./panel-state";
 import { barKey, chartHeld, cursorAt, enterPool, eventHover, eventKey, gapHover, HOLD_LAPSE_MS, holdAxis, holdKey, hotEvent, hoverAt, hoverPool, lastPointerAt, leavePool, litBy, live, noteRuns, poolHover, readingSurface, releaseAxis, tipMuted, trackCursor } from "./chart-interaction";
 import { hoverModel, kbFocus, kbPool, focusDepth } from "./vram-focus";
