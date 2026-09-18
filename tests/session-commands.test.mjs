@@ -17,6 +17,13 @@ const png = (w, h, pad = 0) => "data:image/png;base64," + b64([0x89, 0x50, 0x4e,
 /** A JPEG with an APP0 segment before its frame header. */
 const jpeg = (w, h) => "data:image/jpeg;base64," + b64([0xff, 0xd8, 0xff, 0xe0, 0, 16, ...new Array(14).fill(0), 0xff, 0xc0, 0, 17, 8, h >> 8, h & 255, w >> 8, w & 255, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
 
+/** What a saved run would be continued from: its messages and the payload it was started with. */
+const AGENT_HISTORY = {
+    kind: "agent",
+    messages: [{ role: "user", content: "read the headline" }, { role: "assistant", content: "done" }],
+    payload: { runId: "aaaa0001", task: "read the headline", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 5, rebuild: { toolNames: ["click"], model: "m", driverSees: false, visionModel: null, groundingModel: null, groundingRange: 0, pierceClosed: false, cdp: false, crossOrigin: false } },
+};
+
 /** A handler over a fresh index, with every dependency recorded and scriptable. */
 function world(over = {}) {
     const index = new SessionIndex({ runtime: "local", spawn: "w1" });
@@ -39,6 +46,9 @@ function world(over = {}) {
         hostsChat: rec("hostsChat", false),
         keepSession: rec("keepSession"),
         startAgent: rec("startAgent", async () => ({ outcome: "started", hash: "ab120001" })),
+        history: rec("history", async () => AGENT_HISTORY),
+        adoptSession: rec("adoptSession", async () => "adopted"),
+        noteResumed: rec("noteResumed"),
         openTab: rec("openTab", async () => 99),
         startPage: () => "https://start.example/",
         utilityConfigured: () => true,
@@ -248,6 +258,132 @@ test("cancelling a worker-hosted chat aborts its turn rather than a run or a pag
     const idle = world({ hostsChat: () => true, cancelChat: () => false });
     idle.index.ingest(chatStart("c0ffee05"), { trusted: true });
     assert.equal((await idle.run({ type: "session.cancel", session: sid("c0ffee05") })).error.code, "conflict");
+});
+
+/** A saved run that has finished: the state `session.resume` is for. */
+function endedRun(w, hash, over = {}) {
+    w.index.ingest(start(hash), { tabId: TAB, trusted: true, page: { url: "https://old.example/" }, ...over });
+    w.index.ingest(ev(hash, "agent-result", { summary: "ok", steps: 1, hitCap: false }), { tabId: TAB, trusted: true });
+    w.index.markSaved(hash);
+}
+
+test("session.resume hands a saved run to a page and says so in the transcript, without taking a turn", async () => {
+    const w = world();
+    endedRun(w, "aaaa0010");
+
+    const r = await w.run({ type: "session.resume", session: sid("aaaa0010"), target: { kind: "tab", tabId: TAB } });
+    assert.deepEqual(r, { ok: true, data: { session: sid("aaaa0010") } });
+
+    const [, tabId, hash, history] = w.named("adoptSession")[0];
+    assert.equal(tabId, TAB);
+    assert.equal(hash, "aaaa0010");
+    assert.equal(history.payload.systemPrompt, "S", "the page rebuilds its toolset from what was stored");
+    assert.equal(w.named("startAgent").length, 0, "resuming is not starting");
+    assert.equal(w.named("toPage").length, 0, "and it is not a message");
+
+    // The note is a fact about the session: where it is now, where it was, how long it sat, and what it lost.
+    const [, noteHash, noteTab, note] = w.named("noteResumed")[0];
+    assert.equal(noteHash, "aaaa0010");
+    assert.equal(noteTab, TAB);
+    assert.equal(note.url, "https://a.example/");
+    assert.equal(note.fromUrl, "https://old.example/");
+    assert.equal(typeof note.afterMs, "number");
+    assert.ok(note.dropped.length > 0, "never empty — something is always dropped");
+    assert.ok(note.dropped.some((d) => /approval grants/.test(d)));
+});
+
+test("resuming the same session twice is two notes, because it is two resumes", async () => {
+    // The index de-duplicates a resume note by its id. A note identified by the SESSION would mean a session that
+    // moved page twice showed one divider for both moves, with the second silently dropped.
+    let t = 1000;
+    const w = world({ now: () => (t += 5000) });
+    endedRun(w, "aaaa0018");
+
+    assert.equal(code(await w.run({ type: "session.resume", session: sid("aaaa0018"), target: { kind: "tab", tabId: TAB } })), "ok");
+    assert.equal(code(await w.run({ type: "session.resume", session: sid("aaaa0018"), target: { kind: "tab", tabId: TAB } })), "ok");
+
+    const ids = w.named("noteResumed").map((c) => c[3].id);
+    assert.equal(ids.length, 2);
+    assert.notEqual(ids[0], ids[1]);
+});
+
+test("a resume that the page does not take leaves no note claiming it happened", async () => {
+    const w = world({ adoptSession: async () => "no-answer" });
+    endedRun(w, "aaaa0011");
+
+    assert.equal((await w.run({ type: "session.resume", session: sid("aaaa0011"), target: { kind: "tab", tabId: TAB } })).error.code, "unavailable");
+    assert.equal(w.named("noteResumed").length, 0);
+});
+
+test("session.resume refuses what cannot be resumed, each for its own reason", async () => {
+    // Still going: it does not need resuming, and adopting it elsewhere would be two pages holding one run.
+    const live = world();
+    live.index.ingest(start("aaaa0012"), { tabId: TAB, trusted: true });
+    live.index.markSaved("aaaa0012");
+    assert.equal((await live.run({ type: "session.resume", session: sid("aaaa0012"), target: { kind: "tab", tabId: TAB } })).error.code, "conflict");
+
+    // Never saved: there is no history to continue from, and the events are a transcript, not one.
+    const unsaved = world();
+    unsaved.index.ingest(start("aaaa0013"), { tabId: TAB, trusted: true });
+    unsaved.index.ingest(ev("aaaa0013", "agent-result", { summary: "ok", steps: 1, hitCap: false }), { tabId: TAB, trusted: true });
+    assert.equal((await unsaved.run({ type: "session.resume", session: sid("aaaa0013"), target: { kind: "tab", tabId: TAB } })).error.code, "not-found");
+
+    // Saved before this browser kept enough to continue a run.
+    const old = world({ history: async () => ({ kind: "agent", messages: [{ role: "user", content: "x" }] }) });
+    endedRun(old, "aaaa0014");
+    assert.equal((await old.run({ type: "session.resume", session: sid("aaaa0014"), target: { kind: "tab", tabId: TAB } })).error.code, "not-found");
+
+    // A chat with no page is already this worker's: its next message rehydrates it, and a tab would do nothing.
+    const chat = world({ hostsChat: () => true });
+    chat.index.ingest(chatStart("c0ffee09"), { trusted: true });
+    assert.equal((await chat.run({ type: "session.resume", session: sid("c0ffee09"), target: { kind: "tab", tabId: TAB } })).error.code, "unsupported");
+    assert.equal(chat.named("adoptSession").length, 0);
+});
+
+test("session.resume picks a target the way agent.start does, including a blank tab", async () => {
+    const w = world();
+    endedRun(w, "aaaa0015");
+    const r = await w.run({ type: "session.resume", session: sid("aaaa0015"), target: { kind: "blank", url: "https://new.example/" } });
+    assert.equal(code(r), "ok");
+    assert.equal(w.named("openTab")[0][1], "https://new.example/");
+
+    // And refuses the same targets: a page the extension cannot run on is not a place to resume.
+    const bad = world({ getTab: async () => ({ tabId: TAB, url: "chrome://settings", title: "s", active: true, windowId: 1 }) });
+    endedRun(bad, "aaaa0016");
+    assert.equal((await bad.run({ type: "session.resume", session: sid("aaaa0016"), target: { kind: "tab", tabId: TAB } })).error.code, "forbidden");
+
+    const headless = world();
+    endedRun(headless, "aaaa0017");
+    assert.equal((await headless.run({ type: "session.resume", session: sid("aaaa0017"), target: { kind: "headless" } })).error.code, "unsupported");
+});
+
+test("a saved chat the worker has FORGOTTEN is still the worker's, and its next message rehydrates it", async () => {
+    // `hostsChat` reads worker memory, which an MV3 eviction empties. Routing on it sent this message down the run
+    // paths, which end at a tab a pageless chat never had: "the tab this session ran on is closed", about a session
+    // with no tab. The index knows what it is.
+    const w = world({ hostsChat: () => false });
+    w.index.ingest(chatStart("c0ffee06"), { trusted: true });
+
+    const r = await w.run({ type: "session.send", session: sid("c0ffee06"), text: "still there?" });
+    assert.deepEqual(r, { ok: true, data: { mode: "turn" } });
+    assert.equal(w.named("sendChat")[0][1], "c0ffee06", "rehydrated from storage rather than relayed");
+    assert.equal(w.named("toPage").length, 0);
+
+    // And the same routing for cancel: a chat the worker has forgotten has no turn in flight.
+    const c = world({ hostsChat: () => false, cancelChat: () => false });
+    c.index.ingest(chatStart("c0ffee07"), { trusted: true });
+    assert.equal((await c.run({ type: "session.cancel", session: sid("c0ffee07") })).error.code, "conflict");
+    assert.equal(c.named("toPage").length, 0, "not a relay to a tab it never had");
+});
+
+test("a chat that DOES have a page is still the page's, forgotten or not", async () => {
+    // The distinction is the page, not the kind: `ml.createChat` in a tab is a chat whose turns that page runs.
+    const w = world({ hostsChat: () => false });
+    w.index.ingest(chatStart("c0ffee08"), { tabId: TAB, trusted: false, page: { url: "https://a.example/" } });
+
+    await w.run({ type: "session.send", session: sid("c0ffee08"), text: "carry on" });
+    assert.equal(w.named("sendChat").length, 0, "not the worker's chat");
+    assert.equal(w.named("toPage")[0][1], TAB);
 });
 
 test("agent.start on a tab goes through that page's own start path and answers with the session it made", async () => {

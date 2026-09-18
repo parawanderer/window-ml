@@ -11,6 +11,7 @@ import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type Comman
 import { SessionIndex, type IngestSource } from "./session-index";
 import { SESSIONS_PORT, SessionServer } from "./session-server";
 import { SessionStore, indexedDbBackend, type SessionHistory } from "./session-store";
+import { bgRuns, trackRun, untrackRun } from "./sw-runs";
 import { fetchLLM } from "./sw-llm";
 
 /** This browser's runtime id until the extension has a key to derive one from (docs/spec/SESSION_CONTRACT.md). */
@@ -99,6 +100,27 @@ export function configureSessionCommands(run: RunDeps): void {
             const reqId = Math.random().toString(36).slice(2, 12);
             const reply = await chrome.tabs.sendMessage(tabId, { type: "ML_START_AGENT", reqId, ...opts }) as { outcome?: PageOutcome | "started"; hash?: string } | undefined;
             return { outcome: reply?.outcome ?? "no-answer", ...(reply?.hash ? { hash: reply.hash } : {}) };
+        },
+        history: async (hash) => (sessionStore ? await sessionStore.history(hash) : null),
+        adoptSession: async (tabId, hash, history) => {
+            if (history.kind !== "agent" || !history.payload) return "none";
+            // Put the run back where a resume looks for it. `RESUME_RUN` reads `bgRuns` and nothing else, and it is
+            // worker MEMORY: a run that settled yesterday is not in it, which is the whole reason a saved session
+            // keeps its own copy. Hydrating here means the resume path itself needs no second source.
+            bgRuns.set(hash, { p: history.payload, tabId, messages: history.messages, ...(history.sub ? { sub: history.sub } : {}) });
+            trackRun(tabId, hash, history.payload.rebuild);
+            const reply = await chrome.tabs.sendMessage(tabId, { type: "ML_ADOPT_SESSION", hash, rebuild: history.payload.rebuild }) as { outcome?: PageOutcome | "adopted" } | undefined;
+            const outcome = reply?.outcome ?? "no-answer";
+            // A page that did not take it must not leave a run hydrated against a tab that is not holding it: the
+            // next thing to read `bgRuns` would believe that tab owns this session.
+            if (outcome !== "adopted") { bgRuns.delete(hash); untrackRun(tabId, hash); }
+            return outcome;
+        },
+        noteResumed: (hash, tabId, note) => {
+            ingestSessionEvent(
+                { kind: "session-resumed", ts: Date.now(), save: false, session: { hash, turn: 0 }, ...note },
+                { tabId, trusted: true },
+            );
         },
         openTab: async (url) => {
             const tab = await chrome.tabs.create({ url, active: true });

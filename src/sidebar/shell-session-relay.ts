@@ -90,6 +90,22 @@ export function relaySessionToPage(msg: Record<string, unknown>, sendResponse: (
 }
 
 /**
+ * The chat page's `session.resume`: hand a SAVED run to this page, which rebuilds its builtin toolset from the
+ * carried {@link RebuildConfig} and registers it by hash — the same `_adoptRun` a cross-page navigation uses, for
+ * the same reason. It starts nothing: the person's next message is the turn.
+ *
+ * @param msg The `ML_ADOPT_SESSION` message, carrying the hash and the rebuild config.
+ * @param sendResponse The background's reply channel.
+ * @returns `true` always: the reply is asynchronous.
+ */
+export function relayAdoptSession(msg: Record<string, unknown>, sendResponse: (r: unknown) => void): boolean {
+    const reqId = Math.random().toString(36).slice(2, 12);
+    window.postMessage({ __mlAdoptSession: { hash: msg.hash, rebuild: msg.rebuild, reqId } }, "*");
+    awaitSessionDone(reqId, sendResponse);
+    return true;
+}
+
+/**
  * The chat page's `agent.start`: run it through the SAME page path the HUD composer uses, so a run started
  * from an extension page is a genuine session of this tab (hash, resumable, appendable) built by the page's
  * own toolset, rather than a second way of starting a run that would drift from it.

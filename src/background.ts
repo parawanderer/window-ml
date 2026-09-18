@@ -959,7 +959,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     // And the same history where a SAVED session keeps it. The snapshot above dies with the run
                     // (it is deleted on settle, and is stale after five minutes); this one lives as long as the
                     // session does, which is what `session.resume` needs from a run that ended yesterday.
-                    saveRunHistory(runId, { messages, ...(p.rebuild ? { rebuild: p.rebuild } : {}), task: p.task, model: p.model, maxSteps: p.maxSteps });
+                    saveRunHistory(runId, { messages, payload: p, sub: snapSub() });
                 },
                 // This turn's delegated vision sub-call tally (accumulated from each delegated tool's envelope
                 // delta in delegateTool) — so chat_metadata reports the real number on the background path too.
@@ -1015,7 +1015,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // vanished from the sidebar/panel (and scrambled the export's chat-log order).
                 const resumeP = { ...p, stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
                 bgRuns.set(runId, { p: resumeP, tabId, messages, sub: snapSub() });
-                saveRunHistory(runId, { messages, ...(p.rebuild ? { rebuild: p.rebuild } : {}), task: p.task, model: p.model, maxSteps: p.maxSteps });
+                // The same snapshot `bgRuns` holds, where it outlives the run: `resumeP` so a later turn continues
+                // AFTER this one's steps rather than colliding with them.
+                saveRunHistory(runId, { messages, payload: resumeP, sub: snapSub() });
                 const answerMedia = runAnswerMedia.length ? runAnswerMedia : undefined;
                 emitLifecycle({
                     kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps },

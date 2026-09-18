@@ -578,6 +578,24 @@ import { createAgent, resumeAgent, approveOnce, _rebuildToolset, _adoptRun } fro
     });
     window.postMessage({ type: "PAGE_ADOPT_HELLO" }, "*");
 
+    // The chat page's `session.resume`: a SAVED run picked up on THIS page, relayed by the shell as
+    // __mlAdoptSession. The same `_adoptRun` a navigation uses, and for the same reason — the run's builtin
+    // toolset has to exist in THIS document for the loop's held delegated tool to run here.
+    //
+    // It starts nothing. Adopting registers the run by hash, so the person's next message reaches it through the
+    // `agentRegistry` branch of __mlSessionSend, exactly as a run that navigated does. A resume that took a turn
+    // would be a turn nobody asked for.
+    window.addEventListener("message", (e: MessageEvent) => {
+        if (e.source !== window || !e.data || !e.data.__mlAdoptSession) return;
+        const { hash, rebuild, reqId } = e.data.__mlAdoptSession as { hash?: string; rebuild?: RebuildConfig; reqId?: string };
+        const done = (outcome: string): void => {
+            if (typeof reqId === "string") window.postMessage({ __mlSessionDone: { reqId, outcome } }, "*");
+        };
+        if (!hash || !rebuild) { done("none"); return; }
+        try { (window.ml as unknown as MlApi)._adoptRun(hash, rebuild); done("adopted"); }
+        catch { done("none"); }   // the toolset could not be rebuilt here: the worker un-hydrates and says so
+    });
+
     // Sidebar hover-highlight for @pt/@box: the shell (a content script) can't read this main-world
     // point/box registry, so it asks us to resolve a token to viewport coords, then draws the overlay
     // itself (in its shadow root — no page mutation). `seq` echoes back so a stale hover is ignored.
