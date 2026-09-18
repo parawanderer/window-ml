@@ -7,7 +7,7 @@
 // the tool so there is one of it. What stays in each caller is what genuinely differs: the tool's model-facing
 // text (hints, clipping, `cast` to a point) and the bench's pretty-printed JSON.
 
-import type { RenderDescriptor } from "./contract";
+import type { RenderDescriptor } from "./contract-render";
 
 /** A string that IS LaTeX even without the sandbox's hint — a model that returns `sympy.latex(expr)` (a string)
  *  rather than the expression. A braced sub/superscript or a LaTeX command: specific enough to skip prose. */

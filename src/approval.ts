@@ -3,8 +3,9 @@
 // read-only-exec result envelope. Extracted from injected.ts — these close over
 // only imported dom/security helpers, no bus/ml state.
 
-import type { ApprovalRequest, ApprovalDecision, RenderDescriptor } from "./contract";
-import { UI_OUT_CAP } from "./contract";
+import type { ApprovalRequest, ApprovalDecision } from "./contract-agent";
+import type { RenderDescriptor } from "./contract-render";
+import { UI_OUT_CAP } from "./contract-chat";
 import { NotInDialect, Denied } from "./readonly-exec";
 import { clipOut, clipValue, elPath } from "./dom";
 import { suspiciousArgsWarning } from "./security";
@@ -19,6 +20,14 @@ const argRank = (k: string): number => {
     const f = ARG_FRONT.indexOf(k);
     return f !== -1 ? f : ARG_BACK.includes(k) ? 1000 : 500;
 };
+/**
+ * Render a tool's arguments for an approval prompt.
+ * String values shown raw (real newlines — so an exec `js` blob is readable, not escaped JSON),
+ * others as compact JSON.
+ *
+ * @param {Object} args The arguments to render.
+ * @returns {string} The rendered arguments string.
+ */
 export const renderArgs = (args: unknown): string => Object.entries(args || {})
     .sort((a, b) => argRank(a[0]) - argRank(b[0]))
     .map(([k, v]) => `${k}:\n${typeof v === "string" ? v : JSON.stringify(v)}`)

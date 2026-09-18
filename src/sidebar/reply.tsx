@@ -4,7 +4,7 @@
 // can import ReplyBubble without a cycle).
 import { services, bareHash } from "./services";
 import { useState } from "preact/hooks";
-import type { ExtendProfile } from "../contract";
+import type { ExtendProfile } from "../contract-chat";
 import { view } from "./store";
 import type { Session, Turn, Status, AgentStep } from "./store";
 import { pretty, truncate, collapsedPreview, markdown } from "./format";

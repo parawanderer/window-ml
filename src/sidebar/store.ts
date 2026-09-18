@@ -3,8 +3,14 @@
 // view module imports from here — extracted from app.tsx so the components can
 // live in their own files while still reading one source of truth.
 import { signal } from "@preact/signals";
-import type { DebugSessionConfig, DebugAgentConfig, MlConfig, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, TokenUsage, SubcallUsage, AnswerMedia, PersistGrant, ReusedGrant, GenPhase, RemoteTiming } from "../contract";
-import { DEFAULT_CONFIG, backendStateFrom } from "../contract";
+import type { MlConfig } from "../contract-config";
+import type { ExtendProfile, TokenUsage, GenPhase } from "../contract-chat";
+import type { PersistGrant, ReusedGrant, RemoteTiming } from "../contract-agent";
+import type { RenderDescriptor, ToolFeedback, AnswerMedia } from "../contract-render";
+import type { LoadedModel } from "../contract-server";
+import type { DebugSessionConfig, DebugAgentConfig, SubcallUsage } from "../contract-debug";
+import { DEFAULT_CONFIG } from "../contract-config";
+import { backendStateFrom } from "../contract-server";
 import { services } from "./services";
 
 export const FONT_KEY = "ml_debug_fontscale";   // storage.local: the panel's font scale

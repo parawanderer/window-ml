@@ -6,7 +6,10 @@
 // Types plus two pure helpers, no `chrome.*`, so the sidebar bundle, a plain web page (a phone) and an agent client
 // can all import it. Every value arriving through it is UNTRUSTED input to the client: strings render as escaped
 // text, and an unknown kind, command or version is skipped, never guessed at.
-import type { ElementContext, JsonSchema, MlDebugEvent, NeutralMessage, TokenUsage } from "./contract";
+import type { JsonSchema } from "./contract";
+import type { ElementContext } from "./contract-run";
+import type { NeutralMessage, TokenUsage } from "./contract-chat";
+import type { MlDebugEvent } from "./contract-debug";
 
 /* ------------------------------ versioning ------------------------------ */
 
@@ -62,7 +65,7 @@ export interface Principal {
 
 /** What a principal may do on a runtime (docs/spec/RUNTIME_HUB.md §Principals and scopes). `approve` is its own
  *  scope and is never implied by `drive`. */
-export type Scope = "view" | "drive" | "approve" | "screen" | "desktop";
+export type Scope = "view" | "drive" | "approve" | "screen" | "desktop" | "admin";
 
 /** One scope held by THIS client on a runtime, possibly narrowed. Grants are attenuated when passed on, never
  *  widened. The runtime checks every command against its own copy; a client reads these only to decide what to
@@ -110,6 +113,8 @@ export interface RuntimeCapabilities {
     resourcePanel?: boolean;
     /** the runtime's settings can be edited from this client (the local host only, today) */
     localSettings?: boolean;
+    /** `device.*`: this runtime holds paired devices and can list, renew, revoke and re-scope them */
+    devices?: boolean;
     /** RESERVED: `agent.start` with a headless target. False on every runtime today. */
     headless?: boolean;
     /** RESERVED: accepts `agent.start` with `lineage` (a subagent started by another agent). False today. */
@@ -293,6 +298,21 @@ export type Command =
         idempotencyKey?: IdempotencyKey;
     }
     | { type: "tabs.list"; runtime: RuntimeId }
+    /** The devices paired with this runtime's account, as a person manages them. Needs `admin`, which is granted at
+     *  the runtime and never passed on. */
+    | { type: "device.list"; runtime: RuntimeId }
+    /** Issue a fresh certificate for a device that still holds a valid one. A device past its expiry cannot be
+     *  renewed — it can no longer prove who it is — and pairs again instead; the runtime answers `conflict`. */
+    | { type: "device.renew"; runtime: RuntimeId; principal: PrincipalId; idempotencyKey?: IdempotencyKey }
+    /** Unpair a device: it stops being answered at once, and the stream keys it held are rotated. Revoking the
+     *  device this client IS logs this client out, which a UI says before it happens. */
+    | { type: "device.revoke"; runtime: RuntimeId; principal: PrincipalId; idempotencyKey?: IdempotencyKey }
+    /** Narrow or widen what a device may do, never beyond what this client holds.
+     *
+     *  `approve`, `control` and `admin` are granted at the runtime alone, so a command carrying one is refused with
+     *  `forbidden` — the client asked for something it may not ask for — rather than being silently dropped from the
+     *  list. Scopes are an open enumeration, and these are the members that must never be settable over the wire. */
+    | { type: "device.scopes"; runtime: RuntimeId; principal: PrincipalId; scopes: Scope[] }
     /** A screenshot on demand, never streamed. `maxBytes` is a ceiling the runtime may lower. */
     | { type: "tab.screenshot"; runtime: RuntimeId; target: { tabId: number } | { session: SessionId }; maxBytes?: number }
     /** Outline an element (`selector`) or a canvas point/box (`token`) on the session's page; `null` clears it. */
@@ -319,10 +339,70 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "chat.start": "drive",
     "agent.start": "drive",
     "tabs.list": "drive",
+    "device.list": "admin",
+    "device.renew": "admin",
+    "device.revoke": "admin",
+    "device.scopes": "admin",
     "tab.screenshot": "screen",
     "page.highlight": "drive",
     "side.call": "drive",
 };
+
+/** A principal's id: SHA-256 of its identity public key, as LOWERCASE hex. Stable across renewal, because a renewed
+ *  certificate is a new certificate over the SAME key — so a client tells its own row from the others by comparing
+ *  this with the id it computes from its own key, and a row that vanishes and reappears is a device that regenerated
+ *  its key rather than a rename the list failed to notice.
+ *
+ *  The case is part of the contract because that comparison is `===`: a runtime sending `0A3F…` to a client holding
+ *  `0a3f…` shows no "this device" row and no logout warning, with nothing wrong to see in either value. */
+export type PrincipalId = string;
+
+/** Is this the same principal? The contract says lowercase hex, and this compares as though it might not be: the one
+ *  place the answer matters is "is this row the device I am using", where being wrong hides a logout warning and
+ *  shows nothing wrong in either value. Strict in what a runtime sends, forgiving in what a client believes. */
+export const samePrincipal = (a: PrincipalId | undefined, b: PrincipalId | undefined): boolean =>
+    !!a && !!b && a.toLowerCase() === b.toLowerCase();
+
+/** What a device still owes, for a list that has to be honest about a revocation that has not finished.
+ *
+ *  Revoking rotates the stream keys the device held, which the RUNTIME does, so a runtime that is offline has not
+ *  done it yet. Both numbers are the runtime's own state, not the relay's. */
+export interface RotationOwed {
+    /** streams whose keys have not been rotated away from this device yet */
+    streams: number;
+    /** epoch ms ON THE RUNTIME'S CLOCK when the oldest of them became owed */
+    oldestOwedMs: number;
+}
+
+/** One device paired with a runtime's account.
+ *
+ *  There is deliberately no "may this client administer" field: that is `COMMAND_SCOPE` against the grants the
+ *  runtime already reported, which is the one table both sides read. Two answers to one question disagree
+ *  eventually, and a `forbidden` from `device.*` should stay a bug rather than becoming a normal answer. */
+export interface DeviceInfo {
+    principal: PrincipalId;
+    /** what a person called this device when pairing it (untrusted text) */
+    label: string;
+    /** OPEN on the wire: a runtime may report a role this client does not know, rendered as a generic device */
+    role: "client" | "runtime" | "box-connector";
+    kind: "browser" | "phone" | "desktop" | "headless";
+    scopes: Scope[];
+    /** May this device issue certificates of its own — pair another device, by itself, without `admin` and without
+     *  asking the runtime? It is a field of the certificate rather than a scope, so `scopes` cannot carry it, and it
+     *  is the distinction a person revoking a device most needs: a phone that can pair another phone is not the same
+     *  thing as a phone that can drive a run. Absent means no. */
+    mayPair?: boolean;
+    /** epoch ms, the runtime's clock. A device past this cannot renew itself and pairs again. */
+    notAfterMs: number;
+    /** epoch ms, the runtime's clock. The only thing that makes a forgotten device visible, since a runtime renews
+     *  everything on its allowlist: expiry therefore bounds "this runtime stopped running", not "somebody forgot
+     *  this device". Absent: never seen since pairing. */
+    lastSeenMs?: number;
+    /** the principal that issued this device's certificate, so a delegated device shows whose it is */
+    grantedBy?: PrincipalId;
+    /** absent when nothing is owed */
+    rotation?: RotationOwed;
+}
 
 /** A browser tab on a runtime. */
 export interface TabInfo {
@@ -346,6 +426,11 @@ export interface CommandResultData {
     "chat.start": { session: SessionId };
     "agent.start": { session: SessionId };
     "tabs.list": { tabs: TabInfo[] };
+    "device.list": { devices: DeviceInfo[] };
+    /** the new window, so a list can say when it next needs attention without asking again */
+    "device.renew": { notAfterMs: number };
+    "device.revoke": Record<string, never>;
+    "device.scopes": { scopes: Scope[] };
     "tab.screenshot": { image: ImageDataUrl; width: number; height: number; ts: number };
     "page.highlight": Record<string, never>;
     /** `structured` is the parsed JSON when a `schema` was sent */

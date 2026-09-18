@@ -5,7 +5,7 @@
 // the runtime's grants and capabilities, recorded, and answered with plausible events.
 //
 // Development only. It ships in the web build until `HubHost` exists (slice 6) and never in the extension.
-import type { MlDebugEvent } from "../contract";
+import type { MlDebugEvent } from "../contract-debug";
 import {
     COMMAND_SCOPE, SESSION_CONTRACT_VERSION, sessionKey,
     type Command, type CommandResult, type HostStatus, type Principal, type RuntimeId, type RuntimeInfo, type SessionHost,

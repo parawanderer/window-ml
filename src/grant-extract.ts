@@ -15,7 +15,7 @@
 // standalone (tests/grant-extract.test.mjs).
 
 import { parse } from "acorn";
-import type { PersistGrant } from "./contract";
+import type { PersistGrant } from "./contract-agent";
 
 /** Minimal acorn-node shape — we only read `type`, member/call fields, and literal values. */
 type Node = { type: string; [k: string]: unknown };

@@ -3,7 +3,8 @@
 // what belongs to the device instead of the runtime (the lightbox, prefs) goes to the `ClientPlatform`.
 //
 // A session identifier here is always a key, `runtime:hash`, which is how the command finds its runtime.
-import type { JsonSchema, NeutralMessage } from "../contract";
+import type { JsonSchema } from "../contract";
+import type { NeutralMessage } from "../contract-chat";
 import type { Command, SessionKey } from "../session-host";
 import { parseSessionKey } from "../session-host";
 import type { SidebarServices } from "../sidebar/services";

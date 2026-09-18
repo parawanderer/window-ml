@@ -1,6 +1,7 @@
 // session-host.ts — the session contract's two helpers and its scope table. The key form is what a client keys
 // its merged store by, so a round trip that lost or mangled a part would merge two runtimes' sessions into one.
 import { test } from "node:test";
+import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import { sessionKey, parseSessionKey, COMMAND_SCOPE } from "../src/session-host.ts";
 
@@ -26,4 +27,38 @@ test("approving is its own scope, never drive", () => {
     assert.equal(COMMAND_SCOPE["approval.answer"], "approve");
     const approving = Object.entries(COMMAND_SCOPE).filter(([, s]) => s === "approve").map(([t]) => t);
     assert.deepEqual(approving, ["approval.answer"]);
+});
+
+test("administering devices is its own scope, never approve or drive", async () => {
+    const { COMMAND_SCOPE: SCOPES } = await import("../src/session-host.ts");
+    // A phone that may approve a click must not thereby be able to pair another phone, so every device.* command
+    // takes `admin` and nothing else does.
+    const admin = Object.entries(SCOPES).filter(([, s]) => s === "admin").map(([t]) => t).sort();
+    assert.deepEqual(admin, ["device.list", "device.renew", "device.revoke", "device.scopes"]);
+    for (const t of admin) assert.notEqual(SCOPES[t], "drive", t);
+});
+
+test("every command names a scope, so a new one cannot arrive unguarded", async () => {
+    const { COMMAND_SCOPE: SCOPES } = await import("../src/session-host.ts");
+    const src = await readFile(new URL("../src/session-host.ts", import.meta.url), "utf8");
+    // The `type:` of each member of the Command union — and ONLY that union, since the index updates and the stream
+    // events are unions of the same shape. The scope table must have an entry for each: a command with no scope
+    // would be typed as needing one and enforced as needing none.
+    const union = src.slice(src.indexOf("export type Command ="), src.indexOf("export type CommandType"));
+    const declared = [...union.matchAll(/type: "([a-z.]+)"/g)].map((m) => m[1]);
+    assert.ok(declared.length >= 15, `found ${declared.length} commands in the union`);
+    for (const t of new Set(declared)) assert.ok(SCOPES[t], `${t} has no scope`);
+});
+
+test("a principal id compares case-insensitively, though the contract says lowercase", async () => {
+    const { samePrincipal } = await import("../src/session-host.ts");
+    assert.equal(samePrincipal("0a3f9c", "0a3f9c"), true);
+    // A runtime that ignores the rule costs nothing: the alternative is a list with no "this device" row and no
+    // logout warning, and nothing wrong to see in either value.
+    assert.equal(samePrincipal("0A3F9C", "0a3f9c"), true);
+    assert.equal(samePrincipal("0a3f9c", "0a3f9d"), false);
+    // Absent is never equal to absent: two devices that failed to report an id are not the same device.
+    for (const [a, b] of [[undefined, undefined], ["0a3f9c", undefined], [undefined, "0a3f9c"], ["", ""]]) {
+        assert.equal(samePrincipal(a, b), false, `${a} vs ${b}`);
+    }
 });

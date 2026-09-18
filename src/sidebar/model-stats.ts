@@ -7,7 +7,7 @@
 //
 // Pure, and deliberately over a MINIMAL shape rather than the sidebar's Session type: the aggregation is the
 // part worth testing, and it should not need a whole debug-event fixture to exercise.
-import { runStats, type RunStats, type TokenUsage, type GenPhase } from "../contract";
+import { runStats, type RunStats, type TokenUsage, type GenPhase } from "../contract-chat";
 import { joinGens, type ResourceEvent } from "../resource-model";
 
 /** The little a session must expose for these to work. */

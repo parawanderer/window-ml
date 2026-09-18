@@ -11,7 +11,8 @@
 // This module is pure (no DOM/chrome calls of its own): element previews and media are computed by
 // the caller and handed in, so it unit-tests standalone. Nodes ride along as opaque values.
 
-import type { AnswerMedia, AgentOutput, TokenRender } from "./contract";
+import type { AgentOutput } from "./contract-agent";
+import type { AnswerMedia, TokenRender } from "./contract-render";
 import { TOKEN_HEX_SRC, TOOL_NAME_SRC } from "./token-id";
 import { tokenIdsIn, resolveToken } from "./answer-tokens";
 

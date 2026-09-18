@@ -5,7 +5,7 @@
 // when the value store holds it, or the preview when it does not. A summary of a 200-row prefix presented as the
 // table's is the sample-as-the-whole bug this codebase keeps meeting.
 
-import type { TableCell } from "./contract";
+import type { TableCell } from "./contract-fetch";
 
 /** Buckets in a numeric column's histogram. Coarse on purpose: a glance, not a chart. */
 export const HIST_BINS = 12;

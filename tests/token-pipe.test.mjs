@@ -548,7 +548,7 @@ test("labels: the similarity metric is swappable, and the guard travels with it"
 // The metric is config, so the benchmark can vary it without a rebuild — and a stale or absent value must
 // degrade to the default rather than breaking pointer resolution.
 test("labelMatch: the configured metric reaches resolution, and a bad value falls back", async () => {
-    const { DEFAULT_CONFIG, LEXICAL_METRICS } = await import("../src/contract.ts");
+    const { DEFAULT_CONFIG, LEXICAL_METRICS } = await import("../src/contract-config.ts");
     assert.equal(DEFAULT_CONFIG.labelMatch, "hybrid");
     assert.ok(LEXICAL_METRICS.includes(DEFAULT_CONFIG.labelMatch), "the default must be one of the offered metrics");
 
@@ -568,7 +568,7 @@ describe("the pipe dialect is described once", () => {
     const dialectish = (s) => /grep PATTERN|chained with/.test(s);
 
     test("no tool PARAMETER carries the dialect verbatim any more", async () => {
-        const files = ["../src/tools.ts", "../src/builtin-tools.ts", "../src/python-tool.ts", "../src/injected.ts", "../src/ml-server.ts", "../src/ml-tool-factories.ts", "../src/ml-vision.ts"];
+        const files = ["../src/tools.ts", "../src/builtin-tools.ts", "../src/python-tool.ts", "../src/injected.ts", "../src/ml-server.ts", "../src/ml-tool-factories.ts", "../src/ml-vision.ts", "../src/ml-python.ts"];
         for (const f of files) {
             const src = await readFile(new URL(f, import.meta.url), "utf8");
             for (const line of src.split("\n")) {

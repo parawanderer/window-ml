@@ -94,6 +94,21 @@ test("EVERY type the doc names is either expanded or deliberately skipped", () =
         + ` binding), or it belongs in SKIP_TYPES with a reason.`);
 });
 
+test("a MODULE HEADER never leaks into the doc the model reads", () => {
+    // parseDecls takes the comment run directly above a declaration as its documentation. When contract.ts was
+    // split by theme, two of the new modules had their file header sitting directly above their first
+    // declaration with no blank line and no import between — so the header, which is written for whoever edits
+    // the module, was attached to that declaration and printed into the model's API reference. It cost 10 lines
+    // of prose about storage keys and worker lifetimes, and it named a type (RequestHint) that then had no
+    // section, which is the failure the dangling check catches one step later.
+    //
+    // A blank line after the header is the fix. This asserts the outcome instead, because the next module
+    // written without one should fail here rather than ship.
+    const headers = [...docs.matchAll(/^\/\/ ([\w-]+\.tsx?) —.*$/gm)].map(m => m[1]);
+    assert.deepEqual(headers, [], `a module's file header reached the model: ${headers.join(", ")}.`
+        + ` Put a blank line between the header and the first declaration in that file.`);
+});
+
 test("a type that MOVES out of contract.ts is still found, through the import that binds it", () => {
     // contract.ts is one contract; it does not have to be one FILE. Splitting it used to cut this doc by 10.7%
     // in silence. The generator now resolves an unknown name through the import/re-export that binds it, so
@@ -101,9 +116,14 @@ test("a type that MOVES out of contract.ts is still found, through the import th
     const { makeResolver } = genApi;
     const r = makeResolver(new URL("../src/contract.ts", import.meta.url).pathname);
     // Declared in contract.ts itself.
-    assert.ok(r.has("ChatOptions"), "a local declaration still resolves");
+    assert.ok(r.has("MlApi"), "a local declaration still resolves");
     // Declared elsewhere and reached only by following contract.ts's own imports.
     assert.ok(r.has("DynamicToolNamespace"), "an imported declaration resolves through the import that binds it");
+    // And through the BARREL: contract.ts was split by theme, so these are declared in contract-*.ts files
+    // and reach a reader only via `export * from`. This is the case the split actually depends on, and it is
+    // load-bearing for about a hundred `import("./contract").X` type queries that no tool would rewrite.
+    for (const n of ["ChatOptions", "AgentResult", "MlTool", "FetchResult", "MlConfig", "RenderDescriptor", "MlDebugEvent", "LoadedModel", "StartRunPayload"])
+        assert.ok(r.has(n), `${n} moved to a themed module and must still resolve through contract.ts's barrel`);
     assert.ok(!r.has("ThisTypeDoesNotExistAnywhere"), "and an unknown name stays unknown");
 });
 
@@ -171,10 +191,12 @@ test("stripPrivateMembers keeps a well-formed interface and drops multi-line `_`
 });
 
 test("parseDecls captures whole declarations, including multi-line type aliases", () => {
-    const decls = parseDecls(CONTRACT);
-    assert.equal(decls.get("MlApi").kind, "interface");
-    assert.equal(decls.get("MlPublicConfig").kind, "type");
-    // MlPublicConfig is a multi-line `Pick<MlConfig, …>`; a scanner that stopped at the
-    // first line would silently truncate the field list.
-    assert.ok(decls.get("MlPublicConfig").body.join("\n").includes("apiFormat"));
+    assert.equal(parseDecls(CONTRACT).get("MlApi").kind, "interface");
+    // MlPublicConfig is a multi-line `Pick<MlConfig, …>`; a scanner that stopped at the first line would
+    // silently truncate the field list. It lives in contract-config.ts since the contract was split by theme,
+    // so parseDecls is asked about the file that DECLARES it — this is the single-file scanner, and the
+    // following-imports behaviour is the resolver's job, asserted separately below.
+    const config = parseDecls(readFileSync(new URL("../src/contract-config.ts", import.meta.url), "utf8"));
+    assert.equal(config.get("MlPublicConfig").kind, "type");
+    assert.ok(config.get("MlPublicConfig").body.join("\n").includes("apiFormat"));
 });

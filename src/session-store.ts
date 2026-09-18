@@ -9,7 +9,7 @@
 // `planEviction` in `value-store.ts` is the same shape of decision for stored VALUES and deliberately not shared:
 // a value is idle when nothing has READ it and leaves a tombstone so a later dereference can say why it is gone,
 // while a session is evicted whole, by age, and simply stops being listed. The common part is four lines.
-import type { MlDebugEvent } from "./contract";
+import type { MlDebugEvent } from "./contract-debug";
 import type { SessionSummary } from "./session-host";
 
 /** How much of a person's disk the saved sessions may use before the oldest are dropped. */

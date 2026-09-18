@@ -3,7 +3,8 @@
 // the bottom-of-answer Result / Feedback / Reused blocks. Extracted from app.tsx; sits above ./render-panel.
 import type { ComponentChildren } from "preact";
 import { h } from "preact";
-import type { RenderDescriptor, ToolFeedback, ReusedGrant } from "../contract";
+import type { ReusedGrant } from "../contract-agent";
+import type { RenderDescriptor, ToolFeedback } from "../contract-render";
 import { splitAnswer, hasTokens, resolveTokenStep, answerWithoutShown } from "../answer-tokens";
 import type { AnswerSegment } from "../answer-tokens";
 import type { Session, AgentStep } from "./store";
