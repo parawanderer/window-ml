@@ -10,6 +10,7 @@ import { FakeHost } from "../src/chat/fake-host.ts";
 import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
 import { resumableHere } from "../src/chat/new-session.tsx";
+import { CALM_KEY, LIST_KEY, calm, installViewPrefs, listOpen, setCalm, setListOpen } from "../src/chat/view-mode.tsx";
 import { sessionMap, view } from "../src/sidebar/store.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";
 
@@ -339,4 +340,36 @@ test("a resume is offered only where it would DO something, and refused where th
     assert.equal(resumableHere(runtime("laptop", { grants: [{ scope: "view" }] }), key, done()), false);
     assert.equal(resumableHere(undefined, key, done()), false);
     assert.equal(resumableHere(rt, key, undefined), false);
+});
+
+/* ------------------------------ the page's own view preferences ------------------------------ */
+
+/** A `PlatformPrefs` over a Map, which is all either adapter's is. */
+const fakePrefs = (seed = {}) => {
+    const m = new Map(Object.entries(seed));
+    return { get: (k) => m.get(k), set: (k, v) => m.set(k, v), all: m };
+};
+
+test("view prefs: calm is the default, a stored answer wins, and both toggles write back", () => {
+    // Nothing stored: the page opens calm, with the list out, which is what this surface is for.
+    installViewPrefs(fakePrefs());
+    assert.equal(calm.value, true);
+    assert.equal(listOpen.value, true);
+
+    // A device that has said otherwise keeps its answer across a reload.
+    installViewPrefs(fakePrefs({ [CALM_KEY]: false, [LIST_KEY]: false }));
+    assert.equal(calm.value, false);
+    assert.equal(listOpen.value, false);
+
+    const prefs = fakePrefs();
+    installViewPrefs(prefs);
+    setCalm(false);
+    setListOpen(false);
+    assert.equal(prefs.all.get(CALM_KEY), false);
+    assert.equal(prefs.all.get(LIST_KEY), false);
+    assert.equal(calm.value, false);
+
+    // A stored value of the wrong shape is ignored rather than coerced: `undefined` means "never asked".
+    installViewPrefs(fakePrefs({ [CALM_KEY]: "yes" }));
+    assert.equal(calm.value, true);
 });

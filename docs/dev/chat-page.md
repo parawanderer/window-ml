@@ -17,6 +17,7 @@ The spec is [`docs/spec/CHAT_PAGE.md`](../spec/CHAT_PAGE.md) and the contract it
 | `fake-host.ts` | A scripted host with real epochs and cursors, for tests, the web build and demos. |
 | `demo-world.ts` | The fake host's runtimes and sessions: one of each state the page has to draw. |
 | `chat-app.tsx`, `chat.css` | The page: list and session, two panes or one. |
+| `view-mode.tsx` | How much machinery the page shows (calm), whether the list pane is open, and the two controls that flip them. |
 | `web.tsx`, `chat.html` | The web entry, built to `dist-web/` by `scripts/build-web.mjs`. |
 | `local-host.ts` | This browser as a `SessionHost`: the client of the background's `ml-sessions` port, reconnecting when the worker is evicted. |
 
@@ -390,6 +391,62 @@ fails silently, as a run that simply is not saved.
 The request reaches the worker from a page, so the pending set is bounded: a page can name a hash that never
 arrives. What it costs to claim one is a session row, which the store's budget already bounds — the same standing
 a page's own `{ save: true }` chat has always had.
+
+## Which tab a run is driving
+
+`SessionSummary.page` has carried the URL, title and `tabId` since the index existed, and nothing rendered it: the
+header read `Work laptop · qwen3:32b`, which names the machine and the model and not the document being acted on.
+On a page whose whole point is that an agent owns several tabs at once, that is the missing half of a session's
+identity. The host now sits in the list row and in the header's sub-line, with the title and the full URL in the
+tip, because a URL is long and both places ellipsize.
+
+It is deliberately NOT a link. Opening the URL would make a second tab showing the same document, which is exactly
+not the tab the run holds, and the contract has no command for bringing an existing one to the front.
+
+**The peek** (`PagePeek`) sends `tab.screenshot` for the session and opens the result in the same full-size view an
+image in a transcript opens in. Three conditions, and each one is a real case rather than defensive coding:
+
+- `page.tabId` absent means the tab it worked in has closed — the same tell `resumableHere` reads — so there is
+  nothing to capture and nothing is offered.
+- The runtime must report `capabilities.screenshots` and this client must hold the `screen` scope.
+- The browser can only capture the tab its window is SHOWING. A run working in a background tab is refused with
+  `conflict`, and the store puts the runtime's own sentence on screen. Capturing it anyway would mean attaching the
+  debugger, which puts a banner on someone's display for a remote look; `src/session-commands.ts` refuses on
+  purpose, and the demo world keeps the rule so the UI is developed against it.
+
+## Calm view, and the list pane
+
+Two device preferences, both in `view-mode.tsx`, both stored through `ClientPlatform.prefs` and seeded by the entry
+before the first render so the page never paints one mode and then the other.
+
+**Calm is the default, and it is why this page exists.** The DevTools panel's transcript rendered at page scale is a
+log viewer: a step counter on every turn, a model pill, a raw-argument toggle, a token footer, a hash in the
+header's most prominent corner. None of that is wrong in a 360px drawer beside the page being driven — it is what
+someone debugging a run came for. It is wrong in a tab someone is thinking in.
+
+Calm sets `data-focus`, the same root attribute the panel's own focus mode uses (`src/sidebar/prefs.ts`), and then
+`chat.css` adds what only a whole page needs: a reading measure (`--read`), a bubble for your own turn and no
+container at all around the reply, and provenance that appears under a pointer instead of sitting above every
+paragraph. The brain glyph is the panel's, deliberately: same idea, different default.
+
+Three rules it follows:
+
+- **Everything is a hide, never a restructure.** The document is the same one the export, the search and the toggle
+  see, which is the standing rule that a run's raw, model-facing view may be quiet but never unavailable
+  (AGENTS.md §Showing a run). The approval gate never quiets, because it is the one thing in a transcript that is
+  waiting on a person.
+- **The page reads its OWN preference, not the panel's `focusMode`.** They share an origin, so writing that signal
+  from a tab would silently reconfigure the DevTools panel docked beside a page. The two chat entries call
+  `installViewPrefs` where they used to call `applyFocus`.
+- **Hover-reveal lives behind `@media (hover: hover) and (pointer: fine)`.** The same rules on a touch screen would
+  hide the timestamps, the copy button, the counters and the hash with no gesture that brings any of them back, so
+  a phone gets them dimmed and a mouse gets them on demand.
+
+**The list pane hides** (Gemini's move): the pane stays mounted and slides, so its scroll position survives, the
+grid column animates rather than the body jumping a column's width, and `visibility: hidden` takes it out of the
+tab order while it is off screen. Only on a wide layout — a phone shows one pane at a time either way, so there the
+list is a screen you go back to. The way back is a `☰` in the header of whatever pane is left, including the empty
+one, because a control that moves when nothing is open is a control you hunt for.
 
 ## Not yet
 
