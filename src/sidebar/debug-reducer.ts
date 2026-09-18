@@ -222,9 +222,15 @@ export function onDebug(ev: MlDebugEvent, runtime?: string): void {
     if (ev.kind === "session-resumed") {
         const s = sessionMap.get(key);
         if (!s) return;
-        s.resumes = [...(s.resumes ?? []), { ts: ev.ts, url: ev.url, ...(ev.fromUrl ? { fromUrl: ev.fromUrl } : {}), afterMs: ev.afterMs, dropped: ev.dropped }];
+        // Both sides can report one resume, and events repeat around a reconnect: a second note for the same id is
+        // the same resume, and two would be two dividers.
+        if ((s.resumes ?? []).some((r) => r.id === ev.id)) return;
+        s.resumes = [...(s.resumes ?? []), { id: ev.id, ts: ev.ts, url: ev.url, ...(ev.fromUrl ? { fromUrl: ev.fromUrl } : {}), afterMs: ev.afterMs, dropped: ev.dropped }];
         s.lastTs = Math.max(s.lastTs, ev.ts);
-        if (ev.url) s.pageUrl = ev.url;
+        // `pageUrl` is the page the run STARTED on, which is what the export's schema promises and what the index's
+        // row says (both first-wins). Moving it here made the JSON say the resume page with the original page's
+        // title, and made a diff of two runs report a resume as a different experiment. Where it resumed is
+        // `resumes[].url`, which is the field that means that.
         rev.value++;
         return;
     }

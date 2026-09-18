@@ -88,7 +88,7 @@ export interface Session {
     /** Every time this session was picked up again on a different page (`session-resumed`), oldest first. A divider
      *  in the log rather than something anybody said, and a fact the transcript needs: everything before a resume
      *  describes a page that is no longer there. */
-    resumes?: { ts: number; url: string; fromUrl?: string; afterMs: number; dropped: string[] }[];
+    resumes?: { id: string; ts: number; url: string; fromUrl?: string; afterMs: number; dropped: string[] }[];
     pageUrl?: string;        // the page the run STARTED on (a run that navigates ends elsewhere)
     pageTitle?: string;
     steps?: AgentStep[];
