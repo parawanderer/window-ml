@@ -3,7 +3,7 @@
 // `return` reads differently on the two surfaces.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pyBenchDescriptor } from "../src/sidebar/vram.tsx";
+import { pyBenchDescriptor } from "../src/sidebar/vram-bench.js";
 
 test("a sympy return is TYPESET in the bench, as it is in the log", () => {
     const d = pyBenchDescriptor({ ok: true, stdout: "", value: "\\sqrt{\\pi} e^{- \\frac{1}{4}}", render: "latex" });

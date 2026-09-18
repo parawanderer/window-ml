@@ -24,7 +24,8 @@ import { installServices } from "./services";
 import { extensionServices } from "./services-ext";
 import { ProfileBadge, SessionRow, AgentBadge } from "./reply";
 import { Composer } from "./composer";
-import { chartKey, keyRelay, fetchModels, pollPs, connectResourceStream, pollBackendHealth, VramPanel, PythonBench, BenchDrawer, BenchVer, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
+import { chartKey, keyRelay, fetchModels, pollPs, connectResourceStream, pollBackendHealth, VramPanel, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS, VRAM_PALETTE_KEY, VRAM_PALETTES, vramPalette } from "./vram";
+import { PythonBench, BenchDrawer, BenchVer } from "./vram-bench";
 import { CardApp, endActiveCardDrag } from "./hud-card";
 import { releaseAxisHold } from "./resource-chart";
 import {
