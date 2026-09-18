@@ -32,10 +32,15 @@ the page doesn't.
 lives in the page's **main world** (reachable by page scripts/userscripts), not
 the isolated content-script world.
 
-`background.ts` is the message router + run/approval/consent/print/nav spine;
-three cohesive leaf layers are split into their own modules it imports (all
-bundled back into `dist/background.js` by esbuild, so the split is invisible at
-runtime and to the tests, which load the bundle): **`sw-llm.ts`** (the
+`background.ts` is the message ROUTER + the print/nav spine; the cohesive leaf
+layers are split into their own modules it imports (all bundled back into
+`dist/background.js` by esbuild, so the split is invisible at runtime and to the
+tests, which load the bundle). **`sw-consent.ts`** is who is allowed to ask (the
+pending approval gates, the per-tab grant ledgers, `senderTrust`) and
+**`sw-runs.ts`** is what the worker knows about a run (`bgRuns`/`activeRuns`,
+the storage snapshot + rehydration, the replay buffer, the session pointer
+store) — a privileged handler consults the first and mutates the second, so
+neither belongs in the router. The other three are: **`sw-llm.ts`** (the
 per-format request builders `API_FORMATS`, `getConfig`, model-capability probes,
 `fetchLLM`/`streamLLM`/`streamAgentTurn` + `prepareRequest`, the model-list /
 `setModel` / unload plumbing), **`sw-fetch.ts`** (the ml.fetch GET, the rendered
