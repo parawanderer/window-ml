@@ -101,9 +101,14 @@ test("a type that MOVES out of contract.ts is still found, through the import th
     const { makeResolver } = genApi;
     const r = makeResolver(new URL("../src/contract.ts", import.meta.url).pathname);
     // Declared in contract.ts itself.
-    assert.ok(r.has("ChatOptions"), "a local declaration still resolves");
+    assert.ok(r.has("MlApi"), "a local declaration still resolves");
     // Declared elsewhere and reached only by following contract.ts's own imports.
     assert.ok(r.has("DynamicToolNamespace"), "an imported declaration resolves through the import that binds it");
+    // And through the BARREL: contract.ts was split by theme, so these are declared in contract-*.ts files
+    // and reach a reader only via `export * from`. This is the case the split actually depends on, and it is
+    // load-bearing for about a hundred `import("./contract").X` type queries that no tool would rewrite.
+    for (const n of ["ChatOptions", "AgentResult", "MlTool", "FetchResult", "MlConfig", "RenderDescriptor", "MlDebugEvent", "LoadedModel", "StartRunPayload"])
+        assert.ok(r.has(n), `${n} moved to a themed module and must still resolve through contract.ts's barrel`);
     assert.ok(!r.has("ThisTypeDoesNotExistAnywhere"), "and an unknown name stays unknown");
 });
 
@@ -171,10 +176,12 @@ test("stripPrivateMembers keeps a well-formed interface and drops multi-line `_`
 });
 
 test("parseDecls captures whole declarations, including multi-line type aliases", () => {
-    const decls = parseDecls(CONTRACT);
-    assert.equal(decls.get("MlApi").kind, "interface");
-    assert.equal(decls.get("MlPublicConfig").kind, "type");
-    // MlPublicConfig is a multi-line `Pick<MlConfig, …>`; a scanner that stopped at the
-    // first line would silently truncate the field list.
-    assert.ok(decls.get("MlPublicConfig").body.join("\n").includes("apiFormat"));
+    assert.equal(parseDecls(CONTRACT).get("MlApi").kind, "interface");
+    // MlPublicConfig is a multi-line `Pick<MlConfig, …>`; a scanner that stopped at the first line would
+    // silently truncate the field list. It lives in contract-config.ts since the contract was split by theme,
+    // so parseDecls is asked about the file that DECLARES it — this is the single-file scanner, and the
+    // following-imports behaviour is the resolver's job, asserted separately below.
+    const config = parseDecls(readFileSync(new URL("../src/contract-config.ts", import.meta.url), "utf8"));
+    assert.equal(config.get("MlPublicConfig").kind, "type");
+    assert.ok(config.get("MlPublicConfig").body.join("\n").includes("apiFormat"));
 });

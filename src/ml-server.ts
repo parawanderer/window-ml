@@ -14,7 +14,7 @@
 
 import { makeBackgroundTaskPromise } from "./bridge";
 import { emitDebug } from "./bus";
-import type { MlPublicConfig } from "./contract";
+import type { MlPublicConfig } from "./contract-config";
 import type { ServerTool, ServerToolResult, OllamaInfo, LoadedModel } from "./contract-server";
 import { Embedding } from "./embedding";
 

@@ -6,10 +6,10 @@
 import { signal } from "@preact/signals";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LexicalMetric, ProtoMode } from "../contract";
+import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LexicalMetric, ProtoMode } from "../contract-config";
 import type { VisionSupport } from "../contract-render";
 import type { LoadedModel, ServerTool } from "../contract-server";
-import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../contract";
+import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "../contract-config";
 import { DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX } from "../contract-render";
 import { detectGroundingModel, generatesText, producesEmbeddings } from "../contract-server";
 import { PY_PACKAGES } from "../python-env";

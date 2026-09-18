@@ -8,7 +8,8 @@ import type { RequestHint } from "./contract";
 import type { NeutralMessage, ToolCall, TokenUsage } from "./contract-chat";
 import type { ApprovalDecision } from "./contract-agent";
 import type { StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, InjectMessagePayload } from "./contract-messages";
-import { modelFilterAllows, hintSession } from "./contract";   // single source of truth (see contract.ts)
+import { hintSession } from "./contract";   // single source of truth (see contract.ts)
+import { modelFilterAllows } from "./contract-config";
 import { UI_OUT_CAP } from "./contract-chat";
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";

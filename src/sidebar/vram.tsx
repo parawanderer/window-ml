@@ -5,7 +5,7 @@ import type { WireFrame } from "../events-wire";
 import { useState, useEffect, useRef, useMemo } from "preact/hooks";
 import type { RunStats } from "../contract-chat";
 import type { RenderDescriptor } from "../contract-render";
-import { fmtCtx } from "../contract";
+import { fmtCtx } from "../contract-config";
 import { isBackendUnreachable } from "../contract-server";
 import { signal, effect } from "@preact/signals";
 import type { ComponentChildren } from "preact";
