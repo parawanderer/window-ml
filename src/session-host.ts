@@ -350,6 +350,14 @@ export type Command =
      *  `forbidden` — the client asked for something it may not ask for — rather than being silently dropped from the
      *  list. Scopes are an open enumeration, and these are the members that must never be settable over the wire. */
     | { type: "device.scopes"; runtime: RuntimeId; principal: PrincipalId; scopes: Scope[] }
+    /**
+     * Bring a tab, and the window holding it, to the front. What a person at the machine is LOOKING AT, which is why
+     * it is `drive` and not `view`: watching a runtime should not be able to move its windows.
+     *
+     * Only a tab `tabs.list` would show, i.e. an http(s) one. A client can only have GUESSED any other id, so it is
+     * answered `not-found` rather than `forbidden`, which would confirm that the tab exists.
+     */
+    | { type: "tab.focus"; runtime: RuntimeId; tabId: number }
     /** A screenshot on demand, never streamed. `maxBytes` is a ceiling the runtime may lower. */
     | { type: "tab.screenshot"; runtime: RuntimeId; target: { tabId: number } | { session: SessionId }; maxBytes?: number }
     /** Outline an element (`selector`) or a canvas point/box (`token`) on the session's page; `null` clears it. */
@@ -383,6 +391,7 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "device.renew": "admin",
     "device.revoke": "admin",
     "device.scopes": "admin",
+    "tab.focus": "drive",
     "tab.screenshot": "screen",
     "page.highlight": "drive",
     "side.call": "drive",
@@ -531,6 +540,7 @@ export interface CommandResultData {
     "device.renew": { notAfterMs: number };
     "device.revoke": Record<string, never>;
     "device.scopes": { scopes: Scope[] };
+    "tab.focus": Record<string, never>;
     "tab.screenshot": { image: ImageDataUrl; width: number; height: number; ts: number };
     "page.highlight": Record<string, never>;
     /** `structured` is the parsed JSON when a `schema` was sent */
