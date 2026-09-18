@@ -29,7 +29,46 @@ message Frame {
     Error error = 11;
     // defined in identity.proto
     Challenge challenge = 12;
+    // pairing (docs/design/pairing.md): the only frames a peer may send before it has a certificate
+    PairOffer pair_offer = 13;
+    PairFetch pair_fetch = 14;
+    PairAnswer pair_answer = 15;
+    Paired paired = 16;
   }
+}
+
+// ------------------------------ pairing ------------------------------
+// The hub holds two blobs for ten minutes under SHA-256 of a code it never learns, and reads neither. What stops a
+// hub pairing ITSELF is not any of this: it is the person comparing one fingerprint of the offered keys on both
+// screens. See docs/design/pairing.md.
+
+// A principal with no certificate yet -> hub, its first frame instead of a Hello. The hub answers `Paired` with
+// nothing in it (the offer is held), or `Error`.
+message PairOffer {
+  // SHA-256 of the pairing code the person is carrying; the hub never sees the code
+  bytes code_hash = 1;
+  // an encoded PairingOffer, which the hub stores and does not read
+  bytes offer = 2;
+}
+
+// A principal that HAS a certificate -> hub: the offer waiting under this code, so the person can be shown its
+// fingerprint. Answered with `Paired` carrying the offer, or `Error{UNAVAILABLE}` when there is no such slot.
+message PairFetch {
+  bytes code_hash = 1;
+}
+
+// A principal that has a certificate -> hub: the answer for that slot, once the person has confirmed. Only the first
+// is taken.
+message PairAnswer {
+  bytes code_hash = 1;
+  // an encoded PairingAnswer, sealed to the offered agreement key; the hub stores it and does not read it
+  bytes answer = 2;
+}
+
+// hub -> peer: whichever of the two blobs this peer asked for. Both empty means "held, nothing yet".
+message Paired {
+  bytes offer = 1;
+  bytes answer = 2;
 }
 
 // principal -> hub, the first frame a principal sends, answering the hub's Challenge.
@@ -166,6 +205,13 @@ message Presence {
   bytes principal = 1;
   Role role = 2;
   bool online = 3;
+  // The chain this principal presented, leaf first, on a presence that says it came ONLINE; empty when it went away.
+  //
+  // Certificates are public — they are what the hub verifies with public keys only — and a publisher needs the leaf's
+  // agreement key to wrap a stream key to a device. Without this, a runtime would know a phone is online and have no
+  // way to seal anything to it. A subscriber verifies the chain itself against the account root it already holds;
+  // the hub passing it along is a convenience, not a claim.
+  repeated Certificate chain = 4;
 }
 
 message Ping {

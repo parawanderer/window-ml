@@ -50,7 +50,16 @@ export type HubEvent =
     | { kind: "result"; opened: Opened }
     /** a direct envelope this client could not open as a command: the bytes, so a caller can try another opener */
     | { kind: "unopened"; sender: Bytes; envelopeKind: Kind; payload: Bytes; reason: string }
-    | { kind: "presence"; principal: Bytes; role: Role; online: boolean }
+    /**
+     * A principal came online or went away. `chain` is what it presented, leaf first, and is present only on a
+     * principal coming ONLINE — it is empty when one goes away.
+     *
+     * It is carried because without it a peer knows another is there and has no way to seal anything to it: the
+     * leaf's agreement key is what a command is sealed to and what a stream key is wrapped to. Certificates are
+     * public, and the hub passing them along is a convenience and not a claim — a consumer verifies the chain
+     * against the account root it already holds before trusting anything in it, the label included.
+     */
+    | { kind: "presence"; principal: Bytes; role: Role; online: boolean; chain: Certificate[] }
     | { kind: "backfilled"; stream: StreamRef | undefined; epoch: number; seq: number; truncated: boolean }
     | { kind: "gap"; stream: StreamRef | undefined; dropped: number }
     /** the hub reporting something about this connection; THROTTLED leaves it open, the rest close it */
@@ -236,7 +245,7 @@ export class HubClient {
         }
         if (frame.presence) {
             const p = frame.presence;
-            this.push({ kind: "presence", principal: bytes(p.principal), role: p.role, online: p.online });
+            this.push({ kind: "presence", principal: bytes(p.principal), role: p.role, online: p.online, chain: p.chain ?? [] });
             return;
         }
         if (frame.backfilled) {
