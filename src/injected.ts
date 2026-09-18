@@ -19,10 +19,13 @@ import type {
     ToolRenderInput,
     TokenUsage,
     MlHistory,
-    TableSource, TableValue,
-    TablePreview,
+
     DerefValue, ShotBox, VisionMemory, AnswerMedia, MlAnswer, RequestHint, RequestUse
 } from "./contract";
+import type {
+    TableSource, TableValue,
+    TablePreview
+} from "./contract-fetch";
 import type { FetchLlmPayload, StoredSession, RebuildConfig } from "./contract-messages";
 import type {
     SessionRef,
