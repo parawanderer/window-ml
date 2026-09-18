@@ -6,7 +6,7 @@
 // label list is a copy that will drift.
 //
 // Pure — no DOM, no preact. Unit-tested.
-import type { FetchAttempt } from "../contract";
+import type { FetchAttempt } from "../contract-fetch";
 
 /** What each rung MEANS. A row shows the URL when it has one, but a `.md` URL and a declared one look
  *  identical, so the meaning has to be carried separately. */

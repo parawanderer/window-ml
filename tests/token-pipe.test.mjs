@@ -548,7 +548,7 @@ test("labels: the similarity metric is swappable, and the guard travels with it"
 // The metric is config, so the benchmark can vary it without a rebuild — and a stale or absent value must
 // degrade to the default rather than breaking pointer resolution.
 test("labelMatch: the configured metric reaches resolution, and a bad value falls back", async () => {
-    const { DEFAULT_CONFIG, LEXICAL_METRICS } = await import("../src/contract.ts");
+    const { DEFAULT_CONFIG, LEXICAL_METRICS } = await import("../src/contract-config.ts");
     assert.equal(DEFAULT_CONFIG.labelMatch, "hybrid");
     assert.ok(LEXICAL_METRICS.includes(DEFAULT_CONFIG.labelMatch), "the default must be one of the offered metrics");
 

@@ -2242,6 +2242,7 @@
     },
     "SubcallUsage": {
       "type": "object",
+      "description": "What a run spent on model calls it made on its own behalf (a delegated look, locate or verify), totalled, and optionally broken down by model and by individual call. Separate from the run's own usage because the loop never sees these turns, so nothing else can add them up.",
       "properties": {},
       "additionalProperties": true
     },

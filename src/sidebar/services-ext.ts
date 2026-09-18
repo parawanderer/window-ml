@@ -3,7 +3,7 @@
 // shared components used to make inline: the background over `chrome.runtime`, and the frame's parent (the
 // content-script shell, or panel.ts) over `postMessage`. The parent can prove a message came from this extension
 // iframe, which is what makes an approval posted this way unforgeable by the page.
-import { hintSession } from "../contract";
+import { hintSession } from "../contract-run";
 import { config } from "./store";
 import { bareHash, type SidebarServices, type SideCallRequest, type SideCallResult } from "./services";
 

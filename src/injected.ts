@@ -1,35 +1,45 @@
 // This runs in the "Main World" (same as the page JS)
 
 import type {
-    NeutralMessage,
+    MlApi,
+    JsonSchema} from "./contract";
+import type { RequestHint, RequestUse } from "./contract-run";
+import type { DerefValue } from "./contract-pointers";
+import type {
+    NeutralMessage, ChatOptions,
+    ExtendProfile, ToolCall,
+    TokenUsage,
+    MlHistory
+} from "./contract-chat";
+import type {
     MlTool,
     ApprovalRequest,
     ApprovalDecision,
     AgentResult,
     AgentOptions,
-    MlAgentHandle,
-    MlApi,
-    AgentTranscriptEntry,
+    MlAgentHandle, AgentTranscriptEntry, MlAnswer
+} from "./contract-agent";
+import type {
+    RenderDescriptor,
+    ToolFeedback,
+    ToolRenderInput, ShotBox, VisionMemory, AnswerMedia
+} from "./contract-render";
+import type {
+    TableSource, TableValue,
+    TablePreview
+} from "./contract-fetch";
+import type { FetchLlmPayload, StoredSession, RebuildConfig } from "./contract-messages";
+import type {
     SessionRef,
     DebugChatStart,
     DebugChatResult,
     DebugChatError,
-    DebugSessionConfig,
-    FetchLlmPayload,
-    ChatOptions,
-    ExtendProfile,
-    JsonSchema,
-    ToolCall,
-    RenderDescriptor,
-    ToolFeedback,
-    ToolRenderInput,
-    StoredSession,
-    TokenUsage,
-    MlHistory,
-
-    DerefValue, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer, RequestHint, RequestUse
-} from "./contract";
-import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated, hintSession, shortHash } from "./contract";
+    DebugSessionConfig
+} from "./contract-debug";
+import { hintSession, shortHash } from "./contract-run";
+import { outputCapEscalated } from "./contract-pointers";
+import { DEFAULT_GROUNDING_RANGE } from "./contract-render";
+import { detectGroundingModel } from "./contract-server";
 import { evalReadonly } from "./readonly-exec";
 import { expandPointers } from "./pointer-macro";   // `@tool:` → a real dereference call, before the dialect sees it
 import { htmlToMarkdown } from "./html-to-md";

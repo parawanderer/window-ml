@@ -32,6 +32,31 @@ the page doesn't.
 lives in the page's **main world** (reachable by page scripts/userscripts), not
 the isolated content-script world.
 
+**The CONTRACT is one contract in eleven files.** `contract.ts` holds `MlApi` (the shape of `window.ml`
+itself), `JsonSchema`, and a BARREL — `export * from "./contract-<theme>"` for each themed module. Everything
+still imports from `./contract`, and that is not politeness: roughly a hundred references are written as the
+inline type query `import("./contract").X`, which is a string no refactoring tool rewrites, and `gen-api-docs`
+and `gen-export-schema` both start from this file by path. All of them follow an `export … from` out to the
+real declaration, so the barrel is what makes the split invisible. **Run `node scripts/index.mjs '^contract-'
+--kind file --word` for this list live**:
+
+| Module | What it holds |
+| --- | --- |
+| `contract-agent.ts` | `MlTool` and the loop around one: `AgentOptions`, `ToolContext`, `ToolResult`, `AgentResult`, and the approval pair (a request describes what is ASKED; a grant records that a human answered) |
+| `contract-messages.ts` | the wire: the three message-name unions and every payload that carries more than a string, plus `StoredSession` |
+| `contract-config.ts` | `MlConfig`, `DEFAULT_CONFIG` (duplicated in popup.ts — keep in step), and `MlPublicConfig`, whose omissions are a security boundary |
+| `contract-debug.ts` | the debug event stream: every `MlDebugEvent` four surfaces render and `run.json` carries |
+| `contract-server.ts` | what the backend reports about itself, and the pure readings of it (`generatesText`, `backendStateFrom`, …) |
+| `contract-chat.ts` | a model call and what came back: `NeutralMessage`, `ChatOptions`, `TokenUsage`, and `RunStats` — the one place a run's tok/s is computed |
+| `contract-fetch.ts` | `FetchResult`, `ContentKind`, and the whole `TableLike` representation. No imports, so a parser can be pointed at it alone |
+| `contract-render.ts` | `RenderDescriptor` and the vision shapes it is usually derived from |
+| `contract-pointers.ts` | resolving a `@tool:<id>`, and the output cap that decides how much of one reaches the context |
+| `contract-run.ts` | a run's identity and provenance: `shortHash`, the request hints, the background-run pair |
+
+**Give a new module a blank line after its header comment.** A `//` run touching the first declaration is read
+as that declaration's documentation by anything that parses comments by adjacency, and `gen-api-docs` duly
+printed two module headers into the model-facing API reference. `tests/api-docs.test.mjs` fails on it now.
+
 `background.ts` is the message ROUTER + the print/nav spine. Every cohesive leaf
 layer lives in its own `sw-*.ts` module it imports — all bundled back into
 `dist/background.js` by esbuild, so the split is invisible at runtime and to the
@@ -250,7 +275,7 @@ learned by shipping the wrong version first.
   (`@tool:"label"`, 7-hex id, bare tool name) are told apart by SHAPE, never tried in order.
 - **Python.** Each call is stateless; `readonly` mode hardens the sandbox and may auto-approve, `full` always asks.
   The wheels (`pyodide-wheels/`) are gitignored and a missing set fails only at run time.
-- **Tables.** One representation (`TableLike`, contract.ts) and one set of parsers (`table-data.ts`) for every
+- **Tables.** One representation (`TableLike`, contract-fetch.ts) and one set of parsers (`table-data.ts`) for every
   producer — a fetched CSV/TSV/Parquet, a DOM table, the Sheets export, a pointer read. Never hand-split a
   delimited body: the separator is DISCOVERED, and assuming a comma is the bug this replaced. `shape` is the
   SOURCE's row count even when `rows` is a prefix, so pass `rowCount` to `tableOf` whenever you cap. Delimited
@@ -418,8 +443,8 @@ scanner to read those fixed thirty of them with no churn, rather than having me 
 their declarations to satisfy an indexer. Playbook: `.claude/skills/code-index/SKILL.md`.
 
 **RULE — JSDoc that CONTRADICTS the code is a defect; JSDoc that is INCOMPLETE is not.** In a `.ts` file the
-compiler treats JSDoc as prose — `@param` names and types are never checked — and this repo lifts contract.ts's
-JSDoc verbatim into what the MODEL reads, so drift there ships a wrong API reference. `node
+compiler treats JSDoc as prose — `@param` names and types are never checked — and this repo lifts the
+contract's JSDoc verbatim into what the MODEL reads, so drift there ships a wrong API reference. `node
 scripts/check-jsdoc.mjs` reports three things: a doc block immediately followed by another doc block (it
 documents nothing), a `@param` naming something the declaration does not have, and a `@param {string}` on an
 `x: number` — the last only when both are concrete primitives that disagree, because `{Object}` for a `Record`
@@ -433,7 +458,7 @@ rather than deleted, because a stranded block is usually the only copy of what i
 
 **A file that has grown past ~800 lines gets a REMINDER** (`node scripts/check-file-size.mjs`) — in the
 pre-commit hook and in CI's `tools` job suggesting it be split into logical modules, with per-module tests where that follows. It never
-fails a build — size is a judgement, and `contract.ts` is long because it is one contract. It is RATCHETED:
+fails a build — size is a judgement, and a long LIST is not a long module. It is RATCHETED:
 fifteen files are already over the line, so it speaks only when a change makes an oversized file bigger,
 which is the moment the advice is actionable. `--all` lists every one of them when you do want the survey.
 Tests are exempt: a long test file is a long LIST, which is not the same failure as a long module.
@@ -713,7 +738,7 @@ optional: absent means "this server does not report it", and the panel says so r
 **Request hints** (`hint` on every generation request) tell the patched Ollama WHO WAITS for each output
 (`use`), which run or conversation it belongs to (`session`, `wml-<hash>`) and what the session waited on
 (`after`), so placement and keep-alive can later be learned from real use; today they are only recorded on
-`gen.end`. `wireHint` (contract.ts) is the one place limits and defaults apply. **An absent `use` means unknown:
+`gen.end`. `wireHint` (contract-run.ts) is the one place limits and defaults apply. **An absent `use` means unknown:
 never guess one for a caller that did not say.** A tool's own model calls inherit the running run's session
 (`currentRunSession`, bound while the tool runs), and the observe/bench harnesses mark their traffic
 `synthetic` (`SYNTHETIC=0` for a run a person drives). Each request also carries our own `request` id, back on
@@ -732,7 +757,7 @@ exactly instead of by model and end time. The full mapping is in `docs/FORKED-BA
   `prepareRequest` (main/ocr/grounding/utility all pass through) and in `setModel`, and
   `LIST_MODELS` filters its response so a page's `ml.models()` never even sees an excluded
   (e.g. cloud) model. Invalid regex fails **open** (a typo can't brick every call; settings
-  flags it). `modelFilterAllows` (contract.ts, pure) is the single source shared by the
+  flags it). `modelFilterAllows` (contract-config.ts, pure) is the single source shared by the
   background enforcement and the settings row/datalist markers. `modelFilter` is NOT in the
   `GET_CONFIG` public subset — the page can't read the filter.
 - The background's cross-origin fetches rely on `<all_urls>` host permission,

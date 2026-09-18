@@ -17,7 +17,7 @@ import { serializeSessionJson } from "./export-json";
 import type { Session, AgentStep } from "./store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown } from "./format";
 import { splitAnswer, hasTokens, resolveTokenStep } from "../answer-tokens";
-import { runStats, fmtTokPerSec } from "../contract";
+import { runStats, fmtTokPerSec } from "../contract-chat";
 import { timedText } from "./timestamps";
 import { BUILD_INFO } from "../build-info.gen";
 

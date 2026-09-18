@@ -4,7 +4,7 @@
 
 import { truncate, shadowRootStats, iframeStats, markdownTwin } from "./dom";
 import { TOKEN_PAYLOAD_LEN, checkChar, formatToken } from "./token-id";
-import type { ShotBox, VisionMemory } from "./contract";
+import type { ShotBox, VisionMemory } from "./contract-render";
 
 /**
  * The agent's persistent JS scratchpad — a plain object injected into every `exec` body as the lexical
@@ -213,7 +213,7 @@ export const MIN_SHOT_PX = 4;
 // Context window cap for delegated vision sub-calls — the single source of truth
 // lives in contract.ts (shared with the sidebar's model-test); re-exported here so
 // page-world consumers (builtin-tools) keep importing it from util.
-export { VISION_NUM_CTX } from "./contract";
+export { VISION_NUM_CTX } from "./contract-render";
 
 /**
  * Crop a full-viewport PNG data URL down to an element's rect. Runs page-side

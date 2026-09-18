@@ -5,7 +5,7 @@
 // condition. A false positive would nag on a normal model error; a false negative hides a dead backend.
 import { test } from "node:test";
 import assert from "node:assert";
-import { isBackendUnreachable } from "../src/contract.ts";
+import { isBackendUnreachable } from "../src/contract-server.js";
 
 test("the background's translated message is detected", () => {
     assert.equal(isBackendUnreachable("Couldn't reach the server at http://gpubox:11434 (Failed to fetch). Is OpenWebUI / Ollama running there?"), true);

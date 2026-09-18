@@ -72,7 +72,10 @@ failure cannot be overridden.
 
 - **It is a dry run until you drop `--dry-run`**, and a blocked run writes nothing either way.
 - **The new file has no header comment.** Write one saying what the module is for; that is the one part of
-  a move that is not mechanical.
+  a move that is not mechanical. **Leave a blank line after it.** A `//` run touching the first declaration
+  reads as that declaration's documentation to anything that parses comments by adjacency — `gen-api-docs`
+  printed two such headers straight into the model-facing API reference, prose about storage keys and worker
+  lifetimes included. `tests/api-docs.test.mjs` now fails on it, but only for files the doc reaches.
 - **Comments are attached by adjacency.** JSDoc and comment lines directly above a declaration move with it;
   a comment separated by a blank line (a section banner, a file header) stays. A stale comment that sat above
   the wrong function moves with that function, exactly as it was.

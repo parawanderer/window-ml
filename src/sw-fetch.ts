@@ -5,8 +5,8 @@
 // reachable, so without it it's a cookie-authenticated read-any-URL exfil primitive), and only a safelisted,
 // non-auth subset of response headers is ever surfaced. Callers gate approval upstream (injected.ts); these
 // functions assume the decision was already made.
-import type { FetchResult, FetchFormat, FetchAttempt } from "./contract";
-import { acceptLanguageFrom } from "./contract";
+import type { FetchResult, FetchFormat, FetchAttempt } from "./contract-fetch";
+import { acceptLanguageFrom } from "./contract-fetch";
 import { classifyContent, jsonShape, markdownAlternateHref, resolveMarkdownAlternate, markdownSiblingUrl, isMarkdownResponse, typeFromExtension, typeFromHeader } from "./dom";
 import { looksParquet, tableFromParquet, looksArrowFile, tableFromArrow, MAX_TABLE_ROWS } from "./table-data";
 import type { ValueFormat } from "./value-store";

@@ -1,8 +1,8 @@
 // Per-session token / context-window usage — the occupancy bar and the delegated-subcall chip shown in
 // the detail header (and the HUD). Occupancy is the LATEST call's prompt+completion (each call re-sends
 // the whole history, so summing would double-count the shared prefix). Extracted from app.tsx.
-import type { TokenUsage } from "../contract";
-import { fmtCtx } from "../contract";
+import type { TokenUsage } from "../contract-chat";
+import { fmtCtx } from "../contract-config";
 import { config, psError, loadedModels } from "./store";
 import type { Session } from "./store";
 import { shownModel, normModel, seenContext } from "./model";

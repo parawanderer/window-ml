@@ -15,7 +15,7 @@
 // A hostile page reaches the background directly through the content-script relay, so a privileged or credentialed
 // operation must be authorized HERE, at the choke point, against `sender` — which Chrome sets and a page cannot forge.
 
-import type { ApprovalDecision } from "./contract";
+import type { ApprovalDecision } from "./contract-agent";
 import { getConfig } from "./sw-llm";
 
 // Design A: pending background-run approvals, keyed by `${runId}:${seq}`, resolved by a SET_APPROVAL
