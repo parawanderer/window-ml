@@ -461,6 +461,16 @@ pre-commit hook and in CI's `tools` job suggesting it be split into logical modu
 fails a build — size is a judgement, and a long LIST is not a long module. It is RATCHETED:
 fifteen files are already over the line, so it speaks only when a change makes an oversized file bigger,
 which is the moment the advice is actionable. `--all` lists every one of them when you do want the survey.
+
+**To decide WHERE to spend a refactor, use `--cost`, not `--all`.** `--all` sorts by length, which answers "what
+is big" — the wrong question, because a long file nobody opens costs nothing while a shorter one edited weekly
+costs a lot. `--cost` ranks by lines x commits-that-touched-it, roughly what a reader pays, since a file is only
+read when someone works on it. On this repo that reordering is not cosmetic: the three resource-panel files are
+half the total while being 15% of the lines, and `dom.ts`, fourth by length, is under 2%. It ignores the 800-line
+limit deliberately, because cost has no threshold and the size gate cannot see a 430-line file edited 42 times.
+Read the script's header before treating it as a verdict: commits are WRITES, so a heavily imported type module
+is read far more than it is edited (`contract.ts`: 327 lines, 85 importers), which is why fan-in is printed
+beside the score rather than folded into it.
 Tests are exempt: a long test file is a long LIST, which is not the same failure as a long module.
 
 **RULE — move code between files with `node scripts/move-symbols.mjs`, never by copy and paste.**
