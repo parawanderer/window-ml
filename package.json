@@ -25,9 +25,15 @@
     "bench:calibrate": "npm run build && node --import tsx tests/e2e/bench/run.mjs tests/e2e/bench/specs/smoke.bench.ts --repeats 1 --no-cache && node tests/e2e/bench/check-calibration.mjs",
     "check-format": "node scripts/check-format.mjs",
     "lint": "npm run check-format && npm run typecheck",
-    "gen-proto": "node scripts/gen-proto.mjs"
+    "gen-proto": "node scripts/gen-proto.mjs",
+    "mobile:android": "node scripts/build-web.mjs && node scripts/mobile.mjs android",
+    "mobile:ios": "node scripts/build-web.mjs && node scripts/mobile.mjs ios"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/ios": "^8.5.2",
     "@playwright/test": "^1.50.1",
     "@ts-morph/common": "^0.29.0",
     "@types/chrome": "^0.2.2",

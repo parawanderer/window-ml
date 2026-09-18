@@ -75,6 +75,31 @@ does not look like a missing download: the `python_exec` tool fails at RUNTIME w
 
 Fetch it if you will touch `python_exec` or want the tests that exercise real pandas.
 
+## 4b. Optional, and genuinely optional: the phone app
+
+**You do not need this, and nothing in the test suite does.** The phone app is the chat page packaged with
+Capacitor, CI builds it on every change, and nobody working on this repo should have to install Android Studio or
+Xcode to change a page they can open in a browser. If the suite ever comes to need them, that is a bug.
+
+The parts that need no tooling at all work here already — `cap add` writes template files and `cap sync` copies
+`dist-web/` into them:
+
+```bash
+npm run mobile:android    # scaffolds android/ (gitignored) and syncs the web build into it
+npm run mobile:ios        # the same for ios/
+```
+
+What needs the tooling is COMPILING what those produce. If you want to run the app on a device or a simulator:
+
+- **Android.** A JDK (17 works) and the Android SDK, which Android Studio installs; then
+  `cd android && ./gradlew assembleDebug` for an APK, or open `android/` in Android Studio and press run.
+- **iOS.** Xcode, on a Mac; then open `ios/App` and press run. A simulator build needs no signing certificate; a
+  device build needs one, which this repo deliberately does not hold.
+
+Re-run the `mobile:` script after any change to the chat page: the native project holds a COPY of `dist-web/`, so
+without a sync you are looking at the bundle from last time. That is the one trap here, and it looks exactly like a
+change that did nothing.
+
 ## 5. Build
 
 ```bash
