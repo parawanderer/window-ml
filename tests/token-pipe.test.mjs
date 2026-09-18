@@ -568,7 +568,7 @@ describe("the pipe dialect is described once", () => {
     const dialectish = (s) => /grep PATTERN|chained with/.test(s);
 
     test("no tool PARAMETER carries the dialect verbatim any more", async () => {
-        const files = ["../src/tools.ts", "../src/builtin-tools.ts", "../src/python-tool.ts", "../src/injected.ts", "../src/ml-server.ts", "../src/ml-tool-factories.ts"];
+        const files = ["../src/tools.ts", "../src/builtin-tools.ts", "../src/python-tool.ts", "../src/injected.ts", "../src/ml-server.ts", "../src/ml-tool-factories.ts", "../src/ml-vision.ts"];
         for (const f of files) {
             const src = await readFile(new URL(f, import.meta.url), "utf8");
             for (const line of src.split("\n")) {
