@@ -260,8 +260,12 @@ test("a run's history is kept for a session the store holds, and dropped for one
     await flush();
     const row = await storedRow(idb, "run00010");
     assert.equal(row?.history?.kind, "agent");
-    assert.equal(row.history.task, "look it up");
     assert.ok(row.history.messages.length > 0, "what the model would be continued from");
+    // The payload is what makes it continuable rather than merely readable: the system prompt, the tool
+    // descriptors and the rebuild config, none of which can be reconstructed from the transcript.
+    assert.equal(row.history.payload.task, "look it up");
+    assert.equal(row.history.payload.systemPrompt, "S");
+    assert.equal(row.history.payload.runId, "run00010");
 
     // Not kept: a one-off run stays one-off. Whether a run persists is `ephemeral`/`persistUiRuns`, and writing a
     // history must never be a second way to answer that.

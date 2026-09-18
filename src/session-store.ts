@@ -9,9 +9,9 @@
 // `planEviction` in `value-store.ts` is the same shape of decision for stored VALUES and deliberately not shared:
 // a value is idle when nothing has READ it and leaves a tombstone so a later dereference can say why it is gone,
 // while a session is evicted whole, by age, and simply stops being listed. The common part is four lines.
-import type { MlDebugEvent } from "./contract-debug";
+import type { MlDebugEvent, SubcallUsage } from "./contract-debug";
 import type { NeutralMessage } from "./contract-chat";
-import type { RebuildConfig, StoredSession } from "./contract-messages";
+import type { StartRunPayload, StoredSession } from "./contract-messages";
 import type { SessionSummary } from "./session-host";
 
 /** How much of a person's disk the saved sessions may use before the oldest are dropped. */
@@ -35,8 +35,14 @@ const SESSIONS = "sessions", EVENTS = "events";
  */
 export type SessionHistory =
     | { kind: "chat"; session: StoredSession }
-    /** a run: what it said, and enough to rebuild its tools on another page (`RebuildConfig`) */
-    | { kind: "agent"; messages: NeutralMessage[]; rebuild?: RebuildConfig; task?: string; model?: string | null; maxSteps?: number };
+    /**
+     * A run: what it said, and the payload it was started with. The payload is what makes it CONTINUABLE rather
+     * than merely readable — it carries the system prompt, the tool descriptors and the `RebuildConfig` a fresh
+     * page rebuilds the toolset from, which is the whole of what `RESUME_RUN` needs and none of which can be
+     * reconstructed from the transcript. `sub` is the session's cumulative sub-call spend, so a resumed turn
+     * keeps reporting the session total rather than restarting the tally.
+     */
+    | { kind: "agent"; messages: NeutralMessage[]; payload?: StartRunPayload; sub?: SubcallUsage };
 
 /** One saved session's row: its summary, and what it costs. */
 export interface StoredSessionRow {

@@ -6,6 +6,7 @@
 // Pure over its dependencies (`CommandDeps`), which sw-sessions.ts and background.ts fill in with the real ones, so
 // every command's decisions are tested in Node without a browser (tests/session-commands.test.mjs).
 import type { NeutralMessage } from "./contract-chat";
+import type { SessionHistory } from "./session-store";
 import type { Command, CommandError, CommandResult, CommandType, SessionId, TabInfo } from "./session-host";
 import type { SessionIndex } from "./session-index";
 
@@ -44,6 +45,15 @@ export interface CommandDeps {
     hostsChat(hash: string): boolean;
     /** keep this session past the worker's life: what an absent `ephemeral` means on the command that started it */
     keepSession(hash: string): void;
+    /** what a saved session would be CONTINUED from, or null when this browser keeps no history for it */
+    history(hash: string): Promise<SessionHistory | null>;
+    /**
+     * Hand a saved run back to a page: put it where a resume looks for it, and have the page rebuild its toolset.
+     * `"adopted"` when that page now holds it.
+     */
+    adoptSession(tabId: number, hash: string, history: SessionHistory): Promise<PageOutcome | "adopted">;
+    /** note in the session's own transcript that it has been picked up on another page */
+    noteResumed(hash: string, tabId: number, note: { id: string; url: string; fromUrl?: string; afterMs: number; dropped: string[] }): void;
     /** start a run on a tab, through that page's own start path; resolves with what the page reported */
     startAgent(tabId: number, opts: { task: string; images?: string[]; model?: string; maxSteps?: number; vision?: true; stream?: true }): Promise<{ outcome: PageOutcome | "started"; hash?: string }>;
     /** open a new tab at a URL and wait until the extension can talk to it; rejects when it never answers */
@@ -67,6 +77,21 @@ export const SCREENSHOT_MAX_BYTES = 4 * 1024 * 1024;
 const STEER_TEXT_MAX = 20_000;
 /** One message's text, on a chat this worker hosts. Long enough for a pasted document, short of a denial of service. */
 const CHAT_TEXT_MAX = 100_000;
+/**
+ * What a resumed session LOSES, in words a person and a model both read. Never empty: something is always dropped,
+ * because the new page is a different document.
+ *
+ * It is a list rather than prose so the model's transcript and the log's divider cannot disagree about it, and it
+ * lives beside the command because the command is what causes the loss.
+ */
+export const RESUME_DROPS = [
+    "live references to elements on the old page",
+    "the page's state object",
+    "cached fetches",
+    "tools a page script defined (functions cannot be stored)",
+    "approval grants (consent is per page, and is asked again)",
+] as const;
+
 /** A system prompt set at `chat.start`. */
 const CHAT_SYSTEM_MAX = 20_000;
 
@@ -110,7 +135,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
      * `session.resume`, which ask the same question — resuming on another page IS a navigation, so it picks a target
      * the way starting does.
      */
-    const resolveTarget = async (target: { kind?: unknown; tabId?: unknown; url?: unknown } | undefined): Promise<{ tabId: number; error?: undefined } | { tabId?: undefined; error: CommandResult<any> }> => {
+    const resolveTarget = async (target: { kind?: unknown; tabId?: unknown; url?: unknown } | undefined): Promise<{ tabId: number; url: string; error?: undefined } | { tabId?: undefined; url?: undefined; error: CommandResult<any> }> => {
         if (target?.kind === "tab") {
             if (typeof target.tabId !== "number") return { error: fail("invalid", "a tab target needs a tab id") };
             const tab = await deps.getTab(target.tabId);
@@ -118,13 +143,15 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             // The extension's content script does not run on the browser's own pages, so a run there could
             // never see anything. Refused here rather than started and left waiting for a page that cannot answer.
             if (!/^https?:/i.test(tab.url)) return { error: fail("forbidden", "the extension cannot run on that page") };
-            return { tabId: target.tabId };
+            return { tabId: target.tabId, url: tab.url };
         }
         if (target?.kind === "blank") {
             const url = (typeof target.url === "string" && target.url.trim()) || deps.startPage();
             if (!url) return { error: fail("invalid", "a blank target needs a url, or a start page set in this browser's settings") };
             if (!/^https?:\/\//i.test(url)) return { error: fail("invalid", "a start page must be an http(s) url") };
-            try { return { tabId: await deps.openTab(url) }; }
+            // The url is carried back rather than read off the tab afterwards: a tab this call just opened may not
+            // be reportable yet, and the page a resume landed on is the one that was asked for either way.
+            try { return { tabId: await deps.openTab(url), url }; }
             catch (err) { return { error: fail("failed", `could not open a tab at ${url}: ${(err as Error)?.message || err}`) }; }
         }
         if (target?.kind === "headless") return { error: fail("unsupported", "this browser has no headless runtime") };
@@ -181,6 +208,53 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             // still appear in the index, so this says what is known rather than inventing a session id.
             if (r.outcome === "none") return fail("failed", "the page did not start a run");
             return fail("unavailable", "the page did not answer; it may still be loading, or the extension cannot run there");
+        },
+
+        /**
+         * Pick a saved session up on another page. From the agent's side this is a NAVIGATION — everything in its
+         * context describes the page it last ran on — so it names a target the way `agent.start` does and the model
+         * is told, in its own transcript, what no longer holds.
+         *
+         * It does not take a turn. Resuming makes the session live on that page; the person's next `session.send`
+         * is the turn, which is also why a resume of something already running is a conflict rather than a no-op.
+         */
+        "session.resume": async (c) => {
+            const s = session(c);
+            if (s.error) return s.error;
+            const summary = deps.index.get(s.id.hash)!;
+            // A chat with no page is already this worker's, wherever it is: its next message rehydrates it. Giving
+            // it a tab would not make it more resumable, it would give it a page it does not use.
+            if (pagelessChat(s.id.hash)) return fail("unsupported", "a chat with no page resumes on its next message; it needs no tab");
+            if (summary.status === "running" || summary.status === "waiting") return fail("conflict", "that session is still going; it does not need resuming");
+            if (!summary.saved) return fail("not-found", "that session was not saved, so there is nothing to continue from");
+            const history = await deps.history(s.id.hash);
+            if (!history) return fail("not-found", "this browser kept no history for that session");
+            if (history.kind !== "agent") return fail("unsupported", "only a run resumes onto a page");
+            if (!history.payload) return fail("not-found", "that session was saved before this browser kept enough to continue a run");
+
+            const t = await resolveTarget(c.target as { kind?: unknown; tabId?: unknown; url?: unknown } | undefined);
+            if (t.error) return t.error;
+
+            let outcome: PageOutcome | "adopted";
+            try { outcome = await deps.adoptSession(t.tabId, s.id.hash, history); }
+            catch { return fail("unavailable", "that page is not reachable; the extension may not run there"); }
+            if (outcome !== "adopted") {
+                if (outcome === "no-answer") return fail("unavailable", "that page did not answer; it may still be loading");
+                return fail("failed", "that page did not take the session");
+            }
+            // Only once the page holds it: a note about a resume that did not happen would be a lie in the one
+            // place a reader and the model both trust.
+            const at = deps.now();
+            deps.noteResumed(s.id.hash, t.tabId, {
+                // ONE resume, not one session: the index de-duplicates a note by its id, because two surfaces can
+                // report the same resume, and a session resumed twice would otherwise show one divider for both.
+                id: `${s.id.hash}-r${at}`,
+                url: t.url,
+                ...(summary.page?.url ? { fromUrl: summary.page.url } : {}),
+                afterMs: Math.max(0, at - summary.lastTs),
+                dropped: [...RESUME_DROPS],
+            });
+            return ok({ session: s.id });
         },
 
         "chat.start": async (c) => {

@@ -322,6 +322,41 @@ disk and no row to hang a history on. A RUN is the other way round: `saveRunHist
 whether a run is kept was already answered by `ephemeral` or `persistUiRuns`, and a history must not become a second
 way to answer it. A history for a session the store does not hold is dropped.
 
+## Resuming a saved run on another page
+
+`session.resume` makes a saved run live on a tab. It does NOT take a turn: the person's next `session.send` is the
+turn, which is why resuming something still running is a `conflict` rather than a no-op.
+
+**It is the cross-page machinery, not a second one.** A run that navigates already re-adopts on the new document:
+`_adoptRun(hash, rebuild)` rebuilds the builtin toolset from the carried `RebuildConfig` and registers the run by
+hash, and `__mlSessionSend` already routes a message for a registered hash to `agentRegistry` rather than to the
+chat path. Resuming reuses all of it. The only thing that was missing is that `RESUME_RUN` reads `bgRuns`, which is
+worker memory, so a run that settled yesterday was not in it.
+
+So the worker hydrates `bgRuns` from the saved history before relaying the adopt, and `RESUME_RUN` needs no change
+at all. That is why the stored history carries the whole `StartRunPayload` rather than just the messages: the system
+prompt, the tool descriptors and the rebuild config are what make a run continuable, and none of them can be
+reconstructed from the transcript.
+
+**A page that does not take it leaves nothing behind.** If the adopt is refused or unanswered, the worker deletes
+the hydrated `bgRuns` entry and untracks the run, because the next thing to read that map would otherwise believe
+that tab owns the session.
+
+**The note is written only after the page has it.** `session-resumed` says where the session is now, where it was,
+how long it sat and what it lost — a fact about the session, in the one place a reader and the model both trust, so
+a note for a resume that did not happen would be a lie. `RESUME_DROPS` (session-commands.ts) is the list, kept
+beside the command that causes the loss so the divider and the model's transcript cannot disagree.
+
+**Its `id` identifies the RESUME, not the session.** The index de-duplicates a note by id, because two surfaces can
+report one resume. A note identified by the session would mean a session that moved page twice showed one divider
+for both, with the second silently dropped.
+
+**The index rebinds itself.** A resumed run's events reach the worker trusted and carry the new tab, and a
+background-hosted session takes its owner from a trusted event, so nothing has to move the binding by hand.
+
+**A chat with no page is refused**, and that is not a gap: it is already this worker's wherever it is, and
+`sendChat` rehydrates it from storage on its next message. Giving it a tab would give it a page it does not use.
+
 ## Which sessions are kept
 
 Three routes to the same flag, and they are not the same question:

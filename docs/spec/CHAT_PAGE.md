@@ -52,7 +52,7 @@ runtime) and hash, and what the page offers for a session follows what its runti
 - **Approvals are reused exactly.** Inline approval decisions are already accepted only from extension-origin senders,
   and this page is one. Nothing new to build.
 
-## Resuming a saved session on a new page (proposal)
+## Resuming a saved session on a new page
 
 From the agent's side, resuming on a different page is a navigation: everything in its context describes the old
 page. So it reuses the cross-page machinery rather than inventing a second one.
@@ -68,22 +68,25 @@ page. So it reuses the cross-page machinery rather than inventing a second one.
 - **The picker is shared** with a new chat: choose a tab or a blank one.
 - **Later**: a long session may not fit the model's context on resume; that needs compaction.
 
-**What slice 4 did NOT give this, and it is the whole of the work.** Saved sessions store their debug EVENTS, which
+**What slice 4 did NOT give this, and it was the whole of the work.** Saved sessions store their debug EVENTS, which
 is what a reader needs. Resuming needs the model's HISTORY — the message array the loop continues from — and that
-lives somewhere else and does not outlive the session's bookkeeping:
+lived somewhere else and did not outlive the session's bookkeeping:
 
 - A background run's history is in `bgRuns` (worker memory), snapshotted to `chrome.storage.local` and rehydrated at
   startup, but kept for the run rather than for the session: `STALE_BGRUN_MS` bounds an auto-resume at five minutes,
   and `forgetRun` drops the rest.
 - A page-hosted run's history is in the page's handle and dies with the document.
-- A chat's history is the one thing that already persists properly, as `ml_session_<hash>` — which is why
-  `ml.resumeChat(hash)` works today and nothing equivalent works for a run.
+- A chat's history is the one thing that already persisted properly, as `ml_session_<hash>` — which is why
+  `ml.resumeChat(hash)` worked and nothing equivalent worked for a run.
 
-So resuming a run tomorrow means the saved session carries its history beside its events, written when a turn
-settles. That is an addition to the store rather than a new subsystem, but it is the reason this slice is not
-simply "call the cross-page machinery from a button".
+So a saved session now carries its history beside its events, written when a turn settles, and it carries the whole
+`StartRunPayload`: the system prompt, the tool descriptors and the `RebuildConfig` are what make a run continuable,
+and none of them can be reconstructed from the transcript. That is an addition to the store rather than a new
+subsystem, which is why the rest of this slice IS "call the cross-page machinery from a button" — the worker
+hydrates `bgRuns` from the saved history and the existing adopt path does the work. How, and what it refuses:
+`docs/dev/chat-page.md` §Resuming a saved run on another page.
 
-Two more things it needs, both additive to the contract and therefore agreed with the hub session before building:
+Two more things it needed, both additive to the contract and therefore agreed with the hub session before building. Both have shipped (`session.resume`, `session-resumed`):
 
 - **A command.** `session.send` cannot be it: it reaches a page that no longer holds the session. Resuming names a
   TARGET the way `agent.start` does — a tab you pick, or a blank one — so it is its own command with the same

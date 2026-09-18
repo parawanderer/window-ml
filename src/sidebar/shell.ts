@@ -14,7 +14,7 @@
 // can't leave it un-live.
 import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD } from "../ids";
 import { cleanImages } from "../contract-run";
-import { keepStartedSession, onSessionDone, relaySessionToPage, relayStartAgent } from "./shell-session-relay";
+import { keepStartedSession, onSessionDone, relayAdoptSession, relaySessionToPage, relayStartAgent } from "./shell-session-relay";
 import { resolveContextContainer, domToContext } from "../dom";   // right-click "ask about this" (content script sees the page DOM)
 import type { ElementContext } from "../contract-run";
 import type { DebugMode } from "../contract-config";
@@ -1367,4 +1367,5 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // shell-session-relay.ts, which owns the waiter map that joins the two. `true` keeps the reply channel open.
     else if (msg?.type === "ML_SESSION_TO_PAGE") { if (relaySessionToPage(msg, sendResponse)) return true; }
     else if (msg?.type === "ML_START_AGENT" && typeof msg.reqId === "string") return relayStartAgent(msg, sendResponse, agentHud);
+    else if (msg?.type === "ML_ADOPT_SESSION" && typeof msg.hash === "string") return relayAdoptSession(msg, sendResponse);
 });
