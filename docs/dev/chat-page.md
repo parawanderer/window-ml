@@ -354,6 +354,18 @@ for both, with the second silently dropped.
 **The index rebinds itself.** A resumed run's events reach the worker trusted and carry the new tab, and a
 background-hosted session takes its owner from a trusted event, so nothing has to move the binding by hand.
 
+**Where the page offers it.** `resumableHere` (new-session.tsx) decides, and the condition that matters is
+`page.tabId` being absent — the index drops it when a tab closes and keeps the url, so that is the tell that the
+run has nowhere to live. It is also exactly when `session.send` would end at a closed tab, so the resume REPLACES
+the composer rather than sitting beside it: two ways to continue one run is one too many, and one of them would
+always fail.
+
+The WHERE picker is one component (`useTargetPick`), shared with the start form. Resuming is a navigation from the
+agent's side, so offering it a different set of places to go than a fresh run would be a difference with nothing
+behind it. The form has no message box, because resuming takes no turn, and it says what the resume will LOSE
+before it happens rather than only reporting it in the transcript afterwards — a person deciding where to resume
+wants that first.
+
 **A chat with no page is refused**, and that is not a gap: it is already this worker's wherever it is, and
 `sendChat` rehydrates it from storage on its next message. Giving it a tab would give it a page it does not use.
 

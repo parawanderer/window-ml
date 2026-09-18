@@ -53,6 +53,18 @@ html, body, #root { height: 100%; }
 .chat-truncated, .chat-readonly { color: var(--fg-dim); font-size: .92em; }
 .chat-truncated { border: 1px dashed var(--border); border-radius: 7px; padding: 6px 10px; margin-bottom: 10px; }
 .chat-readonly { border-top: 1px solid var(--border); padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); }
+/* Where the composer would be, on a run whose page has gone: the one thing that WOULD work, rather than a box that
+   sends into nothing. Sits at the bottom like the composer it replaces, not at the top like the approval bar, because
+   it is an action on this run and not news about it. */
+.chat-resume {
+    display: flex; align-items: center; gap: 8px; width: 100%; border: none; border-top: 1px solid var(--border);
+    background: var(--panel); color: var(--fg-dim); font: inherit; cursor: pointer; text-align: left;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+}
+.chat-resume:hover { color: var(--fg); }
+.chat-resume-go { margin-left: auto; color: var(--accent); font-weight: 600; }
+/* What a resume will NOT carry over, said in the form BEFORE it happens rather than in the transcript after. */
+.chat-resume-lost { margin: 2px 0 0; color: var(--fg-faint); font-size: .92em; line-height: 1.45; }
 
 /* Notices: a stack at the bottom, above the composer's reach but never over the send button for long. */
 .chat-notices { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; z-index: 50; width: min(92vw, 460px); }

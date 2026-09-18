@@ -37,6 +37,9 @@ const DEMO_TABS = [
     { tabId: 13, url: "https://mail.example/inbox", title: "Inbox (3)", active: false, windowId: 2 },
 ];
 
+/** A tab id for one the demo world just opened, past the ids `DEMO_TABS` already uses. */
+let nextFakeTabId = 90;
+
 /** A session hash for something the demo world just started: the same 8 hex characters a runtime mints. */
 let hashSeq = 0;
 const newHash = () => (0xd0000000 + ++hashSeq).toString(16);
@@ -307,6 +310,27 @@ export class FakeHost implements SessionHost {
                 if (h.summary.status !== "capped") return fail("conflict", "only a run stopped at its step cap can continue");
                 this.updateSummary(key, { status: "running" });
                 return ok({});
+            case "session.resume": {
+                if (h.summary.kind !== "agent") return fail("unsupported", "only a run resumes onto a page");
+                if (h.summary.status === "running" || h.summary.status === "waiting") return fail("conflict", "that session is still going");
+                // A blank target becomes a REAL tab, because that is what opening one does. Reporting a page with no
+                // tab id would leave the run looking as homeless as it was a moment ago, and the page would go on
+                // offering to resume something it had just resumed.
+                const tabId = c.target.kind === "tab" ? c.target.tabId : nextFakeTabId++;
+                const url = c.target.kind === "tab"
+                    ? DEMO_TABS.find((t) => t.tabId === tabId)?.url ?? "https://example.com/"
+                    : (c.target.kind === "blank" && c.target.url) || "https://example.com/";
+                // The note the real runtime writes, so the divider is exercised by the demo rather than only by a
+                // test: a resume a reader cannot see is how the seam stops being drawn without anyone noticing.
+                this.emit(key, {
+                    ...base, id: `${c.session.hash}-r${now}`, kind: "session-resumed", url,
+                    ...(h.summary.page?.url ? { fromUrl: h.summary.page.url } : {}),
+                    afterMs: Math.max(0, now - h.summary.lastTs),
+                    dropped: ["live references to elements on the old page", "the page's state object", "approval grants"],
+                } as MlDebugEvent);
+                this.updateSummary(key, { page: { url, tabId } });
+                return ok({ session: c.session });
+            }
             case "session.delete":
                 this.deleteSession(key);
                 return ok({});

@@ -9,6 +9,7 @@ import { CompositeHost } from "../src/chat/composite-host.ts";
 import { FakeHost } from "../src/chat/fake-host.ts";
 import { hostServices } from "../src/chat/host-services.ts";
 import { holds, mayCommand } from "../src/chat/grants.ts";
+import { resumableHere } from "../src/chat/new-session.tsx";
 import { sessionMap, view } from "../src/sidebar/store.ts";
 import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";
 
@@ -305,4 +306,37 @@ test("services: highlight goes to the open session's page, only where the runtim
     assert.equal(fake.commands.length, 2, "no page on this runtime: nothing sent");
     assert.equal(store.notices.value.length, 0);
     store.dispose();
+});
+
+// --- offering a resume: the one thing that works when a run's page has gone (slice 5) ---
+
+test("a resume is offered only where it would DO something, and refused where the composer already works", () => {
+    const rt = runtime("laptop");
+    const key = "laptop:aaaa0001";
+    const done = (over) => summary("laptop", "aaaa0001", { status: "capped", ...over });
+
+    // A saved run, finished, whose tab has gone: `session.send` would end at a tab that is closed.
+    assert.equal(resumableHere(rt, key, done()), true);
+    assert.equal(resumableHere(rt, key, done({ status: "interrupted" })), true);
+
+    // Its tab is still open, so the composer reaches it. Two ways to continue one run is one too many.
+    assert.equal(resumableHere(rt, key, done({ page: { url: "https://a.example/", tabId: 7 } })), false);
+    // A page recorded but no tab is a CLOSED tab — the index drops `tabId` and keeps the url.
+    assert.equal(resumableHere(rt, key, done({ page: { url: "https://a.example/" } })), true);
+
+    // Still going: it does not need resuming.
+    assert.equal(resumableHere(rt, key, done({ status: "running" })), false);
+    assert.equal(resumableHere(rt, key, done({ status: "waiting" })), false);
+
+    // Never saved: there is nothing kept to continue from.
+    assert.equal(resumableHere(rt, key, done({ saved: false })), false);
+
+    // A chat resumes on its next message and needs no page, so the page never offers it one.
+    assert.equal(resumableHere(rt, key, done({ kind: "chat" })), false);
+
+    // An offline runtime cannot be asked, and one this client may only watch will not be.
+    assert.equal(resumableHere(runtime("laptop", { online: false }), key, done()), false);
+    assert.equal(resumableHere(runtime("laptop", { grants: [{ scope: "view" }] }), key, done()), false);
+    assert.equal(resumableHere(undefined, key, done()), false);
+    assert.equal(resumableHere(rt, key, undefined), false);
 });
