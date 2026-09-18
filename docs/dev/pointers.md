@@ -116,6 +116,14 @@ background-hosted paths with no page round-trip and no approval.
   `ml.pipe(await ml.fetch(url), "grep -i pricing | head -20")`. So the scanning vocabulary is one language
   wherever text comes from, and a stage never round-trips through a re-joined string.
 
+**`agent_api_docs` is pipeable and citable too**, which it was not for a long time and which read as a
+surprising exception: the API reference is ~120 KB, the model knows the dialect for every other large output,
+and this was the one it could not reduce. It takes `pipe` directly — applied LAST, over whatever
+`members`/`types`/`search` selected, because `search` answers in whole SECTIONS and a question like "which
+methods take a signal" wants LINES — and it is in `CITABLE_TOOLS`, so a `token` mints an `@tool:<id>` and
+`dereference` can pipe it on a later step. The reduction runs through `runPipe` in tools.ts rather than a
+private one: `PIPE_CMDS` is the single source for every description of the dialect.
+
 **The value store (`value-store.ts`), POINTER_VALUES slice 4.** Where a pointer's value lives when it is larger than its
 preview: an IndexedDB database of its own (`ml-values`), a `Blob` per value plus a metadata ROW (`sessions`, `bytes`,
 `format`, `source`, `createdAt`, `lastReadAt`), reachable from the service worker and the offscreen document, never the page.

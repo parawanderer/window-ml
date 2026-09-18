@@ -245,6 +245,34 @@ test("agent_api_docs ships the generated window.ml reference in the default regi
     assert.ok(!/\b_logStep\s*\(/.test(docs), "internal plumbing leaked into the shipped doc");
 });
 
+test("agent_api_docs takes a `pipe`, so the reference reduces to LINES rather than sections", async () => {
+    // `search` answers in whole SECTIONS that mention a term, which is the wrong grain for a question like
+    // "which methods take a signal" — that wants the signature lines. The reference was the ONE large output the
+    // pipe dialect could not reach, which is a surprising exception once you know the dialect for everything else.
+    const { ml } = loadDomWorld("<p>hi</p>");
+    const whole = await run(ml, "agent_api_docs", {});
+    const piped = await run(ml, "agent_api_docs", { pipe: "grep -i screenshot" });
+    assert.ok(piped.length < whole.length, "a reduction returns less than what it reduced");
+    for (const line of piped.split("\n").filter(l => l.trim() && !l.startsWith("(piped through")))
+        assert.match(line, /screenshot/i, "every surviving line matches the grep");
+    assert.match(piped, /\(piped through `grep -i screenshot`\)\s*$/, "and the result says what it did");
+});
+
+test("agent_api_docs: a bad pipe stage is an actionable message, never a lost step", async () => {
+    const { ml } = loadDomWorld("<p>hi</p>");
+    const out = await run(ml, "agent_api_docs", { pipe: "grepp -i screenshot" });
+    assert.match(out, /^Pipe error:/, "the model gets something it can correct");
+    assert.ok(!out.includes("Opening the HUD"), "and not the whole reference back as if nothing happened");
+});
+
+test("agent_api_docs is CITABLE, so its output can be named by a pointer and read back later", async () => {
+    // The other half of the same gap: with a `token` the result mints an @tool:<id>, so `dereference` can pipe
+    // it on a LATER step instead of only at the moment of the call.
+    const { CITABLE_TOOLS } = await import("../src/agent-loop.ts");
+    assert.ok(CITABLE_TOOLS.has("agent_api_docs"),
+        "without this, the reference is the one output no pointer can name");
+});
+
 test("agent_api_docs reports the free read-only ml calls ONLY when autoApproveReadonly is on", async () => {
     // Runtime state, like the HUD shortcut — so it lives in the docs tool (paid only when the model
     // asks about itself), not the system prompt. With the flag off these calls DO hit the gate, and

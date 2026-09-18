@@ -229,7 +229,7 @@ export const shotTurnMessage = (labels: string, count: number): string => `[Scre
 // The tools whose output is CITABLE with an `@tool:` token — they expose the opt-in `token` param, and (when
 // tool tokens are on) get a stable id minted onto every non-failed call so the answer renderer can resolve a
 // reference to it. Shared with injected.ts's per-call param injection so the two can't drift.
-export const CITABLE_TOOLS = new Set(["exec", "python_exec", "look", "locate", "fetch_url"]);
+export const CITABLE_TOOLS = new Set(["exec", "python_exec", "look", "locate", "fetch_url", "agent_api_docs"]);   // agent_api_docs is here for the POINTER, not for citation: the reference is ~120 KB and it was the one output the pipe dialect could not reach
 
 export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() => number); signal?: AbortSignal | null; unattended?: boolean;
     // Tool tokens: when set (+ a runHash to seed the id), a tool RESULT that has a rich render (renderIn/
