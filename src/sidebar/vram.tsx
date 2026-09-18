@@ -26,8 +26,8 @@ import { fmtAge, hhmmss } from "./timestamps";
 export { lsGet, lsSet } from "./store";
 import { usageByModel, eventsFrom, laneEvents, type UsageSource } from "./model-stats";
 import { parseInfo, holdCapacity, memorySplit, estimateFrom, quantPlain, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, type MemoryBreakdown, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, rooflineFrom, expectedDecodeFrom, expectedPhrase, predictedDecodeFrom, kindRefusal } from "../resource-model";
-import { chartWindow, windowSamples, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS } from "../resource-axis";
-import { sessionWindow, addMachineEvent, type LaneFilter } from "../resource-lane";
+import { chartWindow, windowSamples } from "../resource-axis";
+import { sessionWindow, addMachineEvent } from "../resource-lane";
 import { type Band } from "../resource-bands";
 import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay, LANE_KINDS, toggleLaneKind } from "./resource-chart";
 import type { LoadedModel } from "../contract-server";
@@ -73,6 +73,7 @@ export function residencyOf(m: LoadedModel): ModelResidency {
 import { RenderPanel } from "./render-panel";
 import { hoverModel, kbFocus, stepFocus, stepDepth, noteFocusOrder } from "./vram-focus";
 import { poolHover } from "./chart-interaction";
+import { VRAM_PALETTES, capacity, resourceHistory, layout, streamLive, colorFor, frameFocused, vramPalette, VRAM_HISTORY, sessionModels } from "./panel-state";
 
 // Fetch the server's model list via the background worker (privileged fetch);
 // degrade silently if unreachable. Populates the datalists.
@@ -89,46 +90,8 @@ export function fetchModels(): void {
 }
 
 
-// --- VRAM monitor ---
-/**
- * The palettes a model's colour can come from. A model's colour is its identity across the whole panel — the
- * line, the band, the row, its lane blocks, its ticks on the strip — so this is a real preference rather
- * than decoration: which eight hues read as distinct depends on the display, the theme and the eyes.
- *
- * `grafana` is the classic dashboard palette, which is what a lot of people are already reading GPU graphs
- * in; `warm`/`cool` narrow the range for a panel sitting beside other colour; `vivid` is the original.
- * Every palette is eight long, because the assignment hashes a name into it and a shorter one collides more.
- */
-export const VRAM_PALETTES: Record<string, string[]> = {
-    vivid:   ["#6366f1", "#22c55e", "#f59e0b", "#ec4899", "#06b6d4", "#a855f7", "#ef4444", "#84cc16"],
-    grafana: ["#7EB26D", "#EAB839", "#6ED0E0", "#EF843C", "#E24D42", "#1F78C1", "#BA43A9", "#705DA0"],
-    cool:    ["#4C78A8", "#54A24B", "#72B7B2", "#B279A2", "#439894", "#5C7EC1", "#83B4D8", "#3F8F7A"],
-    warm:    ["#E45756", "#F58518", "#EECA3B", "#B279A2", "#D67195", "#C4693D", "#E7955A", "#B4451F"],
-};
 export const VRAM_PALETTE_KEY = "ml_vram_palette";   // storage.local: which colour palette names the models
-/** Which one is in use. A sidebar-only display pref in `chrome.storage.local`, like the font scale and the
- *  code-block prefs — it changes how the panel LOOKS, not what the extension does, so it has no business in
- *  the synced `MlConfig`. */
-export const vramPalette = signal<string>("vivid");
 export const VRAM_COLORS = VRAM_PALETTES.vivid;   // the default palette — a model keeps its colour for as long as it is DRAWN, not just while resident
-/** A model's colour: its name hashed into the chosen palette, so it is stable for as long as the model is
- *  called the same thing and identical on every surface that draws it. */
-export const colorFor = (name: string) => {
-    const p = VRAM_PALETTES[vramPalette.value] ?? VRAM_PALETTES.vivid;
-    return p[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % p.length];
-};
-/** A POOL's colour. Pools are an ordered set, not names to hash, so they get distinct colours by construction
- *  — which `VRAM_COLORS[i % 8]` stopped doing on a box with more than eight pools: an 8-GPU node (eight cards
- *  plus system RAM) gave card 0 and System RAM the same indigo, in a legend whose entire job is telling the
- *  lines apart. Past the curated palette, hues are spread evenly over however many pools there are. */
-export function poolColor(i: number, count: number): string {
-    const pal = VRAM_PALETTES[vramPalette.value] ?? VRAM_PALETTES.vivid;
-    if (count <= pal.length) return pal[i % pal.length];
-    // Golden-angle-free even spread: with the count known, evenly spaced hues are maximally far apart, and
-    // fixed saturation/lightness keeps them legible on both themes.
-    return `hsl(${Math.round((i * 360) / count)}deg 70% 55%)`;
-}
-export const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;   // samples kept, and how often we ask — polling is gated on the panel being open, so gaps are real gaps
 // Session-long history, in a MODULE signal rather than component state: the old panel kept 45 samples in
 // useState and threw them away on every close, so "what happened during that run" was unanswerable the moment
 // you looked away. Session-only by choice: it dies with the page, and gaps (the panel was closed, so nothing
@@ -143,9 +106,6 @@ export const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;   // samples kept, and how 
 export const RESOURCE_HISTORY = 5000;
 /** How far back the sample history is kept, past the longest window the chart can be set to draw. */
 export const RESOURCE_RETENTION_MS = 45 * 60_000;
-// EVERY MEMORY SAMPLE this session took, per box. Session-only and dropped on a backend change: redrawing
-// one box's readings against another's ceiling looks like a measurement rather than a mistake.
-export const resourceHistory = signal<ResourceSample[]>([]);
 // Machine CAPACITY — the denominator. The TOTALS change only when hardware does, but `free_memory` rides in
 // the same payload and changes with every load and evict, so fetching once per open froze the free and
 // residual bands at whatever they were when you opened the panel (a card would read "18 GiB in use" beside
@@ -154,10 +114,6 @@ export const resourceHistory = signal<ResourceSample[]>([]);
 // null = unknown (the route isn't served): the chart then draws no ceiling rather than pretending it is zero.
 export const CAPACITY_EVERY = 5;   // ps polls between capacity refreshes (5 x 2s = 10s)
 let psSinceCapacity = 0;
-// WHAT THE BOX CAN HOLD (`/api/info`, patched Ollama only). A fact about the MACHINE, not about a poll —
-// a request that learns nothing must not forget what was measured, or the panel swaps to the no-ceiling
-// fallback until some later poll happens to succeed. Null = never answered, which is drawn as unknown.
-export const capacity = signal<Capacity | null>(null);
 // Whether we have ASKED yet. `capacity: null` alone can't tell "the fetch hasn't come back" from "this server
 // doesn't serve /api/info", and the fallback for the second is the old sparkline — so on every open the panel
 // flashed the legacy chart for a moment before the tracks replaced it. Until the first answer lands the plot
@@ -343,27 +299,6 @@ export const toggleHidden = (model: string): void => {
     hiddenModels.value = next;
 };
 
-/** Pools (a card, or the host) the user has clicked OFF in the Overview legend. The legend key already IS the
- *  line's identity — its swatch, its name, its figure — so making it the switch adds an affordance rather than
- *  a control, which is the same bargain the model rows make. Session-only, like {@link hiddenModels}: it is a
- *  reading choice about what is on screen now, not a setting about the box. */
-export const hiddenPools = signal<Set<string>>(new Set());
-/** Switch one memory pool's line off and back on (a legend key). */
-export const togglePool = (id: string): void => {
-    const next = new Set(hiddenPools.value);
-    next.has(id) ? next.delete(id) : next.add(id);
-    hiddenPools.value = next;
-};
-
-// Poll Ollama's resident-model set (/api/ps) into the shared signals, for BOTH
-// the VRAM panel and the header status dot. Gated so it never hammers Ollama in
-// the background: only while the shell is slid open AND something needs it (the
-// panel is up, or a detail header — the only place a status dot shows).
-/** Is the event stream carrying? While it is, polling stands down — two transports feeding the same history
- *  would double every sample and draw it at twice the true density. Null until we know (a fresh open has not
- *  asked yet); false means this server does not serve the route, which is the ordinary stock-Ollama case and
- *  not an error. */
-export const streamLive = signal(false);
 /** What the stream told us when it could not carry: shown in the panel's own note rather than swallowed, so a
  *  box that has the route but is failing on it does not look like a box that never had it. */
 export const streamNote = signal<string | null>(null);
@@ -381,14 +316,6 @@ let pendingGap = false;
  *  itself says so by BREAKING the line, which is the same thing it does for a sampling gap and needs no
  *  second vocabulary. */
 export const framesLost = signal(0);
-
-/** How far apart two samples may be before the history is a HOLE rather than a quiet stretch. It depends on
- *  the transport, because a gap means a different thing on each — see the two constants. Read at render time
- *  rather than baked in, since a stream can drop mid-session and the answer changes with it. */
-export const sampleGapMs = (): number => (streamLive.value ? STREAM_MAX_GAP_MS : MAX_SAMPLE_GAP_MS);
-/** How far past the last sample still belongs to the final run — one sampling interval, whichever transport
- *  is providing them. */
-export const sampleGraceMs = (): number => (streamLive.value ? STREAM_SAMPLE_MS : VRAM_POLL_MS);
 
 /** Machine events the SERVER reported, as opposed to the ones we infer by diffing polls. A load is the case
  *  that cannot be inferred at all: for most of a load there is no runner object in Ollama for a poll to
@@ -1005,27 +932,6 @@ function withGenCtx(e: ResourceEvent): ResourceEvent {
     return e;
 }
 
-/** The filter as the lane sees it. */
-export function laneFilter(): LaneFilter {
-    const hash = scopedHash();
-    return {
-        hash,
-        scope: laneScoped.value ? "session" : "all",
-        hidden: laneHidden.value as LaneFilter["hidden"],
-        // Which models THIS session ran — the ledger already answers it, delegated readers charged to the
-        // reader, which is what makes a sub-call's load belong to the session that caused it.
-        models: hash ? sessionModels(hash) : undefined,
-    };
-}
-
-/** The models a session ran, for scoping the machine half of the lane. Undefined when the session is not
- *  known — "no models" and "not known" must not collapse, since one hides nothing and the other hides all. */
-export function sessionModels(hash: string): readonly string[] | undefined {
-    const s = sessionMap.get(hash);
-    if (!s) return undefined;
-    return Object.keys(usageByModel([s] as UsageSource[])).map(normModel);
-}
-
 /** One resident model's row. Extracted because the SCOPED list draws it in two places now — the session's
  *  own models, and the folded "other models on the box" — and a second copy of a row with four interactive
  *  parts is exactly where two lists start behaving differently. */
@@ -1391,18 +1297,10 @@ export function chartKey(key: string): boolean {
  *  page, the page's arrows are the page's again. */
 export const pointerOnChart = signal(false);
 let lastKeysSent = "";
-/** Whether this frame's own document has focus, so keys typed now reach `chartKey` without any relay. */
-export const frameFocused = signal(typeof document !== "undefined" && document.hasFocus());
 if (typeof window !== "undefined") {
     window.addEventListener("focus", () => { frameFocused.value = true; });
     window.addEventListener("blur", () => { frameFocused.value = false; });
 }
-/** The parent relays the page's keys while the pointer is on the chart (the overlay's shell says so on ready).
- *  The DevTools panel cannot: keys typed while another DevTools pane has focus never reach it. */
-export const keyRelay = signal(false);
-/** Will ↑↓ reach the chart from where the keyboard is now? What the key hints read, so they never offer keys
- *  that go somewhere else until you click. */
-export const keysReach = (): boolean => keyRelay.value || frameFocused.value;
 
 /** The keys the chart would use RIGHT NOW, for a parent that relays them: what `chartKey` would answer, known in
  *  advance, because the relay has to decide whether to take a key from the page before it can ask. ←/→ only
@@ -1423,7 +1321,6 @@ export function chartKeysWanted(): string[] {
 // fit the machine we're now pointed at.
 export const LAYOUT_KEY = "ml_res_layout";
 export const presetId = signal<string>("");   // the chosen track PRESET (derived from the box's catalog, and validated against the stacking rule)
-export const layout = signal<TrackDef[] | null>(null);   // which tracks are drawn, in what mode, at what height (null = use the preset)
 /** The last CUSTOM layout, kept beside the active one. Picking a preset used to overwrite the stored tracks,
  *  so a layout you had built by hand was destroyed the moment you looked at a preset — and the "Custom" entry
  *  only existed while it was already selected, so there was no way back to it either. */
