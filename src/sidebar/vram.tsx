@@ -71,6 +71,7 @@ export function residencyOf(m: LoadedModel): ModelResidency {
 }
 import { RenderPanel } from "./render-panel";
 import { hoverModel, kbFocus, stepFocus, stepDepth, noteFocusOrder } from "./vram-focus";
+import { poolHover } from "./chart-interaction";
 
 // Fetch the server's model list via the background worker (privileged fetch);
 // degrade silently if unreachable. Populates the datalists.
@@ -1249,13 +1250,6 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
     );
 }
 
-/** The pool (card or host) currently hovered in the chart, and which models sit on it. The model rows below
- *  ARE the legend, so rows not on that pool grey out — reusing what is already on screen instead of injecting
- *  a row that shifts the layout under the cursor. */
-// WHICH pool is hovered, not what it held when you got there — the pool is identified by the LINE, while the
-// figures come from the DATAPOINT the pointer is on (see PoolTip). Keeping the reading out of this signal is
-// what lets the tip follow the cursor along a line and report a different instant at each x.
-export const poolHover = signal<{ id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] } | null>(null);
 /** What a hovered pool holds RIGHT NOW: total in use, and each consumer that has any of it. */
 export function poolFacts(bands: Band[]): { used: number; consumers: { label: string; bytes: number; model?: string }[] } {
     return {
