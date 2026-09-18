@@ -6,6 +6,8 @@ import { test, describe } from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 const M = await import("../src/resource-model.ts");
+// The band arithmetic moved to its own module; the members below are read from there.
+const B = await import("../src/resource-bands.ts");
 // The machine shapes, shared with resource-demo.mjs — one copy, so a guard and a demo cannot disagree
 // about what a box looks like.
 import { BOXES, TOPOLOGIES, pci } from "./fixtures/boxes.mjs";
@@ -118,7 +120,7 @@ test("deviceBands: attributed / other / free — the middle band is the point", 
     const busy = { compute: { ...CUDA_INFO.compute,
         supported_gpus: [{ ...CUDA_INFO.compute.supported_gpus[0], free_memory: 18196987904 }, CUDA_INFO.compute.supported_gpus[1]] } };
     const sample = { t: 1, models: [], capacity: M.parseInfo(busy) };
-    const bands = M.deviceBands(sample, "0");
+    const bands = B.deviceBands(sample, "0");
     const by = Object.fromEntries(bands.map((b) => [b.key, b.bytes]));
     assert.equal(by["m:anything"], undefined, "no models of ours are resident");
     assert.ok(by.other > 83 * GB, "83 GB in use that no model of ours accounts for — shown as NOT ours");
@@ -135,7 +137,7 @@ test("deviceBands: one band per model, plus an explicit unknown for an unattribu
         M.residencyFrom({ name: "qwen3.5:32b", size: 22 * GB, size_vram: 22 * GB, gpus: [{ gpu_id: "0", size_vram: 22 * GB }] }),
         M.residencyFrom({ name: "mystery", size: 1 * GB, size_vram: 1 * GB, gpus: [{ gpu_id: "0", size_vram: 0 }] }),
     ] };
-    const bands = M.deviceBands(sample, "0");
+    const bands = B.deviceBands(sample, "0");
     const models = bands.filter((b) => b.kind === "model").map((b) => b.model);
     assert.deepEqual(models, ["gemma4:31b", "qwen3.5:32b"], "one band per attributable model, carrying its name");
     const unknown = bands.find((b) => b.kind === "unknown");
@@ -150,7 +152,7 @@ test("deviceBands: a single DISCRETE device needs no attribution — the total I
     const sample = { t: 1, capacity: cap, models: [
         M.residencyFrom({ name: "solo", size: 5 * GB, size_vram: 5 * GB }),   // no gpus[] reported at all
     ] };
-    const band = M.deviceBands(sample, "0").find((b) => b.kind === "model");
+    const band = B.deviceBands(sample, "0").find((b) => b.kind === "model");
     assert.equal(band.bytes, 5 * GB, "with one card there is nowhere else it could be");
 });
 
@@ -158,7 +160,7 @@ test("deviceBands: a single DISCRETE device needs no attribution — the total I
 // was 13.5 GB deep in the very same memory — so occupancy read off the device would show a nearly-empty box.
 test("unified memory: occupancy comes from the HOST, and the model is attributed in FULL", () => {
     const sample = { t: 1, capacity: M.parseInfo(METAL_INFO), models: [M.residencyFrom(METAL_PS_GPU)] };
-    const bands = M.deviceBands(sample, "0");
+    const bands = B.deviceBands(sample, "0");
     const model = bands.find((b) => b.kind === "model");
     // size == size_vram on Metal, so ramBytes is 0; attributing only the spill would show NOTHING resident.
     assert.equal(model.bytes, 1039086387, "the whole footprint occupies the one pool, GPU-resident or not");
@@ -187,7 +189,7 @@ test("hostBands: a model's CPU spill is attributed, the rest is not ours", () =>
     const sample = { t: 1, capacity: M.parseInfo(CUDA_INFO), models: [
         M.residencyFrom({ name: "spilled", size: 10 * GB, size_vram: 6 * GB, gpus: [{ gpu_id: "0", size_vram: 6 * GB }] }),
     ] };
-    const bands = M.hostBands(sample);
+    const bands = B.hostBands(sample);
     assert.equal(bands.find((b) => b.kind === "model").bytes, 4 * GB, "size - size_vram is the RAM half");
     assert.ok(bands.find((b) => b.kind === "other").bytes > 100 * GB, "the OS and everything else");
 });
@@ -353,19 +355,19 @@ test("the residual band is named by MAGNITUDE, so an idle card shows no phantom 
         const cap = M.parseInfo(CUDA_INFO);
         cap.devices[0].freeBytes = cap.devices[0].totalBytes - usedBytes;
         const models = modelBytes ? [M.residencyFrom({ name: "m", size: modelBytes, size_vram: modelBytes, gpus: [{ gpu_id: "0", size_vram: modelBytes }] })] : [];
-        return M.deviceBands({ t: 1, capacity: cap, models }, "0").find((b) => b.kind === "other");
+        return B.deviceBands({ t: 1, capacity: cap, models }, "0").find((b) => b.kind === "other");
     };
     // An IDLE card is the case the naive formula gets wrong: ~0.55 GiB is ollama's discovery context, held on
     // every visible card whether or not anything is loaded. Calling that "other processes" invents a process.
     const idle = mk(0.55 * GB, 0);
     assert.equal(idle.label, "driver overhead");
-    assert.equal(idle.label, M.DRIVER_BAND_LABEL);
+    assert.equal(idle.label, B.DRIVER_BAND_LABEL);
     // A loaded model adds its CUDA context on top — size_vram is llama-server's buffer accounting and the
     // driver reports 0.7-1.8 GiB more, so this residual is still OURS, not a third party.
     assert.equal(mk(21 * GB, 20 * GB).label, "driver overhead", "a model's context stays under the floor");
     // Clear the floor and there really is something else on the card worth naming.
     const foreign = mk(30 * GB, 20 * GB);
-    assert.equal(foreign.label, M.OTHER_BAND_LABEL);
+    assert.equal(foreign.label, B.OTHER_BAND_LABEL);
     assert.equal(foreign.label, "unattributed");
     assert.ok(!/other process/i.test(foreign.label), "still never claims to be a process we can point at");
     assert.match(foreign.note, /CUDA context/, "on a CUDA card, the context is named as a CUDA one (and only there — see the per-backend test)");
@@ -883,7 +885,7 @@ test("bands: a model resident before the free bytes catch up does not collapse t
     };
     // The skewed sample: ps says 18 GiB is resident, info still says almost everything is free.
     const sample = { t: 1, capacity: cap, models: [{ model: "m", vramBytes: 18 * GB, ramBytes: 0, perDevice: { 0: 18 * GB }, contextLength: null, expiresAt: null }] };
-    const bands = M.deviceBands(sample, "0");
+    const bands = B.deviceBands(sample, "0");
     const total = bands.filter((b) => b.kind !== "free").reduce((a, b) => a + b.bytes, 0);
     assert.ok(total >= 18 * GB, `what is resident is in use whatever the other sample says yet (got ${total})`);
     const model = bands.find((b) => b.kind === "model");
@@ -1646,25 +1648,25 @@ test("deviceBands: a residual a LOAD explains is named as the load, not as unatt
     ] } };
     const cap = M.parseInfo(mid);
 
-    const blind = M.deviceBands({ t: 1, models: [], capacity: cap }, "0");
-    assert.equal(blind.find((b) => b.key === "other").label, M.OTHER_BAND_LABEL,
+    const blind = B.deviceBands({ t: 1, models: [], capacity: cap }, "0");
+    assert.equal(blind.find((b) => b.key === "other").label, B.OTHER_BAND_LABEL,
         "with nothing loading, a big residual really is unattributed");
 
-    const knowing = M.deviceBands({ t: 1, models: [], capacity: cap, loading: ["qwen3.8-flash-next:vision"] }, "0");
+    const knowing = B.deviceBands({ t: 1, models: [], capacity: cap, loading: ["qwen3.8-flash-next:vision"] }, "0");
     const other = knowing.find((b) => b.key === "other");
     assert.equal(other.label, "loading qwen3.8-flash-next:vision");
     assert.ok(other.bytes > 87 * GB, "…and it is the whole allocation, not a sliver");
 
     // Several at once are counted rather than listed — a band label is one line in a legend.
     assert.equal(
-        M.deviceBands({ t: 1, models: [], capacity: cap, loading: ["a", "b"] }, "0").find((b) => b.key === "other").label,
+        B.deviceBands({ t: 1, models: [], capacity: cap, loading: ["a", "b"] }, "0").find((b) => b.key === "other").label,
         "loading 2 models");
 
     // The FLOOR still wins. An idle card holds ~0.55 GiB of ollama's own discovery context, and a load
     // starting elsewhere must not relabel that as this card loading something.
     const idle = M.parseInfo(CUDA_INFO);
-    const quiet = M.deviceBands({ t: 1, models: [], capacity: idle, loading: ["something"] }, "0");
-    assert.equal(quiet.find((b) => b.key === "other").label, M.DRIVER_BAND_LABEL,
+    const quiet = B.deviceBands({ t: 1, models: [], capacity: idle, loading: ["something"] }, "0");
+    assert.equal(quiet.find((b) => b.key === "other").label, B.DRIVER_BAND_LABEL,
         "a sub-GiB residual is the driver's context whatever is loading");
 });
 
@@ -1870,7 +1872,7 @@ test("a split model decomposes PER CARD, and the sum holds on each one", () => {
     // And the bands the chart actually draws carry that card's parts, never the model's total.
     const cap = { devices: [{ id: "0", totalBytes: 103e9, freeBytes: 30e9 }, { id: "1", totalBytes: 103e9, freeBytes: 32e9 }], host: null };
     const sample = { t: 1, models: [r], capacity: cap };
-    const b0 = M.deviceBands(sample, "0").find((b) => b.model === "qwen3:235b");
+    const b0 = B.deviceBands(sample, "0").find((b) => b.model === "qwen3:235b");
     assert.equal(b0.parts.weights, 72044941148, "card 0 is decomposed by card 0's own figures");
     assert.equal(sum(b0.parts), b0.bytes, "…and they fill exactly the band they are inside");
 });
@@ -1895,7 +1897,7 @@ test("compute is FLAT per device — the reason nothing is ever pro-rated", () =
     const noPerCard = M.residencyFrom({ ...SPLIT_PS, gpus: SPLIT_PS.gpus.map(({ memory, ...g }) => g) });
     assert.equal(noPerCard.perDeviceMemory, undefined);
     const cap = { devices: [{ id: "0", totalBytes: 103e9, freeBytes: 30e9 }, { id: "1", totalBytes: 103e9, freeBytes: 32e9 }], host: null };
-    const band = M.deviceBands({ t: 1, models: [noPerCard], capacity: cap }, "0").find((b) => b.model);
+    const band = B.deviceBands({ t: 1, models: [noPerCard], capacity: cap }, "0").find((b) => b.model);
     assert.equal(band.parts, undefined, "no split beats a pro-rated one");
     assert.equal(band.bytes, SPLIT_PS.gpus[0].size_vram, "…while the card's own TOTAL is still exact");
 });
@@ -1938,8 +1940,8 @@ test("an UNEQUAL split decomposes by each card's own figures, not by its share o
 
     const cap = { devices: [{ id: "0", totalBytes: 8e9, freeBytes: 6e9 }, { id: "1", totalBytes: 8e9, freeBytes: 7e9 }], host: null };
     const sample = { t: 1, models: [r], capacity: cap };
-    const b0 = M.deviceBands(sample, "0").find((b) => b.model);
-    const b1 = M.deviceBands(sample, "1").find((b) => b.model);
+    const b0 = B.deviceBands(sample, "0").find((b) => b.model);
+    const b1 = B.deviceBands(sample, "1").find((b) => b.model);
 
     // Each band is that card's own total, and its parts fill exactly it — on BOTH cards, at 2.2:1.
     assert.equal(b0.bytes, LOPSIDED.gpus[0].size_vram);
@@ -2557,11 +2559,11 @@ test("pendingAllocation: a loading model's memory is its own before the runner e
     // the runner exists and the model's band takes it over.
     const times = [0, 1000, 2000, 3000, 3500, 4000];
     const frames = [[other(0.6 * GiB)], [other(0.6 * GiB)], [other(4 * GiB)], [other(10 * GiB)], [other(12.6 * GiB)], [other(0.6 * GiB), model(12 * GiB)]];
-    const got = M.pendingAllocation(frames, times, "m", [{ t: 1000, until: 3500 }]);
+    const got = B.pendingAllocation(frames, times, "m", [{ t: 1000, until: 3500 }]);
     assert.deepEqual(got.map((b) => b / GiB).map((x) => Math.round(x * 10) / 10), [0, 0, 3.4, 9.4, 12, 0],
         "the growth above the pre-load residual, until the model's own band appears — never both");
     // No load of this model (the caller passes that model's loads only): nothing is attributed to it.
-    assert.deepEqual(M.pendingAllocation(frames, times, "m", []), [0, 0, 0, 0, 0, 0]);
+    assert.deepEqual(B.pendingAllocation(frames, times, "m", []), [0, 0, 0, 0, 0, 0]);
 });
 
 // RUNNER PIDS, against real captures off the box (`ollama-slop:runnerpids2`). The driver's list of processes
@@ -2587,7 +2589,7 @@ test("parseInfo: a card's processes, and the scope that says what the list CAN c
 test("deviceBands: a runner's overhead is measured per runner, and is not a constant", () => {
     const { ps, info } = hwJson("runner-pids-context-band-2026-09-11.json");
     const sample = { t: 1, capacity: M.parseInfo(info), models: ps.models.map(M.residencyFrom) };
-    const ctx = (id, model) => M.deviceBands(sample, id).find((b) => b.key === `ctx:${model}`);
+    const ctx = (id, model) => B.deviceBands(sample, id).find((b) => b.key === `ctx:${model}`);
     // used_memory minus the model's size_vram on that card, both from the same instant.
     assert.equal(ctx("0", "qwen3.5:0.8b").bytes, 6348079104 - 5883004189);
     assert.equal(Math.round(ctx("0", "qwen3.5:0.8b").bytes / MiB), 444);
@@ -2595,31 +2597,31 @@ test("deviceBands: a runner's overhead is measured per runner, and is not a cons
     assert.equal(ctx("1", "granite4.1:3b").of, "granite4.1:3b", "tinted with its model, never the model's identity");
     assert.equal(ctx("1", "granite4.1:3b").model, undefined);
     // Every byte in use is accounted for exactly once: the model, its runner's overhead, and what nothing lists.
-    const b0 = M.deviceBands(sample, "0");
+    const b0 = B.deviceBands(sample, "0");
     const used = info.compute.supported_gpus[0].total_memory - info.compute.supported_gpus[0].free_memory;
     assert.equal(b0.filter((b) => b.kind !== "free").reduce((n, b) => n + b.bytes, 0), used);
     const rest = b0.find((b) => b.key === "other");
-    assert.equal(rest.label, M.OUTSIDE_VIEW_LABEL, "in a container, the unlisted remainder is not called overhead");
+    assert.equal(rest.label, B.OUTSIDE_VIEW_LABEL, "in a container, the unlisted remainder is not called overhead");
     assert.equal(rest.bytes, used - 6348079104);
 });
 
 test("deviceBands: a process ollama cannot see is named as unseen, and one it can see as a tenant", () => {
     const raw = hwJson("runner-pids-other-processes-2026-09-11.json");
     const sample = { t: 1, capacity: M.parseInfo(raw), models: [] };
-    const bands = M.deviceBands(sample, "1");
+    const bands = B.deviceBands(sample, "1");
     const g = raw.compute.supported_gpus[1];
     const tenant = bands.find((b) => b.key === "proc:417");
     assert.deepEqual([tenant.label, tenant.bytes], ["llama-server (pid 417)", 3164602368]);
     // The other container's torch process is NOT listed; the gap between the listed memory and what is in use
     // is exactly it (~2.6 GB, measured on the host with nvidia-smi).
     const unseen = bands.find((b) => b.key === "other");
-    assert.equal(unseen.label, M.OUTSIDE_VIEW_LABEL);
+    assert.equal(unseen.label, B.OUTSIDE_VIEW_LABEL);
     assert.equal(unseen.bytes, g.total_memory - g.free_memory - 3164602368);
     assert.ok(unseen.bytes > 2.5 * 1024 ** 3);
     // With every process listed (`all`), what is left owns no process: the driver's own.
     const all = structuredClone(raw);
     for (const d of all.compute.supported_gpus) d.processes_scope = "all";
-    assert.equal(M.deviceBands({ t: 1, capacity: M.parseInfo(all), models: [] }, "1").find((b) => b.key === "other").label, M.DRIVER_BAND_LABEL);
+    assert.equal(B.deviceBands({ t: 1, capacity: M.parseInfo(all), models: [] }, "1").find((b) => b.key === "other").label, B.DRIVER_BAND_LABEL);
 });
 
 test("deviceBands: through a load, helpers are not tenants and the loading runner IS the allocation", () => {
@@ -2628,7 +2630,7 @@ test("deviceBands: through a load, helpers are not tenants and the loading runne
     const TOTAL = 101972967424;
     const at = (p) => ({ t: 1, models: [], capacity: M.parseInfo({ compute: { system_compute: { total_memory: 8e9 },
         supported_gpus: [{ gpu_id: "0", runner: "CUDA", total_memory: TOTAL, free_memory: TOTAL - p.used_memory, processes_scope: "pid_namespace", processes: [p] }] } }) });
-    const kinds = lines.map((p) => M.deviceBands(at(p), "0").find((b) => b.kind === "other" && b.bytes > 0).key);
+    const kinds = lines.map((p) => B.deviceBands(at(p), "0").find((b) => b.kind === "other" && b.bytes > 0).key);
     // The fit probe (`llama-server`) and device discovery (`ollama`) are ollama's own, and never read as a stranger.
     assert.ok(!kinds.some((k) => k.startsWith("proc:")), `no helper drawn as a tenant: ${kinds}`);
     assert.equal(kinds.filter((k) => k === "helper").length, lines.filter((p) => p.ollama_helper).length);
@@ -2636,15 +2638,15 @@ test("deviceBands: through a load, helpers are not tenants and the loading runne
     const loading = lines.filter((p) => p.runner?.loading);
     assert.ok(loading.length >= 5);
     for (const p of loading) {
-        const b = M.deviceBands(at(p), "0").find((x) => x.key === "load:qwen3.5:0.8b");
+        const b = B.deviceBands(at(p), "0").find((x) => x.key === "load:qwen3.5:0.8b");
         assert.equal(b.bytes, p.used_memory);
     }
     // …and pendingAllocation reads it directly: the process's memory, not the residual's growth.
-    const frames = loading.map((p) => M.deviceBands(at(p), "0"));
-    assert.deepEqual(M.pendingAllocation(frames, frames.map((_, i) => i), "qwen3.5:0.8b", []), loading.map((p) => p.used_memory));
+    const frames = loading.map((p) => B.deviceBands(at(p), "0"));
+    assert.deepEqual(B.pendingAllocation(frames, frames.map((_, i) => i), "qwen3.5:0.8b", []), loading.map((p) => p.used_memory));
     // Once it is resident but /api/ps has not caught up, it is the model's runner — not gigabytes of "overhead".
     const done = lines.at(-1);
-    assert.equal(M.deviceBands(at(done), "0").find((b) => b.kind === "other" && b.bytes > 0).key, "runner:qwen3.5:0.8b");
+    assert.equal(B.deviceBands(at(done), "0").find((b) => b.kind === "other" && b.bytes > 0).key, "runner:qwen3.5:0.8b");
 });
 
 test("deviceBands: a process list with no scope is an EARLIER build's, and names nothing", () => {
@@ -2653,9 +2655,9 @@ test("deviceBands: a process list with no scope is an EARLIER build's, and names
     const frames = JSON.parse(readFileSync(new URL("./e2e/fixtures/events-load-lifecycle.json", import.meta.url), "utf8"));
     const f = frames.filter((x) => x.kind === "sample" && x.info).at(-1);
     const sample = { t: 1, capacity: M.parseInfo(f.info), models: (f.ps?.models || []).map(M.residencyFrom) };
-    const bands = M.deviceBands(sample, "0");
+    const bands = B.deviceBands(sample, "0");
     assert.ok(!bands.some((b) => b.key.startsWith("proc:")), `no tenant invented: ${bands.map((b) => b.key)}`);
-    assert.notEqual(bands.find((b) => b.key === "other").label, M.OUTSIDE_VIEW_LABEL, "and the size rule still names the residual");
+    assert.notEqual(bands.find((b) => b.key === "other").label, B.OUTSIDE_VIEW_LABEL, "and the size rule still names the residual");
 });
 
 test("estimateFrom: the predictor's figures off a real estimate frame, and nothing without a total", () => {
@@ -2803,17 +2805,17 @@ test("a residual is explained in ITS backend's terms — CUDA on NVIDIA, HIP on 
             system_compute: { total_memory: shape.hostTotal, free_memory: Math.round(shape.hostTotal * 0.6) },
             supported_gpus: shape.devices.map((d, i) => ({ ...d, free_memory: d.total_memory - (i === 0 ? 3 * GB : 0.2 * GB) })) } });
         const sample = { t: 1, capacity: cap, models: [] };
-        const notes = [...(cap.unified ? [] : M.deviceBands(sample, d0.gpu_id)), ...M.hostBands(sample)]
+        const notes = [...(cap.unified ? [] : B.deviceBands(sample, d0.gpu_id)), ...B.hostBands(sample)]
             .filter((b) => b.kind === "other").map((b) => b.note);
-        const card = cap.unified ? null : M.deviceBands(sample, d0.gpu_id).find((b) => b.key === "other").note;
-        const host = M.hostBands(sample).find((b) => b.key === "other").note;
+        const card = cap.unified ? null : B.deviceBands(sample, d0.gpu_id).find((b) => b.key === "other").note;
+        const host = B.hostBands(sample).find((b) => b.key === "other").note;
         if (card) {
             if (shape.runner === "CUDA") assert.match(card, /CUDA context/, key);
             else assert.doesNotMatch(card, /CUDA/, `${key}: a ${shape.runner} card is not described in CUDA's terms`);
             if (shape.runner === "ROCm") assert.match(card, /HIP \(ROCm\) context/, key);
         }
         assert.doesNotMatch(host, /CUDA|HIP|card/, `${key}: RAM holds the OS and other programs, not a GPU context`);
-        assert.equal(host, cap.unified ? M.UNIFIED_NOTE : M.HOST_RAM_NOTE, key);
+        assert.equal(host, cap.unified ? B.UNIFIED_NOTE : B.HOST_RAM_NOTE, key);
         assert.ok(notes.every(Boolean), `${key}: every residual carries its own note, so the legend never falls back`);
     }
 });
@@ -2822,12 +2824,12 @@ test("stepBands: models and what belongs to them step — but only from the bott
     const identity = { "m:a": "a", "m:b": "b" };
     const tint = { "ctx:a": "a", "load:c": "c", "runner:d": "d" };
     // A model, its overhead, a second model: all piecewise-constant, all at the bottom — they step.
-    assert.deepEqual([...M.stepBands(["m:a", "ctx:a", "m:b", "other", "free"], identity, tint)], ["m:a", "ctx:a", "m:b"]);
+    assert.deepEqual([...B.stepBands(["m:a", "ctx:a", "m:b", "other", "free"], identity, tint)], ["m:a", "ctx:a", "m:b"]);
     // A LOADING runner climbs, so it is a line — and a runner stacked on it must not step, or its held top sits
     // below its rising floor and the inverted polygon fills as a wedge.
-    assert.deepEqual([...M.stepBands(["m:a", "ctx:a", "load:c", "runner:d", "other", "free"], identity, tint)], ["m:a", "ctx:a"]);
+    assert.deepEqual([...B.stepBands(["m:a", "ctx:a", "load:c", "runner:d", "other", "free"], identity, tint)], ["m:a", "ctx:a"]);
     // A plain residual at the bottom (no model on the card) stops the run at once.
-    assert.deepEqual([...M.stepBands(["other", "free"], identity, tint)], []);
+    assert.deepEqual([...B.stepBands(["other", "free"], identity, tint)], []);
 });
 
 test("bandEdge: a line band on stepped ones turns their corners — a constant residual is the model's step, shifted up", () => {
@@ -2835,13 +2837,13 @@ test("bandEdge: a line band on stepped ones turns their corners — a constant r
     const model = [4, 4, 10, 10], residual = model.map((v) => v + 1);
     // The SHAPE, compared with repeated vertices dropped: a stepped edge emits a corner at every sample, even a flat one.
     const shape = (e) => e.filter((q, k) => k === 0 || q[0] !== e[k - 1][0] || q[1] !== e[k - 1][1]);
-    const floor = shape(M.bandEdge(model, true));
-    const top = shape(M.bandEdge(residual, false, model));
+    const floor = shape(B.bandEdge(model, true));
+    const top = shape(B.bandEdge(residual, false, model));
     assert.deepEqual(top, floor.map(([i, v]) => [i, v + 1]), "exactly the stepped floor plus the residual's own thickness");
     // Interpolating the cumulative value instead is what drew the wedge: no corner, a diagonal from 5 to 11.
-    assert.deepEqual(M.bandEdge(residual, false), [[0, 5], [1, 5], [2, 11], [3, 11]]);
+    assert.deepEqual(B.bandEdge(residual, false), [[0, 5], [1, 5], [2, 11], [3, 11]]);
     // A line with no stepped base below is just a line — the device's own progressive growth stays one.
-    assert.deepEqual(M.bandEdge([1, 2, 3], false, null), [[0, 1], [1, 2], [2, 3]]);
+    assert.deepEqual(B.bandEdge([1, 2, 3], false, null), [[0, 1], [1, 2], [2, 3]]);
 });
 
 // Reported from a real load (ml.__events, 2026-09-16, gemma4:31b): the loading runner's memory (`load:`, a line) climbed
@@ -2853,14 +2855,14 @@ test("bandEdge: a load handing its bytes to its model holds its thickness to the
     // Cumulative tops: the model (stepped base) arrives at sample 2; the load on top of it held 43.3 until then.
     const model = [0, 0, 43.3 * G, 43.3 * G];
     const loadTop = [20 * G, 43.3 * G, 43.3 * G, 43.3 * G];
-    const top = M.bandEdge(loadTop, false, model);
+    const top = B.bandEdge(loadTop, false, model);
     assert.deepEqual(top, [[0, 20 * G], [1, 43.3 * G], [2, 43.3 * G], [2, 43.3 * G], [3, 43.3 * G]], "the stack's top stays flat through the hand-off");
     assert.ok(top.every(([, v]) => v >= 43.3 * G || v === 20 * G), "never below what is on the card");
     // The reverse hand-off (a model's figures dropping back to an unattributed runner) holds the same way.
-    const back = M.bandEdge([43.3 * G, 43.3 * G, 43.3 * G], false, [43.3 * G, 0, 0]);
+    const back = B.bandEdge([43.3 * G, 43.3 * G, 43.3 * G], false, [43.3 * G, 0, 0]);
     assert.deepEqual(back, [[0, 43.3 * G], [1, 43.3 * G], [1, 43.3 * G], [2, 43.3 * G]]);
     // Not a hand-off (both grow): the thickness still varies smoothly above the corner, as before.
-    assert.deepEqual(M.bandEdge([5, 12], false, [4, 10]), [[0, 5], [1, 6], [1, 12]]);
+    assert.deepEqual(B.bandEdge([5, 12], false, [4, 10]), [[0, 5], [1, 6], [1, 12]]);
 });
 
 test("the REAL capture with one card faulted: the healthy card's product name, and a fault with no remembered label", () => {
@@ -3022,12 +3024,12 @@ test("bandOrder: a model loading in the window stacks last among the models, its
         f({ key: "m:zeta", model: "zeta", bytes: 10, kind: "model" }, { key: "runner:aaa", bytes: 6, kind: "other", of: "aaa" }),
         f({ key: "m:aaa", model: "aaa", bytes: 8, kind: "model" }, { key: "ctx:aaa", bytes: 1, kind: "other", of: "aaa" }, { key: "helper", bytes: 1, kind: "other" }),
     ];
-    const order = M.bandOrder(frames);
+    const order = B.bandOrder(frames);
     assert.deepEqual(order, ["m:zeta", "m:aaa", "ctx:aaa", "runner:aaa", "load:aaa", "helper", "other", "free"]);
     // The models BELOW still step; the load is a curve, and stepping stops there — above every model, not among them.
     const identity = { "m:zeta": "zeta", "m:aaa": "aaa" };
     const tint = { "ctx:aaa": "aaa", "runner:aaa": "aaa", "load:aaa": "aaa" };
-    assert.deepEqual([...M.stepBands(order, identity, tint)], ["m:zeta", "m:aaa", "ctx:aaa", "runner:aaa"]);
+    assert.deepEqual([...B.stepBands(order, identity, tint)], ["m:zeta", "m:aaa", "ctx:aaa", "runner:aaa"]);
     // With no load in the window, plain alphabetical order.
-    assert.deepEqual(M.bandOrder([frames[2], [{ key: "m:zeta", model: "zeta", bytes: 10, kind: "model" }]]).slice(0, 3), ["m:aaa", "ctx:aaa", "m:zeta"]);
+    assert.deepEqual(B.bandOrder([frames[2], [{ key: "m:zeta", model: "zeta", bytes: 10, kind: "model" }]]).slice(0, 3), ["m:aaa", "ctx:aaa", "m:zeta"]);
 });
