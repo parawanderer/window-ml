@@ -145,7 +145,11 @@ export function timedText(text: string, marks: [number, number][] | undefined, n
 /** A DURATION, in units a reader can hold in their head. One formatter, because the panel had two that
  *  disagreed: a span's tooltip stopped at seconds, so a five-minute run read as "312.4s" — technically the
  *  number but not the answer to "how long was that". Milliseconds matter under a second (a tool call can be
- *  4ms), tenths under a minute, and past that the seconds are noise beside the minutes. */
+ *  4ms), tenths under a minute, and past that the seconds are noise beside the minutes.
+ *
+ *  It goes up to DAYS for the same reason it stops reporting seconds after a minute. Nothing it originally
+ *  measured lasted a day, so it did not need to; the gap a session sat idle before it was resumed does, and
+ *  "50h" is the arithmetic rather than the answer. */
 export function fmtDur(ms: number): string {
     const n = Math.max(0, ms);
     if (n < 1000) return `${Math.round(n)}ms`;
@@ -154,7 +158,9 @@ export function fmtDur(ms: number): string {
     const m = Math.floor(totalS / 60), sec = totalS % 60;
     if (m < 60) return sec ? `${m}m ${sec}s` : `${m}m`;
     const h = Math.floor(m / 60), min = m % 60;
-    return min ? `${h}h ${min}m` : `${h}h`;
+    if (h < 24) return min ? `${h}h ${min}m` : `${h}h`;
+    const d = Math.floor(h / 24), hr = h % 24;
+    return hr ? `${d}d ${hr}h` : `${d}d`;
 }
 
 /** The same scale, as an AGE ("3m ago"). Sub-second is not a useful age — anything that recent is "now" to a

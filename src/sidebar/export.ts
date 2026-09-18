@@ -18,7 +18,7 @@ import type { Session, AgentStep } from "./store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown } from "./format";
 import { splitAnswer, hasTokens, resolveTokenStep } from "../answer-tokens";
 import { runStats, fmtTokPerSec } from "../contract-chat";
-import { timedText } from "./timestamps";
+import { fmtDur, timedText } from "./timestamps";
 import { BUILD_INFO } from "../build-info.gen";
 
 // A rough token estimate for a string — the ubiquitous ~4-chars/token heuristic (good enough to gauge how much
@@ -302,6 +302,14 @@ function writeAgent(s: Session, d: Sink): void {
     const inter = [
         ...(s.says || []).map((x, j) => ({ pos: x.atStep || 0, ts: x.ts, say: x.text, sayImages: x.images, sayIdx: j })),
         ...answers.map((a, i) => ({ pos: a.atStep || 0, ts: a.ts, answer: a, last: i === answers.length - 1 })),
+        // The session picked up again on ANOTHER page, drawn as the same seam the sidebar draws. Positioned at the
+        // newest step that had already happened when it did, so the timestamp tie-break puts it after that turn's
+        // answer — which is where it happened.
+        ...(s.resumes || []).map((r) => ({
+            pos: (s.steps || []).filter((st) => (st.ts || 0) <= r.ts).reduce((m, st) => Math.max(m, st.step || 0), 0),
+            ts: r.ts,
+            resume: r,
+        })),
     ].sort((a, b) => (a.pos - b.pos)
         // At the SAME step (a turn that ran no tool steps keeps the prior step count), TIME is authoritative —
         // ordering answer-before-say by fiat mis-sorted a chat-style reply whose say arrived before it. Fall
@@ -311,6 +319,15 @@ function writeAgent(s: Session, d: Sink): void {
     const emitInter = (x: typeof inter[number]) => {
         // "User Asked" (not "you") — the export is shared with the DevTools panel; "you" is HUD-only.
         if ("say" in x) { d.head("User Asked"); (x.sayImages || []).forEach((img, k) => d.image(img, `say-${x.sayIdx}-img-${k + 1}`, `follow-up image ${k + 1}`)); d.prose(x.say || ""); return; }
+        // A resume names what it LOST as well as where it went: the divider is a seam a reader will stop at, and
+        // "earlier references no longer hold" is the whole reason it is drawn. A static export cannot hover, so
+        // what the panel puts in a tooltip is written out here.
+        if ("resume" in x) {
+            const r = x.resume;
+            d.divider(`resumed on ${r.url}${r.fromUrl ? ` (was ${r.fromUrl})` : ""} · after ${fmtDur(r.afterMs)}`);
+            d.note(`did not survive the resume: ${r.dropped.join("; ")}`);
+            return;
+        }
         const a = x.answer;
         d.head(x.last ? (a.hitCap ? "Stopped (step cap)" : a.cancelled ? "Cancelled" : a.error ? "Error" : "Answer") : "Answered");
         if (a.error) d.prose(a.error);

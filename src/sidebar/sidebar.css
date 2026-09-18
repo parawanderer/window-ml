@@ -1828,6 +1828,17 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
     font-size: .82em; color: var(--fg-faint); white-space: nowrap; }
 .nav-divider .nav-ico { color: var(--accent); flex: 0 0 auto; }
 .nav-divider .nav-url { color: var(--fg-dim); font-weight: 600; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; }
+/* The same seam, for a session picked up again on ANOTHER page after a gap (session.resume) rather than for a
+   run walking to the next page. Heavier than a nav, because everything above it describes a page that is gone:
+   the rule is dashed and the label carries the accent, so the two are told apart without reading them. */
+.resume-divider { margin: 16px 2px; }
+.resume-divider .nav-rule { background: none; border-top: 1px dashed var(--border); height: 0; }
+.resume-divider .nav-label { color: var(--fg-dim); cursor: help; }
+/* What a resume did NOT carry over, listed in the divider's tooltip — a list, so it is not on the seam itself. */
+.resume-lost { margin: 4px 0 0; padding-left: 16px; }
+.resume-lost li { margin: 1px 0; }
+/* The page a resumed session was on BEFORE, under the list of what it lost. */
+.resume-from { display: block; margin-top: 6px; color: var(--fg-faint); }
 .pending-note { display: flex; flex-direction: column; gap: 6px; padding: 4px 2px 10px; color: var(--fg-faint); font-style: italic; }
 .pending-note .ptext { font-variant-numeric: tabular-nums; }
 /* Browser page-load bar: the thin indeterminate sweep an SPA shows on navigation. */

@@ -353,3 +353,29 @@ test("timeline: an open event is not an instant, even though neither has an end"
     assert.ok(!("endedAt" in live));
     assert.ok("elapsedMs" in live, "an instant would have neither");
 });
+
+test("a session picked up on another page carries its resumes, in order, with what each lost", () => {
+    // A resume is neither a step nor a message: it is a fact about the session. A differ that does not know the
+    // session moved page reads the divergence that follows as the model behaving differently.
+    const doc = sessionToJson(agentSession({
+        resumes: [
+            { id: "abc12345-r1", ts: 1_700_086_400_000, url: "https://new.example/page", fromUrl: "https://old.example/", afterMs: 86_391_000, dropped: ["the page's state object", "approval grants"] },
+            { id: "abc12345-r2", ts: 1_700_172_800_000, url: "https://third.example/", afterMs: 86_400_000, dropped: ["cached fetches"] },
+        ],
+    }));
+    const r = doc.session.resumes;
+    assert.equal(r.length, 2);
+    assert.equal(r[0].url, "https://new.example/page");
+    assert.equal(r[0].fromUrl, "https://old.example/");
+    assert.equal(r[0].afterMs, 86_391_000);
+    assert.deepEqual(r[0].dropped, ["the page's state object", "approval grants"]);
+    assert.equal(r[0].at, new Date(1_700_086_400_000).toISOString());
+    // The one with no prior page says nothing rather than inventing one.
+    assert.equal("fromUrl" in r[1], false);
+    assert.equal(r[1].url, "https://third.example/");
+});
+
+test("a session that never moved page says nothing about resumes", () => {
+    assert.equal("resumes" in sessionToJson(agentSession()).session, false);
+    assert.equal("resumes" in sessionToJson(agentSession({ resumes: [] })).session, false);
+});

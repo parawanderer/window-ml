@@ -223,3 +223,23 @@ test("non-streaming run: no marks means no timed block (never a guessed timestam
     assert.doesNotMatch(md, /Out · timed/, "a run that never streamed has nothing to time");
     assert.match(md, /1/, "the output itself still exports");
 });
+
+test("agent session: a resume is a divider in run.md, and names what it lost", () => {
+    // A static export cannot hover, so what the panel puts in the divider's tooltip is written out here: the
+    // seam is the moment everything above it stopped describing the page it is on.
+    const s = {
+        hash: "abc", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 200_000,
+        status: "ok", turns: [], task: "read it",
+        steps: [{ step: 1, seq: 1, ts: 1000, tool: "findByText", arguments: { text: "hi" }, result: "found" }],
+        answers: [{ text: "done", ts: 2000, atStep: 1, status: "ok" }],
+        resumes: [{
+            id: "abc-r1", ts: 174_800_000, url: "https://new.example/page", fromUrl: "https://old.example/",
+            afterMs: 172_800_000, dropped: ["the page's state object", "approval grants"],
+        }],
+    };
+    const { md } = serializeSession(s);
+    assert.match(md, /resumed on https:\/\/new\.example\/page \(was https:\/\/old\.example\/\) · after 2d/);
+    assert.match(md, /did not survive the resume: the page's state object; approval grants/);
+    // After the turn's answer, which is when it happened — not before the run had said anything.
+    assert.ok(md.indexOf("done") < md.indexOf("resumed on"), "the seam follows the answer it came after");
+});

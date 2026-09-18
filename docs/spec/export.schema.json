@@ -185,6 +185,13 @@
           "items": {
             "$ref": "#/$defs/ExportEvent"
           }
+        },
+        "resumes": {
+          "description": "Every time the session was picked up again on a DIFFERENT page, oldest first. Absent when it never was, which is the ordinary case. A differ should read these before concluding two runs diverged: everything before a resume describes a page that was no longer there, and the model was told so.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExportResume"
+          }
         }
       },
       "required": [
@@ -2420,6 +2427,42 @@
       "required": [
         "inTokens",
         "outTokens"
+      ],
+      "additionalProperties": true
+    },
+    "ExportResume": {
+      "type": "object",
+      "description": "One resume: where the session went, where it had been, how long it sat, and what did not come with it.",
+      "properties": {
+        "url": {
+          "description": "The page it resumed ON.",
+          "type": "string"
+        },
+        "fromUrl": {
+          "description": "The page it last ran on, when that was known.",
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "afterMs": {
+          "description": "How long it had been idle, in milliseconds. `at` minus the previous activity.",
+          "type": "number"
+        },
+        "dropped": {
+          "description": "What did not survive, in the runtime's own words: live element references, the page's state object, cached fetches, tools a page script defined, approval grants. Never empty.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "url",
+        "at",
+        "afterMs",
+        "dropped"
       ],
       "additionalProperties": true
     }

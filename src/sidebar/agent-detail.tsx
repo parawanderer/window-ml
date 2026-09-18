@@ -18,6 +18,7 @@ import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
 import { IconChevron, IconWarn, IconCopy, IconCheck, IconIn, IconOut } from "./icons";
 import { usageSamples, liveOutTokens } from "./usage";
+import { fmtDur } from "./timestamps";
 import {
     Code, CopyBtn, SheetChip, Hash, Stamp, ClickableImg, Dot, Disclosure,
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText, cursorTipOn, PointerChip, TipText,
@@ -652,6 +653,36 @@ export function NavDivider({ url }: { url: string }) {
     );
 }
 
+/**
+ * A RESUME divider in the run log: the session was picked up again on a different page, after a gap.
+ *
+ * Distinct from {@link NavDivider}, which marks the agent walking to a new page inside one run. This is the run
+ * having STOPPED and been continued somewhere else, possibly days later, and the difference matters to a reader:
+ * everything above it describes a page that is no longer there, and the model was told so too. What did not
+ * survive is in the tip rather than the line, because it is a list and the line is a seam.
+ */
+export function ResumeDivider({ r }: { r: NonNullable<Session["resumes"]>[number] }) {
+    return (
+        <div class="nav-divider resume-divider">
+            <span class="nav-rule" aria-hidden="true" />
+            <span
+                class="nav-label"
+                {...cursorTipOn(
+                    <span>
+                        <b>What did not survive</b>
+                        <ul class="resume-lost">{r.dropped.map((d) => <li key={d}>{d}</li>)}</ul>
+                        {r.fromUrl ? <span class="resume-from">was {r.fromUrl}</span> : null}
+                    </span>,
+                )}
+            >
+                <svg class="nav-ico" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 1 0 3-6.7M3 4v4h4" /></svg>
+                resumed on <b class="nav-url">{prettyUrl(r.url)}</b> · after {fmtDur(r.afterMs)}
+            </span>
+            <span class="nav-rule" aria-hidden="true" />
+        </div>
+    );
+}
+
 // Every per-call usage sample a session recorded — see `usageSamples`, which is shared with the context
 // gauge sitting next to this bar. It was a near-copy here that read both collections while the gauge read
 // one, which is how a session could show its spend and no gauge at all.
@@ -733,6 +764,14 @@ export function AgentRunView({ s }: { s: Session }) {
         // page didn't actually change). Sits at step+0.3: after the navigate group, before its next turn/answer.
         ...(s.steps || []).filter(st => st.tool === "navigate" && st.approval !== "denied" && !!st.result && !st.result.startsWith("Error") && !!navTargetOf(st))
             .map((st, i) => ({ pos: (st.step || 0) + 0.3, ts: 0, el: <NavDivider key={`nav${i}-${st.seq ?? st.step}`} url={navTargetOf(st)} /> })),
+        // A RESUME lands after the last turn that had already happened when it did — a step has no timestamp of
+        // its own here, so the position is the newest step at or before the resume, and +0.6 puts it past that
+        // turn's answer (0.5) rather than between the turn and its own reply.
+        ...(s.resumes || []).map((r, i) => ({
+            pos: ((s.steps || []).filter(st => (st.ts || 0) <= r.ts).reduce((m, st) => Math.max(m, st.step || 0), -1)) + 0.6,
+            ts: r.ts,
+            el: <ResumeDivider key={`r${i}-${r.id}`} r={r} />,
+        })),
         ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`, i) })),
         ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={sy.id ? { seen: sy.seen } : undefined} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
