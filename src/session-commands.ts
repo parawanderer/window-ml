@@ -5,7 +5,7 @@
 //
 // Pure over its dependencies (`CommandDeps`), which sw-sessions.ts and background.ts fill in with the real ones, so
 // every command's decisions are tested in Node without a browser (tests/session-commands.test.mjs).
-import type { NeutralMessage } from "./contract";
+import type { NeutralMessage } from "./contract-chat";
 import type { Command, CommandError, CommandResult, CommandType, SessionId, TabInfo } from "./session-host";
 import type { SessionIndex } from "./session-index";
 

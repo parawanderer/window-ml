@@ -1,7 +1,8 @@
 // python-tool.ts — the `python_exec` agent tool: its schema and description, and how a run's result becomes the
 // model-facing text and the sidebar's python-in / python-out descriptors. Moved out of builtin-tools.ts; the sandbox
 // itself is `ml.pythonExec` (injected.ts) → the offscreen document → python-worker.ts.
-import { type MlApi, outputCapPrecheck, resolveOutputCap, UI_OUT_CAP } from "./contract";
+import { type MlApi, outputCapPrecheck, resolveOutputCap } from "./contract";
+import { UI_OUT_CAP } from "./contract-chat";
 import { type MlTool, type ToolResult } from "./contract-agent";
 import { type RenderDescriptor } from "./contract-render";
 import { googleSheetCsvUrl, nonEmptyTables, clipOut, clipValue } from "./dom";

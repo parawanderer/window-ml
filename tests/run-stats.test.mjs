@@ -3,7 +3,7 @@
 // chat_metadata tool, and the exports — one pure computation so all three agree.
 import { test } from "node:test";
 import assert from "node:assert";
-import { runStats, fmtTokPerSec, runStatsProvenance } from "../src/contract.ts";
+import { runStats, fmtTokPerSec, runStatsProvenance } from "../src/contract-chat.js";
 import { normalizeUsage } from "../src/sw-llm.ts";
 
 const u = (promptTokens, completionTokens, extra = {}) => ({ promptTokens, completionTokens, totalTokens: promptTokens + completionTokens, ...extra });

@@ -7,7 +7,8 @@
 // into chrome.storage.local and back, which is the same kind of boundary. Types only; erased at build.
 // Re-exported from contract.ts, which stays the address everything imports from.
 // Type-only, so the cycle with contract.ts (which re-exports this file) erases at build entirely.
-import type { JsonSchema, NeutralMessage, LexicalMetric, ExtendProfile, RequestHint } from "./contract";
+import type { JsonSchema, LexicalMetric, RequestHint } from "./contract";
+import type { NeutralMessage, ExtendProfile } from "./contract-chat";
 import type { RemoteToolTarget, RemoteTiming, ReusedGrant } from "./contract-agent";
 import type { AnswerMedia, RenderDescriptor, ToolFeedback } from "./contract-render";
 import type { FetchFormat } from "./contract-fetch";

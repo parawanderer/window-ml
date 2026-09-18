@@ -5,7 +5,7 @@
 
 import type { ApprovalRequest, ApprovalDecision } from "./contract-agent";
 import type { RenderDescriptor } from "./contract-render";
-import { UI_OUT_CAP } from "./contract";
+import { UI_OUT_CAP } from "./contract-chat";
 import { NotInDialect, Denied } from "./readonly-exec";
 import { clipOut, clipValue, elPath } from "./dom";
 import { suspiciousArgsWarning } from "./security";

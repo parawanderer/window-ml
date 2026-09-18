@@ -12,12 +12,12 @@
 // No chrome, no DOM → builds standalone (dist/agent-loop.js) and is unit-tested against a mocked
 // model / executor / gate in tests/agent-loop.test.js.
 
-import type { ToolCall, TokenUsage, RunStats } from "./contract";
+import type { ToolCall, TokenUsage, RunStats } from "./contract-chat";
 import type { AgentResult, AgentTranscriptEntry, ApprovalDecision } from "./contract-agent";
 import type { RenderDescriptor, ToolFeedback, TokenRender } from "./contract-render";
 import type { SubcallUsage } from "./contract-debug";
 import { tableOf } from "./table-data";
-import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract";
+import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract-chat";
 import { formatBytes, type Capacity } from "./resource-model";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";

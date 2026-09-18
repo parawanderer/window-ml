@@ -11,7 +11,7 @@
 
 import type { Session, Turn, AgentStep } from "./store";
 import { turnsRun } from "./store";
-import type { TokenUsage } from "../contract";
+import type { TokenUsage } from "../contract-chat";
 import type {
     ExportDocument, ExportSession, ExportBuild, ExportPage, ExportStep, ExportMessage,
     ExportOutcome, ExportTotals, ExportModelUsage, ExportStatus, IsoTimestamp,

@@ -14,7 +14,7 @@ import cssLang from "highlight.js/lib/languages/css";
 import mdLang from "highlight.js/lib/languages/markdown";
 import { js_beautify } from "js-beautify/js/lib/beautify.js";
 import katex from "katex";
-import type { NeutralMessage } from "../contract";
+import type { NeutralMessage } from "../contract-chat";
 import type { Session, Status } from "./store";
 
 for (const [name, lang] of [

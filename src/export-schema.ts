@@ -36,9 +36,7 @@
  * Types erased at build; import with `import type`.
  */
 
-import type {
-    TokenUsage,
-} from "./contract";
+import type { TokenUsage } from "./contract-chat";
 import type { PersistGrant, ReusedGrant } from "./contract-agent";
 import type { RenderDescriptor, ToolFeedback } from "./contract-render";
 import type { SubcallUsage, DebugAgentConfig, DebugSessionConfig } from "./contract-debug";

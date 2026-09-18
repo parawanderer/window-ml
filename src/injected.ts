@@ -1,17 +1,17 @@
 // This runs in the "Main World" (same as the page JS)
 
 import type {
-    NeutralMessage,
     MlApi,
-    ChatOptions,
-    ExtendProfile,
     JsonSchema,
-    ToolCall,
-    TokenUsage,
-    MlHistory,
 
     DerefValue, RequestHint, RequestUse
 } from "./contract";
+import type {
+    NeutralMessage, ChatOptions,
+    ExtendProfile, ToolCall,
+    TokenUsage,
+    MlHistory
+} from "./contract-chat";
 import type {
     MlTool,
     ApprovalRequest,
