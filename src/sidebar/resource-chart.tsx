@@ -21,15 +21,15 @@ import {
     type ResourceSample, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
 import {
-    segments, chartWindow, axisFrac, axisGaps, axisOf, type Axis, timeAtFraction, sampleAtFraction, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
+    segments, chartWindow, axisFrac, axisGaps, axisOf, timeAtFraction, sampleAtFraction, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
     scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction, runWeight, runFrac, gridStep, gridTimes, runGap, type RunGap
 } from "../resource-axis";
 import { placeEvents, laneRows, lineageOf, MIN_EV_SPAN, scopeToSpan, scopeAround, filterEvents, countByKind, sessionWindow } from "../resource-lane";
 import { deviceBands, hostBands, OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, pendingAllocation, stepBands, bandEdge, type Band, bandOrder } from "../resource-bands";
 import { keysReach, resourceHistory, capacity, colorFor, poolColor, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, streamLive, sampleGapMs, sampleGraceMs, layout, editLayout } from "./vram";
+import { barKey, chartHeld, cursorAt, enterPool, eventHover, eventKey, gapHover, HOLD_LAPSE_MS, holdAxis, holdKey, hotEvent, hoverAt, hoverPool, lastPointerAt, leavePool, litBy, live, noteRuns, poolHover, readingSurface, releaseAxis, tipMuted, trackCursor } from "./chart-interaction";
+import { hoverModel, kbFocus, kbPool, focusDepth } from "./vram-focus";
 import { scopedHash, sessionMap, models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot, predictView, timeGrid } from "./store";
-import { poolHover } from "./chart-interaction";
-import { hoverModel, kbFocus, kbPool, focusDepth, releaseFocus } from "./vram-focus";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { scrollToAnswer } from "./answer-render";
@@ -37,21 +37,6 @@ import { scrollToStepSeq } from "./step-scroll";
 import { useTipPlacement } from "./use-tip";
 import { signal } from "@preact/signals";
 
-/** Which overlay POOL (a card, or the host) is hovered — the line and its key light together. */
-const hoverPool = signal<string | null>(null);
-
-/** Where in the PLOT the pointer is (CSS px, and the plot's own width), so the tip can follow it and decide
- *  which side to sit on. Tracked on the plot rather than on each polygon: a polygon's offsetX is relative to
- *  its own segment's SVG, so with several segments it would jump, and the viewBox is 300 units wide whatever
- *  the panel's real pixel width is. */
-// The cursor, in VIEWPORT coordinates, plus WHICH surface it is over. Two fixes in one:
-//   • Viewport, not element-relative. A tip positioned inside a 9px lane row has nowhere to go but under the
-//     pointer, which is exactly where a tooltip must never be. Against the window it flips like every other
-//     tip in the panel (tip.ts), so the behaviour is one implementation rather than per-container luck.
-//   • A surface, because every track renders a BandTip and the lane renders an EventTip, all reading these
-//     same signals — so hovering a lane bar (which cross-highlights a model) made every track's band tip
-//     appear at once. A tip renders only for the surface the pointer is actually on.
-const hoverAt = signal<{ x: number; y: number; w: number; surface: string; yFrac?: number } | null>(null);
 /** Which part of the scrub window the pointer is over, so the cursor can say a handle is there before you
  *  try to use it. A resize affordance you can only discover by failing to pan is not an affordance. */
 const scrubGrab = signal<"from" | "to" | "pan" | "outside" | null>(null);
@@ -71,16 +56,6 @@ const snapUnder = (runs: ResourceSample[][]) => {
     if (eventHover.value || gapHover.value) return null;   // …and so does a gap: there is no sample in one
     return snapFraction(runs, c.frac, live.axis, sampleGraceMs());
 };
-/**
- * IS THE TOOLTIP MUTED? Esc hides it so you can LOOK at the chart, and the next pointer movement brings it
- * back. A cursor tip has to sit near the pointer to be readable, which means it sits on top of the trace you
- * paused over — so the one moment you want to study a shape is the one moment something is covering it.
- *
- * Deliberately not sticky: it clears on the next move rather than needing a second Esc, because the gesture
- * is "get out of the way for a second", not a mode. Nothing else about the hover changes — the crosshair and
- * its dots stay, since they mark WHERE you were looking and that is the thing being preserved.
- */
-export const tipMuted = signal(false);
 
 /** Mute the cursor tip if one is showing, and say whether that happened — so the Esc handler can fall through
  *  to leaving the zoom when there was nothing to hide. The decision lives HERE, beside the signals it reads,
@@ -91,8 +66,6 @@ export function muteTip(): boolean {
     return true;
 }
 
-/** Read the cursor for a surface, or null when the pointer is somewhere else. */
-const cursorAt = (surface: string) => (tipMuted.value || hoverAt.value?.surface !== surface ? null : hoverAt.value);
 /** The cursor for a surface, for the tips that READ THE PLOT (the sample stamp, a band, the pool rows) —
  *  null while an EVENT on that same surface is hovered, because then the event's own tip is the answer.
  *
@@ -103,26 +76,6 @@ const cursorAt = (surface: string) => (tipMuted.value || hoverAt.value?.surface 
  *  read, and only EventTip wants it. */
 const cursorOn = (surface: string) =>
     (eventHover.value?.scope === surface || gapHover.value?.scope === surface ? null : cursorAt(surface));
-/** Track a pointer against the viewport, tagged with the surface it is over. */
-const trackCursor = (surface: string) => (e: PointerEvent) => {
-    tipMuted.value = false;   // moving is the ask for it back — see tipMuted
-    // MOVING HANDS THE FOCUS BACK. A keyboard selection holds against everything else — including a band
-    // sliding under a still cursor as samples arrive, which raises `pointerenter` with nobody having touched
-    // anything — and it is a real move that ends it. See releaseFocus.
-    releaseFocus(e.target);
-    releasePool(e.target);
-    readingSurface = surface;
-    // `yFrac` is the pointer's height within the PLOT (0 = top, 1 = bottom), which is the only thing that can
-    // say which of several overlaid lines the pointer is nearest. Read off the plot element rather than the
-    // event target: the hit targets are strokes inside it, so measuring against those would give the pointer's
-    // position within a 10px band and mean nothing.
-    const plot = (e.currentTarget as HTMLElement)?.closest?.(".rc-plot") as HTMLElement | null;
-    const box = plot?.getBoundingClientRect();
-    hoverAt.value = {
-        x: e.clientX, y: e.clientY, w: typeof window !== "undefined" ? window.innerWidth : 1024, surface,
-        ...(box && box.height > 0 ? { yFrac: Math.min(1, Math.max(0, (e.clientY - box.top) / box.height)) } : {}),
-    };
-};
 
 const W = 300, H = 72;
 
@@ -1373,13 +1326,6 @@ const poolRefs = new Map<string, PoolRef[]>();
 export const notePools = (surface: string, pools: PoolRef[]): void => { poolRefs.set(surface, pools); };
 /** Does the view being read draw POOLS (the overlaid lines, a whole-box track)? Decides which list the keys step. */
 export const readingIsOverlay = (): boolean => readingSurface != null && poolRefs.has(readingSurface);
-/**
- * WHICH SURFACE THE READING IS ON, so one key can mean "the thing this view draws" in every view. Recorded from
- * the pointer's own surface rather than from the layout, because a layout may hold tracks of several kinds and
- * the answer is about where the reader is pointing. It OUTLIVES a pointerleave deliberately: the keyboard keeps
- * reading after the pointer wanders off, and it has to keep reading the same view.
- */
-let readingSurface: string | null = null;
 /** Cycle the focused POOL in the view being read, wrapping through "nothing picked out" at index 0. Hidden
  *  pools are skipped: switching one off takes it off the chart, so there is nothing left to point at. */
 export function stepPool(dir: number): void {
@@ -1391,22 +1337,6 @@ export function stepPool(dir: number): void {
     kbPool.value = { id: next?.id ?? null };
     if (next) enterPool(next); else leavePool();
 }
-/** Hand the LINE focus back to the pointer, on a real move and nothing else — the twin of `releaseFocus`. */
-function releasePool(target: EventTarget | null): void {
-    if (!kbPool.value) return;
-    kbPool.value = null;
-    if (!(target as Element | null)?.closest?.(".rc-hit")) leavePool();
-}
-
-function enterPool(p: { id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] }): void {
-    hoverPool.value = p.id;
-    // The pool itself, not a reading of it — every figure is derived from the sample under the cursor at
-    // render time. Its COLOUR rides along so the tip can carry the same swatch its legend key does: several
-    // lines cross in one plot, and a tip that only names a device leaves you matching a name to a stroke by
-    // eye, which is the work the legend's swatches already do everywhere else.
-    poolHover.value = { id: p.id, name: p.name, ceiling: p.ceiling, color: p.color, bandsOf: p.bandsOf };
-}
-function leavePool(): void { hoverPool.value = null; poolHover.value = null; }
 
 /** The per-vendor name for "the tool that shows this card's memory". Saying "nvidia-smi" on an AMD box is
  *  worse than saying nothing — it tells the reader to check something that isn't there. */
@@ -2458,30 +2388,6 @@ function BrushOverlay({ runs }: { runs?: ResourceSample[][] } = {}) {
     return <div class="rc-brush" style={{ left: `${from * 100}%`, width: `${Math.max(0, to - from) * 100}%` }} />;
 }
 
-/**
- * THE RUNS THE PLOTS ARE CURRENTLY DRAWN FROM.
- *
- * A drag outlives the render that started it: `onPointerDown={startBrush(runs)}` closes over the array from
- * whichever render attached the handler, and every poll after that leaves it one sample staler. The mark
- * re-resolves per render and the brush did not, which is exactly how they came to name different samples.
- *
- * A plain module-level ref rather than a signal, deliberately: it is written DURING render, and a signal
- * written during render re-enters rendering. Nothing reads it to decide what to DRAW — only the pointer
- * handlers, which run outside render and want the newest data there is.
- */
-/**
- * WHAT THE CHART PUBLISHES AS IT RENDERS, for every plot, overlay and pointer handler to read.
- *
- * `axis` is the window the plots are drawn on ({@link Axis}), linear in clock time, so they all place a moment at
- * the same x. `runs` is the sample data a plot is about to draw, which a drag begun in the same frame must not
- * read a previous version of.
- *
- * Plain refs rather than signals, deliberately: both are written DURING RENDER, and a signal written during
- * render either warns or re-enters. They live in one object rather than as two `let`s so the binding can be
- * imported — an imported `let` is read-only, which is what stopped the lane and the pointer state moving out of
- * this file at all.
- */
-export const live: { axis: Axis | null; runs: ResourceSample[][] | null } = { axis: null, runs: null };
 /** How often a chart that follows the clock redraws its axis. Fast enough to read as scrolling, slow enough that a
  *  re-render of every track is not the panel's main cost. */
 const AXIS_TICK_MS = 250;
@@ -2492,48 +2398,12 @@ const MIN_BAR_PX = 3;
 /** The lane's measured width, for turning MIN_BAR_PX into a fraction of it. Written from a callback ref, since the
  *  rows are drawn below the lane's early return where a hook cannot reach. */
 const laneWidthPx = signal(0);
-/**
- * THE AXIS HOLDS STILL UNDER THE POINTER. A chart that scrolls while you read it moves the thing you are pointing at:
- * the crosshair's sample walks away, a tooltip changes under a still cursor, a drag's anchored edge slides. So while
- * the pointer is over the plots or the lane, the axis it entered on is held, and the chart catches up to now when
- * the pointer leaves. Samples keep arriving meanwhile; they are drawn past the right edge until then.
- */
-const chartHeld = signal<{ axis: Axis; key: string } | null>(null);
-/** WHAT the held axis was a view OF. Holding is for passive reading only: a zoom, a scrub, a new width or a change of
- *  scope is you navigating, and a hold taken before it would pin the chart to the stretch you just asked to leave. */
-const holdKey = (): string =>
-    `${zoomRange.value?.from ?? ""}:${zoomRange.value?.to ?? ""}:${resWindowS.value}:${laneScoped.value}`
-    // The open session changes the window only when the chart is SCOPED to it. Keying it in regardless released the hold
-    // on the first click of a double-click (a click opens the step), so the chart jumped between the two clicks and the
-    // second one missed the bar it was meant for.
-    + (laneScoped.value ? `:${scopedHash() ?? ""}` : "");
-/** When the pointer last did anything over a chart surface. */
-let lastPointerAt = 0;
-/** A hold with no pointer activity over the chart for this long lets go. The backstop for where nothing can say the
- *  pointer has left: the DevTools panel, and any exit the browser does not report into the iframe. */
-const HOLD_LAPSE_MS = 8000;
-/** Hold the axis as the pointer comes onto (or moves over) a chart surface. */
-const holdAxis = () => {
-    lastPointerAt = Date.now();
-    if (!chartHeld.value && live.axis) chartHeld.value = { axis: live.axis, key: holdKey() };
-};
-/** Let it go when the pointer leaves for somewhere that is not another chart surface (plots → lane keeps it held). */
-const releaseAxis = (e: PointerEvent) => {
-    const to = e.relatedTarget as Element | null;
-    if (!to?.closest?.(".rc, .rc-lane")) chartHeld.value = null;
-};
-/** Let go outright: the pointer is somewhere else entirely. Called when the overlay's shell reports the pointer on the
- *  PAGE, which the iframe is otherwise never told (see `relayPointerOut` in shell.ts). */
-export function releaseAxisHold(): void { if (chartHeld.value) chartHeld.value = null; }
 // THREE WAYS A HOLD ENDS, because the one that should suffice (`pointerleave`) is not delivered when the pointer leaves
 // the panel's iframe for the page: moving anywhere in the panel off the chart; the shell saying the pointer is on the
 // page; and the lapse, in the chart's tick.
 if (typeof document !== "undefined") document.addEventListener("pointermove", (e) => {
     if (chartHeld.value && !(e.target as Element | null)?.closest?.(".rc, .rc-lane")) chartHeld.value = null;
 }, { passive: true });
-/** Publish the runs a plot is about to draw, for the pointer handlers. Call it from a render, not an effect:
- *  a drag begun in the same frame must not consult the previous one's data. */
-const noteRuns = (runs: ResourceSample[][]): ResourceSample[][] => (live.runs = runs);
 
 /** Drag across a plot to select a time range (and release to apply it). The fractions are mapped back to TIME
  *  through the same segmented geometry events are placed with — the axis is not linear, so a range read off
@@ -2600,35 +2470,6 @@ const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
 };
-
-/** One event's identity across surfaces: the same eviction is drawn in every track, so hovering it anywhere
- *  must highlight it everywhere. Its time and what it was are enough to identify it. */
-const eventKey = (e: ResourceEvent): string => `${e.kind}:${e.t}:${e.model ?? ""}`;
-/** A lane bar's DOM identity: the event it draws, never its index in a row. Keyed by index, a row that re-packed as a
- *  live run grew handed the same button to a different event under a still pointer; no `pointerenter` fired, so the
- *  hover went on naming the event that button used to be (a hovered aside showed the run's tooltip). */
-const barKey = (e: ResourceEvent): string => e.id ?? `${eventKey(e)}:${e.ref?.hash ?? ""}:${e.ref?.seq ?? ""}:${e.label}`;
-const hotEvent = signal<string | null>(null);
-
-/** WHICH EVENTS A HOVER LIGHTS, for every surface that dims around it (the lane, each card's phase strip): the hovered event
- *  itself, by its bar key, plus its lineage. Null when nothing should dim — no hover, or a hover on an event that is no
- *  longer among `events` (a held signal outlives the bar it named, and dimming everything for it reads as the lane
- *  vanishing). The key, not only the lineage id: a server-reported generation has no id, so hovering one dimmed nothing. */
-function litBy(events: readonly ResourceEvent[], hovered: ResourceEvent | undefined): ((e: ResourceEvent) => boolean) | null {
-    if (!hovered) return null;
-    const key = barKey(hovered);
-    if (!events.some((e) => barKey(e) === key)) return null;
-    const lineage = lineageOf(events, hovered.id);
-    return (e) => barKey(e) === key || (e.id != null && lineage.has(e.id));
-}
-
-/** The hovered event, and WHICH surface owns it. Every track's plot renders a tip (a ruled instant is hovered
- *  in the plot, where its meaning is) and so does the lane — all driven by this one signal, so without an
- *  owner every one of them rendered the same tooltip at once, four deep on a three-track panel. */
-const eventHover = signal<{ p: EventPlacement; scope: string } | null>(null);
-/** The hovered GAP between two runs, and which surface owns it — the same arrangement as `eventHover`, and for the
- *  same reason: the plot's own reading stands down while it is pointed at (see `cursorOn`). */
-const gapHover = signal<{ gap: RunGap; scope: string } | null>(null);
 
 /** "local (ollama)" or "cloud" for a model, or "" when the server never told us. Provenance comes from the
  *  ollama id list; without it an absence is not evidence of anything, so nothing is said. */
