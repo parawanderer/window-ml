@@ -32,22 +32,28 @@ the page doesn't.
 lives in the page's **main world** (reachable by page scripts/userscripts), not
 the isolated content-script world.
 
-`background.ts` is the message ROUTER + the print/nav spine; the cohesive leaf
-layers are split into their own modules it imports (all bundled back into
+`background.ts` is the message ROUTER + the print/nav spine. Every cohesive leaf
+layer lives in its own `sw-*.ts` module it imports — all bundled back into
 `dist/background.js` by esbuild, so the split is invisible at runtime and to the
-tests, which load the bundle). **`sw-consent.ts`** is who is allowed to ask (the
-pending approval gates, the per-tab grant ledgers, `senderTrust`) and
-**`sw-runs.ts`** is what the worker knows about a run (`bgRuns`/`activeRuns`,
-the storage snapshot + rehydration, the replay buffer, the session pointer
-store) — a privileged handler consults the first and mutates the second, so
-neither belongs in the router. The other three are: **`sw-llm.ts`** (the
-per-format request builders `API_FORMATS`, `getConfig`, model-capability probes,
-`fetchLLM`/`streamLLM`/`streamAgentTurn` + `prepareRequest`, the model-list /
-`setModel` / unload plumbing), **`sw-fetch.ts`** (the ml.fetch GET, the rendered
-background-tab fetch, and the credentialed Google Sheets CSV pull — the
-security-sensitive fetch guards `SHEET_URL_OK` + the response-header safelist
-live here), and **`sw-cdp.ts`** (the `chrome.debugger`/CDP layer: attach
-lifecycle + `cdpClick`/`cdpEval`/`cdpScreenshot`/`cdpShadowResolve`/`cdpKeyType`).
+tests, which load the bundle. **Run `node scripts/index.mjs '^sw-' --kind file
+--word` for this list live**; it is here because you need it to know where to
+look at all:
+
+| Module | What it owns |
+| --- | --- |
+| `sw-llm.ts` | the per-format request builders `API_FORMATS`, `getConfig`, capability probes, `fetchLLM`/`streamLLM`/`streamAgentTurn` + `prepareRequest`, model-list / `setModel` / unload |
+| `sw-fetch.ts` | the ml.fetch GET, the rendered background-tab fetch, the credentialed Sheets pull — the security-sensitive guards `SHEET_URL_OK` + the response-header safelist |
+| `sw-cdp.ts` | the `chrome.debugger`/CDP layer: attach lifecycle + `cdpClick`/`cdpEval`/`cdpScreenshot`/`cdpShadowResolve`/`cdpKeyType` |
+| `sw-consent.ts` | WHO IS ALLOWED TO ASK: the pending approval gates, the per-tab grant ledgers, `senderTrust` |
+| `sw-runs.ts` | WHAT THE WORKER KNOWS ABOUT A RUN: `bgRuns`/`activeRuns`, the storage snapshot + rehydration, the replay buffer, the session pointer store |
+| `sw-values.ts` | the value store's worker side: what is stored, who holds it, when it goes, how large it may grow |
+| `sw-events.ts` | ONE connection to the fork's `/api/events`, fanned to every open resource panel |
+| `sw-sessions.ts` | the background's session index, as the chat page's local host sees it |
+| `sw-tools.ts` | running ONE OpenWebUI-configured tool ourselves, in our own loop, with arguments we chose |
+| `sw-housekeeping.ts` | the one housekeeping log and its two messages |
+
+A privileged handler CONSULTS `sw-consent.ts` and MUTATES `sw-runs.ts`, which is
+why neither belongs in the router.
 
 ## The message contract (how to add a primitive)
 
