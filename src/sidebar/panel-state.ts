@@ -12,7 +12,8 @@
 import { signal } from "@preact/signals";
 import { STREAM_MAX_GAP_MS, MAX_SAMPLE_GAP_MS, STREAM_SAMPLE_MS } from "../resource-axis";
 import type { LaneFilter } from "../resource-lane";
-import { type ResourceSample, type Capacity, normModel, type TrackDef, presetRefusal, presetsFor } from "../resource-model";
+import { type ResourceSample, type Capacity, normModel } from "../resource-model";
+import { type TrackDef, presetRefusal, presetsFor } from "../resource-presets";
 import { usageByModel, type UsageSource } from "./model-stats";
 import { scopedHash, laneScoped, laneHidden, sessionMap } from "./store";
 import type { Band } from "../resource-bands";

@@ -10,6 +10,8 @@ const M = await import("../src/resource-model.ts");
 const B = await import("../src/resource-bands.ts");
 // The same for the GPU link graph: the topology parse and the bridge/link readings of it.
 const T = await import("../src/resource-topology.ts");
+// And the layout side: the series a box offers, the presets built from them, and the rules that judge both.
+const P = await import("../src/resource-presets.ts");
 const L = await import("../src/resource-lane.ts");
 const X = await import("../src/resource-axis.ts");
 // The machine shapes, shared with resource-demo.mjs — one copy, so a guard and a demo cannot disagree
@@ -202,29 +204,29 @@ test("stackRefusal: stacking asserts a real total, so the false cases are refuse
     const cudaCap = M.parseInfo(CUDA_INFO);
     const metalCap = M.parseInfo(METAL_INFO);
     const sample = { t: 1, capacity: cudaCap, models: [] };
-    const cat = M.seriesCatalog(sample);
+    const cat = P.seriesCatalog(sample);
     const byId = (id) => cat.find((s) => s.id === id);
 
-    assert.equal(M.stackRefusal([byId("vram.0")], cudaCap), null, "one series always stacks");
-    assert.match(M.stackRefusal([byId("vram.0"), byId("vram.1")], cudaCap), /each card has its own capacity.*ONE ceiling/i,
+    assert.equal(P.stackRefusal([byId("vram.0")], cudaCap), null, "one series always stacks");
+    assert.match(P.stackRefusal([byId("vram.0"), byId("vram.1")], cudaCap), /each card has its own capacity.*ONE ceiling/i,
         "a stack draws against one ceiling, and two cards have two");
-    assert.match(M.stackRefusal([byId("vram.0"), byId("ram")], metalCap), /same silicon|double-count/i,
+    assert.match(P.stackRefusal([byId("vram.0"), byId("ram")], metalCap), /same silicon|double-count/i,
         "on unified memory the device and host totals describe the same pool");
-    assert.match(M.stackRefusal([byId("vram.0"), byId("ram")], cudaCap), /different pools/i,
+    assert.match(P.stackRefusal([byId("vram.0"), byId("ram")], cudaCap), /different pools/i,
         "even discrete, VRAM + RAM in ONE stack claims a total that isn't measured against anything");
 });
 
 test("seriesCatalog: generated from the devices the box actually reports", () => {
-    const two = M.seriesCatalog({ t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] }).map((s) => s.id);
+    const two = P.seriesCatalog({ t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] }).map((s) => s.id);
     assert.deepEqual(two, ["vram.0", "vram.1", "ram"], "two cards → two device series, no hardcoding");
     // Unified memory yields ONE capacity series, not a device/host pair — offering both would invite exactly
     // the double-count stackRefusal exists to block.
-    const cat = M.seriesCatalog({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [M.residencyFrom(METAL_PS_GPU)] });
+    const cat = P.seriesCatalog({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [M.residencyFrom(METAL_PS_GPU)] });
     assert.deepEqual(cat.map((s) => s.id), ["mem", "mem.qwen3:0.6b"], "one pool, one ceiling, plus the model");
     assert.match(cat[0].label, /MTL0/, "labelled with the device the machine reported");
 
     // A resident model on a DISCRETE box adds its own per-device and (when it spills) per-host series.
-    const withModel = M.seriesCatalog({ t: 1, capacity: M.parseInfo(CUDA_INFO), models: [
+    const withModel = P.seriesCatalog({ t: 1, capacity: M.parseInfo(CUDA_INFO), models: [
         M.residencyFrom({ name: "m", size: 10 * GB, size_vram: 6 * GB, gpus: [{ gpu_id: "0", size_vram: 6 * GB }] }),
     ] }).map((s) => s.id);
     assert.ok(withModel.includes("vram.0.m"), "the model is plottable on the device");
@@ -232,7 +234,7 @@ test("seriesCatalog: generated from the devices the box actually reports", () =>
 });
 
 test("presetsFor: the default layout follows the hardware", () => {
-    const multi = M.presetsFor({ t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] });
+    const multi = P.presetsFor({ t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] });
     // The default is the most COMPACT view that still hides nothing: one track, every pool overlaid — cards
     // AND the host, since a CPU-resident model holds no VRAM and would otherwise vanish from the chart.
     assert.equal(multi[0].id, "overview", "Overview leads — one track, and it omits no pool");
@@ -255,11 +257,11 @@ test("presetsFor: the default layout follows the hardware", () => {
     assert.deepEqual(box.tracks[0].series, ["vram.0", "vram.1", "ram"], "every pool, laid end to end");
     // A preset must never propose a layout `stackRefusal` would reject; `total` is judged separately because
     // it does not merge the pools into one — the walls between them are the point.
-    assert.equal(M.presetRefusal(box, { t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] }), null);
+    assert.equal(P.presetRefusal(box, { t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] }), null);
     assert.ok(!multi.some((p) => p.id === "placement"));
 
     // The Mac: ONE pool, so one preset with one track — not a GPU view and a RAM view of the same silicon.
-    const single = M.presetsFor({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [] });
+    const single = P.presetsFor({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [] });
     assert.deepEqual(single.map((p) => p.id), ["memory"]);
     assert.deepEqual(single[0].tracks.map((t) => t.series), [["mem"]], "the one pool, once");
     assert.ok(!single.some((p) => p.id === "placement"));
@@ -421,17 +423,17 @@ test("DRIFT GUARD: every generated preset is valid under the stacking rule, on e
             supported_gpus: shape.devices.map((d) => ({ ...d, free_memory: d.total_memory - shape.idleHeld })),
         } };
         const sample = { t: 1, models: [], capacity: M.parseInfo(info) };
-        const presets = M.presetsFor(sample);
+        const presets = P.presetsFor(sample);
         assert.ok(presets.length > 0, `${name}: no preset at all`);
         for (const p of presets) {
-            assert.equal(M.presetRefusal(p, sample), null,
+            assert.equal(P.presetRefusal(p, sample), null,
                 `${name}: preset "${p.id}" proposes a layout the rule refuses`);
             assert.ok(p.tracks.length > 0, `${name}: preset "${p.id}" has no tracks`);
             for (const t of p.tracks) assert.ok(t.series.length > 0, `${name}: "${p.id}" has an empty track`);
         }
         // The DEFAULT is the first, and it is the one a user meets without choosing anything — so its
         // validity is the one that matters most and the one that was broken.
-        assert.equal(M.presetRefusal(presets[0], sample), null, `${name}: the DEFAULT preset is refused`);
+        assert.equal(P.presetRefusal(presets[0], sample), null, `${name}: the DEFAULT preset is refused`);
     }
 });
 
@@ -443,7 +445,7 @@ test("presets follow the SHAPE of the box, not its vendor or its card count", ()
             supported_gpus: shape.devices.map((d) => ({ ...d, free_memory: d.total_memory - shape.idleHeld })),
         } };
         const sample = { t: 1, models: [], capacity: M.parseInfo(info) };
-        return { presets: M.presetsFor(sample), sample };
+        return { presets: P.presetsFor(sample), sample };
     };
 
     // A MAC IS ONE POOL, so there is one preset and nothing to lay end to end — "Whole box" there would be
@@ -476,29 +478,29 @@ test("presets follow the SHAPE of the box, not its vendor or its card count", ()
 
 test("presets: ONE card plus host RAM is still two pools, so Overview overlays", () => {
     const sample = { t: 1, models: [], capacity: M.parseInfo(ONE_CARD_INFO) };
-    const overview = M.presetsFor(sample).find((p) => p.id === "overview");
+    const overview = P.presetsFor(sample).find((p) => p.id === "overview");
     assert.deepEqual(overview.tracks[0].series, ["vram.0", "ram"]);
     assert.equal(overview.tracks[0].mode, "overlay",
         "a card and the host have no shared capacity to stack into — the count that matters is POOLS, not cards");
     // The mode is read off the track AFTER the catalog filter, so it counts the series the machine actually
     // has rather than the ones the preset hoped for.
-    assert.equal(M.presetRefusal(overview, sample), null);
+    assert.equal(P.presetRefusal(overview, sample), null);
 
     // …and a single-POOL machine still stacks, which is what the ternary was reaching for and got right only
     // by accident on the Mac.
     const mac = { t: 1, models: [], capacity: M.parseInfo(METAL_INFO) };
-    const only = M.presetsFor(mac)[0];
+    const only = P.presetsFor(mac)[0];
     assert.deepEqual(only.tracks[0].series, ["mem"]);
     assert.equal(only.tracks[0].mode, "stack");
 });
 
 test("presets: several cards are OVERLAID, never stacked into a total that isn't real", () => {
     const sample = { t: 1, models: [], capacity: M.parseInfo(CUDA_INFO) };
-    const overview = M.presetsFor(sample).find((p) => p.id === "overview");
+    const overview = P.presetsFor(sample).find((p) => p.id === "overview");
     assert.equal(overview.tracks[0].mode, "overlay", "two cards have no meaningful combined total");
     // On a single-device box there is nothing to overlay, so a stack is both valid and the clearer reading.
     const mac = { t: 1, models: [], capacity: M.parseInfo(METAL_INFO) };
-    assert.equal(M.presetsFor(mac).find((p) => p.id === "overview"), undefined,
+    assert.equal(P.presetsFor(mac).find((p) => p.id === "overview"), undefined,
         "a one-pool machine gets one preset — there is nothing to overlay or place");
 });
 
@@ -506,7 +508,7 @@ test("presetRefusal: names a series the machine doesn't have (a layout saved on 
     const mac = { t: 1, models: [], capacity: M.parseInfo(METAL_INFO) };
     // A layout saved on the 2-card server, restored onto a Mac: `vram.1` does not exist here.
     const stale = { id: "saved", label: "Saved", description: "", tracks: [{ id: "t", series: ["vram.1"], mode: "stack", heightPx: 96 }] };
-    assert.match(M.presetRefusal(stale, mac), /doesn't have/);
+    assert.match(P.presetRefusal(stale, mac), /doesn't have/);
 });
 
 // Switching the extension's backend from a CUDA server to a Metal Mac is not a UI nicety — it is a category
@@ -2014,7 +2016,7 @@ test("placementFrom: the device name is carried through, never mapped", () => {
 // is slow), so they are laid END TO END rather than merged: each owns a band the height of its own capacity
 // and fills it from its own floor, and the walls between them are what make that visible.
 test("boxAxis: pools are laid end to end, and the total is real", () => {
-    const a = M.boxAxis([{ id: "vram.0", ceiling: 96 }, { id: "vram.1", ceiling: 96 }, { id: "ram", ceiling: 128 }]);
+    const a = P.boxAxis([{ id: "vram.0", ceiling: 96 }, { id: "vram.1", ceiling: 96 }, { id: "ram", ceiling: 128 }]);
     assert.equal(a.total, 320, "the axis total is the sum of real capacities");
     assert.deepEqual(a.bands.map((b) => [b.base, b.ceiling]), [[0, 96], [96, 96], [192, 128]]);
     // Each band starts where the previous one ended — the walls are the boundaries, and nothing crosses them.
@@ -2025,7 +2027,7 @@ test("boxAxis: pools are laid end to end, and the total is real", () => {
 
 test("boxAxis: hiding a pool shrinks the axis rather than leaving a hole", () => {
     // Which is what makes "just my two cards" a VIEW rather than arithmetic the reader has to do.
-    const a = M.boxAxis([{ id: "vram.0", ceiling: 96 }, { id: "vram.1", ceiling: 96 }]);
+    const a = P.boxAxis([{ id: "vram.0", ceiling: 96 }, { id: "vram.1", ceiling: 96 }]);
     assert.equal(a.total, 192);
     assert.deepEqual(a.bands.map((b) => b.base), [0, 96]);
 });
@@ -2033,7 +2035,7 @@ test("boxAxis: hiding a pool shrinks the axis rather than leaving a hole", () =>
 test("boxAxis: a pool with no capacity takes no band", () => {
     // A device whose total is unknown (the box has never answered /api/info) would otherwise take a
     // zero-height band and shift every wall above it by nothing, which is a band that cannot be pointed at.
-    const a = M.boxAxis([{ id: "vram.0", ceiling: 96 }, { id: "unknown", ceiling: 0 }, { id: "ram", ceiling: 128 }]);
+    const a = P.boxAxis([{ id: "vram.0", ceiling: 96 }, { id: "unknown", ceiling: 0 }, { id: "ram", ceiling: 128 }]);
     assert.deepEqual(a.bands.map((b) => b.id), ["vram.0", "ram"]);
     assert.equal(a.total, 224);
 });
@@ -2433,12 +2435,12 @@ test("utilization: its own series, its own preset where a card reports it, and n
     // CUDA reports both figures; the AMD shape reports only GPU busy — still a series, still the preset.
     for (const name of ["cuda", "amd"]) {
         const s = sampleOf(BOXES[name]);
-        const cat = M.seriesCatalog(s);
+        const cat = P.seriesCatalog(s);
         assert.deepEqual(cat.filter((d) => d.scope === "util").map((d) => d.id), ["util.0", "util.1"], name);
-        const act = M.presetsFor(s).find((p) => p.id === "activity");
+        const act = P.presetsFor(s).find((p) => p.id === "activity");
         assert.ok(act, `${name}: Activity is offered where a card reports`);
         assert.deepEqual(act.tracks[0].series, ["util.0", "util.1"]);
-        assert.equal(M.presetRefusal(act, s), null, "and the rule accepts what the preset proposes");
+        assert.equal(P.presetRefusal(act, s), null, "and the rule accepts what the preset proposes");
     }
     assert.deepEqual(M.parseInfo({ compute: { system_compute: { total_memory: 1 },
         supported_gpus: [{ ...BOXES.amd.devices[0], free_memory: 1 }] } }).devices[0].utilization, { gpuPercent: 40 }, "the absent figure stays absent");
@@ -2446,22 +2448,22 @@ test("utilization: its own series, its own preset where a card reports it, and n
     // drawn would read as an idle box.
     for (const name of ["laptop", "rig", "lab", "metal"]) {
         const s = sampleOf(BOXES[name]);
-        assert.equal(M.seriesCatalog(s).some((d) => d.scope === "util"), false, name);
-        assert.equal(M.presetsFor(s).some((p) => p.id === "activity"), false, name);
+        assert.equal(P.seriesCatalog(s).some((d) => d.scope === "util"), false, name);
+        assert.equal(P.presetsFor(s).some((p) => p.id === "activity"), false, name);
     }
     // THE RULES. A share of time never shares a track with a share of memory, in ANY mode; it never stacks;
     // and it has no capacity to lay end to end.
     const s = sampleOf(BOXES.cuda);
-    const cat = M.seriesCatalog(s);
+    const cat = P.seriesCatalog(s);
     const def = (id) => cat.find((d) => d.id === id);
-    assert.match(M.kindRefusal([def("util.0"), def("vram.0")]), /share of TIME/);
-    assert.equal(M.kindRefusal([def("util.0"), def("util.1")]), null);
-    assert.equal(M.kindRefusal([def("vram.0"), def("ram")]), null);
-    assert.match(M.stackRefusal([def("util.0")], s.capacity), /nothing here to add/);
+    assert.match(P.kindRefusal([def("util.0"), def("vram.0")]), /share of TIME/);
+    assert.equal(P.kindRefusal([def("util.0"), def("util.1")]), null);
+    assert.equal(P.kindRefusal([def("vram.0"), def("ram")]), null);
+    assert.match(P.stackRefusal([def("util.0")], s.capacity), /nothing here to add/);
     const mixed = { id: "x", label: "x", description: "", tracks: [{ id: "t", series: ["util.0", "vram.0"], mode: "overlay", heightPx: 96 }] };
-    assert.match(M.presetRefusal(mixed, s), /share of TIME/, "a saved layout mixing them is refused at restore");
+    assert.match(P.presetRefusal(mixed, s), /share of TIME/, "a saved layout mixing them is refused at restore");
     const total = { ...mixed, tracks: [{ id: "t", series: ["util.0", "util.1"], mode: "total", heightPx: 96 }] };
-    assert.match(M.presetRefusal(total, s), /no capacity to lay end to end/);
+    assert.match(P.presetRefusal(total, s), /no capacity to lay end to end/);
 });
 
 // ---- THE HOST-RAM PROMPT CACHE (`ollama-slop:promptcache2`), against the server's real captures ----
