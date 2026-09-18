@@ -3,5 +3,6 @@
   "branch": "v0.2.0",
   "path": "vectors/seal-v1.json",
   "commit": "41d3fffc9e41442b28838a7e07b7f5077eb318c6",
-  "blob": "6ad280a1e3b6cbfaa320ce7ec9c253ea1f6f9bd3"
+  "blob": "6ad280a1e3b6cbfaa320ce7ec9c253ea1f6f9bd3",
+  "watch": "main"
 }

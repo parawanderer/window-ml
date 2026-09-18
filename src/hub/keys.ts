@@ -267,8 +267,16 @@ export async function verifyChain(root: Bytes, chain: Certificate[], nowMs: numb
                     throw new ChainError("a certificate grants a scope its issuer does not hold");
             }
         } else if (body.renews) {
-            // The root needs no exemption, and a renewal it signed would be a renewal nobody checked.
-            throw new ChainError("the root issued a renewal");
+            // A ROOT-signed renewal is MORE checked, not less, which is the opposite of what it looks like. The two
+            // rules a renewal is exempt from only run when a certificate HAS A PARENT, so a root-issued one was
+            // never subject to them and there is nothing to exempt; what the predecessor adds — decoded, verified
+            // under the root, compared field for field — is a check that would not otherwise exist.
+            //
+            // And it is load-bearing: `may_revoke` may not be renewed by a delegate, by design, so the root
+            // renewing its own grant is the ONLY way the account's revoker gets a new window. Refusing it would
+            // fail on the one certificate whose failure is worst — the row whose lapse costs the account its
+            // ability to revoke at all.
+            await renewalOf(root, body, i, nowMs);
         }
     }
 
