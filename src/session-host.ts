@@ -317,6 +317,22 @@ export type Command =
      * A client asks once when a runtime appears and again when it reconnects, because a runtime that restarted may
      * have been upgraded under it.
      */
+    /**
+     * A page of one session's events, from the runtime itself.
+     *
+     * A subscription resumes from a position, and a relay's ring is short: a client that subscribes to a session
+     * from last Tuesday is answered `truncated` and has nowhere to read the rest. Locally the index serves that
+     * in-process, which is why the contract has never needed it; across a relay there is no in-process.
+     *
+     * It reads the page of events ENDING just before `before`, so a transcript fills upwards the way a person
+     * scrolls back. Paged, because one session's events include screenshots and a whole run does not belong in one
+     * answer.
+     *
+     * `before` is a position in the SESSION'S OWN HISTORY — 0 is its first event ever — and is deliberately NOT the
+     * stream cursor: a cursor counts across every session on a runtime and is not kept for an event once it is on
+     * disk. Absent means "from the end". A client pages by passing back the `from` it was given.
+     */
+    | { type: "session.backfill"; session: SessionId; before?: number; limit?: number }
     | { type: "runtime.info"; runtime: RuntimeId }
     | { type: "tabs.list"; runtime: RuntimeId }
     /** The devices paired with this runtime's account, as a person manages them. Needs `admin`, which is granted at
@@ -360,6 +376,7 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "chat.start": "drive",
     "agent.start": "drive",
     "session.resume": "drive",
+    "session.backfill": "view",
     "runtime.info": "view",
     "tabs.list": "drive",
     "device.list": "admin",
@@ -495,6 +512,16 @@ export interface CommandResultData {
     "agent.start": { session: SessionId };
     /** the same session, because resuming is not starting a new one */
     "session.resume": { session: SessionId };
+    /**
+     * Older events, OLDEST-FIRST within the page so a client applies them in stream order, from a page that ends
+     * just before `before`.
+     *
+     * `from` is this page's first event's position, which is what a client passes back as the next `before`.
+     * `epoch` is the runtime's, and a client holding a different one throws away what it has rather than stitching
+     * two histories together. `more` says another page exists BELOW this one; `truncated` says it does not exist
+     * anywhere any more, which is a different sentence and the one a reader has to be told.
+     */
+    "session.backfill": { session: SessionId; epoch: string; events: MlDebugEvent[]; from: number; more: boolean; truncated: boolean };
     /** What a transport cannot know about a runtime, from the runtime. `nowMs` is its OWN clock at the moment it
      *  answered, which is how `clockOffsetMs` is estimated: the round trip bounds the error. */
     "runtime.info": { kind: RuntimeInfo["kind"]; contractVersion: number; capabilities: RuntimeCapabilities; nowMs: number };

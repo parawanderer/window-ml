@@ -180,6 +180,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `chat.start` | drive | `chat` | nothing background-hosted |
 | `agent.start`: on a tab, a blank tab, or (reserved) headless | drive | `agent`, `tabs`, `headless` | `startRun` → the page → `START_RUN` |
 | `session.resume`: pick a saved session up on another page, by target | drive | `persistence`, `tabs`, and `agent` or `chat` by the session's kind | nothing |
+| `session.backfill`: a page of a session's events, older than a position | view | `persistence` | nothing |
 | `runtime.info`: what this runtime IS — its kind, contract version, capabilities and its own clock | view | | nothing |
 | `tabs.list` | drive | `tabs` | nothing |
 | `tab.screenshot`: on demand, size-capped | screen | `screenshots` | `CAPTURE_TAB` |
@@ -189,6 +190,24 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `device.renew`: a fresh certificate for a device that still holds a valid one | admin | `devices` | nothing |
 | `device.revoke`: unpair, and rotate the stream keys it held | admin | `devices` | nothing |
 | `device.scopes`: narrow or widen what a device may do; `approve`, `control` and `admin` are refused with `forbidden` | admin | `devices` | nothing |
+
+**`session.backfill` exists because a RELAY's ring is short.** A subscription resumes from a position, and a client
+that opens a session from last Tuesday is answered `truncated` with nowhere to read the rest. Locally the index
+serves that in-process from its ring and the store, which is why the contract never needed a command for it; across
+a relay there is no in-process.
+
+It reads UPWARDS — the page ending just before `before`, oldest-first within the page — because that is how a person
+scrolls a transcript back. `before` and `from` are positions in the SESSION'S OWN HISTORY, 0 being its first event
+ever, and deliberately not the stream cursor: a cursor counts across every session on a runtime and is not kept for
+an event once it is on disk. A client pages by handing back the `from` it was given.
+
+`more` says another page exists below this one. `truncated` says one does not and never will, which is a different
+sentence: a session the runtime does not KEEP has no durable history at all, its only copy having been the ring the
+subscription already served, and a client given an empty page without being told would wait for a page that is never
+coming.
+
+The page is capped by the runtime whatever a client asks for. It is a size decision wearing a count: forty events of
+a DOM run is nothing and forty screenshots is tens of megabytes.
 
 **`runtime.info` exists because a TRANSPORT cannot answer it.** A hub carries a runtime's identity and liveness and
 deliberately nothing else: the moment it holds a claim about what a runtime can do, a client is trusting it for

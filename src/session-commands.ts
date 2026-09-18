@@ -6,6 +6,7 @@
 // Pure over its dependencies (`CommandDeps`), which sw-sessions.ts and background.ts fill in with the real ones, so
 // every command's decisions are tested in Node without a browser (tests/session-commands.test.mjs).
 import type { NeutralMessage } from "./contract-chat";
+import type { MlDebugEvent } from "./contract-debug";
 import type { SessionHistory } from "./session-store";
 import type { Command, CommandError, CommandResult, CommandType, SessionId, TabInfo } from "./session-host";
 import type { SessionIndex } from "./session-index";
@@ -51,6 +52,8 @@ export interface CommandDeps {
     hostsChat(hash: string): boolean;
     /** keep this session past the worker's life: what an absent `ephemeral` means on the command that started it */
     keepSession(hash: string): void;
+    /** every event this runtime still holds for a session, oldest first; empty when it holds none */
+    storedEvents?(hash: string): Promise<MlDebugEvent[]>;
     /** what a saved session would be CONTINUED from, or null when this browser keeps no history for it */
     history(hash: string): Promise<SessionHistory | null>;
     /**
@@ -97,6 +100,11 @@ export const RESUME_DROPS = [
     "tools a page script defined (functions cannot be stored)",
     "approval grants (consent is per page, and is asked again)",
 ] as const;
+
+/** How many events one backfill page carries, whatever a client asks for. A page holds screenshots, so this is a
+ *  size decision wearing a count: forty events of a DOM run is nothing and forty screenshots is tens of megabytes,
+ *  which is why a client pages rather than asking for a session. */
+const BACKFILL_PAGE = 40;
 
 /** A system prompt set at `chat.start`. */
 const CHAT_SYSTEM_MAX = 20_000;
@@ -180,6 +188,41 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
     };
 
     const handlers: { [T in CommandType]?: (c: Extract<Command, { type: T }>) => Promise<CommandResult<T>> } = {
+        /**
+         * A page of a session's events, for a client whose subscription came back `truncated`.
+         *
+         * Locally this is never needed — the index serves a subscription from its ring and the store in-process —
+         * so it exists for a client on the other side of a relay, whose ring is short and whose session may be from
+         * last Tuesday. Answering it here anyway is what keeps the two paths honest: a local client can exercise
+         * the same command a phone will.
+         */
+        "session.backfill": async (c) => {
+            const s = session(c);
+            if (s.error) return s.error;
+            if (!deps.storedEvents) return fail("unsupported", "this browser keeps no history to page through");
+            const limit = c.limit == null ? BACKFILL_PAGE : Math.min(Math.max(1, Math.floor(c.limit)), BACKFILL_PAGE);
+            if (c.before != null && (!Number.isInteger(c.before) || c.before < 0)) return fail("invalid", "before must be a position in this session's history");
+            // A session this runtime does not KEEP has no durable history: the only copy was the ring, which the
+            // subscription already served, and what fell out of it is gone. Saying so is the whole point of
+            // `truncated` — a client that got an empty page would otherwise wait for a page that is never coming.
+            const kept = !!deps.index.get(s.id.hash)?.saved;
+            const all = kept ? await deps.storedEvents(s.id.hash) : [];
+            // A position past the end is not an error: a client that asked before the runtime had written its
+            // newest events would otherwise be refused for being early rather than given the page it asked for.
+            const end = c.before == null ? all.length : Math.min(c.before, all.length);
+            const from = Math.max(0, end - limit);
+            return ok({
+                session: s.id,
+                epoch: deps.index.epochOf(s.id.hash),
+                events: all.slice(from, end),
+                from,
+                // `more` says another page exists BELOW this one. `truncated` says one does not and never will,
+                // which is a different sentence and the one a reader has to be told.
+                more: from > 0,
+                truncated: from === 0 && !kept,
+            });
+        },
+
         // What a transport cannot answer. A hub carries identity and liveness and deliberately nothing else, so a
         // client that reached this runtime over one asks the runtime itself — over the same authenticated channel as
         // every other command, which is what makes the answer worth anything.
