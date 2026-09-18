@@ -4,6 +4,7 @@
 // (docs/dev/chat-page.md §The local index).
 import { hintSession, type MlDebugEvent } from "./contract";
 import { createCommandHandler, type CommandDeps, type PageOutcome } from "./session-commands";
+import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, startBackgroundChat } from "./sw-chat";
 import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type TabInfo } from "./session-host";
 import { SessionIndex, type IngestSource } from "./session-index";
 import { SESSIONS_PORT, SessionServer } from "./session-server";
@@ -25,7 +26,7 @@ let utilityModelSet = false;
 function localRuntime(): RuntimeInfo {
     return {
         id: LOCAL_RUNTIME, name: "This browser", kind: "browser", online: true, contractVersion: SESSION_CONTRACT_VERSION,
-        capabilities: { highlight: true, screenshots: true, sideCalls: utilityModelSet },
+        capabilities: { chat: true, highlight: true, screenshots: true, sideCalls: utilityModelSet },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -51,6 +52,18 @@ const CAPTURE_RETRIES = 5, CAPTURE_RETRY_MS = 550;   // captureVisibleTab allows
 
 /** Wire the command handler to the browser and to background.ts's runs. */
 export function configureSessionCommands(run: RunDeps): void {
+    // A worker-hosted chat has no tab, so its transcript reaches the index from here and nowhere else (sw-chat.ts
+    // says why that is not the double-feed AGENTS.md warns about).
+    configureBackgroundChats({
+        emit: (event) => ingestSessionEvent(event, { trusted: true }),
+        call: async (req, signal) => await fetchLLM(req, signal) as import("./contract").LlmResult,
+        load: async (hash) => {
+            const key = `ml_session_${hash}`;
+            try { return ((await chrome.storage.local.get(key)) as Record<string, never>)[key] ?? null; } catch { return null; }
+        },
+        save: async (hash, session) => { await chrome.storage.local.set({ [`ml_session_${hash}`]: session }); },
+        now: () => Date.now(),
+    });
     handler = createCommandHandler({
         runtime: LOCAL_RUNTIME,
         index: sessionServer.index,
@@ -68,8 +81,13 @@ export function configureSessionCommands(run: RunDeps): void {
         resolveApproval: run.resolveApproval,
         forgetStored: async (hash) => {
             run.forgetRun(hash);
+            forgetBackgroundChat(hash);
             try { await chrome.storage.local.remove(`ml_session_${hash}`); } catch { /* storage unavailable */ }
         },
+        startChat: (opts) => startBackgroundChat(opts),
+        sendChat: (hash, text, images) => sendBackgroundChat(hash, text, images),
+        cancelChat: (hash) => cancelBackgroundChat(hash),
+        hostsChat: (hash) => isBackgroundChat(hash),
         utilityConfigured: () => utilityModelSet,
         sideCall: async ({ messages, schema, maxTokens, session }) => {
             const r = await fetchLLM({

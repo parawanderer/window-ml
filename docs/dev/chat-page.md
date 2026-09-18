@@ -156,6 +156,7 @@ browser. Nothing new decides a gate, starts a loop or builds a request.
 | `side.call` | `fetchLLM` on the utility profile, `think: false`, `maxTokens` capped at 1024, the session on the hint; `unsupported` without a utility model, which `capabilities.sideCalls` also says (kept current from storage) |
 | `tab.screenshot` | `captureVisibleTab`, only for a tab in front in its window; PNG, then JPEG at falling quality until it fits `maxBytes` (ceiling 4 MB); size read from the image header |
 | `tabs.list` | `chrome.tabs.query`, http(s) tabs only |
+| `chat.start` | a chat the worker hosts itself: `sw-chat.ts` (below) |
 
 **The page says what it did.** The composer's page path was fire-and-forget, so the result could not say whether a
 message steered a run, started a turn, or reached nothing (a reloaded page no longer holds an unsaved chat). A command
@@ -167,6 +168,39 @@ unchanged.
 
 **A screenshot of a background tab is refused, not taken with the debugger.** CDP could capture it, but attaching
 puts the debugging banner on someone's screen for a look they did not start.
+
+## Chats the worker hosts
+
+`chat.start` makes a conversation with no page behind it (`src/sw-chat.ts`). Every other session in the index belongs
+to a tab: a console `ml.chat`, a page script, a background-hosted run delegating its tools back to the page it started
+on. This one does not, because the person typed it into `chat.html`, and closing that page must not end the
+conversation the phone will open later through the hub.
+
+The turn is emitted here, as the same `chat` / `chat-result` / `chat-error` events `injected.ts` emits for a page's
+chat, so the index, the session views and the exports read one shape and none of them has to know which side ran it.
+The start and its result share an `id` derived from the hash and the turn number rather than drawn at random, so a
+turn reported twice is recognised as one turn.
+
+**This is the one place an event reaches the index without also going to `relayDebugEvent`**, and that is not the
+double-feed the AGENTS.md trap is about. That trap is about recording a run twice because a background-hosted run's
+lifecycle is emitted page-side on some surfaces and background-side on others. Here there is no panel to relay to at
+all: a DevTools panel attaches to a tab, and this session has none.
+
+Three things follow from having no page:
+
+- **A message is simply the next turn.** There is no loop to steer and no page to relay to, so `session.send` checks
+  for a worker-hosted chat BEFORE both run paths, which each end at a tab this session does not have. A message that
+  arrives while the model is still answering is a `conflict`, since a chat has no inbox.
+- **A saved chat survives the worker.** Each answered turn writes the same `ml_session_<hash>` record a page's
+  `{ save: true }` chat writes, so `ml.resumeChat(hash)` picks it up from a page like any other, and the next message
+  after an eviction rehydrates the history from it instead of reporting that the chat is gone. The turn counter is
+  rebuilt from the answers in that history, or the turns after an eviction would reuse ids the earlier ones had.
+  An `ephemeral` chat writes nothing and is therefore gone when the worker is.
+- **A failed turn does not keep the message it could not answer**, so the next turn does not re-send a question the
+  model never answered. The attempt is still in the transcript as its own `chat-error`.
+
+The map of live chats is capped (`MAX_BG_CHATS`), dropping the chat idle longest; a saved one comes back from storage,
+so the cap costs a round trip rather than a conversation. A chat mid-turn is never dropped.
 
 ## Not yet
 

@@ -280,7 +280,8 @@ learned by shipping the wrong version first.
   runtime says so (no optimistic updates). The background's session index (`session-index.ts`) is fed where the DevTools
   panel is fed, never at a second point: a background run's start and result are emitted page-side on some surfaces and
   background-side on others, and feeding both records a run twice. A page's forwarded event is untrusted and bound to
-  its tab.
+  its tab. The ONE session with no such pair is a chat the worker hosts itself (`chat.start`, `sw-chat.ts`): it has no
+  tab, so no panel can be attached to it, and its events reach the index and nothing else.
 - **Exports.** Diff two runs with `run.json` after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`.
 
 ## Showing a run: the log, the exports and tooltips

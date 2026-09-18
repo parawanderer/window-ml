@@ -34,6 +34,14 @@ export interface CommandDeps {
     resolveApproval(key: string, decision: { approved: true; persist?: boolean } | { approved: false; feedback?: string }): boolean;
     /** forget what the worker keeps for a finished session: its stored chat history, its resumable snapshot */
     forgetStored(hash: string): Promise<void>;
+    /** start a chat this worker hosts (no tab), resolving with its hash once the first turn is under way */
+    startChat(opts: { text: string; images?: string[]; model?: string; system?: string; think?: boolean | null; ephemeral?: boolean }): Promise<string>;
+    /** the next turn of a worker-hosted chat; `not-found` when this worker does not host it and storage has nothing */
+    sendChat(hash: string, text: string, images?: string[]): Promise<"turn" | "busy" | "not-found">;
+    /** abort a worker-hosted chat's turn; false when it was idle or is not ours */
+    cancelChat(hash: string): boolean;
+    /** does this worker host this chat itself, rather than a tab? */
+    hostsChat(hash: string): boolean;
     /** is a utility model configured (a side call would otherwise run on the main model) */
     utilityConfigured(): boolean;
     /** a small model call on the utility profile */
@@ -49,6 +57,10 @@ export const SIDE_CALL_MAX_TOKENS = 1024;
 export const SCREENSHOT_MAX_BYTES = 4 * 1024 * 1024;
 /** Mid-run steers carry text only (the loop's inbox has no image slot); images go with a new turn. */
 const STEER_TEXT_MAX = 20_000;
+/** One message's text, on a chat this worker hosts. Long enough for a pasted document, short of a denial of service. */
+const CHAT_TEXT_MAX = 100_000;
+/** A system prompt set at `chat.start`. */
+const CHAT_SYSTEM_MAX = 20_000;
 
 const fail = (code: CommandError["code"], message: string): CommandResult<any> => ({ ok: false, error: { code, message } });
 const ok = <T extends CommandType>(data: any): CommandResult<T> => ({ ok: true, data });
@@ -86,12 +98,49 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
     const handlers: { [T in CommandType]?: (c: Extract<Command, { type: T }>) => Promise<CommandResult<T>> } = {
         "tabs.list": async (c) => ownRuntime(c) ?? ok({ tabs: await deps.listTabs() }),
 
+        // A chat with no page behind it, hosted by the worker (sw-chat.ts). It answers as soon as the first turn is
+        // UNDER WAY rather than when it finishes, so the client subscribes and watches the answer arrive; a chat that
+        // only existed once the model had replied would leave the person's own message nowhere for half a minute.
+        "chat.start": async (c) => {
+            const bad = ownRuntime(c);
+            if (bad) return bad;
+            const text = typeof c.text === "string" ? c.text : "";
+            const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
+            if (!text.trim() && !images.length) return fail("invalid", "a chat needs a message or an image");
+            if (text.length > CHAT_TEXT_MAX) return fail("invalid", "that message is too long");
+            if (c.system != null && typeof c.system !== "string") return fail("invalid", "a system prompt must be text");
+            if (typeof c.system === "string" && c.system.length > CHAT_SYSTEM_MAX) return fail("invalid", "that system prompt is too long");
+            if (c.model != null && typeof c.model !== "string") return fail("invalid", "a model must be named as text");
+            if (c.think != null && typeof c.think !== "boolean") return fail("invalid", "think must be true, false or absent");
+            try {
+                const hash = await deps.startChat({
+                    text, ...(images.length ? { images } : {}),
+                    ...(c.model ? { model: c.model } : {}),
+                    ...(typeof c.system === "string" && c.system ? { system: c.system } : {}),
+                    ...(c.think != null ? { think: c.think } : {}),
+                    ...(c.ephemeral ? { ephemeral: true } : {}),
+                });
+                return ok({ session: { runtime: deps.runtime, hash } });
+            } catch (err) {
+                return fail("failed", (err as Error)?.message || String(err));
+            }
+        },
+
         "session.send": async (c) => {
             const s = session(c);
             if (s.error) return s.error;
             const text = typeof c.text === "string" ? c.text : "";
             const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
             if (!text.trim() && !images.length && !c.elementContext) return fail("invalid", "a message needs text, an image or an element");
+            // A chat this worker hosts has no tab to relay to, and no loop to steer: the message is simply its next
+            // turn. Checked BEFORE the run paths, which both end at a tab this session does not have.
+            if (deps.hostsChat(s.id.hash)) {
+                if (text.length > CHAT_TEXT_MAX) return fail("invalid", "that message is too long");
+                const outcome = await deps.sendChat(s.id.hash, text, images);
+                if (outcome === "turn") return ok({ mode: "turn" });
+                if (outcome === "busy") return fail("conflict", "the chat is still answering the last message");
+                return fail("not-found", "this browser no longer holds that chat");
+            }
             const status = deps.index.get(s.id.hash)!.status;
             const running = status === "running" || status === "waiting";
             // A background loop that is running takes the steer directly: the page's handle may be gone (the run
@@ -109,6 +158,10 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
         "session.cancel": async (c) => {
             const s = session(c);
             if (s.error) return s.error;
+            if (deps.hostsChat(s.id.hash)) {
+                if (deps.cancelChat(s.id.hash)) return ok({});
+                return fail("conflict", "the session is not running");
+            }
             if (deps.cancelRun(s.id.hash)) return ok({});
             const status = deps.index.get(s.id.hash)!.status;
             if (status !== "running" && status !== "waiting") return fail("conflict", "the session is not running");

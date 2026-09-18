@@ -2578,3 +2578,12 @@ declare global {
     interface Window { ml: MlApi; }
 }
 export {};
+
+/** Stable short hex id per session (crypto.getRandomValues, Math.random fallback).
+ *  Shown in the sidebar and used to resume a conversation. */
+export const shortHash = (): string => {
+    try {
+        const b = new Uint8Array(4); crypto.getRandomValues(b);
+        return [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+    } catch { return Math.random().toString(16).slice(2, 10); }
+};

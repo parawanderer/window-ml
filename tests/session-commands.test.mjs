@@ -33,6 +33,10 @@ function world(over = {}) {
         cancelRun: rec("cancelRun", false),
         resolveApproval: rec("resolveApproval", true),
         forgetStored: rec("forgetStored", async () => {}),
+        startChat: rec("startChat", async () => "beef0001"),
+        sendChat: rec("sendChat", async () => "turn"),
+        cancelChat: rec("cancelChat", true),
+        hostsChat: rec("hostsChat", false),
         utilityConfigured: () => true,
         sideCall: rec("sideCall", async () => ({ content: "a title", usage: { totalTokens: 5 } })),
         captureVisible: rec("captureVisible", async () => png(1280, 720)),
@@ -59,7 +63,9 @@ test("every session command refuses a session this runtime does not hold, or ano
         { type: "tab.screenshot", runtime: "local", target: { session: sid("ffff0000") } },
     ]) assert.equal(code(await run(c)), "not-found", c.type);
     assert.equal(code(await run({ type: "session.send", session: "aaaa0001", text: "hi" })), "invalid");
-    assert.equal(code(await run({ type: "chat.start", runtime: "local", text: "hi" })), "unsupported");
+    // A command this runtime does not implement yet answers `unsupported`, so a newer client degrades to a message
+    // rather than to a guess. `agent.start` is the next one to land.
+    assert.equal(code(await run({ type: "agent.start", runtime: "local", task: "hi", target: { kind: "blank" } })), "unsupported");
 });
 
 test("session.send: a running background loop is steered directly; anything else goes to the page, which says what it did", async () => {
@@ -182,4 +188,59 @@ test("image headers: PNG and JPEG sizes read from bytes; anything else is not an
     assert.equal(imageSize("data:image/png;base64,AAAA"), null);
     assert.equal(dataUrlBytes("data:image/png;base64,QUJD"), 3);
     assert.equal(dataUrlBytes("data:image/png;base64,QUI="), 2);
+});
+
+/** The index row a worker-hosted chat makes: a `chat` turn with no tab behind it. */
+const chatStart = (hash) => ({ kind: "chat", id: `${hash}-1`, ts: 1, save: true, session: { hash, turn: 1 }, streaming: false,
+    config: { system: null, model: null, think: null, schema: false, toolIds: null, maxTokens: null, save: true },
+    request: { model: null, extend: null, messages: [{ role: "user", content: "hi" }], images: null, toolIds: null, schema: false, think: null, maxTokens: null } });
+
+test("chat.start hands back the new session and passes the options through", async () => {
+    const w = world();
+    const r = await w.run({ type: "chat.start", runtime: "local", text: "hello", system: "be terse", model: "m1", think: true });
+    assert.deepEqual(r, { ok: true, data: { session: sid("beef0001") } });
+    assert.deepEqual(w.named("startChat")[0][1], { text: "hello", model: "m1", system: "be terse", think: true });
+});
+
+test("chat.start refuses an empty message and another runtime", async () => {
+    const w = world();
+    assert.equal((await w.run({ type: "chat.start", runtime: "local", text: "   " })).error.code, "invalid");
+    assert.equal((await w.run({ type: "chat.start", runtime: "local", text: "x".repeat(100_001) })).error.code, "invalid");
+    assert.equal((await w.run({ type: "chat.start", runtime: "phone", text: "hi" })).error.code, "not-found");
+    assert.equal(w.named("startChat").length, 0);
+});
+
+test("a message to a worker-hosted chat is its next turn, never a relay to a tab", async () => {
+    const w = world({ hostsChat: () => true });
+    w.index.ingest(chatStart("c0ffee01"), { trusted: true });
+
+    const r = await w.run({ type: "session.send", session: sid("c0ffee01"), text: "and then?" });
+    assert.deepEqual(r, { ok: true, data: { mode: "turn" } });
+    assert.equal(w.named("sendChat")[0][1], "c0ffee01");
+    assert.equal(w.named("toPage").length, 0, "a worker-hosted chat has no page to relay to");
+    assert.equal(w.named("steer").length, 0);
+});
+
+test("a message to a chat that is still answering is a conflict, and a forgotten one is not-found", async () => {
+    const busy = world({ hostsChat: () => true, sendChat: async () => "busy" });
+    busy.index.ingest(chatStart("c0ffee02"), { trusted: true });
+    assert.equal((await busy.run({ type: "session.send", session: sid("c0ffee02"), text: "hurry up" })).error.code, "conflict");
+
+    const gone = world({ hostsChat: () => true, sendChat: async () => "not-found" });
+    gone.index.ingest(chatStart("c0ffee03"), { trusted: true });
+    assert.equal((await gone.run({ type: "session.send", session: sid("c0ffee03"), text: "hello?" })).error.code, "not-found");
+});
+
+test("cancelling a worker-hosted chat aborts its turn rather than a run or a page", async () => {
+    const w = world({ hostsChat: () => true });
+    w.index.ingest(chatStart("c0ffee04"), { trusted: true });
+
+    assert.deepEqual(await w.run({ type: "session.cancel", session: sid("c0ffee04") }), { ok: true, data: {} });
+    assert.equal(w.named("cancelChat")[0][1], "c0ffee04");
+    assert.equal(w.named("cancelRun").length, 0);
+    assert.equal(w.named("toPage").length, 0);
+
+    const idle = world({ hostsChat: () => true, cancelChat: () => false });
+    idle.index.ingest(chatStart("c0ffee05"), { trusted: true });
+    assert.equal((await idle.run({ type: "session.cancel", session: sid("c0ffee05") })).error.code, "conflict");
 });

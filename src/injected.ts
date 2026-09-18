@@ -33,7 +33,7 @@ import type {
     TablePreview,
     ServerToolResult, DerefValue, ShotBox, ServerTool, OllamaInfo, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer, RequestHint, RequestUse
 } from "./contract";
-import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated, hintSession } from "./contract";
+import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated, hintSession, shortHash } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { expandPointers } from "./pointer-macro";   // `@tool:` → a real dereference call, before the dialect sees it
 import { htmlToMarkdown } from "./html-to-md";
@@ -55,7 +55,7 @@ import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CL
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
 import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
-import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
+import { emitDebug, debugId, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
 import { makeDomTools, buildDereferenceTool } from "./tools";
 import { pipeStages, TokenStore, type DerefRead } from "./token-pipe";
 import { Embedding } from "./embedding";
