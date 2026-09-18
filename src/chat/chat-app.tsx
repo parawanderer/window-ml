@@ -12,7 +12,7 @@ import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { AgentBadge } from "../sidebar/reply";
-import { IconBench, IconCamera, IconChevron, IconClose, IconSave, IconSearch, IconVram } from "../sidebar/icons";
+import { IconBench, IconCamera, IconChevron, IconClose, IconMore, IconSave, IconSearch, IconVram } from "../sidebar/icons";
 import { services } from "../sidebar/services";
 import { ContextMenu, CursorTipLayer, Dot, Hash, Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view, type Status } from "../sidebar/store";
@@ -133,12 +133,13 @@ function hostOf(url: string): string {
  * It is NOT a link. Opening the URL would make a second tab showing the same document, which is precisely not the
  * tab the run holds, and there is no command in the contract for putting an existing one in front.
  */
-function PageChip({ page }: { page: NonNullable<SessionSummary["page"]> }) {
-    return (
-        <span class="chat-page" {...cursorTipOn(<span><b>{page.title || "the page this run is on"}</b><br />{page.url}</span>)}>
-            {hostOf(page.url)}
-        </span>
-    );
+function PageChip({ page, onShow }: { page: NonNullable<SessionSummary["page"]>; onShow?: () => void }) {
+    const tip = <span><b>{page.title || "the page this run is on"}</b><br />{page.url}{onShow ? <><br /><i>Click to bring that tab to the front.</i></> : null}</span>;
+    // WHERE THIS DEVICE CAN ACT ON IT, the chip is the way to the tab. Where it cannot — a runtime on somebody
+    // else's machine — it stays what it was: the name of the document, and nothing that pretends to reach it.
+    return onShow
+        ? <button class="chat-page chat-page-go" {...cursorTipOn(tip)} onClick={onShow}>{hostOf(page.url)}</button>
+        : <span class="chat-page" {...cursorTipOn(tip)}>{hostOf(page.url)}</span>;
 }
 
 /**
@@ -338,27 +339,34 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
         return () => io.disconnect();
     }, [waiting, sessionKey, r]);
 
+    // NO HEADER BAND on a wide calm page: what it held has gone where each part belongs — the title into the
+    // transcript, navigation to the edge, the page's own tools into one corner (see `Lede`, `PageTools`). A phone
+    // keeps the bar: it holds the way back, and there is no room to float anything over a 390px column.
+    const bare = calm.value && !narrow;
     return (
         <main class="chat-main" data-rev={r} data-session={sessionKey}>
-            <div class="head chat-head">
-                {narrow ? <button class="nav" aria-label="Back to sessions" onClick={() => (pushedEntry ? history.back() : (view.value = { name: "list" }))}>‹</button> : null}
-                {!narrow && !listOpen.value ? <ListToggle narrow={narrow} /> : null}
-                <span class="chat-head-title">
-                    <b>{truncate(title, 120)}</b>
-                    <span class="chat-head-sub">
-                        {rt?.name ?? id?.runtime}{summary?.model ? ` · ${summary.model}` : ""}
-                        {summary?.page ? <> · <PageChip page={summary.page} /></> : null}
+            {bare
+                ? (!listOpen.value ? <div class="chat-nav-float"><ListToggle narrow={narrow} /></div> : null)
+                : <div class="head chat-head">
+                    {narrow ? <button class="nav" aria-label="Back to sessions" onClick={() => (pushedEntry ? history.back() : (view.value = { name: "list" }))}>‹</button> : null}
+                    {!narrow && !listOpen.value ? <ListToggle narrow={narrow} /> : null}
+                    <span class="chat-head-title">
+                        <b>{truncate(title, 120)}</b>
+                        <span class="chat-head-sub">
+                            {rt?.name ?? id?.runtime}{summary?.model ? ` · ${summary.model}` : ""}
+                            {summary?.page ? <> · <PageChip page={summary.page} /></> : null}
+                        </span>
                     </span>
-                </span>
-                <span class="sp" />
-                {id && rt && summary?.page ? <PagePeek store={store} id={id} rt={rt} sessionKey={sessionKey} summary={summary} /> : null}
-                {narrow ? null : <DeviceViews extras={extras} rt={rt} />}
-                <ViewToggle />
-                {id ? <Hash hash={id.hash} /> : null}
-            </div>
+                    <span class="sp" />
+                    {id && rt && summary?.page ? <PagePeek store={store} id={id} rt={rt} sessionKey={sessionKey} summary={summary} /> : null}
+                    {narrow ? null : <DeviceViews extras={extras} rt={rt} />}
+                    <ViewToggle />
+                    {id ? <Hash hash={id.hash} /> : null}
+                </div>}
             {waiting && (gateAway || !calm.value) ? <button class="chat-waiting" onClick={jumpToApproval}>Waiting on your approval<span class="chat-waiting-go">Review ›</span></button> : null}
             <div class="view chat-transcript" ref={scroller} onScroll={onScroll}>
                 <div ref={content}>
+                    {bare ? <Lede title={title} rt={rt} summary={summary} id={id} store={store} sessionKey={sessionKey} extras={extras} /> : null}
                     {truncated ? <div class="chat-truncated">Older events no longer exist on {rt?.name ?? "the runtime"}. What is shown here is what this device kept.</div> : null}
                     {s ? <DetailView hash={sessionKey} />
                         : !summary && !rt ? <div class="empty">Session not found.</div>
@@ -378,6 +386,7 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
             ) : s && canDrive ? <Composer s={s} multiline />
                 : s && rt ? <div class="chat-readonly">{!rt.online ? `${rt.name} is offline. You can read this session, and send to it once it is back.` : `This device may watch sessions on ${rt.name}, not drive them.`}</div>
                     : null}
+            {bare ? <PageTools store={store} extras={extras} rt={rt} /> : null}
         </main>
     );
 }
@@ -409,6 +418,59 @@ function DeviceViews({ extras, rt }: { extras?: ChatExtras; rt?: RuntimeInfo }) 
                 </button>
             ) : null}
         </>
+    );
+}
+
+/**
+ * THE PAGE'S OWN TOOLS, in one corner, behind one mark.
+ *
+ * They were a row across the top of a header that existed to hold them. Four glyphs resting in the busiest corner
+ * of the page, for a view mode and two workspaces nobody presses twice an hour. One button opens them, bottom
+ * right, in the composer's row rather than over the transcript — a cluster floating over what you are reading
+ * would fight a table's own controls, which sit in exactly that corner of exactly that table.
+ */
+function PageTools({ store, extras, rt }: { store: ChatStore; extras?: ChatExtras; rt?: RuntimeInfo }) {
+    const [open, setOpen] = useState(false);
+    useEffect(() => {
+        if (!open) return;
+        const onDown = (e: Event) => { if (!(e.target as HTMLElement)?.closest?.(".chat-tools")) setOpen(false); };
+        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+        document.addEventListener("pointerdown", onDown);
+        document.addEventListener("keydown", onKey);
+        return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
+    }, [open]);
+    void store;
+    return (
+        <div class={`chat-tools${open ? " open" : ""}`}>
+            {open ? <><DeviceViews extras={extras} rt={rt} /><ViewToggle /></> : null}
+            <button class={`tt hbtn chat-tools-btn${open ? " on" : ""}`} aria-label="Page tools" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+                <IconMore /><span class="tt-pop left" role="tooltip">How this page reads, and what this browser can show you</span>
+            </button>
+        </div>
+    );
+}
+
+/**
+ * WHAT YOU ARE READING, at the top of it rather than in a band above it.
+ *
+ * The header was a permanent strip holding a title you need once — when you arrive — and never again while you
+ * read. Here it is the transcript's first line, so it is there when you land on the session and gone the moment
+ * you scroll, which is exactly how long it is worth the room.
+ */
+function Lede({ title, rt, summary, id, store, sessionKey, extras }: {
+    title: string; rt?: RuntimeInfo; summary?: SessionSummary; id: SessionId | null; store: ChatStore; sessionKey: SessionKey; extras?: ChatExtras;
+}) {
+    const tabId = summary?.page?.tabId;
+    const show = rt && extras?.focusTab && tabId != null ? () => extras.focusTab?.(rt.id, tabId) : undefined;
+    return (
+        <div class="chat-lede">
+            <b class="chat-lede-title">{truncate(title, 120)}</b>
+            <span class="chat-lede-sub">
+                {rt?.name ?? id?.runtime}{summary?.model ? ` · ${summary.model}` : ""}
+                {summary?.page ? <> · <PageChip page={summary.page} onShow={show} /></> : null}
+                {id && rt && summary?.page ? <PagePeek store={store} id={id} rt={rt} sessionKey={sessionKey} summary={summary} /> : null}
+            </span>
+        </div>
     );
 }
 
@@ -507,15 +569,18 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
                 : key ? <SessionPane store={store} sessionKey={key} narrow={narrow} />
                     : !narrow ? (
                         <main class="chat-main">
-                            {/* The empty pane carries a header of its own so the two page-level controls sit where
-                                they always sit — a toggle that moves when nothing is open is a toggle you hunt for. */}
-                            <div class="head chat-head">
-                                {!listOpen.value ? <ListToggle narrow={narrow} /> : null}
-                                <span class="sp" />
-                                {narrow ? null : <DeviceViews extras={extras} rt={deviceRt} />}
-                                <ViewToggle />
-                            </div>
+                            {/* The same shape as an open session: nothing across the top, the way back at the edge,
+                                the page's tools in the one corner they are always in. */}
+                            {calm.value
+                                ? (!listOpen.value ? <div class="chat-nav-float"><ListToggle narrow={narrow} /></div> : null)
+                                : <div class="head chat-head">
+                                    {!listOpen.value ? <ListToggle narrow={narrow} /> : null}
+                                    <span class="sp" />
+                                    <DeviceViews extras={extras} rt={deviceRt} />
+                                    <ViewToggle />
+                                </div>}
                             <div class="empty chat-pick">Pick a session.</div>
+                            {calm.value ? <PageTools store={store} extras={extras} rt={deviceRt} /> : null}
                         </main>
                     ) : null}
             {aside ? <aside class="chat-pane" aria-label="The box">{aside}</aside> : null}

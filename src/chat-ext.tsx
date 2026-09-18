@@ -62,6 +62,15 @@ const localRuntimes = new Set<RuntimeId>();
 const extras: ChatExtras = {
     resourcePanel: (id) => (localRuntimes.has(id) ? <BoxPanel /> : null),
     bench: (id) => (localRuntimes.has(id) ? <BenchDrawer /> : null),
+    // The WINDOW too, not just the tab: a tab made active in a window that is behind another window is a tab you
+    // still cannot see, which is the whole of what was asked for.
+    focusTab: (id, tabId) => {
+        if (!localRuntimes.has(id)) return;
+        chrome.tabs.update(tabId, { active: true }, (tab) => {
+            if (chrome.runtime.lastError || !tab || tab.windowId == null) return;
+            chrome.windows.update(tab.windowId, { focused: true });
+        });
+    },
 };
 
 // One port for the page's life, reconnected by `LocalHost` itself: an MV3 worker is evicted when idle, which drops

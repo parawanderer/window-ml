@@ -140,6 +140,10 @@ export function Composer({ s, multiline }: { s: Session; multiline?: boolean }) 
                 </button>
             </div>
             <div class="composer-foot">
+                {/* Said once, where it is needed: a box you can write a paragraph in has to say how to send it,
+                    and it stops saying so the moment you start typing — by then you have either pressed Enter or
+                    you have not. */}
+                {multiline && !text ? <span class="chint">Enter to send · Shift+Enter for a new line</span> : null}
                 <RunStatsBar s={s} />
                 <span class="sp" />
                 <UsageBar s={s} />

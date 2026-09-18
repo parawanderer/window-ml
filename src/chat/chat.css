@@ -220,6 +220,18 @@ html, body, #root { height: 100%; }
     background: var(--panel); border: 1px solid var(--border); border-radius: 24px; padding: 4px 5px;
 }
 .chat.calm .composer-row:focus-within { border-color: var(--panel-2-hover); }
+/* ATTACHMENTS SIT ON THE BOX THEY WILL BE SENT WITH. The strip is a sibling of the field rather than a child, so
+   at full width it floated off to the left of a centred pill, attached to nothing — a screenshot you had just
+   pasted, apparently belonging to the page. It takes the pill's own width and rounds its bottom corners into it,
+   so the two read as one surface with the pictures resting on top of the words. */
+.chat.calm .cthumbs {
+    max-width: var(--read); width: 100%; margin: 0 auto -6px; padding: 7px 8px 12px; gap: 7px;
+    background: var(--panel); border: 1px solid var(--border); border-bottom: none;
+    border-radius: 16px 16px 0 0;
+}
+.chat.calm .cthumbs:empty { display: none; }
+.chat.calm .cthumbs + .composer-row { border-top-left-radius: 6px; border-top-right-radius: 6px; }
+.chat.calm .cthumb { width: 52px; height: 52px; border-radius: 9px; }
 .chat.calm .cinput { background: transparent; border: none; padding: 7px 6px; }
 .chat.calm .cinput:focus { outline: none; }
 .chat.calm .cbtn { border-radius: 50%; }
@@ -267,6 +279,13 @@ html, body, #root { height: 100%; }
    cursor because there is something more to read and nothing to click — the chip deliberately does not navigate
    (see `PageChip`). */
 .chat-page { color: var(--fg-faint); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
+/* …and where the device can reach that tab, the chip IS the way to it: a button, underlined the way anything you
+   can follow is, rather than a label with a hidden action on it. */
+button.chat-page-go {
+    font: inherit; background: none; border: none; padding: 0; cursor: pointer;
+    text-decoration: underline dotted; text-underline-offset: 3px;
+}
+button.chat-page-go:hover { color: var(--fg); }
 .chat-head-sub .chat-page { display: inline; max-width: none; }
 .chat-peek { flex: 0 0 auto; }
 .chat-peek:disabled { opacity: .5; cursor: progress; }
@@ -544,4 +563,45 @@ html, body, #root { height: 100%; }
 @media (prefers-reduced-motion: reduce) {
     .chat.calm .asst-body { --asst-close-ms: 0; }
     .chat.calm .asst-body.closing, .chat.calm .asst-body.opening { animation: none; }
+}
+
+/* ===================== NO BAND ACROSS THE TOP =====================
+   What the header held has gone where each part belongs: the title into the transcript (`.chat-lede`), the way
+   back to the edge a sidebar lives on, and the page's own tools into one corner. The band itself is what a page
+   this quiet cannot justify — it was there to hold four glyphs and a line of text you read once. */
+.chat-nav-float { position: absolute; top: 10px; left: 10px; z-index: 5; }
+.chat.calm .chat-main { position: relative; }
+
+/* The session's identity as the transcript's first line: there when you arrive, gone as soon as you scroll. */
+.chat-lede { margin: 6px 0 26px; }
+.chat-lede-title { display: block; font-size: 1.32em; line-height: 1.3; }
+.chat-lede-sub { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--fg-faint); font-size: .88em; }
+.chat.calm .chat-transcript { padding-top: 26px; }
+
+/* ONE MARK, bottom right, in the composer's row rather than over the transcript — a cluster floating over what
+   you are reading would fight a table's own controls, which sit in that corner of that table. */
+.chat-tools {
+    position: absolute; right: 14px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 6;
+    display: flex; align-items: center; gap: 2px; padding: 3px; border-radius: 12px;
+}
+.chat-tools.open { background: color-mix(in srgb, var(--panel) 92%, transparent); box-shadow: 0 4px 18px rgb(0 0 0 / .35); }
+.chat-tools .hbtn { min-width: 32px; min-height: 32px; }
+.chat-tools-btn { color: var(--fg-faint); }
+.chat-tools-btn:hover, .chat-tools-btn.on { color: var(--fg); }
+/* Everything that ends in that corner keeps clear of it: the composer, its footer, and the button a FORM puts at
+   the end of its last row — a cluster that floats over a `Resume` is a cluster that eats the click. */
+.chat.calm:not(.narrow) .composer { padding-right: 58px; }
+.chat.calm:not(.narrow) .composer-foot { padding-right: 44px; }
+.chat.calm:not(.narrow) .chat-new-foot { padding-right: 44px; }
+/* …and none of it at a phone's width, where there is no cluster to keep clear of and every pixel of the row is
+   the box you are typing in. The send hint goes too: on a phone Enter makes a line and the button sends, so a
+   line explaining the keyboard is advice about a keyboard that is not there. */
+.chat.narrow .chint { display: none; }
+
+/* THE RULE ABOUT WHAT HIDES. Anything you go LOOKING for stays put; only what belongs to a thing you are reading
+   arrives with the pointer. The reply's copy and the composer's counters are the first kind — quiet, but there —
+   and were on the wrong side of it. */
+@media (hover: hover) and (pointer: fine) {
+    .chat.calm .msg.asst > .mrow { opacity: .45; }
+    .chat.calm .composer-foot { opacity: .45; }
 }

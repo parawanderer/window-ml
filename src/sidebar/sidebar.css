@@ -888,6 +888,8 @@ textarea.cinput { resize: none; overflow-y: auto; line-height: 1.5; font: inheri
 .cstop { color: var(--err); border-color: var(--err); }
 .cstop:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); }
 .composer-foot { display: flex; align-items: center; min-height: 14px; }
+/* How to send, in a multiline composer — the one hint the box cannot give by its shape. */
+.chint { color: var(--fg-faint); font-size: .86em; }
 /* Attached-image thumbnails above the composer input (a pasted/uploaded screenshot before sending). */
 .cthumbs { display: flex; flex-wrap: wrap; gap: 6px; }
 .cthumb { position: relative; width: 44px; height: 44px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; background: var(--panel); }

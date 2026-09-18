@@ -110,7 +110,9 @@ test("the box's panel and the Python bench are on this page, because THIS browse
 
         // Offered because the RUNTIME reports it can be drawn and this DEVICE holds something to draw it with.
         // Neither question is "is this local", and a phone reaching the same runtime would answer the second one no.
-        const box = chat.locator('.chat-head [aria-label="The box"]');
+        // The page's tools live behind one mark in the bottom-right corner, not in a band across the top.
+        await chat.locator(".chat-tools-btn").click();
+        const box = chat.locator('.chat-tools [aria-label="The box"]');
         await expect(box).toBeVisible();
         await box.click();
         await expect(chat.locator(".chat-pane .vram")).toBeVisible();
@@ -119,7 +121,7 @@ test("the box's panel and the Python bench are on this page, because THIS browse
 
         // The bench is not a picture of one: it runs, through this browser's own offscreen sandbox, from a page
         // that is not the panel. A drawer that opened and could not run would be worse than no drawer.
-        await chat.locator('.chat-head [aria-label="Python bench"]').click();
+        await chat.locator('.chat-tools [aria-label="Python bench"]').click();
         await expect(chat.locator(".bench")).toBeVisible();
         await chat.locator('.bench [aria-label="Run"]').click();
         await expect(chat.locator(".bench-outbody")).toContainText("45", { timeout: 120_000 });

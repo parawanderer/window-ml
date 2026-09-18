@@ -501,6 +501,29 @@ Three rules it follows:
 | a citation | the tip belongs to the CAPTION, not the whole embed: an embed is something you read, and a tip that fires anywhere over it explains the frame on top of the contents. The link form drops the accent colour for the citation green under ordinary text |
 | a reply | copy and the timestamp move UNDER it (they are what you want after reading, not on the first line), the status dot goes unless it is saying something other than "this worked", and the collapse control moves into the gutter |
 
+**NO HEADER BAND on the wide layout.** What a header held has gone where each part belongs, because the four
+things in it had four different scopes and only one of them was about the page:
+
+- the session's TITLE, the runtime, the model and the page are the transcript's first line (`.chat-lede`) — there
+  when you arrive, gone as soon as you scroll, which is exactly as long as they are worth the room;
+- the `☰` is navigation, so it floats at the edge a list pane lives on;
+- the view toggle, the box and the bench are the PAGE's tools, so they sit behind one mark in the bottom right,
+  in the composer's row. Not floating over the transcript: a cluster there would fight a table's own controls,
+  which sit in that corner of that table. Everything that ends in that corner (the composer, its footer, a form's
+  last row) keeps clear of it, because a cluster over a `Resume` button is a cluster that eats the click.
+
+A phone keeps its header: it holds the way back, and there is no room to float anything over a 390px column.
+
+**What hides, and what does not.** Anything you go LOOKING for stays put — the toggles, the reply's copy, the
+composer's counters, quiet but present. Only what belongs to a thing you are READING arrives with the pointer: a
+table's controls, a code block's, a citation's tip. The rule exists because five separate hover-reveals turn
+finding a control into a memory game.
+
+**The page chip brings its tab to the front** where the device can reach it (`ChatExtras.focusTab`). That one wants
+to be a CONTRACT COMMAND rather than a device capability — a phone driving a browser over the hub has every right
+to say "show me that tab", and the runtime is what would act on it — so the member is a local stand-in with an
+expiry date on it, noted in `extras.ts`.
+
 **The list pane hides** (Gemini's move): the pane stays mounted and slides, so its scroll position survives, the
 grid column animates rather than the body jumping a column's width, and `visibility: hidden` takes it out of the
 tab order while it is off screen. Only on a wide layout — a phone shows one pane at a time either way, so there the

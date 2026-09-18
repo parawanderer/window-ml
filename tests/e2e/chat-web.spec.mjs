@@ -126,7 +126,9 @@ test("calm view is what the page opens in, and the toggle hands the panel's deta
     await expect(page.locator(".step-pill").first()).toBeHidden();
     // …but nothing has left the document: the toggle brings all of it back, and the approval never quiets.
     await expect(page.locator(".astep-approve")).toBeVisible();
-    await page.locator(".chat-head .chat-view-btn").click();
+    // The page's tools live behind one mark in the corner now, rather than in a band across the top.
+    await page.locator(".chat-tools-btn").click();
+    await page.locator(".chat-tools .chat-view-btn").click();
     await expect(page.locator(".chat")).not.toHaveClass(/calm/);
     await expect(page.locator(".step-pill").first()).toBeVisible();
     // The choice is this device's, so it survives a reload.
@@ -142,7 +144,7 @@ test("desktop: the session list hides and comes back, and is out of the tab orde
     await page.locator(".chat-list .head .chat-list-btn").click();
     await expect(list).toBeHidden();
     // The way back is in the header of what is now the only pane, not only where the list used to be.
-    await page.locator(".chat-head .chat-list-btn").click();
+    await page.locator(".chat-nav-float .chat-list-btn").click();
     await expect(list).toBeVisible();
     await page.close();
 });
@@ -283,12 +285,12 @@ test("desktop: the list filters, folds a runtime away, and marks what moved whil
 test("desktop: a run says which tab it is driving, and peeks at it", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
     // The header names the page, not only the machine and the model.
-    await expect(page.locator(".chat-head-sub .chat-page")).toHaveText("flights.example");
+    await expect(page.locator(".chat-lede-sub .chat-page")).toHaveText("flights.example");
     await expect(row(page, WAITING).locator(".chat-page")).toHaveText("flights.example");
     // A plain chat is on no page at all, and says nothing rather than something empty.
     await expect(row(page, CHAT).locator(".chat-page")).toHaveCount(0);
 
-    await page.locator(".chat-head .chat-peek").click();
+    await page.locator(".chat-lede .chat-peek").click();
     await expect.poll(() => commands(page)).toContainEqual({
         type: "tab.screenshot", runtime: "laptop", target: { session: { runtime: "laptop", hash: "3f9a0c21" } },
     });
@@ -299,7 +301,7 @@ test("desktop: a run says which tab it is driving, and peeks at it", async () =>
     await page.evaluate(() => {
         globalThis.__chatFake.handlers["tab.screenshot"] = () => ({ ok: false, error: { code: "conflict", message: "that tab is not in front in its window, so it cannot be captured" } });
     });
-    await page.locator(".chat-head .chat-peek").click();
+    await page.locator(".chat-lede .chat-peek").click();
     await expect(page.locator(".chat-notice")).toContainText("not in front in its window");
     expect(errors).toEqual([]);
     await page.close();
@@ -307,9 +309,9 @@ test("desktop: a run says which tab it is driving, and peeks at it", async () =>
 
 test("desktop: a run whose tab has closed still says which page it was on", async () => {
     const { page } = await open(DESKTOP, `#s=${encodeURIComponent(CAPPED)}`);
-    await expect(page.locator(".chat-head-sub .chat-page")).toHaveText("flights.example");
+    await expect(page.locator(".chat-lede-sub .chat-page")).toHaveText("flights.example");
     // No tab to capture, so nothing offers to look at one.
-    await expect(page.locator(".chat-head .chat-peek")).toHaveCount(0);
+    await expect(page.locator(".chat-peek")).toHaveCount(0);
     await expect(page.locator(".chat-resume")).toBeVisible();
     await page.close();
 });
