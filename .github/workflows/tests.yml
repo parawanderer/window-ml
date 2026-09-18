@@ -320,7 +320,12 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
+      # `packages: ""` because the action's DEFAULT list still names `tools`, which Google removed — the job dies on
+      # "Failed to find package 'tools'" before it has built anything. The runner image already ships an Android SDK;
+      # all this step has to do is point the environment at it, and gradle resolves the rest from the project.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: ""
       - run: npm ci
       # `cap add` + `cap sync` need no SDK at all (they scaffold and copy); the SDK above is for the gradle build.
       - run: npm run mobile:android
