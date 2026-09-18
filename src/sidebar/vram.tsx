@@ -23,7 +23,7 @@ import { fmtAge, hhmmss } from "./timestamps";
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
 import { eventsFrom, laneEvents, type UsageSource } from "./model-stats";
-import { parseInfo, holdCapacity, memorySplit, estimateFrom, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, type MemoryBreakdown, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, rooflineFrom, expectedDecodeFrom, predictedDecodeFrom, kindRefusal } from "../resource-model";
+import { parseInfo, holdCapacity, memorySplit, estimateFrom, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, type MemoryBreakdown, formatBytes, boxSignature, sameBoxOnly, presetsFor, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, rooflineFrom, expectedDecodeFrom, predictedDecodeFrom, kindRefusal } from "../resource-model";
 import { chartWindow, windowSamples } from "../resource-axis";
 import { sessionWindow, addMachineEvent } from "../resource-lane";
 import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay, LANE_KINDS, toggleLaneKind } from "./resource-chart";
@@ -70,7 +70,7 @@ export function residencyOf(m: LoadedModel): ModelResidency {
 import { RenderPanel } from "./render-panel";
 import { hoverModel, kbFocus, stepFocus, stepDepth, noteFocusOrder } from "./vram-focus";
 import { poolHover } from "./chart-interaction";
-import { VRAM_PALETTES, capacity, resourceHistory, layout, streamLive, colorFor, frameFocused, vramPalette, VRAM_HISTORY, sessionModels, poolFacts } from "./panel-state";
+import { VRAM_PALETTES, capacity, resourceHistory, layout, streamLive, colorFor, frameFocused, vramPalette, VRAM_HISTORY, sessionModels, poolFacts, choosePreset, customTracks, editLayout, presetId, restoreLayout } from "./panel-state";
 import { NO_EXPIRY_MS, modelCaps, isEmbedding, isChatModel, rowTipSuppressed, ModelFacts, CostFacts } from "./panel-facts";
 
 // Fetch the server's model list via the background worker (privileged fetch);
@@ -1091,66 +1091,7 @@ export function chartKeysWanted(): string[] {
     return keys;
 }
 
-// The chosen VIEW. A preset is a named starting point for a layout, and editing one is the same operation on
-// the same state (`TrackDef[]`) — so there is no "am I in preset mode or edit mode" to get wrong. `layout`
-// null means "use the default preset for this box", which is also the fallback when a saved layout doesn't
-// fit the machine we're now pointed at.
-export const LAYOUT_KEY = "ml_res_layout";
-export const presetId = signal<string>("");   // the chosen track PRESET (derived from the box's catalog, and validated against the stacking rule)
-/** The last CUSTOM layout, kept beside the active one. Picking a preset used to overwrite the stored tracks,
- *  so a layout you had built by hand was destroyed the moment you looked at a preset — and the "Custom" entry
- *  only existed while it was already selected, so there was no way back to it either. */
-export const customTracks = signal<TrackDef[] | null>(null);
 export const editorOpen = signal(false);   // the track editor — where the panel's own settings live, beside the tracks they configure
-
-/** Restore a saved view, but only if it still describes THIS box — a layout saved on a two-card server names
- *  `vram.1`, which is meaningless on a one-device Mac. Anything that doesn't fit falls back to the default
- *  preset rather than rendering a track for a card that isn't there. */
-export function restoreLayout(sample: ResourceSample): void {
-    chrome.storage.local.get([LAYOUT_KEY], (got: Record<string, unknown>) => {
-        const saved = got?.[LAYOUT_KEY] as { presetId?: string; tracks?: TrackDef[]; custom?: TrackDef[] } | undefined;
-        const presets = presetsFor(sample);
-        const fallback = () => { presetId.value = presets[0]?.id ?? ""; layout.value = presets[0]?.tracks ?? null; };
-        if (!saved?.tracks?.length) return fallback();
-        // A saved PRESET is re-derived, never replayed. Storing its tracks would pin the preset as it was the
-        // day you picked it: Overview later gained the host pool, and a layout saved before that kept showing
-        // a cards-only chart with a CPU-resident model missing from it. Only a CUSTOM layout is a literal
-        // record of choices, and only that is restored verbatim.
-        // A custom layout that still fits this box is offered again even when a preset is active.
-        if (saved.custom?.length && !presetRefusal({ id: "c", label: "", description: "", tracks: saved.custom }, sample))
-            customTracks.value = saved.custom;
-        const named = saved.presetId && saved.presetId !== "custom"
-            ? presets.find((x) => x.id === saved.presetId) : null;
-        if (named) { presetId.value = named.id; layout.value = named.tracks; return; }
-        const probe = { id: "saved", label: "", description: "", tracks: saved.tracks };
-        if (presetRefusal(probe, sample)) return fallback();   // saved on another machine, or now invalid
-        presetId.value = "custom";
-        layout.value = saved.tracks;
-        customTracks.value = saved.tracks;
-    });
-}
-const saveLayout = (): void => {
-    try {
-        chrome.storage.local.set({ [LAYOUT_KEY]: {
-            presetId: presetId.value, tracks: layout.value,
-            ...(customTracks.value ? { custom: customTracks.value } : {}),
-        } });
-    } catch { /* opaque origin */ }
-};
-/** Pick a preset: it POPULATES the layout, which the editor then edits in place. */
-export function choosePreset(id: string, sample: ResourceSample): void {
-    // "Custom" is a real destination, not just a state you fall into: it restores the layout you built.
-    if (id === "custom" && customTracks.value) { presetId.value = "custom"; layout.value = customTracks.value; return saveLayout(); }
-    const p = presetsFor(sample).find((x) => x.id === id);
-    if (!p) return;
-    presetId.value = p.id; layout.value = p.tracks; saveLayout();
-}
-/** Any edit flips the picker to Custom — the layout no longer IS that preset. */
-export function editLayout(tracks: TrackDef[]): void {
-    layout.value = tracks; presetId.value = "custom";
-    customTracks.value = tracks;   // kept so a detour through a preset doesn't destroy it
-    saveLayout();
-}
 
 /** Which series each track shows. Bundling and splitting are the SAME operation on a list — everything in one
  *  track is combined, one series per track is small multiples — so the editor is just this list, and a preset
