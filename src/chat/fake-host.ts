@@ -272,6 +272,9 @@ export class FakeHost implements SessionHost {
                 if (tab && !tab.active) return fail("conflict", "that tab is not in front in its window, so it cannot be captured");
                 return ok({ image: DEMO_SHOT, width: 900, height: 560, ts: Date.now() });
             }
+            case "tab.focus":
+                if (!caps.tabs) return fail("unsupported", "this runtime has no tabs");
+                return DEMO_TABS.some((t) => t.tabId === c.tabId) ? ok({}) : fail("not-found", "no such tab");
             case "runtime.info":
                 return ok({ kind: rt.kind, contractVersion: rt.contractVersion, capabilities: caps, nowMs: Date.now() });
             // Starting a session: the demo world mints one and answers the first turn, so the new-session form is

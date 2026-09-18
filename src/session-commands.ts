@@ -32,6 +32,8 @@ export interface CommandDeps {
     getTab(tabId: number): Promise<TabInfo | null>;
     /** relay a session action to the page in a tab and wait for what it did; rejects when nothing listens there */
     toPage(tabId: number, action: "send" | "cancel" | "continue", body: { hash: string; text?: string; images?: string[]; elementContext?: unknown }): Promise<PageOutcome>;
+    /** bring a tab and its window to the front; false when the tab is gone */
+    focusTab(tabId: number, windowId?: number): Promise<boolean>;
     /** outline an element or point on a tab's page (fire and forget) */
     highlight(tabId: number, ref: { selector: string } | { token: string } | null): void;
     /** push a message into a RUNNING background loop's inbox and show it in the transcript; false when no loop runs */
@@ -447,6 +449,17 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             } catch (err) {
                 return fail("failed", (err as Error)?.message || String(err));
             }
+        },
+
+        // What a person at the machine is LOOKING AT, so `drive` rather than `view`. Only a tab `tabs.list` would
+        // have shown: a client can only have guessed any other id, and `forbidden` would confirm the tab exists.
+        "tab.focus": async (c) => {
+            const bad = ownRuntime(c);
+            if (bad) return bad;
+            if (typeof c.tabId !== "number" || !Number.isInteger(c.tabId)) return fail("invalid", "a tab id is a whole number");
+            const tab = await deps.getTab(c.tabId);
+            if (!tab || !/^https?:/i.test(tab.url)) return fail("not-found", "no such tab");
+            return (await deps.focusTab(c.tabId, tab.windowId)) ? ok({}) : fail("not-found", "that tab has closed");
         },
 
         "tab.screenshot": async (c) => {
