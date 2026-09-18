@@ -89,12 +89,15 @@ test("a table past the parse cap is stored whole and held by its run; the next o
     await expect.poll(rows, { timeout: 10_000 }).toHaveLength(1);
     const [a] = await rows();
     expect(a).toMatchObject({ format: "csv", source: `${data.url}/orders.csv?copy=1`, bytes: data.bytes });
-    expect(a.sessions, "claimed by the run whose pointer names it").toEqual([first.hash]);
+    // Two holders, and they mean different things: the TAB the worker disclosed the key to (what entitles a page-hosted
+    // run to read it), and the run whose pointer names it (what a background run releases when its session ends).
+    expect(a.sessions.filter((x) => !/^page:\d+$/.test(x)), "claimed by the run whose pointer names it").toEqual([first.hash]);
+    expect(a.sessions.some((x) => /^page:\d+$/.test(x)), "…and held for the tab it was handed to").toBe(true);
     expect(await ext.sw.evaluate((k) => globalThis.__mlValues.read(k), a.key)).toMatchObject({ bytes: data.bytes });
 
     const second = await fetchInRun(`${data.url}/orders.csv?copy=2`, "the second orders");
     await expect.poll(async () => (await rows()).map((r) => r.source), { timeout: 10_000 }).toEqual([`${data.url}/orders.csv?copy=2`]);
-    expect((await rows())[0].sessions).toEqual([second.hash]);
+    expect((await rows())[0].sessions.filter((x) => !/^page:\d+$/.test(x))).toEqual([second.hash]);
 
     const gone = await ext.sw.evaluate((k) => globalThis.__mlValues.read(k), a.key);
     expect(gone.name).toBe("ValueMissing");
@@ -168,4 +171,64 @@ test("a CSV past the 8 MB text cap is stored WHOLE: its preview counts every row
     expect(stored.map((r) => [r.format, r.bytes]), "every byte of the body, not the 8 MB prefix").toEqual([["csv", data.hugeBytes]]);
     expect(seen[1]).toContain(`[${HUGE_ROWS},${HUGE_ROWS},${((HUGE_ROWS - 1) % 97) + 0.5}]`);
     if (HAS_PYODIDE) expect(seen[2]).toContain(`[${HUGE_ROWS},${HUGE_ROWS - 1}]`);
+});
+
+test("a PAGE-hosted run reads its stored table too, and only on the tab the worker handed the key to", async () => {
+    test.setTimeout(240_000);
+    await configureExtension(ext.sw, { valueStoreBudgetMB: 64 });
+    // A page-hosted run is what a console call gets with no debug surface open: the loop stays in the page, so the
+    // worker has no run id to vouch for. Whitelisting the origin for page approval is what keeps it there — otherwise
+    // an approval-requiring toolset routes the whole run to the background ("off"-mode card).
+    const host = new URL(fake.url).hostname;   // the background whitelists by HOSTNAME, port excluded
+    await configureExtension(ext.sw, { pageApprovalDomains: [host] });
+    await page.reload();
+    await waitForMl(page);
+
+    const before = fake.calls().length;
+    const steps = [
+        { tool: "fetch_url", args: { url: `${data.url}/orders.csv?copy=page`, token: "page orders" } },
+        { tool: "exec", args: { js: 'const t = @tool:"page orders".table; return [t.shape[0], t.col("revenue").length]' } },
+    ];
+    if (HAS_PYODIDE) steps.push({ tool: "python_exec", args: { mode: "readonly", tables: { df: '@tool:"page orders"' }, code: "return [len(df), int(df['order_id'].max())]" } });
+    fake.setScript([...steps, { content: "done" }]);
+    // The gates resolve page-side on this path (there is no background gate to poll), so the run brings its own
+    // approver — the same `approve` hook a userscript would pass.
+    const result = await page.evaluate(() => window.ml.agent("Read the orders.",
+        { env: false, approve: () => true, toolTokens: true, extraTools: [window.ml.pythonTool()] }));
+    expect(fake.calls().length - before, "the whole script ran").toBe(steps.length + 1);
+    const seen = fake.calls().at(-1).messages.filter((m) => m.role === "tool").map((m) => String(m.content ?? "")).slice(-steps.length);
+
+    expect(seen[0], "setup: the model got a preview, not the whole table").toMatch(/\[250,000 rows x 3 columns\]/);
+    // THE POINT: the stored read works here. Before this, `col` fell back to the preview and python_exec refused.
+    expect(seen[1], "rows is the 200-row preview; the column is every row").toContain("[250000,250000]");
+    if (HAS_PYODIDE) expect(seen[2], "and pandas got all 250,000 rows").toContain(`[250000,${ROWS - 1}]`);
+
+    // The value is held for the TAB, which is what entitled those reads — no run id was trusted.
+    const stored = (await rows()).find((r) => r.source === `${data.url}/orders.csv?copy=page`);
+    expect(stored.sessions.some((s) => /^page:\d+$/.test(s)), "held for the tab the key was disclosed to").toBe(true);
+    expect(stored.sessions, "and NOT under the page's own run hash, which the worker never vouched for").not.toContain(result.hash);
+
+    // A DIFFERENT tab knowing the key reads nothing: entitlement is per-tab, not per-key.
+    const other = await ext.context.newPage();
+    await other.goto(`${fake.url}/api/version`);
+    await waitForMl(other);
+    const refused = await other.evaluate(async (key) => {
+        const r = await new Promise((resolve) => {
+            const id = "probe";
+            window.addEventListener("message", function onMsg(e) {
+                if (e.data?.type !== "PAGE_VALUE_COLUMNS_RESULT" || e.data?.id !== id) return;
+                window.removeEventListener("message", onMsg); resolve(e.data);
+            });
+            window.postMessage({ type: "PAGE_VALUE_COLUMNS", id, runId: "anything", key, names: ["revenue"] }, "*");
+        });
+        return r.error || "READ IT";
+    }, stored.key);
+    expect(refused, "another tab holding the key is not entitled to the value").toMatch(/No run on this page holds a stored table to read/);
+    await other.close();
+
+    // Navigating away ends the entitlement, because the page-hosted loop died with the document.
+    await page.goto(`${fake.url}/api/version?moved=1`);
+    await waitForMl(page);
+    await expect.poll(async () => (await rows()).some((r) => r.source === `${data.url}/orders.csv?copy=page`), { timeout: 10_000 }).toBe(false);
+    await configureExtension(ext.sw, { pageApprovalDomains: [] });
 });

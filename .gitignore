@@ -37,3 +37,6 @@ window-ml.code-workspace
 
 # coverage runs (regenerate with the `coverage` skill)
 coverage/
+
+# the code index's ctags-style cache (node scripts/index.mjs) — rebuilt from the sources it describes
+.index-cache.tsv

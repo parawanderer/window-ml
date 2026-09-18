@@ -89,25 +89,22 @@ fi
 #
 #    Gated on the staged files, unlike the schema above: that one is ~40ms and regenerates in place, while
 #    these two shell out to git and print a list, so running them for a README edit is noise.
-if echo "$staged" | grep -qE '^src/sidebar/.*\.(ts|tsx)$'; then
-    if ! node scripts/components.mjs --undocumented >/dev/null; then
+if echo "$staged" | grep -qE '^src/.*\.(ts|tsx|css)$'; then
+    # Against the MERGE BASE, not the previous commit: a branch's second commit should not be asked about
+    # a symbol or a class its first commit added and already answered for.
+    base=$(git merge-base HEAD origin/main 2>/dev/null || echo "")
+    if [ -n "$base" ] && ! node scripts/index.mjs --new "$base" --staged; then
         echo ""
-        node scripts/components.mjs --undocumented || true
-        echo ""
-        echo "pre-commit: an undocumented export is INVISIBLE to \`node scripts/components.mjs | grep -i <concept>\`,"
-        echo "            so the next person rebuilds it — which is the whole failure the index exists to stop."
+        echo "pre-commit: something this commit ADDS has nothing to search on, so"
+        echo "            \`node scripts/index.mjs <concept>\` cannot find it and the next person rebuilds it."
         echo "            One sentence saying what it is FOR, in words someone would search."
+        echo "            (A CSS member of a documented block is fine — .r-diff-head inherits .r-diff.)"
         exit 1
     fi
-fi
-if echo "$staged" | grep -q '^src/sidebar/sidebar\.css$'; then
-    # Against the MERGE BASE, not the previous commit: a branch's second commit should not be asked about
-    # classes its first commit added and already answered for.
-    base=$(git merge-base HEAD origin/main 2>/dev/null || echo "")
-    if [ -n "$base" ] && ! node scripts/components.mjs --new-css "$base" --staged; then
+    # A source file with no HEADER is invisible at the level that costs most: someone rebuilds the module.
+    if ! node scripts/index.mjs --headerless >/dev/null; then
         echo ""
-        echo "pre-commit: a new CSS FAMILY with nothing to search on. A member of a documented block is fine"
-        echo "            (.r-diff-head inherits .r-diff) — this is only asking about names nobody would grep."
+        node scripts/index.mjs --headerless || true
         exit 1
     fi
 fi
