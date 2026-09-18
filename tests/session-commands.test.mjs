@@ -250,6 +250,35 @@ test("cancelling a worker-hosted chat aborts its turn rather than a run or a pag
     assert.equal((await idle.run({ type: "session.cancel", session: sid("c0ffee05") })).error.code, "conflict");
 });
 
+test("a saved chat the worker has FORGOTTEN is still the worker's, and its next message rehydrates it", async () => {
+    // `hostsChat` reads worker memory, which an MV3 eviction empties. Routing on it sent this message down the run
+    // paths, which end at a tab a pageless chat never had: "the tab this session ran on is closed", about a session
+    // with no tab. The index knows what it is.
+    const w = world({ hostsChat: () => false });
+    w.index.ingest(chatStart("c0ffee06"), { trusted: true });
+
+    const r = await w.run({ type: "session.send", session: sid("c0ffee06"), text: "still there?" });
+    assert.deepEqual(r, { ok: true, data: { mode: "turn" } });
+    assert.equal(w.named("sendChat")[0][1], "c0ffee06", "rehydrated from storage rather than relayed");
+    assert.equal(w.named("toPage").length, 0);
+
+    // And the same routing for cancel: a chat the worker has forgotten has no turn in flight.
+    const c = world({ hostsChat: () => false, cancelChat: () => false });
+    c.index.ingest(chatStart("c0ffee07"), { trusted: true });
+    assert.equal((await c.run({ type: "session.cancel", session: sid("c0ffee07") })).error.code, "conflict");
+    assert.equal(c.named("toPage").length, 0, "not a relay to a tab it never had");
+});
+
+test("a chat that DOES have a page is still the page's, forgotten or not", async () => {
+    // The distinction is the page, not the kind: `ml.createChat` in a tab is a chat whose turns that page runs.
+    const w = world({ hostsChat: () => false });
+    w.index.ingest(chatStart("c0ffee08"), { tabId: TAB, trusted: false, page: { url: "https://a.example/" } });
+
+    await w.run({ type: "session.send", session: sid("c0ffee08"), text: "carry on" });
+    assert.equal(w.named("sendChat").length, 0, "not the worker's chat");
+    assert.equal(w.named("toPage")[0][1], TAB);
+});
+
 test("agent.start on a tab goes through that page's own start path and answers with the session it made", async () => {
     const w = world();
     const r = await w.run({ type: "agent.start", runtime: "local", task: "read the headline", target: { kind: "tab", tabId: TAB }, maxSteps: 4, stream: true });

@@ -90,6 +90,47 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
         const b = deps.index.binding(hash);
         return b?.tabId != null ? { tabId: b.tabId } : { error: fail("unavailable", "the tab this session ran on is closed") };
     };
+    /**
+     * Is this session a chat with no page behind it, and therefore this worker's to answer?
+     *
+     * `hostsChat` reads the worker's MEMORY, which an MV3 eviction empties. A saved chat that survives one is still
+     * pageless, and routing on memory sent its next message down the run paths, which end at a tab it never had: the
+     * person was told the tab this session ran on is closed, about a session that never had a tab. The index knows
+     * what it is, and `sendChat` rehydrates from storage, so the KIND is what decides and memory is only the fast
+     * path.
+     */
+    const pagelessChat = (hash: string): boolean => {
+        if (deps.hostsChat(hash)) return true;
+        const summary = deps.index.get(hash);
+        return !!summary && summary.kind === "chat" && !summary.page;
+    };
+
+    /**
+     * The tab an `AgentTarget` names: one that is open, or a new one at a url. Shared by `agent.start` and
+     * `session.resume`, which ask the same question — resuming on another page IS a navigation, so it picks a target
+     * the way starting does.
+     */
+    const resolveTarget = async (target: { kind?: unknown; tabId?: unknown; url?: unknown } | undefined): Promise<{ tabId: number; error?: undefined } | { tabId?: undefined; error: CommandResult<any> }> => {
+        if (target?.kind === "tab") {
+            if (typeof target.tabId !== "number") return { error: fail("invalid", "a tab target needs a tab id") };
+            const tab = await deps.getTab(target.tabId);
+            if (!tab) return { error: fail("not-found", "no such tab") };
+            // The extension's content script does not run on the browser's own pages, so a run there could
+            // never see anything. Refused here rather than started and left waiting for a page that cannot answer.
+            if (!/^https?:/i.test(tab.url)) return { error: fail("forbidden", "the extension cannot run on that page") };
+            return { tabId: target.tabId };
+        }
+        if (target?.kind === "blank") {
+            const url = (typeof target.url === "string" && target.url.trim()) || deps.startPage();
+            if (!url) return { error: fail("invalid", "a blank target needs a url, or a start page set in this browser's settings") };
+            if (!/^https?:\/\//i.test(url)) return { error: fail("invalid", "a start page must be an http(s) url") };
+            try { return { tabId: await deps.openTab(url) }; }
+            catch (err) { return { error: fail("failed", `could not open a tab at ${url}: ${(err as Error)?.message || err}`) }; }
+        }
+        if (target?.kind === "headless") return { error: fail("unsupported", "this browser has no headless runtime") };
+        return { error: fail("invalid", "a run needs a target: a tab, or a blank tab") };
+    };
+
     /** Relay to the session's page; a page with nothing listening, or no answer, is unavailable. */
     const viaPage = async (hash: string, action: "send" | "cancel" | "continue", body: { text?: string; images?: string[]; elementContext?: unknown } = {}): Promise<PageOutcome | CommandResult<any>> => {
         const t = tabOf(hash);
@@ -121,26 +162,9 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             if (!task.trim() && !images.length) return fail("invalid", "a run needs a task or an image");
             if (task.length > CHAT_TEXT_MAX) return fail("invalid", "that task is too long");
             if (c.maxSteps != null && (!Number.isInteger(c.maxSteps) || c.maxSteps <= 0)) return fail("invalid", "maxSteps must be a positive whole number");
-            const target = c.target as { kind?: unknown; tabId?: unknown; url?: unknown } | undefined;
-
-            let tabId: number;
-            if (target?.kind === "tab") {
-                if (typeof target.tabId !== "number") return fail("invalid", "a tab target needs a tab id");
-                const tab = await deps.getTab(target.tabId);
-                if (!tab) return fail("not-found", "no such tab");
-                // The extension's content script does not run on the browser's own pages, so a run there could
-                // never see anything. Refused here rather than started and left waiting for a page that cannot answer.
-                if (!/^https?:/i.test(tab.url)) return fail("forbidden", "the extension cannot run on that page");
-                tabId = target.tabId;
-            } else if (target?.kind === "blank") {
-                const url = (typeof target.url === "string" && target.url.trim()) || deps.startPage();
-                if (!url) return fail("invalid", "a blank target needs a url, or a start page set in this browser's settings");
-                if (!/^https?:\/\//i.test(url)) return fail("invalid", "a start page must be an http(s) url");
-                try { tabId = await deps.openTab(url); }
-                catch (err) { return fail("failed", `could not open a tab at ${url}: ${(err as Error)?.message || err}`); }
-            } else if (target?.kind === "headless") {
-                return fail("unsupported", "this browser has no headless runtime");
-            } else return fail("invalid", "a run needs a target: a tab, or a blank tab");
+            const t = await resolveTarget(c.target as { kind?: unknown; tabId?: unknown; url?: unknown } | undefined);
+            if (t.error) return t.error;
+            const tabId = t.tabId;
 
             const r = await deps.startAgent(tabId, {
                 task, ...(images.length ? { images } : {}),
@@ -194,7 +218,7 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             if (!text.trim() && !images.length && !c.elementContext) return fail("invalid", "a message needs text, an image or an element");
             // A chat this worker hosts has no tab to relay to, and no loop to steer: the message is simply its next
             // turn. Checked BEFORE the run paths, which both end at a tab this session does not have.
-            if (deps.hostsChat(s.id.hash)) {
+            if (pagelessChat(s.id.hash)) {
                 if (text.length > CHAT_TEXT_MAX) return fail("invalid", "that message is too long");
                 const outcome = await deps.sendChat(s.id.hash, text, images);
                 if (outcome === "turn") return ok({ mode: "turn" });
@@ -218,7 +242,9 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
         "session.cancel": async (c) => {
             const s = session(c);
             if (s.error) return s.error;
-            if (deps.hostsChat(s.id.hash)) {
+            // Same routing as `session.send`: a pageless chat is this worker's, and one it has forgotten has no turn
+            // in flight to cancel. Falling through would ask a tab it never had.
+            if (pagelessChat(s.id.hash)) {
                 if (deps.cancelChat(s.id.hash)) return ok({});
                 return fail("conflict", "the session is not running");
             }
