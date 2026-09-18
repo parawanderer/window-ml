@@ -194,6 +194,14 @@ export const SNAPDOT_KEY = "ml_res_snapdot";   // storage.local: snap the crossh
  *  float wherever the pointer is. Off by default: it is a precision affordance for reading one datapoint,
  *  and a dot that follows every movement is noise when you are scanning the shape of the trace instead. */
 export const snapDot = signal(false);
+
+/** The session the lane scopes to when scoping is on: whichever one is open. Null in the list view, where
+ *  "this session" names nothing. */
+export function scopedHash(): string | null {
+    const v = view.value;
+    return v.name === "detail" ? v.hash : null;
+}
+
 export { PREDICT_KEY } from "../load-records";   // storage.local: show the VRAM predictor's figures on loads
 /** Show, on each model load, what the server's VRAM PREDICTOR expected against what the load took — its peak,
  *  where it settled, weights and KV term by term — and a dashed line where it predicted the card would land.

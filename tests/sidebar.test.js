@@ -7551,7 +7551,8 @@ test("history: an evicted model keeps its colour, and says it is gone", async ()
 // VRAM_COLORS[i % 8] gave card 0 and System RAM the same indigo — in a legend whose only job is telling the
 // lines apart. (The 4×3090 NVLink rig, five pools, is the common version of this.)
 test("many pools: every pool gets its own colour, past the curated palette", async () => {
-    const { poolColor, VRAM_COLORS } = await import("../src/sidebar/vram.tsx");
+    const { VRAM_COLORS } = await import("../src/sidebar/vram.tsx");
+    const { poolColor } = await import("../src/sidebar/panel-state.ts");
     // Inside the palette, the hand-picked colours are used as-is.
     assert.equal(poolColor(0, 5), VRAM_COLORS[0]);
     assert.equal(poolColor(4, 5), VRAM_COLORS[4]);

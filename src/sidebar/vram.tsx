@@ -3,13 +3,12 @@
 // self-contained surface from the run views. Extracted from app.tsx.
 import type { WireFrame } from "../events-wire";
 import { useState, useEffect, useRef } from "preact/hooks";
-import type { RunStats } from "../contract-chat";
-import { fmtCtx } from "../contract-config";
 import { isBackendUnreachable } from "../contract-server";
 import { signal, effect } from "@preact/signals";
 import {
     config, models, ollamaIds, modelKinds, loadedModels, psError, vramOpen, backendError, rev, sessionMap,
     sidebarOpen, view, crosshair, backendAliveAt, backendLoading, unreachableIfNothingSaysOtherwise, VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, lsGet, asides,
+    scopedHash,
 } from "./store";
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
@@ -23,12 +22,12 @@ import { fmtAge, hhmmss } from "./timestamps";
 // lsGet/lsSet live in store.ts, not here: a rendered code block hands the bench a script, and render-panel
 // cannot import this module (it would be a cycle — this one imports RenderPanel).
 export { lsGet, lsSet } from "./store";
-import { usageByModel, eventsFrom, laneEvents, type UsageSource } from "./model-stats";
-import { parseInfo, holdCapacity, memorySplit, estimateFrom, quantPlain, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, kvOccupancy, fmtOccupancy, type MemoryBreakdown, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, rooflineFrom, expectedDecodeFrom, expectedPhrase, predictedDecodeFrom, kindRefusal } from "../resource-model";
-import { chartWindow, windowSamples, MAX_SAMPLE_GAP_MS, STREAM_MAX_GAP_MS, STREAM_SAMPLE_MS } from "../resource-axis";
-import { sessionWindow, addMachineEvent, type LaneFilter } from "../resource-lane";
-import { type Band } from "../resource-bands";
-import { ResourceTracks, ScopeSwitch, muteTip, stepPool, readingIsOverlay, LANE_KINDS, toggleLaneKind } from "./resource-chart";
+import { eventsFrom, laneEvents, type UsageSource } from "./model-stats";
+import { parseInfo, holdCapacity, memorySplit, estimateFrom, noteSeenCards, type SeenCards, type LoadEstimate, placementFrom, activityFrom, type MemoryBreakdown, formatBytes, boxSignature, sameBoxOnly, presetsFor, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type Capacity, type ResourceSample, type ModelResidency, type TrackDef, type UnavailableGpu, unavailableFrom, isGpuFault, gpuFaultNote, genSpan, genTimingsFrom, hintFrom, rooflineFrom, expectedDecodeFrom, predictedDecodeFrom, kindRefusal } from "../resource-model";
+import { chartWindow, windowSamples } from "../resource-axis";
+import { sessionWindow, addMachineEvent } from "../resource-lane";
+import { ResourceTracks, muteTip, stepPool, readingIsOverlay } from "./resource-chart";
+import { ScopeSwitch, LANE_KINDS, toggleLaneKind } from "./resource-lane-ui";
 import type { LoadedModel } from "../contract-server";
 
 /** Is this model resident right now? `undefined` when we have no `/api/ps` answer yet — the caller must not
@@ -71,6 +70,9 @@ export function residencyOf(m: LoadedModel): ModelResidency {
 }
 import { RenderPanel } from "./render-panel";
 import { hoverModel, kbFocus, stepFocus, stepDepth, noteFocusOrder } from "./vram-focus";
+import { poolHover } from "./chart-interaction";
+import { VRAM_PALETTES, capacity, resourceHistory, layout, streamLive, colorFor, frameFocused, vramPalette, VRAM_HISTORY, sessionModels, poolFacts, choosePreset, customTracks, editLayout, presetId, restoreLayout } from "./panel-state";
+import { NO_EXPIRY_MS, modelCaps, isEmbedding, isChatModel, rowTipSuppressed, ModelFacts, CostFacts } from "./panel-facts";
 
 // Fetch the server's model list via the background worker (privileged fetch);
 // degrade silently if unreachable. Populates the datalists.
@@ -87,46 +89,8 @@ export function fetchModels(): void {
 }
 
 
-// --- VRAM monitor ---
-/**
- * The palettes a model's colour can come from. A model's colour is its identity across the whole panel — the
- * line, the band, the row, its lane blocks, its ticks on the strip — so this is a real preference rather
- * than decoration: which eight hues read as distinct depends on the display, the theme and the eyes.
- *
- * `grafana` is the classic dashboard palette, which is what a lot of people are already reading GPU graphs
- * in; `warm`/`cool` narrow the range for a panel sitting beside other colour; `vivid` is the original.
- * Every palette is eight long, because the assignment hashes a name into it and a shorter one collides more.
- */
-export const VRAM_PALETTES: Record<string, string[]> = {
-    vivid:   ["#6366f1", "#22c55e", "#f59e0b", "#ec4899", "#06b6d4", "#a855f7", "#ef4444", "#84cc16"],
-    grafana: ["#7EB26D", "#EAB839", "#6ED0E0", "#EF843C", "#E24D42", "#1F78C1", "#BA43A9", "#705DA0"],
-    cool:    ["#4C78A8", "#54A24B", "#72B7B2", "#B279A2", "#439894", "#5C7EC1", "#83B4D8", "#3F8F7A"],
-    warm:    ["#E45756", "#F58518", "#EECA3B", "#B279A2", "#D67195", "#C4693D", "#E7955A", "#B4451F"],
-};
 export const VRAM_PALETTE_KEY = "ml_vram_palette";   // storage.local: which colour palette names the models
-/** Which one is in use. A sidebar-only display pref in `chrome.storage.local`, like the font scale and the
- *  code-block prefs — it changes how the panel LOOKS, not what the extension does, so it has no business in
- *  the synced `MlConfig`. */
-export const vramPalette = signal<string>("vivid");
 export const VRAM_COLORS = VRAM_PALETTES.vivid;   // the default palette — a model keeps its colour for as long as it is DRAWN, not just while resident
-/** A model's colour: its name hashed into the chosen palette, so it is stable for as long as the model is
- *  called the same thing and identical on every surface that draws it. */
-export const colorFor = (name: string) => {
-    const p = VRAM_PALETTES[vramPalette.value] ?? VRAM_PALETTES.vivid;
-    return p[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % p.length];
-};
-/** A POOL's colour. Pools are an ordered set, not names to hash, so they get distinct colours by construction
- *  — which `VRAM_COLORS[i % 8]` stopped doing on a box with more than eight pools: an 8-GPU node (eight cards
- *  plus system RAM) gave card 0 and System RAM the same indigo, in a legend whose entire job is telling the
- *  lines apart. Past the curated palette, hues are spread evenly over however many pools there are. */
-export function poolColor(i: number, count: number): string {
-    const pal = VRAM_PALETTES[vramPalette.value] ?? VRAM_PALETTES.vivid;
-    if (count <= pal.length) return pal[i % pal.length];
-    // Golden-angle-free even spread: with the count known, evenly spaced hues are maximally far apart, and
-    // fixed saturation/lightness keeps them legible on both themes.
-    return `hsl(${Math.round((i * 360) / count)}deg 70% 55%)`;
-}
-export const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;   // samples kept, and how often we ask — polling is gated on the panel being open, so gaps are real gaps
 // Session-long history, in a MODULE signal rather than component state: the old panel kept 45 samples in
 // useState and threw them away on every close, so "what happened during that run" was unanswerable the moment
 // you looked away. Session-only by choice: it dies with the page, and gaps (the panel was closed, so nothing
@@ -141,9 +105,6 @@ export const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;   // samples kept, and how 
 export const RESOURCE_HISTORY = 5000;
 /** How far back the sample history is kept, past the longest window the chart can be set to draw. */
 export const RESOURCE_RETENTION_MS = 45 * 60_000;
-// EVERY MEMORY SAMPLE this session took, per box. Session-only and dropped on a backend change: redrawing
-// one box's readings against another's ceiling looks like a measurement rather than a mistake.
-export const resourceHistory = signal<ResourceSample[]>([]);
 // Machine CAPACITY — the denominator. The TOTALS change only when hardware does, but `free_memory` rides in
 // the same payload and changes with every load and evict, so fetching once per open froze the free and
 // residual bands at whatever they were when you opened the panel (a card would read "18 GiB in use" beside
@@ -152,10 +113,6 @@ export const resourceHistory = signal<ResourceSample[]>([]);
 // null = unknown (the route isn't served): the chart then draws no ceiling rather than pretending it is zero.
 export const CAPACITY_EVERY = 5;   // ps polls between capacity refreshes (5 x 2s = 10s)
 let psSinceCapacity = 0;
-// WHAT THE BOX CAN HOLD (`/api/info`, patched Ollama only). A fact about the MACHINE, not about a poll —
-// a request that learns nothing must not forget what was measured, or the panel swaps to the no-ceiling
-// fallback until some later poll happens to succeed. Null = never answered, which is drawn as unknown.
-export const capacity = signal<Capacity | null>(null);
 // Whether we have ASKED yet. `capacity: null` alone can't tell "the fetch hasn't come back" from "this server
 // doesn't serve /api/info", and the fallback for the second is the old sparkline — so on every open the panel
 // flashed the legacy chart for a moment before the tracks replaced it. Until the first answer lands the plot
@@ -341,27 +298,6 @@ export const toggleHidden = (model: string): void => {
     hiddenModels.value = next;
 };
 
-/** Pools (a card, or the host) the user has clicked OFF in the Overview legend. The legend key already IS the
- *  line's identity — its swatch, its name, its figure — so making it the switch adds an affordance rather than
- *  a control, which is the same bargain the model rows make. Session-only, like {@link hiddenModels}: it is a
- *  reading choice about what is on screen now, not a setting about the box. */
-export const hiddenPools = signal<Set<string>>(new Set());
-/** Switch one memory pool's line off and back on (a legend key). */
-export const togglePool = (id: string): void => {
-    const next = new Set(hiddenPools.value);
-    next.has(id) ? next.delete(id) : next.add(id);
-    hiddenPools.value = next;
-};
-
-// Poll Ollama's resident-model set (/api/ps) into the shared signals, for BOTH
-// the VRAM panel and the header status dot. Gated so it never hammers Ollama in
-// the background: only while the shell is slid open AND something needs it (the
-// panel is up, or a detail header — the only place a status dot shows).
-/** Is the event stream carrying? While it is, polling stands down — two transports feeding the same history
- *  would double every sample and draw it at twice the true density. Null until we know (a fresh open has not
- *  asked yet); false means this server does not serve the route, which is the ordinary stock-Ollama case and
- *  not an error. */
-export const streamLive = signal(false);
 /** What the stream told us when it could not carry: shown in the panel's own note rather than swallowed, so a
  *  box that has the route but is failing on it does not look like a box that never had it. */
 export const streamNote = signal<string | null>(null);
@@ -379,14 +315,6 @@ let pendingGap = false;
  *  itself says so by BREAKING the line, which is the same thing it does for a sampling gap and needs no
  *  second vocabulary. */
 export const framesLost = signal(0);
-
-/** How far apart two samples may be before the history is a HOLE rather than a quiet stretch. It depends on
- *  the transport, because a gap means a different thing on each — see the two constants. Read at render time
- *  rather than baked in, since a stream can drop mid-session and the answer changes with it. */
-export const sampleGapMs = (): number => (streamLive.value ? STREAM_MAX_GAP_MS : MAX_SAMPLE_GAP_MS);
-/** How far past the last sample still belongs to the final run — one sampling interval, whichever transport
- *  is providing them. */
-export const sampleGraceMs = (): number => (streamLive.value ? STREAM_SAMPLE_MS : VRAM_POLL_MS);
 
 /** Machine events the SERVER reported, as opposed to the ones we infer by diffing polls. A load is the case
  *  that cannot be inferred at all: for most of a load there is no runner object in Ollama for a poll to
@@ -810,39 +738,6 @@ export function expiresIn(expiresAt: string | null, busy?: boolean): string | nu
     return s < 90 ? `expires in ${s}s` : `expires in ${Math.round(s / 60)}m`;
 }
 
-/** BEYOND THIS, THE DEADLINE IS NOT A DEADLINE. `keep_alive: -1` pins a model in memory, and Ollama expresses
- *  that as an `expires_at` about a century out — so a countdown rendered from it reads "36159d 12h", which is
- *  a true number and a useless one: nobody is waiting for it, and a day count that large reads as a bug in
- *  the panel rather than as a decision someone made on purpose. A year is far past any keep-alive a person
- *  would actually set and far short of the pinned stamp, so nothing real falls between them. */
-export const NO_EXPIRY_MS = 365 * 24 * 3600 * 1000;
-
-// Live keep-alive countdown from an /api/ps expires_at stamp, as a compact
-// two-unit d/h/m/s string ("2d 3h", "5m 12s", "44s") for the VRAM row. Ollama
-// evicts a model once this hits zero; each use resets it (Ollama recomputes
-// expires_at). Returns null when there's no stamp or it's already elapsed.
-//
-// `busy` STOPS the clock, and it is not a nicety: the deadline is only rewritten when a request FINISHES, so
-// throughout a generation the stamp stands still while this counts down against it — on a long enough one,
-// straight past zero and into a model that the display says should already have been evicted. There is
-// nothing to count to while it works, so it says so instead of drawing a number that is wrong. It also covers
-// traffic this browser never sees; a local in-flight flag would only freeze the runs we started ourselves.
-export function fmtTTL(expiresAt: string | null, busy?: boolean): string | null {
-    if (busy) return "in use";
-    if (!expiresAt) return null;
-    const ms = new Date(expiresAt).getTime() - Date.now();
-    if (isNaN(ms) || ms <= 0) return null;
-    if (ms > NO_EXPIRY_MS) return "pinned";
-    let s = Math.floor(ms / 1000);
-    const d = Math.floor(s / 86400); s -= d * 86400;
-    const h = Math.floor(s / 3600); s -= h * 3600;
-    const m = Math.floor(s / 60); s -= m * 60;
-    if (d) return `${d}d ${h}h`;
-    if (h) return `${h}h ${m}m`;
-    if (m) return `${m}m ${s}s`;
-    return `${s}s`;
-}
-
 // Live model-load state for the header's "responds-next" model, from /api/ps
 // (resident) + the installed list + our own in-flight flag. Five states, detail
 // in the tooltip (see SIDEBAR_UI_FEEDBACK.md). Reads signals directly so it
@@ -895,17 +790,6 @@ export function ModelStatusDot({ model, inFlight }: { model: string; inFlight: b
     );
 }
 
-// Live VRAM: a sparkline of total usage over time + a per-model legend with
-// evict controls. Reads the shared OLLAMA_PS signals (polled at App level while
-// the sidebar is open) and accumulates the sparkline history locally.
-/** The facts about one resident model: context window and keep-alive TTL, each with its explanation. Shared
- *  by the legend row and the chart's hover tooltip so the two can never drift — a badge added here appears in
- *  both placements, which is the whole reason this isn't inlined twice. */
-// What each resident model can DO, by name. /api/ps says nothing about a model's role, so an embedding model
-// sits in the list looking exactly like a chat model — and one of those is 5.8 GiB of a card you were trying
-// to account for. /api/show knows (`capabilities` includes "embedding"), so ask ONCE per model and keep it:
-// capabilities don't change while a model is loaded, and the panel re-renders every two seconds.
-export const modelCaps = signal<Record<string, string[] | null>>({});
 const capsAsked = new Set<string>();
 /** Ask Ollama what a model can do (`/api/show` capabilities). Undeterminable — a cloud model, an old
  *  server — is UNKNOWN, never "no". */
@@ -919,26 +803,9 @@ export function probeCaps(model: string): void {
         });
     } catch { /* no runtime (tests) */ }
 }
-/** Only a POSITIVE answer counts: a cloud model or an old Ollama reports nothing, and "unknown" must not be
- *  rendered as a claim either way. */
-export const isEmbedding = (model: string): boolean => !!modelCaps.value[model]?.includes("embedding");
-/** The counterpart: a model that GENERATES. Also positive-only — a model whose capabilities nobody reported
- *  gets no badge at all, because "chat" would be a guess and the two are indistinguishable by name. */
-export const isChatModel = (model: string): boolean => {
-    const caps = modelCaps.value[model];
-    return !!caps && caps.includes("completion") && !caps.includes("embedding");
-};
 /** One phrase for what a model IS, for every tooltip that names one. Empty when nobody said. */
 export const modelKindLabel = (model: string): string =>
     isEmbedding(model) ? "embedding model" : isChatModel(model) ? "chat model" : "";
-
-/** What this model has COST this browsing session, across every chat and run in the list. Recomputed from the
- *  session map on each render rather than kept as its own accumulator: the map IS the record, and a second
- *  copy is a second thing to keep true. `rev` is what makes it re-read (the map mutates in place). */
-export function costOf(model: string): RunStats | null {
-    void rev.value;
-    return usageByModel([...sessionMap.values()] as UsageSource[])[model] ?? null;
-}
 
 /** How long a selected range is, for the chip that offers to leave it. */
 export const zoomSpan = (z: { from: number; to: number }): string => {
@@ -1001,34 +868,6 @@ function withGenCtx(e: ResourceEvent): ResourceEvent {
             ...(r.roofline ? { genRoofline: r.roofline } : {}) };
     }
     return e;
-}
-
-/** The session the lane scopes to when scoping is on: whichever one is open. Null in the list view, where
- *  "this session" names nothing. */
-export function scopedHash(): string | null {
-    const v = view.value;
-    return v.name === "detail" ? v.hash : null;
-}
-
-/** The filter as the lane sees it. */
-export function laneFilter(): LaneFilter {
-    const hash = scopedHash();
-    return {
-        hash,
-        scope: laneScoped.value ? "session" : "all",
-        hidden: laneHidden.value as LaneFilter["hidden"],
-        // Which models THIS session ran — the ledger already answers it, delegated readers charged to the
-        // reader, which is what makes a sub-call's load belong to the session that caused it.
-        models: hash ? sessionModels(hash) : undefined,
-    };
-}
-
-/** The models a session ran, for scoping the machine half of the lane. Undefined when the session is not
- *  known — "no models" and "not known" must not collapse, since one hides nothing and the other hides all. */
-export function sessionModels(hash: string): readonly string[] | undefined {
-    const s = sessionMap.get(hash);
-    if (!s) return undefined;
-    return Object.keys(usageByModel([s] as UsageSource[])).map(normModel);
 }
 
 /** One resident model's row. Extracted because the SCOPED list draws it in two places now — the session's
@@ -1102,170 +941,6 @@ function ModelRow({ m, hidden, latestSample, evict }: { m: LoadedModel; hidden: 
                 onPointerLeave={() => (rowTipSuppressed.value = false)}>✕<span class="tt-pop" role="tooltip">Evict from VRAM</span></button>
         </div>
     );
-}
-
-/** The cost line under a model's name: what it spent, and how fast — with the rate's BASIS said out loud,
- *  since one from Ollama's own eval timings and one from wall clock (network and queue included) are not the
- *  same measurement. */
-export function CostFacts({ model }: { model: string }) {
-    const c = costOf(model);
-    if (!c || !c.calls) return null;
-    return (
-        <div class="vram-cost">
-            {c.calls} call{c.calls === 1 ? "" : "s"} · {c.inTokens.toLocaleString()} in / {c.outTokens.toLocaleString()} out
-            {c.tokPerSec != null ? <> · {c.tokPerSec.toFixed(1)} tok/s <span class="rc-tip-pct">({c.genBasis === "eval" ? "generation only" : c.genBasis === "wall" ? "incl. network" : "mixed"})</span></> : null}
-        </div>
-    );
-}
-
-/** Device ids this model is resident on that capacity no longer reports. A card can vanish while ps still
- *  lists what was loaded onto it, and then the model's VRAM is in the list with no track to appear in — true,
- *  but asymmetric enough to need saying out loud. */
-export function orphanedOn(m: LoadedModel, cap: Capacity | null): string[] {
-    if (!cap) return [];   // capacity unknown → nothing to contradict
-    return (m.gpus || []).map((g) => g.id).filter((id) => !cap.devices.some((d) => d.id === id));
-}
-
-/** ONE RESIDENT MODEL'S facts: what it occupies, where (which card, or spilled into system RAM), and
- *  how long until its keep-alive expires. Shared by the panel's model list and the status dot's tooltip,
- *  so the two cannot disagree about the same model. */
-export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean }) {
-    const ttl = fmtTTL(m.expiresAt, m.busy);
-    const orphaned = orphanedOn(m, capacity.value);
-    // Parsed here rather than read raw: `activityFrom` is what turns an absent object into null instead of an
-    // idle runner, and `kvOccupancy` is what refuses a denominator it does not have. Both distinctions are the
-    // whole content of these two chips.
-    const act = activityFrom(m.activity);
-    // Derived THROUGH `act` rather than beside it, so "there is an occupancy to draw" implies "there is a
-    // reading it came from". The chip prints the exact token counts, and reading them off an object the
-    // percentage did not come from is how a row ends up showing one model's number with another's denominator.
-    const kv = act ? kvOccupancy({ activity: act, contextLength: m.contextLength }) : null;
-    const past = kv !== null ? act!.promptTokens! : 0;
-    // Only the row's copy has its own tooltips to defer to; the chart tip renders these as plain text.
-    const yieldTip = tips
-        ? { onPointerEnter: () => (rowTipSuppressed.value = true), onPointerLeave: () => (rowTipSuppressed.value = false) }
-        : {};
-    return (
-        <>
-            {orphaned.length ? (
-                <span class={tips ? "tt vram-orphan" : "vram-orphan"} {...yieldTip}>card gone
-                    {tips ? <span class="tt-pop left above" role="tooltip">Still resident on {orphaned.length > 1 ? "devices" : "device"} {orphaned.join(", ")}, which the server has stopped reporting — a driver crash, a GPU reset, or a container that lost the device. Its memory is real but has no pool to be drawn against, so it appears here and not in the chart.</span> : null}
-                </span>
-            ) : null}
-            {/* What the model IS, beside what it costs. An embedding model and a chat model occupy memory
-                identically and read identically in a list of names, so the row says which — and says NOTHING
-                when the server never reported capabilities, since "chat" would then be a guess. */}
-            {isEmbedding(m.model) ? (
-                <span class={tips ? "tt vram-embed" : "vram-embed"} {...yieldTip}><span class="vram-badge-t">embed</span>
-                    {tips ? <span class="tt-pop left above" role="tooltip">An EMBEDDING model — it turns text into vectors for search and retrieval; it doesn't chat. It holds its VRAM like any other resident model, and evicts the same way.</span> : null}
-                </span>
-            ) : isChatModel(m.model) ? (
-                <span class={tips ? "tt vram-chat" : "vram-chat"} {...yieldTip}><span class="vram-badge-t">chat</span>
-                    {tips ? <span class="tt-pop left above" role="tooltip">A generating model — what <code>ml.chat</code> and <code>ml.agent</code> run on. Shown beside the embedding badge so a row you did not expect to be holding a card says which kind it is.</span> : null}
-                </span>
-            ) : null}
-            {/* WHICH BUILD it is. The name rarely says which quantization was pulled, and it is the one choice
-                a user makes about a model that changes its size, its speed and its answers at once. */}
-            {m.quant ? (() => {
-                // IN WORDS on the chip — "4-bit weights", not "Q4_K_M" — with the code and what it means behind
-                // it. An unknown code is shown as itself rather than guessed at.
-                const plain = quantPlain(m.quant);
-                return (
-                    <span class={tips ? "tt vram-quant" : "vram-quant"} {...yieldTip}><span class="vram-badge-t">{plain?.short ?? m.quant}</span>
-                        {tips ? <span class="tt-pop left above" role="tooltip"><code>{m.quant}</code>: {plain?.detail ?? "the precision its weights are stored at."} A lower precision is smaller and faster and answers somewhat worse; the same model at another quantization is a different download.{m.paramSize ? <> {m.paramSize} parameters{m.family ? <>, {m.family} family</> : null}.</> : null}</span> : null}
-                    </span>
-                );
-            })() : null}
-            {m.contextLength ? (
-                <span class={tips ? "tt vram-ctx" : "vram-ctx"} {...yieldTip}>{fmtCtx(m.contextLength)}
-                    {/* The chip's figure LEADS, then the exact count. They are the same number — 262,144 tokens
-                        is 256K, binary, the way every context window is sized — but a chip reading "256K" beside
-                        a tooltip reading "262,144" looks like the panel contradicting itself, and the reader has
-                        no way to know which one to trust. Saying both, in that order, is what reconciles them.
-                        Same rule as the memory figures: the round number is the binary one. */}
-                    {tips ? <span class="tt-pop left above" role="tooltip">Loaded with a {fmtCtx(m.contextLength)}-token context window — {m.contextLength.toLocaleString()} tokens exactly ({fmtCtx(m.contextLength)} is binary, like memory sizes). Ollama preallocates the KV cache for the FULL window, even when your prompts are short. Load with a smaller <code>num_ctx</code> to reclaim it.</span> : null}
-                </span>
-            ) : null}
-            {/* HOW MUCH OF THAT WINDOW IS ACTUALLY IN USE. The context chip above says what was RESERVED and its
-                tooltip ends by advising a smaller `num_ctx` — advice it has no way to know applies here. This
-                is the evidence for it: a 256K window at 2% is reclaimable, the same window at 90% is not, and
-                the two are indistinguishable from the byte figure on the right. It is a reading about traffic
-                this browser never started, which is the whole reason it has to come from the server. */}
-            {kv !== null ? (
-                <span class={tips ? "tt vram-kv" : "vram-kv"} {...yieldTip}>{fmtOccupancy(kv)}
-                    {tips ? <span class="tt-pop left above" role="tooltip">The KV cache is holding {past.toLocaleString()} of {(m.contextLength ?? 0).toLocaleString()} tokens. The BYTES do not move with it — Ollama reserves the cache for the whole window when the model loads and it does not grow — so this is how much of what was reserved is being used{kv < 0.25 ? ", and at this level a smaller num_ctx would reclaim most of it" : ""}. It survives the request that filled it, so an idle model still says what its last task left behind.</span> : null}
-                </span>
-            ) : null}
-            {/* WHAT IT SHOULD DECODE AT, where it is placed now (`expected_decode`): a PREDICTION from the box's measured
-                profile, corrected by this model's own runs once it has enough — so it covers a mixture of experts,
-                where the roofline is withheld. Worded by its basis (`expectedPhrase`), and drawn only when there IS a
-                figure: an unavailable reason on every row would be noise, since a spilled model is ordinary. The
-                measured rate sits on the cost line below, so the two can be read against each other. */}
-            {(() => {
-                const ed = expectedDecodeFrom(m.expectedDecode);
-                if (!ed || "unavailable" in ed) return null;
-                const ph = expectedPhrase(ed);
-                return (
-                    <span class={`${tips ? "tt " : ""}vram-expect${ph.quiet ? " quiet" : ""}`} {...yieldTip}>{ph.text}
-                        {tips ? <span class="tt-pop left above" role="tooltip">{ph.tip}</span> : null}
-                    </span>
-                );
-            })()}
-            {/* THE HOST-RAM PROMPT CACHE: conversations parked in system RAM while another has the model's one
-                slot. It is where a second conversation on the same model lives between turns, and filling it is
-                the precondition for the thrash — two conversations that do not fit, each evicting the one about
-                to be needed — so it turns to a warning near its limit. RAM, never VRAM, and per model. */}
-            {act?.promptCache ? (() => {
-                const pc = act.promptCache;
-                const full = pc.limitBytes ? pc.bytes / pc.limitBytes : null;
-                return (
-                    <span class={`${tips ? "tt " : ""}vram-pcache${full != null && full >= 0.9 ? " warn" : ""}`} {...yieldTip}>
-                        {formatBytes(pc.bytes)}{pc.limitBytes ? ` / ${formatBytes(pc.limitBytes)}` : ""} RAM cache
-                        {tips ? <span class="tt-pop left above" role="tooltip">{pc.entries} {pc.entries === 1 ? "conversation" : "conversations"} ({pc.tokens.toLocaleString()} tokens) parked in SYSTEM RAM while another has this model's slot, so switching back reads them in instead of recomputing them.{pc.limitBytes ? <> The cache holds up to {formatBytes(pc.limitBytes)} for this model; past that, saving one conversation evicts another, and when two take turns each evicts the one about to be needed — every turn then pays a full prefill plus the copy.</> : null}</span> : null}
-                    </span>
-                );
-            })() : null}
-            {/* WHAT THE RUNNER IS DOING, when it is doing something. Kept apart from the TTL chip beside it
-                rather than folded into its "in use": they are different facts and they can disagree — measured
-                on the box, a request in flight while the slot had not started reads `busy: true, phase: idle`.
-                Never drawn for `idle`, which would put a permanent chip on every row to say nothing. */}
-            {act && act.phase !== "idle" ? (
-                <span class={tips ? "tt vram-phase" : "vram-phase"} {...yieldTip}>{act.phase}
-                    {tips ? <span class="tt-pop left above" role="tooltip">{act.phase === "prefill"
-                        ? <>Reading the prompt — {act.promptTokensDone?.toLocaleString() ?? "?"} of {act.promptTokens?.toLocaleString() ?? "?"} tokens so far{act.promptTokensCached ? <>, with {act.promptTokensCached.toLocaleString()} of them served from the prefix cache and never computed</> : null}. No tokens are being generated yet.</>
-                        : <>Generating — {act.decoded?.toLocaleString() ?? "?"} tokens so far{act.promptTokensCached ? <>, after a prompt whose {act.promptTokensCached.toLocaleString()} cached tokens meant there was almost nothing to read</> : null}. Each one lands in the KV cache, which is why the occupancy beside this is climbing.</>}</span> : null}
-                </span>
-            ) : null}
-            {ttl ? (
-                <span class={`${tips ? "tt " : ""}vram-ttl${m.busy ? " busy" : ""}`} {...yieldTip}>{ttl}
-                    {tips ? <span class="tt-pop left above" role="tooltip">{m.busy
-                        ? <>Serving a request right now, so the keep-alive countdown is HELD. Ollama rewrites the deadline when the request finishes, which is why counting down during a generation would run past zero on a long one. The clock restarts, from full, once it is idle.</>
-                        : ttl === "pinned"
-                            ? <>Loaded to STAY — <code>keep_alive: -1</code>, so Ollama will not evict it on a timer and it holds this memory until something unloads it or needs the room. (The server does report a deadline, about a century out; counting down to it would be true and useless.)</>
-                            : <>Keep-alive TTL — Ollama evicts this model from {m.vramBytes ? "VRAM" : "memory"} when the countdown reaches zero (expires {new Date(m.expiresAt!).toLocaleTimeString()}). Each use resets it. Set <code>keep_alive</code> to change how long it lingers.</>}</span> : null}
-                </span>
-            ) : null}
-        </>
-    );
-}
-
-/** The pool (card or host) currently hovered in the chart, and which models sit on it. The model rows below
- *  ARE the legend, so rows not on that pool grey out — reusing what is already on screen instead of injecting
- *  a row that shifts the layout under the cursor. */
-// WHICH pool is hovered, not what it held when you got there — the pool is identified by the LINE, while the
-// figures come from the DATAPOINT the pointer is on (see PoolTip). Keeping the reading out of this signal is
-// what lets the tip follow the cursor along a line and report a different instant at each x.
-export const poolHover = signal<{ id: string; name: string; ceiling: number; color: string; bandsOf: (s: ResourceSample) => Band[] } | null>(null);
-/** What a hovered pool holds RIGHT NOW: total in use, and each consumer that has any of it. */
-export function poolFacts(bands: Band[]): { used: number; consumers: { label: string; bytes: number; model?: string }[] } {
-    return {
-        used: bands.filter((b) => b.kind !== "free").reduce((n, b) => n + b.bytes, 0),
-        // Including the residual, which is most of what a nearly-idle card holds and is the thing a reader
-        // would otherwise go looking for a process to explain. `model` rides along so the tip can carry each
-        // consumer's own colour — the residual has none, because it is not a model.
-        consumers: bands.filter((b) => b.kind !== "free" && b.bytes > 0)
-            .map((b) => ({ label: b.label, bytes: b.bytes, ...(b.model ? { model: b.model } : {}) })),
-    };
 }
 
 // The smallest the panel may be dragged is LEARNED, not computed. Summing the parts is a guess about which
@@ -1355,10 +1030,6 @@ export function easeVramH(to: number, ms = 220): void {
 
 /** Pointer position for the model-row tip, in viewport coords (the row is not inside the plot). */
 export const rowTipAt = signal<{ x: number; y: number } | null>(null);
-/** True while the pointer is over a badge inside the row that has its OWN tooltip (the context window, the
- *  keep-alive TTL). Two tooltips for one pointer is never right — the specific one wins, and the row's
- *  follower steps aside rather than overlapping it. */
-export const rowTipSuppressed = signal(false);
 
 /**
  * ONE KEY, READ BY THE CHART — whether it arrived at this frame's own document or was relayed in from the page.
@@ -1403,18 +1074,10 @@ export function chartKey(key: string): boolean {
  *  page, the page's arrows are the page's again. */
 export const pointerOnChart = signal(false);
 let lastKeysSent = "";
-/** Whether this frame's own document has focus, so keys typed now reach `chartKey` without any relay. */
-export const frameFocused = signal(typeof document !== "undefined" && document.hasFocus());
 if (typeof window !== "undefined") {
     window.addEventListener("focus", () => { frameFocused.value = true; });
     window.addEventListener("blur", () => { frameFocused.value = false; });
 }
-/** The parent relays the page's keys while the pointer is on the chart (the overlay's shell says so on ready).
- *  The DevTools panel cannot: keys typed while another DevTools pane has focus never reach it. */
-export const keyRelay = signal(false);
-/** Will ↑↓ reach the chart from where the keyboard is now? What the key hints read, so they never offer keys
- *  that go somewhere else until you click. */
-export const keysReach = (): boolean => keyRelay.value || frameFocused.value;
 
 /** The keys the chart would use RIGHT NOW, for a parent that relays them: what `chartKey` would answer, known in
  *  advance, because the relay has to decide whether to take a key from the page before it can ask. ←/→ only
@@ -1429,67 +1092,7 @@ export function chartKeysWanted(): string[] {
     return keys;
 }
 
-// The chosen VIEW. A preset is a named starting point for a layout, and editing one is the same operation on
-// the same state (`TrackDef[]`) — so there is no "am I in preset mode or edit mode" to get wrong. `layout`
-// null means "use the default preset for this box", which is also the fallback when a saved layout doesn't
-// fit the machine we're now pointed at.
-export const LAYOUT_KEY = "ml_res_layout";
-export const presetId = signal<string>("");   // the chosen track PRESET (derived from the box's catalog, and validated against the stacking rule)
-export const layout = signal<TrackDef[] | null>(null);   // which tracks are drawn, in what mode, at what height (null = use the preset)
-/** The last CUSTOM layout, kept beside the active one. Picking a preset used to overwrite the stored tracks,
- *  so a layout you had built by hand was destroyed the moment you looked at a preset — and the "Custom" entry
- *  only existed while it was already selected, so there was no way back to it either. */
-export const customTracks = signal<TrackDef[] | null>(null);
 export const editorOpen = signal(false);   // the track editor — where the panel's own settings live, beside the tracks they configure
-
-/** Restore a saved view, but only if it still describes THIS box — a layout saved on a two-card server names
- *  `vram.1`, which is meaningless on a one-device Mac. Anything that doesn't fit falls back to the default
- *  preset rather than rendering a track for a card that isn't there. */
-export function restoreLayout(sample: ResourceSample): void {
-    chrome.storage.local.get([LAYOUT_KEY], (got: Record<string, unknown>) => {
-        const saved = got?.[LAYOUT_KEY] as { presetId?: string; tracks?: TrackDef[]; custom?: TrackDef[] } | undefined;
-        const presets = presetsFor(sample);
-        const fallback = () => { presetId.value = presets[0]?.id ?? ""; layout.value = presets[0]?.tracks ?? null; };
-        if (!saved?.tracks?.length) return fallback();
-        // A saved PRESET is re-derived, never replayed. Storing its tracks would pin the preset as it was the
-        // day you picked it: Overview later gained the host pool, and a layout saved before that kept showing
-        // a cards-only chart with a CPU-resident model missing from it. Only a CUSTOM layout is a literal
-        // record of choices, and only that is restored verbatim.
-        // A custom layout that still fits this box is offered again even when a preset is active.
-        if (saved.custom?.length && !presetRefusal({ id: "c", label: "", description: "", tracks: saved.custom }, sample))
-            customTracks.value = saved.custom;
-        const named = saved.presetId && saved.presetId !== "custom"
-            ? presets.find((x) => x.id === saved.presetId) : null;
-        if (named) { presetId.value = named.id; layout.value = named.tracks; return; }
-        const probe = { id: "saved", label: "", description: "", tracks: saved.tracks };
-        if (presetRefusal(probe, sample)) return fallback();   // saved on another machine, or now invalid
-        presetId.value = "custom";
-        layout.value = saved.tracks;
-        customTracks.value = saved.tracks;
-    });
-}
-const saveLayout = (): void => {
-    try {
-        chrome.storage.local.set({ [LAYOUT_KEY]: {
-            presetId: presetId.value, tracks: layout.value,
-            ...(customTracks.value ? { custom: customTracks.value } : {}),
-        } });
-    } catch { /* opaque origin */ }
-};
-/** Pick a preset: it POPULATES the layout, which the editor then edits in place. */
-export function choosePreset(id: string, sample: ResourceSample): void {
-    // "Custom" is a real destination, not just a state you fall into: it restores the layout you built.
-    if (id === "custom" && customTracks.value) { presetId.value = "custom"; layout.value = customTracks.value; return saveLayout(); }
-    const p = presetsFor(sample).find((x) => x.id === id);
-    if (!p) return;
-    presetId.value = p.id; layout.value = p.tracks; saveLayout();
-}
-/** Any edit flips the picker to Custom — the layout no longer IS that preset. */
-export function editLayout(tracks: TrackDef[]): void {
-    layout.value = tracks; presetId.value = "custom";
-    customTracks.value = tracks;   // kept so a detour through a preset doesn't destroy it
-    saveLayout();
-}
 
 /** Which series each track shows. Bundling and splitting are the SAME operation on a list — everything in one
  *  track is combined, one series per track is small multiples — so the editor is just this list, and a preset
