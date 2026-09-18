@@ -6,7 +6,8 @@
 // Types plus two pure helpers, no `chrome.*`, so the sidebar bundle, a plain web page (a phone) and an agent client
 // can all import it. Every value arriving through it is UNTRUSTED input to the client: strings render as escaped
 // text, and an unknown kind, command or version is skipped, never guessed at.
-import type { ElementContext, JsonSchema, MlDebugEvent, NeutralMessage, TokenUsage } from "./contract";
+import type { ElementContext, JsonSchema, NeutralMessage, TokenUsage } from "./contract";
+import type { MlDebugEvent } from "./contract-debug";
 
 /* ------------------------------ versioning ------------------------------ */
 

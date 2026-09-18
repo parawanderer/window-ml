@@ -37,9 +37,10 @@
  */
 
 import type {
-    RenderDescriptor, TokenUsage, SubcallUsage, ToolFeedback,
-    PersistGrant, ReusedGrant, DebugAgentConfig, DebugSessionConfig,
+    RenderDescriptor, TokenUsage, ToolFeedback,
+    PersistGrant, ReusedGrant,
 } from "./contract";
+import type { SubcallUsage, DebugAgentConfig, DebugSessionConfig } from "./contract-debug";
 
 /** Bumped only on a BREAKING change. Adding an optional field is not breaking. */
 export const EXPORT_SCHEMA_VERSION = 1;

@@ -6,7 +6,8 @@
 import type { ComponentChildren } from "preact";
 import { services } from "./services";
 import { useState, useEffect, useRef } from "preact/hooks";
-import type { RenderDescriptor, DebugAgentConfig, PersistGrant } from "../contract";
+import type { RenderDescriptor, PersistGrant } from "../contract";
+import type { DebugAgentConfig } from "../contract-debug";
 import { resolveOutputCap, runStats, fmtTokPerSec, runStatsProvenance } from "../contract";
 import { externalSheetIds } from "../dom";
 import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode } from "./store";

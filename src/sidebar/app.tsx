@@ -6,7 +6,8 @@
 // — the core primitive stays dependency-free.
 import { render } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
-import type { MlDebugEvent, MlConfig, ElementContext, InvocationInfo } from "../contract";
+import type { MlConfig, ElementContext, InvocationInfo } from "../contract";
+import type { MlDebugEvent } from "../contract-debug";
 import { DEFAULT_CONFIG } from "../contract";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY, CODE_THEME_KEY, CODE_THEME_VSCODE_KEY, CODE_THEME_UI_KEY, codeTheme, codeThemeCustom, codeThemeUi, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, resWindowPref, VRAMH_KEY, LANE_HIDDEN_KEY, laneHidden, LANE_SCOPE_KEY, laneScoped, SECTIONS_KEY, laneEnabled, showLane, showModels, LANEH_KEY, laneH, LANE_H_DEFAULT, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, FOCUS_KEY, focusMode,

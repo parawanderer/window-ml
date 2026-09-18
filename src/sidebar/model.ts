@@ -2,7 +2,8 @@
 // turn/session's model the way the background resolves it (so a pending turn shows
 // the real model, not "default"), and annotates createChat options with which
 // values are defaults. Pure except for reading the live `config` signal.
-import type { DebugSessionConfig, ExtendProfile } from "../contract";
+import type { ExtendProfile } from "../contract";
+import type { DebugSessionConfig } from "../contract-debug";
 import { config } from "./store";
 import type { Turn, Session } from "./store";
 

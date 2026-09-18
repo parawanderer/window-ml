@@ -10,11 +10,6 @@ import type {
     MlAgentHandle,
     MlApi,
     AgentTranscriptEntry,
-    SessionRef,
-    DebugChatStart,
-    DebugChatResult,
-    DebugChatError,
-    DebugSessionConfig,
     FetchLlmPayload,
     ChatOptions,
     ExtendProfile,
@@ -30,6 +25,13 @@ import type {
     TablePreview,
     DerefValue, ShotBox, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer, RequestHint, RequestUse
 } from "./contract";
+import type {
+    SessionRef,
+    DebugChatStart,
+    DebugChatResult,
+    DebugChatError,
+    DebugSessionConfig
+} from "./contract-debug";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated, hintSession, shortHash } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { expandPointers } from "./pointer-macro";   // `@tool:` → a real dereference call, before the dialect sees it

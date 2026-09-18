@@ -2,7 +2,8 @@
 // served over the `ml-sessions` port to extension pages (session-server.ts). background.ts feeds it from the same
 // places that feed the DevTools panel, so the index holds what a panel would show for every tab at once
 // (docs/dev/chat-page.md §The local index).
-import { hintSession, type MlDebugEvent } from "./contract";
+import { hintSession } from "./contract";
+import { type MlDebugEvent } from "./contract-debug";
 import { createCommandHandler, type CommandDeps, type PageOutcome } from "./session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, startBackgroundChat } from "./sw-chat";
 import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type TabInfo } from "./session-host";
