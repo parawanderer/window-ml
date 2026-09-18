@@ -30,9 +30,9 @@
 //
 //   node scripts/gen-export-schema.mjs
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -383,6 +383,44 @@ const specFor = (key) => {
     return spec;
 };
 
+/** How many modules the walk will read before giving up. A cycle is handled by `seen`; this bounds a graph
+ *  that turns out to be the whole codebase, which would make a fast generator slow for no gain. */
+const MAX_CONTRACT_MODULES = 48;
+
+/**
+ * contract.ts and every module reachable from it by a RELATIVE import, breadth-first, contract.ts first.
+ *
+ * Breadth-first and nearest-first because the caller resolves a name once: a declaration in contract.ts itself
+ * must win over one in something it imports, and this order is what makes "first wins" mean "nearest wins".
+ */
+function contractModules() {
+    const resolve = (from, spec) => {
+        const base = join(dirname(from), spec);
+        for (const c of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) if (existsSync(c)) return c;
+        return null;
+    };
+    const start = join(ROOT, "src/contract.ts");
+    const seen = new Set([start]);
+    const queue = [start];
+    const out = [];
+    while (queue.length && out.length < MAX_CONTRACT_MODULES) {
+        const file = queue.shift();
+        const src = readFileSync(file, "utf8");
+        out.push({ rel: relative(ROOT, file), src });
+        // Both spellings that appear here: a statement import/re-export, and the inline `import("./x").Name`
+        // form contract.ts uses heavily.
+        const specs = [
+            ...[...src.matchAll(/(?:import|export)\s[^;]*?from\s*["'](\.[^"']+)["']/g)].map((m) => m[1]),
+            ...[...src.matchAll(/import\(\s*["'](\.[^"']+)["']\s*\)/g)].map((m) => m[1]),
+        ];
+        for (const spec of specs) {
+            const t = resolve(file, spec);
+            if (t && !seen.has(t)) { seen.add(t); queue.push(t); }
+        }
+    }
+    return out;
+}
+
 /** Build one document. Exported so the test can regenerate without shelling out. */
 export function buildSchema(key = "export") {
     const spec = specFor(key);
@@ -390,8 +428,27 @@ export function buildSchema(key = "export") {
     const contractSrc = readFileSync(join(ROOT, "src/contract.ts"), "utf8");
 
     const own = scanInterfaces(schemaSrc, spec.source);
-    const contract = scanInterfaces(contractSrc, "contract.ts");
-    const aliases = new Map([...scanAliases(contractSrc), ...scanAliases(schemaSrc)]);
+    // contract.ts is one CONTRACT; it does not have to be one FILE. Reading only that file meant a type moved to
+    // a themed module vanished from a NORMATIVE document, silently — the same failure gen-api-docs.mjs had, where
+    // moving one interface out cut the model-facing reference by 10.7%. So the scan follows contract.ts's own
+    // relative imports, transitively.
+    //
+    // EAGER here, where gen-api-docs.mjs had to be demand-driven, and the difference is worth stating: that
+    // generator matched any capitalised word against what it knew, so a wider `known` would have pulled unrelated
+    // declarations into the output. This one WALKS FROM A ROOT — nothing reaches `$defs` unless the root actually
+    // references it — so an extra interface in the map costs nothing and cannot appear in the document.
+    const reached = contractModules();
+    const contract = new Map();
+    const aliases = new Map();
+    const unstableSrc = [contractSrc, schemaSrc];
+    // NEAREST WINS: later files in the walk must not shadow contract.ts's own declarations, and the normative
+    // file wins over all of them (below).
+    for (const { rel, src } of reached) {
+        for (const [k, v] of scanInterfaces(src, rel)) if (!contract.has(k)) contract.set(k, v);
+        for (const [k, v] of scanAliases(src)) if (!aliases.has(k)) aliases.set(k, v);
+        unstableSrc.push(src);
+    }
+    for (const [k, v] of scanAliases(schemaSrc)) aliases.set(k, v);
 
     const version = (schemaSrc.match(new RegExp(`${spec.versionConst}\\s*=\\s*(\\d+)`)) || [])[1];
     if (!version) throw new Error(`gen-export-schema: ${spec.versionConst} not found in ${spec.source}`);
@@ -400,7 +457,7 @@ export function buildSchema(key = "export") {
         // The normative file wins a name clash with contract.ts.
         ifaces: new Map([...contract, ...own]),
         aliases,
-        unstable: new Set([...scanUnstable(contractSrc), ...scanUnstable(schemaSrc)]),
+        unstable: new Set(unstableSrc.flatMap((t) => [...scanUnstable(t)])),
         resolving: new Set(),
         defs: {},
     };
