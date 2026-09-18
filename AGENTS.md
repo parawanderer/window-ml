@@ -281,7 +281,9 @@ learned by shipping the wrong version first.
   panel is fed, never at a second point: a background run's start and result are emitted page-side on some surfaces and
   background-side on others, and feeding both records a run twice. A page's forwarded event is untrusted and bound to
   its tab. The ONE session with no such pair is a chat the worker hosts itself (`chat.start`, `sw-chat.ts`): it has no
-  tab, so no panel can be attached to it, and its events reach the index and nothing else.
+  tab, so no panel can be attached to it, and its events reach the index and nothing else. A run started from an
+  extension page (`agent.start`) goes through the target tab's OWN start path, because the page builds the toolset
+  and the system prompt; the worker has no second way to start one.
 - **Exports.** Diff two runs with `run.json` after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`.
 
 ## Showing a run: the log, the exports and tooltips

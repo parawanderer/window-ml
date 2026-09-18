@@ -157,6 +157,7 @@ browser. Nothing new decides a gate, starts a loop or builds a request.
 | `tab.screenshot` | `captureVisibleTab`, only for a tab in front in its window; PNG, then JPEG at falling quality until it fits `maxBytes` (ceiling 4 MB); size read from the image header |
 | `tabs.list` | `chrome.tabs.query`, http(s) tabs only |
 | `chat.start` | a chat the worker hosts itself: `sw-chat.ts` (below) |
+| `agent.start` | the target tab's own start path, the one the HUD composer uses (below) |
 
 **The page says what it did.** The composer's page path was fire-and-forget, so the result could not say whether a
 message steered a run, started a turn, or reached nothing (a reloaded page no longer holds an unsaved chat). A command
@@ -201,6 +202,31 @@ Three things follow from having no page:
 
 The map of live chats is capped (`MAX_BG_CHATS`), dropping the chat idle longest; a saved one comes back from storage,
 so the cap costs a round trip rather than a conversation. A chat mid-turn is never dropped.
+
+## Starting a run from an extension page
+
+`agent.start` does not start a run. It asks a tab's page to start one, through `ML_START_AGENT` → the shell →
+`__mlStartAgent` → `ml.createAgent().run()`: the same path the HUD composer uses. That is deliberate. The page
+builds the toolset and the system prompt, because it has the DOM, the config and the tool factories; a second
+start path in the worker would be a second set of defaults to drift from the first. The run then routes itself to
+the background loop in off and devtools modes exactly as a console run does.
+
+**How the command learns which session it got.** The hash is minted inside the loop, after its own async setup, so
+it does not exist when `run()` is called. Rather than poll the handle for it, the run reports it: an internal
+`_onSession(hash)` option, called once on the first turn at the moment the hash is assigned, which the
+`__mlStartAgent` handler turns into the same `__mlSessionDone` acknowledgement the other page commands use
+(`outcome: "started"`, plus the hash). A start gets a longer deadline than a send (`START_DONE_MS`, ten seconds
+against three), because it is waiting for the loop's setup and not merely for a page to receive a message.
+
+**A blank tab is a real page.** The browser's own new-tab page cannot host a run: the extension is not allowed to
+run there, so an agent would open on a page it cannot see. `{ kind: "blank" }` therefore opens a tab at the
+command's `url`, or at the `agentStartPage` setting, and refuses when it has neither. Having opened it, the worker
+waits for **`window.ml` to exist in the new page's main world**, not for the tab to report `complete` and not for
+the content script to answer: the content script registers its listener before `injected.js` runs, so a start
+relayed on that signal reaches a page whose `__mlStartAgent` listener does not exist yet, and the run is lost to a
+timeout.
+
+A tab whose URL is not http(s) is refused with `forbidden` before anything is started, for the same reason.
 
 ## Not yet
 

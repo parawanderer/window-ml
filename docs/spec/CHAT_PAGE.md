@@ -247,9 +247,10 @@ coordinates, and offers live viewing only when the runtime has the capability.
    built: `docs/dev/chat-page.md`.
 2. **Background plumbing for the local host**: the cross-tab session index, per-session event rings with epoch and
    cursor, `tabs.list`, starting an agent on a chosen or blank tab from an extension page, delete.
-   **In progress**: the index, the rings, the `ml-sessions` port, `LocalHost`, the capture setting, the commands on
-   existing sessions and `chat.start` are built (`docs/dev/chat-page.md` §The local index, §The local commands,
-   §Chats the worker hosts); `agent.start` comes next.
+   **Done**: the index, the rings, the `ml-sessions` port, `LocalHost`, the capture setting, the commands on
+   existing sessions, `chat.start` and `agent.start` (`docs/dev/chat-page.md` §The local index, §The local
+   commands, §Chats the worker hosts, §Starting a run from an extension page). What a saved session means, and
+   what survives an evicted worker, is slice 4.
 3. **`LocalHost`**: `chat.html` over slice 2, with the extension's `ClientPlatform`. (`LocalHost` itself, `side.call`,
    `page.highlight` and screenshots landed with slice 2.) The local host then works end to end.
 4. **Persistence**: saved agent sessions (IndexedDB), the Commander persist toggle and its Settings default, delete.

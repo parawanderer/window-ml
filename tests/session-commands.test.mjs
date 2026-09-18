@@ -37,6 +37,9 @@ function world(over = {}) {
         sendChat: rec("sendChat", async () => "turn"),
         cancelChat: rec("cancelChat", true),
         hostsChat: rec("hostsChat", false),
+        startAgent: rec("startAgent", async () => ({ outcome: "started", hash: "ab120001" })),
+        openTab: rec("openTab", async () => 99),
+        startPage: () => "https://start.example/",
         utilityConfigured: () => true,
         sideCall: rec("sideCall", async () => ({ content: "a title", usage: { totalTokens: 5 } })),
         captureVisible: rec("captureVisible", async () => png(1280, 720)),
@@ -63,9 +66,10 @@ test("every session command refuses a session this runtime does not hold, or ano
         { type: "tab.screenshot", runtime: "local", target: { session: sid("ffff0000") } },
     ]) assert.equal(code(await run(c)), "not-found", c.type);
     assert.equal(code(await run({ type: "session.send", session: "aaaa0001", text: "hi" })), "invalid");
-    // A command this runtime does not implement yet answers `unsupported`, so a newer client degrades to a message
-    // rather than to a guess. `agent.start` is the next one to land.
-    assert.equal(code(await run({ type: "agent.start", runtime: "local", task: "hi", target: { kind: "blank" } })), "unsupported");
+    // A target kind this runtime does not offer answers `unsupported`, so a newer client degrades to a message
+    // rather than to a guess.
+    assert.equal(code(await run({ type: "agent.start", runtime: "local", task: "hi", target: { kind: "headless" } })), "unsupported");
+    assert.equal(code(await run({ type: "nonsense" })), "unsupported");
 });
 
 test("session.send: a running background loop is steered directly; anything else goes to the page, which says what it did", async () => {
@@ -243,4 +247,59 @@ test("cancelling a worker-hosted chat aborts its turn rather than a run or a pag
     const idle = world({ hostsChat: () => true, cancelChat: () => false });
     idle.index.ingest(chatStart("c0ffee05"), { trusted: true });
     assert.equal((await idle.run({ type: "session.cancel", session: sid("c0ffee05") })).error.code, "conflict");
+});
+
+test("agent.start on a tab goes through that page's own start path and answers with the session it made", async () => {
+    const w = world();
+    const r = await w.run({ type: "agent.start", runtime: "local", task: "read the headline", target: { kind: "tab", tabId: TAB }, maxSteps: 4, stream: true });
+    assert.deepEqual(r, { ok: true, data: { session: sid("ab120001") } });
+    assert.deepEqual(w.named("startAgent")[0].slice(1), [TAB, { task: "read the headline", maxSteps: 4, stream: true }]);
+    assert.equal(w.named("openTab").length, 0);
+});
+
+test("agent.start on a blank tab opens one, at the command's url or the browser's start page", async () => {
+    const w = world();
+    await w.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "blank" } });
+    assert.equal(w.named("openTab")[0][1], "https://start.example/", "the configured start page");
+    await w.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "blank", url: "https://other.example/x" } });
+    assert.equal(w.named("openTab")[1][1], "https://other.example/x", "the command's own url wins");
+    assert.equal(w.named("startAgent")[1][1], 99, "the run starts on the tab that was opened");
+
+    // With no start page set and no url, there is nowhere to go: the browser's own new-tab page cannot host a run.
+    const bare = world({ startPage: () => "" });
+    assert.equal((await bare.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "blank" } })).error.code, "invalid");
+    assert.equal(bare.named("openTab").length, 0);
+    // And a non-http(s) one is refused before a tab is opened at it.
+    const bad = world({ startPage: () => "" });
+    assert.equal((await bad.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "blank", url: "file:///etc/passwd" } })).error.code, "invalid");
+    assert.equal(bad.named("openTab").length, 0);
+});
+
+test("agent.start refuses a page the extension cannot run on, and a run it cannot confirm", async () => {
+    const chromePage = world({ getTab: async () => ({ tabId: 5, url: "chrome://extensions/", title: "Extensions", active: true, windowId: 1 }) });
+    assert.equal((await chromePage.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: 5 } })).error.code, "forbidden");
+    assert.equal(chromePage.named("startAgent").length, 0);
+
+    const silent = world({ startAgent: async () => ({ outcome: "no-answer" }) });
+    assert.equal((await silent.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: TAB } })).error.code, "unavailable");
+
+    const refused = world({ startAgent: async () => ({ outcome: "none" }) });
+    assert.equal((await refused.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: TAB } })).error.code, "failed");
+
+    // A started run with no hash is not a session id to hand back.
+    const hashless = world({ startAgent: async () => ({ outcome: "started" }) });
+    assert.equal((await hashless.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: TAB } })).error.code, "unavailable");
+});
+
+test("agent.start refuses an empty task, a bad step budget, a missing target and a subagent", async () => {
+    const w = world();
+    const bad = [
+        { type: "agent.start", runtime: "local", task: "  ", target: { kind: "tab", tabId: TAB } },
+        { type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: TAB }, maxSteps: 0 },
+        { type: "agent.start", runtime: "local", task: "go", target: { kind: "tab" } },
+        { type: "agent.start", runtime: "local", task: "go" },
+    ];
+    for (const c of bad) assert.equal(code(await w.run(c)), "invalid", JSON.stringify(c.target));
+    assert.equal(code(await w.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: TAB }, lineage: { parent: sid("aaaa0001") } })), "unsupported");
+    assert.equal(w.named("startAgent").length, 0);
 });

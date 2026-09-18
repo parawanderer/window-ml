@@ -1137,6 +1137,11 @@ export function Settings() {
                     <span>List console and page-script sessions in the chat page when the debug panel is off</span>
                 </label>
                 <div class="set-hint">Agents the extension runs are always listed. With the panel off, a page's own <code>ml.chat</code> and <code>ml.agent</code> calls are not, because reporting them costs every page a little work.</div>
+                <label class="set-field"><span>Blank-tab start page</span>
+                    <input type="url" placeholder="https://example.com" value={c.agentStartPage}
+                        onChange={(e: any) => setField("agentStartPage", e.target.value.trim())} />
+                </label>
+                <div class="set-hint">Where a run started from the chat page “on a blank tab” begins. The browser's own new-tab page cannot be used: the extension is not allowed to run there, so an agent would open on a page it cannot see.</div>
                 </Section>
 
                 <Section id="agenthud" title="Agent HUD">
