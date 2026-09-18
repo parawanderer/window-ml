@@ -1,7 +1,7 @@
 {
   "repo": "parawanderer/window-ml-hub",
-  "branch": "v0.1.0",
+  "branch": "v0.2.0",
   "path": "proto/wmlhub/v1/identity.proto",
-  "commit": "fbfafe49323a2995de90f32a9e17e9c6b4621fe3",
-  "blob": "3e900cd6fba4841b3d59198c0195f1b8b41084a7"
+  "commit": "41d3fffc9e41442b28838a7e07b7f5077eb318c6",
+  "blob": "154ab90e312dae646396bdcddc9aa438b05cf520"
 }

@@ -140,6 +140,18 @@ export interface CertSpec {
     notAfterMs: number;
     /** what a person calls this device */
     label?: string;
+    /** May this subject sign a revocation list? Granted by the ROOT only — a delegate issuing it is refused, and so
+     *  is a delegate RENEWING it, which is why the holder's certificate is the one row that always needs the root. */
+    mayRevoke?: boolean;
+    /**
+     * The certificate this one RE-ISSUES, when it re-issues rather than grants.
+     *
+     * Carrying it exempts this certificate from exactly two checks — `NotDelegable` and scope-widening — because
+     * re-issuing something the ROOT already granted, unchanged, gives the holder nothing it did not have. That is
+     * what lets a runtime renew a phone holding `approve` without a person fetching the root device four times a
+     * year, and it is bought strictly: see the rules in `verifyChain`.
+     */
+    renews?: Certificate;
 }
 
 /**
@@ -166,6 +178,8 @@ export async function issueCertificate(issuer: Identity, spec: CertSpec): Promis
         notBeforeMs: spec.notBeforeMs,
         notAfterMs: spec.notAfterMs,
         label: spec.label ?? "",
+        mayRevoke: spec.mayRevoke ?? false,
+        renews: spec.renews,
     }).finish();
     return { body, signature: await sign(issuer, LABEL.certificate, bytes(body)) };
 }
@@ -240,18 +254,73 @@ export async function verifyChain(root: Bytes, chain: Certificate[], nowMs: numb
             throw new ChainError("a box connector that may pair or approve");
         if (parent) {
             if (!parent.mayPair) throw new ChainError("an intermediate may not pair");
-            // Issued by a delegate rather than by the root: the powers a person decides at the root do not travel.
-            if (body.scopes.some((s) => (NEVER_DELEGABLE as readonly string[]).includes(s)))
-                throw new ChainError("a delegate issued a scope only the root may grant");
             if (body.notAfterMs > parent.notAfterMs) throw new ChainError("a certificate outlives its issuer");
-            if (!body.scopes.every((s) => parent.scopes.includes(s)))
-                throw new ChainError("a certificate grants a scope its issuer does not hold");
+            // A RENEWAL re-issues, unchanged, something the ROOT already granted. That gives the holder nothing it
+            // did not have, so it is exempt from exactly the two checks that stop a delegate handing out power:
+            // `NEVER_DELEGABLE` and scope-widening. Everything else still applies, the window above included.
+            const renews = body.renews ? await renewalOf(root, body, i, nowMs) : null;
+            if (!renews) {
+                // Issued by a delegate rather than by the root: the powers a person decides at the root do not travel.
+                if (body.scopes.some((s) => (NEVER_DELEGABLE as readonly string[]).includes(s)))
+                    throw new ChainError("a delegate issued a scope only the root may grant");
+                if (!body.scopes.every((s) => parent.scopes.includes(s)))
+                    throw new ChainError("a certificate grants a scope its issuer does not hold");
+            }
+        } else if (body.renews) {
+            // The root needs no exemption, and a renewal it signed would be a renewal nobody checked.
+            throw new ChainError("the root issued a renewal");
         }
     }
 
     const leaf = bodies[0];
     const leafKey = key32(bytes(leaf.subject));
     return { account: await accountId(root), principal: await principalId(leafKey), leafKey, leaf };
+}
+
+/**
+ * Check a certificate that claims to RENEW another, and say whether it does.
+ *
+ * Carrying a predecessor buys an exemption from the two checks that make delegation safe, so it is bought strictly.
+ * Three things have to be right, and each has its own way of passing by accident — each of those is a real
+ * implementation somebody wrote:
+ *
+ * - **The predecessor's window is NOT checked.** An expired predecessor is the normal case and the whole reason to
+ *   renew. A verifier that checks it refuses every renewal that matters and passes the vector only by luck.
+ * - **The predecessor verifies under the ACCOUNT ROOT, never under the delegate.** Under a delegate, renewals
+ *   CHAIN: renew something narrow, then renew that with more, and the exemption walks itself wider.
+ * - **Every other field must be equal, `agreement_key` above all.** That is where sealed commands go, so a renewal
+ *   free to change it redirects everything sealed to an approver into a key the renewer holds — without the
+ *   renewer ever holding the approver's identity key. The whole body is compared rather than field by field, so a
+ *   field added to the schema later is covered until somebody deliberately exempts it.
+ *
+ * A rename is NOT a renewal: `label` travels unchanged like everything else, so changing one is a fresh issuance by
+ * whoever may grant those scopes.
+ */
+async function renewalOf(root: Bytes, body: CertificateBody, index: number, nowMs: number): Promise<CertificateBody | null> {
+    const before = body.renews;
+    if (!before) return null;
+    if (index !== 0) throw new ChainError("only a leaf may be a renewal");
+    const prior = decodeBody(bytes(before.body));
+    const issuer = key32(bytes(prior.issuer));
+    // Under the ROOT. A predecessor signed by a delegate is how a narrow renewal becomes a wide one.
+    if (!sameBytes(issuer, root)) throw new ChainError("a renewal's predecessor was not issued by the account root");
+    if (!(await verify(issuer, LABEL.certificate, bytes(before.body), bytes(before.signature))))
+        throw new ChainError("a renewal's predecessor did not verify");
+    // Its window is deliberately NOT checked. `nowMs` is taken so the signature reads like every other check here
+    // and a reader asks why it is unused, which is the question worth asking.
+    void nowMs;
+    // Equal everywhere except who issued it and how long it lasts. Comparing the encoded bodies with those three
+    // fields blanked covers a field added later, which naming the fields one by one would not.
+    if (!sameBytes(comparable(body), comparable(prior)))
+        throw new ChainError("a renewal changed something other than its issuer and its window");
+    return prior;
+}
+
+/** A certificate body with the three fields a renewal is allowed to change removed, for comparing the rest. */
+function comparable(body: CertificateBody): Bytes {
+    return bytes(CertificateBody.encode({
+        ...body, issuer: new Uint8Array(), notBeforeMs: 0, notAfterMs: 0, renews: undefined,
+    }).finish());
 }
 
 function key32(bytes: Bytes): Bytes {
