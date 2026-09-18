@@ -118,6 +118,35 @@ test("desktop: a runtime that lost a session's history keeps what is shown and s
     await page.close();
 });
 
+test("calm view is what the page opens in, and the toggle hands the panel's detail back", async () => {
+    const { page } = await open(DESKTOP, `#s=${encodeURIComponent(WAITING)}`);
+    await expect(page.locator(".chat")).toHaveClass(/calm/);
+    // Calm rides the shared reading attribute, so the step counters the panel draws are quiet here…
+    expect(await page.evaluate(() => document.documentElement.hasAttribute("data-focus"))).toBe(true);
+    await expect(page.locator(".step-pill").first()).toBeHidden();
+    // …but nothing has left the document: the toggle brings all of it back, and the approval never quiets.
+    await expect(page.locator(".astep-approve")).toBeVisible();
+    await page.locator(".chat-head .chat-view-btn").click();
+    await expect(page.locator(".chat")).not.toHaveClass(/calm/);
+    await expect(page.locator(".step-pill").first()).toBeVisible();
+    // The choice is this device's, so it survives a reload.
+    await page.reload();
+    await expect(page.locator(".chat")).not.toHaveClass(/calm/);
+    await page.close();
+});
+
+test("desktop: the session list hides and comes back, and is out of the tab order while hidden", async () => {
+    const { page } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    const list = page.locator(".chat-list");
+    await expect(list).toBeVisible();
+    await page.locator(".chat-list .head .chat-list-btn").click();
+    await expect(list).toBeHidden();
+    // The way back is in the header of what is now the only pane, not only where the list used to be.
+    await page.locator(".chat-head .chat-list-btn").click();
+    await expect(list).toBeVisible();
+    await page.close();
+});
+
 test("a reload keeps the open session", async () => {
     const { page } = await open(PHONE);
     await row(page, CHAT).click();

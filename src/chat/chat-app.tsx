@@ -17,6 +17,7 @@ import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import { mayCommand, speaksOurContract } from "./grants";
 import { NewSession, ResumeSession, StartMenu, resumableHere, type StartKind } from "./new-session";
+import { ListToggle, ViewToggle, calm, listOpen } from "./view-mode";
 import { lightboxSrc } from "./platform";
 
 /** Below this width the page shows one pane at a time. */
@@ -112,13 +113,13 @@ function IndexRow({ s, rt, active }: { s: SessionSummary; rt: RuntimeInfo; activ
 }
 
 /** The session list, grouped by runtime. */
-function SessionList({ store, activeKey, onStart }: { store: ChatStore; activeKey: SessionKey | null; onStart: (kind: StartKind) => void }) {
+function SessionList({ store, activeKey, narrow, onStart }: { store: ChatStore; activeKey: SessionKey | null; narrow: boolean; onStart: (kind: StartKind) => void }) {
     const runtimes = store.runtimes.value;
     const sessions = store.listed();
     const status = store.status.value;
     return (
         <aside class="chat-list" aria-label="Sessions">
-            <div class="head"><b>Sessions</b><span class="sp" />{status.state !== "online" ? <span class="chat-chip warn">{status.state === "connecting" ? "connecting…" : "offline"}</span> : null}<StartMenu store={store} onPick={onStart} /></div>
+            <div class="head"><ListToggle narrow={narrow} /><b>Sessions</b><span class="sp" />{status.state !== "online" ? <span class="chat-chip warn">{status.state === "connecting" ? "connecting…" : "offline"}</span> : null}<StartMenu store={store} onPick={onStart} />{narrow ? <ViewToggle /> : null}</div>
             <div class="view chat-list-scroll">
                 {runtimes.length === 0 && status.state === "online" ? <div class="empty">No runtimes yet. Pair one to see its sessions here.</div> : null}
                 {runtimes.map((rt) => {
@@ -182,11 +183,13 @@ function SessionPane({ store, sessionKey, narrow }: { store: ChatStore; sessionK
         <main class="chat-main" data-rev={r} data-session={sessionKey}>
             <div class="head chat-head">
                 {narrow ? <button class="nav" aria-label="Back to sessions" onClick={() => (pushedEntry ? history.back() : (view.value = { name: "list" }))}>‹</button> : null}
+                {!narrow && !listOpen.value ? <ListToggle narrow={narrow} /> : null}
                 <span class="chat-head-title">
                     <b>{truncate(title, 120)}</b>
                     <span class="chat-head-sub">{rt?.name ?? id?.runtime}{summary?.model ? ` · ${summary.model}` : ""}</span>
                 </span>
                 <span class="sp" />
+                <ViewToggle />
                 {id ? <Hash hash={id.hash} /> : null}
             </div>
             {waiting ? <button class="chat-waiting" onClick={jumpToApproval}>Waiting on your approval<span class="chat-waiting-go">Review ›</span></button> : null}
@@ -266,14 +269,25 @@ export function ChatApp({ store }: { store: ChatStore }) {
     useEffect(() => { if (key) store.open(key); else store.close(); }, [key]);
     useEffect(() => { if (key) setStarting(null); }, [key]);   // opening a session puts the form away
     return (
-        <div class={`chat${narrow ? " narrow" : ""}`}>
+        <div class={`chat${narrow ? " narrow" : ""}${calm.value ? " calm" : ""}${!narrow && !listOpen.value ? " list-hidden" : ""}`}>
             <ContextMenu />
             <CursorTipLayer />
-            {(!narrow || (!key && !starting)) ? <SessionList store={store} activeKey={key} onStart={setStarting} /> : null}
+            {(!narrow || (!key && !starting)) ? <SessionList store={store} activeKey={key} narrow={narrow} onStart={setStarting} /> : null}
             {starting ? <NewSession store={store} kind={starting} onCancel={() => setStarting(null)}
                 onStarted={(k) => { setStarting(null); openSession(k); }} />
                 : key ? <SessionPane store={store} sessionKey={key} narrow={narrow} />
-                    : !narrow ? <main class="chat-main"><div class="empty chat-pick">Pick a session.</div></main> : null}
+                    : !narrow ? (
+                        <main class="chat-main">
+                            {/* The empty pane carries a header of its own so the two page-level controls sit where
+                                they always sit — a toggle that moves when nothing is open is a toggle you hunt for. */}
+                            <div class="head chat-head">
+                                {!listOpen.value ? <ListToggle narrow={narrow} /> : null}
+                                <span class="sp" />
+                                <ViewToggle />
+                            </div>
+                            <div class="empty chat-pick">Pick a session.</div>
+                        </main>
+                    ) : null}
             <Notices store={store} />
             <Lightbox />
         </div>

@@ -107,3 +107,132 @@ html, body, #root { height: 100%; }
 .chat.narrow .chat-start .hbtn { min-width: 40px; min-height: 40px; }
 .chat.narrow .chat-new-field > select,
 .chat.narrow .chat-new-field > input { min-height: 44px; }
+
+/* ============================ THE LIST PANE, SHOWN OR HIDDEN ============================
+   Gemini's move, and it is the right one for a page whose body is prose: the list is navigation, and navigation you
+   are not using should not hold a quarter of the window. The pane stays MOUNTED and slides, so its scroll position
+   survives being closed, and the grid column animates with it rather than the body jumping a column's width. */
+.chat { transition: grid-template-columns .24s cubic-bezier(.4, 0, .2, 1); }
+/* `minmax(0px, 0px)`, not `0`: a track only interpolates against the same FUNCTION, so animating a `minmax()`
+   column down to a bare length does not tween at all — the column snaps shut and the body jumps a pane's width
+   sideways, while the pane itself slides. Both sides `minmax()`, and the two move together. */
+.chat.list-hidden { grid-template-columns: minmax(0px, 0px) minmax(0, 1fr); }
+/* A hidden pane must not be reachable by TAB — it is off screen, and a focus ring lands nowhere the eye can
+   follow — but `visibility` does not interpolate, so switching it with the class would take the pane away on the
+   first frame and leave the column animating over nothing. It is DELAYED by the slide's own duration on the way
+   out and applied at once on the way in, which is the only asymmetry here and the reason closing and opening look
+   the same. */
+.chat-list {
+    overflow: hidden;
+    transition: transform .24s cubic-bezier(.4, 0, .2, 1), opacity .18s ease, visibility 0s linear 0s;
+}
+.chat.list-hidden .chat-list {
+    transform: translateX(-100%); opacity: 0; pointer-events: none; visibility: hidden;
+    transition: transform .24s cubic-bezier(.4, 0, .2, 1), opacity .18s ease, visibility 0s linear .24s;
+}
+@media (prefers-reduced-motion: reduce) {
+    .chat, .chat-list, .chat.list-hidden .chat-list { transition: none; }
+}
+.chat-list-btn, .chat-view-btn { flex: 0 0 auto; }
+
+/* ================================== CALM VIEW ==================================
+   What this page is for (src/chat/view-mode.tsx). The DevTools panel's transcript rendered at page scale is a log
+   viewer, and none of it is wrong there: a step counter, a model pill, a raw-argument toggle and a token footer are
+   what a person debugging a run came for. A person thinking out loud came for the words.
+   So calm sets `data-focus` — the shared reading rules the panel already has — and adds the part that only a whole
+   page needs: a measure, a bubble for your own turn, and chrome that appears when a pointer asks for it.
+   Every rule here is presentational. Nothing is removed from the document, every disclosure still opens, and the
+   toggle brings all of it back, which is the standing rule about a run's raw view being quiet but never gone. */
+.chat.calm { --fs: 15px; --read: 42rem; }
+.chat.calm .chat-transcript { padding: 18px 18px 2px; line-height: 1.65; }
+.chat.calm:not(.narrow) .chat-transcript > div { max-width: var(--read); }
+.chat.calm .md p { margin: 0 0 .85em; }
+.chat.calm .md h1, .chat.calm .md h2, .chat.calm .md h3 { margin: 1.1em 0 .4em; }
+.chat.calm .md li { margin: .2em 0; }
+
+/* YOUR OWN TURN is the one thing that gets a shape, because it is the only thing on the page that is not the
+   answer: a bubble says "you said this" without a label doing it. The reply keeps no container at all — the page
+   IS the reply, which is what every product that people read for pleasure does and no panel does. */
+.chat.calm .msg.user {
+    background: var(--user-bg); border: none; border-radius: 18px; padding: 9px 15px;
+    margin: 4px 0 14px auto; max-width: min(84%, 34rem); width: fit-content; position: relative;
+}
+/* Focus mode floats this row into the bubble's top-right corner, where in a bubble it would sit on the words. It
+   goes UNDER instead: the stamp is the transcript's one clock, and it is worth having without being worth a line
+   of its own above every prompt. */
+.chat.calm .msg.user .mrow { top: auto; bottom: -1.35em; right: 6px; margin: 0; opacity: .6; }
+.chat.calm .msg.user .utext { line-height: 1.55; }
+
+/* THE REPLY'S HEADER ROW — a dot, a collapse chevron, a copy button, a timestamp — is provenance, and provenance is
+   what you go looking for rather than what you read. Where there is a pointer it fades in under it (see the
+   `hover` block below); where there is not, it simply sits quiet, because a touch screen cannot hover and an
+   affordance that only a mouse can summon is one a phone does not have at all. */
+.chat.calm .msg.asst > .mrow { opacity: .55; margin-bottom: 1px; }
+.chat.calm .msg.asst { padding: 0; margin-bottom: 18px; }
+.chat.calm .msg.asst > .md { padding: 0; }
+
+/* An agent turn's box: the border earns its keep in a 360px panel, where a turn and its steps need telling apart at
+   a glance. At page width the left rail on the steps already says it, and eight bordered cards down a column do
+   not read as one conversation. */
+.chat.calm .aturn { border: none; padding: 0; margin-bottom: 16px; }
+.chat.calm .aturn-prose { margin: 2px 0 8px; }
+.chat.calm .astep.tool { margin: 6px 0; }
+/* The request's own configuration, above the first sentence of every chat. It is a disclosure that is already
+   closed; calm only stops it looking like a card. */
+.chat.calm .block { background: transparent; border: none; margin-bottom: 4px; opacity: .6; }
+.chat.calm .block:has(.tbody) .block-head { border-bottom: none; }
+
+/* The header: a session's identity is its title, and the hash is how a DEVELOPER names it. */
+.chat.calm .chat-head .hash { opacity: .5; }
+
+/* The composer as a page's composer rather than a panel's: one rounded field on the canvas, aligned to the same
+   measure as the prose above it, with the token counters kept for whoever hovers it. */
+.chat.calm .composer { border-top: none; padding: 4px 18px calc(16px + env(safe-area-inset-bottom)); }
+.chat.calm .composer-row {
+    max-width: var(--read); margin: 0 auto; width: 100%; gap: 4px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 24px; padding: 4px 5px;
+}
+.chat.calm .composer-row:focus-within { border-color: var(--panel-2-hover); }
+.chat.calm .cinput { background: transparent; border: none; padding: 7px 6px; }
+.chat.calm .cinput:focus { outline: none; }
+.chat.calm .cbtn { border-radius: 50%; }
+.chat.calm .composer-foot { max-width: var(--read); width: 100%; margin: 5px auto 0; opacity: .5; }
+.chat.calm .chat-readonly, .chat.calm .chat-resume { max-width: calc(var(--read) + 36px); margin: 0 auto; width: 100%; }
+
+/* The list: rows are a table of contents, so the page draws the one you are pointing at and the one you are on,
+   and nothing else. A finished session's green dot is the row's loudest mark and says the least — it goes, and the
+   space it held stays, so the titles still line up under the ones that are still saying something. */
+.chat.calm .chat-list { background: var(--bg); }
+.chat.calm .chat-row { background: transparent; border-color: transparent; border-radius: 10px; margin-bottom: 2px; }
+.chat.calm .chat-row:hover { background: var(--panel); border-color: transparent; }
+.chat.calm .chat-row.active { background: var(--panel-2); border-color: transparent; }
+.chat.calm .chat-row .dot.ok { visibility: hidden; }
+.chat.calm .chat-row .agent-badge { background: transparent; color: var(--fg-faint); padding: 0; font-weight: 600; }
+.chat.calm .chat-row .time { opacity: .55; }
+
+/* WHERE THERE IS A POINTER, the quiet things above go further: all the way out until it comes looking. This is the
+   whole of the hover behaviour, in one place and behind `hover: hover`, because the same rules on a touch screen
+   would hide the timestamps, the copy button, the token counters and the hash with no gesture that brings any of
+   them back. A phone gets them dimmed; a mouse gets them on demand. */
+@media (hover: hover) and (pointer: fine) {
+    .chat.calm .msg.user .mrow,
+    .chat.calm .msg.asst > .mrow,
+    .chat.calm .chat-head .hash,
+    .chat.calm .composer-foot,
+    .chat.calm .chat-row .time,
+    .chat.calm .block { opacity: 0; transition: opacity .15s ease; }
+    .chat.calm .msg.user:hover .mrow, .chat.calm .msg.user:focus-within .mrow { opacity: .75; }
+    .chat.calm .msg.asst:hover > .mrow, .chat.calm .msg.asst:focus-within > .mrow { opacity: 1; }
+    /* …but never while the row is saying something that is not provenance. */
+    .chat.calm .msg.asst.streaming > .mrow,
+    .chat.calm .msg.asst.err > .mrow,
+    .chat.calm .msg.asst.capped > .mrow { opacity: 1; }
+    .chat.calm .chat-head:hover .hash, .chat.calm .chat-head:focus-within .hash { opacity: .8; }
+    .chat.calm .composer:hover .composer-foot, .chat.calm .composer:focus-within .composer-foot { opacity: .8; }
+    .chat.calm .chat-row:hover .time, .chat.calm .chat-row.active .time { opacity: .8; }
+    .chat.calm .block:hover, .chat.calm .block:focus-within { opacity: 1; }
+    @media (prefers-reduced-motion: reduce) {
+        .chat.calm .msg.user .mrow, .chat.calm .msg.asst > .mrow, .chat.calm .chat-head .hash,
+        .chat.calm .composer-foot, .chat.calm .chat-row .time, .chat.calm .block { transition: none; }
+    }
+}

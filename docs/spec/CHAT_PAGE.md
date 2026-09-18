@@ -49,6 +49,13 @@ runtime) and hash, and what the page offers for a session follows what its runti
   - Agent history survives a browser restart only for a saved session. That means storing agent sessions (IndexedDB),
     not only `{ save: true }` chat histories: background runs and the DevTools replay buffer live in service-worker
     memory, which MV3 evicts.
+- **The page opens CALM, and the panel's detail is a toggle** (2026-09-18). This surface is for thinking out loud, and
+  the DevTools panel's transcript rendered at page scale is a log viewer: a step counter on every turn, a model pill,
+  a raw-argument toggle, a token footer, a hash in the header's most prominent corner. Calm sets the same `data-focus`
+  the panel's focus mode uses and adds what only a page needs — a reading measure, a bubble for your own turn, no
+  container around the reply, provenance under a pointer. It is presentational only: nothing leaves the document, so
+  the export, the search and the toggle all see one transcript. Implementation: `docs/dev/chat-page.md` §Calm view.
+- **The session list pane hides**, Gemini-style, on a wide layout only.
 - **Approvals are reused exactly.** Inline approval decisions are already accepted only from extension-origin senders,
   and this page is one. Nothing new to build.
 
@@ -309,6 +316,57 @@ is stuck on, or sign in where it cannot. Three things, each a contract addition 
 
 The phone's side of it lives in the core: a viewer that shows the latest frame with its age, maps a tap to the frame's
 coordinates, and offers live viewing only when the runtime has the capability.
+
+## The state inspector: current state beside the linear transcript (proposal)
+
+**Status: agreed direction, unbuilt** (Shane, 2026-09-18). This page is where it goes, because it is the only surface
+with the room.
+
+Everything this app renders today is derived from an event LOG. The transcript, the event lane, both exports and the
+DevTools panel are all replays of `MlDebugEvent`s, and the architecture leans on that: the reducer de-duplicates by
+`seq`, and a transcript changes only when the runtime emits. The state inspector is the first view that is not a
+projection of history at all. It is a snapshot of a mutable object — Jupyter's variable pane, or a register view in a
+simulator — and the object is the run's CURRENT context.
+
+**The user-facing transcript stays linear and unchanged.** The inspector is a second pane, showing what the model is
+actually carrying right now:
+
+- the message history as it stands, block by block, after any edit or compaction — not what was said, what is
+  REMEMBERED;
+- the live pointer heap: which `@tool:<id>` values exist, their size, format, source, and which sessions hold them;
+- what each block costs, so the context budget is a thing you can see being spent;
+- the structure a compaction strategy has imposed, when one has — topic-grouped histories draw as groups here while
+  the transcript stays a straight line.
+
+Why it is not a debugging luxury: once the agent can edit its own context by pointer, or a compaction strategy can
+rewrite it, the transcript CANNOT show that. The transcript is what was said; the change is to what is remembered.
+Without this pane, compaction is invisible and unauditable, which makes the inspector a precondition for shipping
+compaction rather than a follow-up to it.
+
+Four things it has to get right:
+
+1. **Its own contract call, not a new rendering of the event stream** — something like `context.get(session)` returning
+   the blocks with a REVISION, plus an event when that revision moves. A pane derived from the log would silently go
+   stale, which is the one failure that makes an inspector worse than nothing.
+2. **It says when it was taken.** A register view that does not distinguish "live" from "as of 40 seconds ago" teaches
+   the reader to distrust it.
+3. **Side by side, not a tab.** The value is the correspondence — this turn in the transcript is that block in the
+   context — including highlighting one from the other. That is an argument for a pane and against a route.
+4. **It is told apart from the conversation at a glance.** It is the one place where what is shown can legitimately
+   disagree with the transcript above it, so it must never read as more of the conversation.
+
+What exists already, and what does not: `ValueStore.rows()` (`src/value-store.ts`) already returns the whole pointer
+heap, live, in the worker — key, bytes, format, source, holders, last touched — and nothing exposes it to any client,
+so the heap half is a command away rather than a design problem. The housekeeping log records every eviction, which
+gives the heap's HISTORY and not its contents. The message array itself has no reader at all: it lives in the run
+loop's memory, and the transcript is rebuilt from debug events rather than from what was sent. Exposing that array is
+the real work.
+
+**Where it is offered** follows the rule the rest of the page follows: by capability, never by "it is local". A phone
+talking to a remote runtime over the hub gets it only if that runtime offers it, exactly as it gets the Python bench
+and the resource panel only where they exist. No branch anywhere asks whether this is the local browser.
+
+Related: `AGENT_COMPACTION.md`, `COMPACTION.md`, `POINTER_VALUES.md`.
 
 ## Slices (proposal)
 

@@ -5,11 +5,12 @@
 import { render } from "preact";
 import { installServices } from "../sidebar/services";
 import { installTooltipLayer } from "../sidebar/tooltip-layer";
-import { applyCodePrefs, applyFocus, initThemeStyle } from "../sidebar/prefs";
+import { applyCodePrefs, initThemeStyle } from "../sidebar/prefs";
 import { ChatStore } from "./chat-store";
 import { demoHost } from "./demo-world";
 import { hostServices } from "./host-services";
 import { webPlatform } from "./platform";
+import { installViewPrefs } from "./view-mode";
 import { ChatApp } from "./chat-app";
 
 const host = demoHost();
@@ -19,7 +20,7 @@ const store = new ChatStore(host);
 installServices(hostServices(store, webPlatform));
 initThemeStyle();
 applyCodePrefs();
-applyFocus();
+installViewPrefs(webPlatform.prefs);
 try { installTooltipLayer(document); } catch { /* no DOM */ }
 store.start();
 render(<ChatApp store={store} />, document.getElementById("root") || document.body);

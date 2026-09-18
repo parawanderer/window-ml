@@ -19,6 +19,12 @@ npx playwright test tests/e2e/chat-web.spec.mjs  # the spec, ~2s; E2E_DIST_WEB=<
 
 Open a session directly with `#s=<runtime:hash>` (`#s=laptop%3A3f9a0c21` is the one waiting on an approval).
 
+The page opens in CALM view (`src/chat/view-mode.tsx`): the brain button in the session header hands the DevTools
+panel's full detail back, the `☰` hides the list pane, and both choices are stored per device, so a screenshot run
+or a spec that cares about either must set or assert it rather than assume. Both are plain CSS over the same
+document — nothing is removed, so a locator still finds a quieted element and `toBeHidden()` is the assertion that
+means anything.
+
 ## Scripting the fake host
 
 The web entry exposes it as `window.__chatFake` (a `FakeHost`, `src/chat/fake-host.ts`). From the page's console or a

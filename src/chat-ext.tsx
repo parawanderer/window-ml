@@ -12,8 +12,9 @@ import { LocalHost } from "./chat/local-host";
 import { webPlatform, type ClientPlatform } from "./chat/platform";
 import { SESSIONS_PORT } from "./session-server";
 import { installServices } from "./sidebar/services";
-import { applyCodePrefs, applyFocus, initThemeStyle } from "./sidebar/prefs";
+import { applyCodePrefs, initThemeStyle } from "./sidebar/prefs";
 import { installTooltipLayer } from "./sidebar/tooltip-layer";
+import { installViewPrefs } from "./chat/view-mode";
 
 /**
  * The extension's device adapter.
@@ -34,7 +35,9 @@ const store = new ChatStore(host);
 installServices(hostServices(store, extensionPlatform));
 initThemeStyle();
 applyCodePrefs();
-applyFocus();
+// This page reads its OWN view preference rather than the panel's `focusMode`: the two surfaces share an origin,
+// and a reading choice made in a tab must not quietly reconfigure the DevTools panel beside a page.
+installViewPrefs(extensionPlatform.prefs);
 try { installTooltipLayer(document); } catch { /* no DOM */ }
 store.start();
 render(<ChatApp store={store} />, document.getElementById("root") || document.body);

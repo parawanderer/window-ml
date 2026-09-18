@@ -93,6 +93,13 @@ export const IconEye = () => (
         <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
     </svg>
 );
+/** Three rules — the session list, shown or hidden. The page's list pane is a place, so the glyph is the one
+ *  every product uses for one rather than a cleverer drawer icon nobody reads as "the list". */
+export const IconMenu = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <path d="M4 6h16M4 12h16M4 18h16" />
+    </svg>
+);
 /** Vision OFF — the composer's per-call native-vision toggle, struck through. */
 export const IconEyeOff = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
