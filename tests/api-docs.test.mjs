@@ -8,6 +8,8 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { generateApiDocs, renderModule, parseDecls, stripPrivateMembers, AGENT_HIDDEN } from "../scripts/gen-api-docs.mjs";
+import * as genApi from "../scripts/gen-api-docs.mjs";
+import { SKIP_TYPES as SKIP } from "../scripts/gen-api-docs.mjs";
 
 const CONTRACT = readFileSync(new URL("../src/contract.ts", import.meta.url), "utf8");
 const docs = generateApiDocs();
@@ -59,6 +61,50 @@ test("option/result types are expanded, not just named", () => {
     }
     assert.match(docs, /schema\?:/, "ChatOptions.schema missing — type expansion didn't reach the fields");
     assert.match(docs, /maxSteps\?:/, "AgentOptions.maxSteps missing");
+});
+
+test("EVERY type the doc names is either expanded or deliberately skipped", () => {
+    // The real invariant, and the reason the spot-check above is not enough on its own: a named-but-undefined
+    // type teaches the model nothing and it cannot tell that something is missing. This was not hypothetical —
+    // `DynamicToolNamespace` was named by `ml.dynamicTools` and never defined, because it is declared in
+    // another module and the generator used to read only contract.ts. Five hardcoded names could not catch
+    // that, and could not catch the next one either.
+    const expanded = new Set([...docs.matchAll(/^### (\w+)/gm)].map(m => m[1]));
+    // DANGLING means the generator COULD have defined it and did not — asked of the resolver itself, so prose
+    // words and ambient DOM/TS names are excluded by construction rather than by a list that would rot.
+    const resolve = genApi.makeResolver(new URL("../src/contract.ts", import.meta.url).pathname);
+
+    // Only the fences a caller READS: the MlApi block and each expanded type. A tool-initialiser's own option
+    // types are deliberately never seeded (the model passes an MlTool, it never builds one), so those member
+    // lines are dropped here exactly as the generator drops them.
+    const referenced = new Set();
+    for (const fence of docs.match(/```ts\n[\s\S]*?\n```/g) || [])
+        for (const line of fence.split("\n")) {
+            if (/\):\s*MlTool\b/.test(line) || /:\s*MlTool;\s*$/.test(line)) continue;
+            for (const n of line.match(/\b[A-Z][A-Za-z0-9_]*\b/g) || []) referenced.add(n);
+        }
+
+    const dangling = [...referenced]
+        .filter(n => !expanded.has(n) && !SKIP.has(n) && n !== "MlApi" && n !== "MlTool")
+        .filter(n => resolve.has(n));
+
+    assert.deepEqual(dangling, [],
+        `named but never defined, so the model reads a type it cannot resolve: ${dangling.join(", ")}.`
+        + ` Either the generator cannot reach its declaration (it follows contract.ts's imports — check the`
+        + ` binding), or it belongs in SKIP_TYPES with a reason.`);
+});
+
+test("a type that MOVES out of contract.ts is still found, through the import that binds it", () => {
+    // contract.ts is one contract; it does not have to be one FILE. Splitting it used to cut this doc by 10.7%
+    // in silence. The generator now resolves an unknown name through the import/re-export that binds it, so
+    // this asserts the mechanism directly rather than trusting that nobody will ever split the file.
+    const { makeResolver } = genApi;
+    const r = makeResolver(new URL("../src/contract.ts", import.meta.url).pathname);
+    // Declared in contract.ts itself.
+    assert.ok(r.has("ChatOptions"), "a local declaration still resolves");
+    // Declared elsewhere and reached only by following contract.ts's own imports.
+    assert.ok(r.has("DynamicToolNamespace"), "an imported declaration resolves through the import that binds it");
+    assert.ok(!r.has("ThisTypeDoesNotExistAnywhere"), "and an unknown name stays unknown");
 });
 
 test("tool-initialiser / opaque types are named but NOT expanded (the model only passes them)", () => {
