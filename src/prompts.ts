@@ -1,6 +1,6 @@
 // The ml.agent system prompt + the tool-aware clauses appended to it. Split out
 // so the prompt is easy to find and tune. Bundled into injected.js.
-import type { ElementContext } from "./contract";
+import type { ElementContext } from "./contract-run";
 
 export const AGENT_SYSTEM = [
     "You are an automation agent operating on the CURRENT web page through a set",

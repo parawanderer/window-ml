@@ -3,7 +3,7 @@
 // dependency on injected's closure state; only args + browser globals.
 import { roleOf, accessibleName } from "./a11y";   // for the `role=` / `label=` selector engines (a11y has no dom import → no cycle)
 import { looksCsv } from "./table-data";           // the delimiter sniff behind the "csv" classification (table-data has no dom import → no cycle)
-import type { ElementContext } from "./contract";
+import type { ElementContext } from "./contract-run";
 
 /**
  * Collapse whitespace, then truncate to a max length with a trailing ellipsis.

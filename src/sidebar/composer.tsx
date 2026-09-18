@@ -4,7 +4,7 @@
 // element-pill chips, reused by the HUD Spotlight composer. Extracted from app.tsx.
 import { useState, useRef, useEffect } from "preact/hooks";
 import { services } from "./services";
-import type { ElementContext } from "../contract";
+import type { ElementContext } from "../contract-run";
 import { config, rev } from "./store";
 import type { Session } from "./store";
 import { truncate } from "./format";

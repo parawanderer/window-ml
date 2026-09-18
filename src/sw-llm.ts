@@ -9,7 +9,7 @@ import type { MlConfig, ApiFormat, ProtoMode } from "./contract-config";
 import type { NeutralMessage, ToolCall, LlmResult, TokenUsage, GenPhase } from "./contract-chat";
 import type { LoadedModel, ServerTool } from "./contract-server";
 import type { FetchLlmPayload } from "./contract-messages";
-import { wireHint } from "./contract";   // single source of truth (see contract.ts)
+import { wireHint } from "./contract-run";
 import { DEFAULT_CONFIG, modelFilterAllows, protoMode } from "./contract-config";
 import { generatesText, producesEmbeddings } from "./contract-server";
 import { loadedFrom } from "./resource-events";

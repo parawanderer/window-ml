@@ -2,10 +2,8 @@
 
 import type {
     MlApi,
-    JsonSchema,
-
-    RequestHint, RequestUse
-} from "./contract";
+    JsonSchema} from "./contract";
+import type { RequestHint, RequestUse } from "./contract-run";
 import type { DerefValue } from "./contract-pointers";
 import type {
     NeutralMessage, ChatOptions,
@@ -38,7 +36,7 @@ import type {
     DebugChatError,
     DebugSessionConfig
 } from "./contract-debug";
-import { hintSession, shortHash } from "./contract";
+import { hintSession, shortHash } from "./contract-run";
 import { outputCapEscalated } from "./contract-pointers";
 import { DEFAULT_GROUNDING_RANGE } from "./contract-render";
 import { detectGroundingModel } from "./contract-server";

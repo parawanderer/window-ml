@@ -14,7 +14,7 @@ import type { MlTool } from "./contract-agent";
 import type { AnswerMedia } from "./contract-render";
 import type { PageToolEnvelope } from "./contract-messages";
 import type { SubcallUsage } from "./contract-debug";
-import { hintSession } from "./contract";
+import { hintSession } from "./contract-run";
 import { outputCapEscalated } from "./contract-pointers";
 import { executeTool, toolContext, answerSetFor, withRunSession, withRunDeref } from "./tool-exec";
 import { expandPointers } from "./pointer-macro";

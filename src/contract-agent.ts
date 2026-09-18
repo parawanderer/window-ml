@@ -9,7 +9,8 @@
 // record of a human having answered. Merging the two would make a tool's own claim look like consent.
 import type { AnswerSet } from "./answer-set";
 // Type-only, so the cycle with contract.ts (which re-exports this file) erases at build entirely.
-import type { JsonSchema, RequestHint } from "./contract";
+import type { JsonSchema } from "./contract";
+import type { RequestHint } from "./contract-run";
 import type { DerefRead } from "./contract-pointers";
 import type { NeutralMessage } from "./contract-chat";
 import type { AnswerMedia, RenderDescriptor, ToolFeedback, ToolRenderInput, TokenRender } from "./contract-render";

@@ -3,7 +3,7 @@
 // stream/vision), and the run-selection logic (cardRuns / selectedRun / isPendingGate). A leaf module
 // (no JSX) shared by the card view components AND app.tsx's message bus. Extracted from hud-card.tsx.
 import { signal } from "@preact/signals";
-import type { ElementContext } from "../contract";
+import type { ElementContext } from "../contract-run";
 import { sessionMap, ollamaIds, config } from "./store";
 import type { AgentStep, Session } from "./store";
 import { decidedSteps, stepKey } from "./ui-kit";
