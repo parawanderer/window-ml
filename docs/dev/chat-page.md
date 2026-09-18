@@ -228,6 +228,23 @@ timeout.
 
 A tab whose URL is not http(s) is refused with `forbidden` before anything is started, for the same reason.
 
+## The extension entry
+
+`src/chat-ext.tsx` is `chat.html` as a tab of this browser: a `LocalHost` over a `ml-sessions` port, the
+extension's `ClientPlatform`, and the same `ChatApp` the web build renders against a fake host. The popup's
+**Sessions → Open** opens it, focusing the tab when one is already open, since two of them would each hold their
+own port and their own scroll position.
+
+It sits at `src/` rather than in `src/chat/` because it is the one file of the chat page that knows `chrome`
+exists, and everything under `src/chat/` has to build for a phone. `sidebar/services-ext.ts` sits beside its seam
+for the same reason.
+
+**The extension's platform adapter is the web one with a different `kind`**, and that is worth stating rather
+than dressing up: an extension page is a page, with the same `localStorage` (on the extension's origin, so
+preferences are shared with other extension pages rather than with a site), the same anchor download and the same
+clipboard. `kind` still earns its place, because a surface may offer something only where it can be done, and the
+core asks the platform rather than inferring it from the runtime.
+
 ## Not yet
 
 - The extension entry (`chat.html` over `LocalHost`) is slice 3, and its `ClientPlatform` adapter comes with it.

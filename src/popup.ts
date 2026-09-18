@@ -393,6 +393,17 @@ $("chatUrl").addEventListener("input", updateConnSummary);
 $("save").addEventListener("click", save);
 $("unload").addEventListener("click", freeVram);
 $("stopAllRuns").addEventListener("click", stopAllRuns);
+// The chat page, in a tab of its own. Focused if it is already open, rather than opened twice: it is one view of
+// this browser's sessions, and two of them would each hold their own port and their own scroll position.
+$("openChat").addEventListener("click", async () => {
+    const url = chrome.runtime.getURL("chat.html");
+    try {
+        const [open] = await chrome.tabs.query({ url });
+        if (open?.id != null) await chrome.tabs.update(open.id, { active: true });
+        else await chrome.tabs.create({ url });
+        window.close();
+    } catch { /* the browser refused; the popup stays open so the click can be repeated */ }
+});
 $("test").addEventListener("click", saveAndTest);
 $("refreshVram").addEventListener("click", refreshVram);
 $("sheetsAccess").addEventListener("click", enableSheetsAccess);

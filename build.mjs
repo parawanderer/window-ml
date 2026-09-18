@@ -43,6 +43,9 @@ const ENTRIES = {
     "panel": "src/sidebar/panel.ts",
     // Standalone PDF-print tab (window.print() is suppressed inside docked DevTools; a real tab isn't).
     "print": "src/sidebar/print.ts",
+    // The chat page as a tab of this browser, over the local runtime (src/chat-ext.tsx). The same app the web
+    // build serves from src/chat/web.tsx against a fake host.
+    "chat": "src/chat-ext.tsx",
 };
 
 // [source, dist-relative dest] — copied verbatim next to the bundles.
@@ -55,6 +58,8 @@ const ASSETS = [
     ["src/sidebar/panel.html", "panel.html"],
     ["src/sidebar/print.html", "print.html"],
     ["src/offscreen.html", "offscreen.html"],
+    ["src/chat/chat.html", "chat.html"],
+    ["src/chat/chat.css", "chat.css"],
 ];
 
 const watch = process.argv.includes("--watch");
@@ -84,8 +89,10 @@ const DEFINES = Object.fromEntries(process.argv
 // compiled Preact bundle (not meant to be read) and pulls in highlight.js, so
 // it's minified — and so is the CodeMirror chunk beside it, which is third-party
 // code nobody reads and triples in size unminified.
-const { "sidebar-app": sidebarApp, "cm-editor": cmEditor, ...coreEntries } = ENTRIES;
-const uiEntries = { "sidebar-app": sidebarApp, "cm-editor": cmEditor };
+// The chat page is the same kind of thing as the sidebar app — a compiled Preact bundle that renders the shared
+// session views — so it is minified beside it rather than left readable with the worker's own code.
+const { "sidebar-app": sidebarApp, "cm-editor": cmEditor, chat: chatPage, ...coreEntries } = ENTRIES;
+const uiEntries = { "sidebar-app": sidebarApp, "cm-editor": cmEditor, chat: chatPage };
 const base = {
     outdir: BUILD_DIR,
     bundle: true,
