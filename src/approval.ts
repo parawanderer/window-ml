@@ -20,6 +20,14 @@ const argRank = (k: string): number => {
     const f = ARG_FRONT.indexOf(k);
     return f !== -1 ? f : ARG_BACK.includes(k) ? 1000 : 500;
 };
+/**
+ * Render a tool's arguments for an approval prompt.
+ * String values shown raw (real newlines — so an exec `js` blob is readable, not escaped JSON),
+ * others as compact JSON.
+ *
+ * @param {Object} args The arguments to render.
+ * @returns {string} The rendered arguments string.
+ */
 export const renderArgs = (args: unknown): string => Object.entries(args || {})
     .sort((a, b) => argRank(a[0]) - argRank(b[0]))
     .map(([k, v]) => `${k}:\n${typeof v === "string" ? v : JSON.stringify(v)}`)
