@@ -11,7 +11,8 @@
 // what the host already decided to run.  (exec's read-only fast-path is deliberately NOT here — exec is
 // page-context, so a forged "it's read-only" gains nothing the page couldn't already do; it stays a
 // page-side concern of the delegated exec path. See principle-adding-a-privileged-tool.)
-import type { NeutralMessage, ToolCall, AgentResult, ApprovalDecision } from "./contract";
+import type { NeutralMessage, ToolCall } from "./contract";
+import type { AgentResult, ApprovalDecision } from "./contract-agent";
 import type { DerefRead } from "./token-pipe";
 import { runAgentLoop, shotTurnMessage } from "./agent-loop";
 import type { ToolMeta, AgentLoopDeps, ToolRunResult } from "./agent-loop";

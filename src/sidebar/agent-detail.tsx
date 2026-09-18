@@ -6,7 +6,7 @@
 import type { ComponentChildren } from "preact";
 import { services } from "./services";
 import { useState, useEffect, useRef } from "preact/hooks";
-import type { PersistGrant } from "../contract";
+import type { PersistGrant } from "../contract-agent";
 import type { RenderDescriptor } from "../contract-render";
 import type { DebugAgentConfig } from "../contract-debug";
 import { resolveOutputCap, runStats, fmtTokPerSec, runStatsProvenance } from "../contract";

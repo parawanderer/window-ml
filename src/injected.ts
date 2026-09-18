@@ -2,14 +2,7 @@
 
 import type {
     NeutralMessage,
-    MlTool,
-    ApprovalRequest,
-    ApprovalDecision,
-    AgentResult,
-    AgentOptions,
-    MlAgentHandle,
     MlApi,
-    AgentTranscriptEntry,
     ChatOptions,
     ExtendProfile,
     JsonSchema,
@@ -17,8 +10,16 @@ import type {
     TokenUsage,
     MlHistory,
 
-    DerefValue, MlAnswer, RequestHint, RequestUse
+    DerefValue, RequestHint, RequestUse
 } from "./contract";
+import type {
+    MlTool,
+    ApprovalRequest,
+    ApprovalDecision,
+    AgentResult,
+    AgentOptions,
+    MlAgentHandle, AgentTranscriptEntry, MlAnswer
+} from "./contract-agent";
 import type {
     RenderDescriptor,
     ToolFeedback,

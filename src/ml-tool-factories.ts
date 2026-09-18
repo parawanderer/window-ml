@@ -15,7 +15,8 @@
 
 import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from "./builtin-tools";
 import { subcallUsage } from "./bus";
-import type { MlTool, MlApi, ToolResult } from "./contract";
+import type { MlApi } from "./contract";
+import type { MlTool, ToolResult } from "./contract-agent";
 import type { VisionMemory, RenderDescriptor } from "./contract-render";
 import { navTarget, errText, clipOut, askReaderNumCtx, jsonShape } from "./dom";
 import { htmlToMarkdown } from "./html-to-md";

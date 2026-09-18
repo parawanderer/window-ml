@@ -38,8 +38,8 @@
 
 import type {
     TokenUsage,
-    PersistGrant, ReusedGrant,
 } from "./contract";
+import type { PersistGrant, ReusedGrant } from "./contract-agent";
 import type { RenderDescriptor, ToolFeedback } from "./contract-render";
 import type { SubcallUsage, DebugAgentConfig, DebugSessionConfig } from "./contract-debug";
 

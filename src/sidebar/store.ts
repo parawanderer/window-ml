@@ -3,7 +3,8 @@
 // view module imports from here — extracted from app.tsx so the components can
 // live in their own files while still reading one source of truth.
 import { signal } from "@preact/signals";
-import type { MlConfig, ExtendProfile, TokenUsage, PersistGrant, ReusedGrant, GenPhase, RemoteTiming } from "../contract";
+import type { MlConfig, ExtendProfile, TokenUsage, GenPhase } from "../contract";
+import type { PersistGrant, ReusedGrant, RemoteTiming } from "../contract-agent";
 import type { RenderDescriptor, ToolFeedback, AnswerMedia } from "../contract-render";
 import type { LoadedModel } from "../contract-server";
 import type { DebugSessionConfig, DebugAgentConfig, SubcallUsage } from "../contract-debug";

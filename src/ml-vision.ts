@@ -14,7 +14,8 @@
 
 import { makeBackgroundTaskPromise, hideSidebarForShot } from "./bridge";
 import { VIEWS_PARAM, targetRender, lookViews, BOX_OVER_TEXT_TIP, legendFor } from "./builtin-tools";
-import type { MlApi, MlPublicConfig, MlTool, ToolResult } from "./contract";
+import type { MlApi, MlPublicConfig } from "./contract";
+import type { MlTool, ToolResult } from "./contract-agent";
 import type { ShotBox, VisionMemory } from "./contract-render";
 import { queryAll, isElement, viewportRect, classifyOverlay, errText } from "./dom";
 import { pickAccentColorForTarget, annotate } from "./locate";
