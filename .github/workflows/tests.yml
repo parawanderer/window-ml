@@ -151,6 +151,13 @@ jobs:
       # The code index has to be able to FIND what a change adds, or the next person rebuilds it — this repo
       # has grown a duplicate pointer chip, a fourth drag grip and a second view-return signal exactly that
       # way, and the same happens to whole modules. No node_modules needed: it is plain node reading files.
+      # The vendored schemas and vectors are not ours: they live beside the Rust that produces them, and a copy
+      # that drifted is a wrong decoder that still compiles. Offline here, by git blob id. The `--upstream` poll
+      # (which says when the upstream BRANCH has moved past what we hold) is for a person to run, not CI: upstream
+      # moving on is news rather than a fault, and a check that fails for news is one people learn to skip.
+      - name: The vendored schemas are the files they are pinned to
+        run: node scripts/check-pins.mjs
+
       - name: Every source file says what it is for
         run: node scripts/index.mjs --headerless
       # The index is only useful while it is cheap enough to run without thinking about it. This measures a COLD

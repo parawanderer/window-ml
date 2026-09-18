@@ -3,5 +3,6 @@
   "branch": "v0.2.0",
   "path": "proto/wmlhub/v1/seal.proto",
   "commit": "41d3fffc9e41442b28838a7e07b7f5077eb318c6",
-  "blob": "3bc250ac54a57db0e1a3439202f7aa0ec6bca9ab"
+  "blob": "3bc250ac54a57db0e1a3439202f7aa0ec6bca9ab",
+  "watch": "main"
 }

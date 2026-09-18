@@ -3,5 +3,6 @@
   "branch": "v0.2.0",
   "path": "proto/wmlhub/v1/hub.proto",
   "commit": "41d3fffc9e41442b28838a7e07b7f5077eb318c6",
-  "blob": "6016cb005f87fc59c2deb21c2c4d7b1244ff7b9d"
+  "blob": "6016cb005f87fc59c2deb21c2c4d7b1244ff7b9d",
+  "watch": "main"
 }
