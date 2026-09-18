@@ -18,7 +18,7 @@ const { identityFromSeed, principalId, accountId, verifyChain, helloTranscript, 
 const { Receiver, StreamKey, StreamReader, ChannelKey, sealCommand, sealResult, wrapKey, sealFrame } = await import(
     "../src/hub/seal.ts"
 );
-const { Certificate, Role } = await import("../src/proto/wmlhub/v1/identity.gen.ts");
+const { Certificate, CertificateBody, Role } = await import("../src/proto/wmlhub/v1/identity.gen.ts");
 
 const hex = (s) => new Uint8Array(s.match(/../g)?.map((b) => parseInt(b, 16)) ?? []);
 const toHex = (b) => [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
@@ -48,7 +48,7 @@ const receiverFor = async (party, root) =>
 test("the vendored vectors are the pinned file", () => {
     const blob = createHash("sha1").update(`blob ${raw.length}\0`).update(raw).digest("hex");
     assert.equal(blob, PIN.blob, `re-vendor from ${PIN.repo}:${PIN.path} and update the pin`);
-    assert.equal(V.version, 2, "version 2: every certificate carries a validity window");
+    assert.equal(V.version, 3, "version 3: the renewal case, which the verifier is exempt from two checks for");
 });
 
 test("the keys the seeds name are the keys the vectors record", async () => {
@@ -424,4 +424,58 @@ test("what only the root may grant does not travel through a delegate", async ()
         const direct = await issueCertificate(root, spec(phone.publicKey, { scopes: held }));
         assert.ok(await verifyChain(root.publicKey, [direct], NOW), `${never} from the root`);
     }
+});
+
+// --- renewal: the case a verifier that does not know it REFUSES, on its own surface only ---
+
+test("a renewal by a delegate verifies, and grants a scope only the root may give", async () => {
+    // The failure this prevents: a runtime renews a phone holding `approve`, and a verifier enforcing the ordinary
+    // rules reads it as "a delegate issued a scope only the root may grant" and refuses. Correctly, by those rules.
+    // The device just stops working, on this surface only, and it looks like a pairing bug.
+    const { root } = await cast();
+    const renewed = Certificate.decode(hex(V.renewal.renewed));
+    const delegate = Certificate.decode(hex(V.renewal.delegate));
+
+    const verified = await verifyChain(root.publicKey, [renewed, delegate], V.renewal.verify_at_ms);
+    for (const scope of V.renewal.scopes) {
+        assert.ok(verified.leaf.scopes.includes(scope), `the renewed leaf holds ${scope}`);
+    }
+});
+
+test("the three ways to pass the renewal check by accident", async () => {
+    const { root } = await cast();
+    const renewed = Certificate.decode(hex(V.renewal.renewed));
+    const delegate = Certificate.decode(hex(V.renewal.delegate));
+    const before = Certificate.decode(hex(V.renewal.before));
+
+    // 1. The predecessor is EXPIRED at that time, and its window must not be checked — which is what makes the
+    //    exemption worth anything, since an expired predecessor is the whole reason to renew.
+    await assert.rejects(
+        () => verifyChain(root.publicKey, [before], V.renewal.verify_at_ms),
+        /not valid now/,
+        "the predecessor on its own fails at that time, so not checking its window is a real decision",
+    );
+
+    // 2. The predecessor must verify under the ACCOUNT ROOT. Under a delegate, renewals chain: renew something
+    //    narrow, then renew THAT with more, and the exemption walks itself wider.
+    const underDelegate = CertificateBody.decode(renewed.body);
+    assert.ok(underDelegate.renews, "the renewal carries its predecessor");
+    const priorBody = CertificateBody.decode(underDelegate.renews.body);
+    assert.deepEqual([...priorBody.issuer], [...root.publicKey], "and that predecessor was issued by the root");
+
+    // 3. Every other field equal, `agreement_key` above all: it is where sealed commands go, so a renewal free to
+    //    change it redirects everything sealed to an approver into a key the renewer holds.
+    assert.deepEqual([...CertificateBody.decode(renewed.body).agreementKey], [...priorBody.agreementKey]);
+    assert.deepEqual([...CertificateBody.decode(renewed.body).subject], [...priorBody.subject]);
+    assert.deepEqual(CertificateBody.decode(renewed.body).scopes, priorBody.scopes);
+
+    // A renewal that changed the agreement key is refused. Forged here rather than asserted about, because this is
+    // the one whose absence would be silent: everything would keep verifying and the seals would go elsewhere.
+    const tampered = CertificateBody.decode(renewed.body);
+    tampered.agreementKey = new Uint8Array(32).fill(9);
+    await assert.rejects(
+        () => verifyChain(root.publicKey, [{ body: CertificateBody.encode(tampered).finish(), signature: renewed.signature }, delegate], V.renewal.verify_at_ms),
+        /did not verify|changed something other than/,
+        "a renewal may not move where sealed commands go",
+    );
 });

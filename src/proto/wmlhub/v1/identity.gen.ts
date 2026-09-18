@@ -54,6 +54,13 @@ export interface CertificateBody {
   /** May issue certificates in turn (a second device that can pair new ones). Chains are at most two long. */
   mayPair: boolean;
   /**
+   * May sign this account's revocation lists (docs/design/revocation.md). Only the account root may grant it, and
+   * exactly one principal holds it at a time: the list's `version` is per account, so two signers race and the
+   * loser's revocation is refused as stale. It is granted to the runtime at pairing, which is what lets a person
+   * revoke a device without the root key present.
+   */
+  mayRevoke: boolean;
+  /**
    * Validity, epoch milliseconds. BOTH are required and a certificate may not be valid for longer than 90 days
    * (`MAX_CERTIFICATE_MS`): expiry is the one revocation that needs no list, no hub and nobody online, so a device
    * that stops being renewed stops having access. A child never outlives its issuer.
@@ -62,6 +69,21 @@ export interface CertificateBody {
   notAfterMs: number;
   /** a name its owner chose ("phone"); display text, never proof of anything */
   label: string;
+  /**
+   * The certificate this one RENEWS, when it is a renewal rather than a new grant.
+   *
+   * Pairing issues for a NEW subject with scopes chosen then; renewal re-issues an EXISTING subject's certificate,
+   * unchanged but for its window. The second grants nothing that was not already granted, which is why a delegate
+   * may do it for scopes it could not itself grant -- without this, nothing but the root could keep a device holding
+   * `approve`, `control` or `admin` alive past `MAX_CERTIFICATE_MS`, once per device and scattered across the year.
+   *
+   * It is bought strictly (crates/keys `verify_chain`): the predecessor must verify under the ACCOUNT ROOT and never
+   * under a delegate, so renewals do not chain into wider ones; its own window is NOT checked, because an expired
+   * predecessor is the normal case and the point; and every other field must be equal, `agreement_key` above all,
+   * since that is where sealed commands go and a delegate free to change it could redirect everything sealed to an
+   * approver into a key it holds. `may_revoke` is the one power a renewal may not carry from a delegate.
+   */
+  renews: Certificate | undefined;
 }
 
 /** hub -> principal, the first frame on every connection: what the principal signs to prove it holds its key. */
@@ -198,9 +220,11 @@ function createBaseCertificateBody(): CertificateBody {
     role: 0,
     scopes: [],
     mayPair: false,
+    mayRevoke: false,
     notBeforeMs: 0,
     notAfterMs: 0,
     label: "",
+    renews: undefined,
   };
 }
 
@@ -224,6 +248,9 @@ export const CertificateBody: MessageFns<CertificateBody> = {
     if (message.mayPair !== false) {
       writer.uint32(48).bool(message.mayPair);
     }
+    if (message.mayRevoke !== false) {
+      writer.uint32(88).bool(message.mayRevoke);
+    }
     if (message.notBeforeMs !== 0) {
       writer.uint32(56).uint64(message.notBeforeMs);
     }
@@ -232,6 +259,9 @@ export const CertificateBody: MessageFns<CertificateBody> = {
     }
     if (message.label !== "") {
       writer.uint32(74).string(message.label);
+    }
+    if (message.renews !== undefined) {
+      Certificate.encode(message.renews, writer.uint32(98).fork()).join();
     }
     return writer;
   },
@@ -297,6 +327,14 @@ export const CertificateBody: MessageFns<CertificateBody> = {
             message.mayPair = reader.bool();
             continue;
           }
+          case 11: {
+            if (tag !== 88) {
+              break;
+            }
+
+            message.mayRevoke = reader.bool();
+            continue;
+          }
           case 7: {
             if (tag !== 56) {
               break;
@@ -319,6 +357,14 @@ export const CertificateBody: MessageFns<CertificateBody> = {
             }
 
             message.label = reader.string();
+            continue;
+          }
+          case 12: {
+            if (tag !== 98) {
+              break;
+            }
+
+            message.renews = Certificate.decode(reader, reader.uint32());
             continue;
           }
         }
@@ -344,9 +390,13 @@ export const CertificateBody: MessageFns<CertificateBody> = {
     message.role = object.role ?? 0;
     message.scopes = object.scopes?.map((e) => e) || [];
     message.mayPair = object.mayPair ?? false;
+    message.mayRevoke = object.mayRevoke ?? false;
     message.notBeforeMs = object.notBeforeMs ?? 0;
     message.notAfterMs = object.notAfterMs ?? 0;
     message.label = object.label ?? "";
+    message.renews = (object.renews !== undefined && object.renews !== null)
+      ? Certificate.fromPartial(object.renews)
+      : undefined;
     return message;
   },
 };

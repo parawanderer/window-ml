@@ -32,7 +32,7 @@ const { Kind, Role } = await import("../src/hub/wire.ts");
 const HUB = "hub.test";
 /** The hub release this client is checked against. Both changes coming to the hub are additive, so a client pinned
  *  here keeps working against a later one; move this when a later tag is needed, not when one exists. */
-const HUB_TAG = "v0.1.0";
+const HUB_TAG = "v0.2.0";
 const BIN =
     process.env.WMLHUB_BIN ??
     [`../../window-ml-hub-${HUB_TAG}/target/release/wmlhub`, `../../window-ml-hub-${HUB_TAG}/target/debug/wmlhub`]
