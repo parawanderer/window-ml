@@ -10,6 +10,7 @@ import { signal, effect } from "@preact/signals";
 import {
     config, models, ollamaIds, modelKinds, loadedModels, psError, vramOpen, backendError, rev, sessionMap,
     sidebarOpen, view, crosshair, backendAliveAt, backendLoading, unreachableIfNothingSaysOtherwise, VRAMH_KEY, vramH, resWindowS, resWindowPref, RESWIN_KEY, RESWIN_PREF_KEY, RESWIN_DEFAULT, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY, SECTIONS_KEY, laneEnabled, showLane, showModels, SNAPDOT_KEY, snapDot, PREDICT_KEY, predictView, TIMEGRID_KEY, timeGrid, lsGet, asides,
+    scopedHash,
 } from "./store";
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
@@ -1002,13 +1003,6 @@ function withGenCtx(e: ResourceEvent): ResourceEvent {
             ...(r.roofline ? { genRoofline: r.roofline } : {}) };
     }
     return e;
-}
-
-/** The session the lane scopes to when scoping is on: whichever one is open. Null in the list view, where
- *  "this session" names nothing. */
-export function scopedHash(): string | null {
-    const v = view.value;
-    return v.name === "detail" ? v.hash : null;
 }
 
 /** The filter as the lane sees it. */

@@ -26,10 +26,10 @@ import {
 } from "../resource-axis";
 import { placeEvents, laneRows, lineageOf, MIN_EV_SPAN, scopeToSpan, scopeAround, filterEvents, countByKind, sessionWindow } from "../resource-lane";
 import { deviceBands, hostBands, OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, pendingAllocation, stepBands, bandEdge, type Band, bandOrder } from "../resource-bands";
-import { keysReach, resourceHistory, capacity, colorFor, poolColor, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, layout, editLayout } from "./vram";
+import { keysReach, resourceHistory, capacity, colorFor, poolColor, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, streamLive, sampleGapMs, sampleGraceMs, layout, editLayout } from "./vram";
+import { scopedHash, sessionMap, models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot, predictView, timeGrid } from "./store";
 import { poolHover } from "./chart-interaction";
 import { hoverModel, kbFocus, kbPool, focusDepth, releaseFocus } from "./vram-focus";
-import { sessionMap, models, ollamaIds, loadedModels, resWindowS, RESWIN_KEY, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY, LANE_SCOPE_KEY, laneEnabled, showLane, showModels, SECTIONS_KEY, laneLitSeqs, laneH, LANEH_KEY, LANE_H_DEFAULT, snapDot, predictView, timeGrid } from "./store";
 import { Disclosure } from "./ui-kit";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { scrollToAnswer } from "./answer-render";
