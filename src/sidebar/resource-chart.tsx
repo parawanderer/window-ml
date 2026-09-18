@@ -36,6 +36,7 @@ import { hoverModel, kbFocus, kbPool, focusDepth } from "./vram-focus";
 import { scopedHash, loadedModels, resWindowS, RESWIN_KEY, zoomRange, crosshair, laneScoped, laneEnabled, showLane, snapDot, predictView, timeGrid } from "./store";
 import { clockAt, hhmmss, hhmmssms, fmtDur, fmtAge } from "./timestamps";
 import { useTipPlacement } from "./use-tip";
+import { tileOffsets } from "./tip";   // where several track-anchored tips go when they would cover each other
 import { signal } from "@preact/signals";
 import { startBrush, BrushOverlay, EventTip, phaseFill, EventLane } from "./resource-lane-ui";
 
@@ -921,14 +922,16 @@ function HoldingRows({ model, parts }: { model: string; parts: MemoryBreakdown }
  * top tip is the top track's — and a track with no tip leaves a real gap, because the next tip's preferred
  * position is still its own track's top and nothing pushed it up.
  *
- * ONLY WHEN THEY WOULD ACTUALLY OVERLAP. A single tip, or two far enough apart, is not moved at all, so the
- * common case keeps the exact alignment with its track that makes it readable.
+ * ONLY WHEN THEY WOULD ACTUALLY OVERLAP, which is a question about both axes and was once asked about one.
+ * A custom layout puts two cards SIDE BY SIDE, and the right-hand tip was then pushed a full tip's height down
+ * the window for sharing a top edge with a tip it covered nothing of, its own track's corner still empty. The
+ * arithmetic is `tileOffsets` (tip.ts), where it is pure and has the cases as tests; here it is only measured
+ * and applied.
  *
  * Done imperatively after layout because it is a measurement: how tall a tip is depends on how many parts the
  * server reported, which nothing knows until it is drawn. Idempotent — it resets each transform before
  * measuring — so every tip may safely run it.
  */
-const KB_TIP_GAP = 6;
 function tileKbTips(root: Document | null): void {
     if (!root) return;
     // DOM ORDER IS TRACK ORDER: the tips are rendered inside their tracks, top to bottom.
@@ -942,7 +945,6 @@ function tileKbTips(root: Document | null): void {
     els.forEach((el, i) => el.classList.toggle("dup", i < els.length - 1));
     const view = root.defaultView;
     const vw = view?.innerWidth ?? Infinity, vh = view?.innerHeight ?? Infinity;
-    let prevBottom = -Infinity;
     for (const el of els) {
         el.style.transform = "";
         // WHERE IT WANTS TO BE: the top corner of its own track, on the side away from the crosshair. Measured, since
@@ -955,13 +957,12 @@ function tileKbTips(root: Document | null): void {
             el.style.left = `${Math.max(4, Math.min(left, vw - w - 4))}px`;
             el.style.top = `${a.top + PLOT_TIP_INSET}px`;
         }
-        const r = el.getBoundingClientRect();
-        let dy = r.top < prevBottom + KB_TIP_GAP ? prevBottom + KB_TIP_GAP - r.top : 0;
-        // …and never off the bottom of the window, which a stack of drilled-in tips under a low track would reach.
-        if (r.bottom + dy > vh - 4) dy = Math.max(4 - r.top, vh - 4 - r.bottom);
-        if (dy) el.style.transform = `translateY(${dy}px)`;
-        prevBottom = r.bottom + dy;
     }
+    // Measured in one pass BEFORE any of them moves: reading a box after writing a transform would force a
+    // reflow per tip, and the arithmetic wants every tip's wanted position anyway, not a running total.
+    const rects = els.map((el) => el.getBoundingClientRect())
+        .map((r) => ({ left: r.left, right: r.right, top: r.top, height: r.height }));
+    tileOffsets(rects, vh).forEach((dy, i) => { if (dy) els[i].style.transform = `translateY(${dy}px)`; });
 }
 /** How far a keyboard-read tip sits inside its track's corner. */
 const PLOT_TIP_INSET = 3;

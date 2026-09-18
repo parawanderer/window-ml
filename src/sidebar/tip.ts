@@ -10,6 +10,9 @@
 //
 // Pure and unit-tested: the bounds are passed in, so it works for a tip positioned inside a plot (bounds = the
 // plot) and one positioned against the viewport (bounds = the window).
+//
+// `tileOffsets` is the other placement problem in the panel: several tips anchored to their own TRACKS at
+// once, which the keyboard reader produces, and which must not be allowed to sit on each other.
 
 /** Gap between the cursor and the tip, and how far above/below it sits. */
 export const TIP_GAP = 10, TIP_ABOVE = 26, TIP_BELOW = 18;
@@ -52,4 +55,48 @@ export function tipStyle(at: TipAt, size?: TipSize): Record<string, string> {
             : { left: `${Math.max(2, Math.min(at.x + TIP_GAP, size ? at.w - size.w - 2 : at.x + TIP_GAP))}px`, right: "auto" }),
         top: `${top}px`,
     };
+}
+
+
+/** Gap kept between two tiled tips, and how close to the window's edge one may sit. */
+export const TILE_GAP = 6, TILE_EDGE = 4;
+
+/** One tip's measured box, in viewport coordinates, at the position it WANTS: its own track's corner. */
+export interface TipRect { left: number; right: number; top: number; height: number; }
+
+/**
+ * How far each tip must move DOWN to clear the ones before it, in DOM order, which is reading order.
+ *
+ * A tip's preferred position is its own track's corner, because that alignment is what tells a reader which
+ * trace it describes. So nothing is moved that does not have to be: a tip gives way only to one already
+ * placed that it would actually cover, and then only far enough to clear it.
+ *
+ * OVERLAP IS TWO-DIMENSIONAL, which is the whole of this function. Tracks are not always a column — a custom
+ * layout puts two cards SIDE BY SIDE — and two tips in different columns share a top edge while covering
+ * nothing of each other. Testing the vertical alone pushed the right-hand one a full tip's height down the
+ * window, away from the track it belonged to, with the space it wanted still empty beside it.
+ *
+ * Each tip is measured against EVERY tip already placed rather than only the last, since in a grid the one
+ * above is not the one before. Horizontal ranges do not change (the correction is vertical), so the
+ * intersection test is fixed and one pass taking the largest push is exact.
+ *
+ * The last rule is the window: a stack under a low track would reach past the bottom, so a tip is pulled back
+ * up to fit, never below `TILE_EDGE` from either edge. That can put it back over the one before it — there is
+ * no room for both, and a tip off the screen says nothing at all.
+ */
+export function tileOffsets(rects: TipRect[], viewportH: number): number[] {
+    const out: number[] = [];
+    const placed: { left: number; right: number; bottom: number }[] = [];
+    for (const r of rects) {
+        let dy = 0;
+        for (const p of placed) {
+            if (r.right <= p.left || r.left >= p.right) continue;   // different columns: nothing is covered
+            dy = Math.max(dy, p.bottom + TILE_GAP - r.top);
+        }
+        const bottom = r.top + r.height;
+        if (bottom + dy > viewportH - TILE_EDGE) dy = Math.max(TILE_EDGE - r.top, viewportH - TILE_EDGE - bottom);
+        out.push(dy);
+        placed.push({ left: r.left, right: r.right, bottom: bottom + dy });
+    }
+    return out;
 }

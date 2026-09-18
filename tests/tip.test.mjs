@@ -67,3 +67,58 @@ test("tipStyle: a measured tip stays inside the bounds and off the cursor, where
     // Without a measurement it falls back to the old heuristic, which is all it can do.
     assert.equal(tipStyle({ x: 170, y: 300, w: 360 }).left, "180px");
 });
+
+// ---- tileOffsets: several track-anchored tips at once (the keyboard reader) ----
+const { tileOffsets, TILE_GAP, TILE_EDGE } = await import("../src/sidebar/tip.ts");
+
+// A tip that wants to start at its own track's corner. `h` is measured, because how tall one is depends on how
+// many parts the server reported.
+const rect = (left, top, { w = 300, h = 200 } = {}) => ({ left, right: left + w, top, height: h });
+const VH = 1000;
+
+test("tiling: a tip is not moved when nothing is in its way", () => {
+    assert.deepEqual(tileOffsets([rect(20, 30)], VH), [0]);
+    // Far enough apart vertically to leave the gap: neither moves.
+    assert.deepEqual(tileOffsets([rect(20, 30), rect(20, 30 + 200 + TILE_GAP)], VH), [0, 0]);
+});
+
+test("tiling: a tip in the SAME column gives way to the one above it, by exactly what it takes", () => {
+    const [a, b] = tileOffsets([rect(20, 30), rect(20, 150)], VH);
+    assert.equal(a, 0, "the first one keeps its track's corner");
+    assert.equal(b, 30 + 200 + TILE_GAP - 150, "pushed clear of the first and no further");
+});
+
+test("tiling: a tip in ANOTHER column is not moved, however much they share vertically", () => {
+    // The reported bug: a custom layout side by side. The two tips start at the same height, in columns that
+    // do not touch, and the right-hand one was pushed a full tip's height down the window.
+    assert.deepEqual(tileOffsets([rect(20, 30), rect(400, 30)], VH), [0, 0]);
+    // Touching at the edge is still not overlapping: right === left.
+    assert.deepEqual(tileOffsets([rect(20, 30), rect(320, 30)], VH), [0, 0]);
+    // One pixel of genuine overlap, and it gives way again.
+    const [, dy] = tileOffsets([rect(20, 30), rect(319, 30)], VH);
+    assert.equal(dy, 30 + 200 + TILE_GAP - 30);
+});
+
+test("tiling: a tip clears EVERY placed tip it overlaps, not only the previous one", () => {
+    // A grid: two columns, then a wide tip underneath spanning both. The one before it is the SHORTER of the
+    // two, so a rule that looked only backwards would leave it sitting on the taller one.
+    const tall = rect(20, 30, { h: 300 }), short = rect(400, 30, { h: 100 });
+    const wide = rect(20, 60, { w: 700 });
+    const [, , dy] = tileOffsets([tall, short, wide], VH);
+    assert.equal(dy, 30 + 300 + TILE_GAP - 60, "cleared the TALLER of the two it overlaps");
+});
+
+test("tiling: the window wins — a tip is pulled back up rather than pushed off the bottom", () => {
+    const [, dy] = tileOffsets([rect(20, 400, { h: 400 }), rect(20, 500, { h: 400 })], VH);
+    assert.equal(500 + 400 + dy, VH - TILE_EDGE, "its bottom sits at the edge inset, not past it");
+    // A tip taller than the window is pinned at the top rather than scrolled off it.
+    const [only] = tileOffsets([rect(20, 300, { h: 1200 })], VH);
+    assert.equal(300 + only, TILE_EDGE);
+});
+
+test("tiling: order is preserved and a track with no tip leaves a real gap", () => {
+    // Three tracks, the middle one silent. The third still wants its own track's corner, and nothing pulled it
+    // up into the empty space — which is what makes the top tip readable as the top track's.
+    const [a, b] = tileOffsets([rect(20, 30, { h: 60 }), rect(20, 400, { h: 60 })], VH);
+    assert.deepEqual([a, b], [0, 0]);
+});
