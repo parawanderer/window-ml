@@ -41,6 +41,36 @@ the other two schemas.
 - **X25519 has no "public key from private" either**, but it does have the base point, so the public key is
   `x25519(sk, 9)` (`importAgreementKey`).
 
+## The chat page's side: `HubConnection`
+
+`src/chat/hub-connection.ts` is the half of a `SessionHost` that needs no decisions about channels: presence into
+runtime identity, and `send` into a sealed COMMAND whose COMMAND_RESULT comes back by nonce. The index and the
+per-session event streams sit on top of it. Keeping them apart is what let this be finished and tested against the
+real hub while the channel derivation was still being argued about.
+
+**One pump.** `client.next()` is a single queue, so two readers would race for each event and each would see half
+of them. Everything a consumer needs is fanned out from the one loop.
+
+**A chain that arrives with a presence is VERIFIED, not trusted.** The hub relaying a certificate is a convenience
+and not a claim, so a chain that does not verify under the account root this client already holds is a presence for
+a principal this client will not seal to — silently, because there is nobody to report it to and a hub that could
+make a client throw by sending rubbish would have a way to break a page.
+
+**A command whose scope our own leaf does not grant is refused HERE.** The seal refuses it on the way out, so the
+runtime never sees it and never answers, and before this was checked locally the caller waited thirty seconds and
+was then told "the runtime did not answer" — about a runtime that was never asked. A phone with narrow grants would
+have hit that constantly. `forbidden` is the true answer, and it is the one the runtime would have given.
+
+**Every failure is a `CommandResult`, never a throw.** A caller that has to tell `not-found` from a thrown error has
+two error paths for one question. A runtime absent from presence answers `not-found` at once rather than timing out,
+because there is nobody to be slow; one that is connected and says nothing answers `unavailable`; and an abort is
+its own reason, because the command WAS sent and may still be carried out.
+
+**The abort race is real and is handled twice.** Sealing and sending are asynchronous, so an abort can land between
+the check at the top of `send` and the listener being attached — at which point the listener is attached to a signal
+that has already fired and will never fire again. The flag is asked once more after everything the resolver needs is
+in place.
+
 ## Which browsers can do this at all
 
 Two of the curves arrived late and not everywhere: **Ed25519** (identities, every certificate) and **X25519**
