@@ -206,3 +206,92 @@ test("a frame is refused when it is moved, renumbered or forged", async () => {
     flipped[flipped.length - 1] ^= 1;
     await assert.rejects(() => new StreamReader(grant).open(flipped), /signature|malformed/, "a flipped bit");
 });
+
+// ------------------------------ the budgets, after the UI session's review of #129 ------------------------------
+
+test("one sender's flood cannot refuse another sender's commands", async () => {
+    const { ReplayWindow } = await import("../src/hub/seal.ts");
+    const w = new ReplayWindow(8, 2);
+    const [noisy, quiet] = [new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)];
+    const nonce = (n) => new Uint8Array(16).fill(n);
+    w.admit(noisy, nonce(1), NOW);
+    w.admit(noisy, nonce(2), NOW);
+    assert.throws(() => w.admit(noisy, nonce(3), NOW), /busy/, "it filled its own share");
+    w.admit(quiet, nonce(1), NOW);
+    w.admit(quiet, nonce(2), NOW);
+    assert.throws(() => w.admit(quiet, nonce(9), NOW), /busy/, "and only its own");
+});
+
+test("a sender's share comes back when its nonces age out, and the ceiling still holds", async () => {
+    const { ReplayWindow, CLOCK_WINDOW_MS } = await import("../src/hub/seal.ts");
+    const nonce = (n) => new Uint8Array(16).fill(n);
+    const one = new ReplayWindow(8, 1);
+    one.admit(new Uint8Array(32).fill(1), nonce(1), NOW);
+    assert.throws(() => one.admit(new Uint8Array(32).fill(1), nonce(2), NOW), /busy/);
+    one.admit(new Uint8Array(32).fill(1), nonce(2), NOW + 2 * CLOCK_WINDOW_MS + 1);
+
+    const ceiling = new ReplayWindow(2, 8);
+    ceiling.admit(new Uint8Array(32).fill(1), nonce(1), NOW);
+    ceiling.admit(new Uint8Array(32).fill(2), nonce(1), NOW);
+    assert.throws(() => ceiling.admit(new Uint8Array(32).fill(3), nonce(1), NOW), /busy/);
+});
+
+test("a frame before the counter its grant covers is refused", async () => {
+    // A device paired this morning is granted the stream from where it joined; the ring still holds last night.
+    const { root, runtime, phone } = await cast();
+    const key = await StreamKey.generate();
+    const channel = await (await ChannelKey.generate()).channel("events", new Uint8Array([1]));
+    const publisher = { identity: runtime.identity, chain: runtime.chain };
+    const to = { principal: hex(phone.described.principal_id), agreementKey: phone.agreement.publicKey };
+    const wrapped = await wrapKey(publisher, to, channel, key, 5, NOW);
+    const grant = await (await receiverFor(phone, root)).openGrant(hex(runtime.described.principal_id), wrapped, NOW);
+    const reader = new StreamReader(grant);
+
+    const tooEarly = await sealFrame(publisher, channel, key, 4, new TextEncoder().encode("last night"));
+    await assert.rejects(() => reader.open(tooEarly), /before grant/);
+    const granted = await sealFrame(publisher, channel, key, 5, new TextEncoder().encode("since"));
+    const opened = await reader.open(granted);
+    assert.equal(opened.counter, 5, "the edge is inside");
+});
+
+test("a grant naming a channel the hub would not route is refused", async () => {
+    const { MAX_CHANNEL_BYTES } = await import("../src/hub/seal.ts");
+    const { root, runtime, phone } = await cast();
+    const key = await StreamKey.generate();
+    const publisher = { identity: runtime.identity, chain: runtime.chain };
+    const to = { principal: hex(phone.described.principal_id), agreementKey: phone.agreement.publicKey };
+    for (const channel of [new Uint8Array(), new Uint8Array(MAX_CHANNEL_BYTES + 1).fill(7)]) {
+        const wrapped = await wrapKey(publisher, to, channel, key, 1, NOW);
+        const receiver = await receiverFor(phone, root);
+        await assert.rejects(() => receiver.openGrant(hex(runtime.described.principal_id), wrapped, NOW), /malformed/,
+            `${channel.length} bytes`);
+    }
+});
+
+test("the probe that checks a seed signs under its own label, not under hello's", async () => {
+    const { LABEL, identityFromSeed, verify } = await import("../src/hub/keys.ts");
+    assert.notEqual(LABEL.probe, LABEL.hello);
+    const d = V.principals.phone;
+    const identity = await identityFromSeed(hex(d.identity_seed), hex(d.identity_public));
+    const probe = new TextEncoder().encode("does this key belong to this seed");
+    const { sign } = await import("../src/hub/keys.ts");
+    const signature = await sign(identity, LABEL.probe, probe);
+    assert.ok(await verify(identity.publicKey, LABEL.probe, probe, signature));
+    assert.ok(!(await verify(identity.publicKey, LABEL.hello, probe, signature)), "and it is not a hello signature");
+});
+
+test("a mismatched seed and public key are caught at once", async () => {
+    const { identityFromSeed } = await import("../src/hub/keys.ts");
+    const [a, b] = [V.principals.phone, V.principals.runtime];
+    await assert.rejects(() => identityFromSeed(hex(a.identity_seed), hex(b.identity_public)), /does not belong/);
+});
+
+test("replyTo answers a command with the key the sender's own certificate bound", async () => {
+    const { replyTo } = await import("../src/hub/seal.ts");
+    const { root, runtime, phone } = await cast();
+    const receiver = await receiverFor(runtime, root);
+    const opened = await receiver.open(hex(phone.described.principal_id), hex(V.command.sealed), NOW);
+    const back = replyTo(opened);
+    assert.equal(toHex(back.principal), phone.described.principal_id);
+    assert.equal(toHex(back.agreementKey), phone.described.agreement_public);
+});

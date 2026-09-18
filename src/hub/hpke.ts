@@ -17,6 +17,9 @@
  */
 export type Bytes = Uint8Array<ArrayBuffer>;
 
+/** Are these the same bytes? The one copy of this, since three files wanted it. */
+export const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((x, i) => x === b[i]);
+
 /** The same bytes, backed by an `ArrayBuffer`: a copy only when they were not already. */
 export function bytes(b: Uint8Array): Bytes {
     return (b.buffer instanceof ArrayBuffer ? b : new Uint8Array(b)) as Bytes;

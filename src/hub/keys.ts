@@ -8,7 +8,7 @@
  * cannot make a forged body verify.
  */
 import { Certificate, CertificateBody, Role } from "../proto/wmlhub/v1/identity.gen";
-import { Bytes, bytes, concat } from "./hpke";
+import { Bytes, bytes, concat, sameBytes } from "./hpke";
 
 const text = new TextEncoder();
 
@@ -19,6 +19,8 @@ export const LABEL = {
     command: "wmlhub/command/v1\0",
     grant: "wmlhub/grant/v1\0",
     stream: "wmlhub/stream/v1\0",
+    /** Local only, and on no wire: what `identityFromSeed` signs to check a seed and a public key belong together. */
+    probe: "wmlhub/probe/v1\0",
 } as const;
 
 /** The longest chain accepted: a leaf issued by the root, or by one delegate the root allowed to pair. */
@@ -26,6 +28,7 @@ export const MAX_CHAIN = 2;
 /** Bounds a hello is checked against before anything in it is compared, because it arrives unauthenticated. */
 export const MAX_CERT_BYTES = 1024;
 export const MAX_SCOPES = 16;
+/** The longest scope name, and the only statement of it: `SCOPE_NAME` is built from it. */
 export const MAX_SCOPE_BYTES = 32;
 export const MAX_LABEL_BYTES = 64;
 
@@ -94,10 +97,46 @@ export async function identityFromSeed(seed: Bytes, publicKey: Bytes): Promise<I
         ["sign"],
     );
     const identity = { privateKey, publicKey };
-    const probe = text.encode("wmlhub/probe");
-    if (!(await verify(publicKey, LABEL.hello, probe, await sign(identity, LABEL.hello, probe))))
+    const probe = text.encode("does this key belong to this seed");
+    if (!(await verify(publicKey, LABEL.probe, probe, await sign(identity, LABEL.probe, probe))))
         throw new ChainError("that public key does not belong to that seed");
     return identity;
+}
+
+/** What a certificate says about the principal it names. */
+export interface CertSpec {
+    /** the subject's Ed25519 identity public key */
+    subject: Bytes;
+    /** the subject's X25519 agreement public key, bound to it by this certificate's signature */
+    agreementKey: Bytes;
+    role: Role;
+    scopes: string[];
+    /** may this subject issue certificates of its own (never more than it holds)? */
+    mayPair?: boolean;
+    notBeforeMs?: number;
+    /** 0 means no expiry; a child may never outlive its issuer */
+    notAfterMs?: number;
+    /** what a person calls this device */
+    label?: string;
+}
+
+/**
+ * Issue a certificate: the account root, or a delegate the root allowed to pair, saying who a principal is and what
+ * it may do. This is the browser half of pairing; the hub verifies it with public keys only and holds no secret.
+ */
+export async function issueCertificate(issuer: Identity, spec: CertSpec): Promise<Certificate> {
+    const body = CertificateBody.encode({
+        subject: spec.subject,
+        agreementKey: spec.agreementKey,
+        issuer: issuer.publicKey,
+        role: spec.role,
+        scopes: spec.scopes,
+        mayPair: spec.mayPair ?? false,
+        notBeforeMs: spec.notBeforeMs ?? 0,
+        notAfterMs: spec.notAfterMs ?? 0,
+        label: spec.label ?? "",
+    }).finish();
+    return { body, signature: await sign(issuer, LABEL.certificate, bytes(body)) };
 }
 
 /** Sign `bytes` under `label`. */
@@ -124,7 +163,7 @@ export async function verify(
     return crypto.subtle.verify({ name: "Ed25519" }, key, signature, signed);
 }
 
-const SCOPE_NAME = /^[a-z0-9._-]{1,32}$/;
+const SCOPE_NAME = new RegExp(`^[a-z0-9._-]{1,${MAX_SCOPE_BYTES}}$`);
 
 /** Decode a certificate body, refusing anything over its bounds before any of it is compared or verified. */
 function decodeBody(body: Bytes): CertificateBody {
@@ -136,7 +175,7 @@ function decodeBody(body: Bytes): CertificateBody {
     return decoded;
 }
 
-const sameBytes = (a: Bytes, b: Bytes) => a.length === b.length && a.every((x, i) => x === b[i]);
+
 
 /**
  * Verify `chain` (leaf first) up to `root` at `nowMs`, exactly as the hub does: every signature, the issuer links, the
@@ -150,7 +189,7 @@ export async function verifyChain(root: Bytes, chain: Certificate[], nowMs: numb
     for (const [i, body] of bodies.entries()) {
         const subject = key32(bytes(body.subject));
         const issuer = key32(bytes(body.issuer));
-        key32(bytes(body.agreementKey));
+        key32(bytes(body.agreementKey)); // length-checked here; the sealing path is what uses it
         if (sameBytes(subject, root)) throw new ChainError("the root appears as a subject");
         const parent = bodies[i + 1];
         const expected = parent ? key32(bytes(parent.subject)) : root;
