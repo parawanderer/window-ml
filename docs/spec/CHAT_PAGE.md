@@ -68,6 +68,29 @@ page. So it reuses the cross-page machinery rather than inventing a second one.
 - **The picker is shared** with a new chat: choose a tab or a blank one.
 - **Later**: a long session may not fit the model's context on resume; that needs compaction.
 
+**What slice 4 did NOT give this, and it is the whole of the work.** Saved sessions store their debug EVENTS, which
+is what a reader needs. Resuming needs the model's HISTORY — the message array the loop continues from — and that
+lives somewhere else and does not outlive the session's bookkeeping:
+
+- A background run's history is in `bgRuns` (worker memory), snapshotted to `chrome.storage.local` and rehydrated at
+  startup, but kept for the run rather than for the session: `STALE_BGRUN_MS` bounds an auto-resume at five minutes,
+  and `forgetRun` drops the rest.
+- A page-hosted run's history is in the page's handle and dies with the document.
+- A chat's history is the one thing that already persists properly, as `ml_session_<hash>` — which is why
+  `ml.resumeChat(hash)` works today and nothing equivalent works for a run.
+
+So resuming a run tomorrow means the saved session carries its history beside its events, written when a turn
+settles. That is an addition to the store rather than a new subsystem, but it is the reason this slice is not
+simply "call the cross-page machinery from a button".
+
+Two more things it needs, both additive to the contract and therefore agreed with the hub session before building:
+
+- **A command.** `session.send` cannot be it: it reaches a page that no longer holds the session. Resuming names a
+  TARGET the way `agent.start` does — a tab you pick, or a blank one — so it is its own command with the same
+  target type.
+- **A way to say it in the transcript.** The note is not prose the model invented; it is a fact about the session,
+  so it is an event the log renders as a divider rather than a message someone could mistake for the model's.
+
 ## Architecture: one core, two sources, two places (proposal)
 
 The page is one UI that runs in two places and reads from two kinds of source. Each difference is behind an interface
@@ -292,8 +315,10 @@ coordinates, and offers live viewing only when the runtime has the capability.
 
 ## Open
 
-- How much of a session to store: full debug events (what the log renders) or the transcript plus outputs, rebuilding
-  the render from those.
-- Storage limits and eviction for saved sessions with many screenshots.
+- ~~How much of a session to store~~ **settled (slice 4)**: the full debug events. They are what the sidebar, the
+  chat page and both exports already render, so a saved run reads exactly like a live one and there is no second
+  rendering path to keep in step (`docs/dev/chat-page.md` §Saved sessions).
+- ~~Storage limits and eviction~~ **settled (slice 4)**: a byte budget and a session count, evicting oldest activity
+  first, never a running session and never one a page is subscribed to.
 - Whether the index shows ephemeral sessions from tabs that have since closed. For now it does, as `interrupted` when
   they were still running, until the index's caps or the worker's eviction forget them.
