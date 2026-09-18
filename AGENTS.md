@@ -76,6 +76,7 @@ look at all:
 | `sw-sessions.ts` | the background's session index, as the chat page's local host sees it |
 | `sw-tools.ts` | running ONE OpenWebUI-configured tool ourselves, in our own loop, with arguments we chose |
 | `sw-housekeeping.ts` | the one housekeeping log and its two messages |
+| `sw-debug.ts` | the DevTools panel's copy of the page's debug stream: one ring buffer per inspected tab, fanned to every panel on it |
 
 A privileged handler CONSULTS `sw-consent.ts` and MUTATES `sw-runs.ts`, which is
 why neither belongs in the router.

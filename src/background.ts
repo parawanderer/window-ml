@@ -30,7 +30,8 @@ import { configureSessionCommands, ingestSessionEvent, keepSession, saveChatSess
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, recordHousekeeping } from "./sw-housekeeping";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns, budgetBytes as valueBudgetBytes } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, grantsFor, serverToolKey, pendingGrants, grantCredFetch, consentFetch, persistGrants, takeCredFetch } from "./sw-consent";
-import { runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, trackRun, persistRun, bufferReplay, sessionTokens, derefByRun, untrackRun, deleteRun, tabHasBgRun, releaseSessionTokens } from "./sw-runs";
+import { runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, trackRun, persistRun, bufferReplay, sessionTokens, derefByRun, untrackRun, deleteRun, releaseSessionTokens } from "./sw-runs";
+import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw-debug";   // the DevTools panel's copy of the page debug stream
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -1758,54 +1759,6 @@ chrome.runtime.onConnect.addListener((port) => {
     });
 });
 
-// ---- DevTools panel debug stream (opt-in second surface for the sidebar) ----
-// The in-page overlay receives __mlDebug via window-messages; a DevTools panel can't, so
-// the content-script shell also forwards each event here (ML_DEBUG_EVENT). We buffer per
-// inspected tab — a panel opened mid-run replays what it missed (the overlay never needs
-// this, it's always mounted) — and fan out to any connected panel for that tab.
-const devtoolsPorts = new Map<number, Set<chrome.runtime.Port>>();
-const debugBuffer = new Map<number, unknown[]>();
-const DEBUG_BUFFER_CAP = 500;   // drop-oldest ring; screenshots are big, so keep it modest
-
-/** Debug events that carry ACCUMULATED state for one step — the reducer REPLACES with each, never appends — so only the
- *  newest per session and step means anything in a replay. */
-const COALESCED_DEBUG_KINDS = new Set(["agent-stream", "agent-turn"]);
-
-function relayDebugEvent(tabId: number, event: unknown): void {
-    let buf = debugBuffer.get(tabId);
-    if (!buf) { buf = []; debugBuffer.set(tabId, buf); }
-    // COALESCE the live deltas. A streamed turn sends one every ~100 ms, and in a 500-event ring they pushed out the
-    // run's own `agent` start: a DevTools panel opened late had no session to put the steps in, and `ml.__events()`
-    // dumped 450 stream deltas and no run. Each carries everything so far, so the newest replaces the last.
-    const ev = event as { kind?: string; step?: number; session?: { hash?: string } } | null;
-    if (ev?.kind && COALESCED_DEBUG_KINDS.has(ev.kind)) {
-        for (let i = buf.length - 1; i >= 0; i--) {
-            const o = buf[i] as { kind?: string; step?: number; session?: { hash?: string } };
-            if (o?.kind === ev.kind && o.step === ev.step && o.session?.hash === ev.session?.hash) { buf.splice(i, 1); break; }
-        }
-    }
-    buf.push(event);
-    if (buf.length > DEBUG_BUFFER_CAP) buf.splice(0, buf.length - DEBUG_BUFFER_CAP);
-    const ports = devtoolsPorts.get(tabId);
-    if (ports) for (const p of ports) { try { p.postMessage({ __mlDebug: event }); } catch { /* port closing */ } }
-}
-
-// A fresh page mount (shell remount → ML_DEBUG_RESET) clears the buffer AND tells any
-// connected panel to drop its stale sessions — the panel's app outlives a page reload, so
-// without this it keeps the prior load's data while new events pile on under it.
-function resetDebug(tabId: number): void {
-    // A cross-page run's shell remounts on the new page and fires ML_DEBUG_RESET — but the run may STILL be
-    // live (activeRuns) OR resumable (bgRuns: completed-but-follow-up-able, or INTERRUPTED by an SW restart —
-    // e.g. a mid-run site-access grant that cycled the worker). In any of those the session is on disk / in
-    // bgRuns and about to recover, so keep its history: a late CS injection's reset must NOT drop the panel/HUD
-    // session out from under a run that's coming back (the reported "the session vanished after I granted the
-    // site" bug). Only a tab with NO run at all clears.
-    if (activeRuns.has(tabId) || tabHasBgRun(tabId)) return;
-    debugBuffer.delete(tabId);
-    const ports = devtoolsPorts.get(tabId);
-    if (ports) for (const p of ports) { try { p.postMessage({ reset: true }); } catch { /* port closing */ } }
-}
-
 // The resource panel's live feed. ONE connection to the server's event stream per worker, fanned out to
 // every open panel — see sw-events.ts, which also owns the reconnect and the backfill that makes an evicted
 // worker cost latency rather than history.
@@ -1863,26 +1816,7 @@ configureSessionCommands({
     },
 });
 
-chrome.runtime.onConnect.addListener((port) => {
-    if (port.name !== "ml-devtools") return;
-    let tabId: number | null = null;
-    port.onMessage.addListener((msg: any) => {
-        if (msg?.type === "ml-devtools-init" && typeof msg.tabId === "number") {
-            const tid: number = msg.tabId;   // const local: TS narrows it (a captured `let` wouldn't)
-            tabId = tid;
-            let set = devtoolsPorts.get(tid);
-            if (!set) { set = new Set(); devtoolsPorts.set(tid, set); }
-            set.add(port);
-            port.postMessage({ replay: debugBuffer.get(tid) || [] });   // catch a late-opened panel up
-        }
-    });
-    port.onDisconnect.addListener(() => {
-        const tid = tabId;
-        if (tid == null) return;
-        const set = devtoolsPorts.get(tid);
-        if (set) { set.delete(port); if (!set.size) devtoolsPorts.delete(tid); }
-    });
-});
+chrome.runtime.onConnect.addListener(serveDevtoolsPort);
 
 // The Spotlight command bar keyboard shortcut (manifest `commands`, default Alt+Space, user-rebindable
 // at chrome://extensions/shortcuts). Tell the active tab's shell to open the HUD composer; the shell
