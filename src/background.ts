@@ -30,7 +30,7 @@ import { configureSessionCommands, ingestSessionEvent, keepSession, saveChatSess
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, recordHousekeeping } from "./sw-housekeeping";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns, budgetBytes as valueBudgetBytes } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, grantsFor, serverToolKey, pendingGrants, grantCredFetch, consentFetch, persistGrants, takeCredFetch } from "./sw-consent";
-import { runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, trackRun, persistRun, bufferReplay, sessionTokens, derefByRun, untrackRun, deleteRun, releaseSessionTokens } from "./sw-runs";
+import { runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, trackRun, persistRun, bufferReplay, sessionTokens, derefByRun, untrackRun, deleteRun, releaseSessionTokens, tabPageUrl } from "./sw-runs";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw-debug";   // the DevTools panel's copy of the page debug stream
 
 
@@ -92,13 +92,6 @@ const CAPTURE_RETRY_MS = 550;    // …spaced just over the 1s/2-call window →
 const delegateSend = (tabId: number, msg: unknown): Promise<any> =>
     navBarrier.whenReady(tabId).then(() => chrome.tabs.sendMessage(tabId, msg));
 
-// The navigation SENSOR: a committed MAIN-frame navigation on a tab that hosts a live run means its document
-// (and registered toolset) is going away → engage the barrier so the next delegated tool waits for re-adopt.
-// Sub-frame navigations (frameId != 0) don't replace the run's document, so they're ignored.
-/** Each tab's current main-frame URL, as navigation reports it — so a background-hosted run can tell a fetch
- *  of the page it is ON from a fetch of the page it STARTED on (see `fetchIsCurrentPage`). History-API
- *  changes count too: an SPA moves between URLs without committing a navigation. */
-const tabPageUrl = new Map<number, string>();
 if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     chrome.webNavigation.onCommitted.addListener((d) => {
         if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url);

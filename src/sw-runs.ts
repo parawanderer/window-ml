@@ -235,3 +235,11 @@ export const sessionTokens = (runId: string): TokenStore => {
  *  out by newer sessions), never at the end of a turn. Paired with every `bgRuns.delete` so the two lifetimes cannot
  *  drift apart again. The stored values those pointers named go with them: nothing can address them any more. */
 export function releaseSessionTokens(runId: string): void { tokensByRun.delete(runId); releaseSessionValues(runId); }
+
+// The navigation SENSOR: a committed MAIN-frame navigation on a tab that hosts a live run means its document
+// (and registered toolset) is going away → engage the barrier so the next delegated tool waits for re-adopt.
+// Sub-frame navigations (frameId != 0) don't replace the run's document, so they're ignored.
+/** Each tab's current main-frame URL, as navigation reports it — so a background-hosted run can tell a fetch
+ *  of the page it is ON from a fetch of the page it STARTED on (see `fetchIsCurrentPage`). History-API
+ *  changes count too: an SPA moves between URLs without committing a navigation. */
+export const tabPageUrl = new Map<number, string>();
