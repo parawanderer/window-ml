@@ -299,9 +299,14 @@ of `tests/e2e/table-demo.mjs` walks the same path on screen.
 
 ## Open questions
 
-- **Does the page-hosted loop move its store too?** A page-hosted run's pointer rows live in the page today. The
-  VALUES should not, but the rows might stay, with the value behind the same resolver. Worth deciding with the
-  design-A background loop in view, which already moves the loop out of the page.
+- ~~**Does the page-hosted loop move its store too?**~~ **Answered (2026-09-18), and the rows stayed.** A page-hosted
+  run's pointer ROWS still live in the page; its VALUES never did. What was missing was an entitlement the worker
+  could check, since a page-hosted loop has no run id the worker issued. It is the TAB: the worker claims a value for
+  `page:<tabId>` at the moment it discloses that value's key to the tab, which is the only route a key takes to a page,
+  and both readers (`PYTHON_EXEC`, `VALUE_COLUMNS`) accept that holder. So nothing the page says is load-bearing — the
+  claim is the worker's record of what it handed over. Released on the tab's main-frame navigation and on tab close,
+  because a page-hosted loop dies with its document. A background run is unaffected: it still claims under its runId,
+  which is what survives the navigation it was built to survive.
 - **Is Arrow JS worth bundling?** Slice 7 can read columns out of IPC in the offscreen document with pyarrow and
   return plain arrays, which needs nothing new. Reading them in JS (Apache Arrow's reader) is faster and avoids
   waking Pyodide for a survey — at the cost of a sizeable dependency. Start without it.

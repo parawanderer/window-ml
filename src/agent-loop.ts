@@ -254,7 +254,9 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
      *  turns; omit for a one-shot run and the loop makes its own. */
     tokenStore?: TokenStore;
     /** Called when a pointer this run keeps names a value in the value store, so the host holds that value for the
-     *  run's session and releases it with the session. A host with no store omits it. */
+     *  run's session and releases it with the session. Only the BACKGROUND host passes it: a page-hosted run's values
+     *  are held for its TAB, claimed by the worker when it disclosed the key (background.ts, pageValueSession), so
+     *  there is nothing for the page to claim and nothing it could claim that it was not already given. */
     claimValue?: (key: string) => void;
     /** Opt-in LIVE tool-output streaming (same flag as the streamed thinking): when set, each tool call gets a
      *  throttled `ctx.stream(text)` so a tool that supports it (exec's console.log, python_exec's print) streams
@@ -518,8 +520,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             id: v.id, tool: v.tool, kind: v.kind, step: v.step,
             ...(v.label ? { label: v.label } : {}),
             ...(v.table ? { table: v.table } : {}),
-            // The stored table's key, only from a host that claims values: it serves stored reads to the run holding them.
-            ...(v.value && opts.claimValue ? { value: v.value } : {}),
+            // The stored table's key. It travels on every host: the worker serves the read either way, to a run it
+            // hosts or to the tab it disclosed the key to (background.ts, pageValueSession).
+            ...(v.value ? { value: v.value } : {}),
             ...(v.image ? { image: v.image } : {}),
             ...(v.latex ? { latex: v.latex } : {}),
         };
@@ -541,9 +544,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             if (!v) return { error: memoryFault(ref.trim(), tokenStore.nearest(ref.trim()), step) };
             if (!v.table) return { error: `@tool:${v.id} is ${describeToken(v)}, not a table, so python_exec cannot load it as a DataFrame. Pass a pointer to a table (a fetch_url of a CSV/TSV/Parquet/Arrow file, a python_exec that returned a DataFrame), a URL fetch_url read, a CSS selector, or 'current'.` };
             // `value` names the WHOLE table in the value store when `table` is its preview: the loader reads that instead.
-            // Only from a host that claims values, since the store serves a stored table only to a run holding it; a
-            // page-hosted run gets the preview refusal that names the URL form.
-            resolved.set(ref, { ...v.table, pointer: `@tool:${v.id}${v.label ? ` (${JSON.stringify(v.label)})` : ""}`, ...(v.value && opts.claimValue ? { value: v.value } : {}) });
+            // Both hosts qualify — the worker gates the read itself, on the run it hosts or on the tab it gave the key
+            // to — so a page-hosted run loads the whole table rather than hitting the preview refusal.
+            resolved.set(ref, { ...v.table, pointer: `@tool:${v.id}${v.label ? ` (${JSON.stringify(v.label)})` : ""}`, ...(v.value ? { value: v.value } : {}) });
         }
         const swap = (x: unknown) => (isRef(x) ? resolved.get(x) : x);
         return { args: { ...args, tables: typeof tables === "string" ? swap(tables) : Object.fromEntries(Object.entries(tables as Record<string, unknown>).map(([k, x]) => [k, swap(x)])) } };

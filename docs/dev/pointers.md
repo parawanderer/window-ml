@@ -135,10 +135,17 @@ service worker's side is `sw-values.ts`:
   to `FETCH_TABLE_MAX` (64 MB) rather than the 8 MB text cap: the page still gets 8 MB of text, the whole body is kept,
   and `FetchResult.bodyLines` lets the page's preview report the real row count. A body clipped at a read cap is never
   kept, since a stored prefix would later read as the whole file. The `FETCH_URL` handler stores it only AFTER the redirect guard has released the
-  result, and names it on `FetchResult.valueKey`. It is stored unclaimed.
-- **Claim.** `fetch_url` copies the key onto its table render as `value`, only when its table is truncated. The loop notes
-  it on the pointer (`TokenValue.value`) and calls `claimValue`, which a background run binds to its runId. A page-hosted
-  run passes no `claimValue`, so its values are left to the idle sweep.
+  result, and names it on `FetchResult.valueKey`.
+- **Claim.** There are two claims, and the second is what makes the first safe to have. Handing the key to a tab claims the
+  value for that TAB (`page:<tabId>`), at the two points a key ever reaches a page: the `FETCH_URL` response and a
+  `PYTHON_EXEC` result whose returned frame was stored. That is a record of what the worker disclosed, not a request from
+  the page, and it is the whole entitlement a PAGE-HOSTED run reads on — its loop lives in the page, so there is no run id
+  the worker could vouch for, and a claim message would be forgeable. On top of that, `fetch_url` copies the key onto its
+  table render as `value` when the table is truncated, the loop notes it on the pointer (`TokenValue.value`), and a
+  BACKGROUND-hosted run's `claimValue` claims it again under its runId, which is what survives a navigation.
+- **Release.** A tab claim goes when the document it was disclosed to does: a main-frame `onCommitted` and `tabs.onRemoved`
+  both call `releaseSessionValues("page:<tabId>")`. A page-hosted loop dies with its document, so nothing outlives its
+  entitlement; a background run keeps its own claim across the navigation it was built to survive.
 - **Release.** `releaseSessionTokens` releases the session's values too, both when its `bgRuns` entry is purged and when
   the token-store LRU drops it: a value no pointer can name is unreachable either way.
 - **Sweep.** On every worker start and on the hourly `value-store-sweep` alarm (the `alarms` permission).

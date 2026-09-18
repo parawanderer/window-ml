@@ -619,7 +619,8 @@ export interface FetchResult {
      *  {@link Table}: the data plus `col` / `select` / `records` / `head`. */
     table?: Table | TableLike;
     truncated?: boolean;      // the body was clipped to the size cap
-    valueKey?: string;        // value-store key of the WHOLE body when `table` is a preview (past the parse cap); not readable page-side
+    valueKey?: string;        // value-store key of the WHOLE body when `table` is a preview (past the parse cap). Disclosing it
+                              // to a tab is what entitles that tab to read the value back (background.ts, pageValueSession).
     bodyLines?: number;       // for a CSV/TSV whose `text` is a prefix of a body read whole: the whole body's line count
     redirected?: boolean;     // the request followed ≥1 redirect (`url` above is the FINAL landing URL — the
                               // intermediate chain isn't visible to fetch; a redirect log needs chrome.webRequest)

@@ -193,6 +193,13 @@ const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: 
 // the run ids it hosts so the webNavigation sensor knows which tabs to watch. See nav-barrier.ts.
 const navBarrier = createNavBarrier();
 const activeRuns = new Map<number, Set<string>>();   // tabId → runIds hosted in that tab
+// A PAGE-HOSTED run's loop lives in the page, so there is no runId the worker can vouch for: `derefByRun` is empty and
+// `activeRuns` holds only runs WE host. Its values are therefore held for the TAB, under this session name. Nothing the
+// page sends names it — the worker claims a value at the moment it DISCLOSES that value's key to the tab (the only way
+// a key ever reaches a page), so a claim is a record of what this worker handed over rather than an assertion by the
+// page, and a key from anywhere else reads nothing. Released when the document that was handed it goes: a page-hosted
+// loop dies with its document, so a main-frame navigation ends the entitlement along with the run that held it.
+const pageValueSession = (tabId: number): string => `page:${tabId}`;
 // The rebuild-config for each LIVE cross-page run (runId → RebuildConfig), set at START and cleared in the
 // run's finally. bgRuns only stores a snapshot at run COMPLETION, so a MID-run navigation reads this instead.
 const runRebuilds = new Map<string, import("./contract").RebuildConfig>();
@@ -264,12 +271,15 @@ const tabPageUrl = new Map<number, string>();
 if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     chrome.webNavigation.onCommitted.addListener((d) => {
         if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url);
+        // The old document is gone and any page-hosted run in it with it: drop what that tab was entitled to read.
+        // A BACKGROUND run survives the navigation and keeps its own per-run claim, so this never cuts one short.
+        if (d.frameId === 0) releaseSessionValues(pageValueSession(d.tabId));
         if (d.frameId === 0 && activeRuns.has(d.tabId)) navBarrier.noteNavigating(d.tabId);
     });
     chrome.webNavigation.onHistoryStateUpdated?.addListener((d) => { if (d.frameId === 0) tabPageUrl.set(d.tabId, d.url); });
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
+    chrome.tabs.onRemoved.addListener((tabId) => { tabPageUrl.delete(tabId); activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseSessionValues(pageValueSession(tabId)); releaseDebugger(tabId); sessionServer.pageGone(tabId, { closed: true }); });
 }
 
 // ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
@@ -1335,10 +1345,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             const stored = (Array.isArray(message.payload?.tables) ? message.payload.tables as { data?: { kind?: string; key?: unknown } }[] : [])
                 .filter((t) => t?.data?.kind === "value");
             if (stored.length && !ownSurface) {
-                const running = sender.tab?.id != null ? activeRuns.get(sender.tab.id) : undefined;
+                const tid = sender.tab?.id;
+                const running = tid != null ? activeRuns.get(tid) : undefined;
+                // Either the value is held by a run WE host on this tab, or it was disclosed to this tab in the first
+                // place (a page-hosted run, whose loop we cannot vouch for — pageValueSession).
+                const mine = (h: string) => running?.has(h) || (tid != null && h === pageValueSession(tid));
                 for (const t of stored) {
                     const holders = await valueHolders(String(t.data?.key));
-                    if (holders && !holders.some((h) => running?.has(h))) {
+                    if (holders && !holders.some(mine)) {
                         sendResponse({ error: "Refused: that stored table belongs to a run that is not running on this page." });
                         return;
                     }
@@ -1387,7 +1401,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     offscreenReady = null;
                     return attempt();
                 })
-                .then((res) => sendResponse({ data: res }))
+                .then((res) => {
+                    // A returned DataFrame past its preview was stored by the offscreen document, and its key is about
+                    // to reach the page. Same rule as a fetched body: disclosing the key to a tab is what entitles that
+                    // tab's page-hosted run to read it back (pageValueSession).
+                    const key = (res as { valueKey?: string } | undefined)?.valueKey;
+                    if (key && sender.tab?.id != null) claimValue(key, pageValueSession(sender.tab.id));
+                    sendResponse({ data: res });
+                })
                 .catch((err) => sendResponse({ error: err?.message || String(err) }))
                 .finally(() => { if (streamId) pyStreamTabs.delete(streamId); });
         })();
@@ -1403,12 +1424,16 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             const runId = String(message.runId || ""), key = String(message.key || "");
             const names = Array.isArray(message.names) ? (message.names as unknown[]).map(String) : [];
             const tabId = sender.tab?.id;
-            if (!derefByRun.has(runId) || tabId == null || !activeRuns.get(tabId)?.has(runId)) {
-                sendResponse({ error: `No active background run "${runId}" on this page to read a stored table for.` });
+            const holders = await valueHolders(key);
+            // A PAGE-HOSTED run has no run id this worker can check, so its entitlement is the tab's: the value was
+            // disclosed to this tab and the document it was disclosed to is still here (pageValueSession). The run id
+            // in the message is then decorative, and deliberately not trusted for anything.
+            const viaPage = tabId != null && !!holders?.includes(pageValueSession(tabId));
+            if (!viaPage && (!derefByRun.has(runId) || tabId == null || !activeRuns.get(tabId)?.has(runId))) {
+                sendResponse({ error: `No run on this page holds a stored table to read ("${runId}").` });
                 return;
             }
-            const holders = await valueHolders(key);
-            if (holders && !holders.includes(runId)) { sendResponse({ error: "That stored table is not held by this run." }); return; }
+            if (!viaPage && holders && !holders.includes(runId)) { sendResponse({ error: "That stored table is not held by this run." }); return; }
             try {
                 const r = await readStoredColumns(key, names, { ...(typeof message.delimiter === "string" ? { delimiter: message.delimiter } : {}), ...(message.headerless ? { headerless: true } : {}) });
                 sendResponse(r);
@@ -1611,7 +1636,11 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 }
                 if (kept.body) {
                     const key = await storeFetchedBody(kept.body, data.url);
-                    if (key) data.valueKey = key;
+                    // Handing the key over IS the claim (see pageValueSession): this is the only way a key reaches a
+                    // page, so recording it here is what later lets that tab's PAGE-HOSTED run read the value, with no
+                    // claim message to forge and no page-supplied run id to trust. A background-hosted run claims it
+                    // again under its own session when the pointer is stored, which is what survives a navigation.
+                    if (key) { data.valueKey = key; if (tabId != null) claimValue(key, pageValueSession(tabId)); }
                 }
                 sendResponse({ data });
             }

@@ -47,12 +47,13 @@ DataFrame over a prefix answers confidently and wrongly.
 **A pointer to a STORED table** (a fetched table past the parse cap, whose body the value store holds; `docs/dev/pointers.md`)
 reads the whole table instead, POINTER_VALUES slice 5:
 
-- The loop adds the store key (`value`) and the preview's `delimiter`/`headerless` to the `TableValue`. It does this only
-  when its host claims values (`claimValue`, a background run), so a page-hosted run still gets the preview refusal.
+- The loop adds the store key (`value`) and the preview's `delimiter`/`headerless` to the `TableValue`, on EITHER host:
+  what decides the read is the worker's own record of who it gave the key to, not anything the loop asserts.
 - `_loadTable` sends `{ kind: "value", key, label, columns, delimiter?, headerless? }` and none of the preview rows. The
   log shows the preview with the whole table's `rowCount`, and the model's load note gives the whole size.
-- The background `PYTHON_EXEC` handler refuses a key unless a run active on the sender's tab holds it. Our own surfaces
-  are trusted. A key that is no longer stored passes, so the read fails with the store's reason.
+- The background `PYTHON_EXEC` handler refuses a key unless the sender is entitled to it: a run active on the sender's
+  tab holds it, or the worker disclosed that key to that tab (`page:<tabId>`, how a page-hosted run qualifies). Our own
+  surfaces are trusted. A key that is no longer stored passes, so the read fails with the store's reason.
 - The offscreen document reads the Blob (`withStoredTables`) and TRANSFERS its ArrayBuffer to the worker. A missing value
   fails the whole run with the store's message: `python_exec could not load \`df\` from @tool:… (…): the stored value …
   was evicted …`.
