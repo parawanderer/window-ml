@@ -423,10 +423,13 @@ JSDoc verbatim into what the MODEL reads, so drift there ships a wrong API refer
 scripts/check-jsdoc.mjs` reports three things: a doc block immediately followed by another doc block (it
 documents nothing), a `@param` naming something the declaration does not have, and a `@param {string}` on an
 `x: number` — the last only when both are concrete primitives that disagree, because `{Object}` for a `Record`
-is JSDoc's own vaguer spelling rather than drift. A MISSING `@param` is never reported. Ratcheted against the
-diff in the pre-commit hook and CI's `tools` job. It found ten real cases the day it was written, the clearest
-being a doc block that had drifted one member up, so one function had no documentation and the next advertised
-an option it does not take.
+is JSDoc's own vaguer spelling rather than drift. A MISSING `@param` is never reported, and neither is a block
+above `range: mlRange,` — a member documented where it joins the API but declared in another file, so nothing
+here can contradict it. Ratcheted against the diff in the pre-commit hook and CI's `tools` job. It found ten
+real cases the day it was written, the clearest being a doc block that had drifted one member up, so one
+function had no documentation and the next advertised an option it does not take. The repo is at zero
+findings: every one of the ten was a block that had drifted off its declaration, and each was FOLDED BACK
+rather than deleted, because a stranded block is usually the only copy of what it says.
 
 **A file that has grown past ~800 lines gets a REMINDER** (`node scripts/check-file-size.mjs`) — in the
 pre-commit hook and in CI's `tools` job suggesting it be split into logical modules, with per-module tests where that follows. It never

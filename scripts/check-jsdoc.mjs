@@ -28,6 +28,14 @@
 // The type check is narrow on purpose. `{Object}` for a `Record<…>` and `{Function}` for a function type are
 // JSDoc's own vaguer spellings, not drift, and flagging them is how a check gets suppressed. Only
 // string/number/boolean disagreeing with a different concrete primitive is reported.
+//
+// So is the @param check. A block above `range: mlRange,` documents a function declared in ANOTHER file, at the
+// point it joins the API rather than where it is written — this repo does that for about forty members of the
+// `window.ml` literal. Nothing in this file can contradict those parameters, so the block is skipped. Reporting
+// it was worse than useless: the scan for the declaration ran past the one-line property into the members that
+// FOLLOW, so `@param step` was reported and `@param a` was not, on nothing more than which of those words
+// happened to appear in the next thirty lines. A finding that cannot be fixed at the line it names teaches
+// people to pass the check rather than read it.
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
@@ -36,6 +44,8 @@ const SRC = path.join(ROOT, "src");
 const SKIP = /\.gen\.ts$|\.d\.ts$/;
 /** Concrete primitives. A JSDoc type outside this set is never compared — see the header. */
 const PRIMS = new Set(["string", "number", "boolean"]);
+/** `name: otherFunction,` on an object literal — documented here, declared elsewhere. See `declarationBelow`. */
+const ALIAS = /^\s*[A-Za-z_$][\w$]*\s*:\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*,\s*$/;
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(`--${n}`);
@@ -59,12 +69,16 @@ function sources() {
  *
  * Blank and `//` lines between the block and the declaration are skipped — a trailing aside above a function
  * is common here and is not a reason to give up on the check.
+ *
+ * `alias` says the thing below is `name: someFunction,` — a property whose value is declared in another
+ * file. There is no parameter list here to compare against; see `check`.
  */
 function declarationBelow(lines, i) {
     while (i < lines.length && (!lines[i].trim() || lines[i].trimStart().startsWith("//"))) i++;
-    if (i >= lines.length) return { text: "", orphaned: false };
+    if (i >= lines.length) return { text: "", orphaned: false, alias: false };
     // A doc block directly under a doc block documents NOTHING. That is a finding, not a parse failure.
-    if (lines[i].trimStart().startsWith("/**")) return { text: "", orphaned: true };
+    if (lines[i].trimStart().startsWith("/**")) return { text: "", orphaned: true, alias: false };
+    if (ALIAS.test(lines[i])) return { text: lines[i], orphaned: false, alias: true };
     const out = [];
     let depth = 0, opened = false;
     for (let j = i; j < lines.length && j < i + 30; j++) {
@@ -75,7 +89,7 @@ function declarationBelow(lines, i) {
         }
         if (opened && depth <= 0) break;
     }
-    return { text: out.join("\n"), orphaned: false };
+    return { text: out.join("\n"), orphaned: false, alias: false };
 }
 
 /** Each `/** … *\/` block in a file, with the line it starts on and the declaration under it. */
@@ -103,6 +117,14 @@ function check(rel) {
             continue;
         }
         if (!b.text) continue;
+        // `range: mlRange,` — a property whose value is a function declared in ANOTHER file, documented where
+        // it joins the API rather than where it is written. Its parameters are real; they are just not in this
+        // file, so nothing here can contradict them. Without this the 30-line window runs past the property and
+        // collects the members that FOLLOW, and whether `@param step` is reported comes down to whether that
+        // word happens to appear in them — which it did for `ml.range`, giving two findings that are unfixable
+        // at the line they name. An arbitrary finding is worse than no finding: it teaches people to pass the
+        // check rather than read it.
+        if (b.alias) continue;
         // A destructured parameter has no name of its own, so `@param options` cannot be matched against the
         // declaration. Its PROPERTIES can be, and `@param options.think` is the form that actually rots.
         const destructured = /\(\s*\{|,\s*\{/.test(b.text);
