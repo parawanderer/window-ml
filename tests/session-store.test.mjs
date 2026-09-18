@@ -142,3 +142,48 @@ test("sizeOf survives an event that cannot be serialized", () => {
     assert.ok(sizeOf({ kind: "chat", content: "hello" }) > 10);
     assert.ok(STORE_BUDGET_BYTES > 0);
 });
+
+test("a history is what a session would be CONTINUED from, and the newest one is the only one kept", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 5 });
+    store.put(summary("aaaa0001"), ev("aaaa0001", 0));
+    store.putHistory("aaaa0001", { kind: "agent", messages: [{ role: "user", content: "first" }] });
+    store.putHistory("aaaa0001", { kind: "agent", messages: [{ role: "user", content: "first" }, { role: "assistant", content: "second" }] });
+    await store.flush();
+
+    // A history is the whole of it, not an append: the newest replaces the last.
+    const h = await store.history("aaaa0001");
+    assert.deepEqual(h.messages.map((m) => m.content), ["first", "second"]);
+    assert.equal(be._rows.get("aaaa0001").history.messages.length, 2, "and it reached the disk");
+
+    // A worker that restarted can continue what it saved.
+    const next = new SessionStore(be, { flushMs: 5 });
+    await next.open();
+    assert.deepEqual((await next.history("aaaa0001")).messages.length, 2);
+    assert.equal(await next.history("nosuch01"), null);
+});
+
+test("a history written between turns reaches the disk without an event to carry it", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 5 });
+    store.put(summary("aaaa0001"), ev("aaaa0001", 0));
+    await store.flush();
+    const appends = be.calls.append;
+
+    // No new events, only a history. A session's newest turn would otherwise be readable and not continuable
+    // until something else happened to it.
+    store.putHistory("aaaa0001", { kind: "chat", session: { hash: "aaaa0001", messages: [{ role: "user", content: "hi" }], save: true } });
+    await store.flush();
+    assert.equal(be.calls.append, appends + 1);
+    assert.equal(be._rows.get("aaaa0001").history.kind, "chat");
+    assert.equal(be._rows.get("aaaa0001").count, 1, "and it did not invent an event");
+});
+
+test("a history for a session this store does not keep is dropped", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 5 });
+    store.putHistory("ffff0001", { kind: "agent", messages: [] });
+    await store.flush();
+    assert.equal(await store.history("ffff0001"), null);
+    assert.equal(be._rows.size, 0, "an ephemeral session does not become saved by having a history");
+});

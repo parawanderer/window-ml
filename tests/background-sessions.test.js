@@ -197,3 +197,75 @@ test("session.cancel on a background run blocked at its gate ends it cancelled",
     const rows = port.messages.filter((m) => m.type === "index" && m.update.type === "upsert").map((m) => m.update.session.status);
     assert.equal(rows.at(-1), "cancelled");
 });
+
+// --- one home for a session's history (slice 5) ---
+
+/** Read a saved session's row straight out of the fake IndexedDB, once the store's debounced write has landed. */
+async function storedRow(idb, hash, tries = 30) {
+    for (let i = 0; i < tries; i++) {
+        const row = await new Promise((resolve, reject) => {
+            const open = idb.open("ml-saved-sessions", 1);
+            open.onerror = () => reject(open.error);
+            open.onsuccess = () => {
+                const db = open.result;
+                if (!db.objectStoreNames.contains("sessions")) { db.close(); resolve(null); return; }
+                const req = db.transaction("sessions", "readonly").objectStore("sessions").get(hash);
+                req.onsuccess = () => { db.close(); resolve(req.result ?? null); };
+                req.onerror = () => { db.close(); reject(req.error); };
+            };
+        });
+        if (row) return row;
+        await new Promise((r) => setTimeout(r, 50));
+    }
+    return null;
+}
+
+test("a page's { save: true } chat is written ONCE, to both the record resumeChat reads and the session's history", T, async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const idb = new IDBFactory();
+    const bg = loadBackground({ config, indexedDB: idb });
+    const page = openPage(bg);
+    const session = { hash: "dddd0001", messages: [{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }], model: "m", save: true };
+
+    void bg.send({ type: "ML_DEBUG_EVENT", event: ev("dddd0001", "chat", { request: { model: "m", messages: session.messages }, config: {} }) }, tab(7));
+    await flush();
+    const saved = await bg.send({ type: "SAVE_SESSION", payload: { hash: "dddd0001", session } });
+    await flush();
+
+    // The page's own contract, unchanged.
+    assert.deepEqual(saved, { data: true });
+    assert.deepEqual(bg.localStore.ml_session_dddd0001, session);
+
+    // A chat that persists itself is a session to KEEP, so the history has a row to live on.
+    assert.equal(page.rows().get("dddd0001").saved, true);
+    const row = await storedRow(idb, "dddd0001");
+    assert.equal(row?.history?.kind, "chat");
+    assert.deepEqual(row.history.session.messages, session.messages);
+});
+
+test("a run's history is kept for a session the store holds, and dropped for one it does not", T, async () => {
+    const { IDBFactory } = await import("fake-indexeddb");
+    const idb = new IDBFactory();
+    const bg = loadBackground({ config, indexedDB: idb, onFetch: () => jsonResponse({ choices: [{ message: { content: "done" } }] }) });
+    const port = bg.connect("ml-sessions", PAGE);
+    port.send({ type: "sessions" });
+    const run = (runId) => bg.send({ type: "START_RUN", payload: {
+        runId, task: "look it up", systemPrompt: "S", tools: [], model: "m", think: null, maxSteps: 5,
+        autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, tab(7));
+
+    // Kept: this browser's own UI reported the session so the worker keeps it past its life.
+    void bg.send({ type: "ML_KEEP_SESSION", hash: "run00010" }, tab(7));
+    await run("run00010");
+    await flush();
+    const row = await storedRow(idb, "run00010");
+    assert.equal(row?.history?.kind, "agent");
+    assert.equal(row.history.task, "look it up");
+    assert.ok(row.history.messages.length > 0, "what the model would be continued from");
+
+    // Not kept: a one-off run stays one-off. Whether a run persists is `ephemeral`/`persistUiRuns`, and writing a
+    // history must never be a second way to answer that.
+    await run("run00011");
+    await flush();
+    assert.equal(await storedRow(idb, "run00011", 3), null);
+});
