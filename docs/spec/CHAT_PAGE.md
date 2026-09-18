@@ -259,6 +259,14 @@ coordinates, and offers live viewing only when the runtime has the capability.
 5. **Resume on a new page.**
 6. **The phone app**: the Capacitor projects and their `ClientPlatform` adapter (never served by the hub), then
    `HubHost` over the hub's client library.
+   **The native projects are built by CI, not on a maintainer's machine.** Nobody should need Xcode or Android
+   Studio installed to work on this repo, and nothing in the fast suite or the e2e suite may come to depend on
+   them: the phone-shaped surface is already tested as the web build at phone width, which is fast and
+   deterministic, and a device test earns its place only for what only a device has (the camera for pairing, the
+   share sheet, being backgrounded mid-stream). CI gets a build-only check for the two projects, gated on the same
+   `changes` filter the other jobs use, so a change that touches no mobile path does not pay for it. The setup a
+   person would need to build them locally is written down as OPTIONAL prose in `CONTRIBUTING.md`, for anyone who
+   wants to, and is never a prerequisite for anything.
 7. **Pairing components**, standalone and usable from any surface, over the hub's client library: pair a device, the
    paired devices list, delegation.
 8. **Remote control**: the viewer, input at a point, then streaming, once the contract additions are agreed.
