@@ -13,7 +13,7 @@
 // Pure: no DOM, no chrome, no I/O.
 
 import { runPipe, splitStages } from "./text-pipe";
-import type { DerefRead, DerefMeta } from "./contract";
+import type { DerefRead, DerefMeta } from "./contract-pointers";
 import type { TokenKind } from "./contract-render";
 import type { TableLike } from "./table-data";
 export type { DerefRead, DerefMeta };

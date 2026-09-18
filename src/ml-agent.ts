@@ -3,7 +3,8 @@
 // module-level, page-world state that's already parameterized by the `MlApi` handle (`_ml`), so it moves with
 // no `this` rewrite. injected.ts imports `AgentHandle` (used by createAgent/agent), the two same-origin
 // auto-approve predicates (used by the page loop), and the `AgentControl` type.
-import type { MlApi, DerefValue } from "./contract";
+import type { MlApi } from "./contract";
+import type { DerefValue } from "./contract-pointers";
 import type { NeutralMessage } from "./contract-chat";
 import type { AgentOptions, MlAgentHandle, AgentResult, AgentTranscriptEntry } from "./contract-agent";
 import { tableShape, asTable } from "./table-data";

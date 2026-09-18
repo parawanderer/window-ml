@@ -4,8 +4,9 @@ import type {
     MlApi,
     JsonSchema,
 
-    DerefValue, RequestHint, RequestUse
+    RequestHint, RequestUse
 } from "./contract";
+import type { DerefValue } from "./contract-pointers";
 import type {
     NeutralMessage, ChatOptions,
     ExtendProfile, ToolCall,
@@ -37,7 +38,8 @@ import type {
     DebugChatError,
     DebugSessionConfig
 } from "./contract-debug";
-import { outputCapEscalated, hintSession, shortHash } from "./contract";
+import { hintSession, shortHash } from "./contract";
+import { outputCapEscalated } from "./contract-pointers";
 import { DEFAULT_GROUNDING_RANGE } from "./contract-render";
 import { detectGroundingModel } from "./contract-server";
 import { evalReadonly } from "./readonly-exec";

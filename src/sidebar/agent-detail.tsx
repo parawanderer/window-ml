@@ -9,7 +9,7 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { PersistGrant } from "../contract-agent";
 import type { RenderDescriptor } from "../contract-render";
 import type { DebugAgentConfig } from "../contract-debug";
-import { resolveOutputCap } from "../contract";
+import { resolveOutputCap } from "../contract-pointers";
 import { runStats, fmtTokPerSec, runStatsProvenance } from "../contract-chat";
 import { externalSheetIds } from "../dom";
 import { surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps, laneLitSeqs, focusMode } from "./store";

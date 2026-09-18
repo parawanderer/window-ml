@@ -30,7 +30,7 @@ import type { InvocationInfo } from "./contract-server";
 import { ML_READONLY_METHODS } from "./readonly-exec";
 // Generated from contract.ts at build time (scripts/gen-api-docs.mjs) — the public MlApi
 // surface, so the doc the model reads can never drift from the interface it describes.
-import { resolveOutputCap, outputCapPrecheck } from "./contract";
+import { resolveOutputCap, outputCapPrecheck } from "./contract-pointers";
 import { UI_OUT_CAP } from "./contract-chat";
 import { ML_API_PARTS } from "./api-docs.gen";
 import { queryApiDocs, isDefaultQuery, type ApiDocsQuery } from "./api-docs-query";
