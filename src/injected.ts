@@ -573,7 +573,7 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, images = [], _control = null }: {
+        agent: async function(task: string, { tools = null, extraTools = [], serverTools = [], commanderTools = false, system = null, systemAppend = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, toolTokens = false, images = [], _control = null, _onSession = null }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
             serverTools?: string[];
@@ -601,6 +601,7 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
             toolTokens?: boolean;   // surface `@tool:<id>` on rich tool results so the model can cite exact outputs. Default false; HUD auto-on.
             images?: (string | HTMLImageElement)[];   // attachments for THIS turn (composer paste/upload)
             _control?: AgentControl | null;   // internal: a handle's persistent session state (ml.createAgent). Absent → a throwaway per-call one.
+            _onSession?: ((hash: string) => void) | null;   // internal: called once, with the hash, the moment the FIRST turn mints it (a UI that started this run needs to know which session it got)
         } = {}): Promise<AgentResult> {
             // Resume a run held in this tab: reuse its stored loop (same toolset/system/model +
             // accumulated messages), appending `task` as a follow-up user turn under the SAME hash,
@@ -850,6 +851,9 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
             const firstTurn = !control.hash;
             const runHash = control.hash ?? shortHash();
             control.hash = runHash;
+            // Whoever started this run learns its session here and not before: the hash is minted inside the loop,
+            // after the config read, so a caller that wanted it had to poll the handle until it appeared.
+            if (firstTurn && typeof _onSession === "function") { try { _onSession(runHash); } catch { /* the caller went away */ } }
             // Delegated-sub-call token tally is CUMULATIVE across the whole session (all turns), matching the
             // "+N sub" gauge — reset ONCE when the session starts, not per turn. A per-turn reset made
             // chat_metadata report "none" on any turn that hadn't yet made a vision sub-call (e.g. asked at
@@ -2493,7 +2497,13 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
         // Frame it around the user's question (content as context + the scope selector for the DOM tools).
         const elementContext = e.data.__mlStartAgent.elementContext as import("./contract").ElementContext | undefined;
         if (elementContext && typeof elementContext.selector === "string") task = askAboutTask(task, elementContext);
-        if (!task && !(images && images.length)) return;   // allow an image-only start
+        // A `reqId` means somebody is WAITING to be told which session this became: the chat page's `agent.start`,
+        // which must answer with a session id. The HUD composer sends none and is unchanged.
+        const reqId = typeof e.data.__mlStartAgent.reqId === "string" ? e.data.__mlStartAgent.reqId : undefined;
+        const answer = (outcome: string, hash?: string): void => {
+            if (reqId) window.postMessage({ __mlSessionDone: { reqId, outcome, ...(hash ? { hash } : {}) } }, "*");
+        };
+        if (!task && !(images && images.length)) { answer("none"); return; }   // allow an image-only start
         // A UI-started run is a PRODUCT surface (a user typing "click the button" expects click to work),
         // so give it a capable default kit — click/type/python ON TOP of the default domTools + auto-wired
         // look/locate. (The console `ml.agent` primitive stays minimal — callers compose their own.) Each
@@ -2532,8 +2542,11 @@ type LoadedTable = { name: string; source: TableSource; preview?: (string | numb
         // run wait on a message round-trip, so a slow or unanswered read delayed — or never started — a run
         // the user had already typed. The loop already reads the config in its own async setup.
         opts.commanderTools = true;
+        // The hash is minted inside the loop, so the run itself reports it (`_onSession`) rather than the caller
+        // polling the handle for one that is not there yet.
+        opts._onSession = (hash: string) => answer("started", hash);
         try { void ml.createAgent(opts).run(task, images); }
-        catch (err) { console.error("ml: UI-started run failed:", err); }
+        catch (err) { console.error("ml: UI-started run failed:", err); answer("none"); }
     });
 
     // Sidebar/HUD composer → drive a handle-backed session by hash. The app decides which to send from the

@@ -156,3 +156,40 @@ test("chat.start: a chat with no tab behind it runs in the worker, and answers a
         expect(second.messages[1].content).toBe("the first answer");
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+test("agent.start: a run on a chosen tab, and one on a blank tab the browser opens", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off",
+            agentStartPage: site.url + "/",
+        });
+        fake.setScript([{ content: "the first run is done" }, { content: "the second run is done" }]);
+        const rows = await indexReader(ext);
+
+        const page = await ext.context.newPage();
+        await page.goto(site.url + "/");
+        await waitForMl(page);
+        const tabs = await rows.cmd({ type: "tabs.list", runtime: "local" });
+        const tabId = tabs.data.tabs.find((t) => t.url.startsWith(site.url)).tabId;
+
+        // On a tab that is already open: the run belongs to that page.
+        const onTab = await rows.cmd({ type: "agent.start", runtime: "local", task: "read the page", target: { kind: "tab", tabId } });
+        expect(onTab.ok, JSON.stringify(onTab)).toBe(true);
+        await expect.poll(async () => (await rows()).find((r) => r.hash === onTab.data.session.hash)?.kind).toBe("agent");
+
+        // On a blank tab: the browser opens one at the configured start page and the run begins there.
+        const before = ext.context.pages().length;
+        const onBlank = await rows.cmd({ type: "agent.start", runtime: "local", task: "look around", target: { kind: "blank" } });
+        expect(onBlank.ok, JSON.stringify(onBlank)).toBe(true);
+        expect(onBlank.data.session.hash).not.toBe(onTab.data.session.hash);
+        expect(ext.context.pages().length).toBe(before + 1);
+        await expect.poll(async () => (await rows()).find((r) => r.hash === onBlank.data.session.hash)?.kind).toBe("agent");
+
+        // The browser's own pages cannot host a run, and the extension says so rather than starting one there.
+        const refused = await rows.cmd({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: 0 } });
+        expect(refused.ok).toBe(false);
+    } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
+});

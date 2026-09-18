@@ -42,6 +42,12 @@ export interface CommandDeps {
     cancelChat(hash: string): boolean;
     /** does this worker host this chat itself, rather than a tab? */
     hostsChat(hash: string): boolean;
+    /** start a run on a tab, through that page's own start path; resolves with what the page reported */
+    startAgent(tabId: number, opts: { task: string; images?: string[]; model?: string; maxSteps?: number; vision?: true; stream?: true }): Promise<{ outcome: PageOutcome | "started"; hash?: string }>;
+    /** open a new tab at a URL and wait until the extension can talk to it; rejects when it never answers */
+    openTab(url: string): Promise<number>;
+    /** the page a blank agent target opens when the command names no URL ("" when unset) */
+    startPage(): string;
     /** is a utility model configured (a side call would otherwise run on the main model) */
     utilityConfigured(): boolean;
     /** a small model call on the utility profile */
@@ -101,6 +107,53 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
         // A chat with no page behind it, hosted by the worker (sw-chat.ts). It answers as soon as the first turn is
         // UNDER WAY rather than when it finishes, so the client subscribes and watches the answer arrive; a chat that
         // only existed once the model had replied would leave the person's own message nowhere for half a minute.
+        // A run on a tab. It goes through the page's own start path (the one the HUD composer uses), so a run
+        // started from the chat page is a genuine session of that tab, built by the page's toolset, rather than a
+        // second way of starting a run that would drift from the first.
+        "agent.start": async (c) => {
+            const bad = ownRuntime(c);
+            if (bad) return bad;
+            if (c.lineage) return fail("unsupported", "this browser does not start subagents yet");
+            const task = typeof c.task === "string" ? c.task : "";
+            const images = Array.isArray(c.images) ? c.images.filter((i): i is string => typeof i === "string" && i.startsWith("data:image/")) : [];
+            if (!task.trim() && !images.length) return fail("invalid", "a run needs a task or an image");
+            if (task.length > CHAT_TEXT_MAX) return fail("invalid", "that task is too long");
+            if (c.maxSteps != null && (!Number.isInteger(c.maxSteps) || c.maxSteps <= 0)) return fail("invalid", "maxSteps must be a positive whole number");
+            const target = c.target as { kind?: unknown; tabId?: unknown; url?: unknown } | undefined;
+
+            let tabId: number;
+            if (target?.kind === "tab") {
+                if (typeof target.tabId !== "number") return fail("invalid", "a tab target needs a tab id");
+                const tab = await deps.getTab(target.tabId);
+                if (!tab) return fail("not-found", "no such tab");
+                // The extension's content script does not run on the browser's own pages, so a run there could
+                // never see anything. Refused here rather than started and left waiting for a page that cannot answer.
+                if (!/^https?:/i.test(tab.url)) return fail("forbidden", "the extension cannot run on that page");
+                tabId = target.tabId;
+            } else if (target?.kind === "blank") {
+                const url = (typeof target.url === "string" && target.url.trim()) || deps.startPage();
+                if (!url) return fail("invalid", "a blank target needs a url, or a start page set in this browser's settings");
+                if (!/^https?:\/\//i.test(url)) return fail("invalid", "a start page must be an http(s) url");
+                try { tabId = await deps.openTab(url); }
+                catch (err) { return fail("failed", `could not open a tab at ${url}: ${(err as Error)?.message || err}`); }
+            } else if (target?.kind === "headless") {
+                return fail("unsupported", "this browser has no headless runtime");
+            } else return fail("invalid", "a run needs a target: a tab, or a blank tab");
+
+            const r = await deps.startAgent(tabId, {
+                task, ...(images.length ? { images } : {}),
+                ...(c.model ? { model: c.model } : {}),
+                ...(c.maxSteps != null ? { maxSteps: c.maxSteps } : {}),
+                ...(c.vision === true ? { vision: true as const } : {}),
+                ...(c.stream === true ? { stream: true as const } : {}),
+            });
+            if (r.outcome === "started" && r.hash) return ok({ session: { runtime: deps.runtime, hash: r.hash } });
+            // The page answered that it started nothing, or never answered at all. A run that started anyway would
+            // still appear in the index, so this says what is known rather than inventing a session id.
+            if (r.outcome === "none") return fail("failed", "the page did not start a run");
+            return fail("unavailable", "the page did not answer; it may still be loading, or the extension cannot run there");
+        },
+
         "chat.start": async (c) => {
             const bad = ownRuntime(c);
             if (bad) return bad;

@@ -100,6 +100,9 @@ export interface MlConfig {
     /** With the debug panel off, still report every page's own sessions (console calls, page scripts) to the chat
      *  page's session index. Off by default: it wakes each page's debug bus, which is otherwise dormant and free. */
     listPageSessions: boolean;
+    /** The page a run started "on a blank tab" opens, when the client names no URL of its own. Empty: the client
+     *  must name one, since the extension cannot run on the browser's own new-tab page. */
+    agentStartPage: string;
     /** Small "utility" model for cheap side tasks (e.g. session-title summaries).
      *  Empty → fall back to the main `model`. numCtx/forceCpu apply only when set. */
     utilityModel: string;
@@ -732,6 +735,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     agentHud: "progress",
     agentHudInDevtools: false,
     listPageSessions: false,
+    agentStartPage: "",
     utilityModel: "",
     utilityNumCtx: 4096,
     utilityForceCpu: false,

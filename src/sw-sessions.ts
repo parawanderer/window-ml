@@ -21,12 +21,17 @@ const spawn = (() => {
 
 /** Whether a utility model is set (see the storage listener below). */
 let utilityModelSet = false;
+/** The page a blank agent target opens when the command names none (see the storage listener below). */
+let agentStartPage = "";
+
+/** How long a freshly opened tab gets to load the extension into itself before a run on it is given up on. */
+const TAB_READY_MS = 15_000, TAB_POLL_MS = 250;
 
 /** The local runtime as the chat page sees it. Capabilities are added as each command lands. */
 function localRuntime(): RuntimeInfo {
     return {
         id: LOCAL_RUNTIME, name: "This browser", kind: "browser", online: true, contractVersion: SESSION_CONTRACT_VERSION,
-        capabilities: { chat: true, highlight: true, screenshots: true, sideCalls: utilityModelSet },
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
@@ -85,6 +90,29 @@ export function configureSessionCommands(run: RunDeps): void {
             try { await chrome.storage.local.remove(`ml_session_${hash}`); } catch { /* storage unavailable */ }
         },
         startChat: (opts) => startBackgroundChat(opts),
+        startAgent: async (tabId, opts) => {
+            const reqId = Math.random().toString(36).slice(2, 12);
+            const reply = await chrome.tabs.sendMessage(tabId, { type: "ML_START_AGENT", reqId, ...opts }) as { outcome?: PageOutcome | "started"; hash?: string } | undefined;
+            return { outcome: reply?.outcome ?? "no-answer", ...(reply?.hash ? { hash: reply.hash } : {}) };
+        },
+        openTab: async (url) => {
+            const tab = await chrome.tabs.create({ url, active: true });
+            if (tab.id == null) throw new Error("the browser opened a tab with no id");
+            // Wait for `window.ml` to EXIST in the new page, not for the tab to report "complete" and not for the
+            // content script to answer. The content script registers its listener before `injected.js` runs, so a
+            // start relayed on that signal reaches a page whose `__mlStartAgent` listener is not there yet, and the
+            // run is lost to a timeout. What the run needs is the main world, so that is what this asks.
+            const until = Date.now() + TAB_READY_MS;
+            for (;;) {
+                try {
+                    const [probe] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", func: () => !!(window as { ml?: unknown }).ml });
+                    if (probe?.result === true) return tab.id;
+                } catch { /* still loading, or the extension cannot script this page yet */ }
+                if (Date.now() > until) throw new Error("the new tab never loaded window.ml (the extension may not be allowed to run there)");
+                await new Promise((r) => setTimeout(r, TAB_POLL_MS));
+            }
+        },
+        startPage: () => agentStartPage,
         sendChat: (hash, text, images) => sendBackgroundChat(hash, text, images),
         cancelChat: (hash) => cancelBackgroundChat(hash),
         hostsChat: (hash) => isBackgroundChat(hash),
@@ -119,9 +147,15 @@ export const sessionServer = new SessionServer(new SessionIndex({ runtime: LOCAL
 // Kept current from storage: `side.call` needs a utility model, and the runtime's capabilities say whether it has one.
 // After `sessionServer` exists, since a storage callback may run synchronously.
 try {
-    chrome.storage.sync.get({ utilityModel: "" }, (cfg) => { utilityModelSet = !!String(cfg?.utilityModel ?? "").trim(); sessionServer.runtimeChanged(); });
+    chrome.storage.sync.get({ utilityModel: "", agentStartPage: "" }, (cfg) => {
+        utilityModelSet = !!String(cfg?.utilityModel ?? "").trim();
+        agentStartPage = String(cfg?.agentStartPage ?? "").trim();
+        sessionServer.runtimeChanged();
+    });
     chrome.storage.onChanged?.addListener((changes, area) => {
-        if (area !== "sync" || !changes.utilityModel) return;
+        if (area !== "sync") return;
+        if (changes.agentStartPage) agentStartPage = String(changes.agentStartPage.newValue ?? "").trim();
+        if (!changes.utilityModel) return;
         utilityModelSet = !!String(changes.utilityModel.newValue ?? "").trim();
         sessionServer.runtimeChanged();
     });
