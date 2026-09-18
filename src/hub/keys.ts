@@ -39,6 +39,13 @@ export const MAX_CERTIFICATE_MS = 90 * 24 * 60 * 60 * 1000;
  * about it, which involves approving nothing and driving nothing.
  */
 export const BOX_CONNECTOR_FORBIDS = ["approve", "control"] as const;
+
+/**
+ * Scopes only the account root may grant. Answering a run's gates, driving a machine, and administering the account's
+ * devices are things a person decides at the root, not powers a paired device passes on: a phone that may approve a
+ * click should not thereby be able to pair another phone.
+ */
+export const NEVER_DELEGABLE = ["approve", "control", "admin"] as const;
 /** Bounds a hello is checked against before anything in it is compared, because it arrives unauthenticated. */
 export const MAX_CERT_BYTES = 1024;
 export const MAX_SCOPES = 16;
@@ -144,6 +151,11 @@ export async function issueCertificate(issuer: Identity, spec: CertSpec): Promis
         throw new ChainError("a certificate needs a window that begins before it ends");
     if (spec.notAfterMs - spec.notBeforeMs > MAX_CERTIFICATE_MS)
         throw new ChainError(`a certificate may not be valid for longer than ${MAX_CERTIFICATE_MS} ms`);
+    // Everything a verifier refuses that can be seen from here, so a caller learns at issuance rather than at
+    // somebody else's verifier. What cannot be seen from here — that this issuer may delegate at all, that scopes
+    // only narrow — `verifyChain` does.
+    if (spec.role === Role.ROLE_BOX_CONNECTOR && (spec.mayPair || spec.scopes.some(isForbiddenForBox)))
+        throw new ChainError("a box connector may neither pair nor approve");
     const body = CertificateBody.encode({
         subject: spec.subject,
         agreementKey: spec.agreementKey,
@@ -228,6 +240,9 @@ export async function verifyChain(root: Bytes, chain: Certificate[], nowMs: numb
             throw new ChainError("a box connector that may pair or approve");
         if (parent) {
             if (!parent.mayPair) throw new ChainError("an intermediate may not pair");
+            // Issued by a delegate rather than by the root: the powers a person decides at the root do not travel.
+            if (body.scopes.some((s) => (NEVER_DELEGABLE as readonly string[]).includes(s)))
+                throw new ChainError("a delegate issued a scope only the root may grant");
             if (body.notAfterMs > parent.notAfterMs) throw new ChainError("a certificate outlives its issuer");
             if (!body.scopes.every((s) => parent.scopes.includes(s)))
                 throw new ChainError("a certificate grants a scope its issuer does not hold");

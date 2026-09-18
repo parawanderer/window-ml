@@ -340,7 +340,24 @@ test("a box connector may neither pair nor approve", async () => {
         notAfterMs: NOW + 1000,
         ...extra,
     });
-    const chain = async (extra) => verifyChain(root.publicKey, [await issueCertificate(root, spec(extra))], NOW);
+    // signed around the issuer, which refuses these too: what is under test here is the VERIFIER
+    const { CertificateBody } = await import("../src/proto/wmlhub/v1/identity.gen.ts");
+    const { sign, LABEL } = await import("../src/hub/keys.ts");
+    const signed = async (extra) => {
+        const body = CertificateBody.encode({
+            subject: spec(extra).subject,
+            agreementKey: spec(extra).agreementKey,
+            issuer: root.publicKey,
+            role: spec(extra).role,
+            scopes: spec(extra).scopes,
+            mayPair: spec(extra).mayPair ?? false,
+            notBeforeMs: spec(extra).notBeforeMs,
+            notAfterMs: spec(extra).notAfterMs,
+            label: "",
+        }).finish();
+        return { body, signature: await sign(root, LABEL.certificate, body) };
+    };
+    const chain = async (extra) => verifyChain(root.publicKey, [await signed(extra)], NOW);
     await assert.rejects(() => chain({ mayPair: true }), /may pair or approve/);
     for (const forbidden of BOX_CONNECTOR_FORBIDS) {
         await assert.rejects(() => chain({ scopes: [SCOPE.view, forbidden] }), /may pair or approve/, forbidden);
@@ -348,4 +365,63 @@ test("a box connector may neither pair nor approve", async () => {
     assert.ok(await chain({}), "what it may hold");
     // the same scope on a client is fine: the rule is about the role, not the names
     assert.ok(await chain({ role: Role.ROLE_CLIENT, scopes: [SCOPE.approve] }));
+    assert.ok(await verifyChain(root.publicKey, [await issueCertificate(root, spec({}))], NOW), "and it issues");
+});
+
+test("the issuer refuses a box connector that may pair or approve, not only the verifier", async () => {
+    // Reported by the UI session against #135: verifyChain refused these and issueCertificate did not, so an issuer
+    // would happily mint a certificate every verifier then rejects.
+    const { issueCertificate, generateIdentity, BOX_CONNECTOR_FORBIDS } = await import("../src/hub/keys.ts");
+    const { generateAgreementKey } = await import("../src/hub/hpke.ts");
+    const root = await generateIdentity();
+    const box = await generateIdentity();
+    const agreement = await generateAgreementKey();
+    const spec = (extra) => ({
+        subject: box.publicKey,
+        agreementKey: agreement.publicKey,
+        role: Role.ROLE_BOX_CONNECTOR,
+        scopes: [SCOPE.view],
+        notBeforeMs: NOW,
+        notAfterMs: NOW + 1000,
+        ...extra,
+    });
+    await assert.rejects(() => issueCertificate(root, spec({ mayPair: true })), /neither pair nor approve/);
+    for (const forbidden of BOX_CONNECTOR_FORBIDS) {
+        await assert.rejects(
+            () => issueCertificate(root, spec({ scopes: [SCOPE.view, forbidden] })),
+            /neither pair nor approve/,
+            forbidden,
+        );
+    }
+    assert.ok(await issueCertificate(root, spec({})), "what it may hold is still issued");
+});
+
+test("what only the root may grant does not travel through a delegate", async () => {
+    const { NEVER_DELEGABLE, issueCertificate, verifyChain, generateIdentity } = await import("../src/hub/keys.ts");
+    const { generateAgreementKey } = await import("../src/hub/hpke.ts");
+    const root = await generateIdentity();
+    const [laptop, phone] = [await generateIdentity(), await generateIdentity()];
+    const agreement = await generateAgreementKey();
+    const spec = (subject, extra) => ({
+        subject,
+        agreementKey: agreement.publicKey,
+        role: Role.ROLE_CLIENT,
+        scopes: [SCOPE.view],
+        notBeforeMs: NOW,
+        notAfterMs: NOW + 1000,
+        ...extra,
+    });
+    for (const never of NEVER_DELEGABLE) {
+        const held = [SCOPE.view, never];
+        const delegate = await issueCertificate(root, spec(laptop.publicKey, { mayPair: true, scopes: held }));
+        const leaf = await issueCertificate(laptop, spec(phone.publicKey, { scopes: held }));
+        await assert.rejects(
+            () => verifyChain(root.publicKey, [leaf, delegate], NOW),
+            /only the root may grant/,
+            `${never}, even from a delegate that holds it`,
+        );
+        // and straight from the root it is fine, which is the point
+        const direct = await issueCertificate(root, spec(phone.publicKey, { scopes: held }));
+        assert.ok(await verifyChain(root.publicKey, [direct], NOW), `${never} from the root`);
+    }
 });
