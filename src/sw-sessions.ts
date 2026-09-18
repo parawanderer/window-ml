@@ -6,10 +6,11 @@ import { hintSession } from "./contract-run";
 import { type MlDebugEvent } from "./contract-debug";
 import { createCommandHandler, type CommandDeps, type PageOutcome } from "./session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, startBackgroundChat } from "./sw-chat";
+import { type StoredSession } from "./contract-messages";
 import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type TabInfo } from "./session-host";
 import { SessionIndex, type IngestSource } from "./session-index";
 import { SESSIONS_PORT, SessionServer } from "./session-server";
-import { SessionStore, indexedDbBackend } from "./session-store";
+import { SessionStore, indexedDbBackend, type SessionHistory } from "./session-store";
 import { fetchLLM } from "./sw-llm";
 
 /** This browser's runtime id until the extension has a key to derive one from (docs/spec/SESSION_CONTRACT.md). */
@@ -68,7 +69,7 @@ export function configureSessionCommands(run: RunDeps): void {
             const key = `ml_session_${hash}`;
             try { return ((await chrome.storage.local.get(key)) as Record<string, never>)[key] ?? null; } catch { return null; }
         },
-        save: async (hash, session) => { await chrome.storage.local.set({ [`ml_session_${hash}`]: session }); },
+        save: saveChatSession,
         now: () => Date.now(),
     });
     handler = createCommandHandler({
@@ -210,6 +211,36 @@ export function keepSession(hash: string): void {
     const already = sessionServer.markSaved(hash);
     if (!sessionStore) return;
     for (const event of already) sessionStore.put({ ...summary, saved: true }, event);
+}
+
+/**
+ * Write a chat where BOTH readers look: the `ml_session_<hash>` record `ml.resumeChat` rehydrates from, and the saved
+ * session's own history, which is what `session.resume` continues from.
+ *
+ * One function because it is one fact. A page's `{ save: true }` chat, a chat this worker hosts itself and a resumed
+ * chat all have to agree about what that chat's latest state is, and three writers agreeing is something that holds
+ * right up until a fourth is added.
+ *
+ * A chat that persists itself is also a session to KEEP — the two spellings of saved were separate before, so a
+ * `{ save: true }` chat had its record on disk and no row to hang a history on, and resuming it would have found
+ * nothing.
+ */
+export async function saveChatSession(hash: string, session: StoredSession): Promise<void> {
+    keepSession(hash);
+    await chrome.storage.local.set({ [`ml_session_${hash}`]: session });
+    sessionStore?.putHistory(hash, { kind: "chat", session });
+}
+
+/**
+ * What a run would be continued from. A run has no `ml_session_` record — that key is a chat's, and `resumeChat`
+ * reads it — so this writes the one half a run has.
+ *
+ * Unlike a chat's, this does NOT decide that the session is kept: `{ save: true }` is a page ASKING for a chat to
+ * persist, while whether a run is kept was already answered by `ephemeral` or by `persistUiRuns`. A history for a
+ * session the store does not hold is dropped, which is what keeps a one-off run one-off.
+ */
+export function saveRunHistory(hash: string, history: Omit<Extract<SessionHistory, { kind: "agent" }>, "kind">): void {
+    sessionStore?.putHistory(hash, { kind: "agent", ...history });
 }
 
 /** Fold one debug event into the index, and save it when the session is one we keep. Never throws: a malformed event

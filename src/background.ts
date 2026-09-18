@@ -26,7 +26,7 @@ import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, she
 import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configured tool ourselves (privileged fetch)
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
-import { configureSessionCommands, ingestSessionEvent, keepSession, senderPage, serveSessionsPort, sessionServer } from "./sw-sessions";   // the cross-tab session index the chat page reads
+import { configureSessionCommands, ingestSessionEvent, keepSession, saveChatSession, saveRunHistory, senderPage, serveSessionsPort, sessionServer } from "./sw-sessions";   // the cross-tab session index the chat page reads
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, recordHousekeeping } from "./sw-housekeeping";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns, budgetBytes as valueBudgetBytes } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, grantsFor, serverToolKey, pendingGrants, grantCredFetch, consentFetch, persistGrants, takeCredFetch } from "./sw-consent";
@@ -954,7 +954,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         return consentedOrigins.has(new URL(url.startsWith("//") ? "https:" + url : url).origin);
                     } catch { return false; }
                 },
-                checkpoint: (messages) => persistRun(runId, { p, tabId, messages, sub: snapSub() }),   // durable resume snapshot per step
+                checkpoint: (messages) => {
+                    persistRun(runId, { p, tabId, messages, sub: snapSub() });   // durable resume snapshot per step
+                    // And the same history where a SAVED session keeps it. The snapshot above dies with the run
+                    // (it is deleted on settle, and is stale after five minutes); this one lives as long as the
+                    // session does, which is what `session.resume` needs from a run that ended yesterday.
+                    saveRunHistory(runId, { messages, ...(p.rebuild ? { rebuild: p.rebuild } : {}), task: p.task, model: p.model, maxSteps: p.maxSteps });
+                },
                 // This turn's delegated vision sub-call tally (accumulated from each delegated tool's envelope
                 // delta in delegateTool) — so chat_metadata reports the real number on the background path too.
                 subcallTokens: () => snapSub(),
@@ -1009,6 +1015,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // vanished from the sidebar/panel (and scrambled the export's chat-log order).
                 const resumeP = { ...p, stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
                 bgRuns.set(runId, { p: resumeP, tabId, messages, sub: snapSub() });
+                saveRunHistory(runId, { messages, ...(p.rebuild ? { rebuild: p.rebuild } : {}), task: p.task, model: p.model, maxSteps: p.maxSteps });
                 const answerMedia = runAnswerMedia.length ? runAnswerMedia : undefined;
                 emitLifecycle({
                     kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps },
@@ -1712,8 +1719,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // across reloads/tabs. Page-provided message history + createChat options
         // — no secrets (URL/key never live in a session). Main world can't touch
         // storage, hence this round-trip.
+        // ONE writer (sw-sessions.ts): the same call the worker's own chats make, so the record on disk and the
+        // saved session's history can never disagree about what this chat is.
         const { hash, session } = message.payload || {};
-        chrome.storage.local.set({ [`ml_session_${hash}`]: session })
+        saveChatSession(hash, session)
             .then(() => sendResponse({ data: true }))
             .catch(err => sendResponse({ error: err.message }));
         return true;

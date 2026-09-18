@@ -298,6 +298,30 @@ subscription rather than posting them: the client's reducer trusts the contract'
 read is in the ring by the time the backfill is built, so it goes out as part of the backfill and is skipped when
 the queue drains — the ring and the disk overlap, and sending an event twice would show the same step twice.
 
+## What a session is CONTINUED from
+
+The saved events are a transcript. Resuming needs the model's own history, and the two are not interchangeable: a
+reader wants the steps and their outputs, a loop wants the message array. So a row carries a `history` beside its
+events (`SessionHistory` in `session-store.ts`), and `putHistory` OVERWRITES — the newest is the whole of it, and
+the older ones are worth nothing.
+
+**It is written from one place per kind, in `sw-sessions.ts`.** `saveChatSession` writes both halves of a chat: the
+`ml_session_<hash>` record `ml.resumeChat` rehydrates from, and the row's history. `SAVE_SESSION` (a page's
+`{ save: true }` chat) and `sw-chat.ts`'s own `persist` both call it, so the record on disk and the saved session
+cannot disagree about what a chat is. `saveRunHistory` writes the one half a run has, at each checkpoint and at
+settle.
+
+**Why not the run's own snapshot.** A live run is already mirrored to `ml_bgrun_<runId>` (`persistRun`), and that
+looks like the same thing. It is not: that snapshot exists to survive an eviction MID-run, it is deleted the moment
+the run settles, and a hydrate rejects one older than `STALE_BGRUN_MS`. Resuming a session is a question asked of a
+run that finished yesterday, which is the case the snapshot is built to forget.
+
+**`{ save: true }` now means kept.** A chat that persists itself is a session the store holds, so `saveChatSession`
+marks it. The two spellings of "saved" were separate before, which left a `{ save: true }` chat with its record on
+disk and no row to hang a history on. A RUN is the other way round: `saveRunHistory` never marks anything, because
+whether a run is kept was already answered by `ephemeral` or `persistUiRuns`, and a history must not become a second
+way to answer it. A history for a session the store does not hold is dropped.
+
 ## Which sessions are kept
 
 Three routes to the same flag, and they are not the same question:
@@ -322,9 +346,6 @@ a page's own `{ save: true }` chat has always had.
 
 ## Not yet
 
-- The extension entry (`chat.html` over `LocalHost`) is slice 3, and its `ClientPlatform` adapter comes with it.
-- The index lives in worker memory: an evicted worker comes back with an empty list. Saved sessions surviving that is
-  slice 4.
 - `CompositeHost.events` attaches to the host that owns a runtime when it subscribes, and does not move if a
   higher-priority host reports that runtime later.
 - The panel's tooltips (`cursorTipOn`) are pointer-only, so on a touch screen their prose is unreachable.
