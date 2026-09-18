@@ -10,6 +10,8 @@
 // a value is idle when nothing has READ it and leaves a tombstone so a later dereference can say why it is gone,
 // while a session is evicted whole, by age, and simply stops being listed. The common part is four lines.
 import type { MlDebugEvent } from "./contract-debug";
+import type { NeutralMessage } from "./contract-chat";
+import type { RebuildConfig, StoredSession } from "./contract-messages";
 import type { SessionSummary } from "./session-host";
 
 /** How much of a person's disk the saved sessions may use before the oldest are dropped. */
@@ -24,6 +26,18 @@ const DB_NAME = "ml-saved-sessions";
 const DB_VERSION = 1;
 const SESSIONS = "sessions", EVENTS = "events";
 
+/**
+ * What a session would be CONTINUED from, as opposed to what it would be READ from.
+ *
+ * The events are the transcript; this is the model's own history, and the two are not interchangeable — a reader
+ * needs the steps and their outputs, a loop needs the message array. A chat's is the same record `ml.resumeChat`
+ * reads, written from one place, so the two can never disagree about what a chat is.
+ */
+export type SessionHistory =
+    | { kind: "chat"; session: StoredSession }
+    /** a run: what it said, and enough to rebuild its tools on another page (`RebuildConfig`) */
+    | { kind: "agent"; messages: NeutralMessage[]; rebuild?: RebuildConfig; task?: string; model?: string | null; maxSteps?: number };
+
 /** One saved session's row: its summary, and what it costs. */
 export interface StoredSessionRow {
     hash: string;
@@ -35,6 +49,8 @@ export interface StoredSessionRow {
     bytes: number;
     /** how many events are stored, so the next `seq` continues rather than colliding */
     count: number;
+    /** what this session would be continued from, when it is the kind of session that can be */
+    history?: SessionHistory;
 }
 
 /** Approximate retained size, the same measure the in-memory index uses: a screenshot dominates, and its data URL is
@@ -85,6 +101,8 @@ export interface SessionStoreBackend {
 export class SessionStore {
     private readonly rows = new Map<string, StoredSessionRow>();
     private readonly pending = new Map<string, MlDebugEvent[]>();
+    /** rows whose own fields changed with no events to carry them: a history written between turns */
+    private readonly dirty = new Set<string>();
     private timer: ReturnType<typeof setTimeout> | null = null;
     private flushing: Promise<void> = Promise.resolve();
     private ready: Promise<void> | null = null;
@@ -133,6 +151,27 @@ export class SessionStore {
         this.schedule();
     }
 
+    /**
+     * What this session would be continued from. It OVERWRITES: a history is the whole of it rather than an append,
+     * and the newest is the only one worth keeping.
+     *
+     * A session this store does not keep is ignored rather than created — an ephemeral session does not become
+     * saved by having a history.
+     */
+    putHistory(hash: string, history: SessionHistory): void {
+        const row = this.rows.get(hash);
+        if (!row) return;
+        row.history = history;
+        this.dirty.add(hash);
+        this.schedule();
+    }
+
+    /** What a session would be continued from, or null when this store does not hold it. */
+    async history(hash: string): Promise<SessionHistory | null> {
+        await this.open();
+        return this.rows.get(hash)?.history ?? null;
+    }
+
     /** Everything a saved session holds, oldest first. Empty when it is not saved here. */
     async read(hash: string): Promise<MlDebugEvent[]> {
         await this.open();
@@ -164,12 +203,17 @@ export class SessionStore {
         await this.open();
         const batches = [...this.pending.entries()];
         this.pending.clear();
+        // A row whose history changed with no events behind it still has to reach the disk, or a session's newest
+        // turn is readable and not continuable until something else happens to it.
+        for (const hash of this.dirty) if (!batches.some(([h]) => h === hash)) batches.push([hash, []]);
+        this.dirty.clear();
         for (const [hash, events] of batches) {
             const row = this.rows.get(hash);
             // `forget` clears a session's queue as well as its row, so this is the second line of defence rather
             // than the first: no test can reach it, and it is here so that a future change to `forget` cannot turn
-            // a delete into a session that quietly writes itself back.
-            if (!row || !events.length) continue;
+            // a delete into a session that quietly writes itself back. A batch with no events is a row whose own
+            // fields changed — a history written between turns — and still has to reach the disk.
+            if (!row) continue;
             const from = row.count;
             row.count += events.length;
             row.bytes += events.reduce((n, e) => n + sizeOf(e), 0);
