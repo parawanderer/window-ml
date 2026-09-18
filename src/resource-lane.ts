@@ -10,7 +10,8 @@
 // `sameMachineEvent`/`addMachineEvent` exist because the same event can arrive twice, from the replay buffer
 // and from the live fan, in either order.
 
-import { ResourceEvent, MIN_SCOPE_MS, EventPlacement, Axis, axisFrac } from "./resource-model";
+import { ResourceEvent, EventPlacement } from "./resource-model";
+import { MIN_SCOPE_MS, Axis, axisFrac } from "./resource-axis";
 
 /** What the lane draws. Everything is shown by default; this is how a busy session is narrowed.
  *

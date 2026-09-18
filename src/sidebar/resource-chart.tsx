@@ -12,14 +12,18 @@
 import { Fragment } from "preact";
 import { useMemo, useRef, useState, useLayoutEffect, useEffect } from "preact/hooks";
 import {
-    ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    boxAxis, chartWindow, axisFrac, axisGaps, axisOf, type Axis, eventsIn, timeAtFraction, sampleAtFraction, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
-    scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction,
+    ceilingsFor, formatBytes, formatShare, percentOf, isCpuResident,
+    boxAxis, eventsIn,
+
     type ResourceEvent, type EventPlacement, type PhaseKind,
     MEMORY_PARTS, memoryParts, type MemoryBreakdown, type LayerPlacement,
-    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, runWeight, runFrac, loadTrace, gridStep, gridTimes, ribbonSpans, type RibbonSpan, runGap, type RunGap, serverGenNote, layersOnCard, predictionLine,
+    presetsFor, kvFill, bridgeOrder, bridgeWalls, linkPhrase, linkBetween, isBridge, decodeCeiling, loadEdges, loadTrace, ribbonSpans, type RibbonSpan, serverGenNote, layersOnCard, predictionLine,
     type ResourceSample, type Capacity, type TrackDef, type DeviceCapacity,
 } from "../resource-model";
+import {
+    segments, chartWindow, axisFrac, axisGaps, axisOf, type Axis, timeAtFraction, sampleAtFraction, scrubExtent, scrubTo, scrubPinch, snapFraction, TAIL_SLACK_MS,
+    scrubZone, scrubResize, scrubIntent, windowSamples, clampWindow, scrubNudge, wheelScrubFraction, runWeight, runFrac, gridStep, gridTimes, runGap, type RunGap
+} from "../resource-axis";
 import { placeEvents, laneRows, lineageOf, MIN_EV_SPAN, scopeToSpan, scopeAround, filterEvents, countByKind, sessionWindow } from "../resource-lane";
 import { deviceBands, hostBands, OTHER_BAND_NOTE, OUTSIDE_VIEW_LABEL, SPILL_FLOOR, residualRank, pendingAllocation, stepBands, bandEdge, type Band, bandOrder } from "../resource-bands";
 import { keysReach, resourceHistory, capacity, colorFor, poolColor, hoverModel, poolHover, poolFacts, hiddenPools, togglePool, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter, scopedHash, streamLive, sampleGapMs, sampleGraceMs, kbFocus, kbPool, focusDepth, releaseFocus, layout, editLayout } from "./vram";

@@ -9,6 +9,7 @@ const M = await import("../src/resource-model.ts");
 // The band arithmetic moved to its own module; the members below are read from there.
 const B = await import("../src/resource-bands.ts");
 const L = await import("../src/resource-lane.ts");
+const X = await import("../src/resource-axis.ts");
 // The machine shapes, shared with resource-demo.mjs — one copy, so a guard and a demo cannot disagree
 // about what a box looks like.
 import { BOXES, TOPOLOGIES, pci } from "./fixtures/boxes.mjs";
@@ -267,13 +268,13 @@ test("presetsFor: the default layout follows the hardware", () => {
 
 test("segments: history breaks at a hole instead of drawing across it", () => {
     const s = (t) => ({ t, models: [], capacity: null });
-    const runs = M.segments([s(0), s(2000), s(4000), s(600000), s(602000)], M.MAX_SAMPLE_GAP_MS);
+    const runs = X.segments([s(0), s(2000), s(4000), s(600000), s(602000)], X.MAX_SAMPLE_GAP_MS);
     assert.equal(runs.length, 2, "the ten-minute gap (panel closed) splits the line");
     assert.deepEqual(runs.map((r) => r.length), [3, 2]);
-    assert.equal(M.segments([]).length, 0);
-    assert.equal(M.segments([s(0)]).length, 1, "a lone sample is its own segment — a point, not a line");
+    assert.equal(X.segments([]).length, 0);
+    assert.equal(X.segments([s(0)]).length, 1, "a lone sample is its own segment — a point, not a line");
     // A normal cadence is never split.
-    assert.equal(M.segments([s(0), s(2000), s(4000)]).length, 1);
+    assert.equal(X.segments([s(0), s(2000), s(4000)]).length, 1);
 });
 
 test("segments: a REPORTED hole breaks the line even when no time passed", () => {
@@ -282,29 +283,29 @@ test("segments: a REPORTED hole breaks the line even when no time passed", () =>
     // is a hole nothing in the timestamps can see. Two seconds apart is an ordinary cadence, so this run is
     // split by the flag alone; without it the line is drawn straight across the interval the server has just
     // said it cannot account for, and drops happen when memory is moving fastest.
-    const runs = M.segments([s(0), s(2000), { ...s(4000), gapBefore: true }, s(6000)], M.MAX_SAMPLE_GAP_MS);
+    const runs = X.segments([s(0), s(2000), { ...s(4000), gapBefore: true }, s(6000)], X.MAX_SAMPLE_GAP_MS);
     assert.equal(runs.length, 2, "the flag splits a run the interval would have kept whole");
     assert.deepEqual(runs.map((r) => r.length), [2, 2]);
     assert.deepEqual(runs[1].map((x) => x.t), [4000, 6000], "the marked sample STARTS the new run");
     // The mark on the very first sample is about a hole before anything we hold, so there is nothing to break.
-    assert.equal(M.segments([{ ...s(0), gapBefore: true }, s(2000)]).length, 1);
+    assert.equal(X.segments([{ ...s(0), gapBefore: true }, s(2000)]).length, 1);
 });
 
 test("runGap: what a break stands for — how long, and whether the server said so", () => {
     const s = (t, extra = {}) => ({ t, models: [], capacity: null, ...extra });
     // A minute with nothing sampled: the panel was closed, or the box did not answer.
     const all = [s(0), s(2000), s(64000), s(66000)];
-    const [a, b] = M.segments(all, M.MAX_SAMPLE_GAP_MS);
-    assert.deepEqual(M.runGap(a, b, all), { from: 2000, to: 64000, reported: false, isolated: 0 });
+    const [a, b] = X.segments(all, X.MAX_SAMPLE_GAP_MS);
+    assert.deepEqual(X.runGap(a, b, all), { from: 2000, to: 64000, reported: false, isolated: 0 });
     // A REPORTED drop, on the first reading after it: the stream lost frames, a different cause to name.
     const dropped = [s(0), s(2000), s(4000, { gapBefore: true }), s(6000)];
-    const [c, d] = M.segments(dropped, M.MAX_SAMPLE_GAP_MS);
-    assert.equal(M.runGap(c, d, dropped).reported, true);
+    const [c, d] = X.segments(dropped, X.MAX_SAMPLE_GAP_MS);
+    assert.equal(X.runGap(c, d, dropped).reported, true);
     // A lone reading inside the hole is too few to draw, but it WAS measured, so it is counted rather than the
     // stretch being called empty — and a drop reported on it still counts as reported.
     const lone = [s(0), s(2000), s(40000, { gapBefore: true }), s(90000), s(92000)];
-    const runs = M.segments(lone, M.MAX_SAMPLE_GAP_MS).filter((r) => r.length > 1);
-    assert.deepEqual(M.runGap(runs[0], runs[1], lone), { from: 2000, to: 90000, reported: true, isolated: 1 });
+    const runs = X.segments(lone, X.MAX_SAMPLE_GAP_MS).filter((r) => r.length > 1);
+    assert.deepEqual(X.runGap(runs[0], runs[1], lone), { from: 2000, to: 90000, reported: true, isolated: 1 });
 });
 
 test("eventsIn: only the window, in time order", () => {
@@ -664,7 +665,7 @@ test("placeEvents: by time alone on a linear axis — nothing is dropped for fal
 
 test("axisGaps: a break between runs is drawn at its TRUE width", () => {
     const runs = [[{ t: 1000 }, { t: 2000 }], [{ t: 8000 }, { t: 9000 }]];
-    const [g] = M.axisGaps(runs, [...runs[0], ...runs[1]], { from: 0, to: 10_000 });
+    const [g] = X.axisGaps(runs, [...runs[0], ...runs[1]], { from: 0, to: 10_000 });
     assert.deepEqual([g.from, g.to], [0.2, 0.8], "six seconds of a ten-second axis is sixty percent of it, not 3 px");
     assert.deepEqual([g.gap.from, g.gap.to], [2000, 8000]);
 });
@@ -749,15 +750,15 @@ test("lineageOf: an event, what spawned it, and what it spawned", () => {
 // lands in. Getting this wrong makes a zoom select a different stretch than the one you dragged over.
 test("timeAtFraction: the inverse of placeEvents on the linear axis", () => {
     const axis = { from: 1000, to: 11_000 };
-    assert.equal(M.timeAtFraction(axis, 0), 1000);
-    assert.equal(M.timeAtFraction(axis, 1), 11_000);
-    assert.equal(M.timeAtFraction(axis, 0.35), 4500, "linear in time: no weighting by what was sampled where");
+    assert.equal(X.timeAtFraction(axis, 0), 1000);
+    assert.equal(X.timeAtFraction(axis, 1), 11_000);
+    assert.equal(X.timeAtFraction(axis, 0.35), 4500, "linear in time: no weighting by what was sampled where");
     const [p] = L.placeEvents(axis, [{ t: 2500, kind: "note", label: "x" }]);
-    assert.equal(M.timeAtFraction(axis, p.from), 2500, "round-trips with placeEvents");
+    assert.equal(X.timeAtFraction(axis, p.from), 2500, "round-trips with placeEvents");
     // Out of range clamps rather than extrapolating into time that was never on screen.
-    assert.equal(M.timeAtFraction(axis, -3), 1000);
-    assert.equal(M.timeAtFraction(axis, 9), 11_000);
-    assert.equal(M.timeAtFraction(null, 0.5), null, "no axis → no answer, not a guess");
+    assert.equal(X.timeAtFraction(axis, -3), 1000);
+    assert.equal(X.timeAtFraction(axis, 9), 11_000);
+    assert.equal(X.timeAtFraction(null, 0.5), null, "no axis → no answer, not a guess");
 });
 
 // A very short event is WIDENED so it stays visible, so packing has to reserve the same width — otherwise
@@ -965,7 +966,7 @@ test("scopeToSpan: a block's own extent, widened only when it is too short to fr
     // A 40ms tool call is a real event worth pointing at, but a 40ms window contains no samples and draws as
     // an empty plot — so it is widened around its own CENTRE, which stays put.
     const tiny = L.scopeToSpan(10_000, 10_040, 99_000);
-    assert.equal(tiny.to - tiny.from, M.MIN_SCOPE_MS);
+    assert.equal(tiny.to - tiny.from, X.MIN_SCOPE_MS);
     assert.equal((tiny.from + tiny.to) / 2, 10_020, "centred on the block, not shifted to one side");
 
     // Work still IN FLIGHT has no end, so `now` stands in for one — scoping to it while it runs is exactly
@@ -1023,7 +1024,7 @@ test("placementOf: a model on a card that stopped being reported says so", () =>
 test("scrubExtent: where the window sits, and when there is nothing to scrub", () => {
     const samples = Array.from({ length: 10 }, (_, i) => ({ t: 1000 + i * 1000 }));   // 1s..10s
     // A window over the last three seconds sits at the right-hand end, and counts as AT THE TAIL.
-    const tail = M.scrubExtent(samples, { from: 7000, to: 10_000 });
+    const tail = X.scrubExtent(samples, { from: 7000, to: 10_000 });
     assert.equal(tail.from, 1000);
     assert.equal(tail.to, 10_000);
     assert.ok(Math.abs(tail.windowFrom - 6 / 9) < 1e-9);
@@ -1031,44 +1032,44 @@ test("scrubExtent: where the window sits, and when there is nothing to scrub", (
     assert.equal(tail.atTail, true);
 
     // Dragged back: the same width, earlier, and no longer following live.
-    const back = M.scrubExtent(samples, { from: 3000, to: 6000 });
+    const back = X.scrubExtent(samples, { from: 3000, to: 6000 });
     assert.ok(Math.abs(back.windowFrom - 2 / 9) < 1e-9);
     assert.equal(back.atTail, false);
 
     // A window pinned to live is always a poll behind the newest sample — calling that "scrolled back" would
     // unpin the view for nobody.
-    assert.equal(M.scrubExtent(samples, { from: 7000, to: 8500 }).atTail, true, "within the slack");
-    assert.equal(M.scrubExtent(samples, { from: 5000, to: 6500 }).atTail, false, "…but not this far back");
+    assert.equal(X.scrubExtent(samples, { from: 7000, to: 8500 }).atTail, true, "within the slack");
+    assert.equal(X.scrubExtent(samples, { from: 5000, to: 6500 }).atTail, false, "…but not this far back");
 
     // A WINDOW WIDER THAN THE SESSION still has a strip, at full width. This is the state a live view is in
     // for the first minutes of every session — the rolling window reaches back before the first sample — and
     // it is also where a stretch-while-following lands, since that width is remembered. Returning null here
     // made the control delete itself and reappear minutes later when the session outgrew the window, taking
     // the wheel-scrub with it, so there was no way back at all.
-    const wide = M.scrubExtent(samples, { from: 0, to: 99_999 });
+    const wide = X.scrubExtent(samples, { from: 0, to: 99_999 });
     assert.equal(wide.windowFrom, 0, "clamped to the session's own start");
     assert.equal(wide.windowTo, 1);
     assert.equal(wide.atTail, true, "…and following, so the live button reads as on");
 
     // Nothing to scrub: no viewport at all, or no session to be a viewport onto.
-    assert.equal(M.scrubExtent(samples, null), null, "no window means the whole session is shown");
-    assert.equal(M.scrubExtent([{ t: 1 }], { from: 0, to: 2 }), null, "one sample is not a session");
-    assert.equal(M.scrubExtent([], null), null);
+    assert.equal(X.scrubExtent(samples, null), null, "no window means the whole session is shown");
+    assert.equal(X.scrubExtent([{ t: 1 }], { from: 0, to: 2 }), null, "one sample is not a session");
+    assert.equal(X.scrubExtent([], null), null);
 });
 
 test("scrubTo: dragging the box scrolls time, and never past the ends", () => {
     const extent = { from: 0, to: 10_000 };
     const win = { from: 7000, to: 10_000 };   // 3s wide
     // Centred where you dropped it, same width — the box scrolls, it does not zoom.
-    const mid = M.scrubTo(extent, win, 0.5);
+    const mid = X.scrubTo(extent, win, 0.5);
     assert.deepEqual(mid, { from: 3500, to: 6500 });
     assert.equal(mid.to - mid.from, 3000, "the duration is preserved");
     // Past either end it parks against it rather than scrolling into time nothing was measured in.
-    assert.deepEqual(M.scrubTo(extent, win, 0), { from: 0, to: 3000 });
-    assert.deepEqual(M.scrubTo(extent, win, 1), { from: 7000, to: 10_000 });
-    assert.deepEqual(M.scrubTo(extent, win, 5), { from: 7000, to: 10_000 }, "clamped, not extrapolated");
+    assert.deepEqual(X.scrubTo(extent, win, 0), { from: 0, to: 3000 });
+    assert.deepEqual(X.scrubTo(extent, win, 1), { from: 7000, to: 10_000 });
+    assert.deepEqual(X.scrubTo(extent, win, 5), { from: 7000, to: 10_000 }, "clamped, not extrapolated");
     // A window wider than the session sits over all of it rather than being squeezed into it.
-    assert.deepEqual(M.scrubTo(extent, { from: -5000, to: 30_000 }, 0.2), { from: 0, to: 10_000 });
+    assert.deepEqual(X.scrubTo(extent, { from: -5000, to: 30_000 }, 0.2), { from: 0, to: 10_000 });
 });
 
 // The lane shows every session's events, which is right until a browsing session has a dozen runs in it.
@@ -1105,16 +1106,16 @@ test("filterEvents: scope answers whose, kinds answer which — and machine even
 test("chartWindow: the rolling window fills from the first reading, then scrolls, and never rescales", () => {
     const W = 300;   // seconds, the default
     // Thirty seconds of history in a five-minute window: it starts at the first reading and the data fills rightward.
-    const fresh = M.chartWindow(null, null, W, 1_030_000, 1_000_000);
+    const fresh = X.chartWindow(null, null, W, 1_030_000, 1_000_000);
     assert.deepEqual([fresh.from, fresh.to], [1_000_000, 1_300_000]);
     assert.equal(fresh.live, true);
     // A minute later: the SAME window. Nothing rescaled.
-    assert.deepEqual(M.chartWindow(null, null, W, 1_090_000, 1_000_000), fresh);
+    assert.deepEqual(X.chartWindow(null, null, W, 1_090_000, 1_000_000), fresh);
     // Past the width: it follows the clock at that width.
-    const later = M.chartWindow(null, null, W, 1_500_000, 1_000_000);
+    const later = X.chartWindow(null, null, W, 1_500_000, 1_000_000);
     assert.deepEqual([later.from, later.to], [1_200_000, 1_500_000]);
     // A zoom and a scoped window are taken as given.
-    assert.deepEqual(M.chartWindow({ from: 1, to: 2 }, null, W, 1_500_000, 1_000_000), { from: 1, to: 2 });
+    assert.deepEqual(X.chartWindow({ from: 1, to: 2 }, null, W, 1_500_000, 1_000_000), { from: 1, to: 2 });
 });
 
 test("sessionWindow: a live session FILLS its window and then SCROLLS, and never rescales", () => {
@@ -1336,18 +1337,18 @@ test("scopeAround: widens until the window actually contains samples to draw", (
 test("scrubZone: the edges resize, the middle pans, and outside is neither", () => {
     const ex = { windowFrom: 0.30, windowTo: 0.70 };
     const W = 400;   // 7px of handle ≈ 0.0175 of the track
-    assert.equal(M.scrubZone(ex, 0.50, W), "pan");
-    assert.equal(M.scrubZone(ex, 0.30, W), "from");
-    assert.equal(M.scrubZone(ex, 0.70, W), "to");
-    assert.equal(M.scrubZone(ex, 0.10, W), "outside");
-    assert.equal(M.scrubZone(ex, 0.95, W), "outside");
+    assert.equal(X.scrubZone(ex, 0.50, W), "pan");
+    assert.equal(X.scrubZone(ex, 0.30, W), "from");
+    assert.equal(X.scrubZone(ex, 0.70, W), "to");
+    assert.equal(X.scrubZone(ex, 0.10, W), "outside");
+    assert.equal(X.scrubZone(ex, 0.95, W), "outside");
     // Just OUTSIDE the box but within a handle's reach still grabs the handle — a 7px target you have to hit
     // from exactly one side is not a 7px target.
-    assert.equal(M.scrubZone(ex, 0.29, W), "from");
+    assert.equal(X.scrubZone(ex, 0.29, W), "from");
 
     // Still comfortably wide enough for a middle: 0.30 of a 400px track is 120px against 7px handles.
     const roomy = { windowFrom: 0.50, windowTo: 0.80 };
-    assert.equal(M.scrubZone(roomy, 0.65, W), "pan");
+    assert.equal(X.scrubZone(roomy, 0.65, W), "pan");
 });
 
 // A HAIRLINE WINDOW CAN ALWAYS BE WIDENED. The handle is capped at a third of the window so a narrow one
@@ -1359,56 +1360,56 @@ test("scrubZone: the handle's reach OUTSIDE the window is never capped by the wi
     const W = 400;   // 7px of handle ≈ 0.0175 of the track
     // 0.006 of the track = 2.4px: narrower than a single handle.
     const hair = { windowFrom: 0.500, windowTo: 0.506 };
-    assert.equal(M.scrubZone(hair, 0.49, W), "from", "reaching in from the left grabs the left edge");
-    assert.equal(M.scrubZone(hair, 0.515, W), "to", "…and from the right, the right one");
-    assert.equal(M.scrubZone(hair, 0.40, W), "outside", "…but the reach is a handle's width, not the track");
+    assert.equal(X.scrubZone(hair, 0.49, W), "from", "reaching in from the left grabs the left edge");
+    assert.equal(X.scrubZone(hair, 0.515, W), "to", "…and from the right, the right one");
+    assert.equal(X.scrubZone(hair, 0.40, W), "outside", "…but the reach is a handle's width, not the track");
 
     // NOTHING IS GIVEN UP FOR IT. The middle still pans, at every width — a narrow window you can no longer
     // move is a different way to be stuck, and the two gestures both have to survive.
-    assert.equal(M.scrubZone(hair, 0.503, W), "pan");
-    assert.equal(M.scrubZone({ windowFrom: 0.50, windowTo: 0.80 }, 0.65, W), "pan");
+    assert.equal(X.scrubZone(hair, 0.503, W), "pan");
+    assert.equal(X.scrubZone({ windowFrom: 0.50, windowTo: 0.80 }, 0.65, W), "pan");
 
     // The reach is a constant number of PIXELS, so it shrinks as a fraction on a wider track.
-    assert.equal(M.scrubZone(hair, 0.49, 4000), "outside", "10px of a 4000px track is far outside");
+    assert.equal(X.scrubZone(hair, 0.49, 4000), "outside", "10px of a 4000px track is far outside");
 });
 
 test("scrubResize: one edge moves, the other stays exactly put", () => {
     const ex = { from: 0, to: 100_000 };
     const win = { from: 40_000, to: 60_000 };
 
-    const wider = M.scrubResize(ex, win, "from", 0.10);
+    const wider = X.scrubResize(ex, win, "from", 0.10);
     assert.equal(wider.to, 60_000, "the far edge did not drift");
     assert.equal(wider.from, 10_000);
 
-    const narrower = M.scrubResize(ex, win, "to", 0.50);
+    const narrower = X.scrubResize(ex, win, "to", 0.50);
     assert.equal(narrower.from, 40_000, "…in either direction");
     assert.equal(narrower.to, 50_000);
 
     // Dragging an edge PAST the other parks against a minimum rather than inverting the range into a
     // negative duration every consumer would then have to defend against.
-    const crossed = M.scrubResize(ex, win, "from", 0.90);
+    const crossed = X.scrubResize(ex, win, "from", 0.90);
     assert.ok(crossed.from < crossed.to, "still a forward range");
-    assert.equal(crossed.to - crossed.from, M.MIN_SCOPE_MS);
+    assert.equal(crossed.to - crossed.from, X.MIN_SCOPE_MS);
 
     // And it cannot be dragged outside the session.
-    assert.equal(M.scrubResize(ex, win, "from", -1).from, 0);
-    assert.equal(M.scrubResize(ex, win, "to", 2).to, 100_000);
+    assert.equal(X.scrubResize(ex, win, "from", -1).from, 0);
+    assert.equal(X.scrubResize(ex, win, "to", 2).to, 100_000);
 });
 
 test("scrubNudge: one notch moves the same VISIBLE distance at any zoom", () => {
     const ex = { from: 0, to: 600_000 };
-    const tight = M.scrubNudge(ex, { from: 300_000, to: 310_000 }, 0.25);
-    const loose = M.scrubNudge(ex, { from: 200_000, to: 400_000 }, 0.25);
+    const tight = X.scrubNudge(ex, { from: 300_000, to: 310_000 }, 0.25);
+    const loose = X.scrubNudge(ex, { from: 200_000, to: 400_000 }, 0.25);
     assert.equal(tight.from - 300_000, 2_500, "a quarter of a 10s window");
     assert.equal(loose.from - 200_000, 50_000, "…and a quarter of a 200s one");
     // Widths are preserved: this scrolls, it does not zoom.
     assert.equal(tight.to - tight.from, 10_000);
     assert.equal(loose.to - loose.from, 200_000);
     // Parks against the end rather than scrolling into time nobody sampled.
-    const end = M.scrubNudge(ex, { from: 590_000, to: 600_000 }, 0.25);
+    const end = X.scrubNudge(ex, { from: 590_000, to: 600_000 }, 0.25);
     assert.equal(end.to, 600_000);
     // A window already covering everything has nowhere to go.
-    assert.deepEqual(M.scrubNudge(ex, { from: 0, to: 600_000 }, 0.25), { from: 0, to: 600_000 });
+    assert.deepEqual(X.scrubNudge(ex, { from: 0, to: 600_000 }, 0.25), { from: 0, to: 600_000 });
 });
 
 test("scrubNudge: four small notches land exactly where one big one does", () => {
@@ -1421,15 +1422,15 @@ test("scrubNudge: four small notches land exactly where one big one does", () =>
     const ex = { from: 0, to: 22_000 };
     const win = { from: 9_000, to: 13_000 };
     const plotPx = 400;
-    const one = M.scrubNudge(ex, win, M.wheelScrubFraction(0, 120, 0, plotPx));
+    const one = X.scrubNudge(ex, win, X.wheelScrubFraction(0, 120, 0, plotPx));
     let four = win;
-    for (let i = 0; i < 4; i++) four = M.scrubNudge(ex, four, M.wheelScrubFraction(0, 30, 0, plotPx));
+    for (let i = 0; i < 4; i++) four = X.scrubNudge(ex, four, X.wheelScrubFraction(0, 30, 0, plotPx));
     assert.ok(Math.abs(four.from - one.from) < 1e-6, `4x30 landed at ${four.from}, 1x120 at ${one.from}`);
     assert.ok(Math.abs(four.to - one.to) < 1e-6);
     assert.equal(one.from - win.from, 1_200, "and it is the distance the fraction actually names");
     // The same composition holds for a HORIZONTAL gesture, which reaches the same arithmetic by the other
     // axis — `wheelScrubFraction` takes the larger of the two, so the axes cannot drift apart.
-    assert.equal(M.wheelScrubFraction(120, 0, 0, plotPx), M.wheelScrubFraction(0, 120, 0, plotPx));
+    assert.equal(X.wheelScrubFraction(120, 0, 0, plotPx), X.wheelScrubFraction(0, 120, 0, plotPx));
 });
 
 // The chart scrubbing erratically under a trackpad was two bugs wearing one symptom: only `deltaY` was read,
@@ -1438,32 +1439,32 @@ test("wheelScrubFraction: proportional to the gesture, and reads whichever axis 
     const W = 400;
 
     // 1:1 with the plot — swipe across half of it and the window moves half its own width.
-    assert.equal(M.wheelScrubFraction(0, 200, 0, W), 0.5);
-    assert.equal(M.wheelScrubFraction(200, 0, 0, W), 0.5, "a HORIZONTAL swipe scrubs too — it was ignored");
+    assert.equal(X.wheelScrubFraction(0, 200, 0, W), 0.5);
+    assert.equal(X.wheelScrubFraction(200, 0, 0, W), 0.5, "a HORIZONTAL swipe scrubs too — it was ignored");
 
     // Proportional, so a trackpad's stream of small events accumulates to the same distance as one big one.
     // A fixed step per event is what made the same physical swipe travel wildly different distances
     // depending on how the hardware quantised it.
-    const oneBig = M.wheelScrubFraction(0, 120, 0, W);
-    const manySmall = Array.from({ length: 12 }, () => M.wheelScrubFraction(0, 10, 0, W)).reduce((a, b) => a + b, 0);
+    const oneBig = X.wheelScrubFraction(0, 120, 0, W);
+    const manySmall = Array.from({ length: 12 }, () => X.wheelScrubFraction(0, 10, 0, W)).reduce((a, b) => a + b, 0);
     assert.ok(Math.abs(oneBig - manySmall) < 1e-9, "twelve notches of 10 equal one of 120");
 
     // Direction follows the gesture: down and right both move forward in time.
-    assert.ok(M.wheelScrubFraction(0, -200, 0, W) < 0);
-    assert.ok(M.wheelScrubFraction(-200, 0, 0, W) < 0);
+    assert.ok(X.wheelScrubFraction(0, -200, 0, W) < 0);
+    assert.ok(X.wheelScrubFraction(-200, 0, 0, W) < 0);
 
     // A diagonal is counted ONCE, on the dominant axis — not summed, which would make an off-axis swipe
     // travel further than a clean one.
-    assert.equal(M.wheelScrubFraction(200, 40, 0, W), 0.5);
-    assert.equal(M.wheelScrubFraction(40, 200, 0, W), 0.5);
+    assert.equal(X.wheelScrubFraction(200, 40, 0, W), 0.5);
+    assert.equal(X.wheelScrubFraction(40, 200, 0, W), 0.5);
 
     // deltaMode: a mouse reports LINES and a page gesture reports PAGES.
-    assert.equal(M.wheelScrubFraction(0, 1, 1, W), 16 / W, "one line, not one pixel");
-    assert.equal(M.wheelScrubFraction(0, 1, 2, W), 1, "one page = one window width");
+    assert.equal(X.wheelScrubFraction(0, 1, 1, W), 16 / W, "one line, not one pixel");
+    assert.equal(X.wheelScrubFraction(0, 1, 2, W), 1, "one page = one window width");
 
     // Degenerate inputs do nothing rather than dividing by zero.
-    assert.equal(M.wheelScrubFraction(0, 200, 0, 0), 0);
-    assert.equal(M.wheelScrubFraction(0, 0, 0, W), 0);
+    assert.equal(X.wheelScrubFraction(0, 200, 0, 0), 0);
+    assert.equal(X.wheelScrubFraction(0, 0, 0, W), 0);
 });
 
 // WHAT A SCRUB DRAG MEANT. The old rule — "the window ends at the tail → rejoin live" — could not tell a
@@ -1471,7 +1472,7 @@ test("wheelScrubFraction: proportional to the gesture, and reads whichever axis 
 // window while following was read as "rejoin live", the new width was discarded, and the strip snapped back:
 // you could narrow the window and never widen it again.
 describe("scrubIntent", () => {
-    const { scrubIntent } = M;
+    const { scrubIntent } = X;
     const ex = { from: 0, to: 300_000 };          // a five-minute session
     const SLACK = 2000;
 
@@ -1526,7 +1527,7 @@ describe("scrubIntent", () => {
 // tracks — which reads as the panel having broken rather than as a window between polls, while the thing
 // you zoomed in on is still perfectly well defined.
 describe("windowSamples", () => {
-    const { windowSamples } = M;
+    const { windowSamples } = X;
     const at = (...ts) => ts.map((t) => ({ t }));
 
     test("a window with plenty of samples uses exactly those", () => {
@@ -1596,7 +1597,7 @@ describe("placeEvents: an event wider than the window", () => {
 // no samples, draws as an empty plot, and reads as the panel breaking rather than as a selection that was
 // too narrow. `scopeToSpan` already widens a too-short block for the same reason.
 describe("clampWindow", () => {
-    const { clampWindow, MIN_SCOPE_MS } = M;
+    const { clampWindow, MIN_SCOPE_MS } = X;
 
     test("a window wider than the minimum is returned untouched", () => {
         const w = { from: 1000, to: 1000 + MIN_SCOPE_MS * 3 };
@@ -1722,42 +1723,42 @@ test("scrubPinch: narrows and widens around the pointer, symmetrically", () => {
     const win = { from: 40_000, to: 60_000 };
 
     // Pinching OUT is a negative delta and means closer, so the window narrows.
-    const inward = M.scrubPinch(ex, win, -20, 0.5);
+    const inward = X.scrubPinch(ex, win, -20, 0.5);
     assert.ok(inward.to - inward.from < win.to - win.from, "pinching out zooms IN");
-    const outward = M.scrubPinch(ex, win, 20, 0.5);
+    const outward = X.scrubPinch(ex, win, 20, 0.5);
     assert.ok(outward.to - outward.from > win.to - win.from, "and pinching in zooms OUT");
 
     // SYMMETRIC: the same amount each way returns to where it started. A linear step accumulates drift, which
     // is what makes a zoom feel like it is sliding away from you.
-    const there = M.scrubPinch(ex, win, -20, 0.5);
-    const back = M.scrubPinch(ex, there, 20, 0.5);
+    const there = X.scrubPinch(ex, win, -20, 0.5);
+    const back = X.scrubPinch(ex, there, 20, 0.5);
     assert.ok(Math.abs((back.to - back.from) - (win.to - win.from)) < 1, "out then in is where you began");
 
     // ANCHORED: the instant under the pointer stays at the same fraction of the window.
-    const atStart = M.scrubPinch(ex, win, -20, 0);
+    const atStart = X.scrubPinch(ex, win, -20, 0);
     assert.equal(atStart.from, win.from, "pinching on the left edge holds the left edge");
-    const atEnd = M.scrubPinch(ex, win, -20, 1);
+    const atEnd = X.scrubPinch(ex, win, -20, 1);
     assert.ok(Math.abs(atEnd.to - win.to) < 1, "…and on the right edge, the right one");
     // The middle keeps the middle.
-    const mid = M.scrubPinch(ex, win, -20, 0.5);
+    const mid = X.scrubPinch(ex, win, -20, 0.5);
     assert.ok(Math.abs((mid.from + mid.to) / 2 - (win.from + win.to) / 2) < 1, "the centre is where it was");
 
     // BOUNDED both ways: never past the session, never below the minimum a window may be — a zoom that can
     // reach zero width is a zoom you cannot come back from.
-    const huge = M.scrubPinch(ex, win, 10_000, 0.5);
+    const huge = X.scrubPinch(ex, win, 10_000, 0.5);
     assert.ok(huge.to - huge.from <= ex.to - ex.from, "cannot be widened past the session");
     assert.ok(huge.from >= ex.from && huge.to <= ex.to, "and stays inside it");
     let tiny = win;
-    for (let i = 0; i < 200; i++) tiny = M.scrubPinch(ex, tiny, -50, 0.5);
-    assert.ok(tiny.to - tiny.from >= Math.min(M.MIN_SCOPE_MS, ex.to - ex.from), "never collapses to nothing");
+    for (let i = 0; i < 200; i++) tiny = X.scrubPinch(ex, tiny, -50, 0.5);
+    assert.ok(tiny.to - tiny.from >= Math.min(X.MIN_SCOPE_MS, ex.to - ex.from), "never collapses to nothing");
 
     // A single flick cannot cross the whole range: a trackpad can deliver a very large delta in one frame.
-    const flick = M.scrubPinch(ex, win, -100_000, 0.5);
+    const flick = X.scrubPinch(ex, win, -100_000, 0.5);
     assert.ok(flick.to - flick.from > (win.to - win.from) * 0.5, "one event is capped");
 
     // Degenerate inputs are returned untouched rather than producing a NaN window.
-    assert.deepEqual(M.scrubPinch({ from: 5, to: 5 }, win, -20, 0.5), win);
-    assert.deepEqual(M.scrubPinch(ex, { from: 10, to: 10 }, -20, 0.5), { from: 10, to: 10 });
+    assert.deepEqual(X.scrubPinch({ from: 5, to: 5 }, win, -20, 0.5), win);
+    assert.deepEqual(X.scrubPinch(ex, { from: 10, to: 10 }, -20, 0.5), { from: 10, to: 10 });
 });
 
 // WHAT a model's VRAM is holding, not just how much of it there is. `size_vram` alone cannot tell a BIG
@@ -1833,19 +1834,19 @@ test("snapFraction: lands where sampleAtFraction reads, on the linear axis, and 
     const axis = { from: 0, to: 20_000 };
     const runs = [run(5, 0), run(3, 12_000)];   // 0–4 s, then a gap, then 12–14 s
     for (const f of [0, 0.06, 0.1, 0.19, 0.6, 0.65, 0.7]) {
-        const snap = M.snapFraction(runs, f, axis);
+        const snap = X.snapFraction(runs, f, axis);
         assert.ok(snap, `f=${f} is inside a run`);
-        assert.equal(runs[snap.run][snap.index], M.sampleAtFraction(runs, f, axis), `f=${f}: the mark and the reading are one sample`);
+        assert.equal(runs[snap.run][snap.index], X.sampleAtFraction(runs, f, axis), `f=${f}: the mark and the reading are one sample`);
         assert.equal(snap.frac, runs[snap.run][snap.index].t / 20_000, `f=${f}: it sits where that sample is drawn`);
     }
-    assert.equal(M.snapFraction(runs, 0.4, axis), null, "in the gap: nothing was measured, so nothing is read");
+    assert.equal(X.snapFraction(runs, 0.4, axis), null, "in the gap: nothing was measured, so nothing is read");
     // Just past a run's last sample — the right edge of a live chart — it still reads that sample, within reach.
-    assert.equal(M.snapFraction(runs, 0.73, axis, 1000)?.index, 2, "14.6 s, past the last sample, still reads it (14 s)");
-    assert.equal(M.snapFraction(runs, 0.8, axis, 1000), null, "…but not a reading two seconds stale");
+    assert.equal(X.snapFraction(runs, 0.73, axis, 1000)?.index, 2, "14.6 s, past the last sample, still reads it (14 s)");
+    assert.equal(X.snapFraction(runs, 0.8, axis, 1000), null, "…but not a reading two seconds stale");
     // It names the ORIGINAL run, so a caller mapping over `runs` can ask "is it in THIS one?".
-    assert.equal(M.snapFraction([[], ...runs], 0.62, axis).run, 2);
-    assert.equal(M.snapFraction([], 0.5, axis), null);
-    assert.equal(M.snapFraction(runs, 0.5, null), null);
+    assert.equal(X.snapFraction([[], ...runs], 0.62, axis).run, 2);
+    assert.equal(X.snapFraction([], 0.5, axis), null);
+    assert.equal(X.snapFraction(runs, 0.5, null), null);
 });
 
 // A GENUINELY SPLIT MODEL, captured from the box rather than constructed here: `qwen3:235b` (142 GB) across
@@ -2540,16 +2541,16 @@ test("the axis is LINEAR IN TIME on an adaptive cadence: an event, a sample and 
     const [p] = L.placeEvents(axis, [{ t: 8000, kind: "evict", label: "unloaded" }]);
     assert.ok(Math.abs(p.from - 8000 / 15_750) < 1e-12, `placed at ${p.from}`);
     // A sample's position is its time's position — the same mapping the bands are drawn with (`runFrac`).
-    assert.equal(M.runFrac(run, 750), 750 / 15_750);
+    assert.equal(X.runFrac(run, 750), 750 / 15_750);
     // The crosshair's time and the placement round-trip exactly.
-    assert.ok(Math.abs(M.timeAtFraction(axis, p.from) - 8000) < 1e-9);
+    assert.ok(Math.abs(X.timeAtFraction(axis, p.from) - 8000) < 1e-9);
     // The DATAPOINT under a position is the one nearest in TIME — at 8 s, sample 750 (7.25 s away) rather than
     // 15 750 (7.75 s away) — and snapping lands exactly on where that sample is drawn.
-    assert.equal(M.sampleAtFraction([run], p.from, axis).t, 750);
-    const snap = M.snapFraction([run], p.from, axis);
+    assert.equal(X.sampleAtFraction([run], p.from, axis).t, 750);
+    const snap = X.snapFraction([run], p.from, axis);
     assert.deepEqual([snap.index, snap.frac], [3, 750 / 15_750]);
     // A run is as wide as it is LONG: a 1 s run beside a 3 s one takes a quarter of the width.
-    assert.deepEqual([M.runWeight([{ t: 0 }, { t: 1000 }]), M.runWeight([{ t: 0 }, { t: 3000 }]), M.runWeight([{ t: 5 }])], [1000, 3000, 1]);
+    assert.deepEqual([X.runWeight([{ t: 0 }, { t: 1000 }]), X.runWeight([{ t: 0 }, { t: 3000 }]), X.runWeight([{ t: 5 }])], [1000, 3000, 1]);
 });
 
 test("pendingAllocation: a loading model's memory is its own before the runner exists to say so", () => {
@@ -2726,20 +2727,20 @@ test("loadTrace: with no runner to read, the cards' growth — peak above where 
 });
 
 test("gridStep: the smallest round interval that keeps the lines apart at a track's width", () => {
-    assert.equal(M.gridStep(30_000), 5_000, "30 s across 300 px: a line every 5 s is 50 px apart");
-    assert.equal(M.gridStep(300_000), 60_000, "five minutes: one a minute");
-    assert.equal(M.gridStep(300_000, 1200), 15_000, "a wider track affords a finer grid");
-    assert.equal(M.gridStep(1e12), M.GRID_STEPS_MS.at(-1), "past the last step, the last step");
+    assert.equal(X.gridStep(30_000), 5_000, "30 s across 300 px: a line every 5 s is 50 px apart");
+    assert.equal(X.gridStep(300_000), 60_000, "five minutes: one a minute");
+    assert.equal(X.gridStep(300_000, 1200), 15_000, "a wider track affords a finer grid");
+    assert.equal(X.gridStep(1e12), X.GRID_STEPS_MS.at(-1), "past the last step, the last step");
 });
 
 test("gridTimes: on the LOCAL clock's round multiples, and only inside the run it is given", () => {
     const start = new Date(2026, 8, 12, 10, 4, 7, 300).getTime();   // 10:04:07.300 local
     const run = [{ t: start }, { t: start + 95_000 }];
-    const times = M.gridTimes(run, 30_000);
+    const times = X.gridTimes(run, 30_000);
     assert.deepEqual(times.map((t) => { const d = new Date(t); return `${d.getMinutes()}:${d.getSeconds()}.${d.getMilliseconds()}`; }),
         ["4:30.0", "5:0.0", "5:30.0"], "on the half-minute, by the clock on the wall");
     assert.ok(times.every((t) => t >= run[0].t && t <= run[1].t));
-    assert.deepEqual(M.gridTimes([{ t: start }], 30_000), [], "one sample is not a stretch of time");
+    assert.deepEqual(X.gridTimes([{ t: start }], 30_000), [], "one sample is not a stretch of time");
 });
 
 test("ribbonSpans: a card's timed generation phases, on every card the model is on and no other", () => {
