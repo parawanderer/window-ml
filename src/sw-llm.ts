@@ -4,7 +4,8 @@
 // server-tool-mode handback probe. Also the model-list/server-tool/setModel/unload plumbing. Extracted from
 // background.ts verbatim; it depends only on the shared contract (types + DEFAULT_CONFIG/modelFilterAllows)
 // and chrome/fetch. All server JSON is genuinely opaque, so it's typed `any`; our own data uses the contract.
-import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, GenPhase, ProtoMode } from "./contract";
+import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, GenPhase, ProtoMode } from "./contract";
+import type { FetchLlmPayload } from "./contract-messages";
 import { DEFAULT_CONFIG, modelFilterAllows, generatesText, producesEmbeddings, protoMode, wireHint } from "./contract";   // single source of truth (see contract.ts)
 import { loadedFrom } from "./resource-events";
 import { createFrameReader } from "./protostream";

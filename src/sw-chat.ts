@@ -18,7 +18,8 @@
  * feed of a session something else already reports (AGENTS.md's trap, which is about recording a run twice); it is
  * the only feed of a session nothing else can see.
  */
-import { hintSession, shortHash, type LlmResult, type NeutralMessage, type RequestHint, type StoredSession } from "./contract";
+import { hintSession, shortHash, type LlmResult, type NeutralMessage, type RequestHint } from "./contract";
+import { type StoredSession } from "./contract-messages";
 import { type MlDebugEvent } from "./contract-debug";
 
 /** Live background chats. Small on purpose: each holds a whole history, and the worker's memory is shared with

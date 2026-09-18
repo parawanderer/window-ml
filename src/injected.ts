@@ -10,7 +10,6 @@ import type {
     MlAgentHandle,
     MlApi,
     AgentTranscriptEntry,
-    FetchLlmPayload,
     ChatOptions,
     ExtendProfile,
     JsonSchema,
@@ -18,13 +17,13 @@ import type {
     RenderDescriptor,
     ToolFeedback,
     ToolRenderInput,
-    StoredSession,
     TokenUsage,
     MlHistory,
     TableSource, TableValue,
     TablePreview,
-    DerefValue, ShotBox, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer, RequestHint, RequestUse
+    DerefValue, ShotBox, VisionMemory, AnswerMedia, MlAnswer, RequestHint, RequestUse
 } from "./contract";
+import type { FetchLlmPayload, StoredSession, RebuildConfig } from "./contract-messages";
 import type {
     SessionRef,
     DebugChatStart,

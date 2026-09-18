@@ -15,7 +15,8 @@
 // token-store LRU drops it. Dropping the pointers in the turn's finally emptied them between turns, which is the
 // exact failure the session-scoped store was introduced to fix.
 
-import { type StartRunPayload, type NeutralMessage, bgRunResumable, pushReplay, type DerefRead } from "./contract";
+import { type NeutralMessage, bgRunResumable, pushReplay, type DerefRead } from "./contract";
+import { type StartRunPayload } from "./contract-messages";
 import { createNavBarrier } from "./nav-barrier";
 import { releaseSessionValues } from "./sw-values";
 import { TokenStore } from "./token-pipe";
