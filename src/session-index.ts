@@ -84,6 +84,8 @@ interface Indexed {
     openTurns: Set<string>;
     lastResultKey: string | null;
     seenSays: Set<string>;
+    /** resume notes already recorded, by event id: the page's bus and the background can both report one */
+    seenResumes: Set<string>;
     interrupted: boolean;
     summary: SessionSummary;
     summaryJson: string;
@@ -164,6 +166,16 @@ export class SessionIndex {
         const hash = ev.session?.hash;
         if (typeof hash !== "string" || !HASH_RE.test(hash)) return { accepted: false, reason: "invalid" };
 
+        // A resume note whose `dropped` is not what it says it is never enters the stream. The source is untrusted by
+        // this module's own rules (a page-forwarded event, accepted for a session its tab owns), and the divider that
+        // reads it would meet `undefined` where the contract promises a non-empty list.
+        if (ev.kind === "session-resumed") {
+            const note = ev as { url?: unknown; dropped?: unknown };
+            if (typeof note.url !== "string" || !note.url
+                || !Array.isArray(note.dropped) || !note.dropped.length
+                || !note.dropped.every((d: unknown) => typeof d === "string")) return { accepted: false, reason: "invalid" };
+        }
+
         let s = this.sessions.get(hash);
         let reset = false;
         if (s) {
@@ -214,7 +226,7 @@ export class SessionIndex {
         const s: Indexed = {
             id: { runtime: this.runtime, hash }, kind, gen, ring: [], bytes: 0, lostThrough: -1, lastCursor: 0,
             owner: src.tabId, hostedBy: src.trusted ? "background" : "page", hasStart: false,
-            ended: false, endedStep: -1, endStatus: "done", gates: new Set(), openTurns: new Set(), lastResultKey: null, seenSays: new Set(), interrupted: false,
+            ended: false, endedStep: -1, endStatus: "done", gates: new Set(), openTurns: new Set(), lastResultKey: null, seenSays: new Set(), seenResumes: new Set(), interrupted: false,
             summary: { id: { runtime: this.runtime, hash }, kind, status: "running", createdTs: now, lastTs: now, pendingApprovals: 0, saved: false },
             summaryJson: "", reportedTs: 0,
         };
@@ -234,6 +246,11 @@ export class SessionIndex {
             }
             case "agent-say-seen":
                 return s.seenSays.has(ev.sayId);
+            case "session-resumed":
+                // Both sides can report one resume (off mode with `listPageSessions` wakes the page's bus while the
+                // background fans the same run), and two notes are two dividers for one resume, in the log and in
+                // every replay of the ring.
+                return s.seenResumes.has(ev.id);
             case "chat":
                 return s.ring.some((e) => e.event.kind === "chat" && e.event.id === ev.id);
             case "chat-result":
@@ -283,6 +300,9 @@ export class SessionIndex {
                 break;
             case "agent-say-seen":
                 s.seenSays.add(ev.sayId);
+                break;
+            case "session-resumed":
+                s.seenResumes.add(ev.id);
                 break;
             case "chat":
                 s.openTurns.add(ev.id);
@@ -418,7 +438,7 @@ export class SessionIndex {
                 lostThrough: count, lastCursor: count,
                 owner: undefined, hostedBy: "background", hasStart: true,
                 ended: true, endedStep: -1, endStatus: status === "interrupted" ? "error" : "done",
-                gates: new Set(), openTurns: new Set(), lastResultKey: null, seenSays: new Set(),
+                gates: new Set(), openTurns: new Set(), lastResultKey: null, seenSays: new Set(), seenResumes: new Set(),
                 interrupted: status === "interrupted",
                 summary: restored, summaryJson: "", reportedTs: restored.lastTs,
             };

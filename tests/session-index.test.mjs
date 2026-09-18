@@ -3,6 +3,7 @@
 // defines (docs/spec/SESSION_CONTRACT.md).
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { SessionIndex } from "../src/session-index.ts";
 
 const TAB_A = 11, TAB_B = 22;
@@ -278,4 +279,57 @@ test("a resume note belongs to a session that exists, and never makes one", () =
     assert.equal(out.accepted, true);
     assert.equal(ix.get("aaaa0001").kind, "agent", "and it did not change what the session is");
     assert.equal(kinds(ix.backfill("aaaa0001")).at(-2), "session-resumed", "it is in the stream like any other event");
+});
+
+test("a resume note is recorded once, however many sides report it", () => {
+    const ix = index();
+    const note = (hash, over = {}) => base(hash, "session-resumed", { url: "https://new.example/", afterMs: 90_000, dropped: ["the page's state object"], ...over });
+    ix.ingest(start("aaaa0001"), bg());
+
+    assert.equal(ix.ingest(note("aaaa0001"), bg()).accepted, true);
+    // Off mode with `listPageSessions` wakes the page's bus while the background fans the same run, so one resume
+    // arrives twice. Two notes would be two dividers, in the log and in every replay of the ring.
+    assert.deepEqual(ix.ingest(note("aaaa0001"), page()), { accepted: false, reason: "duplicate" });
+    assert.equal(kinds(ix.backfill("aaaa0001")).filter((k) => k === "session-resumed").length, 1);
+
+    // A second, genuinely different resume is its own note.
+    assert.equal(ix.ingest(note("aaaa0001", { id: "aaaa0001-r2", url: "https://later.example/" }), bg()).accepted, true);
+    assert.equal(kinds(ix.backfill("aaaa0001")).filter((k) => k === "session-resumed").length, 2);
+});
+
+test("a resume note that does not say what it dropped never enters the stream", () => {
+    const ix = index();
+    const note = (over) => base("aaaa0001", "session-resumed", { url: "https://new.example/", afterMs: 1, dropped: ["state"], ...over });
+    ix.ingest(start("aaaa0001"), bg());
+
+    // The source is untrusted (a page-forwarded event, accepted for a session its tab owns), and the divider that
+    // reads `dropped` would meet undefined where the contract promises a non-empty list of strings.
+    for (const bad of [{ dropped: undefined }, { dropped: [] }, { dropped: "state" }, { dropped: [1, 2] }, { url: "" }, { url: 5 }]) {
+        assert.deepEqual(ix.ingest(note(bad), page()), { accepted: false, reason: "invalid" }, JSON.stringify(bad));
+    }
+    assert.equal(kinds(ix.backfill("aaaa0001")).filter((k) => k === "session-resumed").length, 0);
+});
+
+test("every event kind the index accepts has been considered for de-duplication", async () => {
+    const src = await readFile(new URL("../src/session-index.ts", import.meta.url), "utf8");
+    const known = [...src.slice(src.indexOf("const KNOWN_KINDS"), src.indexOf("\n", src.indexOf("const KNOWN_KINDS"))).matchAll(/"([a-z-]+)"/g)].map((m) => m[1]);
+    assert.ok(known.length >= 12, `found ${known.length} kinds`);
+
+    // The rules are per KIND, and adding a kind means visiting the table rather than only the path that makes the
+    // feature work: a kind with no rule is a kind that records the same event twice when the page's bus and the
+    // background both report it, which is what `listPageSessions` makes routine. A kind that genuinely needs none
+    // says so here, so the decision is made once and written down rather than made by omission.
+    const NO_RULE_NEEDED = new Set([
+        "agent-step",    // coalesced by step, and a repeat is the same step's later state
+        "agent-stream",  // coalesced by step: the newest delta replaces the last
+        "agent-turn",    // coalesced the same way, and carries no history of its own
+        "agent-cap",     // last write wins: a cap is a number, not an occurrence
+        "agent-say",     // paired with agent-say-seen, which is the one that can arrive twice
+        "chat-error",    // ends a turn opened by `chat`, which is itself de-duplicated
+    ]);
+    const duplicate = src.slice(src.indexOf("private isDuplicate"), src.indexOf("private fold"));
+    for (const kind of known) {
+        if (NO_RULE_NEEDED.has(kind)) continue;
+        assert.ok(duplicate.includes(`"${kind}"`), `${kind} has no de-duplication rule and is not listed as needing none`);
+    }
 });

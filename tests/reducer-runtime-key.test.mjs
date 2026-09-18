@@ -47,3 +47,26 @@ test("keys split on the LAST colon, since a session key may itself contain one",
     assert.deepEqual(splitStepKey("rt-7f3a:abcd1234:12"), { session: "rt-7f3a:abcd1234", seq: 12 });
     assert.deepEqual(splitStepKey("abcd1234:3"), { session: "abcd1234", seq: 3 });
 });
+
+test("a resume note is a divider, not a move: it never rewrites where the run started", () => {
+    sessionMap.clear();
+    onDebug({ ...agentStart("abcd1234", "buy the thing"), pageUrl: "https://shop.example/item", pageTitle: "Item" }, "local");
+    const note = { kind: "session-resumed", id: "abcd1234-r1", session: { hash: "abcd1234" }, ts: 5000, url: "https://unrelated.example/blank", fromUrl: "https://shop.example/item", afterMs: 172_800_000, dropped: ["the page's state object", "approval grants"] };
+    onDebug(note, "local");
+
+    const s = sessionMap.get("local:abcd1234");
+    // `pageUrl` is where the run STARTED, which is what the export's schema promises and what the index's row says.
+    // Moving it made run.json report the resume page with the original page's title, so a diff of two runs called a
+    // resume a different experiment.
+    assert.equal(s.pageUrl, "https://shop.example/item");
+    assert.equal(s.resumes.length, 1);
+    assert.equal(s.resumes[0].url, "https://unrelated.example/blank", "where it resumed is the field that means that");
+    assert.deepEqual(s.resumes[0].dropped, ["the page's state object", "approval grants"]);
+
+    // The same note again is the same resume: both sides can report one, and events repeat around a reconnect.
+    onDebug(note, "local");
+    assert.equal(s.resumes.length, 1);
+    // A different resume is its own divider.
+    onDebug({ ...note, id: "abcd1234-r2", ts: 9000, url: "https://third.example/" }, "local");
+    assert.equal(sessionMap.get("local:abcd1234").resumes.length, 2);
+});

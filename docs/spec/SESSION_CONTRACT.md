@@ -157,7 +157,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `approval.answer`: by the pending step's `seq`; `persist`, `feedback` | approve | | `approval` → `SET_APPROVAL` → `resolveApproval` |
 | `chat.start` | drive | `chat` | nothing background-hosted |
 | `agent.start`: on a tab, a blank tab, or (reserved) headless | drive | `agent`, `tabs`, `headless` | `startRun` → the page → `START_RUN` |
-| `session.resume`: pick a saved session up on another page, by target | drive | `persistence`, `tabs` | nothing |
+| `session.resume`: pick a saved session up on another page, by target | drive | `persistence`, `tabs`, and `agent` or `chat` by the session's kind | nothing |
 | `tabs.list` | drive | `tabs` | nothing |
 | `tab.screenshot`: on demand, size-capped | screen | `screenshots` | `CAPTURE_TAB` |
 | `page.highlight`: a selector, a canvas token, or clear | drive | `highlight` | `__mlHighlight` → `ML_HL_REMOTE` |
@@ -195,6 +195,9 @@ command because `session.send` would reach a page that no longer holds the sessi
 
 - **The hash does not change.** The result answers with the same session id, and it stays one conversation on every
   surface.
+- **It needs the capability that RUNS the session, not only the one that stored it.** A runtime advertising
+  `persistence` and `tabs` but not `agent` can hold a saved run and cannot continue one, so resuming it is
+  `unsupported` — the capability is `agent` or `chat` by the resumed session's kind.
 - **The runtime says what was lost, in the transcript.** `session-resumed` is the first event of the new turn: the
   page it is resuming on, the page it was on, how long it had been idle, and what did not survive. It is a fact
   about the session rather than something anybody said, so a client draws it as a divider and never as a message.
