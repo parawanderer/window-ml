@@ -200,7 +200,7 @@ only once the page next loads. Plan + STATUS/HANDOFF: `tmp/cross-page-agent.md`.
 be resolved from OUTSIDE the browser, so an automated driver approves/denies exactly like a human click — the
 Playwright harness today, a desktop orchestrator (over `onMessageExternal` / native messaging) later; this is
 the control channel for the "one wrapper driving a desktop with delegated subagents over IPC" goal.
-`pendingApprovals` (background.ts) stores `{ resolve, descriptor }` — the descriptor is the serializable
+`pendingApprovals` (sw-consent.ts) stores `{ resolve, descriptor }` — the descriptor is the serializable
 "what's being approved" (`runId`/`seq`/`step`/`tool`/`arguments`/`routing`). Both the origin-authed
 `SET_APPROVAL` message and the external channel funnel through ONE `resolveApproval(key, decision)`, so a
 decision from either resolves the gate on every surface. The channel is
