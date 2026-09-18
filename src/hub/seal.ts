@@ -9,7 +9,7 @@
  */
 import { CommandBody, GrantBody, Sealed as SealedMessage, SignedCommand, SignedGrant, StreamFrame } from "../proto/wmlhub/v1/seal.gen";
 import { Certificate } from "../proto/wmlhub/v1/identity.gen";
-import { AgreementKey, Bytes, bytes, concat, open as hpkeOpen, seal as hpkeSeal } from "./hpke";
+import { AgreementKey, Bytes, bytes, concat, open as hpkeOpen, sameBytes, seal as hpkeSeal } from "./hpke";
 import { Identity, LABEL, principalId, sign, verify, verifyChain, Verified } from "./keys";
 
 export const NONCE_BYTES = 16;
@@ -17,7 +17,14 @@ export const CLOCK_WINDOW_MS = 60_000;
 export const MAX_SEALED_BYTES = 1 << 20;
 export const MAX_STREAM_FRAME_BYTES = 1 << 20;
 export const MAX_REPLAY_ENTRIES = 65_536;
+/**
+ * Nonces one recipient remembers from ONE sender. The window is shared by every device of an account, so without a
+ * per-sender share a single noisy or hostile device could fill it and refuse every other device for two windows.
+ */
+export const MAX_REPLAY_PER_SENDER = 4_096;
 const KEY_ID_BYTES = 8;
+/** The longest channel name a grant may carry, matching the relay's `max_id_bytes`. */
+export const MAX_CHANNEL_BYTES = 64;
 const FRAME_NONCE_BYTES = 12;
 export const CHANNEL_BYTES = 16;
 
@@ -67,7 +74,6 @@ export interface Opened {
 }
 
 const text = new TextEncoder();
-const bytesEqual = (a: Bytes, b: Bytes) => a.length === b.length && a.every((x, i) => x === b[i]);
 
 function info(label: string, from: Bytes, to: Bytes): Bytes {
     return concat(text.encode(label), from, to);
@@ -140,6 +146,14 @@ async function sealCommandBody(
     );
 }
 
+/**
+ * Where to send the answer to an opened command: the sender, and the agreement key its own certificate bound. Saves a
+ * consumer reassembling this by hand, which is how a reply ends up sealed to the wrong key.
+ */
+export function replyTo(opened: Opened): Recipient {
+    return { principal: opened.from, agreementKey: bytes(opened.verified.leaf.agreementKey) };
+}
+
 /** A principal receiving commands: its keys, the account it belongs to, and the nonces it has accepted. */
 export class Receiver {
     private readonly replay = new ReplayWindow();
@@ -183,7 +197,7 @@ export class Receiver {
         } catch (e) {
             throw new OpenError(`chain: ${(e as Error).message}`);
         }
-        if (!bytesEqual(verified.principal, sender)) throw new OpenError("not the sender");
+        if (!sameBytes(verified.principal, sender)) throw new OpenError("not the sender");
         return verified;
     }
 
@@ -196,8 +210,8 @@ export class Receiver {
         timeMs: number,
         nowMs: number,
     ): void {
-        if (!bytesEqual(from, sender)) throw new OpenError("not the sender");
-        if (!bytesEqual(to, this.principal)) throw new OpenError("not for me");
+        if (!sameBytes(from, sender)) throw new OpenError("not the sender");
+        if (!sameBytes(to, this.principal)) throw new OpenError("not for me");
         if (nonce.length !== NONCE_BYTES) throw new OpenError("malformed");
         if (Math.abs(timeMs - nowMs) > CLOCK_WINDOW_MS) throw new OpenError("clock");
         this.replay.admit(sender, nonce, nowMs);
@@ -260,8 +274,9 @@ export class Receiver {
             throw new OpenError("malformed");
         }
         if (body.key.length !== 32 || body.keyId.length !== KEY_ID_BYTES) throw new OpenError("malformed");
+        if (body.channel.length === 0 || body.channel.length > MAX_CHANNEL_BYTES) throw new OpenError("malformed");
         const key = await StreamKey.fromBytes(bytes(body.key));
-        if (!bytesEqual(key.id, bytes(body.keyId))) throw new OpenError("malformed");
+        if (!sameBytes(key.id, bytes(body.keyId))) throw new OpenError("malformed");
         this.checkAddressing(sender, bytes(body.from), bytes(body.to), bytes(body.nonce), body.timeMs, nowMs);
         return {
             publisher: sender,
@@ -274,24 +289,41 @@ export class Receiver {
 }
 
 /**
- * The nonces accepted recently, per sender. A nonce is kept until its command could no longer pass the clock check,
+ * The nonces accepted recently, per sender. Exported so its budget can be tested without sealing thousands of
+ * commands; nothing outside this file constructs one. A nonce is kept until its command could no longer pass the clock check,
  * and the window refuses when it is full rather than forgetting a live one.
  */
-class ReplayWindow {
+export class ReplayWindow {
     private readonly seen = new Set<string>();
-    private readonly order: Array<{ forgetAt: number; key: string }> = [];
+    private readonly held = new Map<string, number>();
+    private readonly order: Array<{ forgetAt: number; key: string; from: string }> = [];
 
-    constructor(private readonly capacity = MAX_REPLAY_ENTRIES) {}
+    constructor(
+        private readonly capacity = MAX_REPLAY_ENTRIES,
+        private readonly perSender = MAX_REPLAY_PER_SENDER,
+    ) {}
 
     admit(from: Bytes, nonce: Bytes, nowMs: number): void {
         while (this.order.length > 0 && this.order[0].forgetAt <= nowMs) {
-            this.seen.delete(this.order.shift()!.key);
+            const gone = this.order.shift()!;
+            if (this.seen.delete(gone.key)) this.release(gone.from);
         }
-        const key = `${hex(from)}:${hex(nonce)}`;
+        const sender = hex(from);
+        const key = `${sender}:${hex(nonce)}`;
         if (this.seen.has(key)) throw new OpenError("replay");
-        if (this.seen.size >= this.capacity) throw new OpenError("busy");
+        // This sender's own share first: a sender that has filled it is refused while everyone else is served.
+        if ((this.held.get(sender) ?? 0) >= this.perSender || this.seen.size >= this.capacity)
+            throw new OpenError("busy");
         this.seen.add(key);
-        this.order.push({ forgetAt: nowMs + 2 * CLOCK_WINDOW_MS + 1, key });
+        this.held.set(sender, (this.held.get(sender) ?? 0) + 1);
+        this.order.push({ forgetAt: nowMs + 2 * CLOCK_WINDOW_MS + 1, key, from: sender });
+    }
+
+    /** A sender is forgotten when its last nonce is, so the map is bounded by senders with live nonces. */
+    private release(sender: string): void {
+        const held = (this.held.get(sender) ?? 0) - 1;
+        if (held > 0) this.held.set(sender, held);
+        else this.held.delete(sender);
     }
 }
 
@@ -399,7 +431,8 @@ export interface Published {
 
 /** One subscriber's view of one stream: whose it is, which channel, the keys granted, and how far it has read. */
 export class StreamReader {
-    private readonly keys = new Map<string, StreamKey>();
+    /** each granted key, with the first counter that grant covers */
+    private readonly keys = new Map<string, { key: StreamKey; fromCounter: number }>();
     private last = 0;
 
     constructor(grant: Grant) {
@@ -415,8 +448,8 @@ export class StreamReader {
 
     /** Take another key for this stream: a rotation, or the previous key for reading further back in the ring. */
     addKey(grant: Grant): boolean {
-        if (!bytesEqual(grant.publisher, this.publisher) || !bytesEqual(grant.channel, this.channel)) return false;
-        this.keys.set(hex(grant.key.id), grant.key);
+        if (!sameBytes(grant.publisher, this.publisher) || !sameBytes(grant.channel, this.channel)) return false;
+        this.keys.set(hex(grant.key.id), { key: grant.key, fromCounter: grant.fromCounter });
         return true;
     }
 
@@ -425,7 +458,12 @@ export class StreamReader {
         return this.last;
     }
 
-    /** Start again from `counter`, after a backfill that begins further back than this reader has read. */
+    /**
+     * Start again from `counter`, after a backfill that begins further back than this reader has read.
+     *
+     * The number must come from what THIS consumer has processed, never from a hub frame: a hub that named the rewind
+     * point could replay a stream at a subscriber, which is the one thing the counter exists to prevent.
+     */
     rewindTo(counter: number): void {
         this.last = counter;
     }
@@ -442,18 +480,26 @@ export class StreamReader {
         if (decoded.keyId.length !== KEY_ID_BYTES || decoded.nonce.length !== FRAME_NONCE_BYTES)
             throw new StreamError("malformed");
         const [keyId, frameNonce, ciphertext] = [bytes(decoded.keyId), bytes(decoded.nonce), bytes(decoded.ciphertext)];
-        const key = this.keys.get(hex(keyId));
-        if (!key) throw new StreamError("unknown key");
+        const granted = this.keys.get(hex(keyId));
+        if (!granted) throw new StreamError("unknown key");
 
         const aad = header(this.publisher, this.channel, keyId, decoded.counter, frameNonce);
         if (!(await verify(this.publisherKey, LABEL.stream, concat(aad, ciphertext), bytes(decoded.signature))))
             throw new StreamError("signature");
+        // Authentic, and under a key this reader holds; but a grant covers a stream from a counter, and the ring
+        // still holds what came before it.
+        if (decoded.counter < granted.fromCounter)
+            throw new StreamError(`before grant: ${decoded.counter} under a key granted from ${granted.fromCounter}`);
         if (decoded.counter <= this.last) throw new StreamError(`out of order: ${decoded.counter} after ${this.last}`);
 
         let batch: Bytes;
         try {
             batch = new Uint8Array(
-                await crypto.subtle.decrypt({ name: "AES-GCM", iv: frameNonce, additionalData: aad }, key.aes, ciphertext),
+                await crypto.subtle.decrypt(
+                    { name: "AES-GCM", iv: frameNonce, additionalData: aad },
+                    granted.key.aes,
+                    ciphertext,
+                ),
             );
         } catch {
             throw new StreamError("decrypt");

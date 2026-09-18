@@ -71,6 +71,17 @@ the other two schemas.
 - **The checks are in a deliberate order** (sizes, decryption, chain, sender, signature, addressing, clock, scope,
   and the nonce last), so only an authenticated command inside its clock window can occupy a place in the replay
   window. Adding a check in the middle is fine; moving the nonce earlier is not.
+- **A grant's `fromCounter` is a permission, not a note.** A reader refuses a frame below it, so a device paired this
+  morning cannot read last night out of a ring the hub still holds. Each key keeps the counter its own grant covers,
+  so a rotation grants from where it begins while the old key keeps covering what it always did.
+- **`rewindTo` is driven by what THIS consumer processed, never by a number from a hub frame.** A hub that could name
+  the rewind point could replay a stream at a subscriber, which is the one thing the counter exists to prevent.
+- **The replay window is shared by every device of an account, so each sender has its own share of it.** Without one,
+  a single device could fill it and refuse every other device for two clock windows.
+- **A frame's nonce is random on purpose**, though the header beside it carries a counter that a nonce could be
+  derived from for free: a publisher that restarts, keeps its key and resumes its counter would re-use a derived
+  nonce on different plaintext, which is the catastrophic AES-GCM failure. The collision risk traded for that is
+  about 2^-33 after 2^32 frames under one key.
 - **A key grant travels like any other envelope**, so "this did not open as a command" is not an error to swallow: try
   `openGrant` before deciding something is wrong.
 - **A number the hub chooses fits in a double, and that is the hub's promise, not luck.** A ring epoch was a full
