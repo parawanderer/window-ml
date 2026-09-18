@@ -78,6 +78,7 @@ look at all:
 | `sw-housekeeping.ts` | the one housekeeping log and its two messages |
 | `sw-debug.ts` | the DevTools panel's copy of the page's debug stream: one ring buffer per inspected tab, fanned to every panel on it |
 | `sw-run-host.ts` | HOSTING one background run: the design-A loop, every tool delegated back to the page that built the toolset, approval gated through the sidebar |
+| `sw-python.ts` | the offscreen Pyodide host: who may run `full` mode, and the live stdout relay back to whoever awaits it |
 
 A privileged handler CONSULTS `sw-consent.ts` and MUTATES `sw-runs.ts`, which is
 why neither belongs in the router.
