@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+// Identities and certificates (docs/design/end-to-end-crypto.md §Identities and §Accounts).
+//
+// An account is an Ed25519 root key. Every principal (runtime, device, agent client, box connector) has its own
+// Ed25519 identity key and X25519 key agreement key, and holds a certificate chain that ends at the account root.
+// The hub verifies chains with public keys only; runtimes verify them too, and additionally enforce the scopes.
+package wmlhub.v1;
+
+// What a connection is, in the hub's routing. It changes nothing a runtime trusts: a runtime decides what to do
+// with a command from its own allowlist of keys, never from a role the hub reports.
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  // runs sessions and publishes their events (the extension, a desktop daemon)
+  ROLE_RUNTIME = 1;
+  // shows sessions and sends commands (a phone, the chat page, an agent client)
+  ROLE_CLIENT = 2;
+  // relays one box's telemetry
+  ROLE_BOX_CONNECTOR = 3;
+}
+
+// The signed bytes and the signature over them. `body` is an encoded CertificateBody and is verified exactly as
+// transmitted, never re-encoded, so no canonical encoding is needed.
+message Certificate {
+  bytes body = 1;
+  // Ed25519, by `CertificateBody.issuer`, over "wmlhub/cert/v1" || 0x00 || body
+  bytes signature = 2;
+}
+
+message CertificateBody {
+  // was `repeated Scope scopes`, a closed enum
+  reserved 5;
+  // the holder's Ed25519 identity public key (32 bytes); its SHA-256 is the principal id
+  bytes subject = 1;
+  // the holder's X25519 public key (32 bytes), bound to the identity by this signature: what others seal to
+  bytes agreement_key = 2;
+  // the signer's Ed25519 public key: the account root, or a principal whose own certificate has `may_pair`
+  bytes issuer = 3;
+  Role role = 4;
+  // Granted scopes, by name: what the holder may ask a runtime to do (window-ml docs/spec/RUNTIME_HUB.md §Principals
+  // and scopes: `view`, `drive`, `approve`, `screen`, `desktop`, and later names such as `control`). Strings, not an
+  // enum, because the set is open (window-ml docs/spec/SESSION_CONTRACT.md §Versioning): a name a runtime does not know
+  // grants nothing there, and issuing one needs no schema change on any peer. The hub does not enforce scopes; it
+  // checks only their shape (at most 16, each 1 to 32 bytes of `a-z 0-9 . _ -`) and that a certificate issued by a
+  // non-root issuer carries only names the issuer's certificate carries.
+  repeated string scopes = 10;
+  // May issue certificates in turn (a second device that can pair new ones). Chains are at most two long.
+  bool may_pair = 6;
+  // validity, epoch milliseconds; `not_after_ms` 0 means no expiry, and a child never outlives its issuer
+  uint64 not_before_ms = 7;
+  uint64 not_after_ms = 8;
+  // a name its owner chose ("phone"); display text, never proof of anything
+  string label = 9;
+}
+
+// hub -> principal, the first frame on every connection: what the principal signs to prove it holds its key.
+message Challenge {
+  // 32 random bytes, fresh per connection
+  bytes nonce = 1;
+  // The hub's configured name. A client checks it is the hub it meant to reach before signing, so a malicious hub
+  // cannot pass along another hub's challenge and log in there as the client.
+  string hub = 2;
+  uint64 server_time_ms = 3;
+}

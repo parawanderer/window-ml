@@ -1,0 +1,204 @@
+syntax = "proto3";
+
+// The hub's wire protocol: the only schema the hub reads.
+//
+// Every websocket binary message carries one or more varint-delimited `Frame`s (crates/frame). The hub decodes
+// Frames and the routing fields of an Envelope; it never decodes `Envelope.payload`, which is end-to-end
+// ciphertext between principals. Prose, rules and reasons: docs/PROTOCOL.md.
+//
+// Evolution: add fields and oneof members, never renumber or re-type one. A peer ignores a field it does not
+// know, and answers a Frame body it does not know with Error{UNSUPPORTED}. A breaking change is a new package
+// (wmlhub.v2), negotiated in Hello.
+package wmlhub.v1;
+
+import "wmlhub/v1/identity.proto";
+
+// One unit on the wire. The first Frame a connection sends is Hello; the hub answers Welcome or Error and closes.
+message Frame {
+  oneof body {
+    Hello hello = 1;
+    Welcome welcome = 2;
+    Envelope envelope = 3;
+    Subscribe subscribe = 4;
+    Unsubscribe unsubscribe = 5;
+    Backfilled backfilled = 6;
+    Gap gap = 7;
+    Presence presence = 8;
+    Ping ping = 9;
+    Pong pong = 10;
+    Error error = 11;
+    // defined in identity.proto
+    Challenge challenge = 12;
+  }
+}
+
+// principal -> hub, the first frame a principal sends, answering the hub's Challenge.
+message Hello {
+  // the newest protocol major this peer speaks; the hub answers with the one it chose, or Error{UNSUPPORTED}
+  uint32 protocol = 1;
+  // SHA-256 of the leaf certificate's subject key. (Development mode: any bytes, trusted as claimed.)
+  bytes principal = 2;
+  Role role = 3;
+  // Development mode only: the account, as given. Ignored when the hub authenticates.
+  bytes account_credential = 4;
+  // the account root's Ed25519 public key; SHA-256 of it is the account id
+  bytes account_root = 5;
+  // leaf first, each issued by the next, the last issued by `account_root`; one or two certificates
+  repeated Certificate chain = 6;
+  // Ed25519 by the leaf key over the hello transcript: "wmlhub/hello/v1" || 0x00 || u32be(len hub) || hub ||
+  // nonce || u32be(len principal) || principal || u32be(role) || account id (crates/keys: hello_transcript)
+  bytes signature = 7;
+  // a hub-operator invite, needed only to register an account the hub does not know, when registration is invite-only
+  bytes invite = 8;
+}
+
+// hub -> principal, answering Hello.
+message Welcome {
+  uint32 protocol = 1;
+  // the hub's clock, epoch ms, when it sent this; with the round trip, a peer estimates the hub's clock offset
+  uint64 server_time_ms = 2;
+  Limits limits = 3;
+}
+
+// What the hub will accept from this connection. A peer that exceeds one is disconnected, not throttled silently.
+message Limits {
+  uint32 max_frame_bytes = 1;
+  uint32 max_payload_bytes = 2;
+  // envelopes retained per stream, by kind; 0 means the kind is not retained
+  uint32 ring_session_events = 3;
+  uint32 ring_telemetry = 4;
+  // Work the account may cause, shared by all its connections: every message at its size plus 64 bytes a frame, and
+  // 64 bytes for each frame the hub queues on its behalf. Past the rate the hub stops reading until the debt is repaid,
+  // so a client that sends faster simply goes slower. A client pacing itself below this is never delayed.
+  uint64 account_bytes_per_second = 5;
+  uint64 account_burst_bytes = 6;
+}
+
+// How the hub treats an envelope: whether it is retained, and what happens when a subscriber falls behind.
+enum Kind {
+  KIND_UNSPECIFIED = 0;
+  // Published, retained in a ring, never dropped. A subscriber that falls behind is disconnected and resyncs.
+  KIND_SESSION_EVENTS = 1;
+  // Published, retained in a ring. Coalesced by `coalesce` and, past a limit, dropped with a Gap.
+  KIND_TELEMETRY = 2;
+  // Direct, not retained, never dropped. Offline recipient: Error{UNAVAILABLE} to the sender.
+  KIND_COMMAND = 3;
+  // Direct, the answer to a command; as KIND_COMMAND.
+  KIND_COMMAND_RESULT = 4;
+  // Direct, not retained: a large object in chunks (a screenshot). Counts toward the recipient's queue like any
+  // direct envelope.
+  KIND_BULK = 5;
+}
+
+// A publisher's stream: a channel of one principal. `channel` is opaque bytes the publisher chose; it is routing
+// metadata the hub sees, so a publisher should not put a session hash in it verbatim (docs/PROTOCOL.md).
+message StreamRef {
+  bytes publisher = 1;
+  bytes channel = 2;
+}
+
+// Either way. The only frame that carries user data, and that data is `payload`.
+message Envelope {
+  // Where it goes: a principal (direct) or a channel of the sender's (published).
+  oneof to {
+    bytes principal = 1;
+    // published on this channel of the SENDER; the publisher part is the sender, never a field a peer sets
+    bytes channel = 2;
+  }
+  Kind kind = 3;
+  // Set by the hub on delivery from the connection it arrived on. Ignored when a peer sends it: nothing can
+  // claim to be another principal to the hub. (The payload's own signature is what a runtime trusts.)
+  bytes sender = 4;
+  // Set by the hub on delivery of a published envelope: strictly increasing within one stream's `epoch`.
+  uint64 seq = 5;
+  // Set by the hub on delivery of a published envelope: identifies the ring the seq belongs to. A ring recreated
+  // (a hub restart) has a new epoch, and a seq from another epoch means nothing.
+  uint64 epoch = 6;
+  // Telemetry only: a queued envelope on the same stream with the same non-empty `coalesce` is replaced by this
+  // one. Opaque to the hub.
+  bytes coalesce = 7;
+  // Chosen by the sender and echoed on an Error about this envelope. Not unique beyond the sender's own use.
+  uint64 ref = 8;
+  // End-to-end ciphertext. Never decoded, logged or inspected by the hub.
+  bytes payload = 15;
+}
+
+// client -> hub: deliver a stream, starting after `since` when the client holds part of it.
+message Subscribe {
+  StreamRef stream = 1;
+  // absent: from the oldest retained envelope
+  Position since = 2;
+}
+
+message Position {
+  uint64 epoch = 1;
+  uint64 seq = 2;
+}
+
+message Unsubscribe {
+  StreamRef stream = 1;
+}
+
+// hub -> client: the backfill for a Subscribe is complete; live envelopes follow.
+message Backfilled {
+  StreamRef stream = 1;
+  uint64 epoch = 2;
+  // the newest seq delivered so far; 0 when nothing was
+  uint64 seq = 3;
+  // true when `since` was older than the ring holds, or from another epoch: the client's record has a gap before
+  // the first envelope it was sent
+  bool truncated = 4;
+}
+
+// hub -> client: telemetry on a stream was dropped for this subscriber because it fell behind.
+message Gap {
+  StreamRef stream = 1;
+  uint64 epoch = 2;
+  // envelopes dropped since the previous Gap on this stream
+  uint64 dropped = 3;
+  // the first seq delivered after the gap
+  uint64 resume_seq = 4;
+}
+
+// hub -> principal: a principal of the same account connected or disconnected. Sent for every online principal
+// right after Welcome, then on each change. This is the account's directory; nothing outside the account appears.
+message Presence {
+  bytes principal = 1;
+  Role role = 2;
+  bool online = 3;
+}
+
+message Ping {
+  uint64 nonce = 1;
+}
+
+message Pong {
+  uint64 nonce = 1;
+}
+
+message Error {
+  enum Code {
+    CODE_UNSPECIFIED = 0;
+    // a frame body, protocol version or kind this hub does not handle
+    CODE_UNSUPPORTED = 1;
+    // Hello rejected: bad credential or a principal already connected elsewhere
+    CODE_UNAUTHENTICATED = 2;
+    // malformed frame or envelope (both or neither of principal/channel, a wrong kind for the direction)
+    CODE_INVALID = 3;
+    // direct envelope to a principal that is not online in this account
+    CODE_UNAVAILABLE = 4;
+    // a limit in Welcome was exceeded; the connection closes after this
+    CODE_LIMIT = 5;
+    // a subscriber fell behind on KIND_SESSION_EVENTS; the connection closes after this, and it resubscribes
+    CODE_SLOW_CONSUMER = 6;
+    // The account is over its work rate (Welcome.limits.account_bytes_per_second): the hub is reading this connection
+    // more slowly until the debt is repaid. Nothing was dropped and the connection stays open. Sent for a wait of 100 ms or
+    // more, at most once per connection every 10 seconds.
+    CODE_THROTTLED = 7;
+  }
+  Code code = 1;
+  // the `ref` of the envelope this is about, when it is about one
+  uint64 ref = 2;
+  // for a person reading a log; never parsed
+  string message = 3;
+}
