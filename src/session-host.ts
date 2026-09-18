@@ -297,6 +297,16 @@ export type Command =
         lineage?: Lineage;
         idempotencyKey?: IdempotencyKey;
     }
+    /**
+     * Pick a SAVED session up again on another page. From the agent's side this is a navigation — everything in its
+     * context describes the page it last ran on — so it names a target the way `agent.start` does rather than going
+     * through `session.send`, which would reach a page that no longer holds it.
+     *
+     * The hash does not change: it stays one conversation on every surface, and the result says so by answering
+     * with the same id. What the session keeps and what it loses is in `CHAT_PAGE.md` §Resuming, and the runtime
+     * says which in the `session-resumed` event that opens the new turn.
+     */
+    | { type: "session.resume"; session: SessionId; target: AgentTarget; idempotencyKey?: IdempotencyKey }
     | { type: "tabs.list"; runtime: RuntimeId }
     /** The devices paired with this runtime's account, as a person manages them. Needs `admin`, which is granted at
      *  the runtime and never passed on. */
@@ -338,6 +348,7 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "approval.answer": "approve",
     "chat.start": "drive",
     "agent.start": "drive",
+    "session.resume": "drive",
     "tabs.list": "drive",
     "device.list": "admin",
     "device.renew": "admin",
@@ -425,6 +436,8 @@ export interface CommandResultData {
     "approval.answer": { resolved: boolean };
     "chat.start": { session: SessionId };
     "agent.start": { session: SessionId };
+    /** the same session, because resuming is not starting a new one */
+    "session.resume": { session: SessionId };
     "tabs.list": { tabs: TabInfo[] };
     "device.list": { devices: DeviceInfo[] };
     /** the new window, so a list can say when it next needs attention without asking again */

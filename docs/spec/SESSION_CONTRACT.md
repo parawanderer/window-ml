@@ -157,6 +157,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `approval.answer`: by the pending step's `seq`; `persist`, `feedback` | approve | | `approval` → `SET_APPROVAL` → `resolveApproval` |
 | `chat.start` | drive | `chat` | nothing background-hosted |
 | `agent.start`: on a tab, a blank tab, or (reserved) headless | drive | `agent`, `tabs`, `headless` | `startRun` → the page → `START_RUN` |
+| `session.resume`: pick a saved session up on another page, by target | drive | `persistence`, `tabs` | nothing |
 | `tabs.list` | drive | `tabs` | nothing |
 | `tab.screenshot`: on demand, size-capped | screen | `screenshots` | `CAPTURE_TAB` |
 | `page.highlight`: a selector, a canvas token, or clear | drive | `highlight` | `__mlHighlight` → `ML_HL_REMOTE` |
@@ -185,6 +186,23 @@ the session's events show what happened.
 A remote approval is a command handed to the runtime's **one `resolveApproval`**, the same function the sidebar's
 click and the IPC channel reach. Nothing new decides a gate, and `approve` is never implied by `drive`. The consent
 model does not change: a gated tool still asks, and remote driving only adds places to answer from.
+
+### Resuming
+
+A saved session picked up on another page is, from the agent's side, a NAVIGATION: everything in its context
+describes the page it last ran on. So it reuses that framing rather than inventing a second one, and it is its own
+command because `session.send` would reach a page that no longer holds the session.
+
+- **The hash does not change.** The result answers with the same session id, and it stays one conversation on every
+  surface.
+- **The runtime says what was lost, in the transcript.** `session-resumed` is the first event of the new turn: the
+  page it is resuming on, the page it was on, how long it had been idle, and what did not survive. It is a fact
+  about the session rather than something anybody said, so a client draws it as a divider and never as a message.
+- **It is the one SESSION-level event kind**, because a chat and a run resume for the same reasons and lose the
+  same things. It never creates a session: a note about a session a client does not hold is not a session.
+- **What is kept and what is dropped** is `CHAT_PAGE.md` §Resuming — messages, config and captured outputs kept, so
+  a `@tool:` pointer still resolves; live element references, the page's `state`, cached fetches, page-defined
+  tools and approval grants dropped, and each named in `dropped`.
 
 ### Devices
 

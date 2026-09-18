@@ -48,7 +48,10 @@ export interface SessionIndexOptions {
     maxSessions?: number;
 }
 
-const KNOWN_KINDS = new Set(["chat", "chat-result", "chat-error", "agent", "agent-step", "agent-result", "agent-cap", "agent-say", "agent-say-seen", "agent-stream", "agent-turn"]);
+const KNOWN_KINDS = new Set(["chat", "chat-result", "chat-error", "agent", "agent-step", "agent-result", "agent-cap", "agent-say", "agent-say-seen", "agent-stream", "agent-turn", "session-resumed"]);
+/** Kinds that describe a SESSION rather than a chat or a run. They never create one: a note about a session this
+ *  index does not hold is not a session, and the kind-from-prefix rule below would have to guess what it was. */
+const SESSION_KINDS = new Set(["session-resumed"]);
 /** A session hash as runtimes mint them. No `:`, so it composes into a SessionKey. */
 const HASH_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const TASK_CAP = 280;
@@ -182,6 +185,7 @@ export class SessionIndex {
             }
         }
         if (!s) {
+            if (SESSION_KINDS.has(ev.kind)) return { accepted: false, reason: "invalid" };
             // A session starts on its first event, whatever kind it is: the index must not lose a run whose start it
             // missed (an off-mode tab whose page bus woke mid-run). The row fills in as more arrives. A hash seen
             // before continues its generation, so a replacement's epoch differs from the one it replaced.

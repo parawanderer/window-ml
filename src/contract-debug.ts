@@ -263,8 +263,31 @@ export interface DebugAgentSay extends DebugBase { kind: "agent-say"; text: stri
 export interface DebugAgentSaySeen extends DebugBase { kind: "agent-say-seen"; sayId: string; }
 
 /** The event stream injected.js emits over window.postMessage for the sidebar. */
+/**
+ * A saved session picked up again on a different page (`session.resume`). The FIRST event of the new turn, and a
+ * fact about the session rather than something anybody said: the log draws it as a divider, and the model is told
+ * the same thing in its own transcript, because everything in its context describes the old page.
+ *
+ * It is SESSION-level rather than chat- or agent-level, and it is the only kind that is: a chat and a run resume
+ * for the same reasons and lose the same things. That is also why it never creates a session — a note about a
+ * session nobody holds is not a session, and the index refuses it.
+ */
+export interface DebugSessionResumed extends DebugBase {
+    kind: "session-resumed";
+    /** the page it is resuming ON */
+    url: string;
+    /** the page it last ran on, when that is known */
+    fromUrl?: string;
+    /** how long it had been idle, in ms, so a reader sees "after two days" rather than doing arithmetic */
+    afterMs: number;
+    /** what did not survive, in words a person and a model both read: "the page's state object", "cached fetches",
+     *  "tools a page script defined", "approval grants". Never empty — something is always dropped. */
+    dropped: string[];
+}
+
 export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError
-    | DebugAgentStart | DebugAgentStep | DebugAgentResult | DebugAgentCap | DebugAgentSay | DebugAgentSaySeen | DebugAgentStream | DebugAgentTurn;
+    | DebugAgentStart | DebugAgentStep | DebugAgentResult | DebugAgentCap | DebugAgentSay | DebugAgentSaySeen | DebugAgentStream | DebugAgentTurn
+    | DebugSessionResumed;
 
 /** Window-bus envelopes between the core (main world) and the sidebar. */
 export interface MlDebugMessage { __mlDebug: MlDebugEvent; }
