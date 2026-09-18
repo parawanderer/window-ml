@@ -188,3 +188,70 @@ test("index: --check-speed reports a cold build and passes well inside its budge
         assert.match(line.join("\t"), /^::notice::The code index built in \d+ ms for 1 files, \d+ records .* inside its \d+ ms budget\.$/);
     } finally { fx.stop(); }
 });
+
+// ---- fixes that came from USING it (see the skill's "what you owe it") ---------------------------------------
+
+test("index: --word anchors the pattern, so a short query stops matching inside longer words", async () => {
+    const fx = fixture({
+        "src/a.ts": "// a.ts — about a table of orders.\nexport const one = 1;   // x\n",
+        "src/b.ts": "// b.ts — a persistable thing, nothing to do with tables.\nexport const two = 2;   // y\n",
+    });
+    try {
+        // The complaint this fixes: `table` also hit "persi(stable)".
+        assert.equal(fx.run("table", "--kind", "file").length, 2, "unanchored: both, one of them noise");
+        const anchored = fx.run("table", "--kind", "file", "--word");
+        assert.deepEqual(anchored.map((r) => r[1]), ["a.ts"], "anchored: only the one that means it");
+        // Alternation survives anchoring, because the anchors wrap the whole group.
+        assert.equal(fx.run("table|persistable", "--kind", "file", "--word").length, 2);
+    } finally { fx.stop(); }
+});
+
+test("index: --undocumented is SCOPED by the query and --kind, so it is a job rather than a survey", async () => {
+    const fx = fixture({
+        "src/keep.ts": "// keep.ts — one.\nexport function keepMe(a: number) { return a; }\n",
+        "src/other.ts": "// other.ts — two.\nexport function otherOne(a: number) { return a; }\nexport const otherTwo = 2;\n",
+    });
+    try {
+        let all = "";
+        try { fx.run("--undocumented"); } catch (e) { all = String(e.stdout); }
+        assert.equal(all.split("\n").filter((l) => /NO DOCSTRING/.test(l)).length, 3, "everything, repo-wide");
+
+        let scoped = "";
+        try { fx.run("other", "--undocumented"); } catch (e) { scoped = String(e.stdout); }
+        assert.match(scoped, /otherOne/);
+        assert.ok(!/keepMe/.test(scoped), "the query narrows it to the module you are actually fixing");
+
+        let byKind = "";
+        try { fx.run("other", "--undocumented", "--kind", "const"); } catch (e) { byKind = String(e.stdout); }
+        assert.match(byKind, /otherTwo/);
+        assert.ok(!/otherOne/.test(byKind));
+    } finally { fx.stop(); }
+});
+
+test("index: --new WARNS when uncommitted work under src/ is outside the range it is about to check", async () => {
+    const fx = fixture({ "src/a.ts": "// a.ts — one.\nexport const one = 1;   // x\n" });
+    try {
+        execFileSync("git", ["init", "-q"], { cwd: fx.root });
+        execFileSync("git", ["add", "-A"], { cwd: fx.root });
+        execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"], { cwd: fx.root });
+        execFileSync("git", ["branch", "-f", "base-ref"], { cwd: fx.root });
+        // An UNCOMMITTED export with no docstring: `base...HEAD` cannot see it, so the check would pass silently.
+        writeFileSync(join(fx.root, "src/a.ts"), "// a.ts — one.\nexport const one = 1;   // x\nexport const sneaky = 2;\n");
+
+        const res = execFileSync(process.execPath, [join(fx.root, "scripts", "index.mjs"), "--new", "base-ref"],
+            { cwd: fx.root, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+        assert.match(res, /everything added since base-ref is documented/, "the range really is clean…");
+        // …and the tool says what it did not look at, which is the whole point: a falsely clean answer is the
+        // worst thing a check can produce, and this one is reachable by forgetting a flag.
+        let warned = "";
+        try {
+            execFileSync(process.execPath, [join(fx.root, "scripts", "index.mjs"), "--new", "base-ref"],
+                { cwd: fx.root, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
+        } catch { /* it exits 0 here */ }
+        warned = execFileSync("sh", ["-c",
+            `${process.execPath} ${join(fx.root, "scripts", "index.mjs")} --new base-ref 2>&1 1>/dev/null`],
+            { cwd: fx.root, encoding: "utf8" });
+        assert.match(warned, /1 uncommitted file\(s\) under src\/ are NOT in this range/);
+        assert.match(warned, /Pass --staged/);
+    } finally { fx.stop(); }
+});

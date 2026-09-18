@@ -3,6 +3,7 @@
 //
 //   node scripts/index.mjs                       # everything
 //   node scripts/index.mjs 'pill|chip|badge'     # a REGEX over name + summary (case-insensitive)
+//   node scripts/index.mjs table --word           # …anchored, so it does not also match "persistable"
 //   node scripts/index.mjs table --kind file     # which MODULES are about tables
 //   node scripts/index.mjs '' --kind css         # every documented CSS class
 //   node scripts/index.mjs fetch --sig           # …with each symbol's signature
@@ -83,6 +84,7 @@ const queryArg = (() => {
 })();
 const kinds = opt("kind") ? new Set(opt("kind").split(",").map((s) => s.trim())) : null;
 const wantExported = flag("exported"), wantLocal = flag("local");
+const wholeWord = flag("word");
 const withSig = flag("sig");
 
 // ---- reading docstrings ------------------------------------------------------------------------------------
@@ -101,17 +103,25 @@ function firstSentence(doc) {
     return one.length > 160 ? `${one.slice(0, 159).trimEnd()}…` : one;
 }
 
-/** A JSDoc block or a run of `//` lines immediately above `line`, or "". */
+/** A JSDoc block or a run of `//` lines immediately above `line`, or "". Never the FILE HEADER: a comment block
+ *  that starts at the top of the file describes the module, and letting the first declaration inherit it makes that
+ *  declaration look documented while saying nothing about itself — the exact failure the index exists to catch. */
 function docAbove(lines, i) {
     let j = i - 1;
     if (lines[j]?.trim().endsWith("*/")) {
         const end = j;
         while (j >= 0 && !lines[j].includes("/*")) j--;
-        return lines.slice(j, end + 1).join("\n");
+        return isHeader(lines, j) ? "" : lines.slice(j, end + 1).join("\n");
     }
     const out = [];
     while (j >= 0 && /^\s*\/\//.test(lines[j])) { out.unshift(lines[j]); j--; }
-    return out.join("\n");
+    return isHeader(lines, j + 1) ? "" : out.join("\n");
+}
+
+/** Does the comment block starting at `start` begin the FILE? (Only blank lines above it.) */
+function isHeader(lines, start) {
+    for (let k = start - 1; k >= 0; k--) if (lines[k].trim()) return false;
+    return true;
 }
 
 /** A file's HEADER: the comment block it opens with, before any code. This is the row that answers "is there
@@ -342,6 +352,9 @@ const { records, scanned, files } = buildIndex({ rebuild: flag("rebuild") });
 function cssClassDocs() {
     const doc = new Map();
     for (const rel of CSS_FILES) {
+        // A configured stylesheet that is not there (renamed, or a checkout that does not carry it) is skipped, not
+        // fatal: this runs as a pre-commit gate, and crashing would block every commit while looking like a tool bug.
+        if (!existsSync(path.join(ROOT, rel))) continue;
         const css = readFileSync(path.join(ROOT, rel), "utf8").split("\n");
         css.forEach((l, i) => {
             const m = /^(\.[a-z][a-z0-9-]*)(?:[,\s{:])/.exec(l);
@@ -363,7 +376,7 @@ function documentedAncestor(cls, docs) {
 }
 
 // THE RATCHET. Two things a change ADDS must be findable: a CSS class under a new family, and an exported symbol.
-// Both are checked against the DIFF, never against the repo, because the repo has 176 undocumented exports and 323
+// Both are checked against the DIFF, never against the repo, because the repo has 178 undocumented exports and 323
 // uncommented classes — and a check that ships red is one people learn to scroll past, which enforces nothing. What
 // it asks for is the thing that stops the next person rebuilding what you just wrote: one sentence saying what it
 // is FOR, in words someone would search.
@@ -377,7 +390,7 @@ if (flag("new-css") || flag("new")) {
     const range = flag("staged") ? ["diff", "--cached", "--unified=0", base] : ["diff", "--unified=0", `${base}...HEAD`];
     let diff, srcDiff = "";
     try {
-        diff = execFileSync("git", [...range, "--", ...CSS_FILES], { cwd: ROOT, encoding: "utf8" });
+        diff = execFileSync("git", [...range, "--", ...CSS_FILES.filter((f) => existsSync(path.join(ROOT, f)))], { cwd: ROOT, encoding: "utf8" });
         // `-U0` with a file header per hunk, so an added declaration can be attributed to its file.
         if (flag("new")) srcDiff = execFileSync("git", [...range, "--", "src"], { cwd: ROOT, encoding: "utf8" });
     }
@@ -386,6 +399,19 @@ if (flag("new-css") || flag("new")) {
         // build because it could not find a baseline teaches people to pass --no-verify, and then it enforces nothing.
         console.log(`index: cannot diff against ${base} — skipping the CSS ratchet.`);
         process.exit(0);
+    }
+    // A FALSELY CLEAN answer is the worst thing this check can do, and there is one way to get one: `--new <base>`
+    // without `--staged` diffs COMMITS, so work that is staged-but-uncommitted is invisible and the check passes
+    // having looked at nothing. That is not hypothetical — it happened twice inside ten minutes while this tool was
+    // being written. The tool cannot guess which range you meant (CI wants commits, the hook wants the index), so it
+    // says what it did not look at.
+    if (!flag("staged")) {
+        let pending = "";
+        try { pending = execFileSync("git", ["status", "--porcelain", "--", "src"], { cwd: ROOT, encoding: "utf8" }); }
+        catch { /* not a work tree: nothing to warn about */ }
+        const n = pending.split("\n").filter(Boolean).length;
+        if (n) console.error(`index: ${n} uncommitted file(s) under src/ are NOT in this range (${base}...HEAD).`
+            + ` Pass --staged to check what is about to be committed.`);
     }
     const docs = cssClassDocs();
     const added = new Set();
@@ -480,7 +506,16 @@ if (flag("headerless")) {
 // (--new-css) rather than part of this, because 323 of the stylesheet's classes have no comment and a check that
 // ships red is one people learn to scroll past.
 if (flag("undocumented")) {
-    const bad = records.filter((r) => r.exported && !r.doc && r.kind !== "css" && r.kind !== "file");
+    // Honours the QUERY and `--kind`, because 178 rows repo-wide is a survey nobody acts on while
+    // `index.mjs sw-values --undocumented` is a job you can finish. The unfiltered form still exists for CI.
+    let bad = records.filter((r) => r.exported && !r.doc && r.kind !== "css" && r.kind !== "file");
+    if (kinds) bad = bad.filter((r) => kinds.has(r.kind));
+    if (queryArg) {
+        let re;
+        try { re = new RegExp(wholeWord ? `\\b(?:${queryArg})\\b` : queryArg, "i"); }
+        catch (e) { console.error(`index: ${queryArg} is not a regex (${e.message})`); process.exit(2); }
+        bad = bad.filter((r) => re.test(r.name) || re.test(r.where));
+    }
     for (const r of bad) console.log(`${r.kind}\t${r.name}\t${r.where}\t— NO DOCSTRING`);
     if (bad.length) { console.error(`\n${bad.length} undocumented — they cannot be found by concept, so they will be rebuilt.`); process.exit(1); }
     console.log("index: all documented");
@@ -493,7 +528,9 @@ if (wantExported) rows = rows.filter((r) => r.exported);
 if (wantLocal) rows = rows.filter((r) => !r.exported);
 if (queryArg) {
     let re;
-    try { re = new RegExp(queryArg, "i"); }
+    // `--word` anchors the whole pattern, which is the answer to the one real noise complaint: a bare `table`
+    // matches "persi(stable)". Alternation still works, because the anchors go outside the group.
+    try { re = new RegExp(wholeWord ? `\\b(?:${queryArg})\\b` : queryArg, "i"); }
     catch (e) { console.error(`index: ${queryArg} is not a regex (${e.message})`); process.exit(2); }
     // Over the NAME, the SUMMARY and the path — searching prose is the point, and a path match is how `--kind file`
     // answers "anything under sidebar/". The signature joins in only when it is being shown.

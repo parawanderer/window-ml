@@ -392,7 +392,7 @@ change ADDS needs a sentence; **`--headerless`** is a hard gate, because every s
 a header saying what the module is for and it must stay that way; **`--check-speed`** holds the tool to its
 own time budget (a cold build is ~70 ms; it warns at 750 ms and fails at 3 s, with what to do about it in the
 message), because an index that stops being cheap stops being run. The first is a ratchet rather than a rule
-because 176 exports and 323 of the stylesheet's 557 classes have none, and a check that ships red is one
+because 178 exports and 323 of the stylesheet's 557 classes have none, and a check that ships red is one
 people learn to scroll past — so it reads the diff against the merge base and asks only about what you are
 adding. A CSS member of a documented block passes on its ancestor (`.r-diff-head` inherits `.r-diff`), because
 the failure being prevented is a NEW family under a name nobody would grep, not a paragraph per modifier.

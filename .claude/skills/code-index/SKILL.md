@@ -43,6 +43,7 @@ node scripts/index.mjs '' --local | cut -f2 | sort | uniq -d   # helper names us
 | Flag | Effect |
 | --- | --- |
 | `--kind a,b` | `file`, `component`, `hook`, `function`, `class`, `type`, `enum`, `const`, `css` |
+| `--word` | anchor the whole pattern, so `table` stops matching "persi**stable**" |
 | `--exported` / `--local` | module surface vs. a file's private declarations |
 | `--sig` | include the signature column (and search it) |
 | `--stats` | how big the index is, by kind, and how many files were rescanned |
@@ -68,7 +69,12 @@ node scripts/index.mjs --headerless             # source files with no header co
 node scripts/index.mjs --undocumented           # every undocumented export repo-wide (a survey — ships red)
 ```
 
-**`--new` is a ratchet, not a rule**, and that is deliberate: 176 exports and 300+ CSS classes have no
+**`--new` without `--staged` cannot see staged work**, because it diffs COMMITS — so it warns on stderr
+naming how many uncommitted files under `src/` fall outside the range it checked. A falsely clean answer is
+the worst thing a check can produce, and this one is reachable by forgetting a flag (it happened twice in ten
+minutes while the tool was being written).
+
+**`--new` is a ratchet, not a rule**, and that is deliberate: 178 exports and 300+ CSS classes have no
 docstring today, and a check that ships red is one people learn to scroll past. It reads the diff against
 the merge base and asks only about what you are ADDING. `--staged` compares the base to the INDEX, which is
 the only thing a pre-commit hook may ask about — `base...HEAD` diffs COMMITS, so a hook using it passes
@@ -95,7 +101,12 @@ can stay a rule. Keep it that way: a new file opens with a comment saying what t
   and the content HASH is what decides, because a branch switch rewrites mtimes wholesale and a cache that
   trusted them would rebuild everything — or, worse, treat a restored older file as fresh. Delete the file
   or pass `--rebuild` if you ever doubt it; a cold build is ~100ms, warm ~30ms.
-- **A regex matches substrings**, so `table` also hits "persistable". Anchor it (`\btable`) when that bites.
+- **A regex matches substrings**, so `table` also hits "persistable". `--word` anchors the whole pattern
+  (alternation still works: `--word 'table|frame'`).
+- **`--undocumented` takes the query and `--kind` too.** Repo-wide it is 178 rows, which is a survey nobody
+  acts on; `node scripts/index.mjs sw-values --undocumented` is a job you can finish. CI runs it unfiltered.
+- **A file HEADER is never a declaration's docstring**, even with no blank line between them. Letting the
+  first symbol inherit it made it look documented while saying nothing about itself.
 - **CSS is one row per class**, from its documented declaration — not one per `:hover`/media override.
 - It **replaced `scripts/components.mjs`**, which covered only the sidebar's components and CSS. Anything
   still calling that name is stale.

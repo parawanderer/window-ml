@@ -158,7 +158,7 @@ jobs:
       # and fails only on a change in KIND — see SPEED_WARN_MS in scripts/index.mjs for the measurement behind both.
       - name: The code index is still fast
         run: node scripts/index.mjs --check-speed
-      # A RATCHET, not a rule: 176 existing exports and 300+ existing CSS classes have no docstring, and a
+      # A RATCHET, not a rule: 178 existing exports and 300+ existing CSS classes have no docstring, and a
       # check that ships red is one people learn to scroll past. Only what a PR ADDS is asked about.
       - name: Everything this PR adds is documented
         run: |
