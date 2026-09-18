@@ -15,6 +15,7 @@ import { createFrameReader } from "../protostream";
 import { AgreementKey, Bytes, bytes } from "./hpke";
 import { Identity, accountId, helloTranscript, principalId, sign, LABEL } from "./keys";
 import { Grant, Opened, Receiver, Recipient, Sender, sealCommand, sealResult } from "./seal";
+import { hubCryptoReason, hubCryptoSupported } from "./support";
 import { Envelope, Frame, HubErrorFrame, Kind, Limits, Role, encodeFrames } from "./wire";
 import type { Position, StreamRef } from "./wire";
 
@@ -59,10 +60,10 @@ export type HubEvent =
     /** events dropped because the consumer stopped reading: a full queue is reported, never silent */
     | { kind: "dropped"; count: number };
 
-/** Why connecting failed. */
+/** Why connecting failed. `unsupported` is the only one that is about THIS BROWSER rather than about the hub. */
 export class ConnectError extends Error {
     constructor(
-        readonly reason: "transport" | "protocol" | "wrong-hub" | "refused",
+        readonly reason: "transport" | "protocol" | "wrong-hub" | "refused" | "unsupported",
         message: string,
     ) {
         super(message);
@@ -102,6 +103,10 @@ export class HubClient {
 
     /** Connect, check the hub's name, answer its challenge, and wait for the welcome. */
     static async connect(config: HubConfig): Promise<HubClient> {
+        // Before the socket, because a browser without Ed25519 or X25519 cannot answer the challenge and would
+        // otherwise learn that as "the hub refused you" (see docs/dev/hub-client.md).
+        const support = await hubCryptoSupported();
+        if (!support.ok) throw new ConnectError("unsupported", hubCryptoReason(support));
         const socket = new WebSocket(config.url);
         socket.binaryType = "arraybuffer";
         const reader = createFrameReader();

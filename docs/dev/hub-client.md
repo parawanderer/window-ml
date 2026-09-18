@@ -41,6 +41,31 @@ the other two schemas.
 - **X25519 has no "public key from private" either**, but it does have the base point, so the public key is
   `x25519(sk, 9)` (`importAgreementKey`).
 
+## Which browsers can do this at all
+
+Two of the curves arrived late and not everywhere: **Ed25519** (identities, every certificate) and **X25519**
+(HPKE's key agreement, so every sealed command and every encrypted stream). The floor is **Chrome 137** and
+**Safari 17**; Firefox has Ed25519 and, at the time of writing, not X25519.
+
+There is no fallback and there cannot be one. A WASM implementation would need the raw private key, which is the
+property the whole design rests on, so a browser without these curves cannot pair, cannot verify a chain and cannot
+open a seal.
+
+**`hubCryptoSupported()` (`src/hub/support.ts`) is the one place that asks**, and it EXERCISES each curve rather
+than reading a list: generate, then actually sign and verify, or generate two keys and agree. An implementation that
+produces a key it will not then use fails at a point far from the cause otherwise.
+
+The reason this is a function and not a comment: `verify()` swallows an unsupported-algorithm error into `false`,
+which is right for a bad key and is indistinguishable from a browser that has never heard of Ed25519. Without the
+probe, a person on an old browser meets that as "that certificate did not verify" — a sentence about their hub, when
+nothing is wrong with their hub. `hubCryptoReason()` says it the other way round, and names the two versions.
+
+**The extension does NOT set `minimum_chrome_version`, deliberately.** A hub is one optional feature of an extension
+whose other features work on an older engine, and refusing to install is a heavier answer than the question
+deserves. The build targets (`chrome114`, and `safari16` for the web build) are about SYNTAX and are unrelated: the
+floor here is what the engine's crypto implements, which no downlevelling reaches. So the gate is the probe, at the
+point the UI offers to pair, the same way every other capability in this codebase is handled — absent means no.
+
 ## Checks, in the order a failure is easiest to read
 
 1. `tests/hub-hpke.test.mjs` runs the RFC's own vector for this suite. If this fails, HPKE is wrong and everything
