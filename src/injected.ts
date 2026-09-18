@@ -38,12 +38,8 @@ import { mlPipe, PIPE_SYNTAX } from "./text-pipe";
 import { citeParam } from "./tool-params";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, googleSheetCsvUrl, googleSheetId, externalSheetIds, nonEmptyTables, setPierceClosedShadow, viewportRect, isElement, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine, isCurrentPage, typeFromExtension } from "./dom";
 import { castTableColumns, tableFromDelimited, tableShape, asTable } from "./table-data";
-import { FetchCache, estimateFetchResultBytes } from "./fetch-cache";
 import { isTable } from "./table-brand";
 import { parseInfo } from "./resource-model";   // chat_metadata: the machine's devices and memory
-/** The page fetch cache's estimated memory budget. Enough for the table a step just fetched plus a few smaller
- *  bodies; far below what an unbounded session used to accumulate in the user's tab. */
-const FETCH_CACHE_BUDGET_BYTES = 64_000_000;
 import { makeAnswerFacade, finalizeAnswer, resolveOutputs } from "./answer-set";
 import { isSelfSourceUrl } from "./self-source";
 import { BUILD_INFO } from "./build-info.gen";
@@ -72,6 +68,7 @@ import type { AgentControl } from "./ml-agent";
 import { models, serverTools, execServerTool, info, capabilities, getModel, embed, config, setModel, ps, unload } from "./ml-server";
 import { defineTool, lookTool, locateTool, clickTool, typeTool, navigateTool, fetchTool, pythonTool, chatMetaTool } from "./ml-tool-factories";
 import { read, screenshot, _shotBox, _stitchFullPage, _resolveVisionModel, _modelSees, _nativeLookTool, _imageToDataUrl, _fetchImageBase64 } from "./ml-vision";
+import { mlFetchCache } from "./ml-fetch-cache";
 
 /** Histories `ml.chat` made for a single call. They have no conversation behind them, so their requests carry no
  *  hint session — a new session per call is the "per message" case, from which the server learns nothing. */
@@ -306,21 +303,6 @@ const _resolveTable = function(target: string | Element, raw = false): { kind: "
     }
     return { kind: "rows", columns: t.columns, rows: raw ? t.rows : castTableColumns(t.columns, t.rows) };
 };
-
-// Results of successful `ml.fetch(url)` calls, keyed by URL. Populated when a fetch resolves (the fetch
-// itself was already approved/consented to reach the background), so a follow-up READONLY `exec` that
-// re-reads the same URL gets the cached result with NO approval — the `_fetchCached` reader the read-only
-// dialect's `ml.fetch` is bound to. The python_exec+Google-Sheet parallel: approve the source ONCE, then
-// operate on it freely. Page-scoped (module lifetime); holds only public, uncredentialed, non-rendered bytes
-// (a credentialed / rendered fetch is authenticated or session-bound → NEVER cached).
-// BUDGETED (fetch-cache.ts): it was a bare Map that kept every fetched body — and every parsed CSV's rows —
-// in the user's tab for the life of the page. The most recent fetch is always kept, since the next step
-// reading it is the handoff this cache exists for; evicted URLs are remembered so a miss can say so.
-// Each budget eviction goes to the housekeeping log (docs/dev/housekeeping.md), reported from here because the
-// cache lives in the page: the worker stamps it page-origin, and only this tab reads its key (the URL) back.
-const mlFetchCache = new FetchCache<import("./contract").FetchResult>(FETCH_CACHE_BUDGET_BYTES, estimateFetchResultBytes, undefined, (key, bytes) => {
-    makeBackgroundTaskPromise("HOUSEKEEPING_REPORT_REQUEST", "HOUSEKEEPING_REPORT_RESPONSE", { subsystem: "fetch-cache", kind: "evict", reason: "budget", key, bytes, detail: { budgetBytes: FETCH_CACHE_BUDGET_BYTES } }).catch(() => { /* a log, never worth a failure */ });
-});
 
 (function() {
 
