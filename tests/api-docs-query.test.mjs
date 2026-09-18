@@ -267,3 +267,4 @@ test("real parts: every public method splits out as an expandable member", () =>
         assert.match(out, new RegExp(`## \`ml\\.${name}\``), `${name} did not expand as a member`);
     }
 });
+

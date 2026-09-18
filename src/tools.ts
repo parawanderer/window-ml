@@ -864,6 +864,13 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                             "set this to force a fresh full re-print. Do NOT set it if you recently checked the " +
                             "definitions you need (repeats within a dig are collapsed to save space). Default off."
                     },
+                    pipe: {
+                        type: "string",
+                        description: "Reduce what this call returns, e.g. 'grep -i signal', 'grep -n fetch | head 20'. " +
+                            "Applied LAST, to whatever the other args selected. Reach for it when you want LINES rather " +
+                            "than sections: `search` returns every section that mentions a term, which is the wrong grain " +
+                            "for a question like \"which methods take a signal\". " + PIPE_REF
+                    },
                     diff: {
                         type: "boolean",
                         description: "Return the EXACT local diff of this build's uncommitted changes (vs its commit) " +
@@ -877,7 +884,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             // handed to the slicer as searchable env sections. Resolved for the default view (which shows them) and
             // for a `search` (the model hunts the HUD shortcut via search, as observed) — but NOT for a member/type
             // drill, which shouldn't pay two background round-trips for context it didn't ask for.
-            run: async (args: ApiDocsQuery & { diff?: boolean } = {}, ctx?: ToolContext): Promise<string> => {
+            run: async (args: ApiDocsQuery & { diff?: boolean; pipe?: string } = {}, ctx?: ToolContext): Promise<string> => {
                 if (args.diff) return dirtyDiffSection();   // explicit: the exact local diff (never in the default view)
                 const wantEnv = isDefaultQuery(args) || !!(args.search && args.search.trim());
                 const env = wantEnv
@@ -892,7 +899,14 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // path) collapses chunks already printed earlier in the dig to one-line stubs.
                 const mem = ctx?.docsMemory;
                 if (mem) { mem.sinceDocs = 0; if (args.fresh) mem.shown.clear(); }
-                return queryApiDocs(ML_API_PARTS, args, env, mem?.shown);
+                const view = queryApiDocs(ML_API_PARTS, args, env, mem?.shown);
+                // The reduction lives HERE rather than in api-docs-query.ts, which has no imports on purpose, and it
+                // goes through `runPipe` rather than growing a second one: PIPE_CMDS is the single source for every
+                // description of the dialect, and a private reduction in one tool is how that stops being true.
+                const pipe = typeof args.pipe === "string" ? args.pipe.trim() : "";
+                if (!pipe) return view;
+                try { return `${runPipe(view, pipe)}\n\n(piped through \`${pipe}\`)`; }
+                catch (e) { const msg = errText(e as Error); return `Pipe error: ${msg}${pipeHint(msg)}`; }
             }
         }),
         T({
