@@ -48,7 +48,7 @@ const receiverFor = async (party, root) =>
 test("the vendored vectors are the pinned file", () => {
     const blob = createHash("sha1").update(`blob ${raw.length}\0`).update(raw).digest("hex");
     assert.equal(blob, PIN.blob, `re-vendor from ${PIN.repo}:${PIN.path} and update the pin`);
-    assert.equal(V.version, 1);
+    assert.equal(V.version, 2, "version 2: every certificate carries a validity window");
 });
 
 test("the keys the seeds name are the keys the vectors record", async () => {
@@ -294,4 +294,58 @@ test("replyTo answers a command with the key the sender's own certificate bound"
     const back = replyTo(opened);
     assert.equal(toHex(back.principal), phone.described.principal_id);
     assert.equal(toHex(back.agreementKey), phone.described.agreement_public);
+});
+
+// ------------------------------ expiry, which is the revocation that needs nobody online ------------------------
+
+test("a certificate without a window, or with too long a one, is refused", async () => {
+    const { MAX_CERTIFICATE_MS, issueCertificate, verifyChain, generateIdentity } = await import("../src/hub/keys.ts");
+    const { generateAgreementKey } = await import("../src/hub/hpke.ts");
+    const root = await generateIdentity();
+    const device = await generateIdentity();
+    const agreement = await generateAgreementKey();
+    const base = {
+        subject: device.publicKey,
+        agreementKey: agreement.publicKey,
+        role: Role.ROLE_CLIENT,
+        scopes: [SCOPE.view],
+        notBeforeMs: NOW,
+        notAfterMs: NOW + 1000,
+    };
+    // the issuer refuses to make one, so a caller learns at issuance rather than at somebody else's verifier
+    await assert.rejects(() => issueCertificate(root, { ...base, notAfterMs: 0 }), /window/);
+    await assert.rejects(() => issueCertificate(root, { ...base, notBeforeMs: 0 }), /window/);
+    await assert.rejects(
+        () => issueCertificate(root, { ...base, notAfterMs: NOW + MAX_CERTIFICATE_MS + 1 }),
+        /longer than/,
+    );
+    // and a verifier refuses one that was made anyway
+    const longest = await issueCertificate(root, { ...base, notAfterMs: NOW + MAX_CERTIFICATE_MS });
+    assert.ok(await verifyChain(root.publicKey, [longest], NOW), "the longest window there is, at its edge");
+    await assert.rejects(() => verifyChain(root.publicKey, [longest], NOW + MAX_CERTIFICATE_MS + 1), /not valid now/);
+});
+
+test("a box connector may neither pair nor approve", async () => {
+    const { BOX_CONNECTOR_FORBIDS, issueCertificate, verifyChain, generateIdentity } = await import("../src/hub/keys.ts");
+    const { generateAgreementKey } = await import("../src/hub/hpke.ts");
+    const root = await generateIdentity();
+    const box = await generateIdentity();
+    const agreement = await generateAgreementKey();
+    const spec = (extra) => ({
+        subject: box.publicKey,
+        agreementKey: agreement.publicKey,
+        role: Role.ROLE_BOX_CONNECTOR,
+        scopes: [SCOPE.view],
+        notBeforeMs: NOW,
+        notAfterMs: NOW + 1000,
+        ...extra,
+    });
+    const chain = async (extra) => verifyChain(root.publicKey, [await issueCertificate(root, spec(extra))], NOW);
+    await assert.rejects(() => chain({ mayPair: true }), /may pair or approve/);
+    for (const forbidden of BOX_CONNECTOR_FORBIDS) {
+        await assert.rejects(() => chain({ scopes: [SCOPE.view, forbidden] }), /may pair or approve/, forbidden);
+    }
+    assert.ok(await chain({}), "what it may hold");
+    // the same scope on a client is fine: the rule is about the role, not the names
+    assert.ok(await chain({ role: Role.ROLE_CLIENT, scopes: [SCOPE.approve] }));
 });

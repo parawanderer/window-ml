@@ -25,6 +25,20 @@ export const LABEL = {
 
 /** The longest chain accepted: a leaf issued by the root, or by one delegate the root allowed to pair. */
 export const MAX_CHAIN = 2;
+
+/**
+ * The longest a certificate may be valid for. Every certificate carries a real window, so expiry is the one form of
+ * revocation that needs no list, no hub and nobody online: a device that stops being renewed stops having access.
+ * Revoking is then simply not renewing, and a hub that lost its list and a runtime that never came back still
+ * converge on the device losing access.
+ */
+export const MAX_CERTIFICATE_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * Scopes a box connector's certificate may never carry: it relays one machine's telemetry and answers a few commands
+ * about it, which involves approving nothing and driving nothing.
+ */
+export const BOX_CONNECTOR_FORBIDS = ["approve", "control"] as const;
 /** Bounds a hello is checked against before anything in it is compared, because it arrives unauthenticated. */
 export const MAX_CERT_BYTES = 1024;
 export const MAX_SCOPES = 16;
@@ -113,9 +127,10 @@ export interface CertSpec {
     scopes: string[];
     /** may this subject issue certificates of its own (never more than it holds)? */
     mayPair?: boolean;
-    notBeforeMs?: number;
-    /** 0 means no expiry; a child may never outlive its issuer */
-    notAfterMs?: number;
+    /** required: a certificate with no window is refused by every verifier */
+    notBeforeMs: number;
+    /** required, within `MAX_CERTIFICATE_MS` of `notBeforeMs`; a child may never outlive its issuer */
+    notAfterMs: number;
     /** what a person calls this device */
     label?: string;
 }
@@ -125,6 +140,10 @@ export interface CertSpec {
  * it may do. This is the browser half of pairing; the hub verifies it with public keys only and holds no secret.
  */
 export async function issueCertificate(issuer: Identity, spec: CertSpec): Promise<Certificate> {
+    if (spec.notBeforeMs <= 0 || spec.notAfterMs <= spec.notBeforeMs)
+        throw new ChainError("a certificate needs a window that begins before it ends");
+    if (spec.notAfterMs - spec.notBeforeMs > MAX_CERTIFICATE_MS)
+        throw new ChainError(`a certificate may not be valid for longer than ${MAX_CERTIFICATE_MS} ms`);
     const body = CertificateBody.encode({
         subject: spec.subject,
         agreementKey: spec.agreementKey,
@@ -132,8 +151,8 @@ export async function issueCertificate(issuer: Identity, spec: CertSpec): Promis
         role: spec.role,
         scopes: spec.scopes,
         mayPair: spec.mayPair ?? false,
-        notBeforeMs: spec.notBeforeMs ?? 0,
-        notAfterMs: spec.notAfterMs ?? 0,
+        notBeforeMs: spec.notBeforeMs,
+        notAfterMs: spec.notAfterMs,
         label: spec.label ?? "",
     }).finish();
     return { body, signature: await sign(issuer, LABEL.certificate, bytes(body)) };
@@ -162,6 +181,8 @@ export async function verify(
     const signed = concat(text.encode(label), bytes);
     return crypto.subtle.verify({ name: "Ed25519" }, key, signature, signed);
 }
+
+const isForbiddenForBox = (s: string) => (BOX_CONNECTOR_FORBIDS as readonly string[]).includes(s);
 
 const SCOPE_NAME = new RegExp(`^[a-z0-9._-]{1,${MAX_SCOPE_BYTES}}$`);
 
@@ -196,12 +217,18 @@ export async function verifyChain(root: Bytes, chain: Certificate[], nowMs: numb
         if (!sameBytes(issuer, expected)) throw new ChainError("an issuer is not the next subject");
         if (!(await verify(issuer, LABEL.certificate, bytes(chain[i].body), bytes(chain[i].signature))))
             throw new ChainError("a certificate signature did not verify");
-        if (nowMs < body.notBeforeMs || (body.notAfterMs !== 0 && nowMs > body.notAfterMs))
+        // A real window on every certificate, so expiry is the revocation that works with nobody online.
+        if (body.notBeforeMs === 0 || body.notAfterMs === 0)
+            throw new ChainError("a certificate without a validity window");
+        if (body.notAfterMs <= body.notBeforeMs || body.notAfterMs - body.notBeforeMs > MAX_CERTIFICATE_MS)
+            throw new ChainError("a certificate valid for longer than the maximum");
+        if (nowMs < body.notBeforeMs || nowMs > body.notAfterMs)
             throw new ChainError("a certificate is not valid now");
+        if (body.role === Role.ROLE_BOX_CONNECTOR && (body.mayPair || body.scopes.some(isForbiddenForBox)))
+            throw new ChainError("a box connector that may pair or approve");
         if (parent) {
             if (!parent.mayPair) throw new ChainError("an intermediate may not pair");
-            if (parent.notAfterMs !== 0 && (body.notAfterMs === 0 || body.notAfterMs > parent.notAfterMs))
-                throw new ChainError("a certificate outlives its issuer");
+            if (body.notAfterMs > parent.notAfterMs) throw new ChainError("a certificate outlives its issuer");
             if (!body.scopes.every((s) => parent.scopes.includes(s)))
                 throw new ChainError("a certificate grants a scope its issuer does not hold");
         }

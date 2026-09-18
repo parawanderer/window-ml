@@ -92,7 +92,14 @@ async function device(root, role, scopes) {
     const identity = await generateIdentity();
     const agreement = await generateAgreementKey();
     const chain = [
-        await issueCertificate(root, { subject: identity.publicKey, agreementKey: agreement.publicKey, role, scopes }),
+        await issueCertificate(root, {
+            subject: identity.publicKey,
+            agreementKey: agreement.publicKey,
+            role,
+            scopes,
+            notBeforeMs: Date.now() - 3_600_000,
+            notAfterMs: Date.now() + 3_600_000,
+        }),
     ];
     return { identity, agreement, chain, principal: await principalId(identity.publicKey) };
 }

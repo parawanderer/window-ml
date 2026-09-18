@@ -71,6 +71,13 @@ the other two schemas.
 - **The checks are in a deliberate order** (sizes, decryption, chain, sender, signature, addressing, clock, scope,
   and the nonce last), so only an authenticated command inside its clock window can occupy a place in the replay
   window. Adding a check in the middle is fine; moving the nonce earlier is not.
+- **A certificate with no expiry is refused, and one may not outlast 90 days.** Expiry is the only revocation that
+  works with nobody online: a runtime's allowlist stops a revoked device at once, but an account nobody is watching
+  needs the clock. Revoking is not renewing, and renewal is an ordinary sealed command to a device holding
+  `mayPair`. `issueCertificate` refuses a spec without a window, so a caller learns at issuance rather than at
+  somebody else's verifier.
+- **A box connector may neither pair nor approve**, enforced rather than documented: the rule is about the role, so
+  the same scopes on a client are fine.
 - **A grant's `fromCounter` is a permission, not a note.** A reader refuses a frame below it, so a device paired this
   morning cannot read last night out of a ring the hub still holds. Each key keeps the counter its own grant covers,
   so a rotation grants from where it begins while the old key keeps covering what it always did.
