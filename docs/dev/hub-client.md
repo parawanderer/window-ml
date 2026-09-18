@@ -65,6 +65,11 @@ the other two schemas.
 
 ## Traps
 
+- **`next()` latches the close.** Once the socket has gone, every call resolves with that same `closed` event rather
+  than waiting forever, because a reconnect loop built on a promise that never settles looks like a service worker
+  eviction for an hour before it looks like this.
+- **The event queue is bounded** (`MAX_QUEUED_EVENTS`). A consumer that stops draining while a stream publishes loses
+  the oldest events and is told how many with a `dropped` event, which is kinder than a tab's memory.
 - **A hub is not trusted with anything, including who sent something.** `Envelope.sender` is the hub's word: it is
   bound into the HPKE info, so a ciphertext attributed to anyone else does not open, and what a runtime acts on is the
   signature inside the seal.
