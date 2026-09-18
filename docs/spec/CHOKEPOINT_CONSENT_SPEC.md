@@ -1,6 +1,6 @@
 # Spec: enforce privileged-op consent at the BACKGROUND choke point
 
-Status: **implemented + tested** (background.ts: `senderTrust` + `pendingGrants` +
+Status: **implemented + tested** (sw-consent.ts: `senderTrust` + `pendingGrants` +
 `isBlockedFetchTarget`; the four handler guards). `tests/background.test.js` covers
 it: four `SECURITY (…)` refusal tests, a trusted-surface positive, and a
 grant-*positive* end-to-end (`SECURITY (grant)`) — an approved design-A run reads

@@ -32,17 +32,28 @@ the page doesn't.
 lives in the page's **main world** (reachable by page scripts/userscripts), not
 the isolated content-script world.
 
-`background.ts` is the message router + run/approval/consent/print/nav spine;
-three cohesive leaf layers are split into their own modules it imports (all
-bundled back into `dist/background.js` by esbuild, so the split is invisible at
-runtime and to the tests, which load the bundle): **`sw-llm.ts`** (the
-per-format request builders `API_FORMATS`, `getConfig`, model-capability probes,
-`fetchLLM`/`streamLLM`/`streamAgentTurn` + `prepareRequest`, the model-list /
-`setModel` / unload plumbing), **`sw-fetch.ts`** (the ml.fetch GET, the rendered
-background-tab fetch, and the credentialed Google Sheets CSV pull — the
-security-sensitive fetch guards `SHEET_URL_OK` + the response-header safelist
-live here), and **`sw-cdp.ts`** (the `chrome.debugger`/CDP layer: attach
-lifecycle + `cdpClick`/`cdpEval`/`cdpScreenshot`/`cdpShadowResolve`/`cdpKeyType`).
+`background.ts` is the message ROUTER + the print/nav spine. Every cohesive leaf
+layer lives in its own `sw-*.ts` module it imports — all bundled back into
+`dist/background.js` by esbuild, so the split is invisible at runtime and to the
+tests, which load the bundle. **Run `node scripts/index.mjs '^sw-' --kind file
+--word` for this list live**; it is here because you need it to know where to
+look at all:
+
+| Module | What it owns |
+| --- | --- |
+| `sw-llm.ts` | the per-format request builders `API_FORMATS`, `getConfig`, capability probes, `fetchLLM`/`streamLLM`/`streamAgentTurn` + `prepareRequest`, model-list / `setModel` / unload |
+| `sw-fetch.ts` | the ml.fetch GET, the rendered background-tab fetch, the credentialed Sheets pull — the security-sensitive guards `SHEET_URL_OK` + the response-header safelist |
+| `sw-cdp.ts` | the `chrome.debugger`/CDP layer: attach lifecycle + `cdpClick`/`cdpEval`/`cdpScreenshot`/`cdpShadowResolve`/`cdpKeyType` |
+| `sw-consent.ts` | WHO IS ALLOWED TO ASK: the pending approval gates, the per-tab grant ledgers, `senderTrust` |
+| `sw-runs.ts` | WHAT THE WORKER KNOWS ABOUT A RUN: `bgRuns`/`activeRuns`, the storage snapshot + rehydration, the replay buffer, the session pointer store |
+| `sw-values.ts` | the value store's worker side: what is stored, who holds it, when it goes, how large it may grow |
+| `sw-events.ts` | ONE connection to the fork's `/api/events`, fanned to every open resource panel |
+| `sw-sessions.ts` | the background's session index, as the chat page's local host sees it |
+| `sw-tools.ts` | running ONE OpenWebUI-configured tool ourselves, in our own loop, with arguments we chose |
+| `sw-housekeeping.ts` | the one housekeeping log and its two messages |
+
+A privileged handler CONSULTS `sw-consent.ts` and MUTATES `sw-runs.ts`, which is
+why neither belongs in the router.
 
 ## The message contract (how to add a primitive)
 
@@ -393,7 +404,7 @@ change ADDS needs a sentence; **`--headerless`** is a hard gate, because every s
 a header saying what the module is for and it must stay that way; **`--check-speed`** holds the tool to its
 own time budget (a cold build is ~70 ms; it warns at 750 ms and fails at 3 s, with what to do about it in the
 message), because an index that stops being cheap stops being run. The first is a ratchet rather than a rule
-because 176 exports and 323 of the stylesheet's 557 classes have none, and a check that ships red is one
+because 178 exports and 323 of the stylesheet's 557 classes have none, and a check that ships red is one
 people learn to scroll past — so it reads the diff against the merge base and asks only about what you are
 adding. A CSS member of a documented block passes on its ancestor (`.r-diff-head` inherits `.r-diff`), because
 the failure being prevented is a NEW family under a name nobody would grep, not a paragraph per modifier.
