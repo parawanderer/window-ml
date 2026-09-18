@@ -380,6 +380,40 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
  *  `0a3f…` shows no "this device" row and no logout warning, with nothing wrong to see in either value. */
 export type PrincipalId = string;
 
+/**
+ * Is this runtime id ABSOLUTE — one that denotes the same machine wherever it is read?
+ *
+ * A principal id is SHA-256 of an identity key, so it does. `local` does not: it is the one RELATIVE name in this
+ * namespace, and it means whoever is holding it. That is harmless while it stays on one machine and is a name
+ * collision the moment it does not — two browsers each holding `local:a1b2c3d4` are two different sessions with one
+ * name, and the runtime id is the thing that was supposed to prevent exactly that (a hash is 8 hex and unique only
+ * within its runtime).
+ */
+export const isAbsoluteRuntimeId = (id: unknown): boolean => typeof id === "string" && /^[0-9a-f]{64}$/.test(id);
+
+/**
+ * May this session key LEAVE the machine that minted it — into a signed grant, a lineage another runtime walks, or a
+ * link somebody opens elsewhere?
+ *
+ * Aliases are RECOGNISED, never emitted. A runtime answers to every name it has had, because a page open across a
+ * pairing and a key kept on disk still use the old one; but what it writes down is always the absolute id. Without
+ * that rule the alias stops being a migration that drains and becomes a second name that accumulates users.
+ *
+ * The three places this protects, none of which is built yet, which is why the rule is written now:
+ * - `Grant.sessions`: a session list inside a SIGNED certificate, read by a different device and un-editable for up
+ *   to the certificate's life. A relative name in a capability means one session to the granter and something else
+ *   to the holder.
+ * - `Lineage.parent`, which the contract says may be on another runtime, and which the runtime WALKS to decide
+ *   whether a `started` grant covers a session. A stale `local:` fails that walk on a runtime now called something
+ *   else — access denied where it should be granted, which is the safe direction and still a bug — while a matching
+ *   one grants access across a name collision, which is not the safe direction.
+ * - Anything meant to be opened elsewhere: `#s=local:<hash>` on a phone names the phone.
+ */
+export const isPortableSessionKey = (key: string): boolean => {
+    const id = parseSessionKey(key);
+    return !!id && isAbsoluteRuntimeId(id.runtime) && !!id.hash;
+};
+
 /** Is this the same principal? The contract says lowercase hex, and this compares as though it might not be: the one
  *  place the answer matters is "is this row the device I am using", where being wrong hides a logout warning and
  *  shows nothing wrong in either value. Strict in what a runtime sends, forgiving in what a client believes. */

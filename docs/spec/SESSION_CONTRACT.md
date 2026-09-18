@@ -28,6 +28,24 @@ run the same code. The hub encodes the same shapes as its `Command`, `SessionEve
   twice, because dedupe is by id and two ids never collide; and a page open across the change, a bookmarked
   `local:<hash>` and a key kept on disk would each become a session on a runtime that never existed. A runtime
   answers to the ids it has had; it reports the one it has now.
+- **An alias is RECOGNISED, never EMITTED.** `local` is the one relative name in a namespace where everything else
+  is absolute: every other runtime id denotes one machine wherever it is read, and `local` denotes whoever is
+  holding it. A session key that leaves the machine that minted it — into `Grant.sessions`, into a `Lineage.parent`
+  another runtime walks, or into a link somebody opens elsewhere — has an absolute runtime segment
+  (`isPortableSessionKey`). Where a relative key is RESOLVED, the canonical id is what gets written back, so the
+  alias is a migration that drains rather than a second name that accumulates users.
+
+  The cost of getting this wrong is not a broken link. A hash is unique only within its runtime, so two browsers
+  each holding `local:a1b2c3d4` are two different sessions with one name: a `Grant.sessions` naming it matches on
+  whichever machine reads it, and a lineage walk that decides whether a `started` grant covers a session matches
+  across the collision. That is a name collision rather than a hash collision, and the runtime id is the thing that
+  was supposed to prevent it.
+
+  A profile's id history is `local` → its first principal → its next one, because revoking by subject key means
+  "this device including whatever it is renewed into", so a browser that was revoked and wants back in needs a new
+  identity key and is therefore a new principal. That is an argument for canonicalising on read rather than for
+  keeping a longer list of names: a list nobody drains grows once per revocation, and each entry is a name some
+  stale grant may still be using.
 - **A principal is a key** with a `kind`: `local` (this browser's own surfaces), `device` (a person's paired device),
   `agent` (an agent acting as a client), `runtime`. Its `name` is a label, never proof. A session records who
   started it (`startedBy`, absent when unknown, such as a console call).
