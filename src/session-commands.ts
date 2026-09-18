@@ -15,10 +15,16 @@ export type PageOutcome = "steer" | "turn" | "cancelled" | "continued" | "busy" 
 
 /** Everything the commands reach outside themselves. */
 export interface CommandDeps {
+    /** what this runtime CALLS itself: the id every session id and answer is built with */
     runtime: string;
+    /** Is this id this runtime, by any name it answers to? A runtime keeps answering to the id it had before it was
+     *  paired, so a page open across that change, and a key kept on disk, do not become a runtime that never existed. */
+    ownsRuntime?(id: unknown): boolean;
     index: SessionIndex;
     /** remove a session from the index and end its subscriptions */
     removeFromIndex(id: SessionId): void;
+    /** what this runtime IS, for a client that reached it over a transport that cannot know */
+    describe(): { kind: "browser" | "desktop" | "headless"; contractVersion: number; capabilities: unknown };
     /** http(s) tabs this browser has open */
     listTabs(): Promise<TabInfo[]>;
     /** one tab, or null when it is gone */
@@ -105,11 +111,13 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
     /** The session a command names, when it is this runtime's and the index holds it. */
     const session = (c: { session?: unknown }): { id: SessionId; error?: undefined } | { id?: undefined; error: CommandResult<any> } => {
         if (!isSessionId(c.session)) return { error: fail("invalid", "a session id is required") };
-        if (c.session.runtime !== deps.runtime || !deps.index.get(c.session.hash)) return { error: fail("not-found", "no such session on this browser") };
+        if (!ours(c.session.runtime) || !deps.index.get(c.session.hash)) return { error: fail("not-found", "no such session on this browser") };
         return { id: c.session };
     };
+    /** Is this command addressed to us? By the id we report, or by one we still answer to. */
+    const ours = (id: unknown): boolean => (deps.ownsRuntime ? deps.ownsRuntime(id) : id === deps.runtime);
     const ownRuntime = (c: { runtime?: unknown }): CommandResult<any> | null =>
-        c.runtime === deps.runtime ? null : fail("not-found", "no such runtime here");
+        ours(c.runtime) ? null : fail("not-found", "no such runtime here");
     /** The tab a session is bound to, or an error saying why there is none. */
     const tabOf = (hash: string): { tabId: number; error?: undefined } | { tabId?: undefined; error: CommandResult<any> } => {
         const b = deps.index.binding(hash);
@@ -172,6 +180,11 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
     };
 
     const handlers: { [T in CommandType]?: (c: Extract<Command, { type: T }>) => Promise<CommandResult<T>> } = {
+        // What a transport cannot answer. A hub carries identity and liveness and deliberately nothing else, so a
+        // client that reached this runtime over one asks the runtime itself — over the same authenticated channel as
+        // every other command, which is what makes the answer worth anything.
+        "runtime.info": async (c) => ownRuntime(c) ?? ok({ ...deps.describe(), nowMs: deps.now() }),
+
         "tabs.list": async (c) => ownRuntime(c) ?? ok({ tabs: await deps.listTabs() }),
 
         // A chat with no page behind it, hosted by the worker (sw-chat.ts). It answers as soon as the first turn is

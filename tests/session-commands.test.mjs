@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { SessionIndex } from "../src/session-index.ts";
 import { createCommandHandler, imageSize, dataUrlBytes, SIDE_CALL_MAX_TOKENS } from "../src/session-commands.ts";
+import { SESSION_CONTRACT_VERSION } from "../src/session-host.ts";
 
 const TAB = 7;
 const ev = (hash, kind, over = {}) => ({ kind, id: hash, ts: 1, save: false, session: { hash, turn: 0 }, ...over });
@@ -31,6 +32,7 @@ function world(over = {}) {
     const rec = (name, ret) => (...args) => { calls.push([name, ...args]); return typeof ret === "function" ? ret(...args) : ret; };
     const deps = {
         runtime: "local", index,
+        describe: rec("describe", () => ({ kind: "browser", contractVersion: SESSION_CONTRACT_VERSION, capabilities: { chat: true, agent: true, tabs: true } })),
         removeFromIndex: rec("remove", (id) => index.remove(id.hash)),
         listTabs: rec("listTabs", async () => [{ tabId: TAB, url: "https://a.example/", title: "A", active: true, windowId: 1 }]),
         getTab: rec("getTab", async (id) => (id === TAB ? { tabId: TAB, url: "https://a.example/", title: "A", active: true, windowId: 1 } : null)),
@@ -457,4 +459,37 @@ test("a session started from a command is kept, unless it asked to be ephemeral"
     const refused = world({ startAgent: async () => ({ outcome: "none" }) });
     await refused.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: TAB } });
     assert.equal(refused.named("keepSession").length, 0);
+});
+
+
+// --- what a runtime says about itself, and what it answers to (slice 6 groundwork) ---
+
+test("runtime.info answers what a transport cannot know, and its own clock with it", async () => {
+    const w = world();
+    const r = await w.run({ type: "runtime.info", runtime: "local" });
+    assert.equal(r.ok, true);
+    assert.equal(r.data.kind, "browser");
+    assert.equal(r.data.contractVersion, SESSION_CONTRACT_VERSION);
+    assert.deepEqual(r.data.capabilities, { chat: true, agent: true, tabs: true });
+    // The RUNTIME's clock at the moment it answered: the round trip is what bounds the offset estimated from it.
+    assert.equal(r.data.nowMs, 42);
+
+    // It needs only `view`, so a client that may watch but not drive can still tell what it is looking at.
+    assert.equal((await world().run({ type: "runtime.info", runtime: "phone" })).error.code, "not-found");
+});
+
+test("a runtime keeps answering to the id it had before it was paired", async () => {
+    // Over a hub this browser is its principal, not "local". A page open across that change, and a session key kept
+    // on disk, name the old id — and a runtime that answered only to its newest name would turn both into a session
+    // on a runtime that never existed.
+    const w = world({ runtime: "beef".repeat(16), ownsRuntime: (id) => id === "beef".repeat(16) || id === "local" });
+    w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+
+    assert.equal(code(await w.run({ type: "runtime.info", runtime: "local" })), "ok", "the old name still reaches it");
+    assert.equal(code(await w.run({ type: "runtime.info", runtime: "beef".repeat(16) })), "ok");
+    assert.equal(code(await w.run({ type: "session.send", session: { runtime: "local", hash: "aaaa0001" }, text: "hi" })), "ok");
+
+    // And not to anything else.
+    assert.equal((await w.run({ type: "runtime.info", runtime: "phone" })).error.code, "not-found");
+    assert.equal((await w.run({ type: "session.send", session: { runtime: "phone", hash: "aaaa0001" }, text: "hi" })).error.code, "not-found");
 });
