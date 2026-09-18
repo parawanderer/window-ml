@@ -213,6 +213,22 @@ layout or store, rendered by whichever surface wants them:
 - **Agent clients** get their grants at spawn ([`RUNTIME_HUB.md`](RUNTIME_HUB.md) §Principals and scopes) and show in
   the same list.
 
+**The paired-devices list** renders `device.list` ([`SESSION_CONTRACT.md`](SESSION_CONTRACT.md) §Devices), and four
+of its rules are about what a row must be able to say rather than about what it shows:
+
+- **"This device"** on the row whose `principal` matches the one this client computes from its own key. A list of
+  five phones where one of them is the one in your hand is otherwise a guessing game.
+- **Revoking that row logs you out**, said before it happens rather than discovered when the page stops working. It
+  is the only destructive action here whose consequence is invisible from its label.
+- **"Expires in N days"** while a device is valid, and **"expired, pair it again"** with no button after, because a
+  lapsed device cannot authenticate to ask for a renewal.
+- **"Revoked; this runtime's keys rotate when it is next online"** while `rotation` says something is still owed. A
+  revocation that left the stream readable and said nothing would be the one lie the page tells.
+
+`lastSeenMs` is rendered prominently rather than as metadata: a runtime renews the devices on its allowlist itself,
+so a forgotten device does not expire on its own, and this is the only thing that surfaces one. Times come from the
+runtime's clock, so the list renders the time and not the arithmetic.
+
 **While it is in use**, the runtime's own sidebar says who is watching or controlling it, with a way to stop them.
 
 **What the UI needs from the hub's client library** (not `SessionHost`, which leaves pairing to the transport):

@@ -76,9 +76,9 @@ that subscribed it, and never after its `Unsubscribe` returns.
 A `RuntimeInfo` carries three things a client renders from:
 
 - **`capabilities`**: what the runtime can do (`chat`, `agent`, `tabs`, `screenshots`, `highlight`, `persistence`,
-  `sideCalls`, `pythonBench`, `resourcePanel`, `localSettings`, and the reserved `headless` and `lineage`) and which
+  `sideCalls`, `pythonBench`, `resourcePanel`, `localSettings`, `devices`, and the reserved `headless` and `lineage`) and which
   `boxes` it uses. **Absent means no.** A client renders by capability and never assumes a browser.
-- **`grants`**: what THIS client may do there, as scopes (`view`, `drive`, `approve`, `screen`, `desktop`), each
+- **`grants`**: what THIS client may do there, as scopes (`view`, `drive`, `approve`, `screen`, `desktop`, `admin`), each
   optionally narrowed to `started` sessions (and their descendants, §Agent to agent), a list of sessions, or an expiry. The local host holds every scope.
 - **`clockOffsetMs`**: the estimated offset of the runtime's clock, since every timestamp in its index and events is
   on its own clock.
@@ -161,6 +161,10 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `tab.screenshot`: on demand, size-capped | screen | `screenshots` | `CAPTURE_TAB` |
 | `page.highlight`: a selector, a canvas token, or clear | drive | `highlight` | `__mlHighlight` → `ML_HL_REMOTE` |
 | `side.call`: a utility-model call about a session | drive | `sideCalls` | `FETCH_LLM` with `extend: "utility"` |
+| `device.list` | admin | `devices` | nothing |
+| `device.renew`: a fresh certificate for a device that still holds a valid one | admin | `devices` | nothing |
+| `device.revoke`: unpair, and rotate the stream keys it held | admin | `devices` | nothing |
+| `device.scopes`: narrow or widen what a device may do | admin | `devices` | nothing |
 
 Sessions started by a command are **saved unless `ephemeral: true`**, per the chat page's persistence decision.
 
@@ -181,6 +185,36 @@ the session's events show what happened.
 A remote approval is a command handed to the runtime's **one `resolveApproval`**, the same function the sidebar's
 click and the IPC channel reach. Nothing new decides a gate, and `approve` is never implied by `drive`. The consent
 model does not change: a gated tool still asks, and remote driving only adds places to answer from.
+
+### Devices
+
+Pairing is how a runtime gets clients, and `device.*` is how a person manages the ones it has. Four rules, because
+each of them is a sentence a list has to be able to say.
+
+**`admin` is its own scope, granted at the runtime and never passed on.** A phone that may `approve` a click should
+not thereby be able to pair another phone, so `admin` is not implied by `approve` and, like `approve` and `control`,
+a delegate cannot delegate it (the hub enforces this as `NEVER_DELEGABLE`).
+
+**Whether this client may administer is not on the wire.** It is `COMMAND_SCOPE` against the grants the runtime
+already reported, the same table the runtime enforces from. A second answer to the same question disagrees with the
+first eventually, and the case where they disagree is the case a UI gets wrong. So a client that lacks `admin` does
+not draw the actions at all, and a `forbidden` from `device.*` is a bug rather than a normal answer.
+
+**A device past its expiry cannot be renewed.** It can no longer prove who it is, so there is nothing to renew
+against and it pairs again instead; the runtime answers `conflict`. A list shows "expired, pair it again" with no
+button, because a button that cannot work is worse than no button. It follows that a runtime renews the devices on
+its allowlist itself, before they lapse — which means expiry bounds "this runtime stopped running" rather than
+"somebody forgot this device", and `lastSeenMs` is the only thing that makes a forgotten device visible.
+
+**Revocation is not finished when the command returns.** Unpairing rotates the stream keys that device held, which
+the runtime does, so `rotation` says what is still owed and when the oldest of it became owed. A revoke is refused
+while the runtime is offline, so today that window is seconds wide; it is on the wire because the alternative
+design (accepting a revoke elsewhere and applying it later) would make it hours, and a list that cannot say so
+would be lying.
+
+**Every timestamp here is the RUNTIME's clock**, like every other timestamp in this contract, and `clockOffsetMs` is
+an estimate. Render the time, not the arithmetic: "since 14:02" survives a minute of skew and "owed for 12 seconds"
+does not.
 
 ### Side calls
 
