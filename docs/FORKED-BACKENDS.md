@@ -180,16 +180,21 @@ drive its own agent loop while still using the tools configured in OpenWebUI. Up
 happens only *inside* the chat pipeline, so the only way to reach a tool from outside is to hand the
 whole loop to a model.
 
-**The extension does not call this endpoint yet.** Server-side tools today go through upstream's own
-mechanism: `tool_ids` on the request plus the `function_calling` execution loop, which is why
-`fetchLLM` probes `SERVER_TOOL_MODES` — that loop's label is version-dependent. The fork is what makes
-the *other* shape possible (the extension running one tool itself, in its own loop, with the arguments
-it chose), and this file is where to look when that lands.
+**The extension calls this endpoint.** `sw-tools.ts` posts to it with `stream: true` and reads the
+NDJSON frames back; `ml.dynamicTools` (`dynamic-tools.ts`) is the namespace on top of it, which is the
+shape upstream cannot do: the agent runs ONE configured tool, in our own loop, with arguments it chose.
+A server without the fork answers a single JSON object instead of a frame stream, and `sw-tools.ts`
+reads that as one `result` frame rather than failing, so the degradation is to unstreamed output.
+
+Upstream's mechanism is still there and still used for the *other* shape, a model driving the tools
+itself: `tool_ids` on the request plus the `function_calling` execution loop, which is why `fetchLLM`
+probes `SERVER_TOOL_MODES` — that loop's label is version-dependent.
 
 It now also STREAMS its output and reports its own `durationMs`/`queuedMs` — without the latter a remote
 tool's span is the tool plus the network as one unattributable number. Both are specified, as built, in
-**[REMOTE_TOOL_EXECUTION.md](spec/REMOTE_TOOL_EXECUTION.md)**. Neither is proposed upstream yet, and
-nothing on this side consumes them.
+**[REMOTE_TOOL_EXECUTION.md](spec/REMOTE_TOOL_EXECUTION.md)**. Neither is proposed upstream yet. Both
+are consumed: the frames stream into the step as they arrive, and `remoteMs` crosses the delegation
+(`run-delegation.ts`) into the run export, which is what makes a remote tool's span attributable.
 
 ## Running them
 
