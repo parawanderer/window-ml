@@ -2786,8 +2786,8 @@ const unload = async function(model: string | null = null): Promise<string[]> {
                 { "url": url }
             );
         },
-        models,
-        serverTools,
+        models: models,
+        serverTools: serverTools,
         /**
          * The server-side tools, as a callable NAMESPACE: `ml.dynamicTools.<bundle>.<fn>(args)`.
          *
@@ -2809,10 +2809,10 @@ const unload = async function(model: string | null = null): Promise<string[]> {
         get dynamicTools(): DynamicToolNamespace {
             return (this._dynamicTools ||= makeDynamicTools(this as unknown as MlApi, undefined, currentServerAllow));
         },
-        execServerTool,
-        info,
-        capabilities,
-        getModel,
+        execServerTool: execServerTool,
+        info: info,
+        capabilities: capabilities,
+        getModel: getModel,
         /**
          * A bounded integer range, like Python's `range()` — the terminating counter loop for `exec`
          * (no `for`/`while` needed): `ml.range(8).map(i => …)`. Forms: `range(stop)`, `range(start, stop)`,
@@ -2826,7 +2826,7 @@ const unload = async function(model: string | null = null): Promise<string[]> {
          */
         range: mlRange,
         pipe: mlPipe,
-        embed,
+        embed: embed,
         /**
          * GET a URL's content via the background worker — bypasses CORS (host permissions), and by DEFAULT sends
          * no cookies (uncredentialed; `credentials`/`rendered` opt in — see below). Use it to READ a page/file
@@ -2941,9 +2941,9 @@ const unload = async function(model: string | null = null): Promise<string[]> {
             if (mode?.rendered || mode?.credentials || mode?.format === "html") return undefined;
             return mlFetchCache.get(String(url));
         },
-        config,
-        setModel,
-        ps,
+        config: config,
+        setModel: setModel,
+        ps: ps,
         /**
          * DEBUG DUMP — everything the resource panel derives its timeline from, in one object. For reporting a
          * lane that draws something that makes no sense: the drawn events are DERIVED (`eventsFrom` +
@@ -3020,7 +3020,7 @@ const unload = async function(model: string | null = null): Promise<string[]> {
             }
             return records;
         },
-        unload,
+        unload: unload,
     };
 
     // ---- Default agent tool registry (ml.domTools) ----
