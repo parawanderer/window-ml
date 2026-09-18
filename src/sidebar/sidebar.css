@@ -1769,7 +1769,18 @@ html[data-focus] .r-py-sec.focus-fold:not([open]) > summary::after {
 /* Zero-dep JSON tree (DevTools-console style). */
 .jt-node { }
 /* A returned value drawn as a tree (ValueOut's "tree" button): room for the corner button on the first row. */
-.jt-value { padding: 2px 44px 2px 4px; }
+/* THE TREE IS THE SAME OUTPUT AS THE TEXT, so it sits on the same surface. It did not: the text view's
+   background comes from the highlighter's own `code.hljs` rule, and a tree has no `code` in it — so pressing
+   `tree` dropped the box out from under the value and left it floating on the page, which reads as the control
+   having broken something rather than having changed a view. Same tokens as `.code`, for the same reason it uses
+   them: a code theme's surface, falling back to the panel's own. */
+.jt-value {
+    /* `--panel`, not `--bg`, as the fallback: a code block LOOKS filled because the highlighter paints its own
+       background on the inner `code.hljs`, and `--code-bg` is only set for a non-default theme — so falling back
+       to the page's own colour drew a box with nothing in it beside a block that was plainly full. */
+    padding: 6px 44px 6px 8px; background: var(--code-bg, var(--panel)); border: 1px solid var(--border);
+    border-radius: 5px; max-width: 100%; overflow-x: auto;
+}
 /* The row where a clipped value's text ended, in the container that was still open there. */
 .jt-cut { color: var(--fg-faint); font-style: italic; }
 /* A value tree's members the model was NOT sent (the panel keeps more than the tool's output cap): dimmed like
@@ -2527,6 +2538,11 @@ html[data-surface="card"] .appr-btn.no:hover {
    lighter tinted box, so an inline math cite reads as a highlighted tool output, not model prose. The box is on
    the container so KaTeX (which isn't a .tok-val) is boxed too. */
 .answer-rendered .tok-inline { border-bottom: 1px dashed var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); padding: 0 3px; border-radius: 3px; }
+/* …and the `code` INSIDE it paints none of its own. `.md code` gives every inline code span the panel's grey,
+   which sat on top of the tint and turned a citation back into something the model typed in backticks — the one
+   thing this mark exists to say it is not. The block form carries the same green as a rail; the inline form is
+   the same claim in one line, so it is the same colour. */
+.answer-rendered .tok-inline > .tok-val { background: none; border: 0; padding: 0; }
 .answer-rendered .tok-ref:hover { background: color-mix(in srgb, var(--ok) 10%, transparent); }
 .answer-rendered .tok-ref:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .answer-rendered .tok-ref { position: relative; }

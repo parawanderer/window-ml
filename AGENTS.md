@@ -311,7 +311,9 @@ learned by shipping the wrong version first.
   its tab. The ONE session with no such pair is a chat the worker hosts itself (`chat.start`, `sw-chat.ts`): it has no
   tab, so no panel can be attached to it, and its events reach the index and nothing else. A run started from an
   extension page (`agent.start`) goes through the target tab's OWN start path, because the page builds the toolset
-  and the system prompt; the worker has no second way to start one.
+  and the system prompt; the worker has no second way to start one. The extension-only views (the resource panel,
+  the Python bench) reach the chat page through `ChatExtras`, asked PER RUNTIME: the runtime says the capability
+  exists and the device says it can draw it, and a page that answers only one of the two shows nothing.
 - **Exports.** Diff two runs with `run.json` after stripping `VOLATILE_FIELDS` and running `canonicalizeText()`.
 
 ## Showing a run: the log, the exports and tooltips

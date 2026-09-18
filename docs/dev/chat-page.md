@@ -392,6 +392,36 @@ The request reaches the worker from a page, so the pending set is bounded: a pag
 arrives. What it costs to claim one is a session row, which the store's budget already bounds — the same standing
 a page's own `{ save: true }` chat has always had.
 
+## This device's own views: the box's panel and the Python bench
+
+The resource panel and the bench are the extension's own UI — they talk to this browser's worker over `chrome.*`,
+which `src/chat/` may never do. So the core does not import them. It asks for them, through `ChatExtras`
+(`src/chat/extras.ts`), and the entry that has them fills it in (`src/chat-ext.tsx`); the web entry passes none and
+the bundle never sees them.
+
+**Each is asked PER RUNTIME, and that is the whole point of the argument.** A resource panel drawn from this
+browser's worker describes THIS browser's box; rendering it beside a session running on someone's lab box would be
+a lie told confidently. The extension entry answers for the runtimes its `LocalHost` reports and null for the rest,
+so a `HubHost` runtime arriving later gets nothing without a line changing here.
+
+**Both are asked twice**, which is the rule the rest of the page follows in a second place:
+
+- the RUNTIME reports the capability (`resourcePanel`, `pythonBench` in `src/sw-sessions.ts`), and
+- this DEVICE holds something to draw it with.
+
+A phone reaching the same runtime over the hub reports the same capabilities and draws neither, not because it is a
+phone but because it holds no implementation — and nothing in the page asks which it is.
+
+Where they go: the panel is the first tenant of the PANE ON THE RIGHT, which is the shape the state inspector wants
+(§The state inspector in the spec), and the bench is a full-width drawer in the grid's second row, as it is in the
+sidebar — it is a workspace, not a sidecar of whatever is beside it. The panel's dragged height does not follow it
+into the pane: it carries one because in the DevTools panel it fights the session list for room, and in a pane of
+its own there is nothing to fight.
+
+Not done: `services().bench` stays false here, so a python code block in a transcript does not offer to open in the
+bench. That flag is one boolean for the whole surface, and a session on another runtime would be offered a bench
+that runs somewhere else — it wants to become a question about a session before it can be turned on.
+
 ## Finding one session among many
 
 Three affordances in the list, all of them only worth having once an agent owns several tabs at once.

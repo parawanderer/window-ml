@@ -99,3 +99,30 @@ test("starting a chat from the page: the worker hosts it, with no tab behind it"
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); await fake.stop(); }
 });
+
+test("the box's panel and the Python bench are on this page, because THIS browser is the runtime", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        const { page: chat, errors } = await openChatPage(ext);
+        await expect(chat.locator(".chat-rt", { hasText: "This browser" })).toBeVisible();
+
+        // Offered because the RUNTIME reports it can be drawn and this DEVICE holds something to draw it with.
+        // Neither question is "is this local", and a phone reaching the same runtime would answer the second one no.
+        const box = chat.locator('.chat-head [aria-label="The box"]');
+        await expect(box).toBeVisible();
+        await box.click();
+        await expect(chat.locator(".chat-pane .vram")).toBeVisible();
+        await box.click();
+        await expect(chat.locator(".chat-pane")).toHaveCount(0);
+
+        // The bench is not a picture of one: it runs, through this browser's own offscreen sandbox, from a page
+        // that is not the panel. A drawer that opened and could not run would be worse than no drawer.
+        await chat.locator('.chat-head [aria-label="Python bench"]').click();
+        await expect(chat.locator(".bench")).toBeVisible();
+        await chat.locator('.bench [aria-label="Run"]').click();
+        await expect(chat.locator(".bench-outbody")).toContainText("45", { timeout: 120_000 });
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await fake.stop(); }
+});

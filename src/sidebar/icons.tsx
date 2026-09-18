@@ -100,9 +100,15 @@ export const IconMenu = () => (
         <path d="M4 6h16M4 12h16M4 18h16" />
     </svg>
 );
+/** A magnifier — find one thing in a list long enough that scanning it has stopped working. */
+export const IconSearch = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+        <circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" />
+    </svg>
+);
 /** A camera — capture what a tab looks like RIGHT NOW (the chat page's peek at the page a run is driving). */
 export const IconCamera = () => (
-    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h2.2l1-1.8h6.6l1 1.8h2.2A1.5 1.5 0 0 1 19 8.5v8A1.5 1.5 0 0 1 17.5 18h-11A1.5 1.5 0 0 1 5 16.5v-8" />
         <circle cx="12" cy="12.3" r="3.1" />
     </svg>

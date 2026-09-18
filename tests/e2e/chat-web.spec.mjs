@@ -201,27 +201,54 @@ test("desktop: an agent run picks a tab, or a new one, and is started on the run
     await page.close();
 });
 
+test("an answer that cites its own steps renders the tool's output, not a retyping of it", async () => {
+    const { page, errors } = await open(DESKTOP, "#s=laptop%3A5e6f7a80");
+    const answer = page.locator(".answer-rendered").first();
+    // Every form the renderer has, in one answer: a value quoted mid-sentence, a table and an image embedded as
+    // blocks with the model's caption under them, and a link that jumps to the step instead of showing it.
+    await expect(answer.locator(".tok-inline > .tok-val")).toHaveText("3");
+    await expect(answer.locator(".tok-block .r-df-table")).toBeVisible();
+    await expect(answer.locator(".tok-block img")).toBeVisible();
+    await expect(answer.locator(".tok-link")).toHaveText("the survey step");
+    await expect(answer.locator(".tok-anno").first()).toHaveText("Every fare, cheapest first");
+    // The mark that says this came from a tool and not from the model is a COLOUR, and the inline form carries it
+    // too — an inline `code` background over the tint is what made a citation read as something typed in backticks.
+    const tint = await answer.locator(".tok-inline").evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(tint).not.toBe("rgba(0, 0, 0, 0)");
+    expect(await answer.locator(".tok-inline > .tok-val").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("desktop: the list filters, folds a runtime away, and marks what moved while you were elsewhere", async () => {
     const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
     const rows = page.locator(".chat-row");
-    await expect(rows).toHaveCount(5);
+    await expect(rows).toHaveCount(6);
+
+    // The box is not there until it is asked for, and it takes no room until it is.
+    await expect(page.locator(".chat-filter-in")).toBeHidden();
+    await page.locator('.chat-list .head [aria-label="Find a session"]').click();
+    await expect(page.locator(".chat-filter-in")).toBeFocused();
 
     // Filtering matches the PAGE a run is on, not only its title, and a runtime with no match goes with its rows.
     await page.locator(".chat-filter-in").fill("flights");
-    await expect(rows).toHaveCount(2);
+    await expect(rows).toHaveCount(3);
     await expect(page.locator(".chat-rt", { hasText: "Lab box" })).toHaveCount(0);
+    // Escape puts it away, and putting it away is also clearing it: a hidden filter still filtering would be a
+    // list quietly lying about what it holds.
     await page.locator(".chat-filter-in").press("Escape");
-    await expect(rows).toHaveCount(5);
+    await expect(page.locator(".chat-filter-in")).toBeHidden();
+    await expect(rows).toHaveCount(6);
 
     // Folding a runtime says what it is holding, so folding is not the same as forgetting.
     await page.locator(".chat-rt[data-runtime='laptop']").click();
     await expect(rows).toHaveCount(2);
-    await expect(page.locator(".chat-rt[data-runtime='laptop']")).toContainText("3 sessions");
+    await expect(page.locator(".chat-rt[data-runtime='laptop']")).toContainText("4 sessions");
     // …and it is this device's choice, so it survives a reload.
     await page.reload();
     await expect(rows).toHaveCount(2);
     await page.locator(".chat-rt[data-runtime='laptop']").click();
-    await expect(rows).toHaveCount(5);
+    await expect(rows).toHaveCount(6);
 
     // A session that moves while another one is open is marked; reading it is catching up with it.
     await expect(row(page, WAITING).locator(".chat-moved")).toHaveCount(0);

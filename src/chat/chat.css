@@ -6,7 +6,22 @@
 html, body, #root { height: 100%; }
 /* The chat page's two-pane grid (the session list, then one session), one pane when `.narrow`. `dvh` is the height that
    excludes a phone's collapsing toolbars, so the composer is never under them. */
-.chat { font-size: var(--fs); height: 100vh; height: 100dvh; display: grid; grid-template-columns: minmax(280px, 360px) minmax(0, 1fr); }
+/* The page paints the canvas itself. `body`'s background reads the ROOT tokens, and calm redefines them on `.chat`
+   — so anything the panes do not cover (the main pane, which has no background of its own) showed the panel's
+   lighter dark through the page's darker one. */
+.chat { background: var(--bg); }
+.chat {
+    font-size: var(--fs); height: 100vh; height: 100dvh; display: grid;
+    /* A FIXED list width, not a `minmax()` range: the pane slides, and a column that RESIZES re-wraps every title
+       and re-lays out every row on the way, so the text crawls sideways while the pane moves. Fixed, the content
+       is drawn once and the pane reveals it. */
+    --list-w: 320px;
+    grid-template-columns: var(--list-w) minmax(0, 1fr);
+    /* Two rows: the panes, and the bench drawer under all of them when it is open. The drawer is a full-width
+       surface in the sidebar too — it is a workspace, not a sidecar of whatever is beside it. */
+    grid-template-rows: minmax(0, 1fr) auto;
+}
+.chat-bench { grid-column: 1 / -1; display: flex; flex-direction: column; min-height: 0; }
 .chat.narrow { grid-template-columns: minmax(0, 1fr); }
 .chat-list, .chat-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .chat-list { border-right: 1px solid var(--border); background: var(--bg); }
@@ -125,7 +140,7 @@ html, body, #root { height: 100%; }
 /* `minmax(0px, 0px)`, not `0`: a track only interpolates against the same FUNCTION, so animating a `minmax()`
    column down to a bare length does not tween at all — the column snaps shut and the body jumps a pane's width
    sideways, while the pane itself slides. Both sides `minmax()`, and the two move together. */
-.chat.list-hidden { grid-template-columns: minmax(0px, 0px) minmax(0, 1fr); }
+.chat.list-hidden { grid-template-columns: 0px minmax(0, 1fr); }
 /* A hidden pane must not be reachable by TAB — it is off screen, and a focus ring lands nowhere the eye can
    follow — but `visibility` does not interpolate, so switching it with the class would take the pane away on the
    first frame and leave the column animating over nothing. It is DELAYED by the slide's own duration on the way
@@ -259,7 +274,21 @@ html, body, #root { height: 100%; }
    something is typed, so it never vanishes under the cursor mid-search. It matches everything a person would use to
    name a session out loud — its title, the task, the page it is on, the runtime — and it looks PAST a folded group,
    because hiding a match because its runtime happens to be folded is the list refusing the question it was asked. */
-.chat-filter { padding: 0 8px 6px; flex: 0 0 auto; }
+/* Closed, it takes NO ROOM and opens by growing its own row — `grid-template-rows: 0fr → 1fr`, which is the one
+   way to animate to a height nobody has measured. `visibility` is delayed on the way out for the same reason the
+   list pane delays its own: it does not interpolate, so switching it with the class would blank the field on the
+   first frame of the close. */
+.chat-filter {
+    flex: 0 0 auto; display: grid; grid-template-rows: 0fr; padding: 0 8px;
+    transition: grid-template-rows .2s cubic-bezier(.4, 0, .2, 1), padding .2s ease, opacity .15s ease, visibility 0s linear .2s;
+    opacity: 0; visibility: hidden;
+}
+.chat-filter.open {
+    grid-template-rows: 1fr; padding: 0 8px 6px; opacity: 1; visibility: visible;
+    transition: grid-template-rows .2s cubic-bezier(.4, 0, .2, 1), padding .2s ease, opacity .15s ease, visibility 0s linear 0s;
+}
+.chat-filter-row { overflow: hidden; min-height: 0; }
+@media (prefers-reduced-motion: reduce) { .chat-filter, .chat-filter.open { transition: none; } }
 .chat-filter-in {
     width: 100%; font: inherit; color: var(--fg); background: var(--panel); border: 1px solid transparent;
     border-radius: 999px; padding: 6px 12px; min-height: 32px;
@@ -273,4 +302,95 @@ html, body, #root { height: 100%; }
    anybody wants read to them. */
 .chat-moved {
     width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: 0 0 auto; align-self: center;
+}
+
+/* ============================ THE PANE ON THE RIGHT ============================
+   This device's own views, for the runtime whose session is open (src/chat/extras.ts). The resource panel is its
+   first tenant; the state inspector — the run's current context and pointer heap, beside the transcript rather than
+   instead of it — is the one it is really shaped for (docs/spec/CHAT_PAGE.md §The state inspector), which is why
+   the slot is named rather than a boolean.
+   Same `minmax()` on both sides as the list pane, for the same reason: a track only interpolates against the same
+   function, and a bare `0` would snap the column shut while its contents were still moving. */
+.chat { grid-template-columns: var(--list-w) minmax(0, 1fr) 0px; }
+.chat.pane-open { grid-template-columns: var(--list-w) minmax(0, 1fr) minmax(320px, 420px); }
+.chat.list-hidden { grid-template-columns: 0px minmax(0, 1fr) 0px; }
+.chat.list-hidden.pane-open { grid-template-columns: 0px minmax(0, 1fr) minmax(320px, 420px); }
+.chat.narrow, .chat.narrow.pane-open { grid-template-columns: minmax(0, 1fr); }
+.chat-pane {
+    display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow-y: auto; overflow-x: hidden;
+    border-left: 1px solid var(--border); background: var(--bg);
+}
+/* The resource panel was built to sit ON TOP of the session list and fight it for height, which is why it carries
+   a dragged height and a grip. In a pane of its own there is nothing to fight: it takes the room and the grip has
+   nothing to do, so the height it was dragged to in the DevTools panel does not follow it here. */
+.chat-pane > .vram { flex: 1 1 auto; height: auto !important; border-bottom: none; }
+.chat-pane > .vram > .vram-grip { display: none; }
+
+/* ===================== THE DARK THEME THIS PAGE WANTS, which is not the panel's =====================
+   The panel's dark tokens SINK your own message below the surface (`--user-bg` darker than `--bg`), which reads as
+   an inset field — right for a debug drawer whose ground is already dark, and backwards for a page. Gemini and the
+   rest do the opposite: the canvas is the darkest thing on the screen, and what you typed and the box you type
+   into are raised out of it. Calm view takes that, and only in dark, because in light the panel's ground is white
+   and a raised surface there is ALREADY a shade darker — the inversion is a dark-mode problem only.
+   Scoped to `.chat.calm`: the toggle back to the panel's view brings the panel's palette with it. */
+:root:not([data-theme="light"]) .chat.calm {
+    --bg: #121316;
+    --panel: #1c1d21;
+    --panel-2: #2a2b31;
+    --panel-2-hover: #34353c;
+    --user-bg: #2a2b31;
+    --border: #2a2b31;
+}
+
+/* ===================== A TOOL STEP IS AN ASIDE, NOT THE SUBJECT =====================
+   In the DevTools panel a run's machinery IS what you came for, and every row of it earns its place. Here the run
+   is something that happened in the middle of a conversation, and one `fetch_url` was drawing ten things: an
+   identifier, a chevron, a dot, `In:`, a rendered/raw switch, the action, `Out:`, `running…`, the timer, and the
+   card. Calm keeps the two that say what is going on — what it is doing, and how long it has been doing it. */
+.chat.calm .io-label { display: none; }
+/* No `Out:` at all while the step is waiting on a PERSON: there is no output, and "running…" over a run that is
+   not running is the one thing on screen that is actually wrong. */
+.chat.calm .astep.awaiting .io + .io { display: none; }
+/* The approval card states it, with the buttons on it; the note under the rule states it again, and the bar at the
+   top of the pane a third time (that one is hidden from the component, which knows whether the card is in view). */
+.chat.calm .pending-note.blocked { display: none; }
+/* The rail down the left of a tool step groups its BODY against the prose either side. A collapsed step has no
+   body, so the rail is a stroke beside a single line — structure drawn for nothing. It keeps its width, so
+   opening one moves nothing sideways. */
+.chat.calm .astep.tool:not(.open) { border-left-color: transparent; }
+
+/* `rendered | raw` is a developer's control over somebody else's prose, and in calm it goes — Shane's call, and the
+   right one: a segmented switch above every input and every output was the single busiest thing left in a step, and
+   whoever wants the model-facing text turns calm off, which is one click and brings all of it back at once. The
+   standing rule is that a raw view may never be UNAVAILABLE; it does not say it must be on the screen at all times,
+   and the way to it is a control this page carries in its header. */
+.chat.calm .rr-toggle { display: none; }
+
+/* ===================== THE LIST ARRIVES, RATHER THAN APPEARING =====================
+   Two halves, and the order is the point: the PANE opens first, and what is in it comes in after, from the left
+   and top to bottom. A list that simply exists the instant the column has width reads as a jump-cut; one that
+   arrives tells you where it came from.
+   The rows keep a fixed width (above), so nothing re-wraps while the pane moves — the same reason the HUD's card
+   fixes its content width before it animates. */
+.chat:not(.narrow) > .chat-list > .head,
+.chat:not(.narrow) > .chat-list > .chat-filter,
+.chat:not(.narrow) > .chat-list > .view { width: var(--list-w); flex: 0 0 auto; }
+.chat:not(.narrow) > .chat-list > .view { flex: 1 1 auto; }
+
+@keyframes chat-row-in {
+    from { opacity: 0; transform: translateX(-14px); }
+    to { opacity: 1; transform: none; }
+}
+/* Driven by the animation NAME changing from `none`, which is what makes it play again each time the pane opens
+   without any JavaScript: a closed list has none, an open one has this. */
+.chat.list-hidden .chat-list .chat-row, .chat.list-hidden .chat-list .chat-rt { animation: none; }
+.chat:not(.list-hidden) .chat-list .chat-row,
+.chat:not(.list-hidden) .chat-list .chat-rt {
+    animation: chat-row-in .34s cubic-bezier(.2, .7, .3, 1) both;
+    /* After the pane itself (.24s), then one row every 26ms — capped, so a long list does not turn its tail into
+       a queue you watch. */
+    animation-delay: calc(140ms + min(var(--i, 0) * 26ms, 260ms));
+}
+@media (prefers-reduced-motion: reduce) {
+    .chat:not(.list-hidden) .chat-list .chat-row, .chat:not(.list-hidden) .chat-list .chat-rt { animation: none; }
 }

@@ -17,13 +17,22 @@ import { IconBrain, IconMenu } from "../sidebar/icons";
 import type { PlatformPrefs } from "./platform";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
 
 /** Is the session list pane open? Only a wide layout asks: a phone shows one pane at a time either way. */
 export const listOpen = signal(true);
+
+/**
+ * What the pane on the RIGHT is showing, if anything.
+ *
+ * One slot, named rather than a boolean, because it has more than one tenant coming: the resource panel is the
+ * first, and the state inspector — the run's current context and pointer heap, beside the transcript rather than
+ * instead of it — is the one the pane is really shaped for (docs/spec/CHAT_PAGE.md §The state inspector).
+ */
+export const pane = signal<"resource" | null>(null);
 
 /** Runtimes whose group in the list is folded away. By id, so a runtime that goes offline and comes back stays as
  *  it was left, and one this device has never seen starts open. */
@@ -46,6 +55,8 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     const l = prefs.get<boolean>(LIST_KEY);
     calm.value = typeof c === "boolean" ? c : true;
     listOpen.value = typeof l === "boolean" ? l : true;
+    const pn = prefs.get<string>(PANE_KEY);
+    pane.value = pn === "resource" ? pn : null;
     const f = prefs.get<string[]>(FOLDED_KEY);
     foldedRuntimes.value = new Set(Array.isArray(f) ? f.filter((x) => typeof x === "string") : []);
     applyCalm();
@@ -62,6 +73,12 @@ export function setCalm(on: boolean): void {
 export function setListOpen(on: boolean): void {
     listOpen.value = on;
     store?.set(LIST_KEY, on);
+}
+
+/** Show something in the right-hand pane, or close it. */
+export function setPane(p: "resource" | null): void {
+    pane.value = p;
+    store?.set(PANE_KEY, p);
 }
 
 /** Fold a runtime's group away, or bring it back. */

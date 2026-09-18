@@ -61,7 +61,11 @@ const TAB_READY_MS = 15_000, TAB_POLL_MS = 250;
 function localRuntime(): RuntimeInfo {
     return {
         id: localRuntimeId(), name: "This browser", kind: "browser", online: true, contractVersion: SESSION_CONTRACT_VERSION,
-        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore },
+        // `resourcePanel` and `pythonBench` are not commands: they say the box behind this runtime can be drawn and
+        // its sandbox can be driven, which a client offers only where it ALSO holds an implementation (the chat
+        // page's `ChatExtras`). A phone reaching this same runtime over the hub reports the capability and draws
+        // nothing, because it has nothing to draw with.
+        capabilities: { chat: true, agent: true, tabs: true, highlight: true, screenshots: true, sideCalls: utilityModelSet, persistence: !!sessionStore, resourcePanel: true, pythonBench: true },
         // This browser's own pages hold every scope.
         grants: [{ scope: "view" }, { scope: "drive" }, { scope: "approve" }, { scope: "screen" }],
     };
