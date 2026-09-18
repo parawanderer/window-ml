@@ -68,7 +68,7 @@ const snapUnder = (runs: ResourceSample[][]) => {
     // nearest SAMPLE — so drawn together they read as one thing that cannot decide where it is. The same rule
     // the reading tooltips already follow (`cursorOn`), applied to the mark.
     if (eventHover.value || gapHover.value) return null;   // …and so does a gap: there is no sample in one
-    return snapFraction(runs, c.frac, liveAxis, sampleGraceMs());
+    return snapFraction(runs, c.frac, live.axis, sampleGraceMs());
 };
 /**
  * IS THE TOOLTIP MUTED? Esc hides it so you can LOOK at the chart, and the next pointer movement brings it
@@ -883,7 +883,7 @@ function hoveredSample(runs: ResourceSample[][], scope: string): ResourceSample 
     // breakdown genuinely does not describe the other). Reading only the pointed-at track would show one
     // half of a split and silently omit the rest.
     if (!kbFocus.value?.model && !cursorOn(scope)) return null;
-    return sampleAtFraction(runs, c.frac, liveAxis, sampleGraceMs());
+    return sampleAtFraction(runs, c.frac, live.axis, sampleGraceMs());
 }
 
 /** WHEN the figures above were measured. A tooltip that reads a historical datapoint has to say which one,
@@ -1362,7 +1362,7 @@ type PoolRef = { id: string; name: string; ceiling: number; color: string; bands
 /**
  * THE LINES THE KEYS STEP THROUGH, published from the render that draws them — the key handler runs outside
  * render, and "which pools are on screen" is a fact about what was just drawn. A plain ref for the same
- * reason `liveRuns` is one: written DURING render, and a signal written during render re-enters rendering.
+ * reason `live.runs` is one: written DURING render, and a signal written during render re-enters rendering.
  */
 // PER SURFACE: the overlaid view and a whole-box track both draw POOLS, and a layout can hold both — one shared
 // list meant whichever rendered last owned the keys, and the whole-box view published none at all, so ↑↓ there
@@ -2051,7 +2051,7 @@ function phaseGradient(phases: { kind: string; until: number }[], from: number, 
  *  them: the same events, drawn in one place and not the other. */
 function useInstants(events: ResourceEvent[]): EventPlacement[] {
     // Not memoised: the axis moves on every tick of a live chart, and the instants in a window are few.
-    const axis = liveAxis;
+    const axis = live.axis;
     if (!axis) return [];
     // The moments themselves, plus a server-split load's two internal edges (`loadEdges`) — the steps in the
     // memory trace a load draws, which otherwise had nothing on the plot saying what they were. Placed on the axis
@@ -2107,7 +2107,7 @@ function ClickFirst() {
  *  loop every view draws its runs in. A run's own drawing works in run-local fractions (`runFrac`), which is the
  *  axis restricted to that run, so the box is all the placement it needs. */
 function onAxis(runs: ResourceSample[][], samples: ResourceSample[], scope: string, seg: (run: ResourceSample[], i: number) => preact.JSX.Element) {
-    const axis = liveAxis;
+    const axis = live.axis;
     if (!axis) return null;
     return <>
         {axisGaps(runs, samples, axis).map((g) => <GapMark key={`g${g.gap.from}`} gap={g.gap} from={g.from} to={g.to} scope={scope} />)}
@@ -2415,7 +2415,7 @@ const trackCrosshair = (_runs?: ResourceSample[][]) => (e: PointerEvent) => {
     const frac = raw;
     // How much time ONE PIXEL is worth here, which is what decides whether milliseconds mean anything in the
     // label: zoomed into ten seconds they do, over five minutes of history they are noise.
-    const axis = liveAxis;
+    const axis = live.axis;
     const msPerPx = axis && box.width > 0 ? (axis.to - axis.from) / box.width : Infinity;
     // The TIME comes from the unsnapped position when floating and from the snapped one when not, so the
     // label always names the instant the line is actually drawn at.
@@ -2452,7 +2452,7 @@ function BrushOverlay({ runs }: { runs?: ResourceSample[][] } = {}) {
     // edge resolved once drifts off the dot it was dragged against the moment a poll lands: measured a whole
     // sample apart (a box edge at 0.600 beside a mark at 0.500). Both now answer "which sample is under this
     // screen position" from the same data at the same instant, which is the only way they cannot disagree.
-    const at = (f: number) => (snapDot.value && runs ? snapFraction(runs, f, liveAxis, sampleGraceMs())?.frac ?? f : f);
+    const at = (f: number) => (snapDot.value && runs ? snapFraction(runs, f, live.axis, sampleGraceMs())?.frac ?? f : f);
     const from = Math.min(at(b.from), at(b.to)), to = Math.max(at(b.from), at(b.to));
     return <div class="rc-brush" style={{ left: `${from * 100}%`, width: `${Math.max(0, to - from) * 100}%` }} />;
 }
@@ -2468,13 +2468,19 @@ function BrushOverlay({ runs }: { runs?: ResourceSample[][] } = {}) {
  * written during render re-enters rendering. Nothing reads it to decide what to DRAW — only the pointer
  * handlers, which run outside render and want the newest data there is.
  */
-let liveRuns: ResourceSample[][] | null = null;
 /**
- * THE AXIS THE PLOTS ARE DRAWN ON ({@link Axis}): the chart's window, linear in clock time. Published by the chart as
- * it renders and read by every plot, overlay and pointer handler, so they all place a time at the same x. A plain
- * ref rather than a signal for the same reason as `liveRuns`: it is written during render.
+ * WHAT THE CHART PUBLISHES AS IT RENDERS, for every plot, overlay and pointer handler to read.
+ *
+ * `axis` is the window the plots are drawn on ({@link Axis}), linear in clock time, so they all place a moment at
+ * the same x. `runs` is the sample data a plot is about to draw, which a drag begun in the same frame must not
+ * read a previous version of.
+ *
+ * Plain refs rather than signals, deliberately: both are written DURING RENDER, and a signal written during
+ * render either warns or re-enters. They live in one object rather than as two `let`s so the binding can be
+ * imported — an imported `let` is read-only, which is what stopped the lane and the pointer state moving out of
+ * this file at all.
  */
-let liveAxis: Axis | null = null;
+export const live: { axis: Axis | null; runs: ResourceSample[][] | null } = { axis: null, runs: null };
 /** How often a chart that follows the clock redraws its axis. Fast enough to read as scrolling, slow enough that a
  *  re-render of every track is not the panel's main cost. */
 const AXIS_TICK_MS = 250;
@@ -2508,7 +2514,7 @@ const HOLD_LAPSE_MS = 8000;
 /** Hold the axis as the pointer comes onto (or moves over) a chart surface. */
 const holdAxis = () => {
     lastPointerAt = Date.now();
-    if (!chartHeld.value && liveAxis) chartHeld.value = { axis: liveAxis, key: holdKey() };
+    if (!chartHeld.value && live.axis) chartHeld.value = { axis: live.axis, key: holdKey() };
 };
 /** Let it go when the pointer leaves for somewhere that is not another chart surface (plots → lane keeps it held). */
 const releaseAxis = (e: PointerEvent) => {
@@ -2526,7 +2532,7 @@ if (typeof document !== "undefined") document.addEventListener("pointermove", (e
 }, { passive: true });
 /** Publish the runs a plot is about to draw, for the pointer handlers. Call it from a render, not an effect:
  *  a drag begun in the same frame must not consult the previous one's data. */
-const noteRuns = (runs: ResourceSample[][]): ResourceSample[][] => (liveRuns = runs);
+const noteRuns = (runs: ResourceSample[][]): ResourceSample[][] => (live.runs = runs);
 
 /** Drag across a plot to select a time range (and release to apply it). The fractions are mapped back to TIME
  *  through the same segmented geometry events are placed with — the axis is not linear, so a range read off
@@ -2553,13 +2559,13 @@ const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
      *  Snapped, it is the sample's own stamp, not the axis position read back through `timeAtFraction`,
      *  which would interpolate the very value the snap exists to avoid. */
     const timeAt = (x: number) => {
-        const rs = liveRuns ?? runs;
+        const rs = live.runs ?? runs;
         if (snapDot.value) {
-            const s = snapFraction(rs, raw(x), liveAxis, sampleGraceMs());
+            const s = snapFraction(rs, raw(x), live.axis, sampleGraceMs());
             const t = s ? rs[s.run]?.[s.index]?.t : null;
             if (t != null) return t;
         }
-        return timeAtFraction(liveAxis, raw(x));
+        return timeAtFraction(live.axis, raw(x));
     };
     const startX = e.clientX;
     // RAW screen fractions, snapped where they are DRAWN (BrushOverlay) — see there. Storing the snapped
@@ -2746,7 +2752,7 @@ const STRIP_ROW = 6;
  * its stretches here. It used to sit on the plot's top edge, where a card near full memory drew over it.
  */
 function PhaseStrip({ runs, spans, events, scope }: { runs: ResourceSample[][]; spans: RibbonSpan[]; events: ResourceEvent[]; scope: string }) {
-    const axis = liveAxis;
+    const axis = live.axis;
     if (!axis) return null;
     const rows = [...new Set(spans.map((s) => s.model))].sort().slice(0, 3);
     // The same focus the lane dims by: the hovered event, its ancestors and its own descendants.
@@ -2787,7 +2793,7 @@ function PhaseStrip({ runs, spans, events, scope }: { runs: ResourceSample[][]; 
  * every card, each having its own ceiling.
  */
 function TimeGrid() {
-    const axis = liveAxis;
+    const axis = live.axis;
     if (!timeGrid.value || !axis) return null;
     const step = gridStep(axis.to - axis.from);
     // The spacing, said once per plot: a grid whose interval you have to work out by counting lines against the
@@ -3107,7 +3113,7 @@ function EventLane({ samples, events: all, session }: { samples: ResourceSample[
     const events = useMemo(() => filterEvents(all, filter), [all, filter.hash, filter.scope, filter.hidden, evKey]);
     const counts = useMemo(() => countByKind(all), [all]);
     const runs = noteRuns(useMemo(() => segments(samples, sampleGapMs()).filter((r) => r.length > 1), [samples, streamLive.value]));
-    const axis = liveAxis;
+    const axis = live.axis;
     // On the chart's axis, by time alone: nothing is dropped for falling between samples. PACKED over a window's
     // width to the LEFT of the screen as well as what is on it, so a bar keeps its row while the chart scrolls,
     // instead of the rows re-packing under it on every tick as bars leave. The minimum drawn width is a fraction of
@@ -3494,7 +3500,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
         }, AXIS_TICK_MS);
         return () => clearInterval(id);
     }, [following]);
-    liveAxis = held ?? (!window_ ? axisOf(null, [windowed], tickNow)
+    live.axis = held ?? (!window_ ? axisOf(null, [windowed], tickNow)
         : window_.live && tickNow > window_.to ? { from: window_.from + (tickNow - window_.to), to: tickNow }
         : window_);
     // KNOWN BUG, diagnosed and deliberately still here: this backfills the CURRENT capacity into a sample
