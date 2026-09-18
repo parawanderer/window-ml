@@ -211,3 +211,48 @@ test("a certificate from another root is refused by the hub", { skip: !HAVE_HUB 
         hub.stop();
     }
 });
+
+test("every next() after the socket closes resolves with the close, not never", { skip: !HAVE_HUB && "wmlhub binary not built", timeout: 30_000 }, async () => {
+    // A promise that never settles is how a reconnect loop hangs, and a hang there reads like a service worker
+    // eviction for an hour before it reads like this.
+    const hub = await startHub();
+    try {
+        const root = await generateIdentity();
+        const phone = await device(root, Role.ROLE_CLIENT, [SCOPE.view]);
+        const client = await HubClient.connect({
+            url: hub.url,
+            hubName: HUB,
+            accountRoot: root.publicKey,
+            ...phone,
+            role: Role.ROLE_CLIENT,
+        });
+        hub.stop();
+        const first = await nextWithin(client, "the close");
+        assert.equal(first.kind, "closed");
+        for (let i = 0; i < 3; i++) {
+            const again = await nextWithin(client, "the close again");
+            assert.equal(again.kind, "closed", "and again, however many times a loop asks");
+        }
+    } finally {
+        hub.stop();
+    }
+});
+
+test("a consumer that stops reading is told what it dropped", async () => {
+    const { MAX_QUEUED_EVENTS } = await import("../src/hub/client.ts");
+    // Driven through the private queue rather than a hub, because filling it over a socket would mean publishing
+    // four thousand frames to prove an arithmetic property.
+    const client = Object.create(HubClient.prototype);
+    Object.assign(client, { queue: [], waiting: [], dropped: 0, ended: null });
+    // No optional call: if this method is renamed the test must fail here rather than quietly testing nothing.
+    const push = HubClient.prototype.push;
+    assert.equal(typeof push, "function", "the queue is filled through the client's own path");
+    for (let i = 0; i < MAX_QUEUED_EVENTS + 5; i++) {
+        push.call(client, { kind: "presence", principal: new Uint8Array(32), role: 2, online: true });
+    }
+    const first = await client.next();
+    assert.equal(first.kind, "dropped", "the loss is reported before the events that survived it");
+    assert.equal(first.count, 5);
+    assert.equal((await client.next()).kind, "presence");
+    assert.equal((await client.next()).kind, "presence", "and the rest are still there");
+});

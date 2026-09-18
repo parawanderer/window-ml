@@ -54,8 +54,10 @@ export type HubEvent =
     | { kind: "gap"; stream: StreamRef | undefined; dropped: number }
     /** the hub reporting something about this connection; THROTTLED leaves it open, the rest close it */
     | { kind: "error"; code: number; message: string; ref: number }
-    /** the socket closed: nothing more will arrive */
-    | { kind: "closed"; reason: string };
+    /** the socket closed: nothing more will arrive, and every later `next()` resolves with this again */
+    | { kind: "closed"; reason: string }
+    /** events dropped because the consumer stopped reading: a full queue is reported, never silent */
+    | { kind: "dropped"; count: number };
 
 /** Why connecting failed. */
 export class ConnectError extends Error {
@@ -69,12 +71,25 @@ export class ConnectError extends Error {
 
 const WELCOME_TIMEOUT_MS = 15_000;
 
+/**
+ * Events held for a consumer that is not reading. A stream can publish faster than a slow consumer drains, and an
+ * unbounded queue turns that into a tab's memory; past this the oldest are dropped and the loss is reported.
+ */
+export const MAX_QUEUED_EVENTS = 4_096;
+
 /** A connected, authenticated client. */
 export class HubClient {
     private readonly queue: HubEvent[] = [];
     private readonly waiting: Array<(event: HubEvent) => void> = [];
     private readonly reader = createFrameReader();
     private closed = false;
+    /**
+     * The close, kept so every later `next()` resolves with it again. A promise that never settles is how a reconnect
+     * loop hangs, and a hang there reads like a service worker eviction for an hour before it reads like this.
+     */
+    private ended: HubEvent | null = null;
+    /** events dropped since the consumer last heard about it */
+    private dropped = 0;
 
     private constructor(
         private readonly socket: WebSocket,
@@ -175,7 +190,9 @@ export class HubClient {
         if (!answer.welcome) throw new ConnectError("protocol", "the hub must answer a hello with a welcome");
 
         const receiver = await Receiver.create(config.identity, config.agreement, config.accountRoot);
-        const client = new HubClient(socket, config, principal, account, answer.welcome.limits!, receiver);
+        const limits = answer.welcome.limits;
+        if (!limits) throw new ConnectError("protocol", "the hub's welcome carried no limits");
+        const client = new HubClient(socket, config, principal, account, limits, receiver);
         client.adopt(reader, incoming);
         return client;
     }
@@ -261,9 +278,22 @@ export class HubClient {
     }
 
     private push(event: HubEvent): void {
+        if (event.kind === "closed") {
+            this.ended ??= event;
+            // everyone waiting hears it, not just the first
+            while (this.waiting.length > 0) this.waiting.shift()!(event);
+            return;
+        }
         const waiter = this.waiting.shift();
-        if (waiter) waiter(event);
-        else this.queue.push(event);
+        if (waiter) {
+            waiter(event);
+            return;
+        }
+        this.queue.push(event);
+        if (this.queue.length > MAX_QUEUED_EVENTS) {
+            this.queue.shift();
+            this.dropped += 1;
+        }
     }
 
     private now(): number {
@@ -275,10 +305,19 @@ export class HubClient {
         this.socket.send(encodeFrames(frames));
     }
 
-    /** The next event. Pings are answered before this ever sees them. */
+    /**
+     * The next event. Pings are answered before this ever sees them, a full queue reports what it dropped, and once
+     * the socket has closed every call resolves with that same `closed` event rather than waiting forever.
+     */
     next(): Promise<HubEvent> {
+        if (this.dropped > 0) {
+            const count = this.dropped;
+            this.dropped = 0;
+            return Promise.resolve({ kind: "dropped", count });
+        }
         const queued = this.queue.shift();
         if (queued) return Promise.resolve(queued);
+        if (this.ended) return Promise.resolve(this.ended);
         return new Promise((resolve) => this.waiting.push(resolve));
     }
 
