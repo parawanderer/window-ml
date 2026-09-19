@@ -167,6 +167,13 @@ startup BEFORE the list is restored (so an expired session is never listed then 
 setting changes. It ignores the budget: retention is about a person's history, not space. Every drop, by retention or
 by the caps, is a `sessions/evict` housekeeping record.
 
+**What fills the store** (`session-storage-stats.ts`): from any extension page's console (the chat page, the DevTools
+panel), `await chrome.runtime.sendMessage({ type: "SESSION_STORAGE_STATS" })` answers the store's bytes split into
+images (`data:image/*` wherever they sit), tool output (an agent step's `result`/`streamOutput`/`output`, images
+excluded) and the rest, with `imagesIfDeduplicated` (each distinct image once) and the ten largest sessions. A page is
+refused: the answer lists session hashes, and a saved session is readable by any page that knows its hash. It reads
+every session from disk, so it is for a person asking, never for a timer.
+
 **The page says what it did.** The composer's page path was fire-and-forget, so the result could not say whether a
 message steered a run, started a turn, or reached nothing (a reloaded page no longer holds an unsaved chat). A command
 now carries a `reqId`; the shell relays it into the page and waits up to three seconds for the page's
