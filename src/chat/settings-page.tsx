@@ -6,6 +6,7 @@
 // `ChatExtras.settings` hands over — the extension's own settings view — and appear only where a runtime reports
 // `localSettings` and this device can draw it; this file knows nothing about config, which keeps `src/chat/` free of
 // `chrome`.
+import { signal } from "@preact/signals";
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import { IconBack } from "../sidebar/icons";
@@ -16,7 +17,10 @@ import { CODE_SIZES, PANEL_SIZES, codeSize, panelSize, setCodeSize, setPanelSize
 
 /** Which half of the settings is showing. Not stored: the sheet opens on this page's own, which is the half that is
  *  always there. */
-type SettingsTab = "page" | "runtimes" | "extension" | "housekeeping";
+export type SettingsTab = "page" | "runtimes" | "extension" | "housekeeping";
+
+/** The tab Settings shows; set before opening it to land on one (the attention list opens it on Extension). */
+export const settingsTab = signal<SettingsTab>("page");
 
 /**
  * The settings sheet: this page's display settings, and the extension's where there are any.
@@ -27,7 +31,8 @@ type SettingsTab = "page" | "runtimes" | "extension" | "housekeeping";
  * everything the extension draws.
  */
 export function SettingsPage({ browser, housekeeping, store }: { browser?: ComponentChildren | null; housekeeping?: ComponentChildren | null; store: ChatStore }) {
-    const [tab, setTab] = useState<SettingsTab>("page");
+    const tab = settingsTab.value;
+    const setTab = (t: SettingsTab) => { settingsTab.value = t; };
     useEscapeCloses();
     const shown: SettingsTab = (tab === "extension" && !browser) || (tab === "housekeeping" && !housekeeping) ? "page" : tab;
     const tabs: [SettingsTab, string][] = [

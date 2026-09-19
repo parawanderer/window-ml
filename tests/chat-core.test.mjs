@@ -509,3 +509,29 @@ test("tabTree: browser order per window, a group's run of tabs under its heading
     assert.equal(faviconSrc({ ...t(1), favicon: "javascript:alert(1)" }), null);
     assert.ok(tabMatches(t(1), "s1.EXAMPLE") && !tabMatches(t(1), "nope"));
 });
+
+test("attentionItems: reported and checked codes once each, problems first, fixes only where this device can apply them", async () => {
+    const { attentionItems, attentionCount } = await import("../src/chat/attention.ts");
+    const rt = (id, caps) => ({ id, name: id === "local" ? "This browser" : "Lab box", kind: "browser", online: true, contractVersion: 1, grants: [], capabilities: caps });
+    const here = rt("local", { localSettings: true, archive: { folder: "needs-grant" }, attention: ["no-model"] });
+    const box = rt("box", { attention: ["no-utility-model", "some-future-code"] });
+    const local = new Map([["local", ["no-model", "tab-groups", "site-access"]]]);
+    const canFix = (r, fix) => r.id === "local" && (fix.kind === "settings" || fix.kind === "grant");
+    const items = attentionItems([here, box], local, canFix);
+    assert.deepEqual(items.map((i) => i.key), [
+        "local:no-model",                       // blocks: first, and once though both reported and checked
+        "local:archive-folder-lapsed", "local:site-access", "box:some-future-code",   // limits
+        "local:tab-groups", "box:no-utility-model",                                   // suggests
+    ]);
+    assert.equal(items.find((i) => i.key === "local:no-model").fix.kind, "settings");
+    assert.equal(items.find((i) => i.key === "box:no-utility-model").fix, undefined, "fixed on the box, not from here");
+    assert.match(items.find((i) => i.code === "some-future-code").detail, /does not know/, "an unknown code is said in general words");
+    assert.equal(attentionCount(items), 4, "suggestions are never counted");
+    // A dismissed suggestion is gone; a dismissed PROBLEM is not something a dismissal can hide.
+    const kept = attentionItems([here, box], local, canFix, new Set(["local:tab-groups", "local:site-access"]));
+    assert.ok(!kept.some((i) => i.key === "local:tab-groups"));
+    assert.ok(kept.some((i) => i.key === "local:site-access"));
+    // A runtime's text is never trusted as a code: long or non-string entries are dropped.
+    const odd = attentionItems([rt("x", { attention: ["a".repeat(65), 7, "ok-code"] })], new Map(), () => false);
+    assert.deepEqual(odd.map((i) => i.code), ["ok-code"]);
+});

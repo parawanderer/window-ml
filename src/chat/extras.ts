@@ -23,9 +23,15 @@ export interface ChatExtras {
     /** The runtime's housekeeping log (what it decided on its own: evictions, sweeps, worker restarts), read-only. */
     housekeeping?(runtime: RuntimeId): ComponentChildren | null;
     /**
-     * Ask the browser for tab group names and colours (the optional `tabGroups` permission), for the tab picker. A
-     * function, not a view: it must be CALLED inside the click that asked, the only place a browser shows its
-     * permission prompt. Resolves whether it was granted. Null for a runtime this device cannot grant for.
+     * This device's own checks of a runtime it IS (attention.ts codes: no model, site access, a missing grant…), or
+     * null for one it cannot check. Until runtimes report their own codes on the contract, this is where the
+     * extension's are found. Cheap enough to ask again whenever the page regains focus.
      */
-    tabGroupsGrant?(runtime: RuntimeId): (() => Promise<boolean>) | null;
+    attention?(runtime: RuntimeId): Promise<string[]> | null;
+    /**
+     * Ask the browser for a permission an attention code names (`tab-groups`, `site-access`). A function, not a view:
+     * it must be CALLED inside the click that asked, the only place a browser shows its permission prompt. Resolves
+     * whether it was granted. Null where this device cannot grant it.
+     */
+    grant?(runtime: RuntimeId, code: string): (() => Promise<boolean>) | null;
 }

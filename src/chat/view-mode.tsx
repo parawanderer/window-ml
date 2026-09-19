@@ -17,7 +17,7 @@ import { IconBrain, IconMenu } from "../sidebar/icons";
 import type { PlatformPrefs } from "./platform";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
@@ -146,7 +146,21 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     panelSize.value = PANEL_SIZES.some((x) => x.px === ps) ? ps! : PANEL_FS_DEFAULT;
     const cs = prefs.get<number>(CODE_KEY);
     codeSize.value = CODE_SIZES.some((x) => x.px === cs) ? cs! : CODE_DEFAULT;
+    const d = prefs.get<string[]>(DISMISSED_KEY);
+    dismissed.value = new Set(Array.isArray(d) ? d.filter((x) => typeof x === "string") : []);
     applyCalm();
+}
+
+/** Suggestions put away on this device, as `runtime:code` (attention.ts). Only a suggestion can be; a problem stays. */
+export const dismissed = signal<Set<string>>(new Set());
+
+/** Put a suggestion away on this device. */
+export function dismiss(key: string): void {
+    if (dismissed.value.has(key)) return;
+    const next = new Set(dismissed.value);
+    next.add(key);
+    dismissed.value = next;
+    store?.set(DISMISSED_KEY, [...next]);
 }
 
 /** Set the docked panels' base size (one of `PANEL_SIZES`). */

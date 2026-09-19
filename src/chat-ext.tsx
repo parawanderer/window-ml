@@ -21,7 +21,7 @@ import { installViewPrefs } from "./chat/view-mode";
 import { VRAM_POLL_MS } from "./sidebar/panel-state";
 import { BACKEND_HEALTH_MS, VramPanel, connectResourceStream, fetchModels, pollBackendHealth, pollPs } from "./sidebar/vram";
 import { PythonBench } from "./sidebar/vram-bench";
-import type { RuntimeId } from "./session-host";
+import type { RuntimeId, RuntimeInfo } from "./session-host";
 import { Settings } from "./sidebar/settings";
 import { config } from "./sidebar/store";
 import { DEFAULT_CONFIG, type MlConfig } from "./contract";
@@ -61,6 +61,8 @@ function BoxPanel() {
  * this browser's VRAM would draw someone else's machine under its name.
  */
 const localRuntimes = new Set<RuntimeId>();
+/** The latest description of each of them, for checks that read what the runtime reports about itself. */
+const runtimeInfo = new Map<RuntimeId, RuntimeInfo>();
 
 /**
  * The extension's own settings view, in the page's main pane. It reads and writes `chrome.storage.sync` itself
@@ -83,6 +85,37 @@ function SettingsPane() {
     return <Settings />;
 }
 
+/** The permissions an attention code asks for, where a click here can grant it. */
+const GRANTS: Record<string, chrome.permissions.Permissions> = {
+    "tab-groups": { permissions: ["tabGroups"] as chrome.runtime.ManifestPermission[] },
+    "site-access": { origins: ["<all_urls>"] },
+};
+
+/**
+ * This browser's own attention codes (src/chat/attention.ts), for its runtime. What only the extension can see: its
+ * permissions (site access withheld on "on click" reads as not granted), its config, whether its backend answers,
+ * and whether the build has Python's wheels (`pythonBench` is measured, so false on this browser means missing).
+ */
+async function localAttention(id: string): Promise<string[]> {
+    const codes: string[] = [];
+    const has = (p: chrome.permissions.Permissions) => chrome.permissions?.contains(p).catch(() => true) ?? Promise.resolve(true);
+    const [sites, groups, cfg] = await Promise.all([
+        has(GRANTS["site-access"]), has(GRANTS["tab-groups"]),
+        chrome.storage.sync.get(DEFAULT_CONFIG as never).then((c) => c as unknown as MlConfig, () => null),
+    ]);
+    if (!sites) codes.push("site-access");
+    if (!groups) codes.push("tab-groups");
+    if (cfg && !cfg.model.trim()) codes.push("no-model");
+    if (cfg && !cfg.utilityModel.trim()) codes.push("no-utility-model");
+    if (runtimeInfo.get(id)?.capabilities.pythonBench === false) codes.push("python-packages-missing");
+    // Only when there is something to reach: an empty URL is already "no model" territory for a fresh install.
+    if (cfg?.chatUrl.trim()) {
+        const r = await chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: {} }).catch(() => null) as { error?: string } | null;
+        if (!r || r.error) codes.push("backend-unreachable");
+    }
+    return codes;
+}
+
 /** What this device can draw beyond the chat core. Every answer is per runtime, and null for one that is not ours. */
 const extras: ChatExtras = {
     resourcePanel: (id) => (localRuntimes.has(id) ? <BoxPanel /> : null),
@@ -90,17 +123,22 @@ const extras: ChatExtras = {
     bench: (id) => (localRuntimes.has(id) ? <PythonBench /> : null),
     settings: (id) => (localRuntimes.has(id) ? <SettingsPane /> : null),
     housekeeping: (id) => (localRuntimes.has(id) ? <HousekeepingView /> : null),
+    attention: (id) => (localRuntimes.has(id) ? localAttention(id) : null),
     // Called straight from the click, so the browser still counts it as the user's gesture and shows its prompt.
-    tabGroupsGrant: (id) => (localRuntimes.has(id) && chrome.permissions
-        ? () => chrome.permissions.request({ permissions: ["tabGroups"] }).catch(() => false)
-        : null),
+    grant: (id, code) => {
+        const want = GRANTS[code];
+        return localRuntimes.has(id) && want && chrome.permissions ? () => chrome.permissions.request(want).catch(() => false) : null;
+    },
 };
 
 // One port for the page's life, reconnected by `LocalHost` itself: an MV3 worker is evicted when idle, which drops
 // every port, and the host re-requests the index and resumes each subscription from its last delivered position.
 const host = new LocalHost(() => chrome.runtime.connect({ name: SESSIONS_PORT }));
 const store = new ChatStore(host);
-host.runtimes((list) => { localRuntimes.clear(); for (const r of list) localRuntimes.add(r.id); });
+host.runtimes((list) => {
+    localRuntimes.clear(); runtimeInfo.clear();
+    for (const r of list) { localRuntimes.add(r.id); runtimeInfo.set(r.id, r); }
+});
 
 installServices(hostServices(store, extensionPlatform));
 initThemeStyle();

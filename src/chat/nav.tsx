@@ -18,7 +18,7 @@ import { calm, pane, setCalm, setListOpen, setPane } from "./view-mode";
 
 /** What the MAIN pane shows instead of a session: the search page, or this device's settings. Not stored: both are
  *  places you go to and come back from, and a reload that reopened settings would be a surprise. */
-export const mainView = signal<"search" | "settings" | null>(null);
+export const mainView = signal<"search" | "settings" | "attention" | null>(null);
 
 /** Open the search page (and close any session-level view that would sit on top of it). */
 export function openSearch(): void { mainView.value = "search"; }

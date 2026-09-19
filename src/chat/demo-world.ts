@@ -30,7 +30,9 @@ export function demoHost(now = Date.now(), opts: { latencyMs?: number } = {}): F
         },
         {
             id: "lab-box", name: "Lab box", kind: "desktop", online: true, contractVersion: SESSION_CONTRACT_VERSION, grants: [{ scope: "view" }],
-            capabilities: { agent: true, sideCalls: true },
+            // Its own attention codes, as a runtime would report them once the contract carries `attention` (proposed):
+            // one this page words, one it does not know yet.
+            capabilities: { agent: true, sideCalls: true, attention: ["no-utility-model", "gpu-driver-old"] } as RuntimeInfo["capabilities"],
         },
         {
             id: "old-mac", name: "Old Mac", kind: "browser", online: false, lastSeen: now - 90 * min, contractVersion: SESSION_CONTRACT_VERSION, grants: EVERY,

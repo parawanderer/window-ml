@@ -598,3 +598,34 @@ test("desktop: the list shows the last month, and the search page holds every se
     expect(errors).toEqual([]);
     await page.close();
 });
+
+test("the attention list: an inbox above the gear, problems counted, each said for where it is fixed, suggestions dismissable", async () => {
+    const { page, errors } = await open(DESKTOP);
+    // Two problems (the laptop's lapsed archive folder, the box's code this page does not know) and one suggestion.
+    const btn = page.locator(".chat-list-foot .chat-att-btn");
+    await expect(btn).toContainText("Needs attention");
+    await expect(btn.locator(".chat-att-n")).toHaveText("2");
+    await btn.click();
+    const sheet = page.getByRole("main", { name: "Needs attention" });
+    const items = sheet.locator(".chat-att-item");
+    await expect(items).toHaveCount(3);
+    await expect(items.nth(0)).toContainText("The archive folder needs reconnecting");
+    // Neither runtime's settings can be changed from here, so each says where it is fixed rather than offering a button.
+    await expect(items.nth(0)).toContainText("It is fixed on Work laptop.");
+    await expect(sheet.locator(".chat-att-fix")).toHaveCount(0);
+    await expect(sheet).toContainText("does not know");
+    const tip = items.filter({ hasText: "No utility model" });
+    await tip.getByRole("button", { name: "Dismiss" }).click();
+    await expect(items).toHaveCount(2);
+    // Dismissed on this device: it stays away after a reload, and the count never included it.
+    await page.reload();
+    await btn.click();
+    await expect(items).toHaveCount(2);
+    await expect(btn.locator(".chat-att-n")).toHaveText("2");
+    // Off any tooltip first: a first Escape over one only mutes it.
+    await page.mouse.move(600, 300);
+    await page.keyboard.press("Escape");
+    await expect(sheet).toHaveCount(0);
+    expect(errors).toEqual([]);
+    await page.close();
+});

@@ -665,6 +665,23 @@ back arrow, Escape from anywhere via `useEscapeCloses`): the extension's own set
 through `ChatExtras.settings` and offered where the runtime reports `localSettings` — so only the extension build
 has it, and it edits the same `chrome.storage.sync` the popup and the panel do.
 
+**The attention list** (`attention.ts`, `attention-page.tsx`) is what needs someone's hand before a runtime works
+fully: no model, an unreachable backend, site access on "on click", a lapsed archive folder, a build without Python's
+wheels, and two suggestions (a utility model, tab group names). It is opened from an inbox above the gear, which is
+absent when the list is empty and counts problems only, never suggestions. Nothing is stored: every item is derived,
+so fixing a thing is what removes it, and only a suggestion can be dismissed (per device, `view.dismissed`).
+
+Items are CODES, turned into sentences here. Nearly all of them are facts about a runtime rather than the viewer (a
+phone driving a laptop needs to know the laptop has no model), so a runtime is meant to report its own as
+`capabilities.attention` (proposed to the transport session; read defensively until it lands, as are codes this page
+does not know, which are shown in general words). Codes and not prose, because a remote runtime's text is untrusted
+and the sentence depends on where it is read. Until then the page reads what the contract already says (the archive
+folder's state) and asks `ChatExtras.attention` for this browser's own checks: its permissions, its config, whether
+`LIST_MODELS` answers, and `pythonBench` (measured, so false on this browser means the wheels are missing). They run
+on load, when the page regains focus (at most every 15 s, since one asks the backend) and after a fix. A fix is
+offered only where this device can apply it: `ChatExtras.grant` inside the click, or Settings opened on its
+Extension tab; anywhere else the item says on which runtime it is fixed.
+
 **The page chip brings its tab to the front** with `tab.focus`, a contract command (tab and window both), so a phone
 driving this browser over a hub gets the same button. It started as a device-local `ChatExtras.focusTab` stand-in
 and was deleted when the command landed (#183).

@@ -749,7 +749,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-rail .hbtn, .chat-list-foot .hbtn, .chat-list .head .hbtn, .chat-sheet-back { min-width: 36px; min-height: 36px; border-radius: 50%; }
 .chat-rail .sp { flex: 1 1 auto; }
 /* The rail's `+` menu opens to the RIGHT of the rail: anchored under it, it would open off the left edge. */
-.chat-list-foot { flex: 0 0 auto; padding: 8px 10px 12px; display: flex; }
+.chat-list-foot { flex: 0 0 auto; padding: 8px 10px 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 
 /* THE PAGE'S ONE MENU LOOK (menu.tsx): a rounded sheet, a glyph and a label per row, a tick on a toggle — Android's
    list menu, which Gemini borrowed. The row menu and the gear's menu both use it, so they cannot drift apart. */
@@ -781,6 +781,29 @@ button.chat-page-go:hover { color: var(--fg); }
 }
 .chat-gear-wide:hover, .chat-gear-wide.on { background: var(--panel); color: var(--fg); }
 .chat-gear-wide svg { width: 18px; height: 18px; }
+
+/* THE ATTENTION LIST's button, above the gear (attention-page.tsx): absent when there is nothing to do. Its count
+   is for problems only, in the warning colour, since a suggestion is not something to be nagged about. */
+.chat-att-btn { position: relative; }
+.chat-att-dot { position: absolute; top: 2px; right: 1px; min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box; border-radius: 999px; background: var(--warn); color: var(--bg); font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
+.chat-att-n { margin-left: -4px; min-width: 18px; padding: 0 5px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); font-size: .8em; font-weight: 600; text-align: center; }
+/* The sheet's rows: a sentence on the left, its fix on the right; problems carry a coloured edge, suggestions none. */
+.chat-att-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.chat-att-item { display: flex; align-items: flex-start; gap: 16px; padding: 14px 16px; border-radius: 14px; background: var(--panel); box-shadow: inset 3px 0 0 transparent; }
+.chat-att-item.blocks { box-shadow: inset 3px 0 0 var(--err); }
+.chat-att-item.limits { box-shadow: inset 3px 0 0 var(--warn); }
+.chat-att-text { flex: 1 1 auto; min-width: 0; }
+.chat-att-title { font-weight: 600; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.chat-att-rt { color: var(--fg-faint); font-weight: 400; font-size: .85em; }
+.chat-att-detail { margin-top: 4px; color: var(--fg-dim); font-size: .92em; line-height: 1.5; overflow-wrap: anywhere; }
+.chat-att-acts { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.chat-att-fix { padding: 6px 14px; border: none; border-radius: 999px; background: var(--fg); color: var(--bg); font: inherit; font-size: .9em; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.chat-att-fix:hover { opacity: .88; }
+.chat-att-fix:disabled { opacity: .5; cursor: default; }
+.chat-att-dismiss { padding: 2px 6px; border: none; background: none; color: var(--fg-faint); font: inherit; font-size: .85em; cursor: pointer; }
+.chat-att-dismiss:hover { color: var(--fg); }
+.chat.narrow .chat-att-item { flex-direction: column; gap: 10px; }
+.chat.narrow .chat-att-acts { flex-direction: row; align-items: center; }
 
 /* A SHEET: a page of the app that is not a session — the search page and Settings. One quiet column at the reading
    width, no band across the top, and Escape takes you back. */

@@ -1,0 +1,122 @@
+// attention.ts — WHAT NEEDS SOMEONE'S HAND: the setup steps and lapses that keep a runtime from working fully (no
+// model, site access on "on click", an archive folder that lost its permission), as short CODES turned into sentences
+// here. Pure, so the wording and the rules are tested without a DOM; the list itself is `attention-page.tsx`.
+//
+// Almost everything here is a fact about a RUNTIME, not about whoever is looking: a phone driving a laptop needs to
+// know the laptop has no model as much as the laptop's own page does. So a runtime is meant to report its own codes
+// (proposed on the contract as `capabilities.attention`); until it does, the page reads what is already on the
+// contract (the archive folder's state) and asks this device's own checks (`ChatExtras.attention`) for the runtimes it
+// can check itself. Codes, not prose: a remote runtime's text is untrusted, and the sentence depends on where it is
+// read (a button on the laptop, "on Work laptop" on a phone). An unknown code is still counted, in general words.
+import type { RuntimeInfo } from "../session-host";
+
+/** How much it costs to leave it: nothing works, something is missing, or it would be nicer. */
+export type AttentionLevel = "blocks" | "limits" | "suggests";
+
+/** One code a runtime (or this device, for it) reports. OPEN: a code this page does not know is shown generally. */
+export type AttentionCode =
+    | "no-model" | "backend-unreachable" | "site-access" | "tab-groups" | "no-utility-model"
+    | "archive-folder-lapsed" | "archive-folder-unsupported" | "python-packages-missing";
+
+/** How it is fixed from here, when it can be: a grant inside the click, or the extension's Settings. */
+export type AttentionFix = { kind: "grant"; label: string } | { kind: "settings"; label: string; where: string };
+
+/** One line of the list. `key` is `runtime:code`, what a dismissal remembers. */
+export interface AttentionItem {
+    key: string;
+    runtime: RuntimeInfo;
+    code: string;
+    level: AttentionLevel;
+    title: string;
+    detail: string;
+    /** present only where THIS device can apply it */
+    fix?: AttentionFix;
+}
+
+/** Each known code: its level, its words, and how it is fixed on the runtime's own device. */
+const KNOWN: Record<AttentionCode, { level: AttentionLevel; title: string; detail: string; fix?: AttentionFix }> = {
+    "no-model": {
+        level: "blocks", title: "No model is chosen",
+        detail: "Nothing can run until the extension has a model to send to.",
+        fix: { kind: "settings", label: "Choose one", where: "Extension → Models → Defaults" },
+    },
+    "backend-unreachable": {
+        level: "blocks", title: "The backend is not answering",
+        detail: "Its server URL or API key may be wrong, or the server is down.",
+        fix: { kind: "settings", label: "Check it", where: "Extension → Connection" },
+    },
+    "site-access": {
+        level: "limits", title: "Site access is limited",
+        detail: "The extension may only reach sites you click it on, so the agent cannot fetch other pages and tabs show no icons.",
+        fix: { kind: "grant", label: "Allow all sites" },
+    },
+    "archive-folder-lapsed": {
+        level: "limits", title: "The archive folder needs reconnecting",
+        detail: "It lost the browser's permission, so old sessions are no longer copied into it. They are still kept and searchable in the browser.",
+        fix: { kind: "settings", label: "Reconnect", where: "Extension → Appearance → Archive folder" },
+    },
+    "archive-folder-unsupported": {
+        level: "limits", title: "This browser cannot keep an archive folder",
+        detail: "It does not let pages pick a folder. In Brave, turn on brave://flags/#file-system-access-api and restart it.",
+    },
+    "python-packages-missing": {
+        level: "limits", title: "Python has no packages",
+        detail: "This build was made without its Python wheels, so python_exec and the bench fail. Run npm run fetch-pyodide, then rebuild.",
+    },
+    "no-utility-model": {
+        level: "suggests", title: "No utility model",
+        detail: "Sessions get no titles or summaries, and side calls use nothing. A small, fast model is enough.",
+        fix: { kind: "settings", label: "Choose one", where: "Extension → Models → Utility model" },
+    },
+    "tab-groups": {
+        level: "suggests", title: "Tab groups show without names",
+        detail: "The tab picker groups tabs either way; their names and colours need the browser's permission.",
+        fix: { kind: "grant", label: "Show them" },
+    },
+};
+
+const RANK: Record<AttentionLevel, number> = { blocks: 0, limits: 1, suggests: 2 };
+
+/**
+ * The list, most urgent first. `local` is this device's own codes per runtime (null for a runtime it cannot check);
+ * `canFix(runtime, fix)` says whether this device can apply a fix there (the grant or the Settings it holds); `hidden`
+ * is the dismissed suggestions. A code both reported and checked appears once.
+ */
+export function attentionItems(
+    runtimes: readonly RuntimeInfo[],
+    local: ReadonlyMap<string, readonly string[]>,
+    canFix: (runtime: RuntimeInfo, fix: AttentionFix, code: string) => boolean,
+    hidden: ReadonlySet<string> = new Set(),
+): AttentionItem[] {
+    const out: AttentionItem[] = [];
+    for (const rt of runtimes) {
+        const codes = new Set<string>([...reported(rt), ...(local.get(rt.id) ?? [])]);
+        for (const code of codes) {
+            const k = KNOWN[code as AttentionCode];
+            const key = `${rt.id}:${code}`;
+            const level = k?.level ?? "limits";
+            if (level === "suggests" && hidden.has(key)) continue;
+            out.push({
+                key, runtime: rt, code, level,
+                title: k?.title ?? "Something needs attention",
+                detail: k?.detail ?? `${rt.name} reported "${code.slice(0, 40)}", which this page does not know. Its own Settings will say more.`,
+                ...(k?.fix && canFix(rt, k.fix, code) ? { fix: k.fix } : {}),
+            });
+        }
+    }
+    return out.sort((a, b) => RANK[a.level] - RANK[b.level]);
+}
+
+/** What the runtime itself reports: its `attention` codes once the contract carries them, and what it already says. */
+function reported(rt: RuntimeInfo): string[] {
+    const caps = rt.capabilities as RuntimeInfo["capabilities"] & { attention?: unknown };
+    const codes = Array.isArray(caps.attention) ? caps.attention.filter((c): c is string => typeof c === "string" && c.length <= 64) : [];
+    if (caps.archive?.folder === "needs-grant") codes.push("archive-folder-lapsed");
+    if (caps.archive?.folder === "unsupported") codes.push("archive-folder-unsupported");
+    return codes;
+}
+
+/** What the count on the button says: problems only, never the suggestions, so a set-up page shows no number. */
+export function attentionCount(items: readonly AttentionItem[]): number {
+    return items.filter((i) => i.level !== "suggests").length;
+}

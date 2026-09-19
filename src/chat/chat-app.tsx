@@ -22,6 +22,7 @@ import type { ChatStore } from "./chat-store";
 import { mayCommand, speaksOurContract } from "./grants";
 import { ResumeSession, StartMenu, resumableHere, startableOn, type StartKind } from "./new-session";
 import { START_GRACE_MS, StartPage, useHeldTrue } from "./start-page";
+import { AttentionButton, AttentionPage, useAttention } from "./attention-page";
 import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, panelSize, listOpen, pane, pinned, setPane, toggleRuntime } from "./view-mode";
 import { DeleteConfirm, RenameDialog, RowMenu, isPinned } from "./row-menu";
 import { GearMenu, Rail, mainView, openSearch } from "./nav";
@@ -623,8 +624,9 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     // Held through a worker restart (START_GRACE_MS): the page does not trade the start page for "Pick a session" and
     // back each time the browser stops an idle worker.
     const canStart = useHeldTrue(startableOn(store, "agent").length > 0 || startableOn(store, "chat").length > 0, START_GRACE_MS);
-    const gear = <GearMenu graphsRt={graphsRt} benchRt={benchOwner} />;
-    const gearWide = <GearMenu graphsRt={graphsRt} benchRt={benchOwner} labelled />;
+    const att = useAttention(store, extras);
+    const gear = <><AttentionButton items={att.items} /><GearMenu graphsRt={graphsRt} benchRt={benchOwner} /></>;
+    const gearWide = <><AttentionButton items={att.items} labelled /><GearMenu graphsRt={graphsRt} benchRt={benchOwner} labelled /></>;
     // The sheet is always there: this page's own display settings need no runtime; the browser's settings join them
     // where a runtime offers them and this device can draw them.
     const browserSettings = settingsRt ? extras?.settings?.(settingsRt.id) : null;
@@ -638,6 +640,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
             {(!narrow || (!key && !starting && !main)) ? <SessionList store={store} activeKey={key} narrow={narrow} onStart={start} gear={gear} gearWide={gearWide} /> : null}
             <DockFrame panels={panels} narrow={narrow}>
             {main === "search" && (!narrow || !key) ? <SearchPage store={store} narrow={narrow} />
+                : main === "attention" ? <AttentionPage items={att.items} extras={extras} recheck={att.recheck} />
                 : main === "settings" ? <SettingsPage browser={browserSettings} housekeeping={housekeeping} store={store} />
                 : (starting || (!key && !narrow)) && canStart ? (
                     <main class="chat-main chat-home">
