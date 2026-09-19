@@ -50,6 +50,19 @@ export function clientPairing(o: ClientPairingOptions): PairingApi {
         if (!i) throw new Error("This device may not pair others. Pair new devices on the one that holds the account's root.");
         return i;
     };
+    /** An offer the library found, as the screens show it, with the grant this device starts from. */
+    const shown = async (found: flow.FoundOffer): Promise<FoundOffer> => {
+        const from = await issuer();
+        return {
+            label: found.offer.label,
+            role: roleOf(found.offer.role),
+            fingerprint: found.fingerprint,
+            grant: flow.defaultGrant(found.offer.role, from),
+            grantable: from.scopes ?? null,
+            ref: found,
+            ...(found.checked ? { checked: true } : {}),
+        };
+    };
     return {
         joinsAs: "client",
         canCreate: true,
@@ -74,21 +87,13 @@ export function clientPairing(o: ClientPairingOptions): PairingApi {
                 cancel: offer.cancel,
             };
         },
-        async lookupOffer(typed): Promise<FoundOffer> {
-            const found = await flow.lookupOffer(connected(), typed);
-            const from = await issuer();
-            return {
-                label: found.offer.label,
-                role: roleOf(found.offer.role),
-                fingerprint: found.fingerprint,
-                grant: flow.defaultGrant(found.offer.role, from),
-                grantable: from.scopes ?? null,
-                ref: found,
-            };
-        },
+        lookupOffer: async (typed) => shown(await flow.lookupOffer(connected(), typed)),
+        // The QR carried the whole fingerprint and the library checked the keys against it: `checked`, nothing to compare.
+        lookupScanned: async (text) => shown(await flow.lookupScanned(connected(), text)),
         async confirmOffer(found: FoundOffer, grant: Grant) {
             await flow.confirmOffer(connected(), await issuer(), found.ref as flow.FoundOffer, grant);
         },
+
         async leave() {
             // Never a root: forgetting it is final, and the account view does not offer it on the root device.
             const me = await (await keyring()).load();

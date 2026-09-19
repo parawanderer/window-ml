@@ -3409,3 +3409,11 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .pair-dev-seen .time { font-size: inherit; color: inherit; }
 /* What an action on a pairing screen costs if it goes wrong (where the root key lives): a warning-tinted box. */
 .pair-warn { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 12%, transparent); }
+/* Reading a pairing QR code (qr-scan.tsx): the camera's view, square and framed, with how to use it under it. */
+.pair-scan { display: flex; flex-direction: column; gap: 8px; }
+/* The camera's view itself: square, the width of a phone's column, never wider than the card. */
+.pair-scan-view { width: min(100%, 320px); aspect-ratio: 1; object-fit: cover; border-radius: 12px; background: #000; }
+/* The scan button sits at the start, above the typed code it is the alternative to. */
+.pair-scan-go { justify-content: flex-start; margin-top: 0; }
+/* "Scanned: the keys match": said in the ok colour, since it replaces the comparison a person would have made. */
+.pair-checked { color: var(--ok); }

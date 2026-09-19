@@ -8,7 +8,8 @@
 //
 // NOTHING here needs Android Studio or Xcode: `cap add` writes template files and `cap sync` copies. The SDKs are
 // needed to compile what this produces, which is what CI does and this machine does not.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { withAndroidCamera, withIosCamera } from "./mobile-permissions.mjs";
 import { spawnSync } from "node:child_process";
 
 const platform = process.argv[2];
@@ -26,3 +27,14 @@ const cap = (...args) => {
 if (!existsSync(platform)) cap("add", platform);
 else console.log(`${platform}/ is already scaffolded — syncing into it.`);
 cap("sync", platform);
+
+// The camera, for scanning a pairing QR code: declared in the generated project, since it is not checked in.
+const declared = platform === "android"
+    ? ["android/app/src/main/AndroidManifest.xml", withAndroidCamera]
+    : ["ios/App/App/Info.plist", withIosCamera];
+const [file, add] = declared;
+if (existsSync(file)) {
+    const before = readFileSync(file, "utf8"), after = add(before);
+    if (after === before && !/CAMERA|NSCameraUsageDescription/.test(before)) { console.error(`could not add the camera declaration to ${file}`); process.exit(1); }
+    if (after !== before) { writeFileSync(file, after); console.log(`declared the camera in ${file}`); }
+}

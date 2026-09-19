@@ -86,6 +86,15 @@ export function fakePairing(o: {
             if (!f) throw new FakePairingError("no-offer", "no offer under that code");
             return { ...f, grant: f.grant ?? defaultGrant(f.role, grantable, !!membership?.root), grantable: f.grantable ?? grantable };
         },
+        async lookupScanned(text) {
+            await wait();
+            const m = /^WMLPAIR:1:([0-9A-Z]{8}):([0-9A-F]{64})$/.exec(text);
+            if (!m) throw new FakePairingError("bad-offer", "not a pairing QR code");
+            const f = offers.get(m[1]);
+            if (!f) throw new FakePairingError("no-offer", "no offer under that code");
+            if (!m[2].toLowerCase().startsWith(f.fingerprint)) throw new FakePairingError("mismatch", "the offer's keys are not the ones the code named");
+            return { ...f, grant: f.grant ?? defaultGrant(f.role, grantable, !!membership?.root), grantable: f.grantable ?? grantable, checked: true };
+        },
         async confirmOffer(found, grant) {
             await wait();
             const over = grantable ? grant.scopes.filter((s) => !grantable.includes(s)) : [];

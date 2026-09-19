@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { encode } from "uqr";
 import { ConnectionHistory, DevicesList } from "./devices-ui";
+import { QrScanner, canScan } from "./qr-scan";
 import { groupFour, pairingProblem, roleName, SCOPES, type FoundOffer, type Grant, type HubConnectionView, type Membership, type OfferHandle, type PairingApi } from "./api";
 
 /** A fingerprint as both screens draw it: four-character groups in the code face, large enough to compare. */
@@ -206,6 +207,25 @@ export function PairDevice({ api, onDone }: { api: PairingApi; onDone?: () => vo
     const [busy, setBusy] = useState(false);
     const [problem, setProblem] = useState("");
     const [outcome, setOutcome] = useState<"paired" | "refused" | null>(null);
+    const [scanning, setScanning] = useState(false);
+    // Why a scan was REFUSED (a mismatch): shown in place of the offer, with no way to continue with it.
+    const [refusal, setRefusal] = useState("");
+    const mayScan = !!api.lookupScanned && canScan();
+    const scanned = async (text: string) => {
+        setScanning(false);
+        setBusy(true);
+        setProblem("");
+        try {
+            const f = await api.lookupScanned!(text);
+            setFound(f);
+            setGrant(f.grant);
+        } catch (err) {
+            if ((err as { reason?: string } | null)?.reason === "mismatch") { setRefusal(pairingProblem(err)); setOutcome("refused"); }
+            else setProblem(pairingProblem(err));
+        } finally {
+            setBusy(false);
+        }
+    };
     const look = async () => {
         setBusy(true);
         setProblem("");
@@ -232,7 +252,7 @@ export function PairDevice({ api, onDone }: { api: PairingApi; onDone?: () => vo
             setBusy(false);
         }
     };
-    const again = () => { setTyped(""); setFound(null); setGrant(null); setOutcome(null); setProblem(""); };
+    const again = () => { setTyped(""); setFound(null); setGrant(null); setOutcome(null); setProblem(""); setRefusal(""); };
     if (outcome === "paired" && found) {
         return (
             <section class="pair-card" aria-label="Pair a device">
@@ -246,8 +266,24 @@ export function PairDevice({ api, onDone }: { api: PairingApi; onDone?: () => vo
         return (
             <section class="pair-card" aria-label="Pair a device">
                 <h3 class="pair-h">Nothing was paired</h3>
-                <p class="pair-p">Different fingerprints mean something between the two devices swapped the keys. On the new device, cancel and get a new code; if it happens again, the hub is not one to trust.</p>
+                <p class="pair-p">{refusal || "Different fingerprints mean something between the two devices swapped the keys. On the new device, cancel and get a new code; if it happens again, the hub is not one to trust."}</p>
                 <div class="pair-actions"><button class="btn" onClick={again}>Start again</button></div>
+            </section>
+        );
+    }
+    // SCANNED AND CHECKED: the QR code carried the whole fingerprint and the keys matched it, so there is nothing to
+    // compare by eye; what is left is what it may do.
+    if (found && grant && found.checked) {
+        return (
+            <section class="pair-card" aria-label="Pair a device">
+                <h3 class="pair-h">“{found.label}” wants to join as {roleName(found.role)}</h3>
+                <p class="pair-p pair-checked">Scanned: the QR code named this device's keys, and they match.</p>
+                <GrantEditor found={found} grant={grant} onChange={setGrant} />
+                {problem ? <p class="pair-problem" role="alert">{problem}</p> : null}
+                <div class="pair-actions">
+                    <button class="btn" disabled={busy} onClick={again}>Cancel</button>
+                    <button class="btn primary" disabled={busy} onClick={confirm}>{busy ? "Pairing…" : "Pair it"}</button>
+                </div>
             </section>
         );
     }
@@ -269,7 +305,9 @@ export function PairDevice({ api, onDone }: { api: PairingApi; onDone?: () => vo
     return (
         <section class="pair-card" aria-label="Pair a device">
             <h3 class="pair-h">Pair a device</h3>
-            <p class="pair-p">On the new device, choose Join an account. Type the code it shows.</p>
+            <p class="pair-p">On the new device, choose Join an account. {mayScan ? "Scan the QR code it shows, or type its code." : "Type the code it shows."}</p>
+            {scanning ? <QrScanner onText={(t) => void scanned(t)} onCancel={() => setScanning(false)} />
+                : mayScan ? <div class="pair-actions pair-scan-go"><button class="btn primary" disabled={busy} onClick={() => { setProblem(""); setScanning(true); }}>{busy ? "Looking…" : "Scan its QR code"}</button></div> : null}
             <Field label="Its code" value={typed} onInput={setTyped} placeholder="ABCD 1234" mono />
             {problem ? <p class="pair-problem" role="alert">{problem}</p> : null}
             <div class="pair-actions">
