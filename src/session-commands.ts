@@ -9,7 +9,8 @@ import type { NeutralMessage } from "./contract-chat";
 import type { MlDebugEvent } from "./contract-debug";
 import type { SessionHistory } from "./session-store";
 import type { Command, CommandError, CommandResult, CommandType, SessionId, TabInfo } from "./session-host";
-import type { SessionIndex } from "./session-index";
+import type { SessionIndex } from "./session-index";import { capTitle } from "./session-title";
+
 
 /** What a page said it did with a relayed session action. `no-answer`: it did not reply in time. */
 export type PageOutcome = "steer" | "turn" | "cancelled" | "continued" | "busy" | "none" | "no-answer";
@@ -56,6 +57,8 @@ export interface CommandDeps {
     keepSession(hash: string): void;
     /** pin or unpin a session this runtime holds: saved first when pinning, then the row changed and written */
     pinSession(hash: string, pinned: boolean): void;
+    /** name a session (a capped, non-empty title), or with null return it to a generated title */
+    renameSession(hash: string, title: string | null): void;
     /** every event this runtime still holds for a session, oldest first; empty when it holds none */
     storedEvents?(hash: string): Promise<MlDebugEvent[]>;
     /** what a saved session would be CONTINUED from, or null when this browser keeps no history for it */
@@ -428,6 +431,15 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             // both asked for the state it is in.
             if (c.pinned !== was) deps.pinSession(s.id.hash, c.pinned);
             return ok({});
+        },
+
+        "session.rename": async (c) => {
+            const s = session(c);
+            if (s.error) return s.error;
+            if (typeof c.title !== "string") return fail("invalid", "title must be a string");
+            const title = capTitle(c.title);
+            deps.renameSession(s.id.hash, title || null);
+            return ok({ title });
         },
 
         "approval.answer": async (c) => {

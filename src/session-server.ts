@@ -216,6 +216,13 @@ export class SessionServer {
         return marked.events;
     }
 
+    /** Title a session and tell every client. Returns the new row, or null when nothing changed. */
+    retitle(hash: string, title: string | null, renamed = false): SessionSummary | null {
+        const row = this.index.setTitle(hash, title, renamed);
+        if (row) this.broadcastIndex({ type: "upsert", session: row });
+        return row;
+    }
+
     /** Pin or unpin a session and tell every client. Returns the new row, or null when nothing changed. */
     pin(hash: string, pinned: boolean): SessionSummary | null {
         const row = this.index.setPinned(hash, pinned);

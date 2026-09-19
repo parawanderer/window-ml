@@ -52,6 +52,7 @@ function world(over = {}) {
         hostsChat: rec("hostsChat", false),
         keepSession: rec("keepSession"),
         pinSession: rec("pinSession", (hash, pinned) => { index.setPinned(hash, pinned); }),
+        renameSession: rec("renameSession", (hash, title) => { index.setTitle(hash, title, !!title); }),
         startAgent: rec("startAgent", async () => ({ outcome: "started", hash: "ab120001" })),
         history: rec("history", async () => AGENT_HISTORY),
         storedEvents: rec("storedEvents", async () => STORED),
@@ -80,6 +81,7 @@ test("every session command refuses a session this runtime does not hold, or ano
         { type: "session.continue", session: sid("ffff0000") },
         { type: "session.delete", session: sid("ffff0000") },
         { type: "session.pin", session: sid("ffff0000"), pinned: true },
+        { type: "session.rename", session: sid("ffff0000"), title: "x" },
         { type: "approval.answer", session: sid("ffff0000"), seq: 1, decision: "approve" },
         { type: "page.highlight", session: sid("ffff0000"), ref: null },
         { type: "tabs.list", runtime: "laptop" },
@@ -169,6 +171,20 @@ test("session.pin: bounded, idempotent, and handed to the one pin path", async (
     assert.equal(code(await run({ type: "session.pin", session: sid("b0000000"), pinned: true })), "ok");
     assert.equal(code(await run({ type: "session.pin", session: sid("b0000000"), pinned: false })), "ok");
     assert.equal(code(await run({ type: "session.pin", session: sid("aaaa0001"), pinned: true })), "ok");
+});
+
+test("session.rename: capped, marked as a person's, and empty goes back to generated", async () => {
+    const { run, index, named } = world();
+    index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    assert.equal(code(await run({ type: "session.rename", session: sid("aaaa0001"), title: 7 })), "invalid");
+    const r = await run({ type: "session.rename", session: sid("aaaa0001"), title: "  Lamp   hunt  " });
+    assert.deepEqual(r, { ok: true, data: { title: "Lamp hunt" } });
+    assert.equal(index.get("aaaa0001").title, "Lamp hunt");
+    assert.equal(index.get("aaaa0001").renamed, true);
+    const back = await run({ type: "session.rename", session: sid("aaaa0001"), title: "   " });
+    assert.deepEqual(back, { ok: true, data: { title: "" } });
+    assert.deepEqual(named("renameSession").at(-1), ["renameSession", "aaaa0001", null]);
+    assert.equal(index.get("aaaa0001").renamed, undefined);
 });
 
 test("session.delete refuses a running session, and forgets a finished one everywhere", async () => {

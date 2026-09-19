@@ -11,6 +11,7 @@ import {
     type Command, type CommandResult, type HostStatus, type Principal, type RuntimeId, type RuntimeInfo, type SessionHost,
     type SessionId, type SessionIndexUpdate, type SessionKey, type SessionStreamMessage, type SessionSummary, type StreamPosition, type Unsubscribe,
 } from "../session-host";
+import { capTitle } from "../session-title";
 import { holds } from "./grants";
 
 interface Logged { cursor: number; event: MlDebugEvent }
@@ -386,6 +387,12 @@ export class FakeHost implements SessionHost {
             case "session.delete":
                 this.deleteSession(key);
                 return ok({});
+            case "session.rename": {
+                if (!key || !h) return fail("not-found", "no such session");
+                const title = capTitle(c.title ?? "");
+                this.updateSummary(key, title ? { title, renamed: true } : { title: SIDE_REPLIES.title, renamed: undefined });
+                return ok({ title });
+            }
             case "session.pin":
                 if (!key || !h) return fail("not-found", "no such session");
                 this.updateSummary(key, c.pinned ? { pinned: true, saved: true } : { pinned: undefined });
