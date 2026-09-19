@@ -45,6 +45,7 @@ export interface SessionIndexOptions {
     perSessionBytes?: number;
     /** approximate bytes kept across all sessions */
     totalBytes?: number;
+    /** how many UNSAVED sessions are kept whole. Saved ones are bounded by the store, which decides whether they exist */
     maxSessions?: number;
 }
 
@@ -362,14 +363,23 @@ export class SessionIndex {
             }
         }
         const evicted: SessionId[] = [];
-        if (this.sessions.size > this.maxSessions) {
+        // Whole-session eviction applies to sessions that exist ONLY here. A SAVED session's existence is the store's
+        // to decide: its row is small, its events are on disk (the ring above is trimmed freely and served from there),
+        // and the store bounds it with its own cap and byte budget. Evicting one here as well gave the two different
+        // answers about whether it existed — every client was told `remove`, and the next worker's `restore` put it
+        // straight back, so a saved session flickered out of the list and in again. The old sessions somebody pins
+        // are exactly the saved ones this used to drop first.
+        const unsaved = [...this.sessions.values()].filter((s) => !s.summary.saved);
+        if (unsaved.length > this.maxSessions) {
             // Forget whole sessions, finished ones first, oldest first. Never the one being written.
             const rank = (s: Indexed): number => (s.summary.status === "running" || s.summary.status === "waiting" ? 1 : 0);
-            const victims = [...this.sessions.values()].filter((s) => s !== current).sort((a, b) => rank(a) - rank(b) || a.summary.lastTs - b.summary.lastTs);
+            const victims = unsaved.filter((s) => s !== current).sort((a, b) => rank(a) - rank(b) || a.summary.lastTs - b.summary.lastTs);
+            let over = unsaved.length - this.maxSessions;
             for (const v of victims) {
-                if (this.sessions.size <= this.maxSessions) break;
+                if (over <= 0) break;
                 this.drop(v);
                 evicted.push(v.id);
+                over--;
             }
         }
         return evicted;

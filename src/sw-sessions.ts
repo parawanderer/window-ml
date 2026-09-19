@@ -210,7 +210,14 @@ export function configureSessionCommands(run: RunDeps): void {
 /** Saved sessions, which outlive this worker. A worker with no IndexedDB (a test harness) simply saves nothing.
  *  What a page is subscribed to is what someone is looking at, so that is what an eviction may never take. */
 export const sessionStore = (() => {
-    try { return new SessionStore(indexedDbBackend(), { protect: () => sessionServer.subscribed() }); }
+    try {
+        return new SessionStore(indexedDbBackend(), {
+            protect: () => sessionServer.subscribed(),
+            // The store decides whether a saved session exists, so an eviction there is one here too. Without this a
+            // session stayed listed after its history had left the disk.
+            onEvict: (hashes) => { for (const hash of hashes) sessionServer.remove({ runtime: localRuntimeId(), hash }); },
+        });
+    }
     catch { return null; }
 })();
 
