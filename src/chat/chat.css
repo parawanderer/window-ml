@@ -1171,3 +1171,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .tp-kind-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; white-space: normal; }
 /* What a kind does, dim, under its name. */
 .tp-kind-detail { color: var(--fg-dim); font-size: .88em; line-height: 1.35; }
+/* THE START PAGE'S TOP BAR (start-page.tsx): the model a new session starts on, where a session shows its own. On a
+   phone it leaves room at the left for the round back button that sits in that corner. */
+.chat-start-top { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 8px 16px; }
+.chat.narrow .chat-start-top { padding-left: 60px; }

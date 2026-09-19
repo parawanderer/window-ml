@@ -111,7 +111,14 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow }: { s
             if (r.ok) onStarted(`${r.data.session.runtime}:${r.data.session.hash}`);
         } finally { setBusy(false); }
     };
+    // THE MODEL AT THE TOP of the page, not in the row under the text: it is the setting most often changed, and the
+    // row keeps only what this start needs (the kind, the tab, send), so it fits a phone on one line. The same place a
+    // session shows its model, so the two pages read alike.
+    const modelTop = models && models.length ? <ModelPicker models={models} value={model} onChange={setModel} arrived={waited.current} />
+        : models === null && canList ? <span class="tp-pill tp-pill-model tp-pill-wait" role="status" aria-label="Loading models" /> : null;
     return (
+        <>
+        {modelTop ? <div class="chat-start-top">{modelTop}</div> : null}
         <div class="chat-start-page">
             <div class="chat-start-col">
                 <div class="chat-start-box">
@@ -130,8 +137,6 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow }: { s
                             </div>
                         ) : null}
                         {pick.inline}
-                        {models && models.length ? <ModelPicker models={models} value={model} onChange={setModel} arrived={waited.current} />
-                            : models === null && canList ? <span class="tp-pill tp-pill-model tp-pill-wait" role="status" aria-label="Loading models" /> : null}
                         {!rt.online ? <span class="chat-start-wait">Reconnecting…</span> : null}
                         {runtimes.length > 1 ? (
                             <select class="chat-pick-rt" aria-label="Runtime" value={rt.id} onChange={(e: any) => setRuntimeId(e.target.value)}>
@@ -147,5 +152,6 @@ export function StartPage({ store, onStarted, initialKind, extras, narrow }: { s
                 <div class="chat-start-hint">Enter to start · Shift+Enter for a new line · saved to the list as it starts</div>
             </div>
         </div>
+        </>
     );
 }
