@@ -15,6 +15,14 @@ import type { PortLike, SessionsClientMessage, SessionsServerMessage } from "../
 /** Reconnect delays in ms; the last repeats. */
 const RETRY_MS = [250, 1000, 3000, 10_000];
 
+/**
+ * How long a dropped port may take to come back before the page is told this browser is offline. The browser stops an
+ * idle worker about every 30 seconds and the port is back in a quarter of a second; saying "offline" for that moment
+ * redrew everything keyed on it (the start page, the composer, Settings → Runtimes, which lost its scroll position),
+ * which read as the page reloading on its own. Commands in flight still fail at once: only what is SHOWN waits.
+ */
+export const OFFLINE_GRACE_MS = 3000;
+
 interface Subscription {
     session: SessionId;
     listener: (message: SessionStreamMessage) => void;
@@ -43,6 +51,7 @@ export class LocalHost implements SessionHost {
     private nextId = 1;
     private attempt = 0;
     private retryTimer: ReturnType<typeof setTimeout> | null = null;
+    private offlineTimer: ReturnType<typeof setTimeout> | null = null;
     private disposed = false;
 
     constructor(
@@ -56,6 +65,7 @@ export class LocalHost implements SessionHost {
     dispose(): void {
         this.disposed = true;
         if (this.retryTimer) this.timers.clearTimeout(this.retryTimer);
+        if (this.offlineTimer) this.timers.clearTimeout(this.offlineTimer);
         const port = this.port;
         this.port = null;
         try { port?.disconnect(); } catch { /* already gone */ }
@@ -80,14 +90,21 @@ export class LocalHost implements SessionHost {
 
     private lost(reason: string): void {
         this.failPending(reason);
-        if (this.runtime) {
-            this.runtime = { ...this.runtime, online: false };
-            this.emitRuntimes();
-        }
         if (this.disposed) return;
         const delay = RETRY_MS[Math.min(this.attempt, RETRY_MS.length - 1)];
         this.attempt++;
-        this.setStatus({ state: "offline", reason, retryAt: Date.now() + delay });
+        // Said only if it is still down after the grace (a `runtime` message on reconnect cancels it); once said, each
+        // further failed attempt updates when the next one is.
+        const say = (): void => {
+            this.offlineTimer = null;
+            if (this.runtime?.online) {
+                this.runtime = { ...this.runtime, online: false };
+                this.emitRuntimes();
+            }
+            this.setStatus({ state: "offline", reason, retryAt: Date.now() + delay });
+        };
+        if (this.state.state === "offline") say();
+        else if (!this.offlineTimer) this.offlineTimer = this.timers.setTimeout(say, OFFLINE_GRACE_MS);
         this.retryTimer = this.timers.setTimeout(() => { this.retryTimer = null; this.open(); }, delay);
     }
 
@@ -109,6 +126,7 @@ export class LocalHost implements SessionHost {
         switch (msg.type) {
             case "runtime":
                 this.attempt = 0;
+                if (this.offlineTimer) { this.timers.clearTimeout(this.offlineTimer); this.offlineTimer = null; }
                 this.runtime = msg.runtime;
                 this.setStatus({ state: "online" });
                 this.emitRuntimes();

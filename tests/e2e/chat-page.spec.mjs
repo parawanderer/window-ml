@@ -304,3 +304,34 @@ test("the start page holds through a worker restart, and its tab list is fresh a
         expect(errors).toEqual([]);
     } finally { await ext.context.close(); await fake.stop(); await site.stop(); }
 });
+
+test("a worker restart does not redraw Settings: Runtimes keeps its scroll and never says offline", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "overlay" });
+        const { page: chat, errors } = await openChatPage(ext);
+        await chat.setViewportSize({ width: 1200, height: 520 });
+        await chat.locator(".chat-gear-btn").first().click();
+        await chat.getByRole("menuitem", { name: "Settings" }).click();
+        await chat.getByRole("tab", { name: "Runtimes" }).click();
+        await expect(chat.locator("section[aria-label=Storage]")).toBeVisible();
+        const scroller = chat.locator(".chat-settings .chat-sheet-scroll");
+        await scroller.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+        const at = await scroller.evaluate((el) => el.scrollTop);
+        expect(at).toBeGreaterThan(0);
+        await chat.evaluate(() => {
+            window.__saidOffline = false;
+            new MutationObserver(() => { if (/Offline/.test(document.querySelector(".rt-sheet")?.textContent ?? "")) window.__saidOffline = true; })
+                .observe(document.body, { subtree: true, childList: true, characterData: true });
+        });
+        const cdp = await ext.context.newCDPSession(chat);
+        await cdp.send("ServiceWorker.enable");
+        await cdp.send("ServiceWorker.stopAllWorkers");
+        // Back well inside the grace; the page reconnected without showing anything.
+        await chat.waitForTimeout(1500);
+        expect(await chat.evaluate(() => window.__saidOffline)).toBe(false);
+        expect(await scroller.evaluate((el) => el.scrollTop)).toBe(at);
+        expect(errors).toEqual([]);
+    } finally { await ext.context.close(); await fake.stop(); }
+});

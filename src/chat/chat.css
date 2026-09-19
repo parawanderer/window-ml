@@ -898,6 +898,12 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-start-send { flex: 0 0 auto; }
 /* Settings → Housekeeping: the log's output cell fills a fixed-height box, as it fills the DevTools view. */
 .chat-set-hk { display: flex; flex-direction: column; height: min(640px, calc(100vh - 220px)); min-height: 240px; }
+/* The log is the one thing on a sheet that is wide by nature, so it breaks out of the reading column to the pane's
+   full width (less a gutter), while the title and the tabs above it stay where every other tab has them. 50% is half
+   the column, 50cqw half the pane (the sheet's scroller is the size container). */
+.chat-sheet-scroll { container-type: inline-size; }
+.chat-set-hk { width: calc(100cqw - 48px); margin-left: calc(50% - 50cqw + 24px); height: calc(100vh - 230px); }
+.chat.narrow .chat-set-hk { width: auto; margin-left: 0; }
 .chat-set-hk .hk-view { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; font-size: var(--panel-fs); }
 /* Said in the start pill's row while its runtime reconnects (the worker restarting): the form stays, sending waits. */
 .chat-start-wait { color: var(--fg-faint); font-size: .85em; white-space: nowrap; }
