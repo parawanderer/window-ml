@@ -249,10 +249,9 @@ test("desktop: the list folds a runtime away, and marks what moved while you wer
     const rows = page.locator(".chat-list .chat-row");
     await expect(rows).toHaveCount(6);
 
-    // Folding a runtime says what it is holding, so folding is not the same as forgetting.
     await page.locator(".chat-rt[data-runtime='laptop']").click();
     await expect(rows).toHaveCount(2);
-    await expect(page.locator(".chat-rt[data-runtime='laptop']")).toContainText("4 sessions");
+    await expect(page.locator(".chat-rt[data-runtime='laptop']")).toHaveAttribute("aria-expanded", "false");
     // …and it is this device's choice, so it survives a reload.
     await page.reload();
     await expect(rows).toHaveCount(2);

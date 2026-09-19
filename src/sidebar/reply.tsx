@@ -145,8 +145,9 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                 collapsed one-liner. Without one there is nothing that survives the change to animate: each side
                 is unmounted as the other arrives, and the reply snaps from a screenful to a line. The wrapper is
                 stable, so it can shrink, swap, and grow. Surfaces that set no `--asst-close-ms` swap in one frame,
-                exactly as they always have. */}
-            <div class={`asst-body${closing ? " closing" : ""}${opening ? " opening" : ""}`} ref={bodyRef}>
+                exactly as they always have. `folded` says which side is in it, so each half can run in its own
+                direction. */}
+            <div class={`asst-body${collapsed ? " folded" : ""}${closing ? " closing" : ""}${opening ? " opening" : ""}`} ref={bodyRef}>
             {status === "pending"
                 ? <div class="pending-note">…thinking</div>
                 : error

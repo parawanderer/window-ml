@@ -37,12 +37,12 @@ html, body, #root { height: 100%; }
     display: flex; align-items: center; gap: 7px; padding: 4px 2px 6px; color: var(--fg-dim); font: inherit;
     font-size: .92em; width: 100%; text-align: left; background: none; border: none; cursor: pointer;
 }
-.chat-rt:hover .chat-rt-name { color: var(--accent); }
+/* Hovering brightens rather than recolouring: the accent is for what is selected, and a list of runtime names turning
+   purple under the pointer is colour where the page is meant to be quiet. */
+.chat-rt:hover .chat-rt-name { color: var(--fg); }
 .chat-rt .tri { color: var(--fg-faint); flex: 0 0 auto; display: inline-flex; transition: transform .15s ease; }
 .chat-rt .tri.open { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-rt .tri { transition: none; } }
-/* What a folded group is holding, so folding one is not the same as forgetting it. */
-.chat-rt-count { margin-left: auto; }
 .chat-rt-name { color: var(--fg); font-weight: 600; }
 .chat-rt-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-faint); flex: 0 0 auto; }
 .chat-rt-dot.on { background: var(--ok); }
@@ -466,7 +466,15 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.calm .msg.asst:not(.err):not(.capped):not(.streaming) > .mrow > .tt:has(> .dot) { display: none; }
 /* Out in the GUTTER, which only a wide layout has: at a phone's width there is no margin to put it in, so it
    stays in the row it moved to. */
-.chat.calm:not(.narrow) .msg.asst > .mrow > .who-toggle { position: absolute; top: 1px; left: -20px; margin: 0; }
+.chat.calm:not(.narrow) .msg.asst > .mrow > .who-toggle { position: absolute; top: 7px; left: -20px; margin: 0; }
+/* It centres on the FIRST LINE (a 25.5px line, an 11px glyph), and in the gutter it is a thing you reach for, not
+   something to read past: it arrives with the pointer over the reply and leaves with it. A touch screen keeps it. */
+@media (hover: hover) and (pointer: fine) {
+    .chat.calm:not(.narrow) .msg.asst > .mrow > .who-toggle { opacity: 0; transition: opacity .18s ease; }
+    .chat.calm:not(.narrow) .msg.asst:hover > .mrow > .who-toggle,
+    .chat.calm:not(.narrow) .msg.asst > .mrow > .who-toggle:focus-visible { opacity: 1; }
+    @media (prefers-reduced-motion: reduce) { .chat.calm:not(.narrow) .msg.asst > .mrow > .who-toggle { transition: none; } }
+}
 
 /* A STEP OPENS RATHER THAN APPEARING. A tool body arriving at full height in one frame shoves everything under it
    down the page, and on a long step that is most of the screen moving at once.
@@ -533,18 +541,26 @@ button.chat-page-go:hover { color: var(--fg); }
     @media (prefers-reduced-motion: reduce) { .chat.calm .code-tools { transition: none; } }
 }
 
-/* THE REPLY COLLAPSES AND COMES BACK, rather than snapping between a screenful and a line. The wrapper shrinks
-   with the prose still in it, the swap happens at zero height where nothing can be seen to jump, and it grows
-   again around whichever side arrived. `--asst-close-ms` is how this surface tells the component how long to hold
-   each half; the panel sets none and swaps in one frame, as it always has. */
-.chat.calm .asst-body { --asst-close-ms: 170; }
-@keyframes chat-asst-out { from { height: auto; opacity: 1; } to { height: 0; opacity: 0; } }
-@keyframes chat-asst-in { from { height: 0; opacity: 0; } to { height: auto; opacity: 1; } }
-.chat.calm .asst-body.closing { animation: chat-asst-out .17s cubic-bezier(.4, 0, 1, 1) both; overflow: hidden; }
-.chat.calm .asst-body.opening { animation: chat-asst-in .17s cubic-bezier(0, 0, .2, 1) both; overflow: hidden; }
+/* THE REPLY FOLDS TO ITS SUMMARY WITHOUT BOUNCING. The old version shrank to nothing and grew back, which read as
+   the reply closing and then reopening. Now the height stops where the summary will stand — one line, `1lh` — so
+   nothing below moves twice:
+     folding:   the prose fades as the box shrinks to one line, then the summary slides in from the left;
+     unfolding: the summary slides back out to the left, then the box grows from that line as the prose fades in.
+   The component holds each half for `--asst-close-ms` and says which side is mounted with `.folded`; the panel sets
+   no duration and swaps in one frame, as it always has. */
+.chat.calm .asst-body { --asst-close-ms: 180; }
+@keyframes chat-asst-shrink { from { height: auto; opacity: 1; } to { height: 1lh; opacity: 0; } }
+@keyframes chat-asst-grow { from { height: 1lh; opacity: 0; } to { height: auto; opacity: 1; } }
+@keyframes chat-asst-sum-in { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+@keyframes chat-asst-sum-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(-14px); } }
+.chat.calm .asst-body:not(.folded).closing { animation: chat-asst-shrink .18s cubic-bezier(.4, 0, .2, 1) both; overflow: hidden; }
+.chat.calm .asst-body.folded.opening > .asst-collapsed { animation: chat-asst-sum-in .18s cubic-bezier(0, 0, .2, 1) both; }
+.chat.calm .asst-body.folded.closing > .asst-collapsed { animation: chat-asst-sum-out .18s cubic-bezier(.4, 0, 1, 1) both; }
+.chat.calm .asst-body:not(.folded).opening { animation: chat-asst-grow .18s cubic-bezier(.4, 0, .2, 1) both; overflow: hidden; }
 @media (prefers-reduced-motion: reduce) {
     .chat.calm .asst-body { --asst-close-ms: 0; }
-    .chat.calm .asst-body.closing, .chat.calm .asst-body.opening { animation: none; }
+    .chat.calm .asst-body.closing, .chat.calm .asst-body.opening,
+    .chat.calm .asst-body > .asst-collapsed { animation: none; }
 }
 
 /* ===================== NO BAND ACROSS THE TOP =====================
@@ -676,7 +692,7 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-menu-ico { display: inline-flex; color: var(--fg-dim); }
 .chat-menu-ico svg { width: 18px; height: 18px; }
 .chat-menu-label { flex: 1 1 auto; }
-.chat-menu-on { display: inline-flex; color: var(--accent); }
+.chat-menu-on { display: inline-flex; color: var(--fg); }
 @media (prefers-reduced-motion: reduce) { .chat-menu { animation: none; } }
 
 /* The gear's menu rises from the gear, with room for its longer rows. */

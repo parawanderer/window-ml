@@ -175,7 +175,7 @@ function PagePeek({ store, id, rt, sessionKey, summary }: { store: ChatStore; id
 }
 
 /** A runtime's heading in the list: its name, whether it is reachable, and what this device may do there. */
-function RuntimeHead({ rt, folded, count }: { rt: RuntimeInfo; folded: boolean; count: number }) {
+function RuntimeHead({ rt, folded }: { rt: RuntimeInfo; folded: boolean }) {
     const watchOnly = !mayCommand(rt, "session.send");
     return (
         <button class={`chat-rt${rt.online ? "" : " off"}${folded ? " folded" : ""}`} data-runtime={rt.id}
@@ -185,7 +185,6 @@ function RuntimeHead({ rt, folded, count }: { rt: RuntimeInfo; folded: boolean; 
             <b class="chat-rt-name">{rt.name}</b>
             {!rt.online ? <span class="chat-rt-note">offline{rt.lastSeen ? <> · seen <Stamp ts={rt.lastSeen} /></> : null}</span> : null}
             {rt.online && watchOnly ? <span class="chat-chip">view only</span> : null}
-            {folded ? <span class="chat-rt-note chat-rt-count">{count} session{count === 1 ? "" : "s"}</span> : null}
         </button>
     );
 }
@@ -280,7 +279,7 @@ function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { st
                     const shut = folded.has(rt.id);
                     return (
                         <section class={`chat-group${shut ? " folded" : ""}`} key={rt.id}>
-                            <RuntimeHead rt={rt} folded={shut} count={mine.length} />
+                            <RuntimeHead rt={rt} folded={shut} />
                             {shut ? null : !speaksOurContract(rt)
                                 ? <div class="chat-rt-empty">This runtime speaks version {rt.contractVersion} of the session contract, which this app does not. Its sessions open once both sides agree.</div>
                                 : mine.length
