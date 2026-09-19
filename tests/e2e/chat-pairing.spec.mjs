@@ -161,3 +161,66 @@ test("the standalone client creates the account and pairs this browser, then lis
         hub.stop();
     }
 });
+
+test("a session this browser had BEFORE the client paired opens on the client with its transcript", async () => {
+    // KNOWN BROKEN (reported 2026-09-19 on a real phone): the client lists the session, and opening it sits on
+    // "Loading…": nothing arrives on its stream, not even the end-of-history marker. Transport side; handed over in
+    // tmp/chat-page-client-session-loading-2026-09-19.md. `test.fail` keeps CI green and turns red the day it is fixed,
+    // which is the cue to delete this line.
+    test.fail();
+    const { startFakeLlm } = await import("./fake-llm.mjs");
+    const { configureExtension } = await import("./harness.mjs");
+    const { serveStatic } = await import("./static-server.mjs");
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const hub = await startHub();
+    const web = await serveStatic("dist-web");
+    const ext = await launchExtension();
+    try {
+        const errors = [];
+        // A chat on this browser, the way Shane's "Hello there?" was: before any client existed.
+        await configureExtension(ext.sw, { chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "off" });
+        fake.setScript([{ content: "General Kenobi." }]);
+        const page = await ext.context.newPage();
+        page.on("pageerror", (e) => errors.push(`extension: ${e.message}`));
+        await page.goto(`chrome-extension://${ext.extensionId}/chat.html`);
+        await page.locator(".chat").waitFor();
+        await page.getByRole("radio", { name: "Chat" }).click();
+        await page.locator(".chat-start-box textarea").fill("Hello there?");
+        await page.locator(".chat-start-box textarea").press("Enter");
+        await expect(page.locator(".chat-main")).toContainText("General Kenobi.");
+
+        // The client makes the account; the browser joins it (the same steps as the test above).
+        const client = await ext.context.newPage();
+        client.on("pageerror", (e) => errors.push(`client: ${e.message}`));
+        await client.goto(`${web.url}client.html`);
+        await client.getByRole("button", { name: "Create an account" }).click();
+        await client.getByLabel("Hub", { exact: true }).fill(hub.url);
+        await client.getByRole("button", { name: "Create it" }).click();
+        await expect(client.locator(".chat")).toBeVisible({ timeout: 20_000 });
+        await page.goto(`chrome-extension://${ext.extensionId}/chat.html#/settings/devices`);
+        await page.getByRole("button", { name: "Join an account" }).click();
+        await page.getByLabel("Call this device").fill("Test laptop");
+        await page.getByLabel("Hub", { exact: true }).fill(hub.url);
+        await page.getByRole("button", { name: "Get a code" }).click();
+        const code = (await page.locator(".pair-code").textContent()).trim();
+        await client.goto(`${web.url}client.html#/settings/devices`);
+        await client.getByRole("button", { name: "Pair a device" }).click();
+        await client.getByLabel("Its code").fill(code);
+        await client.getByRole("button", { name: "Find it" }).click();
+        await client.getByRole("button", { name: "They match: pair it" }).click();
+        await expect(page.locator(".pair-conn")).toContainText("Connected", { timeout: 20_000 });
+
+        // The client lists the session, as Shane saw, and opening it shows the conversation rather than "Loading…".
+        await client.goto(`${web.url}client.html`);
+        const row = client.locator(".chat-row", { hasText: "Hello there?" });
+        await expect(row).toBeVisible({ timeout: 30_000 });
+        await row.click();
+        await expect(client.locator(".chat-main")).toContainText("General Kenobi.", { timeout: 20_000 });
+        expect(errors).toEqual([]);
+    } finally {
+        await ext.context.close();
+        await web.close();
+        hub.stop();
+        await fake.stop();
+    }
+});
