@@ -164,6 +164,7 @@ test("the page's code size is a setting of its own, and the prose keeps its size
     // The default first, then A→Z, each tagged with where it runs; an ⓘ says the model access filter is on (and how
     // much it hid), never what the filter is.
     await expect(page.locator(".rt-models li")).toHaveText([/qwen3:32b\s*default\s*local/, /gemma3:27b\s*local/, /litellm\.google\/gemini-flash-latest\s*cloud/, /nomic-embed-text\s*local/]);
+    await expect(page.locator(".chat-set-row", { hasText: "Archive folder" })).toContainText("Needs reconnecting in that browser's Settings, 2 months waiting");
     await page.locator(".rt-filtered").hover();
     await expect(page.locator(".cursor-tip")).toContainText("2 of this backend's models are hidden");
     await expect(page.getByRole("region", { name: "Storage" }).or(page.locator("section[aria-label=Storage]"))).toContainText(/keeps no saved sessions|Saved sessions/);
@@ -564,6 +565,9 @@ test("desktop: the list shows the last month, and the search page holds every se
     // Past what the page holds, the runtime's ARCHIVE: asked for a page at a time, and each of its rows marked.
     await expect(async () => { await toEnd(); expect(await search.locator(".chat-search-row").count()).toBe(84); }).toPass();
     await expect(search.locator(".chat-search-arch")).toHaveCount(30);
+    // A runtime whose archive folder lost its permission says so at the foot: search still works, the copy is paused.
+    await expect(search.locator(".chat-search-foot")).toContainText("Reconnect Work laptop's archive folder");
+    await expect(search.locator(".chat-search-foot")).toContainText("2 months are not yet copied");
     expect((await commands(page)).some((c) => c.type === "sessions.list")).toBe(true);
 
     // A search matches the PAGE a run is on, not only its title, and reaches months back.

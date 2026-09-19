@@ -805,6 +805,12 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-search-box input { flex: 1 1 auto; min-width: 0; border: none; background: none; outline: none; color: var(--fg); font: inherit; font-size: 1.05em; }
 .chat-search-box input::placeholder { color: var(--fg-faint); }
 .chat-search-label { margin: 34px 0 10px; padding: 0 12px; color: var(--fg-dim); font-size: .95em; }
+/* The search page's foot: what limits the search, such as an archive folder that needs reconnecting. */
+.chat-search-foot { margin-top: 18px; padding: 10px 12px 0; border-top: 1px solid var(--border); color: var(--fg-dim); font-size: .9em; line-height: 1.5; }
+.chat-search-foot p { margin: 0 0 8px; }
+/* A button that reads as a link inside a sentence (opening Settings from a note). */
+.chat-link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.chat-link:hover { color: var(--fg); }
 .chat-search-empty { padding: 8px 12px; color: var(--fg-faint); }
 .chat-search-list { list-style: none; margin: 0; padding: 0; }
 .chat-search-row {

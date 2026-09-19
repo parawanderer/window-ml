@@ -6,7 +6,7 @@
 // machine, in its own Settings, and is never a remote command (`localSettings` is local by design). What is here only
 // needs `view`, which is why a watch-only client sees it too.
 import { useEffect, useState } from "preact/hooks";
-import type { ModelChoice, RuntimeCapabilities, RuntimeInfo } from "../session-host";
+import type { ArchiveCapability, ModelChoice, RuntimeCapabilities, RuntimeInfo } from "../session-host";
 import { StorageBody } from "../sidebar/storage-section";
 import { Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import type { ChatStore } from "./chat-store";
@@ -52,6 +52,10 @@ function RuntimeFacts({ rt }: { rt: RuntimeInfo }) {
             <div class="chat-set-row"><div class="chat-set-label"><span>Kind</span></div><div class="rt-val">{rt.kind}</div></div>
             <div class="chat-set-row"><div class="chat-set-label"><span>Contract</span><span class="chat-set-hint">The session contract version it speaks.</span></div>
                 <div class="rt-val">v{rt.contractVersion}</div></div>
+            {rt.capabilities.archive ? (
+                <div class="chat-set-row"><div class="chat-set-label"><span>Archive folder</span><span class="chat-set-hint">Where old sessions are copied, so they outlive the browser's profile.</span></div>
+                    <div class="rt-val">{folderText(rt.capabilities.archive)}</div></div>
+            ) : null}
             <div class="chat-set-row"><div class="chat-set-label"><span>Offers</span></div>
                 <div class="rt-val rt-caps">{can.length ? can.map((c) => <span key={c} class="chat-chip">{c}</span>) : "Nothing this client knows"}</div></div>
         </section>
@@ -60,6 +64,17 @@ function RuntimeFacts({ rt }: { rt: RuntimeInfo }) {
 
 /** Past this many models the list gets a filter: a cloud gateway lists dozens. */
 const MODEL_FILTER_AT = 8;
+
+/** The archive folder's state in words. Open on the wire: a state this page does not know reads as none. */
+function folderText(a: ArchiveCapability) {
+    const when = a.lastSync ? <>, last written <Stamp ts={a.lastSync} /></> : null;
+    switch (a.folder) {
+        case "connected": return <>Connected{a.pending ? `, ${a.pending} month${a.pending === 1 ? "" : "s"} to write` : ""}{when}</>;
+        case "needs-grant": return <>Needs reconnecting in that browser's Settings{a.pending ? `, ${a.pending} month${a.pending === 1 ? "" : "s"} waiting` : ""}{when}</>;
+        case "unsupported": return "This browser cannot keep one";
+        default: return "None picked: the archive stays inside the browser";
+    }
+}
 
 /** The models the runtime offers, from `models.list`: its default marked. Read-only here. */
 function RuntimeModels({ store, rt }: { store: ChatStore; rt: RuntimeInfo }) {
@@ -113,7 +128,8 @@ function RuntimeModels({ store, rt }: { store: ChatStore; rt: RuntimeInfo }) {
     );
 }
 
-/** Where its saved sessions' bytes go: the same Storage view as the extension's, fed from `storage.stats`. */
+/** Where its saved sessions' bytes go: the same Storage view as the extension's, fed from `storage.stats`. No
+ *  "Measure exactly": that reads every stored event, which only that machine can do. */
 function RuntimeStorage({ store, rt }: { store: ChatStore; rt: RuntimeInfo }) {
     const may = rt.online && mayCommand(rt, "storage.stats");
     return (
@@ -121,14 +137,15 @@ function RuntimeStorage({ store, rt }: { store: ChatStore; rt: RuntimeInfo }) {
             <h2 class="rt-h">Storage</h2>
             {!may ? <p class="chat-set-hint rt-note">{rt.online ? "This device may not read its storage." : "Offline."}</p> : (
                 <StorageBody
+                    emptyText={`${rt.name} keeps no saved sessions.`}
                     load={async () => {
                         const r = await store.send({ type: "storage.stats", runtime: rt.id }, { quiet: true });
-                        // Said in this runtime's words: the view's own empty text is about "this browser".
-                        if (!r.ok) throw new Error(r.error.code === "unsupported" ? `${rt.name} keeps no saved sessions.` : r.error.message || "Could not read it.");
+                        if (!r.ok) {
+                            if (r.error.code === "unsupported") return null;
+                            throw new Error(r.error.message || "Could not read it.");
+                        }
                         return r.data;
-                    }}
-                    // An exact measurement reads every stored event, which only that machine can do.
-                    measure={async () => null} />
+                    }} />
             )}
         </section>
     );

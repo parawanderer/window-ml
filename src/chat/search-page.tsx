@@ -160,8 +160,35 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
                     </ul>
                     {shown < all.length || anyMore ? <div ref={sentinel} class="chat-search-more" aria-hidden="true" /> : null}
                     {loading ? <div class="chat-search-empty">Looking further back…</div> : null}
+                    <ArchiveFolderNotes store={store} />
                 </div>
             </div>
         </main>
+    );
+}
+
+/**
+ * A runtime whose archive folder lost its permission: the archive still answers this search (it lives in the browser);
+ * only the copy into the folder, the one that survives a wiped profile, is paused until someone clicks in THAT
+ * runtime's own Settings. No command can grant it, so this says where, and opens Settings when it is this browser's.
+ */
+function ArchiveFolderNotes({ store }: { store: ChatStore }) {
+    const lapsed = store.runtimes.value.filter((r) => r.capabilities.archive?.folder === "needs-grant");
+    if (!lapsed.length) return null;
+    return (
+        <div class="chat-search-foot">
+            {lapsed.map((r) => {
+                const pending = r.capabilities.archive?.pending ?? 0;
+                return (
+                    <p key={r.id}>
+                        Reconnect {r.name === "This browser" ? "your" : `${r.name}'s`} archive folder: it lost the browser's permission, so
+                        {pending ? ` ${pending} month${pending === 1 ? " is" : "s are"}` : " nothing new is"} not yet copied into it. Search still finds archived sessions.{" "}
+                        {r.capabilities.localSettings
+                            ? <>In <button class="chat-link" onClick={() => (mainView.value = "settings")}>Settings</button> → Extension → Appearance → Archive folder.</>
+                            : <>It is reconnected in that browser's own Settings.</>}
+                    </p>
+                );
+            })}
+        </div>
     );
 }
