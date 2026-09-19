@@ -530,6 +530,14 @@ test("agent.start on a blank tab opens one, at the command's url or the browser'
     assert.equal(bad.named("openTab").length, 0);
 });
 
+test("agent.start on a tab that has closed is refused, and nothing starts anywhere else", async () => {
+    const w = world();
+    const r = await w.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: 999 } });
+    assert.equal(r.error.code, "not-found");
+    assert.equal(w.named("startAgent").length, 0, "no run started, on that tab or any other");
+    assert.equal(w.named("openTab").length, 0, "and no new tab opened in its place");
+});
+
 test("agent.start refuses a page the extension cannot run on, and a run it cannot confirm", async () => {
     const chromePage = world({ getTab: async () => ({ tabId: 5, url: "chrome://extensions/", title: "Extensions", active: true, windowId: 1 }) });
     assert.equal((await chromePage.run({ type: "agent.start", runtime: "local", task: "go", target: { kind: "tab", tabId: 5 } })).error.code, "forbidden");

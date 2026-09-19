@@ -22,11 +22,14 @@ export function ModelPicker({ models, value, onChange }: { models: readonly Mode
     });
     const q = p.q.trim();
     const list = shownFor(q);
-    const label = value || (dflt ? `Default · ${dflt.id}` : "Default");
+    // The pill names the model alone: "Default · " cost a third of the row and wrapped it. The list says which is
+    // the default, and so does the pill's accessible name.
+    const label = value || (dflt ? dflt.id : "Default");
+    const name = value || (dflt ? `Default · ${dflt.id}` : "Default");
     return (
         <>
-            <button {...p.pillProps} class="tp-pill" aria-label={`Model: ${label}`}>
-                <span class="tp-pill-text">{truncate(label, 48)}</span>
+            <button {...p.pillProps} class="tp-pill tp-pill-model" aria-label={`Model: ${name}`}>
+                <span class="tp-pill-text">{label}</span>
                 <svg class="tp-caret" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>
             {p.open && p.popProps ? (

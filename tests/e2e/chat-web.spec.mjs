@@ -273,7 +273,8 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
     // cannot run an agent), and picking another one sends it; the default sends no model at all.
     // It is the tab picker's popover: a filter, the rows A→Z, a cloud model tagged as the Commander tags it.
     const modelPill = page.getByRole("button", { name: /^Model:/ });
-    await expect(modelPill).toContainText("Default · qwen3:32b");
+    await expect(modelPill).toHaveText("qwen3:32b");
+    await expect(modelPill).toHaveAccessibleName("Model: Default · qwen3:32b");
     await modelPill.click();
     const models = page.getByRole("listbox", { name: "Model" });
     await expect(models.getByRole("option")).toHaveText(["qwen3:32bdefault", "gemma3:27b", "litellm.google/gemini-flash-latestcloud"]);
@@ -657,5 +658,67 @@ test("a tab group folds from its heading, starts as the browser's strip has it, 
     await research.click();
     await expect(research).toHaveAttribute("aria-expanded", "false");
     expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("a chosen tab that closes is never swapped for another: the pill says so and starting waits for a new pick", async () => {
+    const { page, errors } = await open(DESKTOP);
+    const box = page.locator(".chat-start-box textarea");
+    const pill = page.getByRole("button", { name: /^Where it runs/ });
+    const list = page.getByRole("listbox", { name: "Where it runs" });
+    const close = (title) => page.evaluate((t) => { const f = globalThis.__chatFake; f.tabs = f.tabs.filter((x) => x.title !== t); }, title);
+    const starts = async () => (await commands(page)).filter((c) => c.type === "agent.start");
+
+    // Chosen, then closed before the list is next asked for: the refresh keeps the choice and says it closed. It used
+    // to move to the tab in front, which would have started the run on a page nobody picked.
+    await pill.click();
+    await list.getByRole("option", { name: /Your cart/ }).click();
+    await expect(pill).toContainText("Your cart");
+    await close("Your cart");
+    await pill.click();
+    await page.keyboard.press("Escape");
+    await expect(pill).toContainText("That tab closed");
+    await box.fill("check out");
+    await box.press("Enter");
+    await expect(page.locator(".chat-start-send")).toBeDisabled();
+    expect(await starts()).toEqual([]);
+
+    // Closed while the list is OPEN: the row is still there and can be picked, and the runtime refuses the start
+    // rather than running it elsewhere. What was typed stays, to be sent again.
+    await pill.click();
+    await expect(list.getByRole("option", { name: /Inbox/ })).toHaveCount(1);
+    await close("Inbox (3)");
+    await list.getByRole("option", { name: /Inbox/ }).click();
+    await box.press("Enter");
+    await expect.poll(async () => (await starts()).length).toBe(1);
+    await expect(page.locator(".chat-start-box textarea")).toHaveValue("check out");
+    await expect(page).not.toHaveURL(/#s=/);
+    // Picking a tab that is open starts there, and only there.
+    await pill.click();
+    await list.getByRole("option", { name: /Flights AMS/ }).click();
+    await box.press("Enter");
+    await expect(page).toHaveURL(/#s=laptop%3A/);
+    const last = (await starts()).at(-1);
+    const flights = await page.evaluate(() => globalThis.__chatFake.tabs.find((t) => /Flights/.test(t.title)).tabId);
+    expect(last.target).toEqual({ kind: "tab", tabId: flights });
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
+test("the start row fits one line at the start box's full width, however long the tab title and the model name", async () => {
+    const { page } = await open({ width: 1280, height: 800 });
+    await page.evaluate(() => {
+        const f = globalThis.__chatFake;
+        f.tabs[0].title = "Verify TLS certificates, instead of disabling verification for the whole session, by default";
+        f.models[0].id = "qwen3.8-flash-next-extra-long-name:vision";
+    });
+    // The page asked before the names changed: switch kinds to ask again.
+    await page.getByRole("radio", { name: "Chat" }).click();
+    await page.getByRole("radio", { name: "Agent" }).click();
+    await page.getByRole("button", { name: /^Where it runs/ }).click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: /^Where it runs/ })).toContainText("Verify TLS");
+    const tops = await page.locator(".chat-start-row > *").evaluateAll((els) => els.filter((e) => e.getBoundingClientRect().width > 0 && getComputedStyle(e).position !== "fixed").map((e) => Math.round(e.getBoundingClientRect().top + e.getBoundingClientRect().height / 2)));
+    expect(Math.max(...tops) - Math.min(...tops), `row items' centres: ${tops.join(", ")}`).toBeLessThanOrEqual(4);
     await page.close();
 });

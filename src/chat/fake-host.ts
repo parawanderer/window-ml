@@ -137,6 +137,8 @@ export class FakeHost implements SessionHost {
         { id: "nomic-embed-text", kinds: ["embedding"], where: "local" },
         { id: "litellm.google/gemini-flash-latest", where: "cloud" },
     ];
+    /** The open tabs `tabs.list` reports, a copy per host so a test can close one as a person would. */
+    tabs: TabInfo[] = DEMO_TABS.map((t) => ({ ...t }));
     /** The tab groups `tabs.list` reports, a copy per host so a test can fold one as the browser's strip would. */
     tabGroups: TabGroupInfo[] = DEMO_GROUPS.map((g) => ({ ...g }));
     /** The model access filter's effect, as `models.list` reports it; null for no filter. */
@@ -323,7 +325,7 @@ export class FakeHost implements SessionHost {
             case "page.highlight":
                 return caps.highlight ? ok({}) : fail("unsupported", "no page to highlight on");
             case "tabs.list":
-                return caps.tabs ? ok({ tabs: DEMO_TABS, groups: this.tabGroups }) : fail("unsupported", "this runtime has no tabs");
+                return caps.tabs ? ok({ tabs: this.tabs, groups: this.tabGroups }) : fail("unsupported", "this runtime has no tabs");
             // The real runtime can only capture the tab its window is SHOWING (src/session-commands.ts), so a run
             // working in a background tab is refused rather than captured behind the scenes. The demo world keeps
             // that rule, since a peek that always works would teach the UI the wrong lesson about when it does.
@@ -331,13 +333,13 @@ export class FakeHost implements SessionHost {
                 if (!caps.screenshots) return fail("unsupported", "this runtime cannot capture a tab");
                 const tabId = "tabId" in c.target ? c.target.tabId : this.held.get(sessionKey(c.target.session))?.summary.page?.tabId;
                 if (tabId == null) return fail("not-found", "that session is not on a tab");
-                const tab = DEMO_TABS.find((t) => t.tabId === tabId);
+                const tab = this.tabs.find((t) => t.tabId === tabId);
                 if (tab && !tab.active) return fail("conflict", "that tab is not in front in its window, so it cannot be captured");
                 return ok({ image: DEMO_SHOT, width: 900, height: 560, ts: Date.now() });
             }
             case "tab.focus":
                 if (!caps.tabs) return fail("unsupported", "this runtime has no tabs");
-                return DEMO_TABS.some((t) => t.tabId === c.tabId) ? ok({}) : fail("not-found", "no such tab");
+                return this.tabs.some((t) => t.tabId === c.tabId) ? ok({}) : fail("not-found", "no such tab");
             case "session.backfill": {
                 if (!h) return fail("not-found", "no such session");
                 if (c.before != null && (!Number.isInteger(c.before) || c.before < 0)) return fail("invalid", "before must be a position in this session's history");
@@ -389,6 +391,8 @@ export class FakeHost implements SessionHost {
                 if (!caps.agent) return fail("unsupported", "this runtime runs no agents");
                 if (c.target.kind === "headless" && !caps.headless) return fail("unsupported", "this runtime has no headless target");
                 if (c.target.kind === "tab" && !caps.tabs) return fail("unsupported", "this runtime has no tabs");
+                // As the real runtime does: a tab that has closed is refused, never swapped for another.
+                if (c.target.kind === "tab" && !this.tabs.some((t) => c.target.kind === "tab" && t.tabId === c.target.tabId)) return fail("not-found", "no such tab");
                 const hash = newHash();
                 const key = sessionKey({ runtime: rt.id, hash });
                 this.addSession({ id: { runtime: rt.id, hash }, kind: "agent", status: "running", createdTs: Date.now(), lastTs: Date.now(), pendingApprovals: 0, saved: !c.ephemeral, task: c.task });
@@ -450,7 +454,7 @@ export class FakeHost implements SessionHost {
                 // offering to resume something it had just resumed.
                 const tabId = c.target.kind === "tab" ? c.target.tabId : nextFakeTabId++;
                 const url = c.target.kind === "tab"
-                    ? DEMO_TABS.find((t) => t.tabId === tabId)?.url ?? "https://example.com/"
+                    ? this.tabs.find((t) => t.tabId === tabId)?.url ?? "https://example.com/"
                     : (c.target.kind === "blank" && c.target.url) || "https://example.com/";
                 // The note the real runtime writes, so the divider is exercised by the demo rather than only by a
                 // test: a resume a reader cannot see is how the seam stops being drawn without anyone noticing.

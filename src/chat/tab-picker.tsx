@@ -104,9 +104,10 @@ export function TabPicker({ tabs, groups, value, onChange, onOpen, groupsHint, g
 
     return (
         <>
-            <button {...p.pillProps} class="tp-pill" aria-label={`Where it runs: ${chosen ? chosen.title || tabHost(chosen.url) : "a new tab"}`}>
+            <button {...p.pillProps} class="tp-pill tp-pill-tab" aria-label={`Where it runs: ${chosen ? chosen.title || tabHost(chosen.url) : value === "blank" ? "a new tab" : "a tab that has closed"}`}>
                 {tabs === null && value !== "blank" ? <span class="tp-pill-text dim">Loading tabs…</span>
-                    : chosen ? <><TabIcon tab={chosen} /><span class="tp-pill-text">{truncate(chosen.title || tabHost(chosen.url), 48)}</span></>
+                    : value !== "blank" && !chosen ? <span class="tp-pill-text tp-gone">That tab closed · pick another</span>
+                    : chosen ? <><TabIcon tab={chosen} /><span class="tp-pill-text">{chosen.title || tabHost(chosen.url)}</span></>
                         : <><span class="tp-fav tp-new" aria-hidden="true"><IconPlus /></span><span class="tp-pill-text">New tab</span></>}
                 <svg class="tp-caret" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
             </button>

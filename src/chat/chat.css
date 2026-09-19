@@ -920,6 +920,10 @@ button.chat-page-go:hover { color: var(--fg); }
 }
 .tp-pill:hover, .tp-pill[aria-expanded="true"] { color: var(--fg); }
 .tp-pill-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The start row's two pickers, capped so the row fits the start box on one line at its full width (42rem): the kind
+   switch, both pills and the send. The text ellipsizes; the whole name is in the list. */
+.tp-pill-tab, .tp-pill.tp-pill-tab { flex: 0 1 auto; max-width: 14rem; }
+.tp-pill-model, .tp-pill.tp-pill-model { flex: 0 1 auto; max-width: 12rem; }
 /* The pill's down caret. */
 .tp-caret { flex: 0 0 auto; opacity: .7; }
 /* The list: fixed from the pill's rect, so no scrolling or clipping container can cut it. */
@@ -983,6 +987,8 @@ button.chat-page-go:hover { color: var(--fg); }
 /* A line in place of the tabs: loading, none, or nothing matching the filter. */
 .tp-note { padding: 8px 10px; color: var(--fg-faint); font-size: 13px; }
 
+/* The pill when the chosen tab has closed: said in the warning colour, since starting waits for another pick. */
+.tp-gone { color: var(--warn); }
 /* The tab picker's foot: a sentence under the list, e.g. how to get group names and colours. */
 .tp-foot { flex: 0 1 auto; min-height: 0; overflow: hidden; margin: 4px 6px 0; padding: 8px 4px 2px; border-top: 1px solid var(--border); color: var(--fg-faint); font-size: 12px; line-height: 1.4; }
 /* The full address in the host's cursor tip: broken anywhere, since a URL has no spaces to wrap at. */

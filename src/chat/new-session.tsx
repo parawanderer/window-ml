@@ -77,15 +77,19 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
             const list = r.ok ? r.data.tabs : [];
             setGroups(r.ok ? r.data.groups ?? [] : []);
             setTabs(list);
-            setTabId((id) => (id != null && list.some((t) => t.tabId === id) ? id : list.find((t) => t.active)?.tabId ?? list[0]?.tabId ?? null));
+            // The first list picks the tab showing in the first window. A refresh NEVER moves a choice: a chosen tab
+            // that has closed stays chosen and says so (`closed`), because silently switching to whichever tab is in
+            // front would start an agent on a page nobody picked.
+            setTabId((id) => (id != null && (!fresh || list.some((t) => t.tabId === id)) ? id : list.find((t) => t.active)?.tabId ?? list[0]?.tabId ?? null));
             if (fresh && !list.length) setWhere("blank");
         });
     };
     useEffect(() => { load(true); return () => { seq.current++; }; }, [rt?.id, wantsTabs]);
 
+    const closed = where === "tab" && tabId != null && !!tabs && !tabs.some((t) => t.tabId === tabId);
     return {
         target: () => (where === "tab" && tabId != null ? { kind: "tab", tabId } : { kind: "blank", ...(url.trim() ? { url: url.trim() } : {}) }),
-        ready: where === "blank" || tabId != null,
+        ready: where === "blank" || (tabId != null && !closed),
         fields: enabled ? (
             <>
                 <label class="chat-new-field" data-field="where"><span>Where</span>
