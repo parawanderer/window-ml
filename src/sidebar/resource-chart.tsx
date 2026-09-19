@@ -1981,8 +1981,8 @@ let windowWrite: ReturnType<typeof setTimeout> | null = null;
  * window at wherever it happened to be when you pinched — which would have made the gesture a way to
  * accidentally stop following.
  */
-function settleScrub(next: { from: number; to: number }, ex: { from: number; to: number }): void {
-    const intent = scrubIntent(ex, next, TAIL_SLACK_MS);
+function settleScrub(next: { from: number; to: number }, ex: { from: number; to: number }, follows: boolean): void {
+    const intent = scrubIntent(ex, next, TAIL_SLACK_MS, follows);
     if (!intent.live) { zoomRange.value = intent.window; return; }
     resWindowS.value = intent.windowS;
     zoomRange.value = null;
@@ -1993,7 +1993,7 @@ function settleScrub(next: { from: number; to: number }, ex: { from: number; to:
     }, 400);
 }
 
-function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSample[]; window: { from: number; to: number } | null; events?: ResourceEvent[] }) {
+function ScrubStrip({ samples, window: win, events = [], follows }: { samples: ResourceSample[]; window: { from: number; to: number } | null; events?: ResourceEvent[]; follows: boolean }) {
     const wrapRef = useRef<HTMLDivElement>(null);
     const trackRef = useRef<HTMLDivElement>(null);
     // Where the TRACK sits inside the strip, as percentages of the strip — the connector below is drawn in
@@ -2046,7 +2046,7 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
             window.removeEventListener("pointermove", move);
             window.removeEventListener("pointerup", up);
             // What the gesture meant is decided HERE, by pure logic in resource-model.
-            const intent = landed && scrubIntent(ex, landed, TAIL_SLACK_MS);
+            const intent = landed && scrubIntent(ex, landed, TAIL_SLACK_MS, follows);
             if (!intent) return;
             if (!intent.live) { zoomRange.value = intent.window; return; }
             // A width dragged while following is a PREFERENCE, like the one in Settings — the same quantity,
@@ -2081,14 +2081,14 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
                         // pinching outside the window clamps to its nearer edge rather than teleporting it.
                         const at = ex.from + ((ev.clientX - b.left) / Math.max(1, b.width)) * (ex.to - ex.from);
                         const within = (at - win.from) / Math.max(1, win.to - win.from);
-                        settleScrub(scrubPinch({ from: ex.from, to: ex.to }, win, ev.deltaY, within), ex);
+                        settleScrub(scrubPinch({ from: ex.from, to: ex.to }, win, ev.deltaY, within), ex, follows);
                         ev.preventDefault();
                         ev.stopPropagation();
                         return;
                     }
                     const by = wheelScrubFraction(ev.deltaX, ev.deltaY, ev.deltaMode, b.width);
                     if (!by) return;
-                    settleScrub(scrubNudge({ from: ex.from, to: ex.to }, win, by), ex);
+                    settleScrub(scrubNudge({ from: ex.from, to: ex.to }, win, by), ex, follows);
                     ev.preventDefault();
                     ev.stopPropagation();
                 }}
@@ -2143,10 +2143,19 @@ function ScrubStrip({ samples, window: win, events = [] }: { samples: ResourceSa
             {/* The icon slot is ALWAYS filled — playing or paused. An icon present in only one state changes
                 the button's width, so the control jumped every time the view left or rejoined live, which is
                 exactly the moment you are looking at it. */}
-            <button class={`rc-scrub-live${ex.atTail ? " on" : ""}`} title={ex.atTail ? "Following new samples" : "Jump back to live"}
-                onClick={() => (zoomRange.value = null)}>
-                <span class="rc-live-icon" aria-hidden="true">{ex.atTail ? "▶" : "⏸"}</span>live
-            </button>
+            {/* Where nothing follows the clock (a scoped session that has finished), clearing the zoom returns to the
+                session's own stretch, so the button says that instead of promising a live view it cannot give. */}
+            {follows ? (
+                <button class={`rc-scrub-live${ex.atTail ? " on" : ""}`} title={ex.atTail ? "Following new samples" : "Jump back to live"}
+                    onClick={() => (zoomRange.value = null)}>
+                    <span class="rc-live-icon" aria-hidden="true">{ex.atTail ? "▶" : "⏸"}</span>live
+                </button>
+            ) : (
+                <button class={`rc-scrub-live${zoomRange.value ? "" : " on"}`} title="Back to this session's own stretch"
+                    onClick={() => (zoomRange.value = null)}>
+                    <span class="rc-live-icon" aria-hidden="true">↺</span>session
+                </button>
+            )}
             {/* Two lines from the window's edges down to the LANE's, so the magnification between them is
                 visible. The strip and the lane are different axes and can never line up — the strip is linear
                 across the whole session with the window as a sub-range, the lane is only that window spread
@@ -2450,6 +2459,8 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     // It only means anything once there is a window to move: with no zoom and no rolling window the plot
     // already shows the whole session, and `scrubExtent` returns null there. In that case the event is left
     // alone so the panel's wheel-through still scrolls the transcript underneath.
+    // Whether the unzoomed view follows the clock: not for a scoped session that has finished (see `scrubIntent`).
+    const follows = !scopedWindow || !!scopedWindow.live;
     const wheelScrub = (e: WheelEvent) => {
         const w = window_;
         if (!w) return;
@@ -2462,14 +2473,14 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
         if (e.ctrlKey) {
             if (!e.deltaY) return;
             const at = box.width > 0 ? (e.clientX - box.left) / box.width : 0.5;
-            settleScrub(scrubPinch({ from: ex.from, to: ex.to }, w, e.deltaY, at), ex);
+            settleScrub(scrubPinch({ from: ex.from, to: ex.to }, w, e.deltaY, at), ex, follows);
             e.preventDefault();
             e.stopPropagation();
             return;
         }
         const by = wheelScrubFraction(e.deltaX, e.deltaY, e.deltaMode, box.width);
         if (!by) return;
-        settleScrub(scrubNudge({ from: ex.from, to: ex.to }, w, by), ex);
+        settleScrub(scrubNudge({ from: ex.from, to: ex.to }, w, by), ex, follows);
         e.preventDefault();
         e.stopPropagation();
     };
@@ -2501,7 +2512,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
                 ahead of the last reading, see `chartWindow`) it is given the window clipped to that reading: a drag
                 on its left edge then means "fewer seconds than the history", which is what narrowing is. */}
             <ScrubStrip samples={samples} window={window_ && samples.length && window_.to > samples[samples.length - 1].t
-                ? { from: window_.from, to: samples[samples.length - 1].t } : window_} events={stripEvents} />
+                ? { from: window_.from, to: samples[samples.length - 1].t } : window_} events={stripEvents} follows={follows} />
             {/* And below that, sharing the tracks' x-axis: what happened, against what memory was doing. The
                 connector says the second is the first opened out — see ZoomLink. */}
             {/* Drawn unless the track editor's "event lane" is off — `laneEnabled` is that switch and takes
