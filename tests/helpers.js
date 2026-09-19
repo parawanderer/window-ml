@@ -126,6 +126,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const debuggerCalls = [];   // chrome.debugger attach/sendCommand/detach, for CDP_CLICK tests
     const debuggerEventListeners = new Set();   // chrome.debugger.onEvent listeners (CDP streaming)
     let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
+    const permAddedListeners = [];
     const listeners = [];
     const connectListeners = [];
     const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
@@ -225,7 +226,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 // Track named permissions (debugger); treat origin grants as present (FETCH_SHEET only
                 // contains()-checks Google origins, and the harness assumes those are granted).
                 contains: async ({ permissions = [] }) => permissions.every(p => permsHeld.has(p)),
-                request: async ({ permissions = [] }) => { permissions.forEach(p => permsHeld.add(p)); return true; },
+                request: async ({ permissions = [] }) => { permissions.forEach(p => permsHeld.add(p)); for (const fn of permAddedListeners) fn({ permissions }); return true; },
+                onAdded: { addListener: (fn) => permAddedListeners.push(fn) },
+                onRemoved: { addListener: () => {} },
             },
             // CDP surface for reserved-element clicks. Records attach/sendCommand/detach so tests assert the
             // press+release sequence and that we always detach.
@@ -282,6 +285,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             Object.assign(stored, obj);
             for (const fn of syncListeners) fn(changes, "sync");
         },
+        /** Grant a permission the way the browser's prompt does: held, then permissions.onAdded. */
+        grantPermission: (name) => { permsHeld.add(name); for (const fn of permAddedListeners) fn({ permissions: [name] }); },
         stored,
         localStore,   // chrome.storage.local contents — tests assert a snapshot was kept/removed
         sessionStore,   // chrome.storage.session contents — the housekeeping log lives here
