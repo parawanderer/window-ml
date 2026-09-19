@@ -149,6 +149,12 @@ export function CreateAccount({ api, onCreated, onCancel }: { api: PairingApi; o
         <section class="pair-card" aria-label="Create an account">
             <h3 class="pair-h">Create an account</h3>
             <p class="pair-p">For your first device. It holds the account's root key and pairs every other device, so keep it somewhere you trust.</p>
+            {/* WHAT LOSING IT COSTS, said before anyone relies on it: the root is not backed up anywhere, and a device
+                cannot be renewed or paired without it. */}
+            <div class="pair-warn" role="note">
+                <p class="pair-p"><b>The root key is kept only in {api.rootKeptIn ?? "this device's storage"}.</b> Clearing it (or uninstalling, or a browser that evicts it) loses the root for good.</p>
+                <p class="pair-p">Devices already paired keep working until their certificates run out, about 90 days. After that, and from the moment it is lost, nothing can be paired or renewed: the account has to be made again.</p>
+            </div>
             <Field label="Call this device" value={label} onInput={setLabel} placeholder={api.defaultLabel} />
             <Field label="Hub" value={hubUrl} onInput={setHubUrl} placeholder="wss://hub.example" mono />
             <Field label="Invite code" hint="Only if the hub asks for one." value={invite} onInput={setInvite} mono />
@@ -360,7 +366,8 @@ export function AccountPanel({ api }: { api: PairingApi }) {
             </div>
             {m.mayPair ? null : <p class="pair-hint">Pair new devices on the one that holds the account's root.</p>}
             <div class="pair-actions">
-                <LeaveAccount api={api} onLeft={() => setM(null)} />
+                {/* The root device does not leave: forgetting the root is losing the account. */}
+                {m.root ? null : <LeaveAccount api={api} onLeft={() => setM(null)} />}
                 {m.mayPair ? <button class="btn primary" onClick={() => setStep("pair")}>Pair a device</button> : null}
             </div>
         </section>

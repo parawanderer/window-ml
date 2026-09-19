@@ -1120,3 +1120,13 @@ button.chat-page-go:hover { color: var(--fg); }
 /* The sheet itself; the Storage view inside it takes the rows' inset. */
 .rt-sheet .stor { padding: 0 12px; }
 @media (prefers-reduced-motion: reduce) { .tp-group-caret, .tp-grp-body, .tp-grp::before { transition: none; } }
+
+/* THE STANDALONE CLIENT's own screens (client.tsx): before an account, and while the hub cannot be reached. One column
+   in the middle, the account panel's cards in it. */
+.client-first { max-width: 620px; margin: 0 auto; padding: 48px 16px; display: flex; flex-direction: column; gap: 14px; }
+/* The client's name at the top of those screens. */
+.client-title { margin: 0; font-size: 1.6em; font-weight: 650; }
+/* What the client is, or why it is not connected, under the title. */
+.client-lede { margin: 0 0 10px; color: var(--fg-dim); line-height: 1.5; }
+/* The client's own screens put their one button at the start of the column, under the sentence it answers. */
+.client-actions { justify-content: flex-start; }

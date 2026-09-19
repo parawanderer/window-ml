@@ -94,8 +94,18 @@ here costs a missing button or a `forbidden` notice, never access.
 `scripts/build-web.mjs` bundles `src/chat/web.tsx` into `dist-web/` (`chat.js`, `index.html`, `sidebar.css`,
 `chat.css`, the KaTeX fonts). `npm run build` runs it after the extension, except for a variant built with `--outdir`.
 It FAILS on any `chrome.*` reference in the bundle, and `tests/chat-web-bundle.test.mjs` runs the same check in memory
-so `npm test` says so too. The web entry opens on `demoHost()` until `HubHost` exists (slice 6), and exposes it as
-`window.__chatFake`.
+so `npm test` says so too. It builds two entries:
+
+- `index.html` / `chat.js` (`web.tsx`): the DEMO, on `demoHost()`, exposed as `window.__chatFake` (and the pairing fake
+  as `window.__pairFake`). What the specs and `chat-shots.mjs` drive.
+- `client.html` / `client.js` (`client.tsx`): the STANDALONE CLIENT over a real hub, what the phone app and a desktop
+  wrapper run. It is a remote and nothing else: no agents, no tabs, never a runtime. Its state is its keyring (this
+  origin's IndexedDB); in no account it shows only the account panel (create one, holding the root, or join one), and
+  in one it connects with `HubConnection` and draws the chat page over `HubHost`. Pairing others goes over that same
+  connection (`HubConnection.hubClient`), because the hub refuses a second one from a connected principal. A dropped
+  connection reloads the page with a growing delay until the transport can resume one in place.
+  `tests/e2e/chat-pairing.spec.mjs` runs the whole loop against a real `wmlhub`: the client creates the account, the
+  extension joins as a runtime, the client pairs it by code, and lists it.
 
 The phone layout is the same component below `NARROW_PX` (760): one pane, the open session in the URL (`#s=<key>`) so
 a reload stays put and a back gesture returns to the list, touch-sized controls, and `100dvh` so the composer is not

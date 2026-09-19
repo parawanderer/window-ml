@@ -42,7 +42,7 @@ function defaultGrant(role: PairRole, grantable: string[] | null, root: boolean)
 
 /** A fake pairing API. `membership` is where this device starts; `grantable` is what it may pass on (null: root). */
 export function fakePairing(o: {
-    joinsAs?: PairRole; defaultLabel?: string; defaultHubUrl?: string;
+    joinsAs?: PairRole; defaultLabel?: string; defaultHubUrl?: string; rootKeptIn?: string;
     membership?: Membership | null; grantable?: string[] | null; latencyMs?: number;
     /** the account's devices, as a runtime's allowlist or the root's `device.list` would give them */
     devices?: DeviceInfo[];
@@ -58,6 +58,7 @@ export function fakePairing(o: {
     const joinsAs = o.joinsAs ?? "client";
     return {
         joinsAs,
+        rootKeptIn: o.rootKeptIn,
         defaultLabel: o.defaultLabel ?? "This phone",
         defaultHubUrl: o.defaultHubUrl ?? "wss://hub.example",
         async load() { await wait(); return membership; },

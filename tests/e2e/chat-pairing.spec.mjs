@@ -44,7 +44,7 @@ test("this browser joins an account as a runtime: code and fingerprint here, con
         // A hub that is not there fails in words, with the form still up.
         await page.getByRole("button", { name: "Join an account" }).click();
         await page.getByLabel("Call this device").fill("Test laptop");
-        await page.getByLabel("Hub").fill("ws://127.0.0.1:1");
+        await page.getByLabel("Hub", { exact: true }).fill("ws://127.0.0.1:1");
         await page.getByRole("button", { name: "Get a code" }).click();
         await expect(page.getByRole("alert")).toContainText(/hub/i, { timeout: 20_000 });
 
@@ -55,7 +55,7 @@ test("this browser joins an account as a runtime: code and fingerprint here, con
         const m = me.membership;
         phoneClient = await HubClient.connect({ url: m.hubUrl, hubName: m.hubName, identity: me.identity, agreement: me.agreement, chain: m.chain, accountRoot: m.accountRoot, role: Role.ROLE_CLIENT });
 
-        await page.getByLabel("Hub").fill(hub.url);
+        await page.getByLabel("Hub", { exact: true }).fill(hub.url);
         await page.getByRole("button", { name: "Get a code" }).click();
         const code = (await page.locator(".pair-code").textContent()).trim();
         const shown = (await page.locator(".pair-fp").textContent()).replace(/\s/g, "");
@@ -95,6 +95,62 @@ test("this browser joins an account as a runtime: code and fingerprint here, con
     } finally {
         phoneClient?.close();
         await ext.context.close();
+        hub.stop();
+    }
+});
+
+test("the standalone client creates the account and pairs this browser, then lists it as a runtime", async () => {
+    const { serveStatic } = await import("./static-server.mjs");
+    const hub = await startHub();
+    const web = await serveStatic("dist-web");
+    const ext = await launchExtension();
+    try {
+        const errors = [];
+        // THE CLIENT: a plain page, no extension behind it. In no account, it shows only the account panel.
+        const client = await ext.context.newPage();
+        client.on("pageerror", (e) => errors.push(`client: ${e.message}`));
+        await client.goto(`${web.url}client.html`);
+        await expect(client.locator(".pair-h").first()).toHaveText("This device is in no account");
+        await client.getByRole("button", { name: "Create an account" }).click();
+        await expect(client.getByRole("note")).toContainText("this site's data in this browser");
+        await client.getByLabel("Call this device").fill("Shane's desk");
+        await client.getByLabel("Hub", { exact: true }).fill(hub.url);
+        await client.getByRole("button", { name: "Create it" }).click();
+        // It reloads into the chat page, connected, with nothing running on it: no runtimes until one joins.
+        await expect(client.locator(".chat")).toBeVisible({ timeout: 20_000 });
+
+        // THE BROWSER: joins from its own Settings → Devices, and shows a code.
+        const page = await ext.context.newPage();
+        page.on("pageerror", (e) => errors.push(`extension: ${e.message}`));
+        await page.goto(`chrome-extension://${ext.extensionId}/chat.html`);
+        await page.locator(".chat").waitFor();
+        await openDevices(page);
+        await page.getByRole("button", { name: "Join an account" }).click();
+        await page.getByLabel("Call this device").fill("Test laptop");
+        await page.getByLabel("Hub", { exact: true }).fill(hub.url);
+        await page.getByRole("button", { name: "Get a code" }).click();
+        const code = (await page.locator(".pair-code").textContent()).trim();
+        const shown = (await page.locator(".pair-fp").textContent()).replace(/\s/g, "");
+
+        // BACK ON THE CLIENT: Settings → Devices → Pair a device, the code typed, the fingerprints compared.
+        await expect(client.locator(".chat")).toContainText("No runtimes yet");
+        await openDevices(client);
+        await client.getByRole("button", { name: "Pair a device" }).click();
+        await client.getByLabel("Its code").fill(code);
+        await client.getByRole("button", { name: "Find it" }).click();
+        await expect(client.locator(".pair-h").first()).toHaveText("“Test laptop” wants to join as a browser runtime");
+        expect((await client.locator(".pair-fp").textContent()).replace(/\s/g, ""), "both screens show the same fingerprint").toBe(shown);
+        await client.getByRole("button", { name: "They match: pair it" }).click();
+        await expect(client.locator(".pair-h").first()).toHaveText("Paired");
+
+        // The browser joins and connects; the client lists it as a runtime, named by its verified label.
+        await expect(page.locator(".pair-conn")).toContainText("Connected", { timeout: 20_000 });
+        await client.reload();
+        await expect(client.locator(".chat-rt", { hasText: "Test laptop" })).toBeVisible({ timeout: 30_000 });
+        expect(errors).toEqual([]);
+    } finally {
+        await ext.context.close();
+        await web.close();
         hub.stop();
     }
 });

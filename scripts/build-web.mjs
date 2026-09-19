@@ -23,7 +23,9 @@ export function chromeRefs(text) {
 /** The esbuild options for the web bundle, shared with the test that builds it in memory. */
 export const webBuildOptions = (outdir) => ({
     absWorkingDir: ROOT,
-    entryPoints: { chat: "src/chat/web.tsx" },
+    // `chat`: the demo (the fake host's world), what the specs and the screenshots drive. `client`: the standalone
+    // client over a real hub (src/chat/client.tsx), what the phone app and a desktop wrapper run.
+    entryPoints: { chat: "src/chat/web.tsx", client: "src/chat/client.tsx" },
     outdir,
     bundle: true,
     format: "iife",
@@ -43,11 +45,12 @@ export async function buildWeb({ outdir = "dist-web" } = {}) {
     mkdirSync(stage, { recursive: true });
     try {
         await esbuild.build(webBuildOptions(stage));
-        const refs = chromeRefs(readFileSync(path.join(stage, "chat.js"), "utf8"));
+        const refs = ["chat.js", "client.js"].flatMap((f) => chromeRefs(readFileSync(path.join(stage, f), "utf8")));
         if (refs.length) {
             throw new Error(`the web bundle references chrome.* ${refs.length} time(s); route it through services() or the ClientPlatform:\n  ${refs.slice(0, 8).join("\n  ")}`);
         }
         cpSync(path.join(ROOT, "src/chat/chat.html"), path.join(stage, "index.html"));
+        cpSync(path.join(ROOT, "src/chat/client.html"), path.join(stage, "client.html"));
         cpSync(path.join(ROOT, "src/chat/chat.css"), path.join(stage, "chat.css"));
         cpSync(path.join(ROOT, "src/sidebar/sidebar.css"), path.join(stage, "sidebar.css"));
         const fonts = path.join(ROOT, "node_modules/katex/dist/fonts");

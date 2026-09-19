@@ -3407,3 +3407,5 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .pair-scopes { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0; }
 /* "Seen" and its time at one size: the stamp's own smaller, fainter `.time` is for dense lists, not this. */
 .pair-dev-seen .time { font-size: inherit; color: inherit; }
+/* What an action on a pairing screen costs if it goes wrong (where the root key lives): a warning-tinted box. */
+.pair-warn { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 12%, transparent); }
