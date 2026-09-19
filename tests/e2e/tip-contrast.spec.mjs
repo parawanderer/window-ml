@@ -80,6 +80,16 @@ for (const p of PALETTES) {
             expect(all.length, "the probe found the tooltip's text").toBeGreaterThan(8);
             const low = all.filter((c) => c.ratio < 4.5);
             expect(low, `lines under 4.5:1: ${JSON.stringify(low)}`).toEqual([]);
+            // One kind of floating surface: a tip wears the same fill as the page's menus (the gear menu).
+            if (p.calm) {
+                const fills = await page.evaluate(() => {
+                    const menu = document.createElement("div");
+                    menu.className = "chat-menu";
+                    document.querySelector(".chat").append(menu);
+                    return { menu: getComputedStyle(menu).backgroundColor, tip: getComputedStyle(document.querySelector(".rc-tip")).backgroundColor };
+                });
+                expect(fills.tip, "the tooltip's fill is the menu's").toBe(fills.menu);
+            }
         } finally {
             await browser.close();
         }

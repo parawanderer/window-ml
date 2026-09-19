@@ -248,18 +248,17 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
           gap: 4px 5px; padding: 4px 7px; font-size: calc(var(--fs) * 0.83); line-height: 1.35; pointer-events: none;
           color: var(--fg); background: var(--tip-bg); border: 1px solid var(--tip-line); border-radius: 5px;
           box-shadow: 0 2px 8px rgba(0,0,0,.35); }
-/* THE TOOLTIP SURFACE, for both tooltips: well DARKER than the plots and controls it floats over in a dark theme
-   (the page's own background, taken further down), and the page's background in light. It was a fill 7% off
-   `--panel-2`, a mid grey, and the secondary lines in `--fg-faint` on it came out near 2:1 — unreadable, and
-   `tests/e2e/tip-contrast.spec.mjs` holds every line of a tip to 4.5:1 now. Inside a tip the faint tone is the dim
-   one for the same reason: faint is for a large surface's asides, and a tip is small text on its own ground.
-   The lines stay a clear step off the fill (mixed from `--fg`), so its edge and dividers never vanish into it. */
+/* THE TOOLTIP SURFACE, for both tooltips: `--panel`, the fill the page's menus use (the chat page's gear menu), so
+   everything that floats over the page is one kind of surface — darker than the plots it floats over (`--panel-2`)
+   in a dark theme. It was a fill 7% off `--panel-2`, a mid grey, and the secondary lines in `--fg-faint` on it came
+   out near 2:1; `tests/e2e/tip-contrast.spec.mjs` holds every line of a tip to 4.5:1 now. Inside a tip the faint tone
+   is the dim one for the same reason: faint is for a large surface's asides, and a tip is small text on its own
+   ground. The lines stay a clear step off the fill (mixed from `--fg`), so its edge and dividers never vanish. */
 .rc-tip, .tt-layer {
-    --tip-bg: color-mix(in srgb, var(--bg) 62%, #000);
+    --tip-bg: var(--panel);
     --tip-line: color-mix(in srgb, var(--fg) 20%, var(--tip-bg));
     --fg-faint: var(--fg-dim);
 }
-:root[data-theme="light"] .rc-tip, :root[data-theme="light"] .tt-layer { --tip-bg: var(--bg); }
 /* The model's own name and figure lead; its badges (context window, TTL, embed) and its cost each take a line
    of their own, so a long name can't push the number that matters off the edge. */
 .rc-tip-name { white-space: nowrap; }
