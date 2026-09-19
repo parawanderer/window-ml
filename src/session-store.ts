@@ -91,6 +91,23 @@ export function planEviction(rows: readonly StoredSessionRow[], o: { budgetBytes
     return out;
 }
 
+/** Why a saved session left the store. `"archived"` is reserved for when an archive folder exists: expiring a
+ *  session will then move it there rather than delete it, and the record already has the word for it. */
+export type StoreEviction = { hash: string; reason: "budget" | "retention"; outcome: "deleted"; bytes: number; idleMs: number };
+
+/**
+ * WHICH SAVED SESSIONS HAVE EXPIRED: idle for longer than `retainMs`, measured from the last thing they did. Pure.
+ *
+ * Retention is a rule about a person's history, not about space, so it ignores the budget entirely: a store that is
+ * nearly empty still forgets a session past its time. A pinned session never expires, and neither does a protected
+ * one (open on a page, or still running). `retainMs` of 0 or less keeps everything.
+ */
+export function planExpiry(rows: readonly StoredSessionRow[], o: { now: number; retainMs: number; protect?: readonly string[] }): string[] {
+    if (!(o.retainMs > 0)) return [];
+    const protect = new Set(o.protect ?? []);
+    return rows.filter((r) => !r.summary.pinned && !protect.has(r.hash) && o.now - r.lastTs > o.retainMs).map((r) => r.hash);
+}
+
 /** A place to put saved sessions. The worker's is IndexedDB; the tests' is a map. */
 export interface SessionStoreBackend {
     rows(): Promise<StoredSessionRow[]>;
@@ -128,6 +145,11 @@ export class SessionStore {
              * stays in the list after its history has left the disk.
              */
             onEvict?: (hashes: string[]) => void;
+            /** One record per session the store dropped on its own, for the housekeeping log. */
+            onEvicted?: (e: StoreEviction) => void;
+            /** How long an unpinned session is kept after it last did something; 0 or absent keeps it. Read at every
+             *  sweep, so a changed setting applies without a restart. */
+            retainMs?: () => number;
             onError?: (err: unknown) => void;
         } = {},
     ) {}
@@ -139,6 +161,33 @@ export class SessionStore {
         })();
         await this.ready;
         return [...this.rows.values()].sort((a, b) => b.lastTs - a.lastTs);
+    }
+
+    /**
+     * Apply retention now. A worker that starts and finds sessions past their time forgets them before listing them,
+     * and one that has been idle for a week does the same on its next write. Returns what it dropped.
+     */
+    async sweep(): Promise<string[]> {
+        await this.open();
+        return this.drop(planExpiry([...this.rows.values()], { now: this.now(), retainMs: this.opts.retainMs?.() ?? 0, protect: this.protected() }), "retention");
+    }
+
+    private now(): number {
+        return this.opts.now?.() ?? Date.now();
+    }
+
+    private protected(): string[] {
+        return [...(this.opts.protect?.() ?? []), ...this.running()];
+    }
+
+    private async drop(hashes: string[], reason: StoreEviction["reason"]): Promise<string[]> {
+        if (!hashes.length) return [];
+        const now = this.now();
+        const gone = hashes.map((h) => this.rows.get(h)).filter((r): r is StoredSessionRow => !!r);
+        await this.forget(hashes);
+        this.opts.onEvict?.(hashes);
+        for (const r of gone) this.opts.onEvicted?.({ hash: r.hash, reason, outcome: "deleted", bytes: r.bytes, idleMs: Math.max(0, now - r.lastTs) });
+        return hashes;
     }
 
     /** Is this session saved here? */
@@ -248,13 +297,12 @@ export class SessionStore {
             row.bytes += events.reduce((n, e) => n + sizeOf(e), 0);
             await this.backend.append({ ...row }, from, events);
         }
-        const evict = planEviction([...this.rows.values()], {
-            budgetBytes: this.opts.budgetBytes, maxSessions: this.opts.maxSessions,
-            protect: [...(this.opts.protect?.() ?? []), ...this.running()],
-        });
-        if (!evict.length) return;
-        await this.forget(evict);
-        this.opts.onEvict?.(evict);
+        // Retention first: what has expired should not survive because the budget happened to have room, and what it
+        // frees is room the budget no longer has to find.
+        await this.drop(planExpiry([...this.rows.values()], { now: this.now(), retainMs: this.opts.retainMs?.() ?? 0, protect: this.protected() }), "retention");
+        await this.drop(planEviction([...this.rows.values()], {
+            budgetBytes: this.opts.budgetBytes, maxSessions: this.opts.maxSessions, protect: this.protected(),
+        }), "budget");
     }
 
     /** A session whose events are still arriving would be evicted and immediately written again. */

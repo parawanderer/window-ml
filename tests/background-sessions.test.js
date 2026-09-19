@@ -318,3 +318,49 @@ test("every command the contract defines reaches the handler through the port", 
         assert.notEqual(reply.result.error?.message, "this runtime does not know that command", type);
     }
 });
+
+test("a worker starting with sessions past their retention forgets them before listing, logs it, and keeps a pin", T, async () => {
+    // `require`, not `import`: the harness hands the worker the CommonJS build's IDBKeyRange, and a key range from the
+    // other build is refused by this database, which aborts the delete.
+    const { IDBFactory } = require("fake-indexeddb");
+    const { indexedDbBackend } = await import("../src/session-store.ts");
+    const idb = new IDBFactory();
+    const DAY = 24 * 60 * 60 * 1000;
+    const be = indexedDbBackend(idb);
+    const put = (hash, idleDays, over = {}) => {
+        const lastTs = Date.now() - idleDays * DAY;
+        const summary = { id: { runtime: "local", hash }, kind: "agent", status: "done", createdTs: lastTs, lastTs, pendingApprovals: 0, saved: true, ...over };
+        return be.append({ hash, summary, lastTs, createdTs: lastTs, bytes: 10, count: 1 }, 0, [start(hash)]);
+    };
+    await put("0ld00001", 40);
+    await put("0ld00002", 40, { pinned: true });
+    await put("new00001", 3);
+
+    const bg = loadBackground({ config: { ...config, sessionRetentionDays: 30 }, indexedDB: idb });
+    const page = openPage(bg);
+    for (let i = 0; i < 100 && !page.rows().has("new00001"); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual([...page.rows().keys()].sort(), ["0ld00002", "new00001"], "never listed, not listed then removed");
+    assert.equal(await storedRow(idb, "0ld00001", 3), null, "gone from the disk too");
+
+    const { data } = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: {} }, { url: "chrome-extension://test/sidebar/devtools.html" });
+    const evicted = data.filter((e) => e.subsystem === "sessions" && e.kind === "evict");
+    assert.equal(evicted.length, 1);
+    assert.equal(evicted[0].key, "0ld00001");
+    assert.equal(evicted[0].reason, "retention");
+    assert.equal(evicted[0].detail.outcome, "deleted");
+    assert.equal(evicted[0].detail.idleDays, 40);
+});
+
+test("every event of a saved session reaches the store, not only the ones that changed its row", T, async () => {
+    // Keyed on the index's `summary`, which is null when the row did not change, the write dropped most of a run: seven
+    // events in, two stored. A restarted worker and `session.backfill` both read the store.
+    const { IDBFactory } = require("fake-indexeddb");
+    const idb = new IDBFactory();
+    const bg = loadBackground({ config, indexedDB: idb });
+    void bg.send({ type: "ML_KEEP_SESSION", hash: "cccc0001" }, tab(7));
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("cccc0001") }, tab(7));
+    for (let i = 1; i <= 6; i++) void bg.send({ type: "ML_DEBUG_EVENT", event: ev("cccc0001", "agent-step", { step: i, seq: i, tool: "exec", result: `r${i}` }) }, tab(7));
+    let row = null;
+    for (let i = 0; i < 100 && !(row?.count >= 7); i++) { await new Promise((r) => setTimeout(r, 20)); row = await storedRow(idb, "cccc0001", 1); }
+    assert.equal(row?.count, 7);
+});

@@ -161,6 +161,12 @@ browser. Nothing new decides a gate, starts a loop or builds a request.
 | `chat.start` | a chat the worker hosts itself: `sw-chat.ts` (below) |
 | `agent.start` | the target tab's own start path, the one the HUD composer uses (below) |
 
+**Retention** (`sessionRetentionDays`, 0 = keep): a saved, unpinned session that has done nothing for that many days
+is deleted, measured from its last activity. `planExpiry` (session-store.ts) is the rule; the store applies it at
+startup BEFORE the list is restored (so an expired session is never listed then removed), on every write, and when the
+setting changes. It ignores the budget: retention is about a person's history, not space. Every drop, by retention or
+by the caps, is a `sessions/evict` housekeeping record.
+
 **The page says what it did.** The composer's page path was fire-and-forget, so the result could not say whether a
 message steered a run, started a turn, or reached nothing (a reloaded page no longer holds an unsaved chat). A command
 now carries a `reqId`; the shell relays it into the page and waits up to three seconds for the page's
