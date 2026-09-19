@@ -15,6 +15,7 @@ import type { Bytes } from "../hub/hpke";
 import type { Grant, Recipient } from "../hub/seal";
 import type { Position } from "../hub/wire";
 import { HubClient, type HubEvent } from "../hub/client";
+import { Role } from "../hub/wire";
 import { COMMAND_SCOPE, type Command, type CommandResult, type CommandType } from "../session-host";
 
 /** How long a sealed command waits for its result before the caller is told the runtime did not answer. */
@@ -31,6 +32,9 @@ export interface HubPeer {
     lastSeen: number;
     /** who to seal to: the principal, and the agreement key from its verified leaf */
     recipient: Recipient;
+    /** what it IS, from its verified leaf: only a runtime is listed as one. A phone's own presence arrives the same way,
+     *  and without this it would appear in a runtime list as a runtime. */
+    role: Role;
 }
 
 /** What one subscription hears about its stream. The payload is still SEALED: opening it needs a grant, which is the
@@ -63,6 +67,8 @@ export class HubConnection {
      *  knows, so the map holds the widest shape and each `send` narrows its own. */
     private readonly waiting = new Map<string, (r: CommandResult<CommandType>) => void>();
     private readonly peerListeners = new Set<(peers: HubPeer[]) => void>();
+    private readonly closeListeners = new Set<(reason: string) => void>();
+    private closedWith: string | null = null;
     /** by `<publisher hex>:<channel hex>`: every stream this connection is subscribed to, and who hears it */
     private readonly streams = new Map<string, (e: StreamEvent) => void>();
     private stopped = false;
@@ -173,6 +179,19 @@ export class HubConnection {
         };
     }
 
+    /** What THIS device's own verified leaf grants: `RuntimeInfo.grants` for every runtime on this account, since
+     *  scopes are granted per account rather than per runtime. */
+    ownScopes(): readonly string[] {
+        return [...this.scopes];
+    }
+
+    /** Called once when the connection ends, with why — at once if it already has. */
+    onClose(listener: (reason: string) => void): () => void {
+        if (this.closedWith !== null) { const r = this.closedWith; queueMicrotask(() => listener(r)); return () => {}; }
+        this.closeListeners.add(listener);
+        return () => this.closeListeners.delete(listener);
+    }
+
     /** Open a stream key granted to this principal. It verifies the grant, so a key from anyone else never opens. */
     openGrant(sender: Bytes, payload: Bytes): Promise<Grant> {
         return this.client.openGrant(sender, payload);
@@ -195,6 +214,9 @@ export class HubConnection {
                 this.waiting.clear();
                 for (const peer of this.peers.values()) peer.online = false;
                 this.announce();
+                this.closedWith = event.reason;
+                for (const l of this.closeListeners) l(event.reason);
+                this.closeListeners.clear();
                 return;
             }
             await this.handle(event);
@@ -265,6 +287,9 @@ export class HubConnection {
                 online: true,
                 lastSeen: this.now(),
                 recipient: { principal: event.principal, agreementKey: verified.leaf.agreementKey as Bytes },
+                // From the VERIFIED leaf, not the presence frame's own `role`: the frame is the hub's word, the leaf
+                // is the account root's.
+                role: verified.leaf.role,
             });
             this.announce();
         } catch {
