@@ -547,10 +547,9 @@ composer's counters, quiet but present. Only what belongs to a thing you are REA
 table's controls, a code block's, a citation's tip. The rule exists because five separate hover-reveals turn
 finding a control into a memory game.
 
-**The page chip brings its tab to the front** where the device can reach it (`ChatExtras.focusTab`). That one wants
-to be a CONTRACT COMMAND rather than a device capability — a phone driving a browser over the hub has every right
-to say "show me that tab", and the runtime is what would act on it — so the member is a local stand-in with an
-expiry date on it, noted in `extras.ts`.
+**The page chip brings its tab to the front** with `tab.focus`, a contract command (tab and window both), so a phone
+driving this browser over a hub gets the same button. It started as a device-local `ChatExtras.focusTab` stand-in
+and was deleted when the command landed (#183).
 
 **The list pane hides** (Gemini's move): the pane stays mounted and slides, so its scroll position survives, the
 grid column animates rather than the body jumping a column's width, and `visibility: hidden` takes it out of the

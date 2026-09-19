@@ -248,6 +248,9 @@ html, body, #root { height: 100%; }
 .chat.calm .chat-row .dot.ok { visibility: hidden; }
 .chat.calm .chat-row .agent-badge { background: transparent; color: var(--fg-faint); padding: 0; font-weight: 600; }
 .chat.calm .chat-row .time { opacity: .55; }
+/* A runtime's fold chevron: the heading is still the button, and a folded one still says what it holds ("4 sessions"),
+   which is the state the chevron was drawing a second time. */
+.chat.calm .chat-rt .tri { display: none; }
 
 /* WHERE THERE IS A POINTER, the quiet things above go further: all the way out until it comes looking. This is the
    whole of the hover behaviour, in one place and behind `hover: hover`, because the same rules on a touch screen
@@ -356,6 +359,12 @@ button.chat-page-go:hover { color: var(--fg); }
    into are raised out of it. Calm view takes that, and only in dark, because in light the panel's ground is white
    and a raised surface there is ALREADY a shade darker — the inversion is a dark-mode problem only.
    Scoped to `.chat.calm`: the toggle back to the panel's view brings the panel's palette with it. */
+/* The anchored tooltip layer too: it is appended to `<body>`, OUTSIDE `.chat`, so it read the panel's palette while the
+   cursor tip (mounted inside `.chat`) read this one, and the two looked like different components. `data-focus` on
+   the root is what calm sets (view-mode.tsx), so it scopes this the same way `.chat.calm` does. The font size comes
+   along for the same reason: the layer sizes itself off `--fs`. */
+:root[data-focus] body > .tt-layer { --fs: 15px; }
+:root[data-focus]:not([data-theme="light"]) body > .tt-layer,
 :root:not([data-theme="light"]) .chat.calm {
     --bg: #121316;
     --panel: #1c1d21;
@@ -665,10 +674,11 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.narrow .chat-row-more { opacity: .7; }
 
 /** The row menu, placed fixed from its button (row-menu.tsx), so a scrolling, clipping list cannot cut it off. */
-.chat-row-menu { position: fixed; right: auto; top: auto; min-width: 180px; z-index: 60; }
+.chat-row-menu { position: fixed; right: auto; top: auto; z-index: 60; }
 .chat-row-menu.up { transform: translateY(-100%); }
-.chat-row-menu .menu-item { flex-direction: row; align-items: center; gap: 9px; padding: 7px 9px; }
-.chat-row-menu .menu-item svg { flex: 0 0 auto; color: var(--fg-dim); }
+.chat-row-menu { min-width: 150px; font-size: 13px; }
+.chat-row-menu .menu-item { flex-direction: row; align-items: center; gap: 8px; padding: 6px 8px; }
+.chat-row-menu .menu-item svg { flex: 0 0 auto; width: 14px; height: 14px; color: var(--fg-dim); }
 .menu-item.danger, .menu-item.danger svg { color: var(--err); }
 
 /** The one confirmation a delete goes through: modal, centred, and focused on Cancel. */

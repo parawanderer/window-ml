@@ -290,6 +290,9 @@ test("desktop: a run says which tab it is driving, and peeks at it", async () =>
     await expect(row(page, WAITING).locator(".chat-page")).toHaveText("flights.example");
     // A plain chat is on no page at all, and says nothing rather than something empty.
     await expect(row(page, CHAT).locator(".chat-page")).toHaveCount(0);
+    // The chip asks the RUNTIME to bring the tab forward, so it works the same over a hub.
+    await page.locator(".chat-lede-sub .chat-page").click();
+    await expect.poll(() => commands(page)).toContainEqual({ type: "tab.focus", runtime: "laptop", tabId: 41 });
 
     await page.locator(".chat-lede .chat-peek").click();
     await expect.poll(() => commands(page)).toContainEqual({

@@ -188,6 +188,14 @@ function RuntimeHead({ rt, folded, count }: { rt: RuntimeInfo; folded: boolean; 
     );
 }
 
+/** The page chip's click: ask the RUNTIME to bring the run's tab (and its window) forward with `tab.focus`, so the chip
+ *  works the same over a hub as on this browser. Undefined where there is no open tab or this client may not ask. */
+function tabFocus(store: ChatStore, rt: RuntimeInfo | undefined, summary: SessionSummary | undefined): (() => void) | undefined {
+    const tabId = summary?.page?.tabId;
+    if (!rt || tabId == null || !rt.capabilities.tabs || !mayCommand(rt, "tab.focus")) return undefined;
+    return () => { void store.send({ type: "tab.focus", runtime: rt.id, tabId }); };
+}
+
 /** One session in the list, from its index row (the transcript is fetched only when it is opened). The row and its
  *  `⋮` are siblings in a wrapper rather than one inside the other, because a button cannot hold a button. */
 function IndexRow({ s, rt, active, moved, showRuntime }: { s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean; showRuntime?: boolean }) {
@@ -438,7 +446,7 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
                         <b>{truncate(title, 120)}</b>
                         <span class="chat-head-sub">
                             {rt?.name ?? id?.runtime}{summary?.model ? ` · ${summary.model}` : ""}
-                            {summary?.page ? <> · <PageChip page={summary.page} /></> : null}
+                            {summary?.page ? <> · <PageChip page={summary.page} onShow={tabFocus(store, rt, summary)} /></> : null}
                         </span>
                     </span>
                     <span class="sp" />
@@ -450,7 +458,7 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
             {waiting && (gateAway || !calm.value) ? <button class="chat-waiting" onClick={jumpToApproval}>Waiting on your approval<span class="chat-waiting-go">Review ›</span></button> : null}
             <div class="view chat-transcript" ref={scroller} onScroll={onScroll}>
                 <div ref={content}>
-                    {bare ? <Lede title={title} rt={rt} summary={summary} id={id} store={store} sessionKey={sessionKey} extras={extras} /> : null}
+                    {bare ? <Lede title={title} rt={rt} summary={summary} id={id} store={store} sessionKey={sessionKey} /> : null}
                     {truncated ? <div class="chat-truncated">Older events no longer exist on {rt?.name ?? "the runtime"}. What is shown here is what this device kept.</div> : null}
                     {s ? <DetailView hash={sessionKey} />
                         : !summary && !rt ? <div class="empty">Session not found.</div>
@@ -541,11 +549,10 @@ function PageTools({ store, extras, rt }: { store: ChatStore; extras?: ChatExtra
  * read. Here it is the transcript's first line, so it is there when you land on the session and gone the moment
  * you scroll, which is exactly how long it is worth the room.
  */
-function Lede({ title, rt, summary, id, store, sessionKey, extras }: {
-    title: string; rt?: RuntimeInfo; summary?: SessionSummary; id: SessionId | null; store: ChatStore; sessionKey: SessionKey; extras?: ChatExtras;
+function Lede({ title, rt, summary, id, store, sessionKey }: {
+    title: string; rt?: RuntimeInfo; summary?: SessionSummary; id: SessionId | null; store: ChatStore; sessionKey: SessionKey;
 }) {
-    const tabId = summary?.page?.tabId;
-    const show = rt && extras?.focusTab && tabId != null ? () => extras.focusTab?.(rt.id, tabId) : undefined;
+    const show = tabFocus(store, rt, summary);
     return (
         <div class="chat-lede">
             <b class="chat-lede-title">{truncate(title, 120)}</b>

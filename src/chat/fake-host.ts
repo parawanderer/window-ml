@@ -35,6 +35,8 @@ const DEMO_TABS = [
     { tabId: 11, url: "https://news.example/front", title: "The front page", active: true, windowId: 1 },
     { tabId: 12, url: "https://docs.example/api/tables", title: "Tables — API reference", active: false, windowId: 1 },
     { tabId: 13, url: "https://mail.example/inbox", title: "Inbox (3)", active: false, windowId: 2 },
+    // The tab the demo world's flight runs are driving (their `page.tabId`), so `tab.focus` on their chip finds it.
+    { tabId: 41, url: "https://flights.example/search?from=AMS&to=LIS", title: "Flights AMS → LIS", active: true, windowId: 3 },
 ];
 
 /** What the demo world hands back for a screenshot: an SVG of a page rather than a real capture, because the point

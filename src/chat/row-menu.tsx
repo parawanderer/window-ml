@@ -14,6 +14,10 @@ import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
 import { dropPin, pinned, togglePin } from "./view-mode";
 
+/** Which row's menu is open, and where: ONE for the whole list, so opening a second closes the first. Local state per
+ *  row let every `⋮` think it was the only one, and a click on another row's `⋮` counted as a click inside a menu. */
+const openMenu = signal<{ key: string; top: number; left: number; up: boolean } | null>(null);
+
 /** The session a delete is waiting to be confirmed for, or null. One at a time, drawn by `DeleteConfirm`. */
 const confirming = signal<{ s: SessionSummary; rt: RuntimeInfo; title: string } | null>(null);
 
@@ -26,13 +30,17 @@ export function mayDelete(rt: RuntimeInfo): boolean {
  *  scrolls and clips, and a menu on the last row would otherwise open into nothing. */
 export function RowMenu({ s, rt, title }: { s: SessionSummary; rt: RuntimeInfo; title: string }) {
     const key = `${s.id.runtime}:${s.id.hash}`;
-    const [at, setAt] = useState<{ top: number; left: number; up: boolean } | null>(null);
+    const m = openMenu.value;
+    const at = m?.key === key ? m : null;
+    const setAt = (v: { top: number; left: number; up: boolean } | null) => { openMenu.value = v ? { key, ...v } : (openMenu.value?.key === key ? null : openMenu.value); };
     const btn = useRef<HTMLButtonElement>(null);
+    const menu = useRef<HTMLDivElement>(null);
     const isPinned = pinned.value.has(key);
     useEffect(() => {
         if (!at) return;
         const close = () => setAt(null);
-        const onDown = (e: Event) => { if (!(e.target as HTMLElement)?.closest?.(".chat-row-menu, .chat-row-more")) close(); };
+        // Anywhere but this menu and its own button closes it; another row's `⋮` then opens its own.
+        const onDown = (e: Event) => { const t = e.target as Node; if (!menu.current?.contains(t) && !btn.current?.contains(t)) close(); };
         const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { close(); btn.current?.focus(); } };
         document.addEventListener("pointerdown", onDown);
         document.addEventListener("keydown", onKey);
@@ -45,12 +53,12 @@ export function RowMenu({ s, rt, title }: { s: SessionSummary; rt: RuntimeInfo; 
             window.removeEventListener("resize", close);
             document.removeEventListener("scroll", close, true);
         };
-    }, [at]);
+    }, [!!at]);
     const open = () => {
         const r = btn.current?.getBoundingClientRect();
         if (!r) return;
         const up = r.bottom + 110 > window.innerHeight;   // not enough room below: open upwards
-        setAt({ top: up ? r.top - 4 : r.bottom + 4, left: Math.max(8, r.right - 180), up });
+        setAt({ top: up ? r.top - 4 : r.bottom + 4, left: Math.max(8, r.right - 150), up });
     };
     const act = (run: () => void) => { setAt(null); run(); };
     return (
@@ -60,7 +68,7 @@ export function RowMenu({ s, rt, title }: { s: SessionSummary; rt: RuntimeInfo; 
                 <IconMore />
             </button>
             {at ? (
-                <div class={`chat-row-menu menu${at.up ? " up" : ""}`} role="menu" style={`top:${at.top}px;left:${at.left}px`}>
+                <div ref={menu} class={`chat-row-menu menu${at.up ? " up" : ""}`} role="menu" style={`top:${at.top}px;left:${at.left}px`}>
                     <button class="menu-item" role="menuitem" onClick={() => act(() => togglePin(key))}>
                         <IconPin />{isPinned ? "Unpin" : "Pin to the top"}
                     </button>

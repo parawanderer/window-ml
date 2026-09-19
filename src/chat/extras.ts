@@ -18,13 +18,4 @@ export interface ChatExtras {
     resourcePanel?(runtime: RuntimeId): ComponentChildren | null;
     /** A Python bench running against one runtime's sandbox. */
     bench?(runtime: RuntimeId): ComponentChildren | null;
-    /**
-     * Bring the tab a session is working in to the front, where this device is the one holding it.
-     *
-     * This one WANTS TO BE A COMMAND rather than a device capability — a phone driving a browser over the hub has
-     * every right to say "show me that tab", and the runtime is what would act on it. It lives here because the
-     * contract has no `tab.focus` yet, and a button that works on the surface where an agent is actually holding
-     * your tabs is worth more than a correct absence. When the command lands this member goes.
-     */
-    focusTab?(runtime: RuntimeId, tabId: number): void;
 }
