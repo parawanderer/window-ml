@@ -879,6 +879,12 @@ test("joining an account: the code and this device's fingerprint, then the accou
     await page.evaluate(() => globalThis.__pairFake.setMembership(null));
     await openDevices(page);
     await expect(page.locator(".pair-h").first()).toHaveText("This device is in no account");
+    // Creating says where the root would live and what losing it costs, before anyone relies on it.
+    await page.getByRole("button", { name: "Create an account" }).click();
+    const warn = page.getByRole("note");
+    await expect(warn).toContainText("The root key is kept only in this site's data in this browser.");
+    await expect(warn).toContainText("nothing can be paired or renewed");
+    await page.getByRole("button", { name: "Back" }).click();
     await page.getByRole("button", { name: "Join an account" }).click();
     await page.getByRole("button", { name: "Get a code" }).click();
     await expect(page.locator(".pair-code")).toHaveText("7K3M Q9XD");

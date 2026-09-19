@@ -7,19 +7,13 @@
 // it could give a phone nothing; phones are paired at the root device). The screens read that off `canCreate` and
 // `mayPair` and say where to go instead.
 
-import { CertificateBody } from "../proto/wmlhub/v1/identity.gen";
 import { Keyring } from "../hub/keyring";
-import { principalId } from "../hub/keys";
 import { beginOffer } from "../hub/pair-flow";
-import { PAIRING_WINDOW_MS, pairingFingerprintHex } from "../hub/pairing";
+import { PAIRING_WINDOW_MS } from "../hub/pairing";
 import { Role } from "../hub/wire";
 import type { DeviceInfo } from "../session-host";
-import type { HubConnectionView, HubLogLine, Membership, PairingApi, PairRole, RevokeOutcome } from "./api";
-
-/** The certificate's role, as the screens name it. */
-function roleOf(role: Role | undefined): PairRole {
-    return role === Role.ROLE_RUNTIME ? "runtime" : role === Role.ROLE_BOX_CONNECTOR ? "box-connector" : "client";
-}
+import type { HubConnectionView, HubLogLine, Membership, PairingApi, RevokeOutcome } from "./api";
+import { membershipOf } from "./keyring-view";
 
 /** What this browser is called by default: its brand and platform ("Brave on macOS"), which a phone's list can tell apart. */
 function browserLabel(): string {
@@ -39,21 +33,10 @@ async function hubRuntime(payload: Record<string, unknown>): Promise<unknown> {
 export function extensionPairing(): PairingApi {
     let ring: Promise<Keyring> | null = null;
     const keyring = () => (ring ??= Keyring.open());
-    /** The keyring's membership as the screens show it: the certificate's own label and role, the keys' fingerprint. */
+    // A runtime pairs nobody from here (see the header), whatever its certificate allows.
     const membershipView = async (): Promise<Membership | null> => {
-        const me = await (await keyring()).load();
-        if (!me?.membership) return null;
-        const leaf = me.membership.chain[0];
-        const body = leaf ? CertificateBody.decode(leaf.body) : null;
-        return {
-            label: body?.label || browserLabel(),
-            role: roleOf(body?.role),
-            hubUrl: me.membership.hubUrl,
-            fingerprint: await pairingFingerprintHex(me.identity.publicKey, me.agreement.publicKey),
-            root: !!me.root,
-            mayPair: false,
-            principal: [...await principalId(me.identity.publicKey)].map((b) => b.toString(16).padStart(2, "0")).join(""),
-        };
+        const m = await membershipOf(await (await keyring()).load(), browserLabel());
+        return m && { ...m, mayPair: false };
     };
     const notHere = () => Promise.reject(new Error("Pair devices on the device that holds the account's root."));
     return {

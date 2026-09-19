@@ -31,7 +31,7 @@ store.start();
 // Pairing, faked the same way: this phone is in an account and may pair others, but pass on only what it holds, and a
 // tablet is waiting under a code. `__pairFake` answers or fails a join, and swaps the membership, for the specs.
 const pairing = fakePairing({
-    joinsAs: "client", defaultLabel: "This phone",
+    joinsAs: "client", defaultLabel: "This phone", rootKeptIn: "this site's data in this browser",
     membership: { label: "Shane's phone", role: "client", hubUrl: "wss://hub.example", fingerprint: "5ab0e19c44d2", root: false, mayPair: true, principal: "5ab0e19c".repeat(8) },
     grantable: ["view", "drive", "screen"],
     devices: [

@@ -62,6 +62,8 @@ export interface FoundOffer {
     grant: Grant;
     /** the scopes this device may grant at all (a delegate passes on only what it holds); null: any */
     grantable: string[] | null;
+    /** the library's own found offer, handed back to `confirmOffer` untouched; opaque to the screens */
+    ref?: unknown;
 }
 
 /** One line of this device's connection history, as the worker kept it ("online (2 devices)", "offline: <reason>"). */
@@ -85,6 +87,11 @@ export interface PairingApi {
      * pair others from, and no runtime holds it (window-ml-hub end-to-end-crypto decision 4). Absent means yes.
      */
     readonly canCreate?: boolean;
+    /**
+     * Where an account's root key would be kept on this device, in words ("this app's storage", "this site's data"):
+     * losing it loses the root for good, which the Create screen says before anyone relies on it.
+     */
+    readonly rootKeptIn?: string;
     /** this device's connection to the hub, where it keeps one; absent where the surface does not */
     connection?(): Promise<HubConnectionView>;
     /** leave the account: forget the membership (never a root) and stop connecting. Absent where it cannot */
