@@ -26,6 +26,8 @@ export interface TabGroupView {
     title?: string;
     /** Chromium's group colour name: grey, blue, red, yellow, green, pink, purple, cyan, orange */
     color?: string;
+    /** collapsed in the browser's tab strip */
+    collapsed?: boolean;
 }
 
 /** One line of the picker's list. */

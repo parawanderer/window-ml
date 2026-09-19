@@ -629,3 +629,33 @@ test("the attention list: an inbox above the gear, problems counted, each said f
     expect(errors).toEqual([]);
     await page.close();
 });
+
+test("a tab group folds from its heading, starts as the browser's strip has it, and stays as it was left", async () => {
+    const { page, errors } = await open(DESKTOP);
+    // Folded in the browser's own strip: the picker starts it folded, its tabs out of the list and out of the arrows' way.
+    await page.evaluate(() => { globalThis.__chatFake.tabGroups[0].collapsed = true; });
+    const pill = page.getByRole("button", { name: /^Where it runs/ });
+    await pill.click();
+    const list = page.getByRole("listbox", { name: "Where it runs" });
+    const research = list.getByRole("button", { name: /^Research, 2 tabs/ });
+    await expect(research).toHaveAttribute("aria-expanded", "false");
+    await expect(list.getByRole("option", { name: /Tables — API reference/ })).toHaveCount(0);
+    // Typing opens every group: a match inside a fold is still found.
+    await list.getByRole("searchbox", { name: "Filter tabs" }).fill("Tables");
+    await expect(list.getByRole("option", { name: /Tables — API reference/ })).toHaveCount(1);
+    await list.getByRole("searchbox", { name: "Filter tabs" }).fill("");
+    // A click opens it, and the choice is this device's from then on, over the browser's.
+    await research.click();
+    await expect(research).toHaveAttribute("aria-expanded", "true");
+    await expect(list.getByRole("option", { name: /Tables — API reference/ })).toHaveCount(1);
+    // The arm: a line in the group's colour beside its tabs.
+    expect(await list.locator(".tp-grp").first().evaluate((el) => getComputedStyle(el, "::before").backgroundColor)).toBe("rgb(138, 180, 248)");
+    await page.reload();
+    await page.evaluate(() => { globalThis.__chatFake.tabGroups[0].collapsed = true; });
+    await pill.click();
+    await expect(research).toHaveAttribute("aria-expanded", "true");
+    await research.click();
+    await expect(research).toHaveAttribute("aria-expanded", "false");
+    expect(errors).toEqual([]);
+    await page.close();
+});

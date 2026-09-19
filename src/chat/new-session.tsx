@@ -113,6 +113,7 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
             <>
                 <TabPicker tabs={tabs} groups={groups} value={where === "tab" && tabId != null ? tabId : "blank"}
                     onOpen={() => load(false)}
+                    runtime={rt?.id}
                     groupsGrant={rt ? extras?.grant?.(rt.id, "tab-groups") : null}
                     groupsHint="Group names and colours need the browser's permission: Settings → Extension → Appearance → Tab group names, in the browser the tabs are in."
                     onChange={(v) => { if (v === "blank") setWhere("blank"); else { setWhere("tab"); setTabId(v); } }} />

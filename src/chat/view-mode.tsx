@@ -17,7 +17,7 @@ import { IconBrain, IconMenu } from "../sidebar/icons";
 import type { PlatformPrefs } from "./platform";
 
 /** Preference keys, under the platform's own namespace. */
-export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed";
+export const CALM_KEY = "view.calm", LIST_KEY = "view.list", FOLDED_KEY = "view.folded", PANE_KEY = "view.pane", PINNED_KEY = "view.pinned", CODE_KEY = "view.codeSize", DOCK_KEY = "view.dock", PANEL_FS_KEY = "view.panelSize", DISMISSED_KEY = "view.dismissed", TAB_GROUPS_KEY = "view.tabGroups";
 
 /** Is the page in calm view? Read it in a render to re-render when it changes. */
 export const calm = signal(true);
@@ -146,9 +146,30 @@ export function installViewPrefs(prefs: PlatformPrefs): void {
     panelSize.value = PANEL_SIZES.some((x) => x.px === ps) ? ps! : PANEL_FS_DEFAULT;
     const cs = prefs.get<number>(CODE_KEY);
     codeSize.value = CODE_SIZES.some((x) => x.px === cs) ? cs! : CODE_DEFAULT;
+    const tg = prefs.get<Record<string, boolean>>(TAB_GROUPS_KEY);
+    groupFolds.value = tg && typeof tg === "object" && !Array.isArray(tg)
+        ? Object.fromEntries(Object.entries(tg).filter(([, v]) => typeof v === "boolean")) : {};
     const d = prefs.get<string[]>(DISMISSED_KEY);
     dismissed.value = new Set(Array.isArray(d) ? d.filter((x) => typeof x === "string") : []);
     applyCalm();
+}
+
+/**
+ * Tab groups folded or opened in the tab picker, as `runtime:groupId` → folded. Only what someone CHANGED is here;
+ * a group with no entry starts as the browser's strip has it. A group's id lasts until the browser restarts, so an
+ * old entry is simply never matched again; the map is capped so those do not pile up.
+ */
+export const groupFolds = signal<Record<string, boolean>>({});
+
+/** Remember a tab group folded or opened in the picker. */
+export function setGroupFold(key: string, folded: boolean): void {
+    const next = { ...groupFolds.value };
+    delete next[key];
+    next[key] = folded;
+    const keys = Object.keys(next);
+    for (const k of keys.slice(0, Math.max(0, keys.length - 200))) delete next[k];
+    groupFolds.value = next;
+    store?.set(TAB_GROUPS_KEY, next);
 }
 
 /** Suggestions put away on this device, as `runtime:code` (attention.ts). Only a suggestion can be; a problem stays. */

@@ -314,7 +314,11 @@ until the new one lands: tabs open and close while the page sits, and an icon st
 there the second. Tab group names and colours need the optional `tabGroups` permission; where groups arrive unnamed,
 the list's foot offers "Show them" on this browser's own runtime (`ChatExtras.tabGroupsGrant`), which calls
 `chrome.permissions.request` synchronously inside that click, the only place Chrome shows the prompt. It cannot be
-asked on load. A remote runtime's list says it is granted in that browser's Settings instead.
+asked on load. A remote runtime's list says it is granted in that browser's Settings instead. A named group is one box
+with an ARM, a line in its colour from the heading's dot down beside its tabs, and its heading folds it (a grid row
+animating 1fr → 0fr; folded tabs stay drawn but `inert`, and the arrows skip them). It starts as the browser's strip
+has it (`TabGroupInfo.collapsed`), then as it was last left on this device (`view.tabGroups`, per `runtime:groupId`,
+capped, since a group's id lasts only until the browser restarts). Typing in the filter opens every group.
 
 **A worker restart must not redraw the page.** The browser stops an idle worker about every 30 seconds and
 `LocalHost` reconnects in a quarter of a second, but for that moment the runtime is offline, and anything gated on

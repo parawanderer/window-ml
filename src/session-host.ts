@@ -610,6 +610,8 @@ export interface TabGroupInfo {
     title?: string;
     /** the browser's colour name (`blue`, `red`, …); a client maps it to its own palette */
     color?: string;
+    /** collapsed in the browser's own tab strip; a picker starts it the same way */
+    collapsed?: boolean;
 }
 
 export type { StorageReport, StorageSnapshot } from "./session-storage-stats";

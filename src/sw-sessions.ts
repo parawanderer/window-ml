@@ -142,9 +142,9 @@ async function listTabsForPicker(): Promise<TabInfo[]> {
  * still indents grouped tabs by `groupId`.
  */
 async function listTabGroups(): Promise<TabGroupInfo[]> {
-    const api = (chrome as unknown as { tabGroups?: { query(q: object): Promise<{ id: number; title?: string; color?: string }[]> } }).tabGroups;
+    const api = (chrome as unknown as { tabGroups?: { query(q: object): Promise<{ id: number; title?: string; color?: string; collapsed?: boolean }[]> } }).tabGroups;
     if (!api) return [];
-    return (await api.query({})).map((g) => ({ id: g.id, ...(g.title ? { title: g.title } : {}), ...(g.color ? { color: g.color } : {}) }));
+    return (await api.query({})).map((g) => ({ id: g.id, ...(g.title ? { title: g.title } : {}), ...(g.color ? { color: g.color } : {}), ...(g.collapsed ? { collapsed: true } : {}) }));
 }
 
 const CAPTURE_RETRIES = 5, CAPTURE_RETRY_MS = 550;   // captureVisibleTab allows about two calls a second
