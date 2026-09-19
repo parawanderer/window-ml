@@ -174,7 +174,7 @@ export function ComposerCard() {
                 {el ? <ElementPill ctx={el} onRemove={() => (composerElement.value = null)} /> : null}
                 <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
                 <textarea ref={ref} class="card-cmp-input" rows={3}
-                    placeholder={el ? "Ask about the selected element…" : "Ask window.ml to do something on this page… (paste a screenshot to attach)"}
+                    placeholder={el ? "Ask about the selected element…" : "Ask window.ml to do something on this page… (paste an image to attach)"}
                     value={text}
                     onInput={e => { setText((e.target as HTMLTextAreaElement).value); if (err) setErr(""); }}
                     onPaste={att.onPaste}
@@ -189,7 +189,7 @@ export function ComposerCard() {
             <div class="card-foot card-cmp-foot">
                 <input ref={att.fileRef} type="file" accept="image/*" multiple style="display:none"
                     onChange={e => { att.addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
-                <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste a screenshot)</span></button>
+                <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste one)</span></button>
                 <span class="card-cmp-hint"><kbd class="kb">↵</kbd> send · <kbd class="kb">esc</kbd> cancel</span>
                 <span class="sp" />
                 {/* No `live` toggle. Streaming is what the Commander IS — a run you watch — so it was a

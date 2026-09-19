@@ -117,14 +117,14 @@ export function Composer({ s, multiline }: { s: Session; multiline?: boolean }) 
     // flight used to hit the Stop path and kill the run out of nowhere). Cancelling is the Stop BUTTON only.
     const onKey = (e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey && !empty) { e.preventDefault(); send(); } };
     const placeholder = running ? (agent ? "Steer this run, or send to queue a follow-up…" : "Sending… or stop this turn")
-        : "Send a message (or paste a screenshot) to continue…";
+        : "Send a message (or paste an image) to continue…";
     return (
         <div class="composer" data-rev={r}>
             <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
             <div class="composer-row">
                 <input ref={att.fileRef} type="file" accept="image/*" multiple style="display:none"
                     onChange={e => { att.addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
-                <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste a screenshot into the box)</span></button>
+                <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste one into the box)</span></button>
                 {/* A PAGE's composer is a box you can write a paragraph in; a panel's is one line, because a
                     drawer beside a page has no room for more. Enter still sends and Shift+Enter still makes a
                     line — that was already true of the key handler, and the single-line `input` was simply
@@ -142,8 +142,9 @@ export function Composer({ s, multiline }: { s: Session; multiline?: boolean }) 
             <div class="composer-foot">
                 {/* Said once, where it is needed: a box you can write a paragraph in has to say how to send it,
                     and it stops saying so the moment you start typing — by then you have either pressed Enter or
-                    you have not. */}
-                {multiline && !text ? <span class="chint">Enter to send · Shift+Enter for a new line</span> : null}
+                    you have not. It FADES rather than leaving: the line it stands on holds the box above it up, and
+                    removing it dropped the whole composer a line on the first keystroke. */}
+                {multiline ? <span class={`chint${text ? " gone" : ""}`} aria-hidden={text ? true : undefined}>Enter to send · Shift+Enter for a new line</span> : null}
                 <RunStatsBar s={s} />
                 <span class="sp" />
                 <UsageBar s={s} />
