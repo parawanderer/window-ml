@@ -24,9 +24,16 @@ function answering(client) {
             if (e.kind === "closed") return;
             if (e.kind !== "command") continue;
             const c = JSON.parse(new TextDecoder().decode(e.opened.body));
+            // A kept session with five stored events, `bbbb0005`, as `session.backfill` pages it.
+            const stored = [0, 1, 2, 3, 4].map((i) => ({ kind: "agent-say", id: "bbbb0005", session: { hash: "bbbb0005", turn: 0 }, text: `stored ${i}` }));
             const body = c.type === "runtime.info"
                 ? { ok: true, data: { kind: "browser", contractVersion: SESSION_CONTRACT_VERSION, capabilities: CAPS, nowMs: Date.now() } }
-                : { ok: false, error: { code: "unsupported", message: c.type } };
+                : c.type === "session.backfill" && c.session.hash === "bbbb0005"
+                    ? (() => {
+                        const end = Math.min(c.before ?? 5, 5), from = Math.max(0, end - (c.limit ?? 100));
+                        return { ok: true, data: { session: c.session, epoch: "w1.0", events: stored.slice(from, end), from, more: from > 0, truncated: false } };
+                    })()
+                    : { ok: false, error: { code: "unsupported", message: c.type } };
             await client.result({ principal: e.opened.from, agreementKey: e.opened.verified.leaf.agreementKey }, e.opened.nonce, new TextEncoder().encode(JSON.stringify(body)));
         }
     })();
@@ -198,4 +205,27 @@ test("a reconnecting host backs off after a failed open, and reconnect() tries a
         await new Promise((r) => setTimeout(r, 1500));
         assert.equal(calls, 2, "a closed host never reopens");
     } finally { host.close(); w.close(); }
+});
+
+test("a session that has published nothing since its runtime connected: no key, and the runtime says where its history ends", LIVE, async () => {
+    // The phone app's "Loading…" forever: the runtime starts a session's stream (its key, its frames) only when the
+    // session publishes, so an idle session has neither, and the ring's end marker used to wait behind a key that was
+    // never coming.
+    const w = await world();
+    try {
+        await poll("the runtime", () => w.conn.peer(w.id));
+        const got = [];
+        w.host.events({ runtime: w.id, hash: "bbbb0005" }, (m) => got.push(m));
+        await poll("the end of the ring", () => got.some((m) => m.type === "backfilled"), 10_000);
+        assert.deepEqual(got.map((m) => m.type), ["backfilled"], "no events and no reset: nothing to replace");
+        assert.equal(got[0].epoch, "w1.0");
+        assert.equal(got[0].from, 5, "the history ends at 5, so the client pages back from there");
+        assert.equal(got[0].truncated, false);
+
+        // When the session does publish, the key is granted and its events arrive live.
+        await w.pub.publish("bbbb0005", { type: "event", v: 1, session: { runtime: w.id, hash: "bbbb0005" }, epoch: "w1.0", cursor: 6, pos: 5, event: { kind: "agent-say", id: "bbbb0005", text: "new" } });
+        await poll("the live event", () => got.some((m) => m.type === "event"));
+        assert.equal(got.at(-1).event.text, "new");
+        assert.equal(got.at(-1).pos, 5);
+    } finally { w.close(); }
 });
