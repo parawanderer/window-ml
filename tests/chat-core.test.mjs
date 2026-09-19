@@ -544,3 +544,15 @@ test("deleteFolderNote: a delete names the archive folder only where it reaches 
         assert.equal(deleteFolderNote(a), null, JSON.stringify(a));
     }
 });
+
+test("attentionItems: a lapse this device fixed before is worded as a repeat, with the lasting choice named", async () => {
+    const { attentionItems } = await import("../src/chat/attention.ts");
+    const rt = { id: "local", name: "This browser", kind: "browser", online: true, contractVersion: 1, grants: [], capabilities: { archive: { folder: "needs-grant" } } };
+    const first = attentionItems([rt], new Map(), () => true);
+    assert.equal(first[0].title, "The archive folder needs reconnecting");
+    assert.match(first[0].detail, /choose Always allow/);
+    const again = attentionItems([rt], new Map(), () => true, new Set(), (r, code) => code === "archive-folder-lapsed");
+    assert.equal(again[0].title, "The archive folder lapsed again");
+    assert.match(again[0].detail, /allowed only until the browser restarted/);
+    assert.equal(again[0].fix.label, "Reconnect", "the same one-click fix either way");
+});

@@ -8,7 +8,7 @@
 // (months wait, marked pending), and one click with "Allow on every visit" chosen makes it stay connected.
 import { useEffect, useState } from "preact/hooks";
 import type { FolderReport } from "../archive-worker";
-import { canPickFolder, pickFolder, regrantFolder, saveFolder } from "../archive-folder";
+import { canPickFolder, pickFolder, regrantFolder, regrantedBefore, saveFolder } from "../archive-folder";
 
 /** The browser-specific way to turn folder access on, when there is one. */
 export const BRAVE_FLAG = "brave://flags/#file-system-access-api";
@@ -63,8 +63,10 @@ export function ArchiveFolderBody(p: {
 
     if (r.state === "needs-grant") return (
         <div class="arch">
-            <div class="set-warn">The archive folder{r.name ? <> <b>{r.name}</b></> : null} needs permission again.</div>
-            <div class="set-hint">The browser asks again after a restart unless it was allowed for good. Reconnect, and in the prompt choose <b>Allow on every visit</b> so it stays connected.</div>
+            <div class="set-warn">The archive folder{r.name ? <> <b>{r.name}</b></> : null} {regrantedBefore() ? "lapsed again" : "needs permission again"}.</div>
+            <div class="set-hint">{regrantedBefore()
+                ? <>Last time it was allowed only until the browser restarted. Reconnect, and this time choose <b>Always allow</b> (<b>Allow on every visit</b> in Chrome) so it stays connected.</>
+                : <>The browser asks again after a restart unless it was allowed for good. Reconnect, and in the prompt choose <b>Always allow</b> (<b>Allow on every visit</b> in Chrome) so it stays connected.</>}</div>
             {asks("Reconnect", "Asking…", "regrant", p.onRegrant, true)}
             {pending}{off}{note}
         </div>
@@ -73,6 +75,9 @@ export function ArchiveFolderBody(p: {
     return (
         <div class="arch">
             <div class="set-field"><span>Folder</span><div><b>{r.name}</b>, written {ago(r.lastSync)}</div></div>
+            {/* The browser never says whether the grant lasts, and a first pick is only ever granted until a restart:
+                the lasting choice is offered on the NEXT ask. Said once, here, so that ask is not a surprise. */}
+            {regrantedBefore() ? null : <div class="set-hint">After a browser restart it may ask for this folder again. Choose <b>Always allow</b> then, and it stays connected.</div>}
             {pending}
             <div class="arch-actions">
                 {btn("Write now", "Writing…", "sync", p.onSync)}

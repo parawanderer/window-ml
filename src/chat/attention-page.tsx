@@ -25,7 +25,8 @@ const NONE: ReadonlyMap<string, readonly string[]> = new Map();
 export function useAttention(store: ChatStore, extras?: ChatExtras): { items: AttentionItem[] } {
     const canFix = (rt: RuntimeInfo, fix: AttentionFix, code: string) =>
         fix.kind === "act" ? !!extras?.fix?.(rt.id, code) : !!rt.capabilities.localSettings && extras?.settings?.(rt.id) != null;
-    return { items: attentionItems(store.runtimes.value, NONE, canFix, dismissed.value) };
+    const repeat = (rt: RuntimeInfo, code: string) => !!extras?.fixedBefore?.(rt.id, code);
+    return { items: attentionItems(store.runtimes.value, NONE, canFix, dismissed.value, repeat) };
 }
 
 /** The inbox above the gear: absent with nothing to do, a count only for problems. `labelled` in the list's foot. */
