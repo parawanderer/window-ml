@@ -2961,15 +2961,18 @@ test("resource panel: the crosshair does not cut the mark's ring", async () => {
                         return { d: c.getContext("2d").getImageData(0, 0, c.width, c.height).data, w: c.width, h: c.height };
                     };
                     const A = await load(a), B = await load(b);
-                    // Per ROW, how many pixels the line is responsible for. A tolerance because the rule is
-                    // drawn at 55% opacity over whatever is behind it and a hair of that survives rounding.
+                    // Per ROW, how STRONGLY the line shows: the largest channel difference the line makes anywhere
+                    // in that row. A strength, not a pixel count, because the mark sits wherever its percentage
+                    // lands, usually between pixels: its ring's outermost row is then only partly opaque and lets a
+                    // FAINT trace of a line painted under it through. Counted as pixels, that trace read exactly like
+                    // the bug and failed on CI's layout while passing on others.
                     return Array.from({ length: A.h }, (_, y) => {
-                        let n = 0;
+                        let most = 0;
                         for (let x = 0; x < A.w; x++) {
                             const i = (y * A.w + x) * 4;
-                            if (Math.max(Math.abs(A.d[i] - B.d[i]), Math.abs(A.d[i + 1] - B.d[i + 1]), Math.abs(A.d[i + 2] - B.d[i + 2])) > 8) n++;
+                            most = Math.max(most, Math.abs(A.d[i] - B.d[i]), Math.abs(A.d[i + 1] - B.d[i + 1]), Math.abs(A.d[i + 2] - B.d[i + 2]));
                         }
-                        return n;
+                        return most;
                     });
                 }, { a: withLine, b: noLine });
             }
@@ -2979,8 +2982,8 @@ test("resource panel: the crosshair does not cut the mark's ring", async () => {
 
         // THE PREMISE: the line is actually drawn in this window, top and bottom. Without it a mark on a
         // plot with no crosshair would pass this test while proving nothing.
-        expect(rows[0], `no line above the mark, so there is nothing to be cut BY: ${rows}`).toBeGreaterThan(0);
-        expect(rows.at(-1), `no line below the mark: ${rows}`).toBeGreaterThan(0);
+        expect(rows[0], `no line above the mark, so there is nothing to be cut BY: ${rows}`).toBeGreaterThan(8);
+        expect(rows.at(-1), `no line below the mark: ${rows}`).toBeGreaterThan(8);
         // THE CLAIM: the mark interrupts it, for the mark's FULL HEIGHT — 7px of fill plus 1.5px of ring on
         // each side, so ten rows of the window carry no difference at all.
         //
@@ -2989,7 +2992,14 @@ test("resource panel: the crosshair does not cut the mark's ring", async () => {
         // accent fill is a change too small to see, so only the RING rows differ — measured, the run went
         // 10 → 7 with the fix reverted while the middle stayed identical. A test that sampled fixed rows
         // would have passed or failed on where the mark happened to sit rather than on whether it was cut.
-        const run = rows.reduce((best, n) => (n === 0 ? { cur: best.cur + 1, max: Math.max(best.max, best.cur + 1) } : { cur: 0, max: best.max }), { cur: 0, max: 0 }).max;
+        //
+        // A row is CUT when the line shows there at under 60% of its strength in the open rows. Painted under the
+        // mark, a ring row covered at least half-way lets through at most about half of the line; painted OVER it,
+        // the line crosses the ring at full strength (more, against the ring's panel colour). So a mark between
+        // pixels still yields its full-cover rows (fill plus one ring row each side, nine at least), and the bug
+        // still yields fewer.
+        const open = Math.min(rows[0], rows.at(-1));
+        const run = rows.reduce((best, d) => (d < open * 0.6 ? { cur: best.cur + 1, max: Math.max(best.max, best.cur + 1) } : { cur: 0, max: best.max }), { cur: 0, max: 0 }).max;
         expect(run, `the line is painted OVER the mark, cutting its ring — rows ${rows}`).toBeGreaterThanOrEqual(9);
     } finally { await ext.close(); await fake.stop(); }
 });
