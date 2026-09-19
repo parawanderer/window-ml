@@ -749,7 +749,11 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-rail .hbtn, .chat-list-foot .hbtn, .chat-list .head .hbtn, .chat-sheet-back { min-width: 36px; min-height: 36px; border-radius: 50%; }
 .chat-rail .sp { flex: 1 1 auto; }
 /* The rail's `+` menu opens to the RIGHT of the rail: anchored under it, it would open off the left edge. */
-.chat-list-foot { flex: 0 0 auto; padding: 8px 10px 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.chat-list-foot { flex: 0 0 auto; padding: 8px 10px 12px; display: flex; flex-direction: column; align-items: stretch; gap: 2px; }
+/* In the foot each button spans the list's width, so its hover and open state read as a row, not a floating pill. */
+.chat-list-foot .chat-gear { display: flex; }
+.chat-list-foot .chat-gear-wide { flex: 1 1 auto; width: 100%; }
+.chat-list-foot .chat-att-n { margin-left: auto; }
 
 /* THE PAGE'S ONE MENU LOOK (menu.tsx): a rounded sheet, a glyph and a label per row, a tick on a toggle — Android's
    list menu, which Gemini borrowed. The row menu and the gear's menu both use it, so they cannot drift apart. */
