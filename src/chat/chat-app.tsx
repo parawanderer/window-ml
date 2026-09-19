@@ -21,7 +21,7 @@ import { STEP_JUMP_EVENT } from "../sidebar/step-scroll";
 import type { ChatStore } from "./chat-store";
 import { mayCommand, speaksOurContract } from "./grants";
 import { NewSession, ResumeSession, StartMenu, resumableHere, type StartKind } from "./new-session";
-import { ListToggle, ViewToggle, calm, foldedRuntimes, listOpen, pane, pinned, setPane, toggleRuntime } from "./view-mode";
+import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, listOpen, pane, pinned, setPane, toggleRuntime } from "./view-mode";
 import { DeleteConfirm, RowMenu } from "./row-menu";
 import { GearMenu, Rail, mainView, openSearch } from "./nav";
 import { SearchPage } from "./search-page";
@@ -557,17 +557,20 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
     useEffect(() => { if (key) store.open(key); else store.close(); }, [key]);
     useEffect(() => { if (key) { setStarting(null); mainView.value = null; } }, [key]);   // opening a session puts the form and the search page away
     const start = (k: StartKind) => { mainView.value = null; setStarting(k); };
-    const gear = <GearMenu extras={extras} graphsRt={graphsRt} benchRt={benchOwner} settingsRt={settingsRt} />;
-    const gearWide = <GearMenu extras={extras} graphsRt={graphsRt} benchRt={benchOwner} settingsRt={settingsRt} labelled />;
-    const settings = main === "settings" && settingsRt ? extras?.settings?.(settingsRt.id) : null;
+    const gear = <GearMenu graphsRt={graphsRt} benchRt={benchOwner} />;
+    const gearWide = <GearMenu graphsRt={graphsRt} benchRt={benchOwner} labelled />;
+    // The sheet is always there: this page's own display settings need no runtime; the browser's settings join them
+    // where a runtime offers them and this device can draw them.
+    const browserSettings = settingsRt ? extras?.settings?.(settingsRt.id) : null;
     return (
-        <div class={`chat${narrow ? " narrow" : ""}${calm.value ? " calm" : ""}${!narrow && !listOpen.value ? " list-hidden" : ""}${aside ? " pane-open" : ""}`}>
+        <div class={`chat${narrow ? " narrow" : ""}${calm.value ? " calm" : ""}${!narrow && !listOpen.value ? " list-hidden" : ""}${aside ? " pane-open" : ""}`}
+            style={{ "--code-fs": `${codeSize.value}px` }}>
             <ContextMenu />
             <CursorTipLayer />
             {!narrow && !listOpen.value ? <Rail store={store} onStart={start} gear={gear} /> : null}
             {(!narrow || (!key && !starting && !main)) ? <SessionList store={store} activeKey={key} narrow={narrow} onStart={start} gear={gear} gearWide={gearWide} /> : null}
             {main === "search" && (!narrow || !key) ? <SearchPage store={store} narrow={narrow} />
-                : settings ? <SettingsPage>{settings}</SettingsPage>
+                : main === "settings" ? <SettingsPage browser={browserSettings} />
                 : starting ? <NewSession store={store} kind={starting} onCancel={() => setStarting(null)}
                     onStarted={(k) => { setStarting(null); openSession(k); }} />
                     : key ? <SessionPane store={store} sessionKey={key} narrow={narrow} />

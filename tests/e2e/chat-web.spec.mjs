@@ -137,6 +137,24 @@ test("calm view is what the page opens in, and the toggle hands the panel's deta
     await page.close();
 });
 
+test("the page's code size is a setting of its own, and the prose keeps its size", async () => {
+    const { page, errors } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
+    const size = () => page.evaluate(() => getComputedStyle(document.querySelector(".chat")).getPropertyValue("--code-fs").trim());
+    expect(await size()).toBe("12.5px");
+    // Settings is on every build: this page's display settings need no runtime behind them.
+    await page.locator(".chat-gear-btn").click();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
+    await page.getByRole("radio", { name: "Large", exact: true }).click();
+    expect(await size()).toBe("14px");
+    await expect(page.locator(".chat-set-sample")).toHaveCSS("font-size", "14px");
+    // A device preference, so it survives a reload; Escape takes the sheet away.
+    await page.reload();
+    expect(await size()).toBe("14px");
+    await page.keyboard.press("Escape");
+    expect(errors).toEqual([]);
+    await page.close();
+});
+
 test("desktop: the session list hides to a rail and comes back, and is out of the tab order while hidden", async () => {
     const { page } = await open(DESKTOP, `#s=${encodeURIComponent(CHAT)}`);
     const list = page.locator(".chat-list");

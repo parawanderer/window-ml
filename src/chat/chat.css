@@ -527,10 +527,16 @@ button.chat-page-go:hover { color: var(--fg); }
    with a shape in the middle, rather than as an answer to something. */
 .chat.calm .msg.asst { margin-bottom: 26px; margin-top: 14px; }
 
-/* Code is set a shade smaller than the prose here. The panel's `.code` is 0.92em of a 12px base — proportionate
-   beside 12px text and heavy beside 15px, where a monospace face of nearly the same size as the prose stops
-   reading as an inset and starts competing with it. */
-.chat.calm .code, .chat.calm .md pre.code, .chat.calm .jt-value { font-size: .84em; }
+/* CODE HAS ITS OWN SIZE on this page, `--code-fs` (the device's "Code size" setting, `codeSize` in view-mode.tsx),
+   rather than a fraction of the prose's. The panel's `.code` is 0.92em of a 12px base — proportionate beside 12px
+   text and heavy beside 15px, where a monospace face of nearly the same size as the prose stops reading as an inset
+   and starts competing with it. */
+.chat { --code-fs: 12.5px; }
+.chat .code, .chat .md pre.code, .chat .jt-value { font-size: var(--code-fs); }
+/* The bench was built for the panel, where its editor is 0.88em of the base: give it the base that makes its code
+   `--code-fs`, and its toolbar and tabs scale with it instead of with the page's reading size. */
+.chat-bench { font-size: calc(var(--code-fs) / .88); }
+.chat-bench .code, .chat-bench .md pre.code { font-size: var(--code-fs); }
 
 /* The same rule for a CODE block's own tools (explain, copy, bench): they belong to the block, so they arrive when
    the pointer is in it. They are positioned over its top-right corner already, so nothing moves when they do. */
@@ -669,8 +675,11 @@ button.chat-page-go:hover { color: var(--fg); }
     animation: chat-rail-in .22s ease .12s both;
 }
 @keyframes chat-rail-in { from { opacity: 0; } }
+/* Outside calm view the page draws its edges (the header's rule, the open list's border), so the rail draws one too,
+   where the list's border would be. Calm view draws none, so its rail stays a column of glyphs on the page. */
+.chat:not(.calm) .chat-rail { border-right: 1px solid var(--border); }
 @media (prefers-reduced-motion: reduce) { .chat-rail { animation: none; } }
-.chat-rail .hbtn, .chat-list-foot .hbtn, .chat-list .head .hbtn { min-width: 36px; min-height: 36px; border-radius: 50%; }
+.chat-rail .hbtn, .chat-list-foot .hbtn, .chat-list .head .hbtn, .chat-sheet-back { min-width: 36px; min-height: 36px; border-radius: 50%; }
 .chat-rail .sp { flex: 1 1 auto; }
 /* The rail's `+` menu opens to the RIGHT of the rail: anchored under it, it would open off the left edge. */
 .chat-rail .chat-start .menu { left: calc(100% + 6px); right: auto; top: 0; }
@@ -712,8 +721,14 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-sheet-scroll { padding: 0 16px; }
 .chat-sheet-col { max-width: 760px; margin: 0 auto; padding: 56px 0 40px; position: relative; }
 .chat.narrow .chat-sheet-col { padding-top: 12px; }
-.chat-sheet-back { margin-bottom: 8px; }
-.chat-sheet-title { margin: 0 0 24px; padding: 0 12px; font-size: 1.6em; font-weight: 500; color: var(--fg); }
+/* The title, and the way back as the rail's round button hanging in the gutter to its left, so the title still lines
+   up with the rows under it. A phone has no gutter, so there the button sits in the line. */
+.chat-sheet-head { position: relative; display: flex; align-items: center; gap: 8px; margin: 0 0 24px; padding: 0 12px; }
+.chat-sheet-back { position: absolute; right: 100%; top: 50%; transform: translateY(-50%); color: var(--fg-dim); }
+.chat.narrow .chat-sheet-back { position: static; transform: none; }
+.chat-sheet-col > .chat-sheet-back { margin-bottom: 8px; }
+.chat.narrow .chat-sheet-head { padding-left: 0; }
+.chat-sheet-title { margin: 0; font-size: 1.6em; font-weight: 500; color: var(--fg); }
 /* The search page: a pill to type in, and the whole history under it with each date at the right. */
 .chat-search-box {
     display: flex; align-items: center; gap: 12px; padding: 0 20px; min-height: 56px; border-radius: 999px;
@@ -736,5 +751,22 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat-search-date { flex: 0 0 auto; color: var(--fg-faint); font-size: .92em; font-variant-numeric: tabular-nums; }
 .chat-search-more { height: 1px; }
 
-/* Settings as a sheet: the extension's own settings view, in the same column as the search page. */
+/* Settings as a sheet: this page's display settings, then the extension's own settings view, in the search page's
+   column. A setting is a row: what it is and what it touches on the left, the choice on the right. */
 .chat-settings-body { padding: 0 12px; }
+.chat-set-group { margin-bottom: 36px; }
+.chat-set-tabs { margin: 0 12px 24px; }
+.chat-set-lede { margin: 0 0 16px; padding: 0 12px; color: var(--fg-faint); font-size: .92em; }
+.chat-set-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 10px 12px; }
+.chat-set-label { flex: 1 1 240px; display: flex; flex-direction: column; gap: 3px; }
+.chat-set-hint { color: var(--fg-faint); font-size: .88em; }
+.chat-set-sample { margin: 4px 12px 0; }
+/* A segmented choice: the options side by side in one pill, the chosen one filled. */
+.chat-seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: 999px; background: var(--panel); }
+.chat-seg-opt {
+    border: none; border-radius: 999px; padding: 6px 14px; background: none; color: var(--fg-dim); font: inherit;
+    font-size: .92em; cursor: pointer;
+}
+.chat-seg-opt:hover { color: var(--fg); }
+.chat-seg-opt.on { background: var(--panel-2); color: var(--fg); }
+.chat-seg-opt:focus-visible { outline: 2px solid var(--fg-dim); outline-offset: 1px; }

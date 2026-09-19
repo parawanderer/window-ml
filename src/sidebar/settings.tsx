@@ -1108,13 +1108,16 @@ export function Settings() {
 
             {tab === "appearance" ? <>
                 <Section id="general" title="General">
-                <div class="set-field"><span>Font size</span>
+                {/* Named for what it sizes: the chat page reads at its own sizes and shows these settings too, where an
+                    unqualified "Font size" that moved nothing on the page it was changed from read as broken. */}
+                <div class="set-field"><span>Panel font size</span>
                     <div class="stepper">
                         <button title="Smaller" onClick={() => setScale(fontScale.value - 0.1)}>−</button>
                         <span class="set-val">{pct}%</span>
                         <button title="Larger" onClick={() => setScale(fontScale.value + 0.1)}>+</button>
                         <button class="reset" title="Reset to 100%" onClick={() => setScale(1)}>reset</button>
                     </div>
+                    <div class="set-hint">The DevTools panel and the sidebar over a page. The chat page has its own sizes.</div>
                 </div>
                 <label class="set-field"><span>Theme</span>
                     <select value={c.theme} onChange={(e: any) => setField("theme", e.target.value as Theme)}>

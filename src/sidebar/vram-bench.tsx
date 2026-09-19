@@ -22,6 +22,7 @@ import { IconExpand, IconClose, IconChevron, IconTimer, IconPlay, IconSendToMode
 import { type BenchJumpDetail, BENCH_JUMP_EVENT, PyBenchOut } from "./render-panel";
 import { benchH, BENCH_H_KEY, benchDock, BENCH_DOCK_KEY, view, viewReturn, benchOpen, BENCH_OPEN_KEY, benchEnv, benchMode, benchKept, noteBenchEnv, benchLost, benchCode, lsSet, BENCH_CODE_KEY, benchRunning, benchResult, type BenchRun, benchLive, benchTimeout, noteBenchKept, benchSplit, BENCH_SPLIT_KEY, codeLineNumbers } from "./store";
 import { cursorTipOn, TipText } from "./ui-kit";
+import { followDrag } from "./drag";
 
 // Shape a raw PYTHON_EXEC response into a `python-out` descriptor for RenderPanel.
 export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" }): Extract<RenderDescriptor, { type: "python-out" }> {
@@ -46,19 +47,12 @@ export function BenchDrawer() {
         // just `button`: the row gained a <select> and a <label>, and `preventDefault` on a pointerdown over
         // a select stops the menu from opening at all — the control looked dead rather than busy.
         if ((e.target as HTMLElement).closest("button, select, input, textarea, label, a")) return;
-        e.preventDefault();
-        const grip = e.currentTarget as HTMLElement;
-        try { grip.setPointerCapture(e.pointerId); } catch { /* older engines */ }
         const startY = e.clientY, startH = benchH.value;
         // Dragging UP grows it. Floored so the editor and its bar still fit, and capped so the drawer can
         // never take the whole panel — at which point it is not a drawer and full mode is what you wanted.
         const cap = Math.max(200, Math.round((typeof window !== "undefined" ? window.innerHeight : 800) * 0.75));
-        const move = (ev: PointerEvent) => { benchH.value = Math.max(150, Math.min(cap, startH + (startY - ev.clientY))); };
-        const up = () => {
-            grip.removeEventListener("pointermove", move); grip.removeEventListener("pointerup", up);
-            chrome.storage.local.set({ [BENCH_H_KEY]: benchH.value });
-        };
-        grip.addEventListener("pointermove", move); grip.addEventListener("pointerup", up);
+        followDrag(e, (ev) => { benchH.value = Math.max(150, Math.min(cap, startH + (startY - ev.clientY))); },
+            () => { try { chrome.storage.local.set({ [BENCH_H_KEY]: benchH.value }); } catch { /* no extension storage */ } });
     };
     // The drawer owns the DRAG and the SHAPE, and hands both to the bench's own header row — one row doing
     // every job, rather than a title strip here and a control bar at the far end of the panel.
@@ -326,21 +320,13 @@ export function PythonBench({ drag, shape }: { drag?: (e: PointerEvent) => void;
      *  output pane. Clamped so neither pane can be dragged out of existence: a pane you cannot get back is
      *  not a smaller pane, it is a lost one. */
     const onSplit = (e: PointerEvent) => {
-        e.preventDefault();
         const host = (e.currentTarget as HTMLElement).parentElement;
         if (!host) return;
-        const el = e.currentTarget as HTMLElement;
-        try { el.setPointerCapture(e.pointerId); } catch { /* older engines */ }
-        const move = (ev: PointerEvent) => {
+        followDrag(e, (ev) => {
             const b = host.getBoundingClientRect();
             if (b.height <= 0) return;
             benchSplit.value = Math.max(0.15, Math.min(0.85, (ev.clientY - b.top) / b.height));
-        };
-        const up = () => {
-            el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up);
-            chrome.storage.local.set({ [BENCH_SPLIT_KEY]: benchSplit.value });
-        };
-        el.addEventListener("pointermove", move); el.addEventListener("pointerup", up);
+        }, () => { try { chrome.storage.local.set({ [BENCH_SPLIT_KEY]: benchSplit.value }); } catch { /* no extension storage */ } });
     };
     // MEMOED on the result, not rebuilt each render: the output pane keeps your chosen tab across runs, and
     // it decides that from this object's identity — a fresh one every render would re-pick on every keypress.

@@ -61,12 +61,12 @@ export function Rail({ store, onStart, gear }: { store: ChatStore; onStart: (kin
  * The gear and its menu: everything on the page that is not a session.
  *
  * Each device view appears only where the runtime reports the capability AND this device can draw it (`ChatExtras`),
- * the same double question the rest of the page asks; Settings likewise, against `localSettings`. `graphsRt` and
- * `benchRt` are the runtimes those views would describe, already asked both questions by the caller: the open
- * session's where it offers the view, otherwise the first that does.
+ * the same double question the rest of the page asks. `graphsRt` and `benchRt` are the runtimes those views would
+ * describe, already asked both questions by the caller: the open session's where it offers the view, otherwise the
+ * first that does. Settings is always offered, because the page's own display settings need no runtime.
  */
-export function GearMenu({ extras, graphsRt, benchRt, settingsRt, labelled }: {
-    extras?: ChatExtras; graphsRt?: RuntimeInfo; benchRt?: RuntimeInfo; settingsRt?: RuntimeInfo; labelled?: boolean;
+export function GearMenu({ graphsRt, benchRt, labelled }: {
+    graphsRt?: RuntimeInfo; benchRt?: RuntimeInfo; labelled?: boolean;
 }) {
     const [open, setOpen] = useState(false);
     const wrap = useRef<HTMLDivElement>(null);
@@ -78,7 +78,6 @@ export function GearMenu({ extras, graphsRt, benchRt, settingsRt, labelled }: {
         document.addEventListener("keydown", onKey);
         return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
     }, [open]);
-    const settings = !!settingsRt && extras?.settings?.(settingsRt.id) != null;
     const pick = (run: () => void) => () => { setOpen(false); run(); };
     return (
         <div class="chat-gear" ref={wrap}>
@@ -87,7 +86,7 @@ export function GearMenu({ extras, graphsRt, benchRt, settingsRt, labelled }: {
                     <MenuItem icon={<IconBrain />} label="Calm view" on={calm.value} onPick={pick(() => setCalm(!calm.value))} />
                     {graphsRt ? <MenuItem icon={<IconVram />} label={`What ${graphsRt.name} is running`} on={pane.value === "resource"} onPick={pick(() => setPane(pane.value === "resource" ? null : "resource"))} /> : null}
                     {benchRt ? <MenuItem icon={<IconBench />} label="Python bench" on={benchOpen.value} onPick={pick(() => (benchOpen.value ? (benchOpen.value = false) : openBench()))} /> : null}
-                    {settings ? <MenuItem icon={<IconGear />} label="Settings" onPick={pick(() => { mainView.value = "settings"; })} /> : null}
+                    <MenuItem icon={<IconGear />} label="Settings" onPick={pick(() => { mainView.value = "settings"; })} />
                 </div>
             ) : null}
             {/* Named where there is room for a word (the open list's foot), a glyph alone on the rail. */}

@@ -57,7 +57,7 @@ export function SearchPage({ store, narrow }: { store: ChatStore; narrow: boolea
             <div class="view chat-sheet-scroll">
                 <div class="chat-sheet-col">
                     {narrow ? (
-                        <button class="nav chat-sheet-back" aria-label="Back to sessions" onClick={() => (mainView.value = null)}><IconBack /></button>
+                        <button class="hbtn chat-sheet-back" aria-label="Back to sessions" onClick={() => (mainView.value = null)}><IconBack /></button>
                     ) : null}
                     <label class="chat-search-box">
                         <IconSearch />

@@ -25,6 +25,7 @@ import { Prose } from "./prose";
 import { JsonNode, JT_CUT, JT_SEEN } from "./json-tree";
 import { parseLooseJson } from "../json-repair";
 import { notesByLine } from "./annotate";
+import { followDrag } from "./drag";
 import {
     openCtxMenu, copyText, ClickableImg, Code, CopyBtn, SheetChip, inlineText, stepKey, displaySource, cursorTipOn, PointerChip, TipText,
     highlightToken, highlightEl, clearHighlight, tokenHover, pickedHover,
@@ -325,12 +326,8 @@ export function PyDfTable({ columns, rows, noCollapse, rowCount, dtypes, delimit
         revealSideways(sc, r, hit);
     }, ":scope > .r-df-scroll");
     const onGrab = (e: any): void => {
-        e.preventDefault();
         const startY = e.clientY, start = scroller()?.getBoundingClientRect().height ?? 320;
-        const move = (ev: any): void => setDragH(Math.max(60, Math.round(start + (ev.clientY - startY))));
-        const up = (): void => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
-        window.addEventListener("pointermove", move);
-        window.addEventListener("pointerup", up);
+        followDrag(e, (ev) => setDragH(Math.max(60, Math.round(start + (ev.clientY - startY)))));
     };
     const scrollStyle = dragH != null ? { maxHeight: `${dragH}px` } : undefined;
 
@@ -400,12 +397,10 @@ export function PyDfTable({ columns, rows, noCollapse, rowCount, dtypes, delimit
         : asFile ? "Saves the whole table as a .csv file (too large for the clipboard)." : "Copies the whole table as CSV.";
     const modeTip = mode === "summary" ? "Show the rows." : `Summarise each column: dtype, nulls, distinct values, and a glance at the values${partial ? (value ? ", over the whole table" : ", over the rows the panel holds") : ""}.`;
     const startResize = (c: number, e: any) => {
-        e.preventDefault(); e.stopPropagation();
+        e.stopPropagation();
         const th = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
         const startX = e.clientX, startW = widths[c] ?? th.offsetWidth;
-        const onMove = (ev: PointerEvent) => setWidths(w => ({ ...w, [c]: Math.max(40, startW + ev.clientX - startX) }));
-        const onUp = () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
-        window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
+        followDrag(e, (ev) => setWidths(w => ({ ...w, [c]: Math.max(40, startW + ev.clientX - startX) })));
     };
 
     return (
@@ -946,12 +941,8 @@ export function OutputCell({ children, text, corner, fill }: { children: Compone
     });
     const onScroll = (): void => { const el = box.current; if (el) follow.current = atBottomOf(el); };
     const onGrab = (e: any): void => {
-        e.preventDefault();
         const startY = e.clientY, start = box.current?.getBoundingClientRect().height ?? cap;
-        const move = (ev: any): void => setDragH(Math.max(60, Math.round(start + (ev.clientY - startY))));
-        const up = (): void => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
-        window.addEventListener("pointermove", move);
-        window.addEventListener("pointerup", up);
+        followDrag(e, (ev) => setDragH(Math.max(60, Math.round(start + (ev.clientY - startY)))));
     };
     return (
         <div class={`r-outcell${fill ? " fill" : ""}`}>

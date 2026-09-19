@@ -545,7 +545,15 @@ composer's counters, quiet but present. Only what belongs to a thing you are REA
 table's controls, a code block's, a citation's tip. The rule exists because five separate hover-reveals turn
 finding a control into a memory game.
 
-**Settings** open as a SHEET in the main pane, the search page's shape (`settings-page.tsx`: one column, a title, a
+**Code has its own size** on this page, `--code-fs` (12.5px by default, the device's "Code size" setting,
+`codeSize` in view-mode.tsx): transcript code, the Python bench's editor and what it prints. It used to be a fraction
+of the prose, and the bench, built for the panel's 12px base, inherited the page's 15px and came out a size and a half
+too big. The extension's "Panel font size" sizes the DevTools panel and the overlay, never this page, and says so.
+
+**Settings** open as a SHEET in the main pane, always, because the page's own display settings need no runtime. Two
+tabs: "This page" (device preferences) and "Extension" (the extension's configuration, only where a runtime reports
+`localSettings`). The sheet's head is `SheetHead`: the title with a round back button hanging in the gutter. Settings
+open as a SHEET in the main pane, the search page's shape (`settings-page.tsx`: one column, a title, a
 back arrow, Escape from anywhere via `useEscapeCloses`): the extension's own settings view (`settings.tsx`, the DevTools panel's), supplied
 through `ChatExtras.settings` and offered where the runtime reports `localSettings` — so only the extension build
 has it, and it edits the same `chrome.storage.sync` the popup and the panel do.
