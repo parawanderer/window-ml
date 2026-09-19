@@ -21,7 +21,7 @@ import { ensureHubRuntime, hubDevices, hubLog, hubState, revokeHubDevice, stopHu
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderOrigin } from "./sw-housekeeping";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch } from "./sw-consent";
-import { runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl } from "./sw-runs";
+import { runControllers, runInboxes, bgRuns, activeRuns, runRebuilds, runReplayBuffer, hydratedRuns, resurrectedRuns, readoptPageInfo, hydratePersistedRuns, navBarrier, pageValueSession, hydrationDone, purgeAllBgRuns, bufferReplay, derefByRun, deleteRun, releaseSessionTokens, tabPageUrl, switchRunModel, forgetRunModel } from "./sw-runs";
 import { relayDebugEvent, resetDebug, debugBuffer, serveDevtoolsPort } from "./sw-debug";   // the DevTools panel's copy of the page debug stream
 import { startBackgroundRun, delegateStreams } from "./sw-run-host";
 import { pythonPrewarm, pythonExec, relayPyStdout } from "./sw-python";
@@ -1036,13 +1036,20 @@ configureSessionCommands({
         return true;
     },
     cancelRun: cancelBackgroundRun,
+    // Only a run whose loop THIS worker hosts: a live one (its controller) or a resumable one (its snapshot).
+    setRunModel: (hash, model) => {
+        const live = runControllers.has(hash);
+        if (!live && !bgRuns.has(hash)) return null;
+        switchRunModel(hash, model);
+        return live ? "running" : "stored";
+    },
     resolveApproval: (key, decision) => resolveApproval(key, decision.approved
         ? { approved: true, source: "user", ...(decision.persist ? { persist: true } : {}) }
         : { approved: false, source: "user", ...(decision.feedback ? { feedback: decision.feedback } : {}) }),
     forgetRun: (hash) => {
         if (runControllers.has(hash)) return;   // never a live run: the command refuses those first
         bgRuns.delete(hash); hydratedRuns.delete(hash); releaseSessionTokens(hash);
-        deleteRun(hash);
+        deleteRun(hash); forgetRunModel(hash);
     },
 });
 

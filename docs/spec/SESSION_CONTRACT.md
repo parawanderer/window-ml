@@ -98,7 +98,7 @@ that subscribed it, and never after its `Unsubscribe` returns.
 A `RuntimeInfo` carries three things a client renders from:
 
 - **`capabilities`**: what the runtime can do (`chat`, `agent`, `tabs`, `screenshots`, `highlight`, `persistence`,
-  `sideCalls`, `pythonBench`, `resourcePanel`, `localSettings`, `devices`, and the reserved `headless` and `lineage`), which
+  `sideCalls`, `pythonBench`, `resourcePanel`, `localSettings`, `switchModel`, `devices`, and the reserved `headless` and `lineage`), which
   `boxes` it uses, the session `archive` with its folder's state (present only while the archive is on), and
   `attention`: what needs someone's hand on the runtime (`no-model`, `backend-unreachable`, `site-access`, …), as
   codes a client words itself, since a runtime's text is untrusted. **Absent means no.** A client renders by capability and never assumes a browser.
@@ -179,6 +179,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `session.continue`: past the step cap | drive | | `continueRun` |
 | `session.delete` | drive | `persistence` for saved sessions | nothing |
 | `session.rename`: a person's title, trimmed and capped (80); empty returns to a generated one; the row's `title` and `renamed` change by `upsert` | drive | | nothing |
+| `session.model`: switch the model from now on: a chat's next turn, a running agent's next model call (never one under way), a finished run's next turn; answers `{ model, applies: "next-step" \| "next-turn" }`; a model the runtime does not offer or its whitelist excludes is `invalid`; a session whose model belongs to the page running it is `unsupported`; the row's `model` changes by `upsert` at once | drive | `switchModel` | nothing |
 | `models.list`: what `chat.start`/`agent.start` would accept, after the runtime's whitelist, with `kinds` and the `default` marked; empty when the backend is unreachable | view | | `LIST_MODELS` |
 | `storage.stats`: where saved-session storage goes now (images, tool output by tool, the rest, unmeasured), a daily history of the same (no session hashes), and the largest sessions | view | `persistence` | `STORAGE_HISTORY` |
 | `sessions.list`: a page of sessions, newest activity first, past `before` (a `lastTs`); the live index and the archive merged, archived rows marked `archived`; `archived: true/false` for only or none of them | view | | nothing |

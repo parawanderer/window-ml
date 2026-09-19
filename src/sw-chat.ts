@@ -120,6 +120,16 @@ export async function startBackgroundChat(opts: {
     return hash;
 }
 
+/** Switch a background chat's model from its next turn on, and write it where a resume reads it. False when this
+ *  worker does not host the chat and storage cannot bring it back. */
+export async function setBackgroundChatModel(hash: string, model: string): Promise<boolean> {
+    const chat = chats.get(hash) ?? (await rehydrate(hash));
+    if (!chat) return false;
+    chat.model = model;
+    if (chat.save) await persist(chat);
+    return true;
+}
+
 /** The next turn of a background chat. `not-found` when this worker does not host it and storage cannot bring it
  *  back; `busy` while a turn is still running, since a chat has no inbox to steer into. */
 export async function sendBackgroundChat(hash: string, text: string, images?: string[]): Promise<"turn" | "busy" | "not-found"> {

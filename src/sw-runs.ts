@@ -56,6 +56,44 @@ export const persistRun = (runId: string, snap: BgRunSnap): void => {
     try { void chrome.storage?.local?.set({ [BGRUN_KEY(runId)]: { ...snap, version: EXT_VERSION, ts: Date.now() } }); } catch { /* storage unavailable */ }
 };
 
+/**
+ * The model a person switched a run to (`session.model`), by run. Read at every model call, so a running loop takes it
+ * at its next step, and applied when a finished run is resumed or a handle starts its next turn with the model it was
+ * built with. Kept in storage, since the switch has to outlive the worker the way the run does.
+ */
+const runModels = new Map<string, string>();
+const RUN_MODELS_KEY = "ml_run_models";
+/** More would be sessions nobody switches back to; the oldest go first. */
+const RUN_MODELS_MAX = 200;
+try {
+    void chrome.storage?.local?.get(RUN_MODELS_KEY).then((got) => {
+        const saved = (got?.[RUN_MODELS_KEY] ?? {}) as Record<string, string>;
+        for (const [runId, model] of Object.entries(saved)) if (!runModels.has(runId) && typeof model === "string") runModels.set(runId, model);
+    }).catch(() => { /* storage unavailable: switches made before the restart are lost */ });
+} catch { /* no storage (a test harness) */ }
+
+function saveRunModels(): void {
+    while (runModels.size > RUN_MODELS_MAX) runModels.delete(runModels.keys().next().value!);
+    try { void chrome.storage?.local?.set({ [RUN_MODELS_KEY]: Object.fromEntries(runModels) }).catch(() => {}); } catch { /* storage unavailable */ }
+}
+
+/** The model a run was switched to, or undefined when nobody switched it. */
+export const runModelFor = (runId: string): string | undefined => runModels.get(runId);
+
+/** Switch a run's model from its next model call, and its resumable snapshot with it. */
+export function switchRunModel(runId: string, model: string): void {
+    runModels.delete(runId);   // re-inserted last, so the cap drops the oldest switch rather than this one
+    runModels.set(runId, model);
+    const held = bgRuns.get(runId);
+    if (held) held.p = { ...held.p, model };
+    saveRunModels();
+}
+
+/** Forget a run's switch: the session was deleted. */
+export function forgetRunModel(runId: string): void {
+    if (runModels.delete(runId)) saveRunModels();
+}
+
 /** Drop a settled run's storage snapshot — it is only there to survive an eviction, and the run no longer can. */
 export const deleteRun = (runId: string): void => {
     try { void chrome.storage?.local?.remove(BGRUN_KEY(runId)); } catch { /* storage unavailable */ }

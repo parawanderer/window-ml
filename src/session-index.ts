@@ -516,6 +516,16 @@ export class SessionIndex {
         return s.summary;
     }
 
+    /** Set the model a session uses from now on (`session.model`). Returns the changed row, or null when the session
+     *  is not held or already uses it. */
+    setModel(hash: string, model: string): SessionSummary | null {
+        const s = this.sessions.get(hash);
+        if (!s || s.summary.model === model) return null;
+        s.summary.model = model;
+        this.refreshSummary(s);
+        return s.summary;
+    }
+
     /** How many sessions are pinned, which the runtime bounds. */
     pinnedCount(): number {
         let n = 0;

@@ -49,6 +49,10 @@ function world(over = {}) {
         startChat: rec("startChat", async () => "beef0001"),
         sendChat: rec("sendChat", async () => "turn"),
         cancelChat: rec("cancelChat", true),
+        setChatModel: rec("setChatModel", async () => true),
+        setRunModel: rec("setRunModel", null),
+        checkModel: rec("checkModel", async (m) => (m === "m2" || m === "m3" ? null : `this runtime does not offer "${m}"`)),
+        remodel: rec("remodel", (hash, model) => { index.setModel(hash, model); }),
         hostsChat: rec("hostsChat", false),
         keepSession: rec("keepSession"),
         listModels: rec("listModels", async () => [{ id: "m", default: true }]),
@@ -711,4 +715,41 @@ test("tab.focus brings a tab and its WINDOW forward, and only a tab tabs.list wo
     // Closed between the check and the focus.
     const gone = world({ focusTab: async () => false });
     assert.equal((await gone.run({ type: "tab.focus", runtime: "local", tabId: TAB })).error.code, "not-found");
+});
+
+test("session.model: a worker-hosted chat switches from its next turn, and the row says so at once", async () => {
+    const w = world({ hostsChat: () => true });
+    w.index.ingest(chatStart("c0ffee03"), { trusted: true });
+    const r = await w.run({ type: "session.model", session: sid("c0ffee03"), model: "m2" });
+    assert.deepEqual(r, { ok: true, data: { model: "m2", applies: "next-turn" } });
+    assert.deepEqual(w.named("setChatModel")[0].slice(1), ["c0ffee03", "m2"]);
+    assert.equal(w.index.get("c0ffee03").model, "m2", "the picker reads the row, so the row changes now");
+    assert.equal(w.named("setRunModel").length, 0);
+});
+
+test("session.model: a run whose loop the worker hosts takes it at the next step, or the next turn once finished", async () => {
+    const running = world({ setRunModel: (hash, model) => { running.calls.push(["setRunModel", hash, model]); return "running"; } });
+    running.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    assert.deepEqual(await running.run({ type: "session.model", session: sid("aaaa0001"), model: "m3" }), { ok: true, data: { model: "m3", applies: "next-step" } });
+    assert.deepEqual(running.named("setRunModel")[0].slice(1), ["aaaa0001", "m3"]);
+    const stored = world({ setRunModel: () => "stored" });
+    stored.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    assert.equal((await stored.run({ type: "session.model", session: sid("aaaa0001"), model: "m3" })).data.applies, "next-turn");
+});
+
+test("session.model: a page's own session is unsupported, and a model the runtime would refuse changes nothing", async () => {
+    const page = world();   // setRunModel answers null: the loop is in a page
+    page.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
+    assert.equal((await page.run({ type: "session.model", session: sid("aaaa0001"), model: "m2" })).error.code, "unsupported");
+    assert.equal(page.index.get("aaaa0001").model, "m", "an unsupported switch leaves the row alone");
+
+    const w = world({ hostsChat: () => true });
+    w.index.ingest(chatStart("c0ffee04"), { trusted: true });
+    const bad = await w.run({ type: "session.model", session: sid("c0ffee04"), model: "gpt-nope" });
+    assert.equal(bad.error.code, "invalid");
+    assert.match(bad.error.message, /does not offer/);
+    assert.equal((await w.run({ type: "session.model", session: sid("c0ffee04"), model: "  " })).error.code, "invalid");
+    assert.equal(w.named("setChatModel").length, 0);
+    assert.equal(w.named("remodel").length, 0);
+    assert.equal((await w.run({ type: "session.model", session: sid("dead0001"), model: "m2" })).error.code, "not-found");
 });
