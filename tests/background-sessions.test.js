@@ -464,3 +464,31 @@ test("models.list answers what the whitelist allows, with kinds and the default 
         { id: "qwen2.5vl:7b", kinds: ["completion", "vision"] },
     ] } }, "the cloud model the whitelist excludes never reaches the contract either");
 });
+
+test("the storage history is recorded at startup, answered over the contract, and refused to a page", T, async () => {
+    const { IDBFactory } = require("fake-indexeddb");
+    const idb = new IDBFactory();
+    const bg = loadBackground({ config, indexedDB: idb });
+    void bg.send({ type: "ML_KEEP_SESSION", hash: "5709a001" }, tab(7));
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("5709a001") }, tab(7));
+    void bg.send({ type: "ML_DEBUG_EVENT", event: ev("5709a001", "agent-step", { step: 1, seq: 1, tool: "exec", result: "r".repeat(500) }) }, tab(7));
+    for (let i = 0; i < 100 && !((await storedRow(idb, "5709a001", 1))?.count >= 2); i++) await new Promise((r) => setTimeout(r, 20));
+
+    // A second worker over the same disk records its first snapshot as it starts.
+    const next = loadBackground({ config, indexedDB: idb });
+    for (let i = 0; i < 100 && !next.localStore.ml_storage_history; i++) await new Promise((r) => setTimeout(r, 20));
+    const [first] = next.localStore.ml_storage_history;
+    assert.equal(first.sessions, 1);
+    assert.equal(first.byTool.exec, 500);
+    assert.equal(JSON.stringify(first).includes("5709a001"), false, "the history names no session");
+
+    const page = openPage(next);
+    page.port.send({ type: "cmd", id: 1, command: { type: "storage.stats", runtime: "local" } });
+    let reply;
+    for (let i = 0; i < 100 && !reply; i++) { await new Promise((r) => setTimeout(r, 10)); reply = page.port.messages.find((m) => m.type === "result" && m.id === 1); }
+    assert.equal(reply.result.ok, true);
+    assert.equal(reply.result.data.history.length, 1);
+    assert.equal(reply.result.data.largest[0].hash, "5709a001");
+
+    assert.match((await next.send({ type: "STORAGE_HISTORY" }, tab(7))).error, /Refused/);
+});

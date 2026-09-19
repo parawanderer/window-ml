@@ -13,6 +13,7 @@ import type { MlDebugEvent, SubcallUsage } from "./contract-debug";
 import type { NeutralMessage } from "./contract-chat";
 import type { StartRunPayload, StoredSession } from "./contract-messages";
 import type { SessionSummary } from "./session-host";
+import { addBytes, emptyBytes, measureEvents, snapshotRows, type SessionBytes, type StorageSnapshot } from "./session-storage-stats";
 
 /** How much of a person's disk the saved sessions may use before the oldest are dropped. */
 export const STORE_BUDGET_BYTES = 256 * 1024 * 1024;
@@ -57,6 +58,11 @@ export interface StoredSessionRow {
     count: number;
     /** what this session would be continued from, when it is the kind of session that can be */
     history?: SessionHistory;
+    /**
+     * Where this session's bytes go, kept current as its events are written, so the Storage page sums rows instead
+     * of reading every event. Absent on a session saved before this existed: its bytes count as unmeasured.
+     */
+    split?: SessionBytes;
 }
 
 /** Approximate retained size, the same measure the in-memory index uses: a screenshot dominates, and its data URL is
@@ -203,6 +209,19 @@ export class SessionStore {
         return hashes;
     }
 
+    /** The largest saved sessions, by the size their rows record. */
+    async largest(n = 10): Promise<{ hash: string; title?: string; bytes: number; pinned?: true }[]> {
+        await this.open();
+        return [...this.rows.values()].sort((a, b) => b.bytes - a.bytes).slice(0, n)
+            .map((r) => ({ hash: r.hash, ...(r.summary.title ? { title: r.summary.title } : {}), bytes: r.bytes, ...(r.summary.pinned ? { pinned: true as const } : {}) }));
+    }
+
+    /** Where the store's bytes go right now, from the rows' running breakdowns. No event is read. */
+    async snapshot(): Promise<StorageSnapshot> {
+        await this.open();
+        return snapshotRows([...this.rows.values()], this.now());
+    }
+
     /** Is this session saved here? */
     has(hash: string): boolean {
         return this.rows.has(hash);
@@ -307,7 +326,12 @@ export class SessionStore {
             if (!row) continue;
             const from = row.count;
             row.count += events.length;
-            row.bytes += events.reduce((n, e) => n + sizeOf(e), 0);
+            // One serialization per event, shared with the budget: the breakdown's total IS the size added.
+            const m = measureEvents(events);
+            row.bytes += m.total;
+            // Only a session measured from its first event has a breakdown that means anything; an older one stays
+            // unmeasured rather than claiming its newest events are all of it.
+            if (row.split || from === 0) row.split = addBytes(row.split ?? emptyBytes(), m);
             await this.backend.append({ ...row }, from, events);
         }
         await this.evict();

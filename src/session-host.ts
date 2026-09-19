@@ -317,6 +317,8 @@ export type Command =
     /** The models a runtime would accept for `chat.start` / `agent.start`: after its own whitelist, so the whitelist
      *  holds over the contract too. */
     | { type: "models.list"; runtime: RuntimeId }
+    /** Where the runtime's saved-session storage goes, now and day by day: what the Storage page draws. */
+    | { type: "storage.stats"; runtime: RuntimeId }
     /** Answer an open approval gate, keyed by the pending step's `seq`. Handed to the runtime's one
      *  `resolveApproval`; nothing new decides a gate. `persist` also remembers the call's egress grants, which the
      *  runtime re-derives from the call itself. */
@@ -427,6 +429,7 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "session.pin": "drive",
     "session.rename": "drive",
     "models.list": "view",
+    "storage.stats": "view",
     "approval.answer": "approve",
     "chat.start": "drive",
     "agent.start": "drive",
@@ -554,6 +557,9 @@ export interface TabInfo {
     windowId?: number;
 }
 
+export type { StorageReport, StorageSnapshot } from "./session-storage-stats";
+import type { StorageReport } from "./session-storage-stats";
+
 /** One model a runtime offers, for a picker. */
 export interface ModelChoice {
     id: string;
@@ -579,6 +585,8 @@ export interface CommandResultData {
      * picker then shows the default and sends no `model`.
      */
     "models.list": { models: ModelChoice[] };
+    /** `unsupported` from a runtime that saves nothing. Sizes are serialized bytes, the measure the budget uses. */
+    "storage.stats": StorageReport;
     /** `false`: the gate was already closed (answered on another surface, or the run was cancelled). Not an error:
      *  every surface shows the outcome from the session's events either way. */
     "approval.answer": { resolved: boolean };

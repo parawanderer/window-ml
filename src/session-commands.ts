@@ -8,7 +8,7 @@
 import type { NeutralMessage } from "./contract-chat";
 import type { MlDebugEvent } from "./contract-debug";
 import type { SessionHistory } from "./session-store";
-import type { Command, CommandError, CommandResult, CommandType, ModelChoice, SessionId, TabInfo } from "./session-host";
+import type { Command, CommandError, CommandResult, CommandType, ModelChoice, SessionId, StorageReport, TabInfo } from "./session-host";
 import type { SessionIndex } from "./session-index";
 import { capTitle } from "./session-title";
 
@@ -55,6 +55,8 @@ export interface CommandDeps {
     hostsChat(hash: string): boolean;
     /** keep this session past the worker's life: what an absent `ephemeral` means on the command that started it */
     keepSession(hash: string): void;
+    /** where saved-session storage goes, now and day by day; absent when this runtime saves nothing */
+    storageReport?(): Promise<StorageReport>;
     /** the models this runtime would accept, after its whitelist, its default marked */
     listModels(): Promise<ModelChoice[]>;
     /** pin or unpin a session this runtime holds: saved first when pinning, then the row changed and written */
@@ -249,6 +251,13 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
         // An unreachable backend is an empty list, not a failure: the picker then offers the default, which is what
         // a start command would use anyway, rather than an error in a box someone opened to type into.
         "models.list": async (c) => ownRuntime(c) ?? ok({ models: await deps.listModels().catch(() => []) }),
+
+        "storage.stats": async (c) => {
+            const not = ownRuntime(c);
+            if (not) return not;
+            if (!deps.storageReport) return fail("unsupported", "this runtime saves no sessions");
+            return ok(await deps.storageReport());
+        },
 
         // A chat with no page behind it, hosted by the worker (sw-chat.ts). It answers as soon as the first turn is
         // UNDER WAY rather than when it finishes, so the client subscribes and watches the answer arrive; a chat that

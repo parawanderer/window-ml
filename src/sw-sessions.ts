@@ -17,7 +17,7 @@ import { cleanTitle, titleMessages } from "./session-title";
 import { bgRuns, trackRun, untrackRun } from "./sw-runs";
 import { fetchLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
 import { recordHousekeeping } from "./sw-housekeeping";
-import { measureEvents, summarizeStore, type StoreBytes } from "./session-storage-stats";
+import { appendSnapshot, measureEvents, summarizeStore, type StorageReport, type StorageSnapshot, type StoreBytes } from "./session-storage-stats";
 
 /**
  * What this browser is called before it has a key to derive an id from (docs/spec/SESSION_CONTRACT.md), and the
@@ -140,6 +140,7 @@ export function configureSessionCommands(run: RunDeps): void {
         keepSession,
         pinSession,
         renameSession,
+        ...(sessionStore ? { storageReport } : {}),
         listModels: async () => {
             const [{ ids }, cfg] = await Promise.all([listAvailableModels(), getConfig()]);
             const allowed = ids.filter((m) => modelFilterAllows(m, cfg.modelFilter));
@@ -273,6 +274,7 @@ if (sessionStore) {
         .then(() => store.open())
         .then((rows) => {
             sessionServer.restored(sessionServer.index.restore(rows.map((r) => ({ summary: r.summary, count: r.count }))));
+            void recordStorageSnapshot().catch(() => { /* storage unavailable */ });
         })
         .catch(() => { /* no storage: the list is whatever this worker sees from now on */ });
 }
@@ -347,6 +349,38 @@ export function keepSession(hash: string): void {
     const already = sessionServer.markSaved(hash);
     if (!sessionStore) return;
     for (const event of already) sessionStore.put({ ...summary, saved: true }, event);
+}
+
+const HISTORY_KEY = "ml_storage_history";
+const SNAPSHOT_ALARM = "ml-storage-snapshot";
+/** A snapshot a day; the alarm checks more often, so a browser closed at the usual time still records one. */
+const SNAPSHOT_EVERY_MS = 20 * 60 * 60 * 1000;
+const SNAPSHOT_CHECK_MIN = 6 * 60;
+
+/** The recorded history, oldest first. Empty when nothing was recorded or storage is unavailable. */
+async function storageHistory(): Promise<StorageSnapshot[]> {
+    try {
+        const got = await chrome.storage.local.get(HISTORY_KEY) as Record<string, unknown>;
+        return Array.isArray(got[HISTORY_KEY]) ? got[HISTORY_KEY] as StorageSnapshot[] : [];
+    } catch { return []; }
+}
+
+/**
+ * Record today's snapshot when the last one is a day old. Sums the rows' running breakdowns, so it costs nothing like
+ * a read of the store; it is what lets the Storage page show what grew, over months of real use, which no single
+ * measurement can.
+ */
+export async function recordStorageSnapshot(): Promise<void> {
+    if (!sessionStore) return;
+    const next = appendSnapshot(await storageHistory(), await sessionStore.snapshot(), SNAPSHOT_EVERY_MS);
+    if (next) await chrome.storage.local.set({ [HISTORY_KEY]: next });
+}
+
+/** `storage.stats`, and the DevTools Storage section: the history, today's picture, and the largest sessions. */
+export async function storageReport(): Promise<StorageReport> {
+    const store = sessionStore!;
+    const [history, now, largest] = await Promise.all([storageHistory(), store.snapshot(), store.largest()]);
+    return { history, now, largest };
 }
 
 /**
@@ -487,3 +521,9 @@ export function serveSessionsPort(port: chrome.runtime.Port): void {
     }
     sessionServer.attach(port);
 }
+
+// The storage history's clock. An alarm, not a timer: a timer is what would keep the worker alive to wait for it.
+try {
+    chrome.alarms?.onAlarm.addListener((a) => { if (a.name === SNAPSHOT_ALARM) void recordStorageSnapshot().catch(() => {}); });
+    void chrome.alarms?.get(SNAPSHOT_ALARM).then((a) => { if (!a) void chrome.alarms.create(SNAPSHOT_ALARM, { periodInMinutes: SNAPSHOT_CHECK_MIN }); }).catch(() => {});
+} catch { /* no alarms (a test harness) */ }
