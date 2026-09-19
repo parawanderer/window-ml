@@ -68,6 +68,8 @@ export function extensionPairing(): PairingApi {
             return {
                 code: offer.code,
                 fingerprint: offer.fingerprint,
+                // The library adds the QR text with #218; until then the screen shows the code alone.
+                qr: (offer as { qr?: string }).qr,
                 expiresAt: Date.now() + PAIRING_WINDOW_MS,
                 // Saved to the keyring before this resolves; the worker then reads it and connects.
                 done: offer.done.then(async () => {

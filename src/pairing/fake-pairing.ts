@@ -75,7 +75,7 @@ export function fakePairing(o: {
             const done = new Promise<Membership>((res, rej) => { resolve = res; reject = rej; });
             join = { code, fingerprint, label, hubUrl, resolve, reject };
             return {
-                code, fingerprint, expiresAt: Date.now() + 10 * 60_000, done,
+                code, fingerprint, qr: `WMLPAIR:1:${code}:${fingerprint.toUpperCase()}${"0".repeat(52)}`, expiresAt: Date.now() + 10 * 60_000, done,
                 cancel() { if (join?.code === code) { join = null; reject(new FakePairingError("cancelled", "cancelled")); } },
             };
         },

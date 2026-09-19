@@ -3396,6 +3396,9 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .pair-log { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; max-height: 240px; overflow: auto; font-size: .92em; }
 .pair-log li { display: contents; }
 .pair-log time { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+/* The pairing QR code: dark on white whatever the theme (a camera reads contrast), square, and big enough to scan
+   from arm's length. */
+.pair-qr { width: 200px; height: 200px; align-self: flex-start; border-radius: 10px; }
 /* A small label chip (a pill): "view only", "connecting…", what a runtime offers, what a device may do. Here rather
    than in chat.css so the pairing screens, which any surface may draw, use the same one as the chat page. */
 .chat-chip { font-size: .8em; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--fg-dim); white-space: nowrap; }
