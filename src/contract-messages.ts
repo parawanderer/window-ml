@@ -51,6 +51,7 @@ export type BackgroundMessageType =
     | "DUMP_LOADS"   // ml.__loads(): one record per model load, collected for tuning the VRAM predictor
     | "DUMP_HOUSEKEEPING"   // ml.__housekeeping() + the DevTools panel: the housekeeping log (housekeeping.ts)
     | "SESSION_STORAGE_STATS"   // extension pages only: where the saved-session store's bytes go (session-storage-stats.ts)
+    | "ARCHIVE_FOLDER"   // extension pages only: the archive folder's state, or an action after a click (pick, sync, import)
     | "STORAGE_HISTORY"   // extension pages only: the Storage section's daily history, today's picture and the largest sessions
     | "HOUSEKEEPING_REPORT"   // another context reporting what it decided; origin is stamped from the sender
     | "PYTHON_PREWARM"   // start Pyodide ahead of a run (run start with python_exec, or the Commander opening)

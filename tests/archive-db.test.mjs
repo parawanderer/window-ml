@@ -75,3 +75,55 @@ test("a file written by a newer schema is refused, not half-read", () => {
     db.exec({ sql: "UPDATE meta SET value = ? WHERE key = 'schema'", bind: [String(ARCHIVE_SCHEMA + 1)] });
     assert.throws(() => migrate(db), /newer version/);
 });
+
+import { allMonths, dirtyMonths, exportMonth, importBytes, markClean, monthOf } from "../src/archive-db.ts";
+
+const SEPT = Date.UTC(2026, 8, 10), OCT = Date.UTC(2026, 9, 3);
+
+test("a write and a delete mark the month their session belongs to, and a move marks both", async () => {
+    const db = fresh();
+    await put(db, "dddd0001", SEPT);
+    await put(db, "dddd0002", OCT);
+    assert.deepEqual(dirtyMonths(db), ["2026-09", "2026-10"]);
+    for (const m of dirtyMonths(db)) markClean(db, m);
+
+    // Resumed and archived again a month later: the September file still has it, so September is dirty too.
+    await put(db, "dddd0001", OCT + 1000);
+    assert.deepEqual(dirtyMonths(db), ["2026-09", "2026-10"]);
+    for (const m of dirtyMonths(db)) markClean(db, m);
+
+    // A delete after its month closed still reaches the folder: that month is rewritten without it.
+    removeArchived(db, "dddd0002");
+    assert.deepEqual(dirtyMonths(db), ["2026-10"]);
+    assert.equal(monthOf(SEPT), "2026-09");
+});
+
+test("a month file holds that month's sessions whole, and restores into a fresh profile exactly", async () => {
+    const db = fresh();
+    await put(db, "eeee0001", SEPT);
+    await put(db, "eeee0002", SEPT + 5000);
+    await put(db, "eeee0003", OCT);
+    assert.deepEqual(allMonths(db), ["2026-09", "2026-10"]);
+    const sept = exportMonth(sqlite3, db, "2026-09");
+    assert.equal(sept.sessions, 2);
+    assert.ok(sept.bytes.byteLength > 0);
+
+    // A wiped profile: an empty archive, the folder's files imported.
+    const restored = fresh();
+    assert.equal(importBytes(sqlite3, restored, sept.bytes), 2);
+    assert.equal(importBytes(sqlite3, restored, exportMonth(sqlite3, db, "2026-10").bytes), 1);
+    for (const h of ["eeee0001", "eeee0002", "eeee0003"]) assert.deepEqual(readArchived(restored, h).events, readArchived(db, h).events, h);
+    assert.equal(archiveStats(restored).images, 2, "images deduplicated across the two files");
+    assert.equal(listArchived(restored, { query: "brass lamp" }).length, 3, "searchable after a restore");
+    assert.deepEqual(dirtyMonths(restored), [], "the folder already matches what was imported");
+
+    // Twice is harmless.
+    assert.equal(importBytes(sqlite3, restored, sept.bytes), 0);
+    assert.equal(archiveStats(restored).sessions, 3);
+});
+
+test("bytes that are not an archive file are refused, and leave nothing attached", () => {
+    const db = fresh();
+    assert.throws(() => importBytes(sqlite3, db, new TextEncoder().encode("not sqlite at all, just text")));
+    assert.deepEqual(db.selectValues("SELECT name FROM pragma_database_list").sort(), ["main"]);
+});

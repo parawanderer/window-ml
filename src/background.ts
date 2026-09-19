@@ -16,6 +16,7 @@ import { executeServerTool } from "./sw-tools";   // run ONE OpenWebUI-configure
 import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, prepareRequest, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 import { subscribeResourceEvents, recentFrames, resourceStreamStatus } from "./sw-events";
 import { configureSessionCommands, ingestSessionEvent, keepSession, saveChatSession, senderPage, serveSessionsPort, sessionServer, sessionStorageStats, sessionStore, storageReport } from "./sw-sessions";   // the cross-tab session index the chat page reads
+import { folderAction } from "./sw-archive";   // the session archive's folder, for Settings
 import { housekeeping, handleHousekeepingReport, handleHousekeepingDump, senderOrigin } from "./sw-housekeeping";
 import { storeFetchedBody, claimValue, releaseSessionValues, startValueSweeps, valueHolders, readStoredColumns } from "./sw-values";   // where a table larger than its preview lives (docs/spec/POINTER_VALUES.md)   // what the system decided on its own (docs/dev/housekeeping.md)
 import { PendingApprovalDescriptor, pendingApprovals, externallyResolvable, resolveApproval, fetchConsent, credFetchGrants, senderTrust, serverToolKey, pendingGrants, takeCredFetch } from "./sw-consent";
@@ -810,6 +811,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         if (senderOrigin(sender) === "page") { sendResponse({ error: "Refused: storage history is for extension pages." }); return; }
         if (!sessionStore) { sendResponse({ data: null }); return; }
         storageReport().then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
+        return true;
+
+    } else if (message.type === "ARCHIVE_FOLDER") {
+        // Settings' archive folder section: its state, or what to do after a click. Extension pages only.
+        if (senderOrigin(sender) === "page") { sendResponse({ error: "Refused: the archive folder is for extension pages." }); return; }
+        folderAction((message.payload as { action?: unknown } | undefined)?.action).then((data) => sendResponse({ data }), (e) => sendResponse({ error: String((e as Error)?.message || e) }));
         return true;
 
     } else if (message.type === "DUMP_LOADS") {
