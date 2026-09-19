@@ -32,8 +32,14 @@ store.start();
 // tablet is waiting under a code. `__pairFake` answers or fails a join, and swaps the membership, for the specs.
 const pairing = fakePairing({
     joinsAs: "client", defaultLabel: "This phone",
-    membership: { label: "Shane's phone", role: "client", hubUrl: "wss://hub.example", fingerprint: "5ab0e19c44d2", root: false, mayPair: true },
+    membership: { label: "Shane's phone", role: "client", hubUrl: "wss://hub.example", fingerprint: "5ab0e19c44d2", root: false, mayPair: true, principal: "5ab0e19c".repeat(8) },
     grantable: ["view", "drive", "screen"],
+    devices: [
+        { principal: "5ab0e19c".repeat(8), label: "Shane's phone", role: "client", kind: "phone", scopes: ["view", "drive", "screen"], mayPair: true, notAfterMs: Date.now() + 80 * 86_400_000, lastSeenMs: Date.now() - 5_000 },
+        { principal: "c0ffee12".repeat(8), label: "Work laptop", role: "runtime", kind: "browser", scopes: [], mayPair: true, mayRevoke: true, notAfterMs: Date.now() + 85 * 86_400_000, lastSeenMs: Date.now() - 120_000 },
+        { principal: "a41c9e07".repeat(8), label: "Kitchen tablet", role: "client", kind: "phone", scopes: ["view"], notAfterMs: Date.now() + 30 * 86_400_000, lastSeenMs: Date.now() - 3 * 86_400_000 },
+        { principal: "0dd0dd00".repeat(8), label: "Old phone", role: "client", kind: "phone", scopes: ["view", "drive"], notAfterMs: Date.now() - 86_400_000, lastSeenMs: Date.now() - 95 * 86_400_000 },
+    ],
 });
 pairing.addOffer("7K3M Q9XD", { label: "Kitchen tablet", role: "client", fingerprint: "a41c9e07d3b2" });
 (globalThis as { __pairFake?: unknown }).__pairFake = pairing;

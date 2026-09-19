@@ -861,7 +861,7 @@ test("pairing a device: find it by its code, compare fingerprints, grant only wh
     // A label is the offering device's own word: markup in it is text, never HTML.
     await page.evaluate(() => globalThis.__pairFake.addOffer("HACK 0001", { label: "<img src=x onerror=window.__owned=1>", role: "client", fingerprint: "0000aaaa1111" }));
     await openDevices(page);
-    await expect(page.locator(".pair-card")).toContainText("“Shane's phone”");
+    await expect(page.locator(".pair-card").first()).toContainText("“Shane's phone”");
     await page.getByRole("button", { name: "Pair a device" }).click();
 
     // A code nobody is waiting under says so, rather than failing in general words.
@@ -872,7 +872,7 @@ test("pairing a device: find it by its code, compare fingerprints, grant only wh
     // Typed any old way: lower case, a hyphen.
     await page.getByLabel("Its code").fill("7k3m-q9xd");
     await page.getByRole("button", { name: "Find it" }).click();
-    await expect(page.locator(".pair-h")).toHaveText("“Kitchen tablet” wants to join as a device");
+    await expect(page.locator(".pair-h").first()).toHaveText("“Kitchen tablet” wants to join as a device");
     await expect(page.locator(".pair-fp")).toHaveText("a41c 9e07 d3b2");
     // This phone passes on only what it holds (view, drive, screen): no approve, no desktop, no install on offer.
     const boxes = page.locator(".pair-grant .pair-check");
@@ -882,7 +882,7 @@ test("pairing a device: find it by its code, compare fingerprints, grant only wh
     await page.getByRole("checkbox", { name: /See its screen/ }).check();
     // The confirm is the answer to the question on screen, not an OK.
     await page.getByRole("button", { name: "They match: pair it" }).click();
-    await expect(page.locator(".pair-h")).toHaveText("Paired");
+    await expect(page.locator(".pair-h").first()).toHaveText("Paired");
     expect(await page.evaluate(() => globalThis.__pairFake.confirmed.map((c) => [c.label, c.grant.scopes.join(",")])))
         .toEqual([["Kitchen tablet", "view,drive,screen"]]);
 
@@ -890,10 +890,10 @@ test("pairing a device: find it by its code, compare fingerprints, grant only wh
     await page.getByRole("button", { name: "Pair another" }).click();
     await page.getByLabel("Its code").fill("HACK0001");
     await page.getByRole("button", { name: "Find it" }).click();
-    await expect(page.locator(".pair-h")).toContainText("<img src=x onerror=window.__owned=1>");
+    await expect(page.locator(".pair-h").first()).toContainText("<img src=x onerror=window.__owned=1>");
     expect(await page.evaluate(() => globalThis.__owned)).toBeUndefined();
     await page.getByRole("button", { name: "They don't match" }).click();
-    await expect(page.locator(".pair-h")).toHaveText("Nothing was paired");
+    await expect(page.locator(".pair-h").first()).toHaveText("Nothing was paired");
     expect(await page.evaluate(() => globalThis.__pairFake.confirmed.length)).toBe(1);
     expect(errors).toEqual([]);
 });
@@ -902,7 +902,7 @@ test("joining an account: the code and this device's fingerprint, then the accou
     const { page, errors } = await open(DESKTOP);
     await page.evaluate(() => globalThis.__pairFake.setMembership(null));
     await openDevices(page);
-    await expect(page.locator(".pair-h")).toHaveText("This device is in no account");
+    await expect(page.locator(".pair-h").first()).toHaveText("This device is in no account");
     await page.getByRole("button", { name: "Join an account" }).click();
     await page.getByRole("button", { name: "Get a code" }).click();
     await expect(page.locator(".pair-code")).toHaveText("7K3M Q9XD");
@@ -924,8 +924,49 @@ test("joining an account: the code and this device's fingerprint, then the accou
     await page.getByRole("button", { name: "Get a code" }).click();
     await expect(page.locator(".pair-code")).toBeVisible();
     await page.evaluate(() => globalThis.__pairFake.answer());
-    await expect(page.locator(".pair-h")).toHaveText("“Kitchen tablet”, a device");
+    await expect(page.locator(".pair-h").first()).toHaveText("“Kitchen tablet”, a device");
     await expect(page.getByRole("button", { name: "Pair a device" })).toHaveCount(0);
-    await expect(page.locator(".pair-card")).toContainText("cannot pair others");
+    await expect(page.locator(".pair-card").first()).toContainText("Pair new devices on the one that holds the account's root");
+    expect(errors).toEqual([]);
+});
+
+test("the devices on the account: which is this one, when each was seen, and removing one only after saying what it costs", async () => {
+    const { page, errors } = await open(DESKTOP);
+    await openDevices(page);
+    const list = page.getByRole("region", { name: "Devices on this account" });
+    const rows = list.locator(".pair-dev");
+    await expect(rows).toHaveCount(4);
+    const row = (name) => rows.filter({ hasText: name });
+    // The one in your hand says so, and cannot be removed from here.
+    await expect(row("Shane's phone").locator(".pair-dev-self")).toHaveText("This device");
+    await expect(row("Shane's phone").getByRole("button", { name: "Remove…" })).toHaveCount(0);
+    // Last seen is on every row; what each may do is in words.
+    await expect(row("Kitchen tablet").locator(".pair-dev-seen")).toContainText("Seen");
+    await expect(row("Kitchen tablet")).toContainText("See sessions");
+    await expect(row("Work laptop")).toContainText("No scopes: it drives nothing");
+    await expect(row("Work laptop")).toContainText("Can pair other devices");
+    await expect(row("Work laptop")).toContainText("Signs revocations for this account");
+    // A certificate's end is when it needs renewing; a lapsed one says to pair again.
+    await expect(row("Kitchen tablet")).toContainText(/needs renewing within \d+ days/);
+    await expect(row("Old phone")).toContainText("expired: pair it again");
+    await expect(list).toContainText("A device stays until it is removed");
+
+    // The revocation signer: the cost first, and a button that says it is going ahead anyway.
+    await row("Work laptop").getByRole("button", { name: "Remove…" }).click();
+    await expect(row("Work laptop")).toContainText("unable to remove ANY device");
+    await row("Work laptop").getByRole("button", { name: "Keep it" }).click();
+    await expect(rows).toHaveCount(4);
+
+    // An ordinary device: one confirmation, then it is gone and the list says so.
+    await row("Kitchen tablet").getByRole("button", { name: "Remove…" }).click();
+    await row("Kitchen tablet").getByRole("button", { name: "Remove it" }).click();
+    await expect(rows).toHaveCount(3);
+    await expect(list.getByRole("status")).toContainText("“Kitchen tablet” was removed");
+
+    // The connection history is folded until asked for, newest first.
+    const history = page.locator(".pair-history");
+    await expect(history.locator(".pair-log")).toHaveCount(0);
+    await history.locator("summary").click();
+    await expect(history.locator(".pair-log li").first()).toContainText("revoked");
     expect(errors).toEqual([]);
 });

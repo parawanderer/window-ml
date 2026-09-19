@@ -13,6 +13,7 @@ import { ChatStore } from "./chat/chat-store";
 import { hostServices } from "./chat/host-services";
 import { LocalHost } from "./chat/local-host";
 import { webPlatform, type ClientPlatform } from "./chat/platform";
+import { extensionPairing } from "./pairing/extension-pairing";
 import { SESSIONS_PORT } from "./session-server";
 import { installServices } from "./sidebar/services";
 import { applyCodePrefs, initThemeStyle } from "./sidebar/prefs";
@@ -37,7 +38,8 @@ import { DEFAULT_CONFIG, type MlConfig } from "./contract";
  * still matters, because a surface may offer something only where it can be done — pairing by camera on a phone,
  * for one — and that question is asked of the platform, never guessed from the runtime.
  */
-const extensionPlatform: ClientPlatform = { ...webPlatform, kind: "extension" };
+// Pairing is this browser joining an account as a runtime (extension-pairing.ts): Settings → Devices.
+const extensionPlatform: ClientPlatform = { ...webPlatform, kind: "extension", pairing: extensionPairing() };
 
 /**
  * The resource panel, with the polling and the live feed it needs, started when it is mounted and stopped when it

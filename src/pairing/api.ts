@@ -7,6 +7,8 @@
 // own keys; the person types the code on a device that may pair, which shows the fingerprint IT computes; they compare
 // the two and confirm there, choosing what the new one may do.
 
+import type { DeviceInfo } from "../session-host";
+
 /** What a principal is on the account. Open on the wire: an unknown role is shown as a generic device. */
 export type PairRole = "runtime" | "client" | "box-connector";
 
@@ -22,6 +24,8 @@ export interface Membership {
     root: boolean;
     /** may pair other devices (the root always may) */
     mayPair: boolean;
+    /** this device's own principal (hex), so a list of devices can say which row is this one */
+    principal?: string;
 }
 
 /** What a new principal is given, chosen on the device that pairs it. `scopes` are names, open-ended. */
@@ -57,8 +61,37 @@ export interface FoundOffer {
     grantable: string[] | null;
 }
 
+/** One line of this device's connection history, as the worker kept it ("online (2 devices)", "offline: <reason>"). */
+export interface HubLogLine { atMs: number; event: string }
+
+/** What removing a device came to: done, done before, refused (it is this device), or there is no account. */
+export type RevokeOutcome = "revoked" | "already" | "self" | "unpaired";
+
+/** Where this device's own connection to the hub stands, for a surface that keeps one (the extension, as a runtime). */
+export type HubConnectionView =
+    | { state: "unpaired" }
+    | { state: "connecting"; hubName?: string }
+    | { state: "online"; hubName?: string; devices: number }
+    | { state: "offline"; hubName?: string; reason: string; retryInMs: number }
+    | { state: "stopped"; hubName?: string };
+
 /** The pairing calls a surface supplies. Every call may reject; `.reason` (see `pairingProblem`) says why. */
 export interface PairingApi {
+    /**
+     * May this device CREATE an account (and so hold its root)? False for a runtime: the root lives on the device people
+     * pair others from, and no runtime holds it (window-ml-hub end-to-end-crypto decision 4). Absent means yes.
+     */
+    readonly canCreate?: boolean;
+    /** this device's connection to the hub, where it keeps one; absent where the surface does not */
+    connection?(): Promise<HubConnectionView>;
+    /** leave the account: forget the membership (never a root) and stop connecting. Absent where it cannot */
+    leave?(): Promise<void>;
+    /** the connection's history, oldest first, where this device keeps one */
+    history?(): Promise<HubLogLine[]>;
+    /** the devices on the account this device can see and answer for (a runtime: its allowlist) */
+    devices?(): Promise<DeviceInfo[]>;
+    /** remove a device from the account, by its principal (hex) */
+    revoke?(principal: string): Promise<RevokeOutcome>;
     /** the role this device takes when it joins: a browser runtime, or a client (a phone, a web page) */
     readonly joinsAs: PairRole;
     /** what to call this device if the person does not say ("This browser", "Pixel 8") */

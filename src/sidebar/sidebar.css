@@ -3364,3 +3364,43 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* This device on its account: the hub and its fingerprint, label and value in two columns. */
 .pair-facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; align-items: center; }
 .pair-facts .pair-fp { font-size: 1.05em; padding: 4px 10px; }
+/* This device's live connection to the hub, in the account's facts: a dot in the state's colour, then the words. */
+.pair-conn { display: inline-flex; align-items: center; gap: 7px; color: var(--fg); }
+/* The connection's dot: green online, amber while connecting or retrying, faint when stopped. */
+.pair-conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-faint); flex: 0 0 auto; }
+.pair-conn.online .pair-conn-dot { background: var(--ok); }
+.pair-conn.connecting .pair-conn-dot, .pair-conn.offline .pair-conn-dot { background: var(--warn); }
+/* Leaving the account, asked a second time with what it costs: a quiet box under the facts. */
+.pair-leave { display: flex; flex-direction: column; gap: 8px; flex: 1 1 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+/* The account view, its connection history and the devices list, one above the other. */
+.pair-stack { display: flex; flex-direction: column; gap: 22px; }
+/* This device on its account, boxed so its facts and actions read as one thing, apart from the list below. */
+.pair-card.pair-box { padding: 16px 18px; margin: 0 12px; border: 1px solid var(--border); border-radius: 14px; background: color-mix(in srgb, var(--fg) 3%, transparent); }
+/* The connection history sits under the box, lined up with its content. */
+.pair-stack > .pair-history { padding: 0 12px; }
+/* The devices on an account: one row per device, ruled apart, the one in your hand marked. */
+.pair-devs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+/* One device: its name, kind and "seen" on the first line, what it may do and its certificate under it. */
+.pair-dev { display: flex; flex-direction: column; gap: 3px; padding: 10px 0; border-top: 1px solid var(--border); }
+.pair-dev:first-child { border-top: none; }
+.pair-dev-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.pair-dev-name { font-weight: 600; overflow-wrap: anywhere; }
+.pair-dev-role { color: var(--fg-dim); font-size: .92em; }
+/* "This device": the row that is the one in your hand, which a list of five phones otherwise leaves you to guess. */
+.pair-dev-self { padding: 1px 8px; border-radius: 999px; background: var(--panel-2); color: var(--fg); font-size: .85em; }
+/* When a device was last seen, at the row's right: prominent, since it is how a forgotten device shows itself. */
+.pair-dev-seen { margin-left: auto; color: var(--fg); font-size: .92em; }
+/* The connection's history, folded under the account's facts: newest first, the time in a column of its own. */
+.pair-history summary { cursor: pointer; color: var(--fg-dim); }
+/* The history's lines: when, then what (connecting, online with N devices, offline and why), scrolling past a screenful. */
+.pair-log { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; max-height: 240px; overflow: auto; font-size: .92em; }
+.pair-log li { display: contents; }
+.pair-log time { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+/* A small label chip (a pill): "view only", "connecting…", what a runtime offers, what a device may do. Here rather
+   than in chat.css so the pairing screens, which any surface may draw, use the same one as the chat page. */
+.chat-chip { font-size: .8em; padding: 1px 7px; border-radius: 999px; background: var(--panel-2); color: var(--fg-dim); white-space: nowrap; }
+.chat-chip.warn { color: var(--warn); }
+/* A device's scopes, as pills in a row that wraps. */
+.pair-scopes { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0; }
+/* "Seen" and its time at one size: the stamp's own smaller, fainter `.time` is for dense lists, not this. */
+.pair-dev-seen .time { font-size: inherit; color: inherit; }
