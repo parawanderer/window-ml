@@ -37,7 +37,9 @@ Close `dev-hub-pair.html` first: an open extension page messaging the worker kee
 thing under test. The page never polls, for the same reason. Leave the browser alone, then reopen the page and press
 Refresh: **history** lists every `start`, `connecting`, `online (n devices)` and `offline: <reason>` with its time,
 kept in `chrome.storage.local` (`ml_hub_log`, last 200), so it outlives the worker. A `start` with no `offline` before
-it means the worker was stopped and the one-minute alarm started it again. Compare with the hub's side
+it means the worker was stopped (a stopped worker logs nothing on its way out). Each `start` says when a worker was
+last alive (stamped once a minute while connected), which bounds when the old one died; `woken by the keepalive alarm`
+right after it means the alarm restarted it, and its absence means something else did (opening this page, for one). Compare with the hub's side
 (`docker compose logs hub` on mlbox): a close the hub saw versus a connection it simply stopped hearing from.
 
 ## Gotchas

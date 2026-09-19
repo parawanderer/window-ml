@@ -37,6 +37,20 @@ function note(event: string): void {
     }).catch(() => { /* a log line is not worth failing anything over */ });
 }
 
+/** When this worker last proved it was running, so a later start can say how long the connection was down. */
+const ALIVE_KEY = "ml_hub_alive";
+const ALIVE_EVERY_MS = 60_000;
+/** When this worker's module ran: a wake-up. An alarm arriving just after it is what did the waking. */
+const wokeAtMs = Date.now();
+let aliveTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Start stamping `ALIVE_KEY` once a minute while connected; a timer does not keep a worker alive, so this costs none. */
+function stampAlive(): void {
+    const stamp = () => { void chrome.storage.local.set({ [ALIVE_KEY]: Date.now() }).catch(() => {}); };
+    stamp();
+    aliveTimer ??= setInterval(stamp, ALIVE_EVERY_MS);
+}
+
 /** The connection's history, oldest first: every start, every state it reached, and why it went offline. */
 export async function hubLog(): Promise<HubLogEntry[]> {
     return ((await chrome.storage.local.get({ [LOG_KEY]: [] }))[LOG_KEY] as HubLogEntry[]);
@@ -95,7 +109,10 @@ export function ensureHubRuntime(): Promise<void> {
                 },
             });
             runtime = r;
-            note(`start (${m.hubName})`);
+            // A worker that was stopped logs nothing on its way out, so the start says when the last one was last seen.
+            const last = (await chrome.storage.local.get({ [ALIVE_KEY]: 0 }).catch(() => ({})) as Record<string, number>)[ALIVE_KEY];
+            note(`start (${m.hubName})${last ? `; a worker was last alive at ${new Date(last).toLocaleString(undefined, { hour12: false })}` : ""}`);
+            stampAlive();
             // Only while paired: an alarm that woke every browser's worker each minute to find nothing to do would
             // cost the ones that never pair.
             try { chrome.alarms?.create(ALARM, { periodInMinutes: 1 }); } catch { /* no alarms */ }
@@ -113,6 +130,7 @@ export function ensureHubRuntime(): Promise<void> {
 
 function unpaired(): void {
     status = { state: "unpaired" };
+    if (aliveTimer) { clearInterval(aliveTimer); aliveTimer = null; }
     try { void chrome.alarms?.clear(ALARM); } catch { /* no alarms */ }
 }
 
@@ -136,6 +154,11 @@ export function stopHubRuntime(): void {
 }
 
 try {
-    chrome.alarms?.onAlarm.addListener((a) => { if (a.name === ALARM) void ensureHubRuntime(); });
+    chrome.alarms?.onAlarm.addListener((a) => {
+        if (a.name !== ALARM) return;
+        // Within a few seconds of the module running, this alarm is what started the worker.
+        if (Date.now() - wokeAtMs < 5_000) note("woken by the keepalive alarm");
+        void ensureHubRuntime();
+    });
 } catch { /* no alarms (a test harness) */ }
 void ensureHubRuntime();
