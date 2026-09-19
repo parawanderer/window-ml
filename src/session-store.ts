@@ -302,6 +302,21 @@ export class SessionStore {
         this.schedule();
     }
 
+    /**
+     * Put a whole session back: an archived one brought back to be opened. Its row, every event and its history, as
+     * one write. Retention and the budget measure it from `touchedTs`, not its last activity: a session someone just
+     * brought back must not be archived again by the next sweep. Nothing happens when the store already holds it.
+     */
+    async restoreSession(summary: SessionSummary, events: MlDebugEvent[], history: SessionHistory | null, touchedTs: number): Promise<void> {
+        await this.open();
+        const hash = summary.id.hash;
+        if (this.rows.has(hash)) return;
+        this.rows.set(hash, { hash, summary: { ...summary, saved: true }, lastTs: touchedTs, createdTs: summary.createdTs ?? touchedTs, bytes: 0, count: 0, ...(history ? { history } : {}) });
+        this.pending.set(hash, [...events]);
+        if (history) this.dirty.add(hash);
+        await this.flush();
+    }
+
     /** What a session would be continued from, or null when this store does not hold it. */
     async history(hash: string): Promise<SessionHistory | null> {
         await this.open();

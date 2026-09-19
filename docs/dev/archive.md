@@ -53,10 +53,17 @@ here instead. Decided with Shane on 2026-09-19; the design and the probe behind 
   overlay (a frame in someone's site) the browser refuses the picker and the prompt, so the section says to open
   Settings in the chat page instead.
 
-## Coming next
+## Reaching archived sessions
 
-`session.resume` of an archived session (the `history` column keeps what it needs; it moves back to the live store
-first), and paged `sessions.list` / `sessions.search` with an `archived` marker on the row.
+- **`sessions.list` / `sessions.search`** merge the live index and the archive by `lastTs`, asking each for a page
+  past `before`; a session in both is shown once, as its live row. The archive's search is FTS5 over every event's
+  text, quoted into a phrase; a live session is matched by title, task and page title (its events have no index).
+- **Opening one un-archives it** (`session.unarchive`, and `session.resume` does it first on its own): the session
+  goes back into the live store WHOLE (`restoreSession`: row, events, history) and only then leaves the archive, so
+  a failure between the two leaves it in both, never in neither. The store measures it from the moment it came back,
+  or the next sweep would archive it again. The index restores its row, which every client hears as an `upsert`.
+  There is deliberately no read-only path over the archive: one place a session lives means every command works on
+  it unchanged.
 
 ## Testing
 

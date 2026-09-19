@@ -98,3 +98,49 @@ test("the folder: a sync writes the month's file, a delete rewrites it away, and
         await ext.close();
     }
 });
+
+test("an archived session is listed and searchable, and comes back to be opened, through the contract", async () => {
+    const ext = await launchExtension();
+    try {
+        await ext.sw.evaluate(() => chrome.storage.sync.set({ sessionArchive: true }));
+        const hash = "a11ce001";
+        const events = [
+            { kind: "agent", id: hash, ts: 1, session: { hash, turn: 0 }, task: "compare the brass lamps", model: "m", maxSteps: 3, config: null },
+            { kind: "agent-result", id: hash, ts: 2, session: { hash, turn: 0 }, summary: "The second one is cheaper", steps: 1, hitCap: false },
+        ];
+        const summary = { id: { runtime: "local", hash }, kind: "agent", status: "done", task: "compare the brass lamps", createdTs: 1, lastTs: 2, pendingApprovals: 0, saved: true };
+        expect((await archive(ext, "put", { input: { summary, events, history: null, bytes: 100 }, archivedTs: 3 })).ok).toBe(true);
+
+        const page = await ext.context.newPage();
+        await page.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+        await page.evaluate(() => {
+            const port = chrome.runtime.connect({ name: "ml-sessions" });
+            const waiting = new Map(); let n = 1;
+            globalThis.__rows = new Map(); globalThis.__events = [];
+            globalThis.__cmd = (command) => new Promise((res) => { const id = n++; waiting.set(id, res); port.postMessage({ type: "cmd", id, command }); });
+            globalThis.__sub = (h) => port.postMessage({ type: "events", sub: 7, hash: h });
+            port.onMessage.addListener((m) => {
+                if (m.type === "result") { waiting.get(m.id)?.(m.result); return; }
+                if (m.type === "stream" && m.message.type === "event") globalThis.__events.push(m.message.event.kind);
+                if (m.type === "index" && m.update.type === "upsert") globalThis.__rows.set(m.update.session.id.hash, m.update.session);
+            });
+            port.postMessage({ type: "sessions" });
+        });
+        const cmd = (c) => page.evaluate((c) => globalThis.__cmd(c), c);
+
+        const listed = await cmd({ type: "sessions.list", runtime: "local" });
+        expect(listed.data.sessions.map((s) => [s.id.hash, s.archived])).toEqual([[hash, true]]);
+        const found = await cmd({ type: "sessions.search", runtime: "local", query: "cheaper" });
+        expect(found.data.sessions[0].match.snippet).toContain("«cheaper»");
+
+        expect((await cmd({ type: "session.unarchive", session: { runtime: "local", hash } })).ok).toBe(true);
+        await expect.poll(() => page.evaluate((h) => globalThis.__rows.has(h), hash)).toBe(true);
+        await page.evaluate((h) => globalThis.__sub(h), hash);
+        await expect.poll(() => page.evaluate(() => globalThis.__events)).toEqual(["agent", "agent-result"]);
+        expect((await archive(ext, "stats")).result.sessions).toBe(0);
+        const again = await cmd({ type: "sessions.list", runtime: "local" });
+        expect(again.data.sessions.map((s) => [s.id.hash, !!s.archived])).toEqual([[hash, false]]);
+    } finally {
+        await ext.close();
+    }
+});

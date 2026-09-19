@@ -325,3 +325,19 @@ test("with the archive on, an evicted session is MOVED; a failed move keeps it a
     assert.deepEqual(records.slice(2).map((r) => [r.hash, r.outcome]), [["aaaa0001", "archived"], ["aaaa0002", "archived"]]);
     assert.equal(store.has("aaaa0001"), false);
 });
+
+test("a session brought back from the archive is written whole, and not archived again by the next sweep", T, async () => {
+    const be = backend();
+    const now = 100 * DAY;
+    const moved = [];
+    const store = new SessionStore(be, { flushMs: 5, now: () => now, retainMs: () => 5 * DAY, archive: { enabled: () => true, move: async (row) => { moved.push(row.hash); } } });
+    const old = summary("abcd0001", { lastTs: 10 * DAY, pinned: undefined });
+    await store.restoreSession(old, [ev("abcd0001", 0), ev("abcd0001", 1)], { kind: "agent", messages: [] }, now);
+    assert.equal((await store.read("abcd0001")).length, 2);
+    assert.deepEqual(await store.history("abcd0001"), { kind: "agent", messages: [] });
+    await store.sweep();
+    assert.deepEqual(moved, [], "idle for 90 days by its summary, but just brought back");
+    // Nothing happens when it is already here.
+    await store.restoreSession(old, [ev("abcd0001", 9)], null, now);
+    assert.equal((await store.read("abcd0001")).length, 2);
+});

@@ -179,6 +179,9 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `session.rename`: a person's title, trimmed and capped (80); empty returns to a generated one; the row's `title` and `renamed` change by `upsert` | drive | | nothing |
 | `models.list`: what `chat.start`/`agent.start` would accept, after the runtime's whitelist, with `kinds` and the `default` marked; empty when the backend is unreachable | view | | `LIST_MODELS` |
 | `storage.stats`: where saved-session storage goes now (images, tool output by tool, the rest, unmeasured), a daily history of the same (no session hashes), and the largest sessions | view | `persistence` | `STORAGE_HISTORY` |
+| `sessions.list`: a page of sessions, newest activity first, past `before` (a `lastTs`); the live index and the archive merged, archived rows marked `archived`; `archived: true/false` for only or none of them | view | | nothing |
+| `sessions.search`: the same rows and paging, matching a query: an archived session by every word its events hold (FTS5), a live one by title, task and page title; `match.snippet` is plain text with the match in «guillemets» | view | | nothing |
+| `session.unarchive`: bring an archived session back into the live store, to be opened, resumed, pinned or deleted like any other; `session.resume` does it first on its own | drive | | nothing |
 | `session.pin`: keep a session whatever the caps and retention say, or stop; the row's `pinned` changes by `upsert`; bounded, `conflict` past it | drive | `persistence` | nothing |
 | `approval.answer`: by the pending step's `seq`; `persist`, `feedback` | approve | | `approval` → `SET_APPROVAL` → `resolveApproval` |
 | `chat.start` | drive | `chat` | nothing background-hosted |

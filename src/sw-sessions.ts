@@ -7,7 +7,7 @@ import { type MlDebugEvent } from "./contract-debug";
 import { createCommandHandler, type CommandDeps, type PageOutcome } from "./session-commands";
 import { cancelBackgroundChat, configureBackgroundChats, forgetBackgroundChat, isBackgroundChat, sendBackgroundChat, startBackgroundChat } from "./sw-chat";
 import { type StoredSession } from "./contract-messages";
-import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type TabGroupInfo, type TabInfo } from "./session-host";
+import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type SessionSummary, type TabGroupInfo, type TabInfo } from "./session-host";
 import { FaviconCache, stripOrder } from "./tab-favicons";
 import { SessionIndex, type IngestSource } from "./session-index";
 import { SESSIONS_PORT, SessionServer } from "./session-server";
@@ -148,6 +148,12 @@ export function configureSessionCommands(run: RunDeps): void {
         removeFromIndex: (id) => { sessionServer.remove(id); },
         listTabs: listTabsForPicker,
         listTabGroups,
+        listArchived: async (o) => {
+            if (!archiveOn) return [];
+            const rows = await archiveCall<{ summary: SessionSummary; snippet?: string }[]>("list", o);
+            return rows.map((r) => ({ summary: r.summary, ...(r.snippet ? { snippet: r.snippet } : {}) }));
+        },
+        unarchive: unarchiveSession,
         getTab: async (tabId) => { try { return tabInfo(await chrome.tabs.get(tabId)); } catch { return null; } },
         focusTab: async (tabId, windowId) => {
             try {
@@ -490,6 +496,22 @@ export function maybeTitle(hash: string): void {
         const changed = sessionServer.retitle(hash, title);
         if (changed) sessionStore?.putSummary(changed);
     }).catch(() => { /* no title: the list shows the task */ });
+}
+
+/**
+ * `session.unarchive`: bring a session back from the archive into the live store, so it can be opened and resumed
+ * like any other. Written to the store FIRST and removed from the archive after, so a failure between the two leaves it
+ * in both rather than in neither. Its month's folder file is then rewritten without it, until it is archived again.
+ */
+export async function unarchiveSession(hash: string): Promise<boolean> {
+    if (!sessionStore) return false;
+    const got = await archiveCall<{ summary: SessionSummary; events: MlDebugEvent[]; history: SessionHistory | null } | null>("read", { hash }).catch(() => null);
+    if (!got) return false;
+    await sessionStore.restoreSession(got.summary, got.events, got.history, Date.now());
+    sessionServer.restored(sessionServer.index.restore([{ summary: got.summary, count: got.events.length }]));
+    await archiveCall("remove", { hash }).catch(() => { /* in both until the next archive: harmless */ });
+    scheduleFolderSync();
+    return true;
 }
 
 /** `session.rename`: a person's title, which the runtime never replaces; or null, back to a generated one. */

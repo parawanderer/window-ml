@@ -127,3 +127,11 @@ test("bytes that are not an archive file are refused, and leave nothing attached
     assert.throws(() => importBytes(sqlite3, db, new TextEncoder().encode("not sqlite at all, just text")));
     assert.deepEqual(db.selectValues("SELECT name FROM pragma_database_list").sort(), ["main"]);
 });
+
+test("a search row carries a plain-text snippet with the match marked", async () => {
+    const db = fresh();
+    await put(db, "aaaa0009", 100);
+    const [row] = listArchived(db, { query: "40 euros" });
+    assert.match(row.snippet, /«40» «euros»|«40 euros»/);
+    assert.equal(listArchived(db)[0].snippet, undefined, "no query, no snippet");
+});
