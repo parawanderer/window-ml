@@ -411,3 +411,37 @@ test("the store budget: 0 caps nothing, and a lowered budget applies at once", T
     const { data } = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: {} }, { url: "chrome-extension://test/sidebar/devtools.html" });
     assert.deepEqual(data.filter((e) => e.subsystem === "sessions").map((e) => [e.key, e.reason]), [["big00001", "budget"]]);
 });
+
+test("the runtime titles a session it keeps, once, never one it does not, and a rename sticks until cleared", T, async () => {
+    const titleCalls = [];
+    const bg = loadBackground({
+        config: { ...config, utilityModel: "tiny", autoTitles: true },
+        onFetch: (call) => {
+            const sys = call.body?.messages?.[0]?.content ?? "";
+            if (/titles for a request/.test(sys)) { titleCalls.push(call.body.messages[1].content); return jsonResponse({ choices: [{ message: { content: `"Lamp hunt ${titleCalls.length}."` } }] }); }
+            return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+        },
+    });
+    const page = openPage(bg);
+    await flush();
+    void bg.send({ type: "ML_KEEP_SESSION", hash: "abcd0001" }, tab(7));
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("abcd0001") }, tab(7));
+    void bg.send({ type: "ML_DEBUG_EVENT", event: start("abcd0002") }, tab(8));   // a page script's: not kept
+    for (let i = 0; i < 100 && !page.rows().get("abcd0001")?.title; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.equal(page.rows().get("abcd0001").title, "Lamp hunt 1");
+    void bg.send({ type: "ML_DEBUG_EVENT", event: ev("abcd0001", "agent-step", { step: 1, seq: 1, tool: "exec", result: "r" }) }, tab(7));
+    await flush();
+    assert.equal(titleCalls.length, 1, "once, not per event, and never for the session nobody kept");
+    assert.match(titleCalls[0], /look it up/);
+
+    const rename = (id, title) => { page.port.send({ type: "cmd", id, command: { type: "session.rename", session: { runtime: "local", hash: "abcd0001" }, title } }); };
+    rename(1, "My lamp");
+    await flush();
+    assert.equal(page.rows().get("abcd0001").title, "My lamp");
+    assert.equal(page.rows().get("abcd0001").renamed, true);
+
+    rename(2, "");
+    for (let i = 0; i < 100 && page.rows().get("abcd0001")?.title !== "Lamp hunt 2"; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.equal(page.rows().get("abcd0001").title, "Lamp hunt 2", "cleared: generated again");
+    assert.equal(page.rows().get("abcd0001").renamed, undefined);
+});
