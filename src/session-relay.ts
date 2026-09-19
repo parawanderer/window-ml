@@ -31,6 +31,12 @@ export function indexChannel(channels: ChannelKey, runtimePrincipal: Bytes): Pro
     return channels.channel("sessions.index", runtimePrincipal);
 }
 
+/** The retained channel carrying the index's key, one wrapped grant per device, beside `indexChannel`. Without it a
+ *  device could subscribe to a runtime's session list and never be able to read it. */
+export function indexKeysChannel(channels: ChannelKey, runtimePrincipal: Bytes): Promise<Bytes> {
+    return channels.channel("sessions.index.keys", runtimePrincipal);
+}
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -60,17 +66,19 @@ export function decodeIndexFrame(batch: Bytes): SessionIndexUpdate | null {
  *
  * Pure over `send`, which seals and publishes one frame. It keeps the current rows itself so that a snapshot can be
  * produced at any point without asking the index again, and so that what it publishes is exactly what it has said.
+ *
+ * It hands over BATCHES, in order, and does not count them: the frame counter belongs to whatever seals the frame
+ * (`SessionPublisher`), and two counters for one stream is how, one day, they disagree.
  */
 export class IndexPublisher {
     private readonly rows = new Map<string, SessionSummary>();
-    private counter = 0;
     private sinceSnapshot = 0;
-    /** A publish is asynchronous and the counter must be strictly increasing, so they go out one at a time. */
+    /** A publish is asynchronous and a reader treats an earlier frame as a replay, so they go out one at a time. */
     private queue: Promise<void> = Promise.resolve();
 
     constructor(
         private readonly runtime: string,
-        private readonly send: (counter: number, batch: Bytes) => Promise<void>,
+        private readonly send: (batch: Bytes) => Promise<void>,
         private readonly snapshotEvery: number = SNAPSHOT_EVERY,
     ) {}
 
@@ -92,7 +100,7 @@ export class IndexPublisher {
 
     private emit(u: SessionIndexUpdate): Promise<void> {
         const batch = encodeIndexFrame(u);
-        this.queue = this.queue.then(() => this.send(++this.counter, batch));
+        this.queue = this.queue.then(() => this.send(batch));
         return this.queue;
     }
 }

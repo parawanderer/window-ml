@@ -10,7 +10,7 @@
 import { StreamKey, sealFrame, wrapKey, type ChannelKey, type Recipient, type Sender } from "./hub/seal";
 import type { Bytes } from "./hub/hpke";
 import type { SessionStreamMessage } from "./session-host";
-import { encodeStreamFrame, eventsChannel, grantees, keysChannel, type Grantee } from "./session-relay";
+import { encodeStreamFrame, eventsChannel, grantees, indexChannel, indexKeysChannel, keysChannel, type Grantee } from "./session-relay";
 
 /** What the publisher needs from a hub connection: to publish a sealed payload on a channel. */
 export interface HubPublish {
@@ -25,7 +25,9 @@ export interface Device extends Grantee {
     recipient: Recipient;
 }
 
-/** One session this runtime is publishing: its own key, its channels, and how far it has counted. */
+/** One stream this runtime is publishing — a session, or the index: its own key, its channels, how far it has
+ *  counted. The index and every session go through the SAME grant path, so there is one rule for who may read, not
+ *  two that could drift. */
 interface Published {
     key: StreamKey;
     events: Bytes;
@@ -47,6 +49,7 @@ interface Published {
  * still holds rather than only what comes after it.
  */
 export class SessionPublisher {
+    /** by stream id: `s:<hash>` for a session, `index` for the index */
     private readonly sessions = new Map<string, Published>();
     private readonly devices = new Map<string, Device>();
     /** one session's publishes go out in order, because a reader treats an earlier counter as a replay */
@@ -55,6 +58,8 @@ export class SessionPublisher {
     constructor(
         private readonly hub: HubPublish,
         private readonly channels: ChannelKey,
+        /** this runtime's principal: the subject of its index channel */
+        private readonly runtimePrincipal: Bytes,
         private readonly now: () => number = Date.now,
     ) {}
 
@@ -66,7 +71,7 @@ export class SessionPublisher {
     async deviceOnline(device: Device): Promise<void> {
         if (!grantees([device]).length) { this.devices.delete(device.id); return; }
         this.devices.set(device.id, device);
-        for (const [hash, s] of this.sessions) await this.enqueue(hash, () => this.grant(s, device));
+        for (const [id, s] of this.sessions) await this.enqueue(id, () => this.grant(s, device));
     }
 
     /** A device went away. Nothing to revoke — a grant it already holds stays readable — only nobody new to tell. */
@@ -76,30 +81,37 @@ export class SessionPublisher {
 
     /** Publish one message of a session's stream, starting the stream (and handing out its key) on the first. */
     publish(hash: string, message: SessionStreamMessage): Promise<void> {
-        return this.enqueue(hash, async () => {
-            const s = this.sessions.get(hash) ?? (await this.start(hash));
-            const counter = ++s.counter;
-            const frame = await sealFrame(this.hub.sender(), s.events, s.key, counter, encodeStreamFrame(message));
+        const id = `s:${hash}`;
+        return this.enqueue(id, async () => {
+            const s = this.sessions.get(id) ?? (await this.start(id, () => eventsChannel(this.channels, hash), () => keysChannel(this.channels, hash)));
+            const frame = await sealFrame(this.hub.sender(), s.events, s.key, ++s.counter, encodeStreamFrame(message));
+            this.hub.publish(s.events, frame);
+        });
+    }
+
+    /**
+     * Publish one index frame, already encoded by `IndexPublisher`, which owns the index's snapshot cadence and hands
+     * the batches over in order. This side seals and counts, the same as for a session, so the index's key goes out
+     * by the same rule and on the same retained kind of channel.
+     */
+    publishIndex(batch: Bytes): Promise<void> {
+        return this.enqueue("index", async () => {
+            const s = this.sessions.get("index") ?? (await this.start("index", () => indexChannel(this.channels, this.runtimePrincipal), () => indexKeysChannel(this.channels, this.runtimePrincipal)));
+            const frame = await sealFrame(this.hub.sender(), s.events, s.key, ++s.counter, batch);
             this.hub.publish(s.events, frame);
         });
     }
 
     /** A session this runtime has stopped publishing (deleted, or evicted): forget its key. */
     forget(hash: string): void {
-        this.sessions.delete(hash);
-        this.queues.delete(hash);
+        this.sessions.delete(`s:${hash}`);
+        this.queues.delete(`s:${hash}`);
     }
 
-    /** The first message of a session: a fresh key, its channels, and a grant to every device allowed to watch. */
-    private async start(hash: string): Promise<Published> {
-        const s: Published = {
-            key: await StreamKey.generate(),
-            events: await eventsChannel(this.channels, hash),
-            keys: await keysChannel(this.channels, hash),
-            counter: 0,
-            granted: new Set(),
-        };
-        this.sessions.set(hash, s);
+    /** The first frame of a stream: a fresh key, its channels, and a grant to every device allowed to read it. */
+    private async start(id: string, events: () => Promise<Bytes>, keys: () => Promise<Bytes>): Promise<Published> {
+        const s: Published = { key: await StreamKey.generate(), events: await events(), keys: await keys(), counter: 0, granted: new Set() };
+        this.sessions.set(id, s);
         for (const device of this.devices.values()) await this.grant(s, device);
         return s;
     }
