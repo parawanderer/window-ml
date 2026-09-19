@@ -54,6 +54,8 @@ export interface CommandDeps {
     hostsChat(hash: string): boolean;
     /** keep this session past the worker's life: what an absent `ephemeral` means on the command that started it */
     keepSession(hash: string): void;
+    /** pin or unpin a session this runtime holds: saved first when pinning, then the row changed and written */
+    pinSession(hash: string, pinned: boolean): void;
     /** every event this runtime still holds for a session, oldest first; empty when it holds none */
     storedEvents?(hash: string): Promise<MlDebugEvent[]>;
     /** what a saved session would be CONTINUED from, or null when this browser keeps no history for it */
@@ -80,6 +82,9 @@ export interface CommandDeps {
     now(): number;
 }
 
+/** How many sessions may be pinned at once. A pin is exempt from every cap, so an unbounded number of them is no cap
+ *  at all; this is well under the store's session cap and far over what a person pins by hand. */
+export const MAX_PINNED = 100;
 /** A side call's token ceiling, whatever the client asks for: glosses and titles are short. */
 export const SIDE_CALL_MAX_TOKENS = 1024;
 /** A screenshot's size ceiling, whatever the client asks for. */
@@ -410,6 +415,18 @@ export function createCommandHandler(deps: CommandDeps): (command: Command) => P
             if (status === "running" || status === "waiting") return fail("conflict", "stop the session before deleting it");
             await deps.forgetStored(s.id.hash);
             deps.removeFromIndex(s.id);
+            return ok({});
+        },
+
+        "session.pin": async (c) => {
+            const s = session(c);
+            if (s.error) return s.error;
+            if (typeof c.pinned !== "boolean") return fail("invalid", "pinned must be true or false");
+            const was = !!deps.index.get(s.id.hash)!.pinned;
+            if (c.pinned && !was && deps.index.pinnedCount() >= MAX_PINNED) return fail("conflict", `at most ${MAX_PINNED} sessions can be pinned; unpin one first`);
+            // Pinning what is already pinned succeeds and changes nothing: two devices pinning the same session
+            // both asked for the state it is in.
+            if (c.pinned !== was) deps.pinSession(s.id.hash, c.pinned);
             return ok({});
         },
 

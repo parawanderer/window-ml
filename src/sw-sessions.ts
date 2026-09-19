@@ -133,6 +133,7 @@ export function configureSessionCommands(run: RunDeps): void {
             try { await chrome.storage.local.remove(`ml_session_${hash}`); } catch { /* storage unavailable */ }
         },
         keepSession,
+        pinSession,
         startChat: (opts) => startBackgroundChat(opts),
         startAgent: async (tabId, opts) => {
             const reqId = Math.random().toString(36).slice(2, 12);
@@ -279,6 +280,17 @@ export function keepSession(hash: string): void {
     const already = sessionServer.markSaved(hash);
     if (!sessionStore) return;
     for (const event of already) sessionStore.put({ ...summary, saved: true }, event);
+}
+
+/**
+ * Pin a session, or unpin it. Pinning keeps it first, through `keepSession`, so the events it has already emitted
+ * reach the store with it; the row then carries `pinned`, which is what the store's eviction reads and what a
+ * restarted worker restores. Unpinning leaves the session saved.
+ */
+export function pinSession(hash: string, pinned: boolean): void {
+    if (pinned) keepSession(hash);
+    const row = sessionServer.pin(hash, pinned);
+    if (row) sessionStore?.putSummary(row);
 }
 
 /**

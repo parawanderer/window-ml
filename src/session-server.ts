@@ -6,7 +6,7 @@
 // Only extension pages may connect (the background checks the port's sender URL before `attach`): a content script
 // never reaches this, because a page's main world is hostile and the index spans every tab.
 import type { MlDebugEvent } from "./contract-debug";
-import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type SessionId, type SessionIndexUpdate, type SessionStreamMessage, type SessionSummary, type StreamPosition } from "./session-host";
+import { COMMAND_SCOPE, SESSION_CONTRACT_VERSION, type Command, type CommandResult, type CommandType, type RuntimeInfo, type SessionId, type SessionIndexUpdate, type SessionStreamMessage, type SessionSummary, type StreamPosition } from "./session-host";
 import type { IngestOutcome, IngestSource, SessionIndex } from "./session-index";
 
 /** The port name the chat page connects on. */
@@ -53,7 +53,13 @@ interface Client {
     subs: Map<number, Sub>;
 }
 
-const KNOWN_COMMANDS: ReadonlySet<string> = new Set<CommandType>(["session.send", "session.cancel", "session.continue", "session.delete", "approval.answer", "chat.start", "agent.start", "tabs.list", "tab.screenshot", "page.highlight", "side.call"]);
+/**
+ * Every command the contract defines, read from `COMMAND_SCOPE` rather than listed here. A hand-kept copy went stale
+ * the day it was written: `session.resume`, `session.backfill`, `runtime.info` and `tab.focus` were built in the
+ * handler and answered `unsupported` from this port, because the unit tests call the handler directly. The handler
+ * answers `unsupported` for a contract command it does not implement, so this only has to reject what is not one.
+ */
+const KNOWN_COMMANDS: ReadonlySet<string> = new Set(Object.keys(COMMAND_SCOPE));
 
 /** Serves a {@link SessionIndex} to connected extension pages. */
 export class SessionServer {
@@ -206,6 +212,13 @@ export class SessionServer {
         if (!marked) return [];
         this.broadcastIndex({ type: "upsert", session: marked.summary });
         return marked.events;
+    }
+
+    /** Pin or unpin a session and tell every client. Returns the new row, or null when nothing changed. */
+    pin(hash: string, pinned: boolean): SessionSummary | null {
+        const row = this.index.setPinned(hash, pinned);
+        if (row) this.broadcastIndex({ type: "upsert", session: row });
+        return row;
     }
 
     /** Every session a connected page is subscribed to: what someone is looking at right now, which the saved-session

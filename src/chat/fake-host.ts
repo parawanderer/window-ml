@@ -366,6 +366,10 @@ export class FakeHost implements SessionHost {
             case "session.delete":
                 this.deleteSession(key);
                 return ok({});
+            case "session.pin":
+                if (!key || !h) return fail("not-found", "no such session");
+                this.updateSummary(key, c.pinned ? { pinned: true, saved: true } : { pinned: undefined });
+                return ok({});
             default:
                 return fail("unsupported", `the fake host does not do ${(c as Command).type}`);
         }

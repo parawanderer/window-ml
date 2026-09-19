@@ -176,6 +176,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `session.cancel` | drive | | `sessionCancel` → `CANCEL_RUN` |
 | `session.continue`: past the step cap | drive | | `continueRun` |
 | `session.delete` | drive | `persistence` for saved sessions | nothing |
+| `session.pin`: keep a session whatever the caps and retention say, or stop; the row's `pinned` changes by `upsert`; bounded, `conflict` past it | drive | `persistence` | nothing |
 | `approval.answer`: by the pending step's `seq`; `persist`, `feedback` | approve | | `approval` → `SET_APPROVAL` → `resolveApproval` |
 | `chat.start` | drive | `chat` | nothing background-hosted |
 | `agent.start`: on a tab, a blank tab, or (reserved) headless | drive | `agent`, `tabs`, `headless` | `startRun` → the page → `START_RUN` |
@@ -503,7 +504,8 @@ display?(target: { tabId: number } | { session: SessionId } | { display: string 
 
 Display preferences and themes (client storage); the envelope, keys, pairing and encryption (hub transport); box
 telemetry (`BoxFrame`, its own feed per `RUNTIME_HUB.md` §Telemetry); settings editing beyond the `localSettings`
-flag.
+flag. That flag is local by design: the settings include where the runtime sends its traffic (the backend URL, the
+API key, `modelFilter`), which no remote client may change whatever scopes it holds.
 
 ## On the wire
 

@@ -135,6 +135,34 @@ test("planEviction: count and bytes both bound it, and it drops no more than it 
     assert.deepEqual(planEviction(rows, { budgetBytes: 300, incoming: 200 }), ["a", "b"]);
 });
 
+test("planEviction: a pinned session counts toward the budget and is never what pays for it", () => {
+    const row = (hash, lastTs, bytes, over = {}) => ({ hash, summary: summary(hash, over), lastTs, createdTs: lastTs, bytes, count: 1 });
+    const rows = [row("a", 1, 100, { pinned: true }), row("b", 2, 100), row("c", 3, 100)];
+    assert.deepEqual(planEviction(rows, { budgetBytes: 250 }), ["b"], "the oldest UNPINNED goes");
+    assert.deepEqual(planEviction(rows, { maxSessions: 1 }), ["b", "c"]);
+    // When only pins are left, the budget is exceeded rather than a pin dropped. The runtime bounds the pins.
+    assert.deepEqual(planEviction([row("a", 1, 500, { pinned: true })], { budgetBytes: 100 }), []);
+});
+
+test("putSummary writes a pin with no event behind it, and a restarted store reads it back", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 5 });
+    store.put(summary("aaaa0001"), ev("aaaa0001", 0));
+    await store.flush();
+    store.putSummary(summary("aaaa0001", { pinned: true }));
+    await store.flush();
+    const again = new SessionStore(be, { flushMs: 5 });
+    const [r] = await again.open();
+    assert.equal(r.summary.pinned, true);
+    assert.equal(r.count, 1, "the pin wrote a row, not an event");
+
+    // A session pinned before anything of it was written still comes back; an unsaved summary is not a row.
+    store.putSummary(summary("aaaa0002", { pinned: true }));
+    store.putSummary(summary("aaaa0003", { saved: false, pinned: true }));
+    await store.flush();
+    assert.deepEqual([...be._rows.keys()].sort(), ["aaaa0001", "aaaa0002"]);
+});
+
 test("sizeOf survives an event that cannot be serialized", () => {
     const circular = { kind: "chat" };
     circular.self = circular;

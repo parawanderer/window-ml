@@ -483,6 +483,29 @@ export class SessionIndex {
     }
 
     /**
+     * Pin a session, or unpin it. Returns the changed row, or null when the session is not held or nothing changed.
+     *
+     * Pinning does not save: the caller does that first, through the same path as any other session asked to be
+     * kept, because the events already in the ring have to reach the store with it. A pinned session is saved, and
+     * the whole-session eviction here never touches a saved one, so this needs no rule of its own in `enforceCaps`.
+     */
+    setPinned(hash: string, pinned: boolean): SessionSummary | null {
+        const s = this.sessions.get(hash);
+        if (!s || !!s.summary.pinned === pinned) return null;
+        if (pinned) s.summary.pinned = true;
+        else delete s.summary.pinned;
+        this.refreshSummary(s);
+        return s.summary;
+    }
+
+    /** How many sessions are pinned, which the runtime bounds. */
+    pinnedCount(): number {
+        let n = 0;
+        for (const s of this.sessions.values()) if (s.summary.pinned) n++;
+        return n;
+    }
+
+    /**
      * Would `backfill` have to read the saved events to answer this subscription? True when what the client needs is
      * older than anything the ring still holds — after a restart, that is every subscription.
      *

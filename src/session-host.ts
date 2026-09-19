@@ -111,7 +111,11 @@ export interface RuntimeCapabilities {
     pythonBench?: boolean;
     /** box telemetry is available for the resource panel */
     resourcePanel?: boolean;
-    /** the runtime's settings can be edited from this client (the local host only, today) */
+    /**
+     * The runtime's settings can be edited from this client. Local by design, not only today: the settings include
+     * the backend URL, the API key and `modelFilter`, and a setting that repoints where this runtime sends its
+     * traffic is not something a remote client may change, whatever scopes it holds. A remote runtime never sets it.
+     */
     localSettings?: boolean;
     /** `device.*`: this runtime holds paired devices and can list, renew, revoke and re-scope them */
     devices?: boolean;
@@ -183,6 +187,11 @@ export interface SessionSummary {
     page?: { url: string; title?: string; tabId?: number };
     /** survives a restart of the runtime; false for an ephemeral console or page-script session */
     saved: boolean;
+    /**
+     * Kept whatever the runtime's caps and retention would otherwise drop, set by `session.pin`. Pinning also saves
+     * the session, since a pin on something that dies with the worker keeps nothing. Absent: not pinned.
+     */
+    pinned?: boolean;
     /** who started it. Absent: not known (a console call, a page script). */
     startedBy?: Principal;
     /** set when another session started this one */
@@ -273,6 +282,12 @@ export type Command =
     /** continue an agent that stopped at its step cap, with a fresh step budget */
     | { type: "session.continue"; session: SessionId }
     | { type: "session.delete"; session: SessionId }
+    /**
+     * Keep a session, or stop keeping it. It is the runtime's because eviction is: a pin kept only on one device
+     * cannot stop the runtime dropping the session. Unpinning leaves the session saved, and subject to the usual caps
+     * and retention again. The runtime bounds how many sessions may be pinned and answers `conflict` past it.
+     */
+    | { type: "session.pin"; session: SessionId; pinned: boolean }
     /** Answer an open approval gate, keyed by the pending step's `seq`. Handed to the runtime's one
      *  `resolveApproval`; nothing new decides a gate. `persist` also remembers the call's egress grants, which the
      *  runtime re-derives from the call itself. */
@@ -380,6 +395,7 @@ export const COMMAND_SCOPE: { readonly [T in CommandType]: Scope } = {
     "session.cancel": "drive",
     "session.continue": "drive",
     "session.delete": "drive",
+    "session.pin": "drive",
     "approval.answer": "approve",
     "chat.start": "drive",
     "agent.start": "drive",
@@ -514,6 +530,8 @@ export interface CommandResultData {
     "session.cancel": Record<string, never>;
     "session.continue": Record<string, never>;
     "session.delete": Record<string, never>;
+    /** the row changes through the index, as an `upsert`, like every other change to a session */
+    "session.pin": Record<string, never>;
     /** `false`: the gate was already closed (answered on another surface, or the run was cancelled). Not an error:
      *  every surface shows the outcome from the session's events either way. */
     "approval.answer": { resolved: boolean };

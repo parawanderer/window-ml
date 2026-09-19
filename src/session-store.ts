@@ -70,11 +70,13 @@ export function sizeOf(ev: MlDebugEvent): number {
  * policy is tested without a database.
  *
  * `protect` is never dropped — the session a page has open, and any session still running, whose events are still
- * arriving and whose row would come straight back.
+ * arriving and whose row would come straight back. Neither is a pinned session.
  */
 export function planEviction(rows: readonly StoredSessionRow[], o: { budgetBytes?: number; maxSessions?: number; incoming?: number; protect?: readonly string[] }): string[] {
     const budget = o.budgetBytes ?? STORE_BUDGET_BYTES, max = o.maxSessions ?? STORE_MAX_SESSIONS;
-    const protect = new Set(o.protect ?? []);
+    // A pinned session counts toward the budget and is never what pays for it. The number of pins is bounded by the
+    // runtime, so the budget can be exceeded by at most what the pinned sessions hold.
+    const protect = new Set([...(o.protect ?? []), ...rows.filter((r) => r.summary.pinned).map((r) => r.hash)]);
     const order = [...rows].sort((a, b) => a.lastTs - b.lastTs || a.createdTs - b.createdTs);
     let total = rows.reduce((n, r) => n + r.bytes, 0) + (o.incoming ?? 0);
     let count = rows.length;
@@ -174,6 +176,21 @@ export class SessionStore {
         const row = this.rows.get(hash);
         if (!row) return;
         row.history = history;
+        this.dirty.add(hash);
+        this.schedule();
+    }
+
+    /**
+     * A saved session's row changed with no event behind it: a pin. The row is created when the session has none yet,
+     * because a session pinned before it emitted anything worth writing still has to come back pinned.
+     */
+    putSummary(summary: SessionSummary): void {
+        if (!summary.saved) return;
+        const hash = summary.id.hash;
+        const now = this.opts.now?.() ?? Date.now();
+        const row = this.rows.get(hash) ?? { hash, summary, lastTs: summary.lastTs || now, createdTs: summary.createdTs ?? now, bytes: 0, count: 0 };
+        row.summary = summary;
+        this.rows.set(hash, row);
         this.dirty.add(hash);
         this.schedule();
     }
