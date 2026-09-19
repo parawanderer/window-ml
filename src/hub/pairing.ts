@@ -59,7 +59,9 @@ export class PairingError extends Error {
             /** an offer that is not one: wrong key sizes, a label too long, an unknown role */
             | "bad-offer"
             /** no offer waits under the code typed: mistyped, already answered, or its window closed */
-            | "no-offer",
+            | "no-offer"
+            /** a scanned offer's keys are not the ones its QR code named: something between the two devices swapped them */
+            | "mismatch",
         message: string,
     ) {
         super(message);
@@ -95,6 +97,27 @@ export function pairingCodeHash(code: string): Promise<Bytes> {
 /** The digest a person compares on both screens: the offered keys and nothing else. Rendering is the UI's. */
 export function pairingFingerprint(identityKey: Bytes, agreementKey: Bytes): Promise<Bytes> {
     return sha256(concat(text.encode(FINGERPRINT_LABEL), identityKey, agreementKey));
+}
+
+/** What a pairing QR code starts with; the version after it changes only if what follows does. */
+const QR_PREFIX = "WMLPAIR:1:";
+
+/**
+ * The text a pairing QR code carries: the code, and the WHOLE fingerprint (all 32 bytes, where the screen shows a 48-bit
+ * prefix sized for a person to compare). Only upper-case letters, digits and colons, so a QR encoder can use its compact
+ * alphanumeric mode. The device that scans it checks the offer's keys against it by itself (`pair-flow.ts`
+ * `lookupScanned`), over the camera, which the hub has no part in.
+ */
+export async function pairingQrText(code: string, identityKey: Bytes, agreementKey: Bytes): Promise<string> {
+    const digest = await pairingFingerprint(identityKey, agreementKey);
+    return `${QR_PREFIX}${code}:${[...digest].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase()}`;
+}
+
+/** A scanned pairing QR code's code and full fingerprint (lower-case hex), or null when the text is not one. */
+export function parsePairingQr(scanned: string): { code: string; fingerprint: string } | null {
+    const m = /^WMLPAIR:1:([0-9A-Z]{8}):([0-9A-F]{64})$/i.exec(scanned.trim());
+    const code = m && parsePairingCode(m[1]);
+    return m && code ? { code, fingerprint: m[2].toLowerCase() } : null;
 }
 
 /** The fingerprint as twelve hex characters, identical to what `wmlbox pair` prints for the same keys. */

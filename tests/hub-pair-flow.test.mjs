@@ -65,6 +65,14 @@ test("an account, a runtime paired to it, and a phone the runtime pairs as a del
         await assert.rejects(F.lookupOffer(phoneClient, "ZZZZ 9999"), (e) => e.reason === "no-offer");
         const found = await F.lookupOffer(phoneClient, pending.code.toLowerCase());
         assert.equal(found.fingerprint, pending.fingerprint, "both screens show the same fingerprint");
+        // Scanning instead of typing: the QR code carries the whole fingerprint, and the scanner checks it itself.
+        assert.match(pending.qr, /^WMLPAIR:1:[0-9A-Z]{8}:[0-9A-F]{64}$/, "QR alphanumeric mode: upper case, digits, colons");
+        const scanned = await F.lookupScanned(phoneClient, pending.qr);
+        assert.equal(scanned.checked, true);
+        assert.equal(scanned.fingerprint, pending.fingerprint);
+        const flipped = pending.qr.slice(0, -1) + (pending.qr.endsWith("0") ? "1" : "0");
+        await assert.rejects(F.lookupScanned(phoneClient, flipped), (e) => e.reason === "mismatch");
+        await assert.rejects(F.lookupScanned(phoneClient, "https://example.com"), (e) => e.reason === "bad-offer");
         assert.equal(found.offer.label, "Work laptop");
         const issuer = await F.issuerOf(phone);
         await F.confirmOffer(phoneClient, issuer, found, F.defaultGrant(Role.ROLE_RUNTIME, issuer));
