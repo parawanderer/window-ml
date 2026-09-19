@@ -92,28 +92,13 @@ const GRANTS: Record<string, chrome.permissions.Permissions> = {
 };
 
 /**
- * This browser's own attention codes (src/chat/attention.ts), for its runtime. What only the extension can see: its
- * permissions (site access withheld on "on click" reads as not granted), its config, whether its backend answers,
- * and whether the build has Python's wheels (`pythonBench` is measured, so false on this browser means missing).
+ * This browser's attention codes that its runtime does not report itself (src/chat/attention.ts). The runtime reports
+ * the rest on the contract (`capabilities.attention`, sw-attention.ts): the model, the backend, site access, the
+ * permissions, the archive folder. What is left is the build: `pythonBench` is measured, so false here means the wheels
+ * are missing.
  */
 async function localAttention(id: string): Promise<string[]> {
-    const codes: string[] = [];
-    const has = (p: chrome.permissions.Permissions) => chrome.permissions?.contains(p).catch(() => true) ?? Promise.resolve(true);
-    const [sites, groups, cfg] = await Promise.all([
-        has(GRANTS["site-access"]), has(GRANTS["tab-groups"]),
-        chrome.storage.sync.get(DEFAULT_CONFIG as never).then((c) => c as unknown as MlConfig, () => null),
-    ]);
-    if (!sites) codes.push("site-access");
-    if (!groups) codes.push("tab-groups");
-    if (cfg && !cfg.model.trim()) codes.push("no-model");
-    if (cfg && !cfg.utilityModel.trim()) codes.push("no-utility-model");
-    if (runtimeInfo.get(id)?.capabilities.pythonBench === false) codes.push("python-packages-missing");
-    // Only when there is something to reach: an empty URL is already "no model" territory for a fresh install.
-    if (cfg?.chatUrl.trim()) {
-        const r = await chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: {} }).catch(() => null) as { error?: string } | null;
-        if (!r || r.error) codes.push("backend-unreachable");
-    }
-    return codes;
+    return runtimeInfo.get(id)?.capabilities.pythonBench === false ? ["python-packages-missing"] : [];
 }
 
 /** What this device can draw beyond the chat core. Every answer is per runtime, and null for one that is not ours. */

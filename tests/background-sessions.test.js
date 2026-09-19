@@ -130,6 +130,8 @@ test("a live background run, driven from the chat page: steered while its gate i
     bg = loadBackground({
         config,
         onFetch: (call) => {
+            // The runtime asks the backend for its model list when a page connects (capabilities.attention): not a turn.
+            if (!/chat\/completions/.test(call.url)) return jsonResponse({ data: [] });
             n++;
             if (n === 1) return jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "click", arguments: JSON.stringify({ selector: "#buy" }) } }] } }] });
             secondCall = call.body;
@@ -540,4 +542,28 @@ test("the archive's folder state rides the runtime's description: read at startu
     bg.setSync({ sessionArchive: false });
     for (let i = 0; i < 100 && archive(); i++) await new Promise((r) => setTimeout(r, 20));
     assert.equal(archive(), undefined);
+});
+
+test("capabilities.attention: what needs a hand on this runtime, as codes, sent again when a fix clears one", T, async () => {
+    let answering = true;
+    const bg = loadBackground({
+        config: { ...config, utilityModel: "" },
+        onFetch: () => (answering ? jsonResponse({ data: [{ id: "default-model" }] }) : Promise.reject(new TypeError("Failed to fetch"))),
+    });
+    const port = bg.connect("ml-sessions", PAGE);
+    const attention = () => port.messages.filter((m) => m.type === "runtime").at(-1)?.runtime.capabilities.attention;
+    const until = async (want) => { for (let i = 0; i < 100 && JSON.stringify(attention()) !== JSON.stringify(want); i++) await new Promise((r) => setTimeout(r, 20)); assert.deepEqual(attention(), want); };
+    await until(["tab-groups", "no-utility-model"]);
+
+    bg.setSync({ utilityModel: "tiny" });
+    await until(["tab-groups"]);
+    bg.grantPermission("tabGroups");
+    await until(undefined);
+
+    // The server went away and the URL was changed: asked again at once, not at the next page.
+    answering = false;
+    bg.setSync({ chatUrl: "http://elsewhere/api/chat/completions" });
+    await until(["backend-unreachable"]);
+    bg.setSync({ model: "" });
+    await until(["no-model", "backend-unreachable"]);
 });

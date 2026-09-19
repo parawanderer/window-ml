@@ -19,8 +19,9 @@ import { addBytes, emptyBytes, measureEvents, snapshotRows, type SessionBytes, t
 export const STORE_BUDGET_BYTES = 256 * 1024 * 1024;
 /** How many sessions are kept, whatever their size: a list nobody can scroll is not worth the disk either. */
 export const STORE_MAX_SESSIONS = 500;
-/** Events are written in batches this often, rather than one transaction per event: a streaming run emits one every
- *  ~100 ms, and a transaction each would spend more time in IndexedDB than in the model. */
+/** Streamed deltas are written in batches this often, rather than one transaction per event: a streaming run emits one
+ *  every ~100 ms, and a transaction each would spend more time in IndexedDB than in the model. Anything else is
+ *  written on the next tick (`schedule`). */
 export const FLUSH_MS = 400;
 /** How long a session whose move to the archive failed is left alone before the next attempt. */
 export const ARCHIVE_RETRY_MS = 60 * 60 * 1000;
@@ -137,6 +138,8 @@ export class SessionStore {
     /** rows whose own fields changed with no events to carry them: a history written between turns */
     private readonly dirty = new Set<string>();
     private timer: ReturnType<typeof setTimeout> | null = null;
+    /** the pending timer is the next-tick one, not the batch one */
+    private urgent = false;
     /** sessions whose move to the archive failed, and when: kept, and not tried again for a while */
     private readonly archiveFailed = new Map<string, number>();
     private flushing: Promise<void> = Promise.resolve();
@@ -269,7 +272,7 @@ export class SessionStore {
         const queue = this.pending.get(hash) ?? [];
         queue.push(event);
         this.pending.set(hash, queue);
-        this.schedule();
+        this.schedule(event.kind !== "agent-stream");
     }
 
     /**
@@ -284,7 +287,7 @@ export class SessionStore {
         if (!row) return;
         row.history = history;
         this.dirty.add(hash);
-        this.schedule();
+        this.schedule(true);
     }
 
     /**
@@ -299,7 +302,7 @@ export class SessionStore {
         row.summary = summary;
         this.rows.set(hash, row);
         this.dirty.add(hash);
-        this.schedule();
+        this.schedule(true);
     }
 
     /**
@@ -339,15 +342,24 @@ export class SessionStore {
 
     /** Write everything queued. Awaited by tests and by `session.delete`, so a delete cannot race a pending write. */
     async flush(): Promise<void> {
-        if (this.timer) { clearTimeout(this.timer); this.timer = null; }
+        if (this.timer) { clearTimeout(this.timer); this.timer = null; this.urgent = false; }
         // One at a time: two flushes writing the same session would both read `count` before either wrote it.
         this.flushing = this.flushing.then(() => this.write()).catch((err) => this.opts.onError?.(err));
         return this.flushing;
     }
 
-    private schedule(): void {
-        if (this.timer) return;
-        this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, this.opts.flushMs ?? FLUSH_MS);
+    /**
+     * Write soon. Only a streamed delta waits `FLUSH_MS` for company; everything else (a start, a step, a result, a
+     * history, a pin) goes on the next tick. The browser stops a worker without warning, and whatever is still queued
+     * then is lost: with every event batched, a short chat that finished inside one window lost its whole session
+     * to a stop a moment later, row included. A lost delta costs nothing, since the step or result after it carries
+     * the whole text.
+     */
+    private schedule(urgent = false): void {
+        if (this.timer && !(urgent && !this.urgent)) return;
+        if (this.timer) clearTimeout(this.timer);
+        this.urgent = urgent;
+        this.timer = setTimeout(() => { this.timer = null; this.urgent = false; void this.flush(); }, urgent ? 0 : this.opts.flushMs ?? FLUSH_MS);
     }
 
     private async write(): Promise<void> {

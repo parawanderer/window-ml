@@ -3,10 +3,10 @@
 // here. Pure, so the wording and the rules are tested without a DOM; the list itself is `attention-page.tsx`.
 //
 // Almost everything here is a fact about a RUNTIME, not about whoever is looking: a phone driving a laptop needs to
-// know the laptop has no model as much as the laptop's own page does. So a runtime is meant to report its own codes
-// (proposed on the contract as `capabilities.attention`); until it does, the page reads what is already on the
-// contract (the archive folder's state) and asks this device's own checks (`ChatExtras.attention`) for the runtimes it
-// can check itself. Codes, not prose: a remote runtime's text is untrusted, and the sentence depends on where it is
+// know the laptop has no model as much as the laptop's own page does. So a runtime reports its own codes on the contract
+// (`capabilities.attention`, sw-attention.ts in the extension), and this device adds only what that does not cover
+// (`ChatExtras.attention`: a build without Python's wheels). The archive folder's state is read as a code too, for a
+// runtime that reports the folder but not yet the codes. Codes, not prose: a remote runtime's text is untrusted, and the sentence depends on where it is
 // read (a button on the laptop, "on Work laptop" on a phone). An unknown code is still counted, in general words.
 import type { RuntimeInfo } from "../session-host";
 
@@ -107,7 +107,7 @@ export function attentionItems(
     return out.sort((a, b) => RANK[a.level] - RANK[b.level]);
 }
 
-/** What the runtime itself reports: its `attention` codes once the contract carries them, and what it already says. */
+/** What the runtime itself reports: its `attention` codes, and the archive folder's state for one without them. */
 function reported(rt: RuntimeInfo): string[] {
     const caps = rt.capabilities as RuntimeInfo["capabilities"] & { attention?: unknown };
     const codes = Array.isArray(caps.attention) ? caps.attention.filter((c): c is string => typeof c === "string" && c.length <= 64) : [];

@@ -126,6 +126,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const debuggerCalls = [];   // chrome.debugger attach/sendCommand/detach, for CDP_CLICK tests
     const debuggerEventListeners = new Set();   // chrome.debugger.onEvent listeners (CDP streaming)
     let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
+    const permAddedListeners = [];
     const listeners = [];
     const connectListeners = [];
     const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
@@ -229,7 +230,9 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                 // contains()-checks Google origins, and the harness assumes those are granted).
                 // `allSites: false` withholds `<all_urls>`, as site access "On click" does.
                 contains: async ({ permissions = [], origins = [] }) => permissions.every(p => permsHeld.has(p)) && (allSites || !origins.includes("<all_urls>")),
-                request: async ({ permissions = [] }) => { permissions.forEach(p => permsHeld.add(p)); return true; },
+                request: async ({ permissions = [] }) => { permissions.forEach(p => permsHeld.add(p)); for (const fn of permAddedListeners) fn({ permissions }); return true; },
+                onAdded: { addListener: (fn) => permAddedListeners.push(fn) },
+                onRemoved: { addListener: () => {} },
             },
             // CDP surface for reserved-element clicks. Records attach/sendCommand/detach so tests assert the
             // press+release sequence and that we always detach.
@@ -295,6 +298,8 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
             Object.assign(stored, obj);
             for (const fn of syncListeners) fn(changes, "sync");
         },
+        /** Grant a permission the way the browser's prompt does: held, then permissions.onAdded. */
+        grantPermission: (name) => { permsHeld.add(name); for (const fn of permAddedListeners) fn({ permissions: [name] }); },
         stored,
         localStore,   // chrome.storage.local contents — tests assert a snapshot was kept/removed
         sessionStore,   // chrome.storage.session contents — the housekeeping log lives here

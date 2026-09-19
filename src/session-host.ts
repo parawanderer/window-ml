@@ -129,6 +129,13 @@ export interface RuntimeCapabilities {
     /** the long-term session archive, present while it is switched on (`sessionArchive`). Reachable through
      *  `sessions.list` / `sessions.search` / `session.unarchive`; this says where its folder copy stands. */
     archive?: ArchiveCapability;
+    /**
+     * What needs someone's hand on this runtime, as codes: `no-model`, `backend-unreachable`, `site-access`,
+     * `tab-groups`, `no-utility-model`, `archive-folder-lapsed`, `archive-folder-unsupported`. Codes and not sentences:
+     * a runtime's text is untrusted, and the words depend on where they are read. OPEN: word an unknown code
+     * generally. Sent again whenever it changes, so a fix clears it without polling. Absent: nothing, or not reported.
+     */
+    attention?: string[];
 }
 
 /** Where a runtime's session archive and its folder copy stand. Sent again whenever it changes (a pick, a re-grant,

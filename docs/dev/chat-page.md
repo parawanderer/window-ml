@@ -677,12 +677,12 @@ so fixing a thing is what removes it, and only a suggestion can be dismissed (pe
 
 Items are CODES, turned into sentences here. Nearly all of them are facts about a runtime rather than the viewer (a
 phone driving a laptop needs to know the laptop has no model), so a runtime is meant to report its own as
-`capabilities.attention` (proposed to the transport session; read defensively until it lands, as are codes this page
-does not know, which are shown in general words). Codes and not prose, because a remote runtime's text is untrusted
-and the sentence depends on where it is read. Until then the page reads what the contract already says (the archive
-folder's state) and asks `ChatExtras.attention` for this browser's own checks: its permissions, its config, whether
-`LIST_MODELS` answers, and `pythonBench` (measured, so false on this browser means the wheels are missing). They run
-on load, when the page regains focus (at most every 15 s, since one asks the backend) and after a fix. A fix is
+`capabilities.attention` (#205, `sw-attention.ts`: the model, the backend, site access, the permissions, the archive
+folder), read defensively: strings of at most 64 characters, and a code this page does not know is shown in general
+words. Codes and not prose, because a remote runtime's text is untrusted and the sentence depends on where it is read.
+`ChatExtras.attention` adds only what the runtime does not report: `python-packages-missing` (`pythonBench` is
+measured, so false on this browser means the wheels are missing). It runs on load, on focus (at most every 15 s) and
+after a fix. A fix is
 offered only where this device can apply it: `ChatExtras.grant` inside the click, or Settings opened on its
 Extension tab; anywhere else the item says on which runtime it is fixed.
 
