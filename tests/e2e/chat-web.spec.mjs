@@ -1157,3 +1157,15 @@ test("a session's model is at the top of its page, as the picker to swap it, and
         await page.close();
     }
 });
+
+test("the start page's model: in the box's row when the page is wide, at the top of the screen on a phone", async () => {
+    for (const [vp, where] of [[DESKTOP, ".chat-start-row"], [PHONE, ".chat-start-top"]]) {
+        const { page, errors } = await open(vp);
+        if (vp === PHONE) await page.locator(".chat-start").click();
+        const pill = page.getByRole("button", { name: /^Model: / });
+        await expect(pill).toBeVisible();
+        expect(await pill.evaluate((e, sel) => !!e.closest(sel), where), `at ${vp.width}px it sits in ${where}`).toBe(true);
+        expect(errors).toEqual([]);
+        await page.close();
+    }
+});
