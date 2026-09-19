@@ -248,14 +248,19 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
           gap: 4px 5px; padding: 4px 7px; font-size: calc(var(--fs) * 0.83); line-height: 1.35; pointer-events: none;
           color: var(--fg); background: var(--tip-bg); border: 1px solid var(--tip-line); border-radius: 5px;
           box-shadow: 0 2px 8px rgba(0,0,0,.35); }
-/* THE TOOLTIP SURFACE, for both tooltips, derived from the text colour rather than named: a fill a shade off the
-   plots and controls it floats over (they are `--panel-2`), and lines a clear step off the fill. Both were plain
-   tokens once, and every palette here has `--border` equal to `--panel-2` — so when the tip took `--panel-2` to
-   match the anchored layer, its dividers and its edge vanished into its own fill and it merged with the chart
-   under it. Mixed from `--fg`, the step holds in the panel's palette, calm view's, and light. */
+/* THE TOOLTIP SURFACE, for both tooltips: `--panel`, the fill the page's menus use (the chat page's gear menu), so
+   everything that floats over the page is one kind of surface — darker than the plots it floats over (`--panel-2`)
+   in a dark theme. It was a fill 7% off `--panel-2`, a mid grey, and the secondary lines in `--fg-faint` on it came
+   out near 2:1; `tests/e2e/tip-contrast.spec.mjs` holds every line of a tip to 4.5:1 now. Inside a tip the faint tone
+   is the dim one for the same reason: faint is for a large surface's asides, and a tip is small text on its own
+   ground. The lines stay a clear step off the fill (mixed from `--fg`), so its edge and dividers never vanish. */
 .rc-tip, .tt-layer {
-    --tip-bg: color-mix(in srgb, var(--fg) 7%, var(--panel-2));
-    --tip-line: color-mix(in srgb, var(--fg) 18%, var(--panel-2));
+    --tip-bg: var(--panel);
+    --tip-line: color-mix(in srgb, var(--fg) 20%, var(--tip-bg));
+    /* One step under the figures' `--fg-dim`, not level with it: a tip has three tones (the name, the figure, what it is
+       OF), and faint set equal to dim flattened the last two. Dim pulled toward the fill keeps the step and still reads
+       at 4.5:1 on it, in both themes. */
+    --fg-faint: color-mix(in srgb, var(--fg-dim) 85%, var(--tip-bg));
 }
 /* The model's own name and figure lead; its badges (context window, TTL, embed) and its cost each take a line
    of their own, so a long name can't push the number that matters off the edge. */
@@ -546,13 +551,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* …and never on the FIRST thing in the tip, where it would be a line under the tip's own edge. */
 .rc-tip > .sep:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
 .rc-tip-consumer { display: inline-flex; align-items: center; gap: 5px; }
-.rc-tip-pct { opacity: .7; font-variant-numeric: tabular-nums; }
+.rc-tip-pct { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .rc-tip-dim { color: var(--fg-faint); }
 /* WHEN the figures above were measured. Ruled off, because it is a different kind of fact from the rest of
    the tip: those describe a quantity, this one says which instant the quantity is from. */
 .rc-tip-when { padding-top: 3px; border-top: 1px solid var(--tip-line); color: var(--fg-faint);
   font-size: 0.92em; font-variant-numeric: tabular-nums; display: flex; gap: 6px; }
-.rc-tip-ago { opacity: .75; }
 .rc-tip-holders { display: flex; flex-wrap: wrap; gap: 2px 8px; }
 /* The swatch sits flush against the name without this — it reads as part of the word. */
 .rc-tip-name .rc-swatch { margin-right: 5px; }
@@ -3306,3 +3310,57 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 .arch-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .arch-primary { font-weight: 600; }
 .arch-msg { color: var(--fg); }
+
+/* THE PAIRING SCREENS (pairing-ui.tsx): joining an account, creating one, pairing a device. Standalone, so they carry
+   their own buttons and fields rather than borrowing a surface's; each is one card that sits in any settings pane. */
+.pair-card { display: flex; flex-direction: column; gap: 10px; max-width: 560px; padding: 0 12px; }
+/* A pairing screen's heading: what this step is, or who is asking (a label that may be long and unbroken). */
+.pair-h { margin: 0; font-size: 1.08em; font-weight: 650; overflow-wrap: anywhere; }
+/* A pairing screen's explanation, one short paragraph per thing to do. */
+.pair-p { margin: 0; color: var(--fg-dim); line-height: 1.5; }
+/* A pairing screen's small print: a field's hint, the countdown, what a grant also carries. */
+.pair-hint { color: var(--fg-dim); font-size: .92em; line-height: 1.45; }
+/* Why a pairing step failed, with what to do next (pairingProblem). */
+.pair-problem { margin: 0; color: var(--err); line-height: 1.45; }
+/* A pairing screen's buttons: right-aligned, the primary last, pill-shaped like the chat page's dialogs. */
+.pair-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+.pair-card .btn {
+    padding: 7px 14px; border-radius: 999px; border: 1px solid var(--border); background: none; color: var(--fg);
+    font: inherit; cursor: pointer;
+}
+.pair-card .btn:hover { background: var(--panel-2); }
+.pair-card .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pair-card .btn.primary { background: var(--fg); border-color: var(--fg); color: var(--bg); font-weight: 600; }
+.pair-card .btn.primary:hover { filter: brightness(.92); }
+.pair-card .btn:disabled { opacity: .6; cursor: default; }
+/* A labelled text field on a pairing screen: the label above, the input the card's width, a hint under it. */
+.pair-field { display: flex; flex-direction: column; gap: 4px; }
+/* The label over a pairing field, and the left column of the account's facts. */
+.pair-field-label { color: var(--fg-dim); font-size: .92em; }
+/* The text input itself (a device's name, the hub, a code), code-faced where what is typed is an address or a code. */
+.pair-input {
+    padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit;
+}
+.pair-input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: transparent; }
+/* Anything on a pairing screen set in the code face: a typed code or hub, and the hub address shown back. */
+.pair-input.mono, .pair-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* THE TWO THINGS A PERSON READS OFF ONE SCREEN AND ONTO ANOTHER: the pairing code (large, to type) and the key
+   fingerprint (to compare character by character). Both in groups of four, as `wmlbox pair` prints them, in the code
+   face with wide tracking so an 8 and a B, a 0 and a D, are told apart at a glance. */
+.pair-code, .pair-fp {
+    align-self: flex-start; justify-self: start; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em;
+    padding: 8px 14px; border-radius: 10px; background: var(--panel-2); color: var(--fg); user-select: all;
+}
+.pair-code { font-size: 1.9em; font-weight: 650; }
+/* A key fingerprint, the one thing a person compares between the two screens before anything is paired. */
+.pair-fp { font-size: 1.35em; }
+/* What a new device may do, chosen on the device pairing it: a checkbox per scope, its words beside it. */
+.pair-grant { display: flex; flex-direction: column; gap: 7px; margin: 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }
+.pair-grant legend { padding: 0 4px; }
+/* One scope's checkbox and its words in the grant editor. */
+.pair-check { display: flex; gap: 9px; align-items: flex-start; line-height: 1.45; cursor: pointer; }
+.pair-check input { margin-top: .25em; accent-color: var(--accent); }
+.pair-check b { font-weight: 600; }
+/* This device on its account: the hub and its fingerprint, label and value in two columns. */
+.pair-facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; align-items: center; }
+.pair-facts .pair-fp { font-size: 1.05em; padding: 4px 10px; }

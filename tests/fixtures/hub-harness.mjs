@@ -68,13 +68,13 @@ export async function startHub() {
     throw new Error(`the hub did not listen on ${port}: ${stderr}`);
 }
 
-/** One principal of an account: fresh keys, and the certificate the root issued it. */
-export async function device(root, role, scopes, label = "") {
+/** One principal of an account: fresh keys, and the certificate the root issued it (`extra`: mayPair, mayRevoke, …). */
+export async function device(root, role, scopes, label = "", extra = {}) {
     const identity = await generateIdentity();
     const agreement = await generateAgreementKey();
     const chain = [await issueCertificate(root, {
         subject: identity.publicKey, agreementKey: agreement.publicKey, role, scopes, label,
-        notBeforeMs: Date.now() - 3_600_000, notAfterMs: Date.now() + 3_600_000,
+        notBeforeMs: Date.now() - 3_600_000, notAfterMs: Date.now() + 3_600_000, ...extra,
     })];
     return { identity, agreement, chain, principal: await principalId(identity.publicKey) };
 }
@@ -83,7 +83,7 @@ export async function device(root, role, scopes, label = "") {
 export async function poll(what, fn, ms = 5000) {
     const until = Date.now() + ms;
     for (;;) {
-        const v = fn();
+        const v = await fn();
         if (v !== undefined && v !== null && v !== false) return v;
         if (Date.now() > until) assert.fail(`waiting for ${what}: it never happened`);
         await new Promise((r) => setTimeout(r, 25));

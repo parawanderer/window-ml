@@ -308,12 +308,21 @@ export function windowSamples<T extends { t: number }>(all: readonly T[], window
  *  snapped the strip back: the window could be narrowed but never stretched.
  *
  *  Following with a width is not a special case of a pinned range — it IS `resWindowS`, the same quantity
- *  Settings names — so a left-edge drag against the tail returns seconds, and the caller stores it. */
+ *  Settings names — so a left-edge drag against the tail returns seconds, and the caller stores it.
+ *
+ *  `follows` is false where the unzoomed view does not follow the clock (a scoped, finished session): then every
+ *  gesture pins, the tail included. */
 export function scrubIntent(
     extent: { from: number; to: number },
     next: { from: number; to: number },
     tailSlackMs: number,
+    follows = true,
 ): { live: true; windowS: number } | { live: false; window: { from: number; to: number } } {
+    // `follows`: does the view with NO zoom follow the clock? A panel scoped to a FINISHED session does not: its
+    // unzoomed view is that session's own stretch, usually near the start of the history. "Rejoin live" there cleared
+    // the zoom and threw the window back to that stretch, so scrolling to the end of the strip jumped to its start.
+    // Where nothing follows, reaching the tail is just a place the window was put, and it stays there.
+    if (!follows) return { live: false, window: next };
     // AT THE TAIL → follow, AT THE WIDTH ON SCREEN. One rule for every gesture, which is what makes it
     // predictable: whatever the window looks like when you let go against the right edge is what live then
     // means. Two separate bugs came from not having it. Rejoining live RESTORED whatever `resWindowS` was

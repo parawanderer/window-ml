@@ -170,3 +170,16 @@ test("the CURSOR tip is cleared when its trigger is removed, too", async () => {
         assert.equal(cursorTip.value, null);
     } finally { Object.assign(g, saved); }
 });
+
+test("the layer takes the text size of the surface that raised it, not the root's", () => {
+    // The chat page's root is the prose at 15px; the docked panel sets its own smaller size. A tip from inside the
+    // panel came out larger than the panel's own text.
+    const w = world(`<span class="tt" style="--fs: 11px">?<span class="tt-pop">from the panel</span></span>`
+        + `<span class="tt">?<span class="tt-pop">from the page</span></span>`);
+    const [panel, page] = w.document.querySelectorAll(".tt");
+    hover(w.document, panel);
+    assert.equal(w.layer().style.getPropertyValue("--fs"), "11px");
+    hover(w.document, page);
+    assert.equal(w.layer().style.getPropertyValue("--fs"), "", "a trigger with no size of its own leaves the layer's");
+    w.stop();
+});

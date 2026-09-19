@@ -71,6 +71,8 @@ export interface Opened {
     /** the nonce of the command this answers; null on a command */
     answers: Bytes | null;
     verified: Verified;
+    /** the sender's chain as it sealed it, leaf first: what a runtime checks its revocations against */
+    chain: Certificate[];
 }
 
 const text = new TextEncoder();
@@ -251,6 +253,7 @@ export class Receiver {
             body: bytes(body.body),
             answers: isResult ? bytes(body.answers) : null,
             verified,
+            chain: signed.chain,
         };
     }
 

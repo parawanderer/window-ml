@@ -556,3 +556,32 @@ test("attentionItems: a lapse this device fixed before is worded as a repeat, wi
     assert.match(again[0].detail, /allowed only until the browser restarted/);
     assert.equal(again[0].fix.label, "Reconnect", "the same one-click fix either way");
 });
+
+test("pairing words: codes and fingerprints in fours as wmlbox prints them, and each failure says what to do next", async () => {
+    const { groupFour, pairingProblem } = await import("../src/pairing/api.ts");
+    assert.equal(groupFour("7K3MQ9XD"), "7K3M Q9XD");
+    assert.equal(groupFour("3f9a0c21b7e4"), "3f9a 0c21 b7e4");
+    assert.equal(groupFour("7k3m-q9 xd"), "7k3m q9xd", "a typed code's own spacing is not kept");
+    assert.match(pairingProblem({ reason: "timed-out" }), /new code/);
+    assert.match(pairingProblem({ reason: "no-offer" }), /No device is waiting/);
+    assert.match(pairingProblem({ reason: "chain" }), /nothing was paired/);
+    // A refusal the library words itself (a delegate passing on what it does not hold) is said as it is.
+    assert.equal(pairingProblem(new Error("This device cannot pass on approve.")), "This device cannot pass on approve.");
+    assert.match(pairingProblem(undefined), /did not complete/);
+});
+
+test("fakePairing: an unknown code, a scope a delegate does not hold, and a join answered from the other side", async () => {
+    const { fakePairing } = await import("../src/pairing/fake-pairing.ts");
+    const f = fakePairing({ latencyMs: 0, grantable: ["view", "drive"], membership: null });
+    f.addOffer("ABCD 1234", { label: "Tablet", role: "client", fingerprint: "aaaabbbbcccc" });
+    await assert.rejects(f.lookupOffer("ZZZZ9999"), (e) => e.reason === "no-offer");
+    const found = await f.lookupOffer("abcd-1234");
+    assert.deepEqual(found.grant.scopes, ["view", "drive"]);
+    await assert.rejects(f.confirmOffer(found, { ...found.grant, scopes: ["view", "approve"] }), /cannot pass on approve/);
+    await f.confirmOffer(found, found.grant);
+    assert.equal(f.confirmed[0].label, "Tablet");
+    const h = await f.beginOffer({ hubUrl: "wss://hub.example", label: "Phone" });
+    f.answer();
+    assert.equal((await h.done).label, "Phone");
+    assert.equal((await f.load()).label, "Phone");
+});

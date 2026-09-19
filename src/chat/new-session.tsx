@@ -123,7 +123,7 @@ export function useTargetPick(store: ChatStore, rt: RuntimeInfo | undefined, ena
                     groupsGrant={rt ? extras?.fix?.(rt.id, "tab-groups") : null}
                     withheld={withheld}
                     sitesGrant={rt ? extras?.fix?.(rt.id, "site-access") : null}
-                    groupsHint="Group names and colours need the browser's permission: Settings → Extension → Appearance → Tab group names, in the browser the tabs are in."
+                    groupsHint="Group names and colours need a browser permission, given on the computer these tabs are on."
                     onChange={(v) => { if (v === "blank") setWhere("blank"); else { setWhere("tab"); setTabId(v); } }} />
                 {where === "blank" ? (
                     <input class="chat-pick-url" type="url" value={url} aria-label="Page to open" placeholder="https://… (optional)"
