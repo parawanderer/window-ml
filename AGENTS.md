@@ -683,7 +683,9 @@ thing. The parts:
   backends (never in CI): `server-tool-live.mjs`, `md-ladder-live.mjs`, `proto-stream-live.mjs`,
   `capture-frames.mjs` (records real event-stream fixtures). The chat page's web build has its own: `chat-shots.mjs`
   (phone + desktop screenshots against the fake host, `SERVE=1` to just serve it) and `window.__chatFake` to script it
-  (skill: `chat-web`). Narrated demos (watched, never asserting):
+  (skill: `chat-web`). Pairing with a REAL hub before the screens exist: `scripts/hub-root.mjs` (the account's
+  root device on the command line) and the extension's `dev-hub-pair.html` (offers this browser, shows the
+  connection's history for an idle test) (skill: `hub-pairing`). Narrated demos (watched, never asserting):
   `approval-demo`, `resource-demo` (`BOX=`), `line-map-demo`, `cursor-demo`, `panel-news-demo`, `whole-box-demo`,
   `stream-demo`, `bench-editor-demo`, `bench-completion-demo`, `table-demo` (fetching CSV/Parquet, then
   scanning, surveying and analysing them through pipe / readonly exec / full exec / python_exec; part two is the

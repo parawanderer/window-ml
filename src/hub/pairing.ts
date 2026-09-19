@@ -57,7 +57,9 @@ export class PairingError extends Error {
             /** the certificate was issued for another role */
             | "wrong-role"
             /** an offer that is not one: wrong key sizes, a label too long, an unknown role */
-            | "bad-offer",
+            | "bad-offer"
+            /** no offer waits under the code typed: mistyped, already answered, or its window closed */
+            | "no-offer",
         message: string,
     ) {
         super(message);

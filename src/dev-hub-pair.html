@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pair with a hub (dev)</title>
+<style>
+  :root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; }
+  body { max-width: 44rem; margin: 2rem auto; padding: 0 1rem; }
+  input { width: 100%; box-sizing: border-box; padding: .4rem; font: inherit; }
+  label { display: block; margin: .6rem 0; }
+  button { font: inherit; padding: .4rem .9rem; margin: .6rem .4rem 0 0; }
+  .code { font: 600 2rem/1.2 ui-monospace, monospace; letter-spacing: .1em; }
+  .fp { font: 1.2rem ui-monospace, monospace; }
+  pre { white-space: pre-wrap; font: 12px ui-monospace, monospace; }
+  .note { opacity: .75; }
+</style>
+</head>
+<body>
+<h1>Pair this browser with a hub</h1>
+<p class="note">A development page, until the pairing screens land. Offers this browser as a RUNTIME; confirm the code on the account's root device (<code>scripts/hub-root.mjs confirm</code>). Close this tab during an idle test: an open page talking to the worker keeps it alive.</p>
+<label>Hub URL <input id="url" placeholder="wss://host.tailnet.ts.net:8787"></label>
+<label>This browser's name <input id="label" value="Brave on the laptop"></label>
+<button id="offer">Offer this browser</button><button id="cancel" hidden>Cancel</button>
+<div id="offered" hidden>
+  <p>Code <span class="code" id="code"></span></p>
+  <p>Fingerprint <span class="fp" id="fp"></span> on <span id="hub"></span></p>
+</div>
+<p id="result"></p>
+<h2>Connection</h2>
+<button id="refresh">Refresh</button><button id="leave">Leave the account</button>
+<pre id="state"></pre>
+<script src="dev-hub-pair.js"></script>
+</body>
+</html>

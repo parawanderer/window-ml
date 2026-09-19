@@ -61,6 +61,8 @@ test("an account, a runtime paired to it, and a phone the runtime pairs as a del
         const laptop = await keyring();
         const pending = await F.beginOffer(laptop, { hubUrl: hub.url, role: Role.ROLE_RUNTIME, label: "Work laptop" });
         assert.match(pending.code, /^[0-9A-Z]{4} [0-9A-Z]{4}$/);
+        // A code with nothing under it is its own reason, so the screen can say "check it, or offer again".
+        await assert.rejects(F.lookupOffer(phoneClient, "ZZZZ 9999"), (e) => e.reason === "no-offer");
         const found = await F.lookupOffer(phoneClient, pending.code.toLowerCase());
         assert.equal(found.fingerprint, pending.fingerprint, "both screens show the same fingerprint");
         assert.equal(found.offer.label, "Work laptop");

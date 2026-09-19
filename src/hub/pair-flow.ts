@@ -12,7 +12,7 @@
 import { Certificate, CertificateBody } from "../proto/wmlhub/v1/identity.gen";
 import { createFrameReader } from "../protostream";
 import { Bytes, bytes } from "./hpke";
-import { HubClient } from "./client";
+import { HubClient, PairingRefused } from "./client";
 import { ChainError, Identity, MAX_CERTIFICATE_MS, NEVER_DELEGABLE, SCOPE, generateIdentity, issueCertificate } from "./keys";
 import { Keyring, Membership } from "./keyring";
 import {
@@ -88,12 +88,16 @@ export async function readHubName(url: string): Promise<string> {
  */
 export async function createAccount(
     keyring: Keyring,
-    opts: { hubUrl: string; label: string; invite?: Bytes; now?: () => number },
+    opts: {
+        hubUrl: string; label: string; invite?: Bytes; now?: () => number;
+        /** the root to use instead of a fresh non-extractable one: `scripts/hub-root.mjs` keeps its root in a file */
+        root?: Identity;
+    },
 ): Promise<Membership> {
     const now = opts.now ?? Date.now;
     const me = await keyring.keys();
     if (me.membership) throw new Error("this device already belongs to an account; leave it first");
-    const root = await generateIdentity();
+    const root = opts.root ?? await generateIdentity();
     const channelKey = crypto.getRandomValues(new Uint8Array(32));
     const t = now();
     // This device holds the root, so its own certificate says what it is (a client) and that it may pair; the root
@@ -171,7 +175,11 @@ export async function lookupOffer(client: HubClient, typed: string): Promise<Fou
     const code = parsePairingCode(typed);
     if (!code) throw new PairingError("bad-offer", "that is not a pairing code: eight letters and digits");
     const codeHash = await pairingCodeHash(code);
-    const offer = decodeOffer(await client.pairingOffered(codeHash));
+    const offered = await client.pairingOffered(codeHash).catch((e) => {
+        // The hub's only refusal of a fetch is "nothing waiting under that code"; a timeout or a dropped socket is not that.
+        throw e instanceof PairingRefused ? new PairingError("no-offer", "no pairing is waiting under that code: check it, or offer again") : e;
+    });
+    const offer = decodeOffer(offered);
     return { codeHash, offer, fingerprint: await pairingFingerprintHex(offer.identityKey, offer.agreementKey) };
 }
 
