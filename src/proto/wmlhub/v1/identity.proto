@@ -124,3 +124,37 @@ message PairedWith {
   // account's streams without it, and the hub never sees it.
   bytes channel_key = 3;
 }
+
+// ------------------------------ revocation (docs/design/revocation.md) ------------------------------
+// What an account has revoked, signed by the one principal allowed to sign it. A publisher verifies one for itself
+// and acts on it: rotate its stream key, and refuse to grant the new one to anything the list names. The hub is not
+// trusted with any of it; a hub that withholds a list delays it, and cannot forge or alter one.
+
+// The signed bytes and who signed them.
+message RevocationList {
+  // an encoded RevocationBody, verified exactly as transmitted
+  bytes body = 1;
+  // Ed25519 by the signer's leaf key over "wmlhub/revocation/v1" || 0x00 || body
+  bytes signature = 2;
+  // The signer's chain, leaf first, to the account root. Its leaf must carry `may_revoke`, which only the root can
+  // grant and nothing can renew but the root, so exactly one principal can sign a list that verifies. The chain must
+  // be valid when the list is checked, not merely when it was signed: a lapsed revoker signs nothing.
+  repeated Certificate chain = 3;
+}
+
+message RevocationBody {
+  // SHA-256 of the account root, so a list signed for one account is never applied to another.
+  bytes account = 1;
+  // Epoch milliseconds at signing. A holder refuses a version at or below the one it has, and one more than a minute
+  // ahead of its own clock. A timestamp rather than a counter because the signer is REPLACEABLE: the root re-places
+  // `may_revoke` when the device holding it is lost, and a new holder has no way to learn a counter's current value
+  // before its first list is accepted. A clock needs no coordination.
+  uint64 version = 2;
+  // Devices revoked entirely, by principal id (SHA-256 of the identity key). Everything the device is renewed into
+  // is revoked with it, and so is every chain that passes THROUGH it: a revoked delegate vouches for nothing, and the
+  // devices it paired are exactly the ones in doubt when it is the thing that was lost.
+  repeated bytes principals = 3;
+  // Single certificates revoked, by SHA-256 of the certificate body as transmitted. A renewal of one is revoked too,
+  // since it re-grants exactly the terms that were revoked; otherwise a renewer would simply keep it alive.
+  repeated bytes certificates = 4;
+}

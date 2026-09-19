@@ -9,8 +9,8 @@
 //
 // The hub is PINNED to a tag (`HUB_TAG`), and the binary is built from YOUR OWN clone of it:
 //
-//   git clone --branch v0.2.0 git@github.com:parawanderer/window-ml-hub.git ../window-ml-hub-v0.2.0
-//   cd ../window-ml-hub-v0.2.0 && cargo build --release -p wmlhub
+//   git clone --branch v0.4.0 git@github.com:parawanderer/window-ml-hub.git ../window-ml-hub-v0.4.0
+//   cd ../window-ml-hub-v0.4.0 && cargo build --release -p wmlhub -p wmlhub-connector
 //
 // or point WMLHUB_BIN at one. The default deliberately does NOT look in a plain `../window-ml-hub`: that is somebody's
 // WORKING TREE, on whatever branch they are on this hour, so a test here could pass or fail because of what they are

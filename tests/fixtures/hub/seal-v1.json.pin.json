@@ -1,8 +1,8 @@
 {
   "repo": "parawanderer/window-ml-hub",
-  "branch": "v0.2.0",
+  "branch": "v0.4.0",
   "path": "vectors/seal-v1.json",
-  "commit": "41d3fffc9e41442b28838a7e07b7f5077eb318c6",
-  "blob": "6ad280a1e3b6cbfaa320ce7ec9c253ea1f6f9bd3",
+  "commit": "ae396978913a979e0dc42176ee6ac3c16a53de6b",
+  "blob": "e18e0af325fd56cc23b506fb4b15acd62b595c90",
   "watch": "main"
 }

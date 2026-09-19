@@ -100,6 +100,12 @@ export class HubClient {
     private ended: HubEvent | null = null;
     /** events dropped since the consumer last heard about it */
     private dropped = 0;
+    /**
+     * The one pairing request in flight (`pairingOffered` / `pairingAnswer`), answered by the hub's next `Paired`, or
+     * by an `Error` with no `ref`: pairing frames carry none, while every error about an envelope does.
+     */
+    private pairing: { resolve: (paired: { offer: Bytes; answer: Bytes }) => void; reject: (e: Error) => void } | null = null;
+    private pairingChain: Promise<unknown> = Promise.resolve();
 
     private constructor(
         private readonly socket: WebSocket,
@@ -257,6 +263,18 @@ export class HubClient {
             this.push({ kind: "gap", stream: frame.gap.stream, dropped: frame.gap.dropped });
             return;
         }
+        if (frame.paired) {
+            const waiting = this.pairing;
+            this.pairing = null;
+            waiting?.resolve({ offer: bytes(frame.paired.offer), answer: bytes(frame.paired.answer) });
+            return;
+        }
+        if (frame.error && this.pairing && !frame.error.ref) {
+            const waiting = this.pairing;
+            this.pairing = null;
+            waiting.reject(new Error(`${frame.error.message} (code ${frame.error.code})`));
+            return;
+        }
         if (frame.error) {
             const e: HubErrorFrame = frame.error;
             this.push({ kind: "error", code: e.code, message: e.message, ref: e.ref });
@@ -371,6 +389,35 @@ export class HubClient {
     /** Open a stream key granted to this principal, wherever it arrived (a key channel, or direct). */
     openGrant(sender: Bytes, payload: Bytes): Promise<Grant> {
         return this.receiver.openGrant(sender, payload, this.now());
+    }
+
+    /** One pairing request at a time: the hub's answers carry no reference, so two in flight could not be told apart. */
+    private pairingRequest(frame: Frame): Promise<{ offer: Bytes; answer: Bytes }> {
+        const run = this.pairingChain.then(() => new Promise<{ offer: Bytes; answer: Bytes }>((resolve, reject) => {
+            const timer = setTimeout(() => { this.pairing = null; reject(new Error("the hub did not answer the pairing request")); }, WELCOME_TIMEOUT_MS);
+            this.pairing = {
+                resolve: (p) => { clearTimeout(timer); resolve(p); },
+                reject: (e) => { clearTimeout(timer); reject(e); },
+            };
+            try { this.send([frame]); } catch (e) { clearTimeout(timer); this.pairing = null; reject(e as Error); }
+        }));
+        this.pairingChain = run.catch(() => {});
+        return run;
+    }
+
+    /**
+     * The offer waiting under a pairing code's hash, so the person can be shown its fingerprint (`decodeOffer`, then
+     * `pairingFingerprint`). Rejects when the hub holds no such slot.
+     */
+    async pairingOffered(codeHash: Bytes): Promise<Bytes> {
+        const { offer } = await this.pairingRequest({ pairFetch: { codeHash } });
+        if (!offer.length) throw new Error("the hub holds no offer under that code");
+        return offer;
+    }
+
+    /** Leave the answer for a pairing (`sealPairingAnswer`), once the person has confirmed. Only the first is taken. */
+    async pairingAnswer(codeHash: Bytes, answer: Bytes): Promise<void> {
+        await this.pairingRequest({ pairAnswer: { codeHash, answer } });
     }
 
     /** Who this client signs as. */

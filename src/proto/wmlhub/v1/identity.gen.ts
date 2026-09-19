@@ -145,6 +145,43 @@ export interface PairedWith {
   channelKey: Uint8Array;
 }
 
+/** The signed bytes and who signed them. */
+export interface RevocationList {
+  /** an encoded RevocationBody, verified exactly as transmitted */
+  body: Uint8Array;
+  /** Ed25519 by the signer's leaf key over "wmlhub/revocation/v1" || 0x00 || body */
+  signature: Uint8Array;
+  /**
+   * The signer's chain, leaf first, to the account root. Its leaf must carry `may_revoke`, which only the root can
+   * grant and nothing can renew but the root, so exactly one principal can sign a list that verifies. The chain must
+   * be valid when the list is checked, not merely when it was signed: a lapsed revoker signs nothing.
+   */
+  chain: Certificate[];
+}
+
+export interface RevocationBody {
+  /** SHA-256 of the account root, so a list signed for one account is never applied to another. */
+  account: Uint8Array;
+  /**
+   * Epoch milliseconds at signing. A holder refuses a version at or below the one it has, and one more than a minute
+   * ahead of its own clock. A timestamp rather than a counter because the signer is REPLACEABLE: the root re-places
+   * `may_revoke` when the device holding it is lost, and a new holder has no way to learn a counter's current value
+   * before its first list is accepted. A clock needs no coordination.
+   */
+  version: number;
+  /**
+   * Devices revoked entirely, by principal id (SHA-256 of the identity key). Everything the device is renewed into
+   * is revoked with it, and so is every chain that passes THROUGH it: a revoked delegate vouches for nothing, and the
+   * devices it paired are exactly the ones in doubt when it is the thing that was lost.
+   */
+  principals: Uint8Array[];
+  /**
+   * Single certificates revoked, by SHA-256 of the certificate body as transmitted. A renewal of one is revoked too,
+   * since it re-grants exactly the terms that were revoked; otherwise a renewer would simply keep it alive.
+   */
+  certificates: Uint8Array[];
+}
+
 function createBaseCertificate(): Certificate {
   return { body: new Uint8Array(0), signature: new Uint8Array(0) };
 }
@@ -713,6 +750,176 @@ export const PairedWith: MessageFns<PairedWith> = {
     message.chain = object.chain?.map((e) => Certificate.fromPartial(e)) || [];
     message.accountRoot = object.accountRoot ?? new Uint8Array(0);
     message.channelKey = object.channelKey ?? new Uint8Array(0);
+    return message;
+  },
+};
+
+function createBaseRevocationList(): RevocationList {
+  return { body: new Uint8Array(0), signature: new Uint8Array(0), chain: [] };
+}
+
+export const RevocationList: MessageFns<RevocationList> = {
+  encode(message: RevocationList, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.body.length !== 0) {
+      writer.uint32(10).bytes(message.body);
+    }
+    if (message.signature.length !== 0) {
+      writer.uint32(18).bytes(message.signature);
+    }
+    for (const v of message.chain) {
+      Certificate.encode(v!, writer.uint32(26).fork()).join();
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): RevocationList {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseRevocationList();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.body = reader.bytes();
+            continue;
+          }
+          case 2: {
+            if (tag !== 18) {
+              break;
+            }
+
+            message.signature = reader.bytes();
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.chain.push(Certificate.decode(reader, reader.uint32()));
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  create<I extends Exact<DeepPartial<RevocationList>, I>>(base?: I): RevocationList {
+    return RevocationList.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<RevocationList>, I>>(object: I): RevocationList {
+    const message = createBaseRevocationList();
+    message.body = object.body ?? new Uint8Array(0);
+    message.signature = object.signature ?? new Uint8Array(0);
+    message.chain = object.chain?.map((e) => Certificate.fromPartial(e)) || [];
+    return message;
+  },
+};
+
+function createBaseRevocationBody(): RevocationBody {
+  return { account: new Uint8Array(0), version: 0, principals: [], certificates: [] };
+}
+
+export const RevocationBody: MessageFns<RevocationBody> = {
+  encode(message: RevocationBody, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+    if (message.account.length !== 0) {
+      writer.uint32(10).bytes(message.account);
+    }
+    if (message.version !== 0) {
+      writer.uint32(16).uint64(message.version);
+    }
+    for (const v of message.principals) {
+      writer.uint32(26).bytes(v!);
+    }
+    for (const v of message.certificates) {
+      writer.uint32(34).bytes(v!);
+    }
+    return writer;
+  },
+
+  decode(input: BinaryReader | Uint8Array, length?: number): RevocationBody {
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
+    const previousRecursionDepth = (reader as any).__tsProtoDecodeDepth ?? 0;
+    if (previousRecursionDepth >= 100) {
+      throw new globalThis.Error("protobuf decode recursion limit exceeded");
+    }
+    (reader as any).__tsProtoDecodeDepth = previousRecursionDepth + 1;
+    try {
+      const end = length === undefined ? reader.len : reader.pos + length;
+      const message = createBaseRevocationBody();
+      while (reader.pos < end) {
+        const tag = reader.uint32();
+        switch (tag >>> 3) {
+          case 1: {
+            if (tag !== 10) {
+              break;
+            }
+
+            message.account = reader.bytes();
+            continue;
+          }
+          case 2: {
+            if (tag !== 16) {
+              break;
+            }
+
+            message.version = longToNumber(reader.uint64());
+            continue;
+          }
+          case 3: {
+            if (tag !== 26) {
+              break;
+            }
+
+            message.principals.push(reader.bytes());
+            continue;
+          }
+          case 4: {
+            if (tag !== 34) {
+              break;
+            }
+
+            message.certificates.push(reader.bytes());
+            continue;
+          }
+        }
+        if ((tag & 7) === 4 || tag === 0) {
+          break;
+        }
+        reader.skip(tag & 7);
+      }
+      return message;
+    } finally {
+      (reader as any).__tsProtoDecodeDepth = previousRecursionDepth;
+    }
+  },
+
+  create<I extends Exact<DeepPartial<RevocationBody>, I>>(base?: I): RevocationBody {
+    return RevocationBody.fromPartial(base ?? ({} as any));
+  },
+  fromPartial<I extends Exact<DeepPartial<RevocationBody>, I>>(object: I): RevocationBody {
+    const message = createBaseRevocationBody();
+    message.account = object.account ?? new Uint8Array(0);
+    message.version = object.version ?? 0;
+    message.principals = object.principals?.map((e) => e) || [];
+    message.certificates = object.certificates?.map((e) => e) || [];
     return message;
   },
 };
