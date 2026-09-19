@@ -445,3 +445,22 @@ test("the runtime titles a session it keeps, once, never one it does not, and a 
     assert.equal(page.rows().get("abcd0001").title, "Lamp hunt 2", "cleared: generated again");
     assert.equal(page.rows().get("abcd0001").renamed, undefined);
 });
+
+test("models.list answers what the whitelist allows, with kinds and the default marked", T, async () => {
+    const bg = loadBackground({
+        config: { ...config, chatUrl: "http://host/api/chat/completions", model: "qwen3:14b", modelFilter: "^qwen" },
+        onFetch: (call) => {
+            if (call.url === "http://host/api/models") return jsonResponse({ data: [{ id: "qwen3:14b" }, { id: "gpt-4o" }, { id: "qwen2.5vl:7b" }] });
+            if (call.url.endsWith("/api/show")) return jsonResponse({ capabilities: call.body?.model === "qwen2.5vl:7b" ? ["completion", "vision"] : ["completion", "tools"] });
+            return jsonResponse({});
+        },
+    });
+    const page = openPage(bg);
+    page.port.send({ type: "cmd", id: 1, command: { type: "models.list", runtime: "local" } });
+    let reply;
+    for (let i = 0; i < 100 && !reply; i++) { await new Promise((r) => setTimeout(r, 10)); reply = page.port.messages.find((m) => m.type === "result" && m.id === 1); }
+    assert.deepEqual(reply.result, { ok: true, data: { models: [
+        { id: "qwen3:14b", kinds: ["completion", "tools"], default: true },
+        { id: "qwen2.5vl:7b", kinds: ["completion", "vision"] },
+    ] } }, "the cloud model the whitelist excludes never reaches the contract either");
+});

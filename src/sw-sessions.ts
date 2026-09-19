@@ -11,11 +11,11 @@ import { SESSION_CONTRACT_VERSION, type Command, type CommandResult, type Comman
 import { SessionIndex, type IngestSource } from "./session-index";
 import { SESSIONS_PORT, SessionServer } from "./session-server";
 import { STORE_MAX_SESSIONS, SessionStore, indexedDbBackend, type SessionHistory } from "./session-store";
-import { DEFAULT_CONFIG } from "./contract-config";
+import { DEFAULT_CONFIG, modelFilterAllows } from "./contract-config";
 import type { NeutralMessage } from "./contract-chat";
 import { cleanTitle, titleMessages } from "./session-title";
 import { bgRuns, trackRun, untrackRun } from "./sw-runs";
-import { fetchLLM } from "./sw-llm";
+import { fetchLLM, getConfig, listAvailableModels, modelCapabilitiesBatch } from "./sw-llm";
 import { recordHousekeeping } from "./sw-housekeeping";
 import { measureEvents, summarizeStore, type StoreBytes } from "./session-storage-stats";
 
@@ -140,6 +140,14 @@ export function configureSessionCommands(run: RunDeps): void {
         keepSession,
         pinSession,
         renameSession,
+        listModels: async () => {
+            const [{ ids }, cfg] = await Promise.all([listAvailableModels(), getConfig()]);
+            const allowed = ids.filter((m) => modelFilterAllows(m, cfg.modelFilter));
+            // Kinds cost an /api/show per model, cached for the worker's life: what lets a picker leave out an
+            // embedding model someone could not chat with.
+            const { caps } = await modelCapabilitiesBatch(cfg, allowed).catch(() => ({ caps: {} as Record<string, string[] | null> }));
+            return allowed.map((id) => ({ id, ...(caps[id] ? { kinds: caps[id]! } : {}), ...(id === cfg.model ? { default: true as const } : {}) }));
+        },
         startChat: (opts) => startBackgroundChat(opts),
         startAgent: async (tabId, opts) => {
             const reqId = Math.random().toString(36).slice(2, 12);
