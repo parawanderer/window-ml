@@ -1059,8 +1059,9 @@ button.chat-page-go:hover { color: var(--fg); }
 .tp-warn-text { min-width: 0; }
 /* The pill when the chosen tab has closed: said in the warning colour, since starting waits for another pick. */
 .tp-gone { color: var(--warn); }
-/* The tab picker's foot: a sentence under the list, e.g. how to get group names and colours. */
-.tp-foot { flex: 0 1 auto; min-height: 0; overflow: hidden; margin: 4px 6px 0; padding: 8px 4px 2px; border-top: 1px solid var(--border); color: var(--fg-faint); font-size: 12px; line-height: 1.4; }
+/* The tab picker's foot: a sentence under the list, e.g. how to get group names and colours. It never shrinks: a foot
+   that did was cut off mid-word in a short window, and the LIST is what scrolls, so the list gives up the room. */
+.tp-foot { flex: 0 0 auto; margin: 4px 6px 0; padding: 8px 4px 2px; border-top: 1px solid var(--border); color: var(--fg-faint); font-size: 12px; line-height: 1.4; }
 /* The full address in the host's cursor tip: broken anywhere, since a URL has no spaces to wrap at. */
 .tp-url { word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
 /* The cursor tip over the page's own popovers (the tab picker's list sits at 60). */
