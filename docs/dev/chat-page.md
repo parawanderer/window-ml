@@ -489,9 +489,17 @@ under a **Pinned** group that spans runtimes, and ends in an "Older sessions" ro
 page. A session that is RUNNING or WAITING is recent however long ago it started: the list never files away
 something that wants you.
 
-**A pin is this device's** (`pinned`, `view.pinned`), like the other view prefs. It does NOT protect a session from
-the runtime's index cap (`maxSessions`, 300, oldest finished dropped first), so a pinned key whose session is gone draws
-nothing and stays stored, in case the session comes back with its runtime. Protecting pins needs the runtime's help.
+**A pin is held twice** (`setPin`, row-menu.tsx). This device's copy (`pinned`, `view.pinned`) orders the Pinned
+section at once; the runtime's (`session.pin`, `SessionSummary.pinned`) is the one that keeps the session from
+retention and eviction, and it reaches every device as an upsert, so a pin made on the phone shows here too
+(`isPinned` is either). A runtime past its limit answers `conflict`, said as a notice, and the device's pin is taken
+back rather than left claiming a pin the runtime refused. A runtime with no `session.pin` keeps the device's pin
+alone.
+
+**Earlier events** (`EarlierEdge`, chat-app.tsx) draw the store's `earlier` state at the top of a transcript that does
+not reach its start: an older page is fetched as the edge scrolls into view, with the reading position held from the
+bottom so the text does not jump; a failed page says the runtime's reason there with "Try again"; and TRUNCATED (the
+events are gone) is its own sentence, never drawn like "there is more".
 
 **A row's `⋮`** (Pin / Delete…) arrives with the pointer in the corner the timestamp used, shows on keyboard focus, and
 is always shown on a touch screen. Row and `⋮` are SIBLINGS in `.chat-row-wrap`, because a button cannot hold a button.

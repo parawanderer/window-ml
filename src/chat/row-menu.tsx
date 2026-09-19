@@ -13,7 +13,7 @@ import { truncate } from "../sidebar/format";
 import type { ChatStore } from "./chat-store";
 import { mayCommand } from "./grants";
 import { MenuItem } from "./menu";
-import { dropPin, pinned, togglePin } from "./view-mode";
+import { addPin, dropPin, pinned } from "./view-mode";
 
 /** Which row's menu is open, and where: ONE for the whole list, so opening a second closes the first. Local state per
  *  row let every `⋮` think it was the only one, and a click on another row's `⋮` counted as a click inside a menu. */
@@ -27,16 +27,39 @@ export function mayDelete(rt: RuntimeInfo): boolean {
     return rt.online && mayCommand(rt, "session.delete");
 }
 
+/**
+ * Is this session pinned? This device's pin, or the runtime's: a pin made on the phone is a pin here too, and a pin
+ * the runtime holds is what keeps the session from being expired or evicted (`session.pin`).
+ */
+export function isPinned(s: SessionSummary): boolean {
+    return pinned.value.has(`${s.id.runtime}:${s.id.hash}`) || !!s.pinned;
+}
+
+/**
+ * Pin or unpin: this device's copy (which orders the Pinned section) at once, and the runtime's where it can take
+ * one, which is the pin that keeps the session. The runtime's answer is not assumed: the row's `pinned` changes when
+ * its upsert arrives. A runtime past its pin limit refuses with `conflict` (said as a notice by the store), and the
+ * device's pin is taken back so the list does not claim a pin the runtime refused. A runtime with no `session.pin`
+ * keeps the device's pin alone, as before it existed.
+ */
+async function setPin(store: ChatStore, s: SessionSummary, rt: RuntimeInfo, on: boolean): Promise<void> {
+    const key = `${s.id.runtime}:${s.id.hash}`;
+    if (on) addPin(key); else dropPin(key);
+    if (!rt.online || !mayCommand(rt, "session.pin")) return;
+    const r = await store.send({ type: "session.pin", session: s.id, pinned: on });
+    if (!r.ok && on && r.error.code !== "unsupported") dropPin(key);
+}
+
 /** A row's `⋮` and the small menu it opens. The menu is placed FIXED from the button's own rect, because the list
  *  scrolls and clips, and a menu on the last row would otherwise open into nothing. */
-export function RowMenu({ s, rt, title }: { s: SessionSummary; rt: RuntimeInfo; title: string }) {
+export function RowMenu({ store, s, rt, title }: { store: ChatStore; s: SessionSummary; rt: RuntimeInfo; title: string }) {
     const key = `${s.id.runtime}:${s.id.hash}`;
     const m = openMenu.value;
     const at = m?.key === key ? m : null;
     const setAt = (v: { top: number; left: number; up: boolean } | null) => { openMenu.value = v ? { key, ...v } : (openMenu.value?.key === key ? null : openMenu.value); };
     const btn = useRef<HTMLButtonElement>(null);
     const menu = useRef<HTMLDivElement>(null);
-    const isPinned = pinned.value.has(key);
+    const pinnedNow = isPinned(s);
     useEffect(() => {
         if (!at) return;
         const close = () => setAt(null);
@@ -70,7 +93,7 @@ export function RowMenu({ s, rt, title }: { s: SessionSummary; rt: RuntimeInfo; 
             </button>
             {at ? (
                 <div ref={menu} class={`chat-menu chat-row-menu${at.up ? " up" : ""}`} role="menu" style={`top:${at.top}px;left:${at.left}px`}>
-                    <MenuItem icon={<IconPin />} label={isPinned ? "Unpin" : "Pin to the top"} onPick={() => act(() => togglePin(key))} />
+                    <MenuItem icon={<IconPin />} label={pinnedNow ? "Unpin" : "Pin to the top"} onPick={() => act(() => void setPin(store, s, rt, !pinnedNow))} />
                     {mayDelete(rt) ? <MenuItem icon={<IconTrash />} label="Delete…" onPick={() => act(() => { confirming.value = { s, rt, title }; })} /> : null}
                 </div>
             ) : null}

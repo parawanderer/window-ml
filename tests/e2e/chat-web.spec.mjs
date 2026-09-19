@@ -235,6 +235,43 @@ test("desktop: with nothing open the page is a start box; an agent run picks a t
     await page.close();
 });
 
+test("a transcript that arrives from a short ring pages back to its start as you reach the top, and says when it cannot", async () => {
+    const RUN = "laptop:5e6f7a80";
+    // The whole history, for comparison.
+    const full = await open(DESKTOP, `#s=${encodeURIComponent(RUN)}`);
+    await expect(full.page.locator(".answer-rendered").first()).toBeVisible();
+    // The demo's clock starts at page load, so two pages a second apart differ in their times and nothing else.
+    const text = (p) => p.locator(".chat-transcript").innerText().then((t) => t.replace(/\d{1,2}:\d{2}:\d{2}( [AP]M)?/g, "T"));
+    const whole = await text(full.page);
+    await full.page.close();
+
+    // The same session through a ring that holds only its last few events, as a hub's does.
+    const { page, errors } = await open(DESKTOP);
+    await page.evaluate(() => { globalThis.__chatFake.ringLimit = 3; });
+    await row(page, RUN).click();
+    // The edge at the top is on screen in a short transcript, so the earlier pages come in on their own, until the
+    // transcript is the whole one and there is no edge left.
+    await expect.poll(async () => (await commands(page)).filter((c) => c.type === "session.backfill").length).toBeGreaterThan(0);
+    await expect(page.locator(".chat-earlier")).toHaveCount(0);
+    await expect.poll(() => text(page)).toBe(whole);
+    expect(errors).toEqual([]);
+    await page.close();
+
+    // A page the runtime cannot serve says why where the page would have been, and offers it again.
+    const failing = await open(DESKTOP);
+    await failing.page.evaluate(() => {
+        globalThis.__chatFake.ringLimit = 3;
+        globalThis.__chatFake.handlers["session.backfill"] = () => ({ ok: false, error: { code: "unavailable", message: "the box is asleep" } });
+    });
+    await row(failing.page, RUN).click();
+    await expect(failing.page.locator(".chat-earlier.err")).toContainText("the box is asleep");
+    await expect(failing.page.locator(".chat-notice")).toHaveCount(0);
+    await failing.page.evaluate(() => { delete globalThis.__chatFake.handlers["session.backfill"]; });
+    await failing.page.getByRole("button", { name: "Try again" }).click();
+    await expect(failing.page.locator(".chat-earlier")).toHaveCount(0);
+    await failing.page.close();
+});
+
 test("an answer that cites its own steps renders the tool's output, not a retyping of it", async () => {
     const { page, errors } = await open(DESKTOP, "#s=laptop%3A5e6f7a80");
     const answer = page.locator(".answer-rendered").first();
@@ -385,8 +422,18 @@ test("desktop: a row's menu pins a session to the top, and deletes one only afte
     await page.getByRole("menuitem", { name: "Pin to the top" }).click();
     await expect(page.locator(".chat-pinned").locator(`.chat-row[data-session="${CHAT}"]`)).toBeVisible();
     await expect(page.locator(".chat-group:not(.chat-pinned)").locator(`.chat-row[data-session="${CHAT}"]`)).toHaveCount(0);
+    // …and the RUNTIME is told, because its pin is the one that keeps the session from being expired or evicted.
+    await expect.poll(async () => (await commands(page)).find((c) => c.type === "session.pin")).toMatchObject({ pinned: true, session: { hash: CHAT.split(":")[1] } });
     await page.reload();
     await expect(page.locator(".chat-pinned").locator(`.chat-row[data-session="${CHAT}"]`)).toBeVisible();
+
+    // A runtime past its pin limit refuses, says so, and the list does not keep a pin the runtime would not.
+    await page.evaluate(() => { globalThis.__chatFake.handlers["session.pin"] = () => ({ ok: false, error: { code: "conflict", message: "at most 100 sessions can be pinned; unpin one first" } }); });
+    await menuOf(CAPPED).click();
+    await page.getByRole("menuitem", { name: "Pin to the top" }).click();
+    await expect(page.locator(".chat-notice.error")).toContainText("at most 100 sessions can be pinned");
+    await expect(page.locator(".chat-pinned").locator(`.chat-row[data-session="${CAPPED}"]`)).toHaveCount(0);
+    await page.evaluate(() => { delete globalThis.__chatFake.handlers["session.pin"]; });
 
     // A runtime this device may only watch offers no delete.
     await menuOf(WATCHED).click();

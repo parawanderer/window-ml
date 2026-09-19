@@ -844,3 +844,12 @@ button.chat-page-go:hover { color: var(--fg); }
 .chat.narrow .chat-start-hint { display: none; }
 /* On a phone the way back sits over the top-left corner; the pill stays centred. */
 .chat-home-back { position: absolute; top: 10px; left: 10px; z-index: 2; }
+
+/* The top of a transcript that does not reach its start (`EarlierEdge`): a quiet line that loads earlier events as it
+   scrolls into view, or says why it cannot. Never styled like `.chat-truncated`, which says they are gone. */
+.chat-earlier { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 4px 0 18px; color: var(--fg-faint); font-size: .88em; }
+.chat-earlier.err { color: var(--fg-dim); }
+.chat-earlier-retry {
+    border: none; border-radius: 999px; padding: 5px 12px; background: var(--panel); color: var(--fg-dim); font: inherit; cursor: pointer;
+}
+.chat-earlier-retry:hover { color: var(--fg); }

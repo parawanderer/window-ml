@@ -174,6 +174,15 @@ export function togglePin(key: string): void {
     store?.set(PINNED_KEY, [...next]);
 }
 
+/** Pin a session on this device (a no-op when it already is). */
+export function addPin(key: string): void {
+    if (pinned.value.has(key)) return;
+    const next = new Set(pinned.value);
+    next.add(key);
+    pinned.value = next;
+    store?.set(PINNED_KEY, [...next]);
+}
+
 /** Forget a pin whose session was deleted HERE: the person asked for it gone, so nothing should hold its key. */
 export function dropPin(key: string): void {
     if (!pinned.value.has(key)) return;

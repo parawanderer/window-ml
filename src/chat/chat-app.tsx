@@ -6,7 +6,7 @@
 // Rendered by capability and grant, never by "it is local": a runtime this device may only watch gets no composer, an
 // offline one says when it was last seen, and one speaking an unknown contract version is listed but not opened.
 import { signal } from "@preact/signals";
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import type { RuntimeInfo, SessionId, SessionKey, SessionStatus, SessionSummary } from "../session-host";
 import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
@@ -23,7 +23,7 @@ import { mayCommand, speaksOurContract } from "./grants";
 import { ResumeSession, StartMenu, resumableHere, startableOn, type StartKind } from "./new-session";
 import { StartPage } from "./start-page";
 import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, listOpen, pane, pinned, setPane, toggleRuntime } from "./view-mode";
-import { DeleteConfirm, RowMenu } from "./row-menu";
+import { DeleteConfirm, RowMenu, isPinned } from "./row-menu";
 import { GearMenu, Rail, mainView, openSearch } from "./nav";
 import { SearchPage } from "./search-page";
 import { SettingsPage } from "./settings-page";
@@ -202,7 +202,7 @@ function tabFocus(store: ChatStore, rt: RuntimeInfo | undefined, summary: Sessio
 
 /** One session in the list, from its index row (the transcript is fetched only when it is opened). The row and its
  *  `⋮` are siblings in a wrapper rather than one inside the other, because a button cannot hold a button. */
-function IndexRow({ s, rt, active, moved, showRuntime }: { s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean; showRuntime?: boolean }) {
+function IndexRow({ store, s, rt, active, moved, showRuntime }: { store: ChatStore; s: SessionSummary; rt: RuntimeInfo; active: boolean; moved: boolean; showRuntime?: boolean }) {
     const key = `${s.id.runtime}:${s.id.hash}`;
     const title = s.title || s.task || "(untitled)";
     const offset = rt.clockOffsetMs ?? 0;
@@ -223,7 +223,7 @@ function IndexRow({ s, rt, active, moved, showRuntime }: { s: SessionSummary; rt
                 {moved ? <span class="chat-moved" {...cursorTipOn("Something happened here while you were reading something else")} aria-label="new activity" /> : null}
                 <Stamp ts={s.lastTs - offset} snap="right" />
             </button>
-            <RowMenu s={s} rt={rt} title={title} />
+            <RowMenu store={store} s={s} rt={rt} title={title} />
         </div>
     );
 }
@@ -253,11 +253,12 @@ function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { st
     const cutoff = Date.now() - RECENT_DAYS * 86_400_000;
     const live = (s: SessionSummary) => s.status === "running" || s.status === "waiting";
     const isRecent = (s: SessionSummary) => live(s) || localTs(s, rtOf.get(s.id.runtime)) >= cutoff;
-    const pinnedRows = sessions.filter((s) => pins.has(keyOf(s)) && rtOf.has(s.id.runtime));
-    const olderCount = sessions.filter((s) => !pins.has(keyOf(s)) && !isRecent(s) && rtOf.has(s.id.runtime)).length;
+    void pins;   // read, so the list re-renders when this device's pins change (`isPinned` reads them too)
+    const pinnedRows = sessions.filter((s) => isPinned(s) && rtOf.has(s.id.runtime));
+    const olderCount = sessions.filter((s) => !isPinned(s) && !isRecent(s) && rtOf.has(s.id.runtime)).length;
     const row = (s: SessionSummary, showRuntime = false) => {
         const key = keyOf(s);
-        return <IndexRow key={key} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} moved={moved.has(key)} showRuntime={showRuntime} />;
+        return <IndexRow key={key} store={store} s={s} rt={rtOf.get(s.id.runtime)!} active={activeKey === key} moved={moved.has(key)} showRuntime={showRuntime} />;
     };
     return (
         <aside class="chat-list" aria-label="Sessions">
@@ -278,7 +279,7 @@ function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { st
                     </section>
                 ) : null}
                 {runtimes.map((rt) => {
-                    const mine = sessions.filter((s) => s.id.runtime === rt.id && !pins.has(keyOf(s)) && isRecent(s));
+                    const mine = sessions.filter((s) => s.id.runtime === rt.id && !isPinned(s) && isRecent(s));
                     const shut = folded.has(rt.id);
                     return (
                         <section class={`chat-group${shut ? " folded" : ""}`} key={rt.id}>
@@ -300,6 +301,59 @@ function SessionList({ store, activeKey, narrow, onStart, gear, gearWide }: { st
             {narrow ? null : <div class="chat-list-foot">{gearWide}</div>}
         </aside>
     );
+}
+
+/**
+ * The top of a transcript that does not reach its session's start: where earlier events come from.
+ *
+ * Three different sentences, never drawn alike. MORE: an older page exists on the runtime, and it is fetched as you
+ * scroll up to this edge (the search page's sentinel), with the reading position held so the text you were on does
+ * not jump when a page lands above it. TRUNCATED: older events no longer exist anywhere, and what is shown is what
+ * this device kept. A FAILED page says the runtime's reason and offers the fetch again, where the page would have
+ * been rather than as a notice. The store does the paging (`loadEarlier`); this only asks for it and says what is so.
+ */
+function EarlierEdge({ store, sessionKey, scroller, rtName, truncated }: {
+    store: ChatStore; sessionKey: SessionKey; scroller: { current: HTMLDivElement | null }; rtName?: string; truncated: boolean;
+}) {
+    const at = store.earlier.value.get(sessionKey);
+    const sentinel = useRef<HTMLDivElement>(null);
+    // Where the reader was when a page was asked for: its distance from the BOTTOM of the content, which is what a
+    // page landing above leaves unchanged.
+    const anchor = useRef<number | null>(null);
+    const more = !!at?.more && !at.error;
+    const load = () => {
+        const el = scroller.current;
+        if (el) anchor.current = el.scrollHeight - el.scrollTop;
+        void store.loadEarlier(sessionKey);
+    };
+    useEffect(() => {
+        const el = sentinel.current, root = scroller.current;
+        if (!el || !root || !more || at?.loading || typeof IntersectionObserver !== "function") return;
+        const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) load(); }, { root, rootMargin: "200px 0px 0px 0px" });
+        io.observe(el);
+        return () => io.disconnect();
+    }, [sessionKey, more, at?.loading, at?.from]);
+    // A page landed: put the reader back where they were, measured from the bottom.
+    useLayoutEffect(() => {
+        const el = scroller.current;
+        if (!el || anchor.current == null || at?.loading) return;
+        el.scrollTop = el.scrollHeight - anchor.current;
+        anchor.current = null;
+    }, [at?.from, at?.loading]);
+    if (at?.error) {
+        return (
+            <div class="chat-earlier err" role="status">
+                <span>Earlier events could not be loaded: {at.error}</span>
+                <button class="chat-earlier-retry" onClick={load}>Try again</button>
+            </div>
+        );
+    }
+    if (at?.loading) return <div class="chat-earlier" role="status">Loading earlier events…</div>;
+    if (more) return <div class="chat-earlier" ref={sentinel}><button class="chat-earlier-retry" onClick={load}>Earlier events</button></div>;
+    if (truncated || at?.truncated) {
+        return <div class="chat-truncated">Older events no longer exist on {rtName ?? "the runtime"}. What is shown here is what this device kept.</div>;
+    }
+    return null;
 }
 
 /** One session: its header, the transcript and, where this device may drive it, the composer. */
@@ -389,7 +443,7 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
             <div class="view chat-transcript" ref={scroller} onScroll={onScroll}>
                 <div ref={content}>
                     {bare ? <Lede title={title} rt={rt} summary={summary} id={id} store={store} sessionKey={sessionKey} /> : null}
-                    {truncated ? <div class="chat-truncated">Older events no longer exist on {rt?.name ?? "the runtime"}. What is shown here is what this device kept.</div> : null}
+                    <EarlierEdge store={store} sessionKey={sessionKey} scroller={scroller} rtName={rt?.name} truncated={truncated} />
                     {s ? <DetailView hash={sessionKey} />
                         : !summary && !rt ? <div class="empty">Session not found.</div>
                             : <div class="empty">Loading…</div>}
