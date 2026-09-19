@@ -579,4 +579,6 @@ test("HUB_RUNTIME: refused to a web page, and an unpaired browser says so to its
     assert.match(refused.error, /extension pages/);
     const { data } = await bg.send({ type: "HUB_RUNTIME", payload: {} }, PAGE);
     assert.deepEqual(data, { state: "unpaired" });
+    assert.deepEqual((await bg.send({ type: "HUB_RUNTIME", payload: { action: "devices" } }, PAGE)).data, [], "no allowlist while unpaired");
+    assert.equal((await bg.send({ type: "HUB_RUNTIME", payload: { action: "revoke", principal: "ab".repeat(32) } }, PAGE)).data, "unpaired");
 });

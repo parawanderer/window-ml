@@ -122,6 +122,16 @@ export class Keyring {
         return this.put({}, andRoot ? ["membership", "root"] : ["membership"]);
     }
 
+    /** A record kept beside the keys under a name of the caller's (a runtime's device list), or null. */
+    record<T>(name: string): Promise<T | null> {
+        return this.get<T>(`record:${name}`);
+    }
+
+    /** Replace a record kept beside the keys. */
+    putRecord(name: string, value: unknown): Promise<void> {
+        return this.put({ [`record:${name}`]: value });
+    }
+
     close(): void {
         this.db.close();
     }
