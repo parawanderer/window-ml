@@ -271,3 +271,13 @@ export const IconDock = ({ side }: { side: "top" | "right" | "bottom" | "left" }
         </svg>
     );
 };
+
+/** Unload every model from the box's memory: a chip with the eject glyph in it, because this takes what is loaded
+ *  OUT of the card (an arrow up over a bar read as "upload to it", which is the opposite). */
+export const IconEvictAll = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="5" y="5" width="14" height="14" rx="2" />
+        <path d="M2.5 9.5h2.5M2.5 14.5h2.5M19 9.5h2.5M19 14.5h2.5M9.5 2.5V5M14.5 2.5V5M9.5 19v2.5M14.5 19v2.5" />
+        <path d="M12 8.6l3 3.4H9z" fill="currentColor" stroke-width="1.2" /><path d="M9 15h6" />
+    </svg>
+);

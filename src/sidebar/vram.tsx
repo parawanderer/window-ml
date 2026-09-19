@@ -16,7 +16,7 @@ import { normModel, seenContext } from "./model";
 // The ONE predicate for "this runs somewhere else": affirmatively not a model of this server. Shared with the
 // composer rather than re-derived here, so the panel and the picker cannot disagree about what is local.
 import { isCloudModel } from "./card-state";
-import { IconWarn, IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
+import { IconWarn, IconVram, IconEye, IconEyeOff, IconBench, IconGear, IconEvictAll } from "./icons";
 import { Disclosure, TipText } from "./ui-kit";
 import { useTipPlacement } from "./use-tip";
 import { fmtAge, hhmmss } from "./timestamps";
@@ -1743,7 +1743,13 @@ export function VramPanel() {
                         </select>
                     </>
                 ) : null}
-                {rows.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
+                {/* An icon with its name in the tip, like the bench's controls: the word cost more of the row than
+                    anything else in it. Amber on hover, because it empties the whole box. */}
+                {rows.length ? (
+                    <button class="tt hbtn vram-free" aria-label="Free VRAM" onClick={() => evict()}>
+                        <IconEvictAll /><span class="tt-pop wrap" role="tooltip">Free VRAM: unload every model the runtime holds. The next call loads its model again.</span>
+                    </button>
+                ) : null}
                 {/* Last in the row: the picker is what you reach for, the editor is the rarer follow-up. */}
                 {capacity.value && latestSample ? (
                     /* The real gear icon, not a ⚙ text glyph: the glyph rendered thin and font-sized, so it
