@@ -213,6 +213,12 @@ export async function openPairingAnswer(
 
 /** An offer the hub is holding: wait for the answer somebody leaves in it, or give up. */
 export interface PairingSlot {
+    /**
+     * The name the hub gave in its challenge, which a later `Hello` must name back. Taken on the hub's word, and that
+     * is enough: the name only stops a hello signed for one hub being replayed at another, and a hub lying about its
+     * own name refuses the hellos it provoked.
+     */
+    hubName: string;
     /** The answer, as left in the slot (open it with `openPairingAnswer`). Rejects on timeout, a refusal or a close. */
     answer(timeoutMs?: number): Promise<Bytes>;
     close(): void;
@@ -255,6 +261,7 @@ export async function offerPairing(url: string, codeHash: Bytes, offer: Bytes): 
         }
     };
     const quiet = () => new PairingError("hub", "the hub did not answer the offer");
+    let first: Frame = {} as Frame;
 
     try {
         if (socket.readyState !== WebSocket.OPEN) {
@@ -265,7 +272,7 @@ export async function offerPairing(url: string, codeHash: Bytes, offer: Bytes): 
             });
         }
         // The hub's challenge comes first even here, and a pairing socket has nothing to answer it with.
-        const first = await nextFrame(OFFER_TIMEOUT_MS, quiet);
+        first = await nextFrame(OFFER_TIMEOUT_MS, quiet);
         if (first.error) throw new PairingError("hub", `${first.error.message} (code ${first.error.code})`);
         if (!first.challenge) throw new PairingError("hub", "the hub's first frame must be a challenge");
         socket.send(encodeFrames([{ pairOffer: { codeHash, offer } }]));
@@ -277,7 +284,9 @@ export async function offerPairing(url: string, codeHash: Bytes, offer: Bytes): 
         throw e;
     }
 
+    const hubName = first.challenge!.hub;
     return {
+        hubName,
         async answer(timeoutMs = PAIRING_WINDOW_MS) {
             // One deadline for the whole wait: the hub's empty "still holding" frames do not restart it.
             const until = Date.now() + timeoutMs;
