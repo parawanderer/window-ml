@@ -3,6 +3,7 @@
 // this runs in the extension-origin iframe, not the page DOM — so edits sync live
 // with the popup. Text fields persist on change (blur) to avoid chatty writes; the
 // signal updates on input for a responsive UI + the utility-field enable gating.
+import { StorageBody } from "./storage-section";
 import { signal } from "@preact/signals";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { ComponentChildren } from "preact";
@@ -1162,6 +1163,12 @@ export function Settings() {
                         onChange={(e: any) => setField("agentStartPage", e.target.value.trim())} />
                 </label>
                 <div class="set-hint">Where a run started from the chat page “on a blank tab” begins. The browser's own new-tab page cannot be used: the extension is not allowed to run there, so an agent would open on a page it cannot see.</div>
+                </Section>
+
+                <Section id="storage" title="Storage">
+                <StorageBody
+                    load={() => new Promise((res, rej) => chrome.runtime.sendMessage({ type: "STORAGE_HISTORY" }, (r: any) => (r?.error ? rej(new Error(r.error)) : res(r?.data ?? null))))}
+                    measure={() => new Promise((res, rej) => chrome.runtime.sendMessage({ type: "SESSION_STORAGE_STATS" }, (r: any) => (r?.error ? rej(new Error(r.error)) : res(r?.data ?? null))))} />
                 </Section>
 
                 <Section id="agenthud" title="Agent HUD">

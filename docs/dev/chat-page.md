@@ -187,6 +187,13 @@ model is set and `autoTitles` is on. The title lands on the row, so every device
 already reads `summary.title`. Ephemeral sessions are not titled (the sidebar still titles what it shows, per device).
 The worker reads these settings at startup whether or not it has a store.
 
+**Storage over time** (the Settings "Storage" section, `storage-section.tsx`; `storage.stats` on the contract): each
+saved session's row keeps a running breakdown (`split`, from `measureEvents` on each written batch, sharing the one
+serialization the budget already does), so a snapshot SUMS rows and reads no event. The worker appends a snapshot to
+`ml_storage_history` (chrome.storage.local) at startup and on a six-hourly alarm, at most one a day, capped at a year,
+with the top 20 tools and no session hashes. A session saved before breakdowns existed counts as `unmeasured` until it
+ages out; "Measure exactly" is the full read (`SESSION_STORAGE_STATS`).
+
 **The budget** (`sessionStoreBudgetMB`, default 256): the store's size cap, with the count cap (`STORE_MAX_SESSIONS`)
 beside it; 0 removes both, leaving retention and pins. The store reads it at every eviction (`limits`), and a lowered
 value applies at once. Until the worker has READ the setting there is no cap at all, not the default: someone who set

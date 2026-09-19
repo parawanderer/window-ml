@@ -278,3 +278,22 @@ test("the store expires on a sweep and on a write, and records each drop with it
     await store.flush();
     assert.deepEqual(records.slice(2).map((r) => [r.hash, r.reason]).sort(), [["aaaa0003", "retention"], ["aaaa0004", "retention"]]);
 });
+
+test("a session keeps a running breakdown from its first event, and one saved before that stays unmeasured", T, async () => {
+    const be = backend();
+    const store = new SessionStore(be, { flushMs: 5 });
+    store.put(summary("aaaa0001"), ev("aaaa0001", 0));
+    store.put(summary("aaaa0001"), ev("aaaa0001", 1));
+    await store.flush();
+    // A row written by an older build: events on disk, no breakdown.
+    await be.append({ hash: "aaaa0002", summary: summary("aaaa0002"), lastTs: 1, createdTs: 1, bytes: 777, count: 3 }, 0, []);
+    const again = new SessionStore(be, { flushMs: 5 });
+    again.put(summary("aaaa0002"), ev("aaaa0002", 3));
+    await again.flush();
+    const snap = await again.snapshot();
+    const row1 = (await be.rows()).find((r) => r.hash === "aaaa0001");
+    assert.equal(row1.split.total, row1.bytes, "measured from the start: the breakdown is all of it");
+    assert.equal((await be.rows()).find((r) => r.hash === "aaaa0002").split, undefined, "not measured from its first event");
+    assert.ok(snap.unmeasured >= 777);
+    assert.deepEqual((await again.largest(1)).map((r) => r.hash), [row1.bytes > 777 + JSON.stringify(ev("aaaa0002", 3)).length ? "aaaa0001" : "aaaa0002"]);
+});
