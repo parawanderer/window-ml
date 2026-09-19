@@ -78,3 +78,19 @@ test("a deleted session ends the stream, and frames that are not events are igno
     a.frame({ type: "gone", session: S });
     assert.deepEqual(shape(), ["reset", 1, "backfilled", "gone"]);
 });
+
+test("a short ring whose events carry positions is not a loss: backfilled says where paging back starts", () => {
+    // The hub kept events 40..42 of a session whose first 40 the runtime still has. Truncated would tell the client
+    // they are gone; `from` tells it to ask the runtime.
+    const { a, out } = adapter();
+    for (const [c, pos] of [[41, 40], [42, 41], [43, 42]]) a.frame({ ...ev(c), pos });
+    a.ringDone(true);
+    assert.deepEqual(out.at(-1), { type: "backfilled", session: S, epoch: "w1.0", cursor: 43, truncated: false, from: 40 });
+
+    // Unstamped frames (an older runtime) keep today's answer: truncated, and no position to page from.
+    const old = adapter();
+    old.a.frame(ev(41));
+    old.a.ringDone(true);
+    assert.equal(old.out.at(-1).truncated, true);
+    assert.equal("from" in old.out.at(-1), false);
+});

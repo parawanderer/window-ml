@@ -137,7 +137,8 @@ test("opening a subscription: everything with a reset, only the tail from a posi
 
     const fresh = ix.backfill(h);
     assert.deepEqual(kinds(fresh), ["reset", "agent", "agent-step", "backfilled"]);
-    assert.deepEqual(fresh.at(-1), { type: "backfilled", session: { runtime: "local", hash: h }, epoch, cursor: c2, truncated: false });
+    // `from: 0`: nothing was lost, so the stream starts at the session's first event and there is nothing to page to.
+    assert.deepEqual(fresh.at(-1), { type: "backfilled", session: { runtime: "local", hash: h }, epoch, cursor: c2, truncated: false, from: 0 });
     assert.ok(fresh.every((m) => m.type !== "event" || (m.v === 1 && m.session.hash === h && m.epoch === epoch)));
 
     const c3 = ix.ingest(result(h), bg()).cursor;

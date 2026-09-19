@@ -225,6 +225,13 @@ export interface SessionEventEnvelope {
     epoch: string;
     /** strictly increasing within one epoch, not necessarily contiguous */
     cursor: number;
+    /**
+     * This event's position in the session's history, counted the way `session.backfill` counts it (0 is its first
+     * event). A cursor is a position in a STREAM and says nothing about how much of the session came before it; this
+     * does. Absent when the runtime cannot say. A transport that replays a short ring reads it to tell a client
+     * where paging back starts.
+     */
+    pos?: number;
     event: MlDebugEvent;
 }
 
@@ -247,6 +254,15 @@ export type SessionStreamMessage =
         cursor: number;
         /** older events than the first one sent no longer exist on the runtime */
         truncated: boolean;
+        /**
+         * Where the contiguous run of events this subscription ended with begins in the session's history: a client
+         * asks `session.backfill { before: from }` for what precedes it. 0 when the stream starts at the session's
+         * first event. Events at lower positions may have been sent as well: a runtime keeps a session's START in a
+         * short ring, because without it a reducer has nothing to hang the rest on, so a client drops by `pos` what a
+         * page repeats. Absent when the runtime cannot say, or on a resume (the client keeps what it had), and then a
+         * client offers no paging from this subscription.
+         */
+        from?: number;
     }
     /** the session was deleted; the subscription ends */
     | { type: "gone"; session: SessionId };
