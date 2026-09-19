@@ -19,7 +19,7 @@ import { applyCodePrefs, initThemeStyle } from "./sidebar/prefs";
 import { installTooltipLayer } from "./sidebar/tooltip-layer";
 import { installViewPrefs } from "./chat/view-mode";
 import { installPageTheme } from "./chat/page-theme";
-import { pickFolder, regrantFolder } from "./archive-folder";
+import { pickFolder, regrantFolder, regrantedBefore } from "./archive-folder";
 import { VRAM_POLL_MS } from "./sidebar/panel-state";
 import { BACKEND_HEALTH_MS, VramPanel, connectResourceStream, fetchModels, pollBackendHealth, pollPs } from "./sidebar/vram";
 import { PythonBench } from "./sidebar/vram-bench";
@@ -103,6 +103,7 @@ const extras: ChatExtras = {
     bench: (id) => (localRuntimes.has(id) ? <PythonBench /> : null),
     settings: (id) => (localRuntimes.has(id) ? <SettingsPane /> : null),
     housekeeping: (id) => (localRuntimes.has(id) ? <HousekeepingView /> : null),
+    fixedBefore: (id, code) => localRuntimes.has(id) && code === "archive-folder-lapsed" && regrantedBefore(),
     fix: (id, code) => (localRuntimes.has(id) && FIXES[code] ? FIXES[code] : null),
 };
 

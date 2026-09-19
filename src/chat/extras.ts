@@ -29,4 +29,10 @@ export interface ChatExtras {
      * prompt or a folder picker. Resolves whether it worked. Null where this device cannot fix it.
      */
     fix?(runtime: RuntimeId, code: string): (() => Promise<boolean>) | null;
+    /**
+     * Has this device fixed this code on this runtime before, so its coming back is a REPEAT? Only the device that
+     * fixed it can know: the browser says `granted` for "allow this time" and "allow on every visit" alike, and a folder
+     * that lapses again was allowed only once. Worded as a repeat where the code has words for one (attention.ts).
+     */
+    fixedBefore?(runtime: RuntimeId, code: string): boolean;
 }

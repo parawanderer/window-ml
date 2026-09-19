@@ -87,11 +87,24 @@ export async function pickFolder(): Promise<string | null> {
     }
 }
 
+/** Where a page remembers that the folder has been reconnected once. Page-side (extension pages share the origin),
+ *  because only a page can re-grant, and the question is only ever asked by one. */
+const REGRANTED_KEY = "wml-archive-regranted";
+
 /** Re-grant a lapsed permission (a page, inside a click). True when it is granted now. */
 export async function regrantFolder(): Promise<boolean> {
     const handle = await loadFolder();
     if (!handle) return false;
-    return (await (handle as Permissioned).requestPermission({ mode: "readwrite" })) === "granted";
+    const ok = (await (handle as Permissioned).requestPermission({ mode: "readwrite" })) === "granted";
+    // Remembered, because the browser never says which answer was given: "Allow this time" and "Allow on every visit"
+    // both come back `granted`. A folder that lapses AGAIN after this was only allowed once, and the next ask says so.
+    if (ok) try { localStorage.setItem(REGRANTED_KEY, String(Date.now())); } catch { /* storage unavailable */ }
+    return ok;
+}
+
+/** Has this browser's folder been reconnected before? If it lapses again, it was allowed only once last time. */
+export function regrantedBefore(): boolean {
+    try { return !!localStorage.getItem(REGRANTED_KEY); } catch { return false; }
 }
 
 /** The folder, when it is writable from here; null otherwise. */

@@ -34,7 +34,7 @@ export interface AttentionItem {
 }
 
 /** Each known code: its level, its words, and how it is fixed on the runtime's own device. */
-const KNOWN: Record<AttentionCode, { level: AttentionLevel; title: string; detail: string; fix?: AttentionFix }> = {
+const KNOWN: Record<AttentionCode, { level: AttentionLevel; title: string; detail: string; fix?: AttentionFix; again?: { title: string; detail: string } }> = {
     "no-model": {
         level: "blocks", title: "No model is chosen",
         detail: "Nothing can run until the extension has a model to send to.",
@@ -52,8 +52,12 @@ const KNOWN: Record<AttentionCode, { level: AttentionLevel; title: string; detai
     },
     "archive-folder-lapsed": {
         level: "limits", title: "The archive folder needs reconnecting",
-        detail: "It lost the browser's permission, so old sessions are no longer copied into it. They are still kept and searchable in the browser.",
+        detail: "It lost the browser's permission, so old sessions are no longer copied into it. They are still kept and searchable in the browser. When the browser asks, choose Always allow (Allow on every visit), or this comes back after every restart.",
         fix: { kind: "act", label: "Reconnect" },
+        again: {
+            title: "The archive folder lapsed again",
+            detail: "Last time it was allowed only until the browser restarted. Reconnect, and this time choose Always allow (Allow on every visit) in the browser's prompt, so it stays connected.",
+        },
     },
     "archive-folder-unsupported": {
         level: "limits", title: "This browser cannot keep an archive folder",
@@ -97,6 +101,8 @@ export function attentionItems(
     local: ReadonlyMap<string, readonly string[]>,
     canFix: (runtime: RuntimeInfo, fix: AttentionFix, code: string) => boolean,
     hidden: ReadonlySet<string> = new Set(),
+    /** has this code come back after this device fixed it once? Then it is worded as a repeat (the codes with `again`) */
+    repeat: (runtime: RuntimeInfo, code: string) => boolean = () => false,
 ): AttentionItem[] {
     const out: AttentionItem[] = [];
     for (const rt of runtimes) {
@@ -106,10 +112,11 @@ export function attentionItems(
             const key = `${rt.id}:${code}`;
             const level = k?.level ?? "limits";
             if (level === "suggests" && hidden.has(key)) continue;
+            const words = k?.again && repeat(rt, code) ? k.again : k;
             out.push({
                 key, runtime: rt, code, level,
-                title: k?.title ?? "Something needs attention",
-                detail: k?.detail ?? `${rt.name} reported "${code.slice(0, 40)}", which this page does not know. Its own Settings will say more.`,
+                title: words?.title ?? "Something needs attention",
+                detail: words?.detail ?? `${rt.name} reported "${code.slice(0, 40)}", which this page does not know. Its own Settings will say more.`,
                 ...(k?.fix && canFix(rt, k.fix, code) ? { fix: k.fix } : {}),
             });
         }
