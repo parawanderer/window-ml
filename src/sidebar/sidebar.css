@@ -257,7 +257,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip, .tt-layer {
     --tip-bg: var(--panel);
     --tip-line: color-mix(in srgb, var(--fg) 20%, var(--tip-bg));
-    --fg-faint: var(--fg-dim);
+    /* One step under the figures' `--fg-dim`, not level with it: a tip has three tones (the name, the figure, what it is
+       OF), and faint set equal to dim flattened the last two. Dim pulled toward the fill keeps the step and still reads
+       at 4.5:1 on it, in both themes. */
+    --fg-faint: color-mix(in srgb, var(--fg-dim) 85%, var(--tip-bg));
 }
 /* The model's own name and figure lead; its badges (context window, TTL, embed) and its cost each take a line
    of their own, so a long name can't push the number that matters off the edge. */
