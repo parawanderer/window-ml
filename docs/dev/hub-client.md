@@ -150,7 +150,10 @@ reading it (`tests/hub-runtime.test.mjs`); `sw-hub.ts` plugs it into the worker.
   `HUB_RUNTIME { action: "paired" }`; the worker reads the keyring again.
 - **History.** Every start, state reached and reason for going offline is appended to `chrome.storage.local`
   (`ml_hub_log`, last 200) and read by `HUB_RUNTIME { action: "log" }`. It outlives the worker, which is the point:
-  whether an idle worker stayed connected is read afterwards, not watched, since watching it keeps it alive.
+  whether an idle worker stayed connected is read afterwards, not watched, since watching it keeps it alive. A
+  stopped worker logs nothing on its way out, so each `start` says when a worker was last alive (`ml_hub_alive`,
+  stamped once a minute while connected; a timer does not keep a worker alive), and an alarm arriving within 5 s of
+  the module running logs `woken by the keepalive alarm`.
 - **Until the screens exist**, `dev-hub-pair.html` offers this browser and `scripts/hub-root.mjs` is the root device
   that confirms it (skill: `hub-pairing`).
 
