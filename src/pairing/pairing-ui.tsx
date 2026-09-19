@@ -7,7 +7,7 @@
 // button that pairs is the answer to "do these match?", never a generic OK.
 
 import { useEffect, useRef, useState } from "preact/hooks";
-import { groupFour, pairingProblem, roleName, SCOPES, type FoundOffer, type Grant, type Membership, type OfferHandle, type PairingApi } from "./api";
+import { groupFour, pairingProblem, roleName, SCOPES, type FoundOffer, type Grant, type HubConnectionView, type Membership, type OfferHandle, type PairingApi } from "./api";
 
 /** A fingerprint as both screens draw it: four-character groups in the code face, large enough to compare. */
 export function Fingerprint({ value }: { value: string }) {
@@ -96,7 +96,7 @@ export function JoinAccount({ api, onJoined, onCancel }: { api: PairingApi; onJo
             <h3 class="pair-h">Join an account</h3>
             <p class="pair-p">This device gets a code to type on one that is already in the account, and you compare a fingerprint on both.</p>
             <Field label="Call this device" value={label} onInput={setLabel} placeholder={api.defaultLabel} />
-            <Field label="Hub" value={hubUrl} onInput={setHubUrl} mono />
+            <Field label="Hub" value={hubUrl} onInput={setHubUrl} placeholder="wss://hub.example" mono />
             {problem ? <p class="pair-problem" role="alert">{problem}</p> : null}
             <div class="pair-actions">
                 {onCancel ? <button class="btn" onClick={onCancel}>Back</button> : null}
@@ -129,7 +129,7 @@ export function CreateAccount({ api, onCreated, onCancel }: { api: PairingApi; o
             <h3 class="pair-h">Create an account</h3>
             <p class="pair-p">For your first device. It holds the account's root key and pairs every other device, so keep it somewhere you trust.</p>
             <Field label="Call this device" value={label} onInput={setLabel} placeholder={api.defaultLabel} />
-            <Field label="Hub" value={hubUrl} onInput={setHubUrl} mono />
+            <Field label="Hub" value={hubUrl} onInput={setHubUrl} placeholder="wss://hub.example" mono />
             <Field label="Invite code" hint="Only if the hub asks for one." value={invite} onInput={setInvite} mono />
             {problem ? <p class="pair-problem" role="alert">{problem}</p> : null}
             <div class="pair-actions">
@@ -253,9 +253,52 @@ export function PairDevice({ api, onDone }: { api: PairingApi; onDone?: () => vo
     );
 }
 
+/** Where the connection stands, in words, re-asked every few seconds while shown. */
+function ConnectionLine({ api }: { api: PairingApi }) {
+    const [c, setC] = useState<HubConnectionView | null>(null);
+    useEffect(() => {
+        if (!api.connection) return;
+        let on = true;
+        const ask = () => api.connection!().then((v) => { if (on) setC(v); }, () => {});
+        void ask();
+        const t = setInterval(ask, 3000);
+        return () => { on = false; clearInterval(t); };
+    }, [api]);
+    if (!c) return null;
+    const text = c.state === "online" ? `Connected${c.devices ? `, ${c.devices} device${c.devices === 1 ? "" : "s"} here now` : ", no other device here now"}`
+        : c.state === "connecting" ? "Connecting…"
+            : c.state === "offline" ? `Offline: ${c.reason}. Trying again in ${Math.max(1, Math.round(c.retryInMs / 1000))} s.`
+                : c.state === "stopped" ? "Stopped" : "Not connected";
+    return (
+        <>
+            <span class="pair-field-label">Connection</span>
+            <span class={`pair-conn ${c.state}`} role="status"><i class="pair-conn-dot" aria-hidden="true" />{text}</span>
+        </>
+    );
+}
+
+/** Leaving the account, behind a second click that says what it costs. */
+function LeaveAccount({ api, onLeft }: { api: PairingApi; onLeft: () => void }) {
+    const [asking, setAsking] = useState(false);
+    const [busy, setBusy] = useState(false);
+    if (!api.leave) return null;
+    if (!asking) return <button class="btn" onClick={() => setAsking(true)}>Leave this account…</button>;
+    const go = async () => { setBusy(true); try { await api.leave!(); onLeft(); } finally { setBusy(false); } };
+    return (
+        <div class="pair-leave" role="group" aria-label="Leave this account">
+            <p class="pair-p">Your devices stop reaching this browser, and it stops reaching them. Joining again needs a new code, confirmed on the account's root device.</p>
+            <div class="pair-actions">
+                <button class="btn" onClick={() => setAsking(false)}>Stay</button>
+                <button class="btn primary" disabled={busy} onClick={go}>{busy ? "Leaving…" : "Leave"}</button>
+            </div>
+        </div>
+    );
+}
+
 /**
- * THE ACCOUNT, as one panel: joining or creating one while this device has none, and then what it is on the account,
- * with pairing a device where it may. What a surface mounts; the three screens above are its steps.
+ * THE ACCOUNT, as one panel: joining (or, where this device may hold a root, creating) one while it has none, and then
+ * what it is on the account — its connection, pairing a device where it may, and leaving. What a surface mounts; the
+ * screens above are its steps.
  */
 export function AccountPanel({ api }: { api: PairingApi }) {
     const [m, setM] = useState<Membership | null | undefined>(undefined);
@@ -269,13 +312,16 @@ export function AccountPanel({ api }: { api: PairingApi }) {
     if (m === undefined) return <p class="pair-hint" role="status">Reading this device's keys…</p>;
     if (!m) {
         if (step === "join") return <JoinAccount api={api} onJoined={joined} onCancel={() => setStep(null)} />;
-        if (step === "create") return <CreateAccount api={api} onCreated={joined} onCancel={() => setStep(null)} />;
+        if (step === "create" && api.canCreate !== false) return <CreateAccount api={api} onCreated={joined} onCancel={() => setStep(null)} />;
         return (
             <section class="pair-card" aria-label="Account">
                 <h3 class="pair-h">This device is in no account</h3>
                 <p class="pair-p">An account is how your devices reach each other through a hub: a phone driving this browser, this browser watching a box.</p>
+                {api.canCreate === false ? (
+                    <p class="pair-p">This browser joins an account; it never holds one. Create it on the device you will pair others from, then join from here.</p>
+                ) : null}
                 <div class="pair-actions">
-                    <button class="btn" onClick={() => setStep("create")}>Create an account</button>
+                    {api.canCreate !== false ? <button class="btn" onClick={() => setStep("create")}>Create an account</button> : null}
                     <button class="btn primary" onClick={() => setStep("join")}>Join an account</button>
                 </div>
             </section>
@@ -287,11 +333,14 @@ export function AccountPanel({ api }: { api: PairingApi }) {
             <h3 class="pair-h">“{m.label}”, {roleName(m.role)}{m.root ? ", holding the account's root" : ""}</h3>
             <div class="pair-facts">
                 <span class="pair-field-label">Hub</span><code class="pair-mono">{m.hubUrl}</code>
+                <ConnectionLine api={api} />
                 <span class="pair-field-label">Fingerprint</span><Fingerprint value={m.fingerprint} />
             </div>
-            {m.mayPair ? (
-                <div class="pair-actions"><button class="btn primary" onClick={() => setStep("pair")}>Pair a device</button></div>
-            ) : <p class="pair-hint">This device cannot pair others. Pair new devices on the one that holds the account's root.</p>}
+            {m.mayPair ? null : <p class="pair-hint">Pair new devices on the one that holds the account's root.</p>}
+            <div class="pair-actions">
+                <LeaveAccount api={api} onLeft={() => setM(null)} />
+                {m.mayPair ? <button class="btn primary" onClick={() => setStep("pair")}>Pair a device</button> : null}
+            </div>
         </section>
     );
 }

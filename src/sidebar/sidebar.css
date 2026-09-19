@@ -3360,3 +3360,11 @@ html[data-lane-focus="answer"] .msg.asst { opacity: 1; }
 /* This device on its account: the hub and its fingerprint, label and value in two columns. */
 .pair-facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; align-items: center; }
 .pair-facts .pair-fp { font-size: 1.05em; padding: 4px 10px; }
+/* This device's live connection to the hub, in the account's facts: a dot in the state's colour, then the words. */
+.pair-conn { display: inline-flex; align-items: center; gap: 7px; color: var(--fg); }
+/* The connection's dot: green online, amber while connecting or retrying, faint when stopped. */
+.pair-conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-faint); flex: 0 0 auto; }
+.pair-conn.online .pair-conn-dot { background: var(--ok); }
+.pair-conn.connecting .pair-conn-dot, .pair-conn.offline .pair-conn-dot { background: var(--warn); }
+/* Leaving the account, asked a second time with what it costs: a quiet box under the facts. */
+.pair-leave { display: flex; flex-direction: column; gap: 8px; flex: 1 1 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; }

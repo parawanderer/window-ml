@@ -57,8 +57,25 @@ export interface FoundOffer {
     grantable: string[] | null;
 }
 
+/** Where this device's own connection to the hub stands, for a surface that keeps one (the extension, as a runtime). */
+export type HubConnectionView =
+    | { state: "unpaired" }
+    | { state: "connecting"; hubName?: string }
+    | { state: "online"; hubName?: string; devices: number }
+    | { state: "offline"; hubName?: string; reason: string; retryInMs: number }
+    | { state: "stopped"; hubName?: string };
+
 /** The pairing calls a surface supplies. Every call may reject; `.reason` (see `pairingProblem`) says why. */
 export interface PairingApi {
+    /**
+     * May this device CREATE an account (and so hold its root)? False for a runtime: the root lives on the device people
+     * pair others from, and no runtime holds it (window-ml-hub end-to-end-crypto decision 4). Absent means yes.
+     */
+    readonly canCreate?: boolean;
+    /** this device's connection to the hub, where it keeps one; absent where the surface does not */
+    connection?(): Promise<HubConnectionView>;
+    /** leave the account: forget the membership (never a root) and stop connecting. Absent where it cannot */
+    leave?(): Promise<void>;
     /** the role this device takes when it joins: a browser runtime, or a client (a phone, a web page) */
     readonly joinsAs: PairRole;
     /** what to call this device if the person does not say ("This browser", "Pixel 8") */

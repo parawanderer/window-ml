@@ -902,6 +902,6 @@ test("joining an account: the code and this device's fingerprint, then the accou
     await page.evaluate(() => globalThis.__pairFake.answer());
     await expect(page.locator(".pair-h")).toHaveText("“Kitchen tablet”, a device");
     await expect(page.getByRole("button", { name: "Pair a device" })).toHaveCount(0);
-    await expect(page.locator(".pair-card")).toContainText("cannot pair others");
+    await expect(page.locator(".pair-card")).toContainText("Pair new devices on the one that holds the account's root");
     expect(errors).toEqual([]);
 });
