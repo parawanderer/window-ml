@@ -12,7 +12,7 @@ import { parseSessionKey } from "../session-host";
 import { DetailView } from "../sidebar/session-detail";
 import { Composer } from "../sidebar/composer";
 import { AgentBadge } from "../sidebar/reply";
-import { IconBack, IconBench, IconCompose, IconCamera, IconChevron, IconClose, IconHistory, IconMore, IconPin, IconSave, IconSearch, IconVram } from "../sidebar/icons";
+import { IconBack, IconBench, IconBrain, IconCompose, IconCopy, IconCamera, IconChevron, IconClose, IconHistory, IconMore, IconPin, IconSave, IconSearch, IconVram } from "../sidebar/icons";
 import { services } from "../sidebar/services";
 import { ContextMenu, CursorTipLayer, Dot, Hash, Stamp, cursorTipOn } from "../sidebar/ui-kit";
 import { benchOpen, openBench, rev, sessionMap, view, type Status } from "../sidebar/store";
@@ -23,7 +23,8 @@ import { mayCommand, speaksOurContract } from "./grants";
 import { ResumeSession, StartMenu, resumableHere, startableOn, type StartKind } from "./new-session";
 import { START_GRACE_MS, StartPage, useHeldTrue } from "./start-page";
 import { AttentionButton, AttentionPage, useAttention } from "./attention-page";
-import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, panelSize, listOpen, pane, pinned, setPane, toggleRuntime } from "./view-mode";
+import { ListToggle, ViewToggle, calm, codeSize, foldedRuntimes, panelSize, listOpen, pane, pinned, setCalm, setPane, toggleRuntime } from "./view-mode";
+import { MenuItem } from "./menu";
 import { DeleteConfirm, RenameDialog, RowMenu, isPinned } from "./row-menu";
 import { GearMenu, Rail, mainView, openSearch } from "./nav";
 import { SearchPage } from "./search-page";
@@ -73,7 +74,9 @@ function useHashRoute(): void {
             const key = r.session && parseSessionKey(r.session) ? r.session : null;
             const v = view.value;
             if (key) { if (v.name !== "detail" || v.hash !== key) view.value = { name: "detail", hash: key }; }
-            else if (!r.main) { pushedEntry = false; if (v.name !== "list") view.value = { name: "list" }; }
+            // The list, or SEARCH: a session opened from search sits over it on a phone, so an address that names search
+            // and no session (back from that session, or a link) closes the session to show search itself.
+            else if (!r.main || r.main === "search") { if (!r.main) pushedEntry = false; if (v.name !== "list") view.value = { name: "list" }; }
             if (r.tab) settingsTab.value = r.tab;
             if (mainView.value !== (r.main ?? null)) mainView.value = r.main ?? null;
         };
@@ -155,7 +158,7 @@ function PageChip({ page, onShow }: { page: NonNullable<SessionSummary["page"]>;
     // WHERE THIS DEVICE CAN ACT ON IT, the chip is the way to the tab. Where it cannot — a runtime on somebody
     // else's machine — it stays what it was: the name of the document, and nothing that pretends to reach it.
     return onShow
-        ? <button class="chat-page chat-page-go" {...cursorTipOn(tip)} onClick={onShow}>{hostOf(page.url)}</button>
+        ? <button class="chat-page chat-page-go" data-inline-target {...cursorTipOn(tip)} onClick={onShow}>{hostOf(page.url)}</button>
         : <span class="chat-page" {...cursorTipOn(tip)}>{hostOf(page.url)}</span>;
 }
 
@@ -169,22 +172,64 @@ function PageChip({ page, onShow }: { page: NonNullable<SessionSummary["page"]>;
  * the runtime's own sentence on screen — which is the rule stated once, where it is met, rather than a button that
  * quietly does nothing.
  */
-function PagePeek({ store, id, rt, sessionKey, summary }: { store: ChatStore; id: SessionId; rt: RuntimeInfo; sessionKey: SessionKey; summary?: SessionSummary }) {
+/** Look at the page a run is on, as it is now: its capture, shown full size. Null where it cannot be (no tab, the runtime
+ *  offline or without screenshots, or this client without the grant to ask). */
+function usePeek(store: ChatStore, id: SessionId | null, rt: RuntimeInfo | undefined, sessionKey: SessionKey, summary?: SessionSummary): { busy: boolean; peek: () => void } | null {
     const [busy, setBusy] = useState(false);
-    if (summary?.page?.tabId == null) return null;
+    if (!id || !rt || summary?.page?.tabId == null) return null;
     if (!rt.online || !rt.capabilities.screenshots || !mayCommand(rt, "tab.screenshot", { key: sessionKey, summary }, store.host.self)) return null;
-    const peek = async (): Promise<void> => {
+    const peek = (): void => {
         setBusy(true);
-        try {
-            const r = await store.send({ type: "tab.screenshot", runtime: rt.id, target: { session: id } });
-            if (r.ok) services().openLightbox(r.data.image);
-        } finally { setBusy(false); }
+        void store.send({ type: "tab.screenshot", runtime: rt.id, target: { session: id } })
+            .then((r) => { if (r.ok) services().openLightbox(r.data.image); })
+            .finally(() => setBusy(false));
     };
+    return { busy, peek };
+}
+
+/** The camera button in a wide header. */
+function PagePeek({ peek }: { peek: { busy: boolean; peek: () => void } | null }) {
+    if (!peek) return null;
     return (
-        <button class="tt hbtn chat-peek" aria-label="Look at the page" disabled={busy} onClick={() => void peek()}>
+        <button class="tt hbtn chat-peek" aria-label="Look at the page" disabled={peek.busy} onClick={peek.peek}>
             <IconCamera />
             <span class="tt-pop left" role="tooltip">Look at the page this run is on, as it is now</span>
         </button>
+    );
+}
+
+/**
+ * A PHONE's header keeps one button at its right, `⋮`, and the session's tools under it (looking at the page, calm
+ * view, copying the id). Three icons at 390px crowded the title into two words, and a brain glyph says nothing on its
+ * own; in a menu each has its name.
+ */
+function SessionMenu({ peek, hash, title }: { peek: { busy: boolean; peek: () => void } | null; hash?: string; title?: string }) {
+    const [at, setAt] = useState<{ top: number; right: number } | null>(null);
+    const btn = useRef<HTMLButtonElement>(null);
+    const menu = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!at) return;
+        const off = (e: Event) => { const t = e.target as Node; if (!menu.current?.contains(t) && !btn.current?.contains(t)) setAt(null); };
+        const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setAt(null); };
+        document.addEventListener("pointerdown", off);
+        document.addEventListener("keydown", esc);
+        return () => { document.removeEventListener("pointerdown", off); document.removeEventListener("keydown", esc); };
+    }, [at]);
+    const open = () => { const r = btn.current!.getBoundingClientRect(); setAt({ top: r.bottom + 6, right: Math.max(8, innerWidth - r.right) }); };
+    const act = (f: () => void) => () => { setAt(null); f(); };
+    return (
+        <>
+            <button ref={btn} class="hbtn chat-head-more" aria-label="Session options" aria-haspopup="menu" aria-expanded={!!at}
+                onClick={() => (at ? setAt(null) : open())}><IconMore /></button>
+            {at ? (
+                <div ref={menu} class="chat-menu chat-head-menu" role="menu" aria-label="Session options" style={`top:${at.top}px;right:${at.right}px`}>
+                    {title ? <div class="chat-head-menu-title" role="presentation">{title}</div> : null}
+                    {peek ? <MenuItem icon={<IconCamera />} label="Look at the page" onPick={act(peek.peek)} /> : null}
+                    <MenuItem icon={<IconBrain />} label="Calm view" on={calm.value} onPick={act(() => setCalm(!calm.value))} />
+                    {hash ? <MenuItem icon={<IconCopy />} label="Copy session id" onPick={act(() => void navigator.clipboard?.writeText(hash).catch(() => {}))} /> : null}
+                </div>
+            ) : null}
+        </>
     );
 }
 
@@ -436,24 +481,30 @@ function SessionPane({ store, sessionKey, narrow, extras }: { store: ChatStore; 
     // transcript (`Lede`), navigation and the page's tools to the left edge (the rail and the gear, `nav.tsx`). A
     // phone keeps the bar: it holds the way back, and there is no room for a rail beside a 390px column.
     const bare = calm.value && !narrow;
+    const peek = usePeek(store, id ?? null, rt, sessionKey, summary);
     return (
         <main class="chat-main" data-rev={r} data-session={sessionKey}>
             {bare
                 ? null
                 : <div class="head chat-head">
-                    {narrow ? <button class="nav" aria-label="Back to sessions" onClick={() => (pushedEntry ? history.back() : (view.value = { name: "list" }))}>‹</button> : null}
+                    {narrow ? <button class="hbtn chat-sheet-back" aria-label="Back to sessions" onClick={() => (pushedEntry ? history.back() : (view.value = { name: "list" }))}><IconBack /></button> : null}
+                    {/* A PHONE leads with the MODEL: the title is on the row you tapped to get here, and a 390px bar
+                        spent on it again says nothing new, where the model is what the next reply comes from. The
+                        title is still one tap away, at the top of the ⋮ menu. */}
                     <span class="chat-head-title">
-                        <b>{truncate(title, 120)}</b>
+                        {narrow && summary?.model ? <b class="chat-head-model">{summary.model}</b> : <b>{truncate(title, 120)}</b>}
                         <span class="chat-head-sub">
-                            {rt?.name ?? id?.runtime}{summary?.model ? ` · ${summary.model}` : ""}
+                            {rt?.name ?? id?.runtime}{!narrow && summary?.model ? ` · ${summary.model}` : ""}
                             {summary?.page ? <> · <PageChip page={summary.page} onShow={tabFocus(store, rt, summary)} /></> : null}
                         </span>
                     </span>
                     <span class="sp" />
-                    {id && rt && summary?.page ? <PagePeek store={store} id={id} rt={rt} sessionKey={sessionKey} summary={summary} /> : null}
-                    {narrow ? null : <DeviceViews extras={extras} rt={rt} />}
-                    <ViewToggle />
-                    {id ? <Hash hash={id.hash} /> : null}
+                    {narrow ? <SessionMenu peek={peek} hash={id?.hash} title={summary?.model ? title : undefined} /> : <>
+                        <PagePeek peek={peek} />
+                        <DeviceViews extras={extras} rt={rt} />
+                        <ViewToggle />
+                        {id ? <Hash hash={id.hash} /> : null}
+                    </>}
                 </div>}
             {waiting && (gateAway || !calm.value) ? <button class="chat-waiting" onClick={jumpToApproval}>Waiting on your approval<span class="chat-waiting-go">Review ›</span></button> : null}
             <div class="view chat-transcript" ref={scroller} onScroll={onScroll}>
@@ -523,13 +574,14 @@ function Lede({ title, rt, summary, id, store, sessionKey }: {
     title: string; rt?: RuntimeInfo; summary?: SessionSummary; id: SessionId | null; store: ChatStore; sessionKey: SessionKey;
 }) {
     const show = tabFocus(store, rt, summary);
+    const peek = usePeek(store, id, rt, sessionKey, summary);
     return (
         <div class="chat-lede">
             <b class="chat-lede-title">{truncate(title, 120)}</b>
             <span class="chat-lede-sub">
                 {rt?.name ?? id?.runtime}{summary?.model ? ` · ${summary.model}` : ""}
                 {summary?.page ? <> · <PageChip page={summary.page} onShow={show} /></> : null}
-                {id && rt && summary?.page ? <PagePeek store={store} id={id} rt={rt} sessionKey={sessionKey} summary={summary} /> : null}
+                <PagePeek peek={peek} />
             </span>
         </div>
     );
@@ -667,7 +719,7 @@ export function ChatApp({ store, platform, extras }: { store: ChatStore; platfor
                             </div>
                         )}
                         {narrow ? <button class="hbtn chat-sheet-back chat-home-back" aria-label="Back to sessions" onClick={() => setStarting(null)}><IconBack /></button> : null}
-                        <StartPage store={store} extras={extras} initialKind={starting ?? undefined} onStarted={(k) => { setStarting(null); openSession(k); }} />
+                        <StartPage store={store} extras={extras} narrow={narrow} initialKind={starting ?? undefined} onStarted={(k) => { setStarting(null); openSession(k); }} />
                     </main>
                 )
                     : key ? <SessionPane store={store} sessionKey={key} narrow={narrow} />

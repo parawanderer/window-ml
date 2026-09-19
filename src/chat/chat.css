@@ -1128,3 +1128,44 @@ button.chat-page-go:hover { color: var(--fg); }
 .client-title { margin: 0; font-size: 1.6em; font-weight: 650; }
 /* What the client is, or why it is not connected, under the title. */
 .client-lede { margin: 0 0 10px; color: var(--fg-dim); line-height: 1.5; }
+/* THE PHONE'S SESSION MENU (⋮, chat-app.tsx SessionMenu): the page's menu look, fixed under its button at the right. */
+.chat-head-menu { position: fixed; z-index: 60; max-width: min(320px, calc(100vw - 16px)); }
+/* The session's title at the top of that menu: what the bar gave up for the model, a tap away. */
+.chat-head-menu-title { padding: 8px 10px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-weight: 600; color: var(--fg); white-space: normal; overflow-wrap: anywhere; }
+/* The phone bar's lead: the session's model, in the code face it is written in everywhere else. */
+.chat-head-model { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
+
+/* ===================== A FINGER, NOT A MOUSE =====================
+   Where the pointer is coarse (a phone, a tablet), anything tapped is at least 40px: the icon buttons of the headers
+   and rows were 22px, a runtime's heading 30px, "Dismiss" 23px. Measured on every view at phone size (the audit in
+   chat-web.spec.mjs); a mouse keeps the compact sizes the desktop layout was drawn for. */
+@media (pointer: coarse) {
+    .chat .hbtn { min-width: 40px; min-height: 40px; border-radius: 50%; }
+    .chat-rt { min-height: 40px; }
+    .chat-att-fix, .chat-att-dismiss, .chat-seg-opt, .chat-menu-item { min-height: 40px; }
+    .pair-history summary { padding: 10px 0; }
+    .tp-pill { min-height: 40px; }
+    /* List rows at 44px, the size a phone's own lists use. */
+    .tp-group, .tp-row { min-height: 44px; }
+    /* The list's own header held its icons at 36px with a more specific rule than the one above. */
+    .chat-list .head .hbtn, .chat-list-foot .hbtn { min-width: 40px; min-height: 40px; }
+    /* A step's head opens it: a row a finger can hit, not a line of text. */
+    .chat .astep-head, .chat .block-head { min-height: 40px; }
+    /* A reply's small tools (collapse, copy): the glyph stays small, the target does not. */
+    .chat .who-toggle, .chat .mrow .icon-btn { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
+    .pair-card .btn { min-height: 40px; }
+    .chat-search-box input, .chat-search input[type="search"] { min-height: 40px; }
+    /* A chip inside a line of text (the run's page in a session's header): the line keeps its height, and a hidden
+       area around the chip takes the finger. */
+    .chat-page-go { position: relative; }
+    .chat-page-go::after { content: ""; position: absolute; inset: -11px -6px; }
+}
+/* A ROUND button keeps its own size wherever it lands. In a phone's column the back button was laid out in flow and
+   stretched across the whole width, a circle drawn 390px wide. */
+.chat-sheet-back { flex: 0 0 auto; align-self: flex-start; display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+/* THE KIND PICKER's rows (kind-picker.tsx): the kind's name, and a line under it saying what it does. */
+.tp-row.tp-kind { align-items: flex-start; }
+/* A kind row's text column: its name above, what it does below, wrapping rather than cut. */
+.tp-kind-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; white-space: normal; }
+/* What a kind does, dim, under its name. */
+.tp-kind-detail { color: var(--fg-dim); font-size: .88em; line-height: 1.35; }

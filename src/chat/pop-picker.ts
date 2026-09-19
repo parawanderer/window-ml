@@ -48,12 +48,20 @@ export function usePickerPop<V>({ picksFor, value, onPick, onOpen, width: [minW,
     useEffect(() => {
         if (!open) return;
         const onDown = (e: Event) => { const t = e.target as Node; if (!pop.current?.contains(t) && !btn.current?.contains(t)) setOpen(false); };
-        const onResize = () => setOpen(false);
+        // A resize RE-FITS the list rather than closing it. On a phone the keyboard IS a resize (the page asks for
+        // `interactive-widget=resizes-content`), so closing on one shut the picker the moment its filter was tapped.
+        const onResize = () => place();
         document.addEventListener("pointerdown", onDown);
         window.addEventListener("resize", onResize);
         return () => { document.removeEventListener("pointerdown", onDown); window.removeEventListener("resize", onResize); };
     }, [open]);
-    useEffect(() => { if (open) (filter.current ?? pop.current)?.focus(); }, [open]);
+    // Typing to filter is where a keyboard lands first, so the filter takes focus on open. On a TOUCH screen it does not:
+    // focus there raises the on-screen keyboard over half the list before anyone asked to type. Tapping the filter does.
+    useEffect(() => {
+        if (!open) return;
+        const touch = typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches;
+        (touch ? pop.current : filter.current ?? pop.current)?.focus({ preventScroll: true });
+    }, [open]);
     useEffect(() => { setHot(0); }, [q]);
     // Keep the highlighted row in view as the arrows move it.
     useLayoutEffect(() => { pop.current?.querySelector(".tp-row.hot")?.scrollIntoView?.({ block: "nearest" }); }, [hot, open]);
