@@ -41,6 +41,26 @@ the other two schemas.
 - **X25519 has no "public key from private" either**, but it does have the base point, so the public key is
   `x25519(sk, 9)` (`importAgreementKey`).
 
+## Knowing when the schema has moved
+
+The files under `src/proto/wmlhub/` and `tests/fixtures/hub/` are vendored from window-ml-hub and pinned by git
+BLOB ID. `node scripts/check-pins.mjs` proves a copy has not drifted, offline, and CI runs it.
+
+**`--upstream` is the half that matters, and it is a poll on purpose.** A schema change there is invisible from
+here: this code is correct against the schema it holds and never asks for what it does not know exists. Waiting to
+be told depends on somebody remembering at exactly the moment they are busy, and the drift that was found this week
+hid two things — the entire pairing vocabulary, and a certificate rule our stale copy had BACKWARDS (it said
+`not_after_ms: 0` means no expiry, where the real rule requires both ends and caps at ninety days, expiry being the
+one revocation that works with nobody online).
+
+A pin carries two refs because they answer two questions. **`branch` is where the bytes came from** and is usually a
+tag, which never moves — polling it could never fire. **`watch` is the branch upstream develops on**, which is what
+`--upstream` asks about. Writing `main` into `branch` to make the poll work would be a lie about the provenance.
+
+Upstream keeps `proto/wmlhub/CHANGES.md` with a CI gate behind it, so once the poll says something moved, that file
+says WHAT — and marks the entries that require a reader to change in order to stay correct. Use both: the poll is
+the guarantee because it depends on nobody, and the changelog is the optimisation because it saves reading a diff.
+
 ## The chat page's side: `HubConnection`
 
 `src/chat/hub-connection.ts` is the half of a `SessionHost` that needs no decisions about channels: presence into

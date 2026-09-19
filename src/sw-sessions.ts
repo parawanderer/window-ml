@@ -119,6 +119,14 @@ export function configureSessionCommands(run: RunDeps): void {
         removeFromIndex: (id) => { sessionServer.remove(id); },
         listTabs: async () => (await chrome.tabs.query({})).filter((t) => /^https?:/.test(t.url || "")).map(tabInfo).filter((t): t is TabInfo => !!t),
         getTab: async (tabId) => { try { return tabInfo(await chrome.tabs.get(tabId)); } catch { return null; } },
+        focusTab: async (tabId, windowId) => {
+            try {
+                await chrome.tabs.update(tabId, { active: true });
+                // The tab being active in a window nobody is looking at is not what was asked: bring the window too.
+                if (windowId != null) await chrome.windows.update(windowId, { focused: true });
+                return true;
+            } catch { return false; }   // closed between the check and the focus
+        },
         toPage: async (tabId, action, body) => {
             const reqId = Math.random().toString(36).slice(2, 12);
             const reply = await chrome.tabs.sendMessage(tabId, { type: "ML_SESSION_TO_PAGE", action, ...body, reqId }) as { outcome?: PageOutcome } | undefined;

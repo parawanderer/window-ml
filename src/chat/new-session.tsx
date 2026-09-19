@@ -230,7 +230,7 @@ export function ResumeSession({ store, rt, session, onResumed, onCancel }: {
                 <p class="chat-resume-lost" data-field="lost">
                     It carries on from what it had said, on the page you pick. It does not carry over live references
                     to elements on the old page, that page's state, cached fetches, tools a page script defined, or
-                    approval grants: consent is per page, and is asked again.
+                    approval grants: consent belongs to the tab it was given in, and is asked again.
                 </p>
                 <div class="chat-new-foot">
                     <span class="chat-new-hint">The same run, not a new one: it keeps its hash and its history.</span>

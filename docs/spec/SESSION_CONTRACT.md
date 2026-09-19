@@ -183,6 +183,7 @@ runtime answers a type or option it does not offer with `unsupported`.
 | `session.backfill`: a page of a session's events, older than a position | view | `persistence` | nothing |
 | `runtime.info`: what this runtime IS — its kind, contract version, capabilities and its own clock | view | | nothing |
 | `tabs.list` | drive | `tabs` | nothing |
+| `tab.focus`: bring a tab and its window to the front; only a tab `tabs.list` would show | drive | `tabs` | nothing |
 | `tab.screenshot`: on demand, size-capped | screen | `screenshots` | `CAPTURE_TAB` |
 | `page.highlight`: a selector, a canvas token, or clear | drive | `highlight` | `__mlHighlight` → `ML_HL_REMOTE` |
 | `side.call`: a utility-model call about a session | drive | `sideCalls` | `FETCH_LLM` with `extend: "utility"` |

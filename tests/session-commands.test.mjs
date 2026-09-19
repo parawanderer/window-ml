@@ -39,6 +39,7 @@ function world(over = {}) {
         removeFromIndex: rec("remove", (id) => index.remove(id.hash)),
         listTabs: rec("listTabs", async () => [{ tabId: TAB, url: "https://a.example/", title: "A", active: true, windowId: 1 }]),
         getTab: rec("getTab", async (id) => (id === TAB ? { tabId: TAB, url: "https://a.example/", title: "A", active: true, windowId: 1 } : null)),
+        focusTab: rec("focusTab", async () => true),
         toPage: rec("toPage", async () => "turn"),
         highlight: rec("highlight"),
         steer: rec("steer", false),
@@ -568,4 +569,27 @@ test("a runtime that keeps no history at all says unsupported, not empty", async
     w.index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });
     w.index.markSaved("aaaa0001");
     assert.equal((await w.run({ type: "session.backfill", session: sid("aaaa0001") })).error.code, "unsupported");
+});
+
+
+test("tab.focus brings a tab and its WINDOW forward, and only a tab tabs.list would have shown", async () => {
+    const w = world();
+    assert.deepEqual(await w.run({ type: "tab.focus", runtime: "local", tabId: TAB }), { ok: true, data: {} });
+    const [, tabId, windowId] = w.named("focusTab")[0];
+    assert.equal(tabId, TAB);
+    assert.equal(windowId, 1, "the window too: an active tab in a window nobody is looking at is not what was asked");
+
+    // A browser page is not in `tabs.list`, so a client could only have GUESSED its id — and `forbidden` would
+    // confirm it exists. `not-found` says the truth from where the client stands.
+    const chrome = world({ getTab: async () => ({ tabId: 9, url: "chrome://settings", title: "s", active: false, windowId: 1 }) });
+    assert.equal((await chrome.run({ type: "tab.focus", runtime: "local", tabId: 9 })).error.code, "not-found");
+    assert.equal(chrome.named("focusTab").length, 0);
+
+    assert.equal((await w.run({ type: "tab.focus", runtime: "local", tabId: 404 })).error.code, "not-found");
+    assert.equal((await w.run({ type: "tab.focus", runtime: "local", tabId: 1.5 })).error.code, "invalid");
+    assert.equal((await w.run({ type: "tab.focus", runtime: "phone", tabId: TAB })).error.code, "not-found");
+
+    // Closed between the check and the focus.
+    const gone = world({ focusTab: async () => false });
+    assert.equal((await gone.run({ type: "tab.focus", runtime: "local", tabId: TAB })).error.code, "not-found");
 });
