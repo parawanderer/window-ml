@@ -59,6 +59,16 @@ class KeyedStream {
     private stops: (() => void)[] = [];
     /** the hub's position of the newest frame received, so a stream moved to a new connection resumes after it */
     private position: Position | undefined;
+    /**
+     * The keys channel's ring has been read to its end, every grant on it tried, and none was this device's. Then the
+     * frames held for a key are unreadable, and holding the ring's end marker behind them would leave the reader
+     * waiting forever: a session that has published nothing since the runtime connected has no key at all.
+     */
+    private keyless = false;
+    private keysDone = false;
+    /** this connection's data ring has ended: what follows is live */
+    private ringOver = false;
+    private opening = 0;
 
     constructor(
         private readonly publisher: Bytes,
@@ -78,18 +88,24 @@ class KeyedStream {
     attach(conn: HubConnection): void {
         this.unsubscribe();
         this.onAttach?.();
+        this.keysDone = false;
+        this.keyless = false;
+        this.ringOver = false;
         // Every device's grant rides the same keys channel, and only the one sealed to THIS device opens. The others
         // are expected, so a refusal is silence rather than an error.
         this.stops.push(conn.subscribe(this.publisher, this.keys, (e) => {
+            if (e.kind === "backfilled") { this.keysDone = true; this.settleKeys(); return; }
             if (e.kind !== "published") return;
+            this.opening++;
             void conn.openGrant(e.sender, e.payload).then(
                 (grant) => {
+                    this.keyless = false;
                     if (this.reader) { this.reader.addKey(grant); return; }   // a rotation, a second grant, a reconnect
                     this.reader = new StreamReader(grant);
                     void this.drain();
                 },
                 () => { /* a grant for another device */ },
-            );
+            ).finally(() => { this.opening--; this.settleKeys(); });
         }));
         this.stops.push(conn.subscribe(this.publisher, this.data, (e: StreamEvent) => {
             if (e.kind === "published") this.position = { epoch: e.epoch, seq: e.seq };
@@ -101,16 +117,32 @@ class KeyedStream {
         }, this.position));
     }
 
-    /** Process what is queued, in order, once the key is here. A second call while one runs is a no-op: the running
-     *  loop picks up whatever was pushed meanwhile. */
+    /** Every grant in the keys ring has been tried: with none of them this device's, stop waiting for a key. */
+    private settleKeys(): void {
+        if (!this.keysDone || this.opening > 0 || this.reader || this.keyless) return;
+        this.keyless = true;
+        void this.drain();
+    }
+
+    /** Process what is queued, in order, once the key is here (or is known not to be). A second call while one runs
+     *  is a no-op: the running loop picks up whatever was pushed meanwhile. */
     private async drain(): Promise<void> {
-        if (this.draining || !this.reader) return;
+        if (this.draining || (!this.reader && !this.keyless)) return;
         this.draining = true;
         try {
             while (this.queue.length) {
-                const e = this.queue.shift()!;
+                const e = this.queue[0];
+                if (e.kind === "published" && !this.reader) {
+                    // Keyless, and still inside the ring: under a key this device was never given, so skipped like any
+                    // unreadable frame. A LIVE frame waits instead: the session has just started publishing, and its
+                    // grant is on the keys channel, still being opened.
+                    if (this.ringOver) return;
+                    this.queue.shift();
+                    continue;
+                }
+                this.queue.shift();
                 if (e.kind === "published") await this.open(e.payload);
-                else if (e.kind === "backfilled") this.onRingDone(e.truncated);
+                else if (e.kind === "backfilled") { this.ringOver = true; this.onRingDone(e.truncated); }
             }
         } finally {
             this.draining = false;
@@ -349,7 +381,13 @@ export class HubHost implements SessionHost {
                 await keysChannel(this.channels, session.hash),
                 await eventsChannel(this.channels, session.hash),
                 (batch) => { const m = decodeStreamFrame(batch); if (m) adapter.frame(m); },
-                (truncated) => adapter.ringDone(truncated),
+                (truncated) => {
+                    // A fresh subscription the hub had nothing readable for: a session that has published nothing
+                    // since its runtime connected, whose history lives only on the runtime. Ask the runtime how long
+                    // it is, and hand the client a position to page back from.
+                    if (!at && adapter.empty) void this.fromRuntime(session, adapter, truncated);
+                    else adapter.ringDone(truncated);
+                },
                 // Each connection's ring is read by a new adapter from where the last one got to: it decides between
                 // resuming and resetting exactly as a fresh subscription with `since` would.
                 fresh,
@@ -359,6 +397,17 @@ export class HubHost implements SessionHost {
             unfollow = this.follow(s);
         })();
         return () => { live = false; unfollow(); stream?.stop(); };
+    }
+
+    /**
+     * The start of a session whose ring held nothing readable: `session.backfill { limit: 1 }` says where its history
+     * ends, and `backfilled { from }` lets the client page it in with the same command (`ChatStore.loadEarlier`). A
+     * runtime that cannot answer leaves the plain end of an empty ring, which is what there was before.
+     */
+    private async fromRuntime(session: SessionId, adapter: HubStreamAdapter, hubTruncated: boolean): Promise<void> {
+        const r = await this.send({ type: "session.backfill", session, limit: 1 });
+        if (!r.ok) { adapter.ringDone(hubTruncated); return; }
+        adapter.ringFromRuntime({ epoch: r.data.epoch, from: r.data.from + r.data.events.length, truncated: r.data.truncated });
     }
 
     send<C extends Command>(command: C, opts?: { signal?: AbortSignal }): Promise<CommandResult<C["type"]>> {
