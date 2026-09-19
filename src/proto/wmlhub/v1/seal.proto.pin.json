@@ -1,8 +1,8 @@
 {
   "repo": "parawanderer/window-ml-hub",
-  "branch": "v0.2.0",
+  "branch": "v0.4.0",
   "path": "proto/wmlhub/v1/seal.proto",
-  "commit": "41d3fffc9e41442b28838a7e07b7f5077eb318c6",
+  "commit": "ae396978913a979e0dc42176ee6ac3c16a53de6b",
   "blob": "3bc250ac54a57db0e1a3439202f7aa0ec6bca9ab",
   "watch": "main"
 }

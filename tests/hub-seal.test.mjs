@@ -48,7 +48,7 @@ const receiverFor = async (party, root) =>
 test("the vendored vectors are the pinned file", () => {
     const blob = createHash("sha1").update(`blob ${raw.length}\0`).update(raw).digest("hex");
     assert.equal(blob, PIN.blob, `re-vendor from ${PIN.repo}:${PIN.path} and update the pin`);
-    assert.equal(V.version, 3, "version 3: the renewal case, which the verifier is exempt from two checks for");
+    assert.equal(V.version, 4, "version 4: a revocation list (version 3 was the renewal case, which the verifier is exempt from two checks for)");
 });
 
 test("the keys the seeds name are the keys the vectors record", async () => {

@@ -15,13 +15,18 @@ const { generateIdentity, issueCertificate, principalId } = await import("../../
 
 export const HUB = "hub.test";
 /** The hub release these tests are checked against; move it when a later one is NEEDED, not when one exists. */
-export const HUB_TAG = "v0.2.0";
+export const HUB_TAG = "v0.4.0";
 export const BIN =
     process.env.WMLHUB_BIN ??
     [`../../../window-ml-hub-${HUB_TAG}/target/release/wmlhub`, `../../../window-ml-hub-${HUB_TAG}/target/debug/wmlhub`]
         .map((p) => new URL(p, import.meta.url).pathname)
         .find((p) => existsSync(p));
 export const HAVE_HUB = !!BIN && existsSync(BIN);
+/** The box connector's `wmlbox`, built beside the hub from the same tag: the other implementation of pairing's offer. */
+export const BOX_BIN =
+    process.env.WMLBOX_BIN ??
+    (BIN ? join(BIN, "..", "wmlbox") : undefined);
+export const HAVE_BOX = !!BOX_BIN && existsSync(BOX_BIN);
 /** A skip that does not say what is missing is a test nobody ever turns on. */
 export const NO_HUB = `no wmlhub ${HUB_TAG} binary: clone the tag and \`cargo build --release -p wmlhub\`, or set WMLHUB_BIN`;
 /** Options for a test that needs the hub: skipped, with the reason, when there is none. */
