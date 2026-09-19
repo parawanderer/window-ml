@@ -136,6 +136,9 @@ export class SessionStore {
         private readonly backend: SessionStoreBackend,
         private readonly opts: {
             budgetBytes?: number; maxSessions?: number; flushMs?: number;
+            /** The size and count caps, read at every eviction so a changed setting applies without a restart. Wins
+             *  over `budgetBytes`/`maxSessions`. `Infinity` for either means no cap of that kind. */
+            limits?: () => { budgetBytes: number; maxSessions: number };
             now?: () => number;
             /** hashes that must survive an eviction: what a page has open */
             protect?: () => readonly string[];
@@ -164,12 +167,22 @@ export class SessionStore {
     }
 
     /**
-     * Apply retention now. A worker that starts and finds sessions past their time forgets them before listing them,
-     * and one that has been idle for a week does the same on its next write. Returns what it dropped.
+     * Apply retention and the caps now. A worker that starts and finds sessions past their time forgets them before
+     * listing them, one that has been idle for a week does the same on its next write, and a lowered setting takes
+     * effect while the person who lowered it watches. Returns what it dropped.
      */
     async sweep(): Promise<string[]> {
         await this.open();
-        return this.drop(planExpiry([...this.rows.values()], { now: this.now(), retainMs: this.opts.retainMs?.() ?? 0, protect: this.protected() }), "retention");
+        return this.evict();
+    }
+
+    /** Retention first: what has expired should not survive because the budget happened to have room, and what it
+     *  frees is room the budget no longer has to find. */
+    private async evict(): Promise<string[]> {
+        const expired = await this.drop(planExpiry([...this.rows.values()], { now: this.now(), retainMs: this.opts.retainMs?.() ?? 0, protect: this.protected() }), "retention");
+        const limits = this.opts.limits?.() ?? { budgetBytes: this.opts.budgetBytes ?? STORE_BUDGET_BYTES, maxSessions: this.opts.maxSessions ?? STORE_MAX_SESSIONS };
+        const over = await this.drop(planEviction([...this.rows.values()], { ...limits, protect: this.protected() }), "budget");
+        return [...expired, ...over];
     }
 
     private now(): number {
@@ -297,12 +310,7 @@ export class SessionStore {
             row.bytes += events.reduce((n, e) => n + sizeOf(e), 0);
             await this.backend.append({ ...row }, from, events);
         }
-        // Retention first: what has expired should not survive because the budget happened to have room, and what it
-        // frees is room the budget no longer has to find.
-        await this.drop(planExpiry([...this.rows.values()], { now: this.now(), retainMs: this.opts.retainMs?.() ?? 0, protect: this.protected() }), "retention");
-        await this.drop(planEviction([...this.rows.values()], {
-            budgetBytes: this.opts.budgetBytes, maxSessions: this.opts.maxSessions, protect: this.protected(),
-        }), "budget");
+        await this.evict();
     }
 
     /** A session whose events are still arriving would be evicted and immediately written again. */

@@ -386,3 +386,28 @@ test("session storage stats answer an extension page and refuse a page", T, asyn
     assert.ok(data.toolOutput >= 300);
     assert.equal(data.top[0].hash, "ffff0001");
 });
+
+test("the store budget: 0 caps nothing, and a lowered budget applies at once", T, async () => {
+    const { IDBFactory } = require("fake-indexeddb");
+    const { indexedDbBackend } = await import("../src/session-store.ts");
+    const idb = new IDBFactory();
+    const be = indexedDbBackend(idb);
+    const MB = 1024 * 1024;
+    // Two sessions of 200 MB each by the store's own accounting: over the default 256, under nothing.
+    for (const [hash, age] of [["big00001", 2], ["big00002", 1]]) {
+        const lastTs = Date.now() - age * 60_000;
+        const summary = { id: { runtime: "local", hash }, kind: "agent", status: "done", createdTs: lastTs, lastTs, pendingApprovals: 0, saved: true };
+        await be.append({ hash, summary, lastTs, createdTs: lastTs, bytes: 200 * MB, count: 1 }, 0, [start(hash)]);
+    }
+    const bg = loadBackground({ config: { ...config, sessionStoreBudgetMB: 0 }, indexedDB: idb });
+    const page = openPage(bg);
+    for (let i = 0; i < 100 && page.rows().size < 2; i++) await new Promise((r) => setTimeout(r, 20));
+    assert.equal(page.rows().size, 2, "0 is no cap: 400 MB kept");
+
+    // Lowered to 256 while watching: the older one goes now, not on some later write.
+    bg.setSync({ sessionStoreBudgetMB: 256 });
+    for (let i = 0; i < 100 && page.rows().has("big00001"); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.deepEqual([...page.rows().keys()], ["big00002"]);
+    const { data } = await bg.send({ type: "DUMP_HOUSEKEEPING", payload: {} }, { url: "chrome-extension://test/sidebar/devtools.html" });
+    assert.deepEqual(data.filter((e) => e.subsystem === "sessions").map((e) => [e.key, e.reason]), [["big00001", "budget"]]);
+});

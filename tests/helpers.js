@@ -130,6 +130,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
     const connectListeners = [];
     const tabRemovedListeners = [];   // chrome.tabs.onRemoved listeners; fired by bg.closeTab(id)
     const stored = { ...config };
+    const syncListeners = [];
     const localStore = { ...local };   // seed chrome.storage.local (e.g. ml_bgrun_* snapshots for durable-resume tests)
     const sessionStore = { ...session };   // seed chrome.storage.session (e.g. a housekeeping heartbeat left by an "earlier" worker)
     let offscreenDoc = false;
@@ -171,6 +172,7 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
                     get: async (defaults) => ({ ...defaults, ...stored }),
                     set: async (obj) => { Object.assign(stored, obj); }
                 },
+                onChanged: { addListener: (fn) => syncListeners.push(fn) },
                 local: {
                     get: async (key) => {
                         if (key == null) return { ...localStore };   // get(null) → ALL keys (hydratePersistedRuns/purgeAllBgRuns)
@@ -272,6 +274,12 @@ function loadBackground({ config = {}, local = {}, session = {}, onFetch, onCapt
         debuggerEventListeners,
         /** Fire a CDP event at every listener the SW registered (e.g. Runtime.bindingCalled). */
         emitDebuggerEvent: (target, method, params) => { [...debuggerEventListeners].forEach(fn => fn(target, method, params)); },
+        /** Change synced settings the way the settings panel does: stored, then storage.onChanged with area "sync". */
+        setSync: (obj) => {
+            const changes = Object.fromEntries(Object.entries(obj).map(([k, v]) => [k, { oldValue: stored[k], newValue: v }]));
+            Object.assign(stored, obj);
+            for (const fn of syncListeners) fn(changes, "sync");
+        },
         stored,
         localStore,   // chrome.storage.local contents — tests assert a snapshot was kept/removed
         sessionStore,   // chrome.storage.session contents — the housekeeping log lives here

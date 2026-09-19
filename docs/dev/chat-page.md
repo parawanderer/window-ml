@@ -179,6 +179,13 @@ startup BEFORE the list is restored (so an expired session is never listed then 
 setting changes. It ignores the budget: retention is about a person's history, not space. Every drop, by retention or
 by the caps, is a `sessions/evict` housekeeping record.
 
+**The budget** (`sessionStoreBudgetMB`, default 256): the store's size cap, with the count cap (`STORE_MAX_SESSIONS`)
+beside it; 0 removes both, leaving retention and pins. The store reads it at every eviction (`limits`), and a lowered
+value applies at once. Until the worker has READ the setting there is no cap at all, not the default: someone who set
+0 may hold gigabytes, and a write landing first must not evict them to 256 MB. The manifest asks for
+`unlimitedStorage` (no install warning), so Chrome does not drop the store under disk pressure, which would be an
+eviction nothing logs.
+
 **What fills the store** (`session-storage-stats.ts`): from any extension page's console (the chat page, the DevTools
 panel), `await chrome.runtime.sendMessage({ type: "SESSION_STORAGE_STATS" })` answers the store's bytes split into
 images (`data:image/*` wherever they sit), tool output (an agent step's `result`/`streamOutput`/`output`, images
