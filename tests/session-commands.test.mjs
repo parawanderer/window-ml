@@ -191,6 +191,55 @@ test("tabs.list carries groups only when the runtime can name some", async () =>
     assert.equal((await broken.run({ type: "tabs.list", runtime: "local" })).ok, true, "a group failure never costs the tabs");
 });
 
+test("sessions.list merges the live index and the archive by last activity, a page at a time", async () => {
+    const archived = [5, 3, 1].map((t) => ({ summary: { id: { runtime: "local", hash: `a000000${t}` }, kind: "agent", status: "done", task: `old ${t}`, createdTs: t, lastTs: t * 1000, pendingApprovals: 0, saved: true } }));
+    // Two live sessions at 4000 and 2000 (their lastTs is the index clock at ingest), three archived around them.
+    let t = 0;
+    const live = new SessionIndex({ runtime: "local", spawn: "w", now: () => t });
+    for (const [h, ts] of [["b0000004", 4000], ["b0000002", 2000]]) { t = ts; live.ingest(start(h), { tabId: TAB, trusted: true }); }
+    const w = world({ index: live, listArchived: async (o) => archived.filter((r) => r.summary.lastTs < o.before).slice(0, o.limit) });
+
+    const first = await w.run({ type: "sessions.list", runtime: "local", limit: 3 });
+    assert.deepEqual(first.data.sessions.map((s) => [s.id.hash, !!s.archived]), [["a0000005", true], ["b0000004", false], ["a0000003", true]]);
+    assert.equal(first.data.more, true);
+    const next = await w.run({ type: "sessions.list", runtime: "local", limit: 3, before: first.data.sessions.at(-1).lastTs });
+    assert.deepEqual(next.data.sessions.map((s) => s.id.hash), ["b0000002", "a0000001"]);
+    assert.equal(next.data.more, false);
+
+    assert.deepEqual((await w.run({ type: "sessions.list", runtime: "local", archived: false })).data.sessions.map((s) => s.id.hash), ["b0000004", "b0000002"]);
+    assert.deepEqual((await w.run({ type: "sessions.list", runtime: "local", archived: true })).data.sessions.map((s) => s.id.hash), ["a0000005", "a0000003", "a0000001"]);
+    assert.equal(code(await w.run({ type: "sessions.list", runtime: "laptop" })), "not-found");
+});
+
+test("sessions.search: a live session by its task with the match marked, the archive by what it said", async () => {
+    const live = new SessionIndex({ runtime: "local", spawn: "w" });
+    live.ingest(ev("c0000001", "agent", { task: "Buy a Brass lamp", model: "m", maxSteps: 3, config: null }), { tabId: TAB, trusted: true });
+    live.ingest(ev("c0000002", "agent", { task: "something else", model: "m", maxSteps: 3, config: null }), { tabId: TAB, trusted: true });
+    const w = world({ index: live, listArchived: async (o) => (o.query ? [{ summary: { id: { runtime: "local", hash: "c0000009" }, kind: "agent", status: "done", createdTs: 1, lastTs: 1, pendingApprovals: 0, saved: true }, snippet: "the «brass» one" }] : []) });
+    const r = await w.run({ type: "sessions.search", runtime: "local", query: "brass" });
+    assert.deepEqual(r.data.sessions.map((s) => [s.id.hash, s.match?.snippet, !!s.archived]), [["c0000001", "Buy a «Brass» lamp", false], ["c0000009", "the «brass» one", true]]);
+    assert.equal(code(await w.run({ type: "sessions.search", runtime: "local", query: "   " })), "invalid");
+});
+
+test("session.unarchive: a live session is a no-op, an archived one comes back, an unknown one is not found", async () => {
+    const back = [];
+    const { run, index } = world({ unarchive: async (hash) => { back.push(hash); return hash === "d0000001"; } });
+    index.ingest(start("d0000002"), { tabId: TAB, trusted: true });
+    assert.deepEqual(await run({ type: "session.unarchive", session: sid("d0000002") }), { ok: true, data: { session: sid("d0000002") } });
+    assert.deepEqual(back, [], "already live: the archive is not asked");
+    assert.equal(code(await run({ type: "session.unarchive", session: sid("d0000001") })), "ok");
+    assert.equal(code(await run({ type: "session.unarchive", session: sid("d0000009") })), "not-found");
+    assert.equal(code(await run({ type: "session.unarchive", session: sid("d0000001", "laptop") })), "not-found");
+    const none = world();
+    assert.equal(code(await none.run({ type: "session.unarchive", session: sid("d0000001") })), "unsupported");
+});
+
+test("session.resume brings an archived session back before resuming it", async () => {
+    const w = world({ unarchive: async (hash) => { w.index.ingest(start(hash), { tabId: TAB, trusted: true }); w.index.markSaved(hash); return true; } });
+    const r = await w.run({ type: "session.resume", session: sid("e0000001"), target: { kind: "tab", tabId: TAB } });
+    assert.notEqual(r.ok ? "ok" : r.error.code, "not-found", "found once it was brought back");
+});
+
 test("session.rename: capped, marked as a person's, and empty goes back to generated", async () => {
     const { run, index, named } = world();
     index.ingest(start("aaaa0001"), { tabId: TAB, trusted: true });

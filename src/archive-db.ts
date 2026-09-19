@@ -168,6 +168,8 @@ export interface ArchivedRow {
     archivedTs: number;
     bytes: number;
     events: number;
+    /** on a search: the matched text with the match in «guillemets», plain text */
+    snippet?: string;
 }
 
 /**
@@ -179,13 +181,21 @@ export function listArchived(db: Database, o: { before?: number; limit?: number;
     const limit = Math.min(Math.max(1, o.limit ?? 40), 200);
     const before = o.before ?? Number.MAX_SAFE_INTEGER;
     const q = o.query?.trim();
+    const phrase = q ? `"${q.replace(/"/g, '""')}"` : "";
     const rows = q
         ? db.selectObjects(
-            `SELECT summary, archived_ts, bytes, events FROM sessions
+            // The snippet is the first matching event's, the match marked; one per session, so a session that says
+            // the phrase fifty times is one row, not fifty.
+            `SELECT summary, archived_ts, bytes, events,
+                    (SELECT snippet(event_text, 2, '«', '»', '…', 12) FROM event_text WHERE event_text MATCH ? AND hash = sessions.hash LIMIT 1) AS snip
+             FROM sessions
              WHERE last_ts < ? AND hash IN (SELECT hash FROM event_text WHERE event_text MATCH ?)
-             ORDER BY last_ts DESC LIMIT ?`, [before, `"${q.replace(/"/g, '""')}"`, limit])
+             ORDER BY last_ts DESC LIMIT ?`, [phrase, before, phrase, limit])
         : db.selectObjects("SELECT summary, archived_ts, bytes, events FROM sessions WHERE last_ts < ? ORDER BY last_ts DESC LIMIT ?", [before, limit]);
-    return rows.map((r) => ({ summary: JSON.parse(String(r.summary)), archivedTs: Number(r.archived_ts), bytes: Number(r.bytes), events: Number(r.events) }));
+    return rows.map((r) => ({
+        summary: JSON.parse(String(r.summary)), archivedTs: Number(r.archived_ts), bytes: Number(r.bytes), events: Number(r.events),
+        ...(r.snip ? { snippet: String(r.snip) } : {}),
+    }));
 }
 
 /** Base64 of bytes, in chunks: a screenshot is too large for one spread into `String.fromCharCode`. */
