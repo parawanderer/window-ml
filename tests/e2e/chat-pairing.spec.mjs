@@ -147,6 +147,13 @@ test("the standalone client creates the account and pairs this browser, then lis
         await expect(page.locator(".pair-conn")).toContainText("Connected", { timeout: 20_000 });
         await client.reload();
         await expect(client.locator(".chat-rt", { hasText: "Test laptop" })).toBeVisible({ timeout: 30_000 });
+
+        // THE HUB GOES AWAY: the page stays where it is (no reload: a marker set now survives) and says it is not
+        // connected, instead of quietly going stale. HubHost.reconnecting keeps trying; hub-host.test.mjs covers the return.
+        await client.evaluate(() => { globalThis.__stillHere = true; });
+        hub.stop();
+        await expect(client.locator(".chat-list .head .chat-chip")).toHaveText(/offline|connecting/, { timeout: 20_000 });
+        expect(await client.evaluate(() => globalThis.__stillHere)).toBe(true);
         expect(errors).toEqual([]);
     } finally {
         await ext.context.close();

@@ -102,8 +102,10 @@ so `npm test` says so too. It builds two entries:
   wrapper run. It is a remote and nothing else: no agents, no tabs, never a runtime. Its state is its keyring (this
   origin's IndexedDB); in no account it shows only the account panel (create one, holding the root, or join one), and
   in one it connects with `HubConnection` and draws the chat page over `HubHost`. Pairing others goes over that same
-  connection (`HubConnection.hubClient`), because the hub refuses a second one from a connected principal. A dropped
-  connection reloads the page with a growing delay until the transport can resume one in place.
+  connection (`HubConnection.hubClient`), because the hub refuses a second one from a connected principal. The host is
+  `HubHost.reconnecting`, so a dropped connection comes back in place (the page keeps its open session), and waking or
+  coming back online tries at once. The build also writes `dist-app/`, the client alone as `index.html`: Capacitor's
+  `webDir`, so the phone app opens the client and never the demo.
   `tests/e2e/chat-pairing.spec.mjs` runs the whole loop against a real `wmlhub`: the client creates the account, the
   extension joins as a runtime, the client pairs it by code, and lists it.
 
